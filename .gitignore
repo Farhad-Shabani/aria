@@ -18,7 +18,9 @@ htmlcov/
 /target/
 
 # Xcode and SwiftPM
-*.xcodeproj/
+**/*.xcodeproj/**
+!**/*.xcodeproj/**/
+!**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 .swiftpm/
 
 # macOS

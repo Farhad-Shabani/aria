@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS app
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@v2.87.28
+        with:
+          tool: just@1.58.0,cargo-about@0.9.2
+      - name: just release-macos
+        run: just release-macos
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: macos
+          path: dist/Aria-*-macos-arm64.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux binary
+    # The oldest Ubuntu LTS with the libstdc++ 13 that ONNX Runtime needs, so
+    # the binary runs there and on anything newer.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake clang libasound2-dev libssl-dev pkg-config
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@v2.87.28
+        with:
+          tool: just@1.58.0,cargo-about@0.9.2
+      - name: just release-linux
+        run: just release-linux
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: linux
+          path: dist/aria-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  checksums:
+    name: Checksums
+    needs: [macos, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2.87.28
+        with:
+          tool: just@1.58.0
+      - name: Check the tag matches the workspace version
+        run: |
+          version=$(just --evaluate version)
+          [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: just release-checksums
+        run: just release-checksums
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  # Only first-party actions run beside the write token.
+  publish:
+    name: Publish
+    needs: checksums
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
