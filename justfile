@@ -207,7 +207,6 @@ notices:
     {
         cat licenses/native.md
         printf '\n## Full license texts\n'
-        full_text "GNU General Public License v3.0" licenses/vendor/GPL-3.0.txt
         full_text "ONNX Runtime third-party notices" licenses/vendor/onnxruntime-notices.txt
     } >> "$out"
 

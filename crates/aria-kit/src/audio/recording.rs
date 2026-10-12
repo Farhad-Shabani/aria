@@ -546,9 +546,15 @@ impl RecordingReader {
         Err(CaptureError::StillCapturing)
     }
 
+    /// Stream position just past the last sample capture has written, whether
+    /// or not this reader has taken it.
+    pub fn written(&self) -> u64 {
+        self.recording.lock().appended as u64
+    }
+
     /// How much audio capture has written, whether or not it has been read.
     pub fn duration(&self) -> Duration {
-        canonical_duration(self.recording.lock().appended as u64)
+        canonical_duration(self.written())
     }
 
     /// Waits for capture to append or end.

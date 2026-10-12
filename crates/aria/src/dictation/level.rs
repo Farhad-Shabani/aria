@@ -45,18 +45,10 @@ impl Meter {
         let thread = thread::Builder::new()
             .name("aria-dictation-level".to_owned())
             .spawn(move || {
-                let mut frame_end = fork.held_to();
                 while !control.is_cancelled() {
-                    frame_end += FRAME_SAMPLES;
-                    // Blocks for one frame of audio, or until capture ends.
-                    if fork.fill_through(frame_end).is_err() || fork.reached_end() {
+                    let Some(level) = next_level(&mut fork) else {
                         return;
-                    }
-                    let level = loudness(fork.samples());
-                    // Read, then forget: a meter holding its window would grow
-                    // without bound.
-                    let end = fork.held_to();
-                    fork.release_before(end);
+                    };
                     events.emit(MicLevel {
                         recording: id,
                         level,
@@ -77,6 +69,21 @@ impl Drop for Meter {
             let _ = thread.join();
         }
     }
+}
+
+/// Waits for one frame past what the fork holds, then measures and forgets
+/// it. `None` once capture ends.
+fn next_level(fork: &mut RecordingReader) -> Option<f32> {
+    let frame_end = fork.held_to() + FRAME_SAMPLES;
+    // Blocks for one frame of audio, or until capture ends.
+    if fork.fill_through(frame_end).is_err() || fork.reached_end() {
+        return None;
+    }
+    let level = loudness(fork.samples());
+    // Read, then forget: a meter holding its window would grow without bound.
+    let end = fork.held_to();
+    fork.release_before(end);
+    Some(level)
 }
 
 /// How loud the microphone is right now, from silent to pinned.
@@ -104,6 +111,17 @@ fn loudness(samples: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::Recording;
+
+    #[test]
+    fn a_large_write_leaves_no_empty_frames() {
+        let (reader, mut writer) = Recording::open();
+        let mut fork = reader.fork();
+        writer.push(&[1.0; 16_000]);
+        assert_eq!(next_level(&mut fork), Some(1.0));
+        writer.push(&[1.0; FRAME_SAMPLES as usize]);
+        assert_eq!(next_level(&mut fork), Some(1.0));
+    }
 
     #[test]
     fn a_quiet_room_sits_on_the_floor() {
