@@ -193,6 +193,24 @@ proto-swift:
         proto/aria/setup/v1/setup.proto \
         proto/grpc/health/v1/health.proto
 
+# Release
+
+# Write the aria binary's third-party licenses to target/THIRD-PARTY-LICENSES.md
+notices:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/THIRD-PARTY-LICENSES.md
+    mkdir -p target
+    cargo about generate --locked -m crates/aria/Cargo.toml \
+        -c licenses/about.toml -o "$out" licenses/about.hbs
+    full_text() { printf '\n### %s\n\n```text\n' "$1"; cat "$2"; printf '```\n'; }
+    {
+        cat licenses/native.md
+        printf '\n## Full license texts\n'
+        full_text "GNU General Public License v3.0" licenses/vendor/GPL-3.0.txt
+        full_text "ONNX Runtime third-party notices" licenses/vendor/onnxruntime-notices.txt
+    } >> "$out"
+
 # Evaluation and benchmarks
 
 # Speech corpus for `just accuracy`, into a gitignored directory

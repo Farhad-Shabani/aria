@@ -1,0 +1,22 @@
+# Third-party licenses
+
+This file covers the `aria` binary.
+
+## Rust crates
+
+These crates are built into the `aria` binary on macOS, Linux, or both.
+
+{{#each licenses}}
+### {{{name}}}
+
+Used by:
+
+{{#each used_by}}
+- [{{{crate.name}}} {{{crate.version}}}](https://crates.io/crates/{{{crate.name}}})
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}
