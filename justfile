@@ -156,6 +156,8 @@ swift-fix:
 
 # Regenerate the gitignored Xcode project from project.yml. XcodeGen has no
 # optional includes, so seed an empty signing overlay when none exists.
+# Builds use only the committed Package.resolved, as Cargo builds --locked.
+# XcodeGen leaves that file in place.
 # Generate the Xcode project
 swift-project:
     test -f clients/project.local.yml || printf '{}\n' > clients/project.local.yml
@@ -164,7 +166,8 @@ swift-project:
 # Run the macOS app tests
 swift-test: swift-project
     cd clients && xcodebuild test -project Aria.xcodeproj -scheme Aria \
-        -destination "platform=macOS,arch=$(uname -m)" CODE_SIGNING_ALLOWED=NO -quiet
+        -destination "platform=macOS,arch=$(uname -m)" -onlyUsePackageVersionsFromResolvedFile \
+        CODE_SIGNING_ALLOWED=NO -quiet
 
 version := `sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1`
 
@@ -172,9 +175,9 @@ version := `sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1`
 app: swift-project
     cargo build --locked --release --bin aria
     cd clients && xcodebuild -project Aria.xcodeproj -scheme Aria \
-        -configuration Release -derivedDataPath build/mac \
+        -configuration Release -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
         CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} -quiet build
-    clients/scripts/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
+    scripts/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
 
 # Regenerate the Swift client stubs from the daemon's proto. Health comes
 # along so clients can probe the daemon; the Rust side gets its own copy from
@@ -209,6 +212,19 @@ notices:
         printf '\n## Full license texts\n'
         full_text "ONNX Runtime third-party notices" licenses/vendor/onnxruntime-notices.txt
     } >> "$out"
+
+# Package Aria.app into a DMG in dist/, with its licenses
+release-macos: app notices
+    scripts/release-macos.sh {{ version }}
+
+# Package the aria binary and its licenses into a tarball in dist/
+release-linux: notices
+    scripts/release-linux.sh {{ version }}
+
+# Write dist/SHA256SUMS, the manifest install.sh reads
+release-checksums:
+    cp install.sh dist/install.sh
+    cd dist && shasum -a 256 install.sh Aria-{{ version }}-macos-arm64.dmg aria-{{ version }}-linux-x86_64.tar.gz > SHA256SUMS
 
 # Evaluation and benchmarks
 

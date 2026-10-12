@@ -1,33 +1,30 @@
 #!/usr/bin/env bash
-# Installs the packaged Aria from the release folder this script sits in, or
-# from ARIA_DIST, then hands off to `aria setup`. Re-running upgrades in
-# place. `--uninstall` reverses it and leaves ~/models and ~/.aria alone.
-# Every other argument goes to setup.
+# Installs Aria on Linux from ARIA_DIST, the release folder this script sits
+# in, or else the latest GitHub release, then hands off to `aria setup`.
+# macOS installs from the DMG instead. Re-running upgrades in place.
+# `--uninstall` reverses it and leaves ~/models and ~/.aria alone. Every other
+# argument goes to setup.
 set -euo pipefail
 
-dist="${ARIA_DIST:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+releases="https://github.com/Farhad-Shabani/aria/releases"
+if [ "$(uname -sm)" != "Linux x86_64" ]; then
+    echo "install.sh supports Linux x86_64; on macOS, open the DMG from $releases" >&2
+    exit 1
+fi
+
+# Piped into bash, the script has no folder, so it never reads the caller's
+# working directory as a release.
+script="${BASH_SOURCE[0]:-}"
+dist="${ARIA_DIST:-}"
+if [ -z "$dist" ] && [ -n "$script" ] && [ -f "$(dirname "$script")/SHA256SUMS" ]; then
+    dist=$(cd "$(dirname "$script")" && pwd)
+fi
 bin_dir="$HOME/.local/bin"
 lib_dir="$HOME/.local/lib/aria"
 
-os=$(uname -s)
-arch=$(uname -m)
-case "$os-$arch" in
-    Darwin-arm64) pattern='macos-arm64\.zip$' ;;
-    Linux-x86_64) pattern='linux-x86_64\.tar\.gz$' ;;
-    *) echo "unsupported platform: $os $arch" >&2; exit 1 ;;
-esac
-
-app_dir() {
-    for dir in /Applications "$HOME/Applications"; do
-        [ -d "$dir/Aria.app" ] && { echo "$dir"; return; }
-    done
-    [ -w /Applications ] && echo /Applications || echo "$HOME/Applications"
-}
-
-# The app may have spawned its own daemon, which keeps the socket and would
-# make the service install refuse. Its pid is in the lock file.
+# A running daemon keeps the socket and would make the service install
+# refuse. Its pid is in the lock file.
 stop_daemon() {
-    pkill -x Aria 2>/dev/null || true
     lock="${ARIA_RUNTIME_DIR:-/tmp/aria-$(id -u)}/daemon.lock"
     [ -r "$lock" ] || return 0
     pid=$(cat "$lock" 2>/dev/null || true)
@@ -44,41 +41,41 @@ if [ "${1:-}" = --uninstall ]; then
         echo "warning: the daemon is still registered; run \`aria service uninstall\`" >&2
     fi
     stop_daemon
-    if [ "$os" = Darwin ]; then
-        rm -rf "$(app_dir)/Aria.app"
-    else
-        rm -rf "$lib_dir"
-    fi
+    rm -rf "$lib_dir"
     rm -f "$bin_dir/aria"
     echo "removed aria; ~/models and ~/.aria were left alone"
     exit 0
 fi
 
-[ -f "$dist/SHA256SUMS" ] || { echo "no release at $dist; set ARIA_DIST" >&2; exit 1; }
-file=$(awk "/$pattern/ {print \$2}" "$dist/SHA256SUMS")
-[ -n "$file" ] || { echo "no artifact for $os $arch in $dist/SHA256SUMS" >&2; exit 1; }
-if command -v sha256sum >/dev/null; then
-    (cd "$dist" && grep " $file\$" SHA256SUMS | sha256sum --check --quiet -)
-else
-    (cd "$dist" && grep " $file\$" SHA256SUMS | shasum -a 256 --check --quiet -)
+remote=
+if [ -z "$dist" ]; then
+    remote=1
+    # One tag for both downloads, so a release published mid-install can't split them.
+    tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$releases/latest")
+    case "$tag" in
+        */releases/tag/*) ;;
+        *) echo "no published release at $releases" >&2; exit 1 ;;
+    esac
+    base="$releases/download/${tag##*/}"
+    dist=$(mktemp -d)
+    trap 'rm -rf "$dist"' EXIT
+    curl -fsSL -o "$dist/SHA256SUMS" "$base/SHA256SUMS"
 fi
+[ -f "$dist/SHA256SUMS" ] || { echo "no release at $dist; set ARIA_DIST" >&2; exit 1; }
+file=$(awk '/linux-x86_64\.tar\.gz$/ {print $2}' "$dist/SHA256SUMS")
+[ -n "$file" ] || { echo "no Linux x86_64 build in $dist/SHA256SUMS" >&2; exit 1; }
+if [ -n "$remote" ]; then
+    curl -fL --progress-bar -o "$dist/$file" "$base/$file"
+fi
+(cd "$dist" && grep " $file\$" SHA256SUMS | sha256sum --check --quiet -)
 
 mkdir -p "$bin_dir"
 stop_daemon
-if [ "$os" = Darwin ]; then
-    apps=$(app_dir)
-    mkdir -p "$apps"
-    rm -rf "$apps/Aria.app"
-    ditto -x -k "$dist/$file" "$apps"
-    ln -sfn "$apps/Aria.app/Contents/Helpers/aria" "$bin_dir/aria"
-    echo "installed $apps/Aria.app"
-else
-    rm -rf "$lib_dir"
-    mkdir -p "$lib_dir"
-    tar -xzf "$dist/$file" --strip-components=1 -C "$lib_dir"
-    ln -sfn "$lib_dir/bin/aria" "$bin_dir/aria"
-    echo "installed $lib_dir"
-fi
+rm -rf "$lib_dir"
+mkdir -p "$lib_dir"
+tar -xzf "$dist/$file" --strip-components=1 -C "$lib_dir"
+ln -sfn "$lib_dir/bin/aria" "$bin_dir/aria"
+echo "installed $lib_dir"
 
 case ":$PATH:" in
     *":$bin_dir:"*) ;;
@@ -89,9 +86,9 @@ if [ -n "$resolved" ] && [ "$resolved" != "$bin_dir/aria" ]; then
     echo "note: PATH resolves aria to $resolved; put $bin_dir first"
 fi
 
-"$bin_dir/aria" setup "$@"
-# The install killed the menu bar app; the service registered by setup owns
-# the daemon now, so the app finds it instead of spawning its own.
-if [ "$os" = Darwin ]; then
-    open "$apps/Aria.app"
+# Piped into bash, stdin is the script, so setup's prompts read the terminal.
+if [ ! -t 0 ] && (: </dev/tty) 2>/dev/null; then
+    "$bin_dir/aria" setup "$@" </dev/tty
+else
+    "$bin_dir/aria" setup "$@"
 fi
