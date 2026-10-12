@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-kit"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Audio capture, transcription, synthesis, and voice-analysis contracts for local speech apps"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "audio", "speech", "microphone", "voice", "vad" ]
 
 [lints]
 workspace = true

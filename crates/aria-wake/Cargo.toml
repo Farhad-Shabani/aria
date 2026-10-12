@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-wake"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Wake-word detection with openWakeWord and livekit-wakeword models"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "wake-word", "hotword", "keyword-spotting", "openwakeword", "voice" ]
 
 [lints]
 workspace = true

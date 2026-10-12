@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-primitives"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Process, file, and socket primitives shared by the Aria crates"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "process", "socket", "filesystem", "unix" ]
 
 [lints]
 workspace = true
