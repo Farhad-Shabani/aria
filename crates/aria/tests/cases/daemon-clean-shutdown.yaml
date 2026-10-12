@@ -1,0 +1,8 @@
+name: valid config starts the daemon and stops cleanly on SIGTERM
+config: |
+  transcription:
+    backend: whisper
+    model: ${WHISPER_MODEL}
+expect:
+  daemon:
+    startup: success

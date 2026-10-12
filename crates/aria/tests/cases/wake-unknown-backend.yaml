@@ -1,0 +1,10 @@
+name: an unsupported wake backend fails daemon startup
+config: |
+  wake:
+    enabled: true
+    backend: porcupine
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'wake.backend does not accept "porcupine"; supported values are openwakeword and livekit'

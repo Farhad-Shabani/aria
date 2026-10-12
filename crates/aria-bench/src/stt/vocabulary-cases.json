@@ -1,0 +1,582 @@
+{
+  "schema": 1,
+  "evidence": "Hand-authored deterministic contract cases plus existing personal-lexicon fixtures; not held-out real audio or population accuracy evidence",
+  "cases": [
+    {
+      "id": "dash_name",
+      "group": "dash_name",
+      "category": "project",
+      "spoken_reference": "look in aria dash stt",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in aria dash stt",
+      "segments": [
+        "look in aria dash stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 5
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "spelled_letters",
+      "group": "spelled_letters",
+      "category": "project",
+      "spoken_reference": "run aria dash s t t",
+      "written_reference": "run aria-stt",
+      "whole_input": "run aria dash s t t",
+      "segments": [
+        "run aria dash s t t"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 1,
+            "end": 2
+          },
+          "spoken_words": {
+            "start": 1,
+            "end": 6
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "manifest",
+      "group": "manifest",
+      "category": "project",
+      "spoken_reference": "open cargo dot toml",
+      "written_reference": "open Cargo.toml",
+      "whole_input": "open cargo dot toml",
+      "segments": [
+        "open cargo dot toml"
+      ],
+      "project_terms": [
+        "Cargo.toml"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 1,
+            "end": 2
+          },
+          "spoken_words": {
+            "start": 1,
+            "end": 4
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "underscore",
+      "group": "underscore",
+      "category": "project",
+      "spoken_reference": "inspect api underscore client",
+      "written_reference": "inspect api_client",
+      "whole_input": "inspect api underscore client",
+      "segments": [
+        "inspect api underscore client"
+      ],
+      "project_terms": [
+        "api_client"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 1,
+            "end": 2
+          },
+          "spoken_words": {
+            "start": 1,
+            "end": 4
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "scoped_package",
+      "group": "scoped_package",
+      "category": "project",
+      "spoken_reference": "update at aria slash client",
+      "written_reference": "update @aria/client",
+      "whole_input": "update at aria slash client",
+      "segments": [
+        "update at aria slash client"
+      ],
+      "project_terms": [
+        "@aria/client"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 1,
+            "end": 2
+          },
+          "spoken_words": {
+            "start": 1,
+            "end": 5
+          },
+          "context_available": true,
+          "supported_whole": false,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "already_correct",
+      "group": "already_correct",
+      "category": "project",
+      "spoken_reference": "run aria-stt now",
+      "written_reference": "run aria-stt now",
+      "whole_input": "run aria-stt now",
+      "segments": [
+        "run aria-stt now"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 1,
+            "end": 2
+          },
+          "spoken_words": {
+            "start": 1,
+            "end": 3
+          },
+          "context_available": true,
+          "supported_whole": false,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "wrong_project",
+      "group": "wrong_project",
+      "category": "wrong_project",
+      "spoken_reference": "look in aria dash stt",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in aria dash stt",
+      "segments": [
+        "look in aria dash stt"
+      ],
+      "project_terms": [
+        "other-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 5
+          },
+          "context_available": false,
+          "supported_whole": false,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "acoustic_error",
+      "group": "acoustic_error",
+      "category": "unsupported",
+      "spoken_reference": "look in area dusty",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in area dusty",
+      "segments": [
+        "look in area dusty"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 4
+          },
+          "context_available": true,
+          "supported_whole": false,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "ordinary_dash",
+      "group": "ordinary_dash",
+      "category": "negative",
+      "spoken_reference": "make a dash for the door",
+      "written_reference": "make a dash for the door",
+      "whole_input": "make a dash for the door",
+      "segments": [
+        "make a dash for the door"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "ordinary_cargo",
+      "group": "ordinary_cargo",
+      "category": "negative",
+      "spoken_reference": "move the cargo tomorrow",
+      "written_reference": "move the cargo tomorrow",
+      "whole_input": "move the cargo tomorrow",
+      "segments": [
+        "move the cargo tomorrow"
+      ],
+      "project_terms": [
+        "Cargo.toml"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "prefix_only",
+      "group": "prefix_only",
+      "category": "negative",
+      "spoken_reference": "look in aria",
+      "written_reference": "look in aria",
+      "whole_input": "look in aria",
+      "segments": [
+        "look in aria"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "prefix_continuation",
+      "group": "prefix_continuation",
+      "category": "negative",
+      "spoken_reference": "aria dash away quickly",
+      "written_reference": "aria dash away quickly",
+      "whole_input": "aria dash away quickly",
+      "segments": [
+        "aria dash away quickly"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "word_boundary",
+      "group": "word_boundary",
+      "category": "negative",
+      "spoken_reference": "inspect malaria dash stt",
+      "written_reference": "inspect malaria dash stt",
+      "whole_input": "inspect malaria dash stt",
+      "segments": [
+        "inspect malaria dash stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unrelated",
+      "group": "unrelated",
+      "category": "negative",
+      "spoken_reference": "the meeting starts after lunch",
+      "written_reference": "the meeting starts after lunch",
+      "whole_input": "the meeting starts after lunch",
+      "segments": [
+        "the meeting starts after lunch"
+      ],
+      "project_terms": [
+        "aria-stt",
+        "Cargo.toml"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "split_1",
+      "group": "dash_name",
+      "category": "split",
+      "spoken_reference": "look in aria dash stt",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in aria dash stt",
+      "segments": [
+        "look",
+        "in aria dash stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 5
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "split_2",
+      "group": "dash_name",
+      "category": "split",
+      "spoken_reference": "look in aria dash stt",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in aria dash stt",
+      "segments": [
+        "look in",
+        "aria dash stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 5
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "split_3",
+      "group": "dash_name",
+      "category": "split",
+      "spoken_reference": "look in aria dash stt",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in aria dash stt",
+      "segments": [
+        "look in aria",
+        "dash stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 5
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "split_4",
+      "group": "dash_name",
+      "category": "split",
+      "spoken_reference": "look in aria dash stt",
+      "written_reference": "look in aria-stt",
+      "whole_input": "look in aria dash stt",
+      "segments": [
+        "look in aria dash",
+        "stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 2,
+            "end": 5
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "three_segments",
+      "group": "dash_name",
+      "category": "split",
+      "spoken_reference": "aria dash stt",
+      "written_reference": "aria-stt",
+      "whole_input": "aria dash stt",
+      "segments": [
+        "aria",
+        "dash",
+        "stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 0,
+            "end": 1
+          },
+          "spoken_words": {
+            "start": 0,
+            "end": 3
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": false
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "repeat",
+      "group": "dash_name",
+      "category": "project",
+      "spoken_reference": "aria dash stt follows aria dash stt",
+      "written_reference": "aria-stt follows aria-stt",
+      "whole_input": "aria dash stt follows aria dash stt",
+      "segments": [
+        "aria dash stt follows aria dash stt"
+      ],
+      "project_terms": [
+        "aria-stt"
+      ],
+      "targets": [
+        {
+          "written_words": {
+            "start": 0,
+            "end": 1
+          },
+          "spoken_words": {
+            "start": 0,
+            "end": 3
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        },
+        {
+          "written_words": {
+            "start": 2,
+            "end": 3
+          },
+          "spoken_words": {
+            "start": 4,
+            "end": 7
+          },
+          "context_available": true,
+          "supported_whole": true,
+          "supported_streaming": true
+        }
+      ],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    }
+  ]
+}

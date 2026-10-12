@@ -1,0 +1,11 @@
+name: a missing model file fails daemon startup
+config: |
+  transcription:
+    backend: whisper
+    model: /nonexistent/model.bin
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "the whisper model cannot be used"
+      - "failed to inspect /nonexistent/model.bin"

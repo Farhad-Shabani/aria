@@ -1,0 +1,2149 @@
+//! Committing a transcript prefix only when two successive decodes of a
+//! growing buffer agree on it (LocalAgreement-2).
+
+use std::time::Duration;
+
+use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
+use crate::cancel::CancelToken;
+
+use super::{
+    ChunkStep, Hypothesis, Transcript, TranscriptSegment, TranscriptUpdate, TranscriptionError,
+    check_cancelled,
+};
+
+/// How much new audio each decode waits for, and how far the buffer may grow
+/// before it is cut whether or not the speaker paused.
+#[derive(Clone, Copy)]
+pub struct Cadence {
+    stride_samples: usize,
+    max_buffer_samples: usize,
+}
+
+impl Cadence {
+    pub const fn from_millis(stride_millis: usize, max_buffer_millis: usize) -> Self {
+        assert!(stride_millis > 0, "a stride must advance the buffer");
+        assert!(
+            stride_millis < max_buffer_millis,
+            "a buffer must hold more than one stride"
+        );
+        Self {
+            stride_samples: canonical_samples(Duration::from_millis(stride_millis as u64)) as usize,
+            max_buffer_samples: canonical_samples(Duration::from_millis(max_buffer_millis as u64))
+                as usize,
+        }
+    }
+
+    /// How many samples of new audio each decode waits for.
+    pub const fn stride_samples(&self) -> usize {
+        self.stride_samples
+    }
+
+    pub const fn max_buffer_samples(&self) -> usize {
+        self.max_buffer_samples
+    }
+}
+
+/// One trim-search frame: 512 samples, about 32 ms of speech.
+const TRIM_FRAME_SAMPLES: usize = 512;
+/// A pause must run this many frames before a cut trusts it: about 416 ms,
+/// longer than a stop closure.
+const TRIM_SILENCE_FRAMES: usize = 13;
+/// A frame counts as quiet at or under this fraction of the buffer's loudest
+/// frame. In a noisy room nothing falls under it and every trim becomes a
+/// cap-forced cut.
+const TRIM_QUIET_FRACTION: f32 = 0.05;
+/// Heard words a decode may lose and still count as a revision rather than
+/// a dropped window.
+const TOLERATED_LOSS: usize = 2;
+/// Frames a word's timing reaches either side of itself. Timings are coarse,
+/// and a word's edges blur into its neighbours.
+const HEARD_MARGIN_FRAMES: usize = 3;
+/// Loud frames in a row that no word covers before the buffer counts as
+/// skipped speech: about half a second, longer than a cough or a breath.
+const UNHEARD_SPEECH_FRAMES: usize = 16;
+/// How far before the last delivered word's end a cap cut lands, so the
+/// next buffer hears that word whole rather than a fragment of it: 240 ms,
+/// past a timing's error and most of a short word.
+const CUT_OVERLAP_SAMPLES: u64 = canonical_samples(Duration::from_millis(240));
+/// Delivered words the next buffer keeps in mind, so the ones its opening
+/// hears again are not said twice.
+const CARRIED_WORDS: usize = 4;
+/// How many words a new buffer's decode may open with before a delivered
+/// word: a fragment of the cut word, or a junk word.
+const REPEAT_REACH: usize = 2;
+/// Eight words in under a second are too many to be speech: the decode
+/// invented them.
+const CRAMMED_WORDS: usize = 8;
+
+const RESTORE_ANCHOR_WORDS: usize = 4;
+const RESTORE_MIN_MISSING_WORDS: usize = 3;
+const RESTORE_TIMING_TOLERANCE_SAMPLES: u64 = canonical_samples(Duration::from_millis(240));
+const RESTORE_MARGIN_SAMPLES: u64 = canonical_samples(Duration::from_millis(96));
+
+/// Drives a growing buffer of audio through [`Agreement`] and delivers what
+/// it confirms, one segment per step.
+pub struct AgreementState {
+    cadence: Cadence,
+    /// Stream position the buffer opens at. Moves only on a trim.
+    buffer_start: u64,
+    /// Stream position the last decode reached.
+    decoded_end: u64,
+    /// The loudness the last pause cut called quiet. A later buffer that
+    /// never rises above it still holds only the pause.
+    pause_level: Option<f32>,
+    /// What this buffer's decodes have agreed on so far. Resets on a trim,
+    /// so nothing has to align across two buffers.
+    agreement: Agreement,
+    transcript: Vec<String>,
+    /// A segment waiting for the next call, so a step carries one segment
+    /// even when a trim or an ending produces two.
+    pending_segment: Option<TranscriptSegment>,
+    pending_preview: Option<String>,
+    last_preview: String,
+    finished: bool,
+}
+
+impl AgreementState {
+    pub(super) fn new(cadence: Cadence) -> Self {
+        Self {
+            cadence,
+            buffer_start: 0,
+            decoded_end: 0,
+            pause_level: None,
+            agreement: Agreement::default(),
+            transcript: Vec::new(),
+            pending_segment: None,
+            pending_preview: None,
+            last_preview: String::new(),
+            finished: false,
+        }
+    }
+
+    /// The earliest position a reader may still need. Usually the buffer's
+    /// opening, but a cap-forced trim moves that past a segment it has not
+    /// handed over yet — and that segment's reader still wants its audio.
+    pub(super) fn retained_from(&self) -> u64 {
+        let pending = self
+            .pending_segment
+            .as_ref()
+            .and_then(|segment| segment.span())
+            .map(|span| span.start);
+        match pending {
+            Some(start) => start.min(self.buffer_start),
+            None => self.buffer_start,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn next_finalized_with(
+        &mut self,
+        recording: &mut RecordingReader,
+        cancel: &CancelToken,
+        decode: impl FnMut(&[f32]) -> Result<Hypothesis, TranscriptionError>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+        self.next_with(recording, cancel, false, decode)
+    }
+
+    pub(super) fn next_with(
+        &mut self,
+        recording: &mut RecordingReader,
+        cancel: &CancelToken,
+        previews: bool,
+        mut decode: impl FnMut(&[f32]) -> Result<Hypothesis, TranscriptionError>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+        if previews {
+            check_cancelled(cancel)?;
+        }
+        if let Some(segment) = self.pending_segment.take() {
+            return Ok(Some(ChunkStep {
+                update: Some(TranscriptUpdate::Finalized(segment)),
+                transcript: None,
+            }));
+        }
+        if let Some(preview) = self.pending_preview.take()
+            && previews
+        {
+            return Ok(Some(ChunkStep {
+                update: Some(TranscriptUpdate::Provisional(preview)),
+                transcript: None,
+            }));
+        }
+        if self.finished {
+            return Ok(None);
+        }
+        loop {
+            let step = match self.await_stride(recording, cancel)? {
+                Some(available) => self.step(recording, available, cancel, &mut decode)?,
+                None => self.finish_after(None)?,
+            };
+            if previews {
+                let preview = self.agreement.preview();
+                let finalized = step.as_ref().is_some_and(|step| {
+                    matches!(step.update, Some(TranscriptUpdate::Finalized(_)))
+                });
+                if preview != self.last_preview || (finalized && !preview.is_empty()) {
+                    self.last_preview.clone_from(&preview);
+                    if finalized {
+                        self.pending_preview = Some(preview);
+                    } else {
+                        let mut step = step.unwrap_or(ChunkStep {
+                            update: None,
+                            transcript: None,
+                        });
+                        step.update = Some(TranscriptUpdate::Provisional(preview));
+                        return Ok(Some(step));
+                    }
+                }
+            }
+            if step.is_some() {
+                return Ok(step);
+            }
+        }
+    }
+
+    /// Waits for one more stride of audio and returns where capture now
+    /// ends. `None` when nothing new arrived and capture is over: what
+    /// remains is the tail.
+    fn await_stride(
+        &self,
+        recording: &mut RecordingReader,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, TranscriptionError> {
+        check_cancelled(cancel)?;
+        recording
+            .fill_through(self.decoded_end + self.cadence.stride_samples as u64)
+            .map_err(TranscriptionError::Capture)?;
+        check_cancelled(cancel)?;
+        let available = recording.held_to();
+        if available == self.decoded_end && recording.reached_end() {
+            return Ok(None);
+        }
+        Ok(Some(available))
+    }
+
+    /// One decode of the buffer up to `available`. `None` when it delivered
+    /// nothing and capture goes on, so the caller waits for the next stride.
+    fn step(
+        &mut self,
+        recording: &RecordingReader,
+        available: u64,
+        cancel: &CancelToken,
+        decode: &mut impl FnMut(&[f32]) -> Result<Hypothesis, TranscriptionError>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+        // Audio that landed while the previous decode was running.
+        // `fill_through` waits for one stride, so anything past that
+        // piled up behind the decoder — and a decode covering four
+        // strides of audio emits four strides of words at once, which
+        // is what a reader sees as a sentence arriving whole.
+        let behind =
+            available.saturating_sub(self.decoded_end + self.cadence.stride_samples as u64);
+        self.decoded_end = available;
+        // The width this step handed the model, read before the trim moves
+        // the buffer on.
+        let decoded = available - self.buffer_start;
+
+        let buffer = recording.span(self.buffer_start..available);
+        let hypothesis = decode(buffer)?;
+        check_cancelled(cancel)?;
+        let loudness = Loudness::of(buffer);
+        let heard = self.hear(&hypothesis, &loudness);
+        let heard_count = heard.len();
+        let skipped = self.skipped_speech(&loudness, &heard);
+        let (confirmed, settled) = self.agreement.agree(heard, skipped);
+        let confirmed = self.commit(confirmed);
+        if recording.reached_end() {
+            return self.finish_after(confirmed);
+        }
+
+        // Relative to this decode's window, so it is read before the trim
+        // moves the window on.
+        let skipped = skipped.map(|at| at - self.buffer_start);
+        let tail = self.trim_when_due(&loudness, available, settled);
+        let segment = self.one_at_a_time(confirmed, tail);
+        log_step(
+            decoded,
+            behind,
+            heard_count,
+            skipped,
+            segment.as_ref(),
+            settled,
+        );
+        Ok(segment.map(|segment| ChunkStep {
+            update: Some(TranscriptUpdate::Finalized(segment)),
+            transcript: None,
+        }))
+    }
+
+    /// The decode's words at their stream positions, untimed when timings do
+    /// not align. Empty when the buffer holds only the last pause, or when
+    /// the words come too dense to be real.
+    fn hear(&self, hypothesis: &Hypothesis, loudness: &Loudness) -> Vec<Word> {
+        if self
+            .pause_level
+            .is_some_and(|level| loudness.loudest < level)
+        {
+            tracing::debug!("buffer holds only the pause; decode ignored");
+            return Vec::new();
+        }
+        let words = self.words_of(hypothesis);
+        if crammed(&words) {
+            tracing::debug!(words = words.len(), "decode invented words");
+            return Vec::new();
+        }
+        words
+    }
+
+    fn words_of(&self, hypothesis: &Hypothesis) -> Vec<Word> {
+        let texts: Vec<&str> = hypothesis.as_str().split_whitespace().collect();
+        let timed = hypothesis.words().len() == texts.len();
+        texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| Word {
+                text: (*text).to_owned(),
+                span: timed.then(|| hypothesis.words()[index].span_from(self.buffer_start)),
+            })
+            .collect()
+    }
+
+    fn commit(&mut self, segment: Option<TranscriptSegment>) -> Option<TranscriptSegment> {
+        if let Some(segment) = &segment {
+            self.transcript.push(segment.as_str().to_owned());
+        }
+        segment
+    }
+
+    /// Cuts the buffer at a pause it ends in, or at the cap. Returns the
+    /// tail a cap cut delivers unconfirmed.
+    fn trim_when_due(
+        &mut self,
+        loudness: &Loudness,
+        available: u64,
+        settled: bool,
+    ) -> Option<TranscriptSegment> {
+        if settled {
+            // A further stride added no words: a pause, or a word the model
+            // holds back until it hears the end of it. Only a pause the
+            // buffer ends in tells the two apart, so anything else waits.
+            if let Some(pause) = loudness.pause_cut() {
+                self.pause_level = Some(loudness.quiet);
+                return self.trim(self.buffer_start + pause as u64, None);
+            }
+        }
+        if available - self.buffer_start >= self.cadence.max_buffer_samples as u64 {
+            return self.cap_cut(loudness, available);
+        }
+        None
+    }
+
+    /// The buffer must go whether or not the speaker paused. The unconfirmed
+    /// tail goes out, and the cut lands a little before the last delivered
+    /// word ends — or where skipped speech begins — so nothing unheard is
+    /// thrown away, and the next buffer recognises the word it hears again.
+    /// Without timings the cut lands at the end: an earlier one would
+    /// re-decode words that were just typed.
+    fn cap_cut(&mut self, loudness: &Loudness, available: u64) -> Option<TranscriptSegment> {
+        let skipped = self.skipped_speech(loudness, &self.agreement.candidate);
+        let tail = self.agreement.take_tail(skipped);
+        let tail = self.commit(tail);
+        let cut = skipped
+            .or(self.agreement.delivered_through)
+            .map(|through| through.saturating_sub(CUT_OVERLAP_SAMPLES))
+            .filter(|&through| through > self.buffer_start)
+            .map_or(available, |through| through.min(available));
+        self.trim(cut, tail)
+    }
+
+    /// Where speech the model skipped begins, past what was delivered: the
+    /// first loud stretch no word of `heard` covers. Nothing this close to
+    /// the buffer's opening counts, or a buffer the model keeps skipping
+    /// the start of would never move on.
+    fn skipped_speech(&self, loudness: &Loudness, heard: &[Word]) -> Option<u64> {
+        let from = self
+            .agreement
+            .delivered_through
+            .unwrap_or(self.buffer_start)
+            .max(self.buffer_start + self.cadence.stride_samples as u64);
+        loudness.unheard_speech(self.buffer_start, heard, from)
+    }
+
+    /// Opens the next buffer at `cut`, forgetting what was heard so far,
+    /// and passes on the tail a cap cut delivered.
+    fn trim(&mut self, cut: u64, tail: Option<TranscriptSegment>) -> Option<TranscriptSegment> {
+        self.buffer_start = cut;
+        self.agreement = self.agreement.next_buffer();
+        tail
+    }
+
+    /// A step carries one segment. When it produced two, the second waits
+    /// for the next call.
+    fn one_at_a_time(
+        &mut self,
+        first: Option<TranscriptSegment>,
+        second: Option<TranscriptSegment>,
+    ) -> Option<TranscriptSegment> {
+        match (first, second) {
+            (Some(first), Some(second)) => {
+                self.pending_segment = Some(second);
+                Some(first)
+            }
+            (first, second) => first.or(second),
+        }
+    }
+
+    /// Delivers whatever was never confirmed by a second decode, plus the
+    /// final transcript. Reading the decode in force means a last decode
+    /// that returned empty still delivers the tail from the last good one.
+    fn finish_after(
+        &mut self,
+        committed: Option<TranscriptSegment>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+        let tail = self.agreement.take_tail(None);
+        let tail = self.commit(tail);
+        // Nobody spoke, which is an ordinary end to a listen session, not a
+        // failure. `Operation::finish` still answers `NoSpeech` for callers
+        // that asked for a transcript and got none.
+        let words = std::mem::take(&mut self.transcript).join(" ");
+        let transcript = (!words.is_empty())
+            .then(|| Transcript::new(words))
+            .transpose()?;
+        self.finished = true;
+        Ok(Some(ChunkStep {
+            update: self
+                .one_at_a_time(committed, tail)
+                .map(TranscriptUpdate::Finalized),
+            transcript,
+        }))
+    }
+}
+
+/// LocalAgreement-2 over one buffer: a word leaves once two successive
+/// decodes agree on it.
+///
+/// A decode's words are told from the delivered ones by their text, in
+/// order: the longest opening run that repeats the end of what was
+/// delivered is a repeat, whether the decode opened later than the last one
+/// or heard a word again across a cut. Timings place cuts and distinguish
+/// a later opening from a revision covering the same audio.
+#[derive(Default)]
+struct Agreement {
+    /// The latest hypothesis, including retained speech.
+    candidate: Vec<Word>,
+    /// How many of `candidate` already left.
+    emitted: usize,
+    /// The words delivered so far — the buffer's own, and the last few from
+    /// before its cut — which a decode may hear again.
+    delivered: Vec<Word>,
+    /// Where the last delivered word's audio ends. `None` until a timed
+    /// word is delivered, and again once an untimed one is: its end is
+    /// unknown, and a cut before it would deliver it twice.
+    delivered_through: Option<u64>,
+}
+
+impl Agreement {
+    /// The agreement for the buffer after this one, which keeps only the
+    /// last delivered words to recognise them again.
+    fn next_buffer(&mut self) -> Self {
+        let carried = self.delivered.len().saturating_sub(CARRIED_WORDS);
+        Self {
+            delivered: self.delivered.split_off(carried),
+            delivered_through: self.delivered_through,
+            ..Self::default()
+        }
+    }
+
+    /// Takes one decode. Returns the words it newly agrees on with the last
+    /// one, and whether it settled: identical to the last one.
+    ///
+    /// With `skipped`, where speech the decode skipped begins, only the
+    /// words before it go out: the ones past it would leave a hole behind.
+    fn agree(
+        &mut self,
+        mut current: Vec<Word>,
+        skipped: Option<u64>,
+    ) -> (Option<TranscriptSegment>, bool) {
+        // An empty decode — a dropped window, or one `hear` threw out —
+        // leaves the last good decode in force, so the emptiness does not
+        // stall the steps after it.
+        if current.is_empty() {
+            return (None, false);
+        }
+        let retained_prefix_len = self.missing_prefix_len(&current);
+        if let Some(count) = retained_prefix_len {
+            let mut retained = self.candidate[..count].to_vec();
+            retained.append(&mut current);
+            current = retained;
+        }
+        if self.dropped_window(&current) {
+            return (None, false);
+        }
+        let Some((start, emitted)) = self.placed(&current) else {
+            return (None, false);
+        };
+        // Retained words have only one model observation; they remain provisional.
+        let agreed = start
+            + if retained_prefix_len.is_some() {
+                0
+            } else {
+                lcp(
+                    &self.candidate[self.emitted.min(self.candidate.len())..],
+                    &current[start..],
+                )
+            };
+        let deliverable = match skipped {
+            Some(at) => heard_before(&current[..agreed], at),
+            None => agreed,
+        };
+        let confirmed = if deliverable > start {
+            self.deliver(&current[start..deliverable])
+        } else {
+            None
+        };
+        self.emitted = deliverable.max(emitted);
+        let settled =
+            agreed == current.len() && current.len() == self.candidate.len() && skipped.is_none();
+        self.candidate = current;
+        (confirmed, settled)
+    }
+
+    fn missing_prefix_len(&self, current: &[Word]) -> Option<usize> {
+        let anchor = current.get(..RESTORE_ANCHOR_WORDS)?;
+        let opening = anchor[0].span.as_ref()?;
+        for offset in self.emitted + RESTORE_MIN_MISSING_WORDS..self.candidate.len() {
+            let Some(previous) = self.candidate.get(offset..offset + RESTORE_ANCHOR_WORDS) else {
+                break;
+            };
+            if lcp(previous, anchor) != RESTORE_ANCHOR_WORDS {
+                continue;
+            }
+            let same_audio = previous.iter().zip(anchor).all(|(old, new)| {
+                old.span
+                    .as_ref()
+                    .zip(new.span.as_ref())
+                    .is_some_and(|(old, new)| {
+                        old.start.abs_diff(new.start) <= RESTORE_TIMING_TOLERANCE_SAMPLES
+                    })
+            });
+            let uncovered = self.candidate[self.emitted..offset].iter().all(|word| {
+                word.span
+                    .as_ref()
+                    .is_some_and(|span| span.end <= opening.start + RESTORE_MARGIN_SAMPLES)
+            });
+            if same_audio && uncovered {
+                return Some(offset);
+            }
+        }
+        None
+    }
+
+    /// Where the decode's new words begin, and how many words count as out
+    /// once it stands as the last decode. A decode that opens where the
+    /// last one did keeps the count: a shorter decode holds nothing new,
+    /// and letting the count follow it down would offer words a second
+    /// time. A decode that opens elsewhere is counted afresh by the
+    /// delivered words it repeats.
+    ///
+    /// `None` for a decode that cannot be placed — one that ends inside the
+    /// delivered words, or shows none of them once some are out. Like an
+    /// empty decode, it leaves the last good one in force.
+    fn placed(&self, current: &[Word]) -> Option<(usize, usize)> {
+        // Once words are out, a lone repeated word is too little to place a
+        // decode by: a heavily revised decode shows one by chance.
+        let least = if self.emitted > 0 { 2 } else { 1 };
+        let (start, emitted) = match self.aligned(current) {
+            Some(start) if self.emitted > 0 => (start, self.emitted),
+            _ => {
+                let repeated = self.repeated(current, least)?;
+                (repeated, repeated)
+            }
+        };
+        if start == 0 && self.emitted > 0 {
+            tracing::debug!(
+                heard = self.candidate.len(),
+                current = current.len(),
+                "decode lost its place"
+            );
+            return None;
+        }
+        Some((start, emitted))
+    }
+
+    /// How many opening words of `words` were delivered already, going by
+    /// the last delivered words: a run of them found in the opening, as
+    /// long a run as possible, as late in the delivered words as possible.
+    /// Everything before the run went out earlier, and so did whatever
+    /// delivered words follow it, however the decode now hears them. Runs
+    /// shorter than `least` do not count. Zero when none turn up: the
+    /// decode opened past them. `None` when the decode ends before the
+    /// delivered words do.
+    fn repeated(&self, words: &[Word], least: usize) -> Option<usize> {
+        let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
+        for count in (least..=carried.len().min(words.len())).rev() {
+            for at in (0..=carried.len() - count).rev() {
+                if let Some(end) = self.opening_run(&carried[at..at + count], words) {
+                    let rest = carried.len() - at - count;
+                    return (end + rest <= words.len()).then_some(end + rest);
+                }
+            }
+        }
+        Some(0)
+    }
+
+    /// Where `run` appears at the opening of `words`, as the index past
+    /// it. Speech repeats itself, so a run is trusted only where a cut
+    /// leaves what is heard again: at the very opening, after at most a
+    /// fragment or a junk word, and starting before the delivered end —
+    /// where new speech cannot be — when it is timed. A run as long as the
+    /// carried words is trusted anywhere, as a decode of the whole buffer
+    /// holds them all. A single word must also be the last delivered word,
+    /// or end before the delivered end.
+    fn opening_run(&self, run: &[Word], words: &[Word]) -> Option<usize> {
+        let count = run.len();
+        let reach = if count < CARRIED_WORDS {
+            count + REPEAT_REACH
+        } else {
+            words.len()
+        };
+        let before_delivered_end = |word: &Word, edge: fn(&std::ops::Range<u64>) -> u64| match (
+            &word.span,
+            self.delivered_through,
+        ) {
+            (Some(span), Some(through)) => edge(span) < through,
+            (None, _) => true,
+            _ => false,
+        };
+        let last_delivered = |word: &Word| {
+            self.delivered
+                .last()
+                .is_some_and(|last| spoken(&last.text) == spoken(&word.text))
+        };
+        (count..=reach.min(words.len())).find(|&end| {
+            let first = &words[end - count];
+            let last = &words[end - 1];
+            lcp(run, &words[end - count..]) == count
+                && (count >= CARRIED_WORDS || before_delivered_end(first, |span| span.start))
+                && (count > 1
+                    || last_delivered(last)
+                    || before_delivered_end(last, |span| span.end))
+        })
+    }
+
+    /// How many opening words of `words` were delivered already, going by
+    /// the last decode: when the two read alike over the delivered words,
+    /// give or take a revision or two, they open at the same place. `None`
+    /// when they do not.
+    fn aligned(&self, words: &[Word]) -> Option<usize> {
+        let compared = self.emitted.min(words.len()).min(self.candidate.len());
+        let revised = self.candidate[..compared]
+            .iter()
+            .zip(&words[..compared])
+            .filter(|(heard, word)| spoken(&heard.text) != spoken(&word.text))
+            .count();
+        (revised <= TOLERATED_LOSS).then_some(self.emitted.min(words.len()))
+    }
+
+    /// A decode that hears several words fewer than the last one did
+    /// dropped part of its window. It stays out of the record: settling on
+    /// it would cut audio it never heard.
+    fn dropped_window(&self, current: &[Word]) -> bool {
+        let lost = self.candidate.len().saturating_sub(current.len());
+        if lost > TOLERATED_LOSS {
+            tracing::debug!(
+                heard = self.candidate.len(),
+                current = current.len(),
+                "decode dropped part of its window"
+            );
+        }
+        lost > TOLERATED_LOSS
+    }
+
+    /// Hands `words` over, and remembers them.
+    fn deliver(&mut self, words: &[Word]) -> Option<TranscriptSegment> {
+        self.delivered_through = ends_at(words, self.delivered_through);
+        self.delivered.extend_from_slice(words);
+        segment_of(words)
+    }
+
+    fn tail_range(&self, skipped: Option<u64>) -> std::ops::Range<usize> {
+        let undelivered = self
+            .repeated(&self.candidate, 1)
+            .unwrap_or(self.candidate.len())
+            .max(self.emitted.min(self.candidate.len()));
+        let through = match skipped {
+            Some(at) => heard_before(&self.candidate, at).max(undelivered),
+            None => self.candidate.len(),
+        };
+        undelivered..through
+    }
+
+    fn preview(&self) -> String {
+        self.candidate[self.tail_range(None)]
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Delivers the words no second decode confirmed — up to `skipped`,
+    /// where speech the decode missed begins, when there is such a place.
+    fn take_tail(&mut self, skipped: Option<u64>) -> Option<TranscriptSegment> {
+        let range = self.tail_range(skipped);
+        self.emitted = range.end;
+        let tail: Vec<Word> = self.candidate.drain(range).collect();
+        self.deliver(&tail)
+    }
+}
+
+/// One decoded word and where its audio sits in the stream.
+#[derive(Clone)]
+struct Word {
+    text: String,
+    span: Option<std::ops::Range<u64>>,
+}
+
+/// One segment for a run of words. Its span is `None` when either end
+/// lacks a timing.
+fn segment_of(words: &[Word]) -> Option<TranscriptSegment> {
+    let texts: Vec<String> = words.iter().map(|word| word.text.clone()).collect();
+    let span = match (words.first(), words.last()) {
+        (
+            Some(Word {
+                span: Some(first), ..
+            }),
+            Some(Word {
+                span: Some(last), ..
+            }),
+        ) => Some(first.start..last.end.max(first.start)),
+        _ => None,
+    };
+    TranscriptSegment::spanned(&texts, span)
+}
+
+/// How many leading words two decodes agree on, zero when they agree on
+/// nothing.
+fn lcp(previous: &[Word], current: &[Word]) -> usize {
+    previous
+        .iter()
+        .zip(current)
+        .take_while(|(left, right)| spoken(&left.text) == spoken(&right.text))
+        .count()
+}
+
+/// Ignores case and punctuation when comparing successive decodes.
+fn spoken(word: &str) -> String {
+    word.chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn log_step(
+    decoded: u64,
+    behind: u64,
+    heard: usize,
+    skipped: Option<u64>,
+    segment: Option<&TranscriptSegment>,
+    settled: bool,
+) {
+    let millis = |samples: u64| canonical_duration(samples).as_millis();
+    tracing::debug!(
+        buffer_ms = millis(decoded),
+        behind_ms = millis(behind),
+        heard,
+        skipped_ms = skipped.map(millis),
+        words = segment.map_or(0, |segment| segment.as_str().split_whitespace().count()),
+        settled,
+        "decode step"
+    );
+}
+
+/// Whether a timed word sequence exceeds the hallucination density cutoff.
+fn crammed(words: &[Word]) -> bool {
+    words.windows(CRAMMED_WORDS).any(|run| {
+        let (Some(first), Some(last)) = (&run[0].span, &run[run.len() - 1].span) else {
+            return false;
+        };
+        last.end.saturating_sub(first.start) < canonical_samples(Duration::from_secs(1))
+    })
+}
+
+/// How many leading words end before `at`. Untimed words count as heard.
+fn heard_before(words: &[Word], at: u64) -> usize {
+    words
+        .iter()
+        .take_while(|word| word.span.as_ref().is_none_or(|span| span.end <= at))
+        .count()
+}
+
+/// Where delivered words leave the delivered end: the last word's, when it
+/// is timed and later than `before`; unknown once an untimed word goes out.
+fn ends_at(words: &[Word], before: Option<u64>) -> Option<u64> {
+    let Some(last) = words.last() else {
+        return before;
+    };
+    last.span
+        .as_ref()
+        .map(|span| span.end.max(before.unwrap_or(0)))
+}
+
+/// A buffer's loudness, frame by frame: the mean square of each frame, the
+/// loudest of them, and the level at or under which a frame counts as quiet.
+struct Loudness {
+    squares: Vec<f32>,
+    loudest: f32,
+    quiet: f32,
+}
+
+impl Loudness {
+    fn of(buffer: &[f32]) -> Self {
+        let squares: Vec<f32> = buffer
+            .chunks(TRIM_FRAME_SAMPLES)
+            .filter(|frame| frame.len() == TRIM_FRAME_SAMPLES)
+            .map(|frame| {
+                frame.iter().map(|sample| sample * sample).sum::<f32>() / TRIM_FRAME_SAMPLES as f32
+            })
+            .collect();
+        let loudest = squares.iter().copied().fold(0.0_f32, f32::max);
+        Self {
+            squares,
+            loudest,
+            quiet: loudest * TRIM_QUIET_FRACTION,
+        }
+    }
+
+    fn is_loud(&self, frame: usize) -> bool {
+        self.squares[frame] > self.quiet
+    }
+
+    /// Where the buffer's tail opens onto a real pause, as a sample offset
+    /// into the buffer. Only a pause the buffer ends in qualifies: a quiet
+    /// run followed by more speech is a dip inside a sentence, and cutting
+    /// there would keep audio whose words were already delivered, which the
+    /// next buffer would deliver again.
+    ///
+    /// A learned detector such as `crate::voice_activity::SileroVad` could
+    /// replace the threshold. It first needs wasm support and no per-stream
+    /// state.
+    fn pause_cut(&self) -> Option<usize> {
+        let quiet = (0..self.squares.len())
+            .rev()
+            .take_while(|&frame| !self.is_loud(frame))
+            .count();
+        if quiet < TRIM_SILENCE_FRAMES {
+            return None;
+        }
+        let start = self.squares.len() - quiet;
+        Some((start + quiet / 2) * TRIM_FRAME_SAMPLES)
+    }
+
+    /// Where speech no heard word accounts for begins, at or after `from`:
+    /// the first of enough loud frames in a row outside every word's
+    /// timing. Untimed words vouch for the whole buffer.
+    fn unheard_speech(&self, buffer_start: u64, words: &[Word], from: u64) -> Option<u64> {
+        let frame =
+            |position: u64| position.saturating_sub(buffer_start) as usize / TRIM_FRAME_SAMPLES;
+        let mut heard = vec![false; self.squares.len()];
+        for word in words {
+            let span = word.span.as_ref()?;
+            let first = frame(span.start).saturating_sub(HEARD_MARGIN_FRAMES);
+            let last = (frame(span.end) + HEARD_MARGIN_FRAMES).min(heard.len());
+            heard[first.min(last)..last].fill(true);
+        }
+        let mut run = 0;
+        for (index, &heard) in heard.iter().enumerate().skip(frame(from)) {
+            run = if self.is_loud(index) && !heard {
+                run + 1
+            } else {
+                0
+            };
+            if run > UNHEARD_SPEECH_FRAMES {
+                let first = index + 1 - run;
+                return Some(buffer_start + (first * TRIM_FRAME_SAMPLES) as u64);
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use super::*;
+    use crate::audio::CANONICAL_SAMPLE_RATE;
+    use crate::audio::testing::{Pace, paced, recorded};
+    use crate::transcription::TimedWord;
+
+    const STRIDE_MS: usize = 100;
+    const STRIDE: usize = STRIDE_MS * CANONICAL_SAMPLE_RATE as usize / 1000;
+
+    fn cadence(max_buffer_ms: usize) -> Cadence {
+        Cadence::from_millis(STRIDE_MS, max_buffer_ms)
+    }
+
+    fn loud_batch() -> Vec<i16> {
+        vec![8_192; STRIDE]
+    }
+
+    fn quiet_batch() -> Vec<i16> {
+        vec![0; STRIDE]
+    }
+
+    /// One run's observable behavior: the segments in delivery order, the
+    /// final transcript, the window every decode was handed, and how many
+    /// steps it took.
+    struct Run {
+        segments: Vec<String>,
+        final_transcript: Option<String>,
+        windows: Vec<usize>,
+        steps: usize,
+    }
+
+    impl Run {
+        fn transcript(&self) -> &str {
+            self.final_transcript
+                .as_deref()
+                .expect("the run finishes with a transcript")
+        }
+    }
+
+    /// Drives `state` over `recording` to completion. With a pace, each
+    /// decode releases the next batch, so a step's window is exactly one
+    /// stride further than the last. `inspect` sees the state after every
+    /// step, for invariants that hold between steps.
+    fn run(
+        mut state: AgreementState,
+        recording: &mut RecordingReader,
+        pace: Option<&Pace>,
+        mut decode: impl FnMut(&[f32]) -> Hypothesis,
+        mut inspect: impl FnMut(&AgreementState),
+    ) -> Run {
+        let cancel = CancelToken::new();
+        let mut run = Run {
+            segments: Vec::new(),
+            final_transcript: None,
+            windows: Vec::new(),
+            steps: 0,
+        };
+        loop {
+            let mut heard = |window: &[f32]| {
+                run.windows.push(window.len());
+                if let Some(pace) = pace {
+                    pace.advance();
+                }
+                Ok(decode(window))
+            };
+            let step = state
+                .next_finalized_with(recording, &cancel, &mut heard)
+                .expect("every step succeeds");
+            inspect(&state);
+            let Some(step) = step else { break };
+            run.steps += 1;
+            if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                run.segments.push(segment.into_text());
+            }
+            // A trailing pending-tail step carries no transcript; like
+            // Operation, keep the last one delivered rather than erase it.
+            if let Some(transcript) = step.transcript {
+                run.final_transcript = Some(transcript.into_text());
+            }
+        }
+        run
+    }
+
+    #[test]
+    fn previews_replace_the_accepted_tail_and_drain_after_final_segments() {
+        let answers = ["turn lift", "turn left now", "", "turn left now"];
+        let (_directory, mut recording, pace) = paced(vec![loud_batch(); answers.len()]);
+        let mut state = AgreementState::new(cadence(20_000));
+        let mut decode = scripted(&answers);
+        let mut events = Vec::new();
+        while let Some(step) = state
+            .next_with(&mut recording, &CancelToken::never(), true, |samples| {
+                pace.advance();
+                Ok(decode(samples))
+            })
+            .expect("script succeeds")
+        {
+            match step.update {
+                Some(TranscriptUpdate::Finalized(segment)) => {
+                    events.push(format!("final:{}", segment.as_str()));
+                }
+                Some(TranscriptUpdate::Provisional(preview)) => {
+                    assert!(state.pending_segment.is_none());
+                    events.push(format!("preview:{preview}"));
+                }
+                None => {}
+            }
+        }
+        assert_eq!(
+            events,
+            [
+                "preview:turn lift",
+                "final:turn",
+                "preview:left now",
+                "final:left now",
+                "preview:",
+            ]
+        );
+    }
+
+    #[test]
+    fn consuming_previews_preserves_decodes_segments_and_completion_through_trims() {
+        for (cap, batches, answers) in [
+            (
+                20_000,
+                vec![loud_batch(); 3],
+                vec!["one two", "one two three", "one two three four"],
+            ),
+            (
+                200,
+                vec![loud_batch(); 4],
+                vec!["one two", "one two three", "three four", "three four five"],
+            ),
+            (
+                20_000,
+                vec![quiet_batch(); 7],
+                vec![
+                    "one two", "one two", "one two", "one two", "one two", "one two", "one two",
+                ],
+            ),
+            (
+                20_000,
+                vec![loud_batch(); 4],
+                vec!["one two three", "one two", "", "one two four"],
+            ),
+        ] {
+            let baseline = drive(cap, batches.clone(), &answers);
+            let (_directory, mut recording, pace) = paced(batches);
+            let mut state = AgreementState::new(cadence(cap));
+            let mut decode = scripted(&answers);
+            let mut segments = Vec::new();
+            let mut windows = Vec::new();
+            let mut completed = None;
+            while let Some(step) = state
+                .next_with(&mut recording, &CancelToken::never(), true, |samples| {
+                    windows.push(samples.len());
+                    pace.advance();
+                    Ok(decode(samples))
+                })
+                .expect("script succeeds")
+            {
+                if matches!(step.update, Some(TranscriptUpdate::Provisional(_))) {
+                    assert!(state.pending_segment.is_none());
+                }
+                if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                    segments.push(segment.into_text());
+                }
+                if let Some(transcript) = step.transcript {
+                    completed = Some(transcript.into_text());
+                }
+            }
+            assert_eq!(segments, baseline.segments);
+            assert_eq!(windows, baseline.windows);
+            assert_eq!(completed, baseline.final_transcript);
+        }
+    }
+
+    #[test]
+    fn a_repeated_word_tail_is_republished_after_commitment() {
+        let (_directory, mut recording, pace) = paced(vec![loud_batch(); 3]);
+        let mut state = AgreementState::new(cadence(20_000));
+        let mut decode = scripted(&["go", "go go", "go go home"]);
+        let mut updates = Vec::new();
+        for _ in 0..3 {
+            let step = state
+                .next_with(&mut recording, &CancelToken::never(), true, |samples| {
+                    pace.advance();
+                    Ok(decode(samples))
+                })
+                .expect("reads")
+                .expect("update");
+            updates.push(match step.update {
+                Some(TranscriptUpdate::Finalized(segment)) => (Some(segment.into_text()), None),
+                Some(TranscriptUpdate::Provisional(preview)) => (None, Some(preview)),
+                None => (None, None),
+            });
+        }
+        assert_eq!(
+            updates,
+            [
+                (None, Some("go".to_owned())),
+                (Some("go".to_owned()), None),
+                (None, Some("go".to_owned())),
+            ]
+        );
+    }
+
+    #[test]
+    fn cancellation_does_not_deliver_a_queued_preview() {
+        let (_directory, mut recording, pace) = paced(vec![loud_batch(); 3]);
+        let mut state = AgreementState::new(cadence(20_000));
+        let cancel = CancelToken::new();
+        let mut decode = scripted(&["one two", "one two three", "one two three"]);
+        for _ in 0..2 {
+            state
+                .next_with(&mut recording, &cancel, true, |samples| {
+                    pace.advance();
+                    Ok(decode(samples))
+                })
+                .expect("script succeeds");
+        }
+        assert!(state.pending_preview.is_some());
+        cancel.cancel();
+        assert!(matches!(
+            state.next_with(&mut recording, &cancel, true, |_| {
+                panic!("cancelled operation cannot decode")
+            }),
+            Err(TranscriptionError::Cancelled)
+        ));
+    }
+
+    /// A decoder that answers from a script, one answer per decode.
+    fn scripted(answers: &[&str]) -> impl FnMut(&[f32]) -> Hypothesis {
+        let mut script: VecDeque<String> =
+            answers.iter().map(|answer| answer.to_string()).collect();
+        move |_| Hypothesis::new(script.pop_front().expect("the script covers every decode"))
+    }
+
+    /// A paced run: each decode releases the next batch.
+    fn drive(max_buffer_ms: usize, batches: Vec<Vec<i16>>, answers: &[&str]) -> Run {
+        let (_directory, mut recording, pace) = paced(batches);
+        run(
+            AgreementState::new(cadence(max_buffer_ms)),
+            &mut recording,
+            Some(&pace),
+            scripted(answers),
+            |_| {},
+        )
+    }
+
+    /// A run over a recording closed before the first read: every sample is
+    /// available at once, which is what a decode slower than its producer
+    /// sees.
+    fn drive_whole(samples: usize, max_buffer_ms: usize, answers: &[&str]) -> Run {
+        let (_directory, mut recording) = recorded(&vec![0; samples]);
+        run(
+            AgreementState::new(cadence(max_buffer_ms)),
+            &mut recording,
+            None,
+            scripted(answers),
+            |_| {},
+        )
+    }
+
+    mod agreement {
+        use super::*;
+
+        fn heard(list: &[&str]) -> Vec<Word> {
+            list.iter()
+                .map(|word| Word {
+                    text: word.to_string(),
+                    span: None,
+                })
+                .collect()
+        }
+
+        fn text_of(segment: Option<TranscriptSegment>) -> Option<String> {
+            segment.map(TranscriptSegment::into_text)
+        }
+
+        fn opening_loss() -> [Vec<Word>; 2] {
+            let decodes: [Vec<(String, std::ops::Range<u64>)>; 2] =
+                serde_json::from_str(include_str!("opening-loss.json")).unwrap();
+            decodes.map(|words| {
+                words
+                    .into_iter()
+                    .map(|(text, span)| Word {
+                        text,
+                        span: Some(span),
+                    })
+                    .collect()
+            })
+        }
+
+        #[test]
+        fn an_omitted_opening_and_new_final_words_both_survive() {
+            let [previous, current] = opening_loss();
+            let suffix = text_of(segment_of(&current)).unwrap();
+            let expected = format!("And to spread abroad its widening tale. {suffix}");
+            for repetitions in [1, 2] {
+                let mut agreement = Agreement::default();
+                agreement.agree(previous.clone(), None);
+                for _ in 0..repetitions {
+                    let (segment, settled) = agreement.agree(current.clone(), None);
+                    assert!(
+                        segment.is_none(),
+                        "retained words are not a second observation"
+                    );
+                    assert!(!settled);
+                }
+                assert_eq!(
+                    text_of(agreement.take_tail(None)).as_deref(),
+                    Some(expected.as_str())
+                );
+            }
+        }
+
+        #[test]
+        fn a_later_complete_decode_can_correct_the_retained_opening() {
+            let [previous, current] = opening_loss();
+            let mut recovered = previous[..7].to_vec();
+            recovered[6].text = "tail.".to_owned();
+            recovered.extend(current.clone());
+            let expected = text_of(segment_of(&recovered)).unwrap();
+            let mut agreement = Agreement::default();
+            agreement.agree(previous, None);
+            agreement.agree(current, None);
+            let (confirmed, _) = agreement.agree(recovered, None);
+            let actual = format!(
+                "{} {}",
+                text_of(confirmed).unwrap(),
+                text_of(agreement.take_tail(None)).unwrap()
+            );
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn a_revision_covering_the_earlier_audio_replaces_the_opening() {
+            let [previous, mut current] = opening_loss();
+            let shift =
+                current[0].span.as_ref().unwrap().start - previous[0].span.as_ref().unwrap().start;
+            for word in &mut current {
+                let span = word.span.as_mut().unwrap();
+                span.start -= shift;
+                span.end -= shift;
+            }
+            let expected = text_of(segment_of(&current));
+            let mut agreement = Agreement::default();
+            agreement.agree(previous, None);
+            agreement.agree(current.clone(), None);
+            let (confirmed, settled) = agreement.agree(current, None);
+            assert_eq!(text_of(confirmed), expected);
+            assert!(settled);
+        }
+
+        #[test]
+        fn an_untimed_revision_does_not_restore_an_opening() {
+            for previous_untimed in [false, true] {
+                let [mut previous, mut current] = opening_loss();
+                for word in if previous_untimed {
+                    &mut previous
+                } else {
+                    &mut current
+                } {
+                    word.span = None;
+                }
+                let expected = text_of(segment_of(&current));
+                let mut agreement = Agreement::default();
+                agreement.agree(previous, None);
+                agreement.agree(current.clone(), None);
+                let (confirmed, _) = agreement.agree(current, None);
+                assert_eq!(text_of(confirmed), expected);
+            }
+        }
+
+        #[test]
+        fn a_delivered_opening_is_not_repeated() {
+            let [previous, current] = opening_loss();
+            let suffix = text_of(segment_of(&current)).unwrap();
+            let expected = format!("And to spread abroad its widening tale. {suffix}");
+            let mut agreement = Agreement::default();
+            agreement.agree(previous.clone(), None);
+            let (first, _) = agreement.agree(previous, None);
+            agreement.agree(current.clone(), None);
+            let (second, _) = agreement.agree(current, None);
+            assert_eq!(
+                format!("{} {}", text_of(first).unwrap(), text_of(second).unwrap()),
+                expected
+            );
+        }
+
+        #[test]
+        fn agreement_delivers_a_confirmed_prefix_once() {
+            let mut agreement = Agreement::default();
+            let (first, settled) = agreement.agree(heard(&["one", "two"]), None);
+            assert_eq!(text_of(first), None, "one decode confirms nothing");
+            assert!(!settled);
+
+            let (second, settled) = agreement.agree(heard(&["one", "two", "three"]), None);
+            assert_eq!(text_of(second).as_deref(), Some("one two"));
+            assert!(!settled, "a decode that grew has not settled");
+
+            let (third, settled) = agreement.agree(heard(&["one", "two", "three"]), None);
+            assert_eq!(text_of(third).as_deref(), Some("three"));
+            assert!(settled, "two identical decodes settle");
+            assert_eq!(text_of(agreement.take_tail(None)), None);
+        }
+
+        #[test]
+        fn an_empty_decode_keeps_the_last_one_in_force() {
+            let mut agreement = Agreement::default();
+            agreement.agree(heard(&["one", "two"]), None);
+            let (confirmed, settled) = agreement.agree(heard(&[]), None);
+            assert_eq!(text_of(confirmed), None);
+            assert!(!settled);
+            assert_eq!(
+                text_of(agreement.take_tail(None)).as_deref(),
+                Some("one two")
+            );
+        }
+
+        #[test]
+        fn lcp_stops_at_the_first_disagreement_ignoring_case_and_punctuation() {
+            assert_eq!(lcp(&[], &heard(&["any"])), 0);
+            assert_eq!(lcp(&heard(&["Hello,"]), &heard(&["hello"])), 1);
+            assert_eq!(
+                lcp(
+                    &heard(&["one", "two", "three"]),
+                    &heard(&["one", "too", "three"])
+                ),
+                1
+            );
+            assert_eq!(
+                lcp(&heard(&["one", "two"]), &heard(&["one", "two", "three"])),
+                2
+            );
+        }
+    }
+
+    mod state {
+        use super::*;
+
+        #[test]
+        fn agreement_commits_only_the_shared_prefix() {
+            let run = drive(
+                5_000,
+                vec![loud_batch(); 3],
+                &[
+                    "alpha beta gamma",
+                    "alpha beta delta epsilon",
+                    "alpha beta delta epsilon zeta",
+                ],
+            );
+
+            // The third word of the first decode was revised away, so only the
+            // two words both decodes heard are committed; the rest waits for a
+            // second opinion or for the end.
+            assert_eq!(run.segments, ["alpha beta", "delta epsilon", "zeta"]);
+            assert_eq!(run.transcript(), "alpha beta delta epsilon zeta");
+            assert_eq!(run.windows, [STRIDE, 2 * STRIDE, 3 * STRIDE]);
+        }
+
+        #[test]
+        fn decodes_sharing_nothing_publish_nothing_until_the_end() {
+            let run = drive(
+                5_000,
+                vec![loud_batch(); 3],
+                &["one two", "three four", "five six"],
+            );
+
+            assert_eq!(run.segments, ["five six"]);
+            assert_eq!(run.transcript(), "five six");
+        }
+
+        #[test]
+        fn a_revision_inside_the_emitted_prefix_emits_nothing_and_does_not_panic() {
+            let run = drive(
+                5_000,
+                vec![loud_batch(); 3],
+                &["a b c", "a b c d", "a x y z"],
+            );
+
+            // After the revision the buffer's indices sit behind what was
+            // delivered, so the tail commit loses one word.
+            assert_eq!(run.segments, ["a b c", "z"]);
+            assert_eq!(run.transcript(), "a b c z");
+        }
+
+        #[test]
+        fn a_revision_shorter_than_what_was_emitted_does_not_panic() {
+            // Words accumulate, then the model comes back with a decode shorter
+            // than what was already emitted, and the cap forces a trim.
+            let run = drive(
+                400,
+                vec![loud_batch(), loud_batch(), loud_batch(), loud_batch()],
+                &[
+                    "alpha beta",
+                    "alpha beta gamma",
+                    "alpha beta gamma delta",
+                    "zeta",
+                ],
+            );
+            assert!(
+                run.transcript().starts_with("alpha beta"),
+                "the words confirmed before the revision survive it: {}",
+                run.transcript()
+            );
+        }
+
+        #[test]
+        fn an_empty_decode_does_not_poison_the_next_step() {
+            let run = drive(
+                5_000,
+                vec![loud_batch(); 3],
+                &["alpha beta", "", "alpha beta gamma"],
+            );
+
+            assert_eq!(run.segments, ["alpha beta", "gamma"]);
+            assert_eq!(run.transcript(), "alpha beta gamma");
+        }
+
+        #[test]
+        fn the_end_commits_a_tail_that_never_got_a_second_decode() {
+            let run = drive(5_000, vec![loud_batch()], &["never confirmed"]);
+
+            assert_eq!(run.segments, ["never confirmed"]);
+            assert_eq!(run.transcript(), "never confirmed");
+            assert_eq!(run.windows, [STRIDE]);
+        }
+
+        #[test]
+        fn a_silent_recording_finishes_without_a_transcript_instead_of_failing() {
+            let (_directory, mut recording) = recorded(&vec![0; STRIDE * 4]);
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                None,
+                |_| Hypothesis::new(""),
+                |_| {},
+            );
+
+            assert_eq!(run.steps, 1, "the finishing step is delivered once");
+            assert!(run.segments.is_empty(), "silence yields no segment");
+            assert_eq!(run.final_transcript, None, "silence yields no transcript");
+        }
+
+        #[test]
+        fn a_settled_trim_opens_the_next_buffer_at_the_pause() {
+            let mut batches = vec![loud_batch()];
+            batches.extend(vec![quiet_batch(); 5]);
+            batches.push(loud_batch());
+            batches.push(quiet_batch());
+            let run = drive(
+                5_000,
+                batches,
+                &[
+                    "one",
+                    "one two",
+                    "one two three",
+                    "one two three four",
+                    "one two three four five",
+                    "one two three four five",
+                    "six seven",
+                    "six seven",
+                ],
+            );
+
+            // The pause behind "five" spans fourteen full frames, so the settled
+            // trim cuts at its midpoint: (4 + 14 / 2) * 512. The next decode then
+            // reads from there instead of the buffer's start, and no word repeats.
+            let cut = (4 + 7) * 512;
+            assert_eq!(
+                run.windows,
+                [
+                    STRIDE,
+                    2 * STRIDE,
+                    3 * STRIDE,
+                    4 * STRIDE,
+                    5 * STRIDE,
+                    6 * STRIDE,
+                    7 * STRIDE - cut,
+                    8 * STRIDE - cut,
+                ]
+            );
+            assert_eq!(
+                run.segments,
+                ["one", "two", "three", "four", "five", "six seven"]
+            );
+            assert_eq!(run.transcript(), "one two three four five six seven");
+        }
+
+        #[test]
+        fn a_decode_that_comes_back_short_does_not_reopen_delivered_words() {
+            // The third decode drops "c", which the second had already
+            // delivered. Following it down would leave the fifth decode
+            // offering "c" again.
+            let run = drive(
+                20_000,
+                vec![quiet_batch(); 6],
+                &["a b c", "a b c x", "a b", "a b c d", "a b c d", "e f"],
+            );
+
+            // The fifth decode settles and cuts the buffer; "e f" is the next
+            // one, which is why it arrives whole.
+            assert_eq!(run.segments, ["a b c", "d", "e f"]);
+            assert!(
+                !run.transcript().contains("c c"),
+                "transcript repeated a word: {:?}",
+                run.transcript()
+            );
+        }
+
+        #[test]
+        fn a_cap_forced_cut_commits_every_word_exactly_once() {
+            let run = drive_whole(4 * STRIDE, 300, &["p q r s t"]);
+
+            assert_eq!(run.segments, ["p q r s t"]);
+            assert_eq!(run.transcript(), "p q r s t");
+            assert_eq!(run.windows, [4 * STRIDE]);
+        }
+
+        #[test]
+        fn a_pending_segment_keeps_its_audio_from_being_released() {
+            let mut state = AgreementState::new(cadence(5_000));
+            // What a cap-forced trim leaves behind: the buffer has moved past a
+            // segment nobody has been handed yet.
+            state.buffer_start = 10 * STRIDE as u64;
+            state.pending_segment = TranscriptSegment::spanned(
+                &["alpha".to_owned()],
+                Some(STRIDE as u64..2 * STRIDE as u64),
+            );
+            assert_eq!(state.retained_from(), STRIDE as u64);
+
+            state.pending_segment = None;
+            assert_eq!(state.retained_from(), 10 * STRIDE as u64);
+        }
+
+        #[test]
+        fn a_decode_behind_its_producer_queues_no_backlog() {
+            let whole = 2 * CANONICAL_SAMPLE_RATE as usize;
+            let run = drive_whole(whole, 20_000, &["whole buffer"]);
+
+            // The first decode jumps straight to everything captured, so no
+            // second pass over stale audio can queue.
+            assert_eq!(run.windows, [whole]);
+            assert_eq!(run.segments, ["whole buffer"]);
+            assert_eq!(run.transcript(), "whole buffer");
+        }
+
+        #[test]
+        fn segments_carry_absolute_sample_spans_from_word_timings() {
+            let (_directory, mut recording) = recorded(&vec![0_i16; 2 * STRIDE]);
+            let mut state = AgreementState::new(cadence(5_000));
+            let cancel = CancelToken::new();
+            let decode = |_window: &[f32]| {
+                Ok(Hypothesis::with_words(
+                    "alpha beta",
+                    vec![
+                        TimedWord {
+                            start: 0.0,
+                            end: 0.4,
+                        },
+                        TimedWord {
+                            start: 0.5,
+                            end: 0.9,
+                        },
+                    ],
+                ))
+            };
+
+            let step = state
+                .next_finalized_with(&mut recording, &cancel, decode)
+                .expect("the step succeeds")
+                .expect("a closed recording finishes in one step");
+            let Some(TranscriptUpdate::Finalized(segment)) = step.update else {
+                panic!("the tail is delivered");
+            };
+
+            assert_eq!(segment.as_str(), "alpha beta");
+            let span = segment.span.expect("timed words produce a span");
+            assert_eq!(span.start, 0);
+            // 0.9 s at 16 kHz.
+            assert_eq!(span.end, 14_400);
+        }
+
+        #[test]
+        fn a_hypothesis_without_timings_yields_spanless_segments() {
+            let (_directory, mut recording) = recorded(&vec![0_i16; 2 * STRIDE]);
+            let mut state = AgreementState::new(cadence(5_000));
+            let cancel = CancelToken::new();
+            let decode = |_window: &[f32]| Ok(Hypothesis::new("no timings here"));
+
+            let step = state
+                .next_finalized_with(&mut recording, &cancel, decode)
+                .expect("the step succeeds")
+                .expect("a closed recording finishes in one step");
+            let Some(TranscriptUpdate::Finalized(segment)) = step.update else {
+                panic!("the tail is delivered");
+            };
+
+            assert_eq!(segment.as_str(), "no timings here");
+            assert!(segment.span().is_none(), "untimed words carry no span");
+        }
+
+        #[test]
+        fn delivered_segments_concatenate_into_the_final_transcript_across_both_trims() {
+            // Six growing decodes settle onto the pause behind "five" and trim
+            // without a forced commit. Twelve more grow across fresh buffers
+            // until the cap cuts mid-sentence, committing the unconfirmed tail
+            // "nineteen". Either way, delivery is the record.
+            let mut answers: Vec<String> = vec![
+                "one".into(),
+                "one two".into(),
+                "one two three".into(),
+                "one two three four".into(),
+                "one two three four five".into(),
+                "one two three four five".into(),
+            ];
+            let mut running = String::new();
+            for word in [
+                "six",
+                "seven",
+                "eight",
+                "nine",
+                "ten",
+                "eleven",
+                "twelve",
+                "thirteen",
+                "fourteen",
+                "fifteen",
+                "sixteen",
+                "seventeen",
+            ] {
+                running.push_str(if running.is_empty() { "" } else { " " });
+                running.push_str(word);
+                answers.push(running.clone());
+            }
+            answers.push(format!("{running} eighteen nineteen"));
+            let answers: Vec<&str> = answers.iter().map(String::as_str).collect();
+
+            let mut batches = vec![loud_batch()];
+            batches.extend(vec![quiet_batch(); 5]);
+            batches.push(loud_batch());
+            batches.extend(vec![loud_batch(); 12]);
+            let run = drive(1_500, batches, &answers);
+
+            let delivered = run.segments.join(" ");
+            assert_eq!(delivered, run.transcript());
+            assert_eq!(
+                delivered,
+                "one two three four five six seven eight nine ten eleven twelve thirteen \
+                 fourteen fifteen sixteen seventeen eighteen nineteen"
+            );
+        }
+    }
+
+    mod trimming {
+        use super::*;
+
+        fn loud_frames(count: usize) -> Vec<f32> {
+            vec![0.5; count * TRIM_FRAME_SAMPLES]
+        }
+
+        fn timed_word(first_frame: usize, frames: usize) -> Word {
+            let start = (first_frame * TRIM_FRAME_SAMPLES) as u64;
+            Word {
+                text: "word".to_owned(),
+                span: Some(start..start + (frames * TRIM_FRAME_SAMPLES) as u64),
+            }
+        }
+
+        #[test]
+        fn skipped_speech_is_a_run_of_loud_frames_no_word_covers() {
+            // Ten words of ten frames, eight frames apart: the margins leave
+            // two uncovered frames in every gap, never a run long enough to
+            // count as skipped speech.
+            let scattered: Vec<Word> = (0..10).map(|word| timed_word(word * 18, 10)).collect();
+            assert_eq!(
+                Loudness::of(&loud_frames(180)).unheard_speech(0, &scattered, 0),
+                None
+            );
+
+            // The same words with a thirty-frame gap after the third one.
+            let skipped: Vec<Word> = (0..10)
+                .map(|word| timed_word(word * 18 + if word >= 3 { 30 } else { 0 }, 10))
+                .collect();
+            let gap_opens = (3 * 18 - 8 + HEARD_MARGIN_FRAMES) * TRIM_FRAME_SAMPLES;
+            assert_eq!(
+                Loudness::of(&loud_frames(210)).unheard_speech(0, &skipped, 0),
+                Some(gap_opens as u64)
+            );
+        }
+
+        #[test]
+        fn a_decode_of_a_buffer_under_the_pause_level_is_ignored() {
+            let (_directory, mut recording) = recorded(&vec![0_i16; 2 * STRIDE]);
+            let mut state = AgreementState::new(cadence(5_000));
+            state.pause_level = Some(f32::EPSILON);
+            let cancel = CancelToken::new();
+            let decode = |_window: &[f32]| Ok(Hypothesis::new("thank you"));
+
+            let step = state
+                .next_finalized_with(&mut recording, &cancel, decode)
+                .expect("the step succeeds")
+                .expect("a closed recording finishes in one step");
+
+            assert!(step.update.is_none());
+            assert!(step.transcript.is_none());
+        }
+
+        #[test]
+        fn a_pause_cut_needs_a_real_pause_at_the_tail() {
+            let speech = [0.5_f32; TRIM_FRAME_SAMPLES];
+            let silence = [0.0_f32; TRIM_FRAME_SAMPLES];
+
+            let mut buffer = Vec::new();
+            buffer.extend_from_slice(&speech);
+            buffer.extend_from_slice(&speech);
+            buffer.extend_from_slice(&speech);
+            buffer.extend_from_slice(&silence.repeat(16)[..]);
+
+            let cut = Loudness::of(&buffer)
+                .pause_cut()
+                .expect("five hundred ms of silence is a pause");
+            assert_eq!(cut, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
+
+            let mut short = Vec::new();
+            short.extend_from_slice(&speech);
+            short.extend_from_slice(&silence.repeat(12)[..]);
+            assert!(
+                Loudness::of(&short).pause_cut().is_none(),
+                "300 ms is not a pause"
+            );
+
+            // A pause with speech after it is a dip inside a sentence, and
+            // cutting there would re-deliver words the trim forgot.
+            let mut mid = Vec::new();
+            mid.extend_from_slice(&speech);
+            mid.extend_from_slice(&silence.repeat(16)[..]);
+            mid.extend_from_slice(&speech);
+            assert!(
+                Loudness::of(&mid).pause_cut().is_none(),
+                "a pause that does not reach the tail is not a stop"
+            );
+
+            assert!(
+                Loudness::of(&speech).pause_cut().is_none(),
+                "constant speech has no pause"
+            );
+        }
+    }
+
+    /// A decoder that reads its answer out of the audio itself, driven over
+    /// seeded random speech. The scripted tests above pin single behaviors;
+    /// these hunt what no script anticipates — duplication, reordering,
+    /// unbounded loss — across many trim and corruption patterns.
+    mod simulated {
+        use super::*;
+        use crate::audio::PCM_SCALE;
+
+        /// Xorshift64. Just enough randomness to vary speech; a failing
+        /// assert names its seed, so any run replays exactly.
+        struct Rng(u64);
+
+        impl Rng {
+            fn new(seed: u64) -> Self {
+                // Nonzero (xorshift's fixed point) and injective, so every
+                // seed the tests sweep is distinct speech.
+                Self(seed + 1)
+            }
+
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+
+            fn below(&mut self, bound: u64) -> u64 {
+                self.next() % bound
+            }
+
+            fn chance(&mut self, percent: u64) -> bool {
+                self.below(100) < percent
+            }
+        }
+
+        /// Word `index` is one stride at amplitude `BASE + STEP * index`, so
+        /// the audio alone names it. The quietest word carries
+        /// (8000/8640)² ≈ 0.86 of the loudest frame's power, far above
+        /// TRIM_QUIET_FRACTION, so no word reads as a pause.
+        const BASE_AMPLITUDE: i16 = 8_000;
+        const AMPLITUDE_STEP: i16 = 8;
+
+        fn word_name(index: usize) -> String {
+            format!("w{index}")
+        }
+
+        /// What one seed says: 40–79 words, each followed by a ~10% chance
+        /// of 500–800 ms of silence — long enough for the 13-frame quiet
+        /// rule, so quiet trims and cap cuts both occur — and a ~10% chance
+        /// of being said again after a beat, so a repeated word is an
+        /// ordinary word.
+        struct Speech {
+            batches: Vec<Vec<i16>>,
+            /// The name of every word said, in order.
+            names: Vec<usize>,
+        }
+
+        impl Speech {
+            fn random(rng: &mut Rng) -> Self {
+                let distinct = 40 + rng.below(40) as usize;
+                let mut batches = Vec::new();
+                let mut names = Vec::new();
+                for name in 0..distinct {
+                    batches.push(word_batch(name));
+                    names.push(name);
+                    if rng.chance(10) {
+                        batches.push(quiet_batch());
+                        batches.push(word_batch(name));
+                        names.push(name);
+                    }
+                    if rng.chance(10) {
+                        for _ in 0..5 + rng.below(4) {
+                            batches.push(quiet_batch());
+                        }
+                    }
+                }
+                // The speaker stops, so the last word's end is heard too.
+                batches.push(quiet_batch());
+                Self { batches, names }
+            }
+        }
+
+        /// Two strides, so a run of words is said at five a second: as fast
+        /// as speech gets, but no faster.
+        fn word_batch(name: usize) -> Vec<i16> {
+            vec![BASE_AMPLITUDE + AMPLITUDE_STEP * name as i16; 2 * STRIDE]
+        }
+
+        /// An honest decode of one window: every run of one constant nonzero
+        /// amplitude at least half a stride long, ending before the window
+        /// does, is a word, and the amplitude names it. i16 through PCM_SCALE
+        /// is exact in f32, so equality scanning is safe.
+        struct Heard {
+            words: Vec<String>,
+            timings: Vec<TimedWord>,
+        }
+
+        impl Heard {
+            fn from_window(window: &[f32]) -> Self {
+                let mut words = Vec::new();
+                let mut timings = Vec::new();
+                let mut start = 0;
+                while start < window.len() {
+                    let value = window[start];
+                    let mut end = start + 1;
+                    while end < window.len() && window[end] == value {
+                        end += 1;
+                    }
+                    // A word still running at the window's edge is held
+                    // back, as a real model holds a word until it hears
+                    // the end of it.
+                    if value != 0.0 && end - start >= STRIDE / 2 && end < window.len() {
+                        let amplitude = (value * PCM_SCALE) as i16;
+                        let index = (amplitude - BASE_AMPLITUDE) / AMPLITUDE_STEP;
+                        words.push(word_name(index as usize));
+                        let rate = CANONICAL_SAMPLE_RATE as f32;
+                        timings.push(TimedWord {
+                            start: start as f32 / rate,
+                            end: end as f32 / rate,
+                        });
+                    }
+                    start = end;
+                }
+                Self { words, timings }
+            }
+
+            /// The decode as a backend would answer it, with its timings or
+            /// without: parakeet times its words, moonshine does not.
+            fn into_hypothesis(self, timed: bool) -> Hypothesis {
+                if timed {
+                    Hypothesis::with_words(self.words.join(" "), self.timings)
+                } else {
+                    Hypothesis::new(self.words.join(" "))
+                }
+            }
+        }
+
+        /// One way a decode goes wrong. At most one per decode, so the loss
+        /// accounting stays trivial.
+        #[derive(Clone, Copy, PartialEq)]
+        enum Corruption {
+            /// The model dropped the window.
+            Empty,
+            /// The last one to three words are missing.
+            Short,
+            /// The last one or two words are junk.
+            Unstable,
+            /// One word in the first half is junk: a revision inside what
+            /// may already have been delivered.
+            Revision,
+            /// Eight to twelve words in a row are missing, timings intact:
+            /// the model skipped part of its window.
+            Partial,
+        }
+
+        impl Corruption {
+            fn adds_junk(self) -> bool {
+                matches!(self, Self::Unstable | Self::Revision)
+            }
+
+            /// The corrupted decode. Junk text is fresh per decode, so junk
+            /// can never agree across two decodes — it reaches the
+            /// transcript only through a cap-cut tail or the finish. Junk
+            /// keeps the timing of the word it replaces, as a model's
+            /// misheard word would.
+            fn apply(self, heard: Heard, rng: &mut Rng) -> Heard {
+                let Heard {
+                    mut words,
+                    mut timings,
+                } = heard;
+                match self {
+                    Self::Empty => {
+                        words.clear();
+                        timings.clear();
+                    }
+                    Self::Partial => {
+                        let dropped = 8 + rng.below(5) as usize;
+                        let from = rng.below((words.len() - dropped) as u64 + 1) as usize;
+                        words.drain(from..from + dropped);
+                        timings.drain(from..from + dropped);
+                    }
+                    Self::Short => {
+                        let keep = words.len() - (1 + rng.below(3) as usize);
+                        words.truncate(keep);
+                        timings.truncate(keep);
+                    }
+                    Self::Unstable => {
+                        let junked = (1 + rng.below(2) as usize).min(words.len());
+                        let from = words.len() - junked;
+                        for word in &mut words[from..] {
+                            *word = junk(rng);
+                        }
+                    }
+                    Self::Revision => {
+                        let target = rng.below((words.len() / 2) as u64) as usize;
+                        words[target] = junk(rng);
+                    }
+                }
+                Heard { words, timings }
+            }
+        }
+
+        fn junk(rng: &mut Rng) -> String {
+            format!("~{}", rng.next())
+        }
+
+        /// Chance, in percent, of each corruption per decode, and whether
+        /// the decoder times its words.
+        struct Noise {
+            timed: bool,
+            empty: u64,
+            short: u64,
+            unstable: u64,
+            revision: u64,
+            partial: u64,
+        }
+
+        const NOISELESS: Noise = Noise {
+            timed: true,
+            empty: 0,
+            short: 0,
+            unstable: 0,
+            revision: 0,
+            partial: 0,
+        };
+
+        const NOISY: Noise = Noise {
+            timed: true,
+            empty: 5,
+            short: 10,
+            unstable: 15,
+            revision: 5,
+            partial: 10,
+        };
+
+        /// An untimed decoder cannot show where it skipped speech, so a
+        /// partial decode is not a fault it can be held to.
+        const NOISY_UNTIMED: Noise = Noise {
+            timed: false,
+            partial: 0,
+            ..NOISY
+        };
+
+        impl Noise {
+            /// Rolls for one decode. A corruption needs enough words to act on.
+            fn roll(&self, heard: &Heard, rng: &mut Rng) -> Option<Corruption> {
+                let words = heard.words.len();
+                if rng.chance(self.empty) {
+                    Some(Corruption::Empty)
+                } else if words > 2 && rng.chance(self.short) {
+                    Some(Corruption::Short)
+                } else if words > 0 && rng.chance(self.unstable) {
+                    Some(Corruption::Unstable)
+                } else if words >= 4 && rng.chance(self.revision) {
+                    Some(Corruption::Revision)
+                } else if words >= 14 && rng.chance(self.partial) {
+                    Some(Corruption::Partial)
+                } else {
+                    None
+                }
+            }
+        }
+
+        /// Which truth words a transcript holds, in order, and how many junk
+        /// words came with them.
+        struct Delivered {
+            names: Vec<usize>,
+            junk: usize,
+        }
+
+        impl Delivered {
+            fn parse(transcript: &str) -> Self {
+                let mut names = Vec::new();
+                let mut junk = 0;
+                for word in transcript.split_whitespace() {
+                    match word.strip_prefix('w').and_then(|name| name.parse().ok()) {
+                        Some(name) => names.push(name),
+                        None => junk += 1,
+                    }
+                }
+                Self { names, junk }
+            }
+
+            /// Whether the words came out in the order they were said, each
+            /// at most once: the delivered names read along the truth,
+            /// skipping only what was lost.
+            fn in_order_of(&self, truth: &[usize]) -> bool {
+                let mut truth = truth.iter();
+                self.names
+                    .iter()
+                    .all(|name| truth.by_ref().any(|said| said == name))
+            }
+        }
+
+        struct Sim {
+            run: Run,
+            injected: Vec<Corruption>,
+            truth: Vec<usize>,
+        }
+
+        /// One seeded run to completion. Windows respect the cap, and
+        /// retention holds after every step.
+        fn simulate(seed: u64, noise: &Noise) -> Sim {
+            let mut rng = Rng::new(seed);
+            let speech = Speech::random(&mut rng);
+            let truth = speech.names.clone();
+            let max_buffer_ms = [1_500, 3_000, 20_000][rng.below(3) as usize];
+            let max_window = max_buffer_ms * CANONICAL_SAMPLE_RATE as usize / 1000 + 2 * STRIDE;
+            let (_directory, mut recording, pace) = paced(speech.batches);
+            let mut injected = Vec::new();
+            let mut last_retained = 0;
+
+            let run = run(
+                AgreementState::new(cadence(max_buffer_ms)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    assert!(
+                        window.len() <= max_window,
+                        "seed {seed}: a {} sample window outgrew the {max_window} cap",
+                        window.len()
+                    );
+                    let heard = Heard::from_window(window);
+                    let heard = match noise.roll(&heard, &mut rng) {
+                        Some(corruption) => {
+                            injected.push(corruption);
+                            corruption.apply(heard, &mut rng)
+                        }
+                        None => heard,
+                    };
+                    heard.into_hypothesis(noise.timed)
+                },
+                |state| retention_holds(seed, state, &mut last_retained),
+            );
+
+            Sim {
+                run,
+                injected,
+                truth,
+            }
+        }
+
+        /// `retained_from` never moves backwards, and never past the audio of
+        /// a segment still waiting to be handed over.
+        fn retention_holds(seed: u64, state: &AgreementState, last_retained: &mut u64) {
+            let retained = state.retained_from();
+            assert!(
+                retained >= *last_retained,
+                "seed {seed}: retained_from moved backwards ({last_retained} -> {retained})"
+            );
+            *last_retained = retained;
+            if let Some(span) = state.pending_segment.as_ref().and_then(|tail| tail.span()) {
+                assert!(
+                    retained <= span.start,
+                    "seed {seed}: a pending segment's audio at {} was released at {retained}",
+                    span.start
+                );
+            }
+        }
+
+        #[test]
+        fn a_noiseless_simulated_decoder_delivers_the_truth_exactly() {
+            for seed in 0..25 {
+                let sim = simulate(seed, &NOISELESS);
+                let truth: Vec<String> = sim.truth.iter().copied().map(word_name).collect();
+                assert_eq!(
+                    sim.run.transcript(),
+                    truth.join(" "),
+                    "seed {seed}: the transcript strayed from the truth"
+                );
+                assert_eq!(
+                    sim.run.segments.join(" "),
+                    sim.run.transcript(),
+                    "seed {seed}: delivery and the final transcript disagree"
+                );
+            }
+        }
+
+        #[test]
+        fn noisy_decodes_keep_every_agreement_invariant_across_seeds() {
+            for seed in 0..200 {
+                invariants_hold(seed, &simulate(seed, &NOISY));
+            }
+        }
+
+        #[test]
+        fn an_untimed_decoder_keeps_the_invariants_too() {
+            for seed in 0..100 {
+                invariants_hold(seed, &simulate(seed, &NOISY_UNTIMED));
+            }
+        }
+
+        fn invariants_hold(seed: u64, sim: &Sim) {
+            let delivered = Delivered::parse(sim.run.transcript());
+            let junk_sources = sim
+                .injected
+                .iter()
+                .filter(|corruption| corruption.adds_junk())
+                .count();
+            let truth_words = sim.truth.len();
+
+            assert_eq!(
+                sim.run.segments.join(" "),
+                sim.run.transcript(),
+                "seed {seed}: delivery and the final transcript disagree"
+            );
+            assert!(
+                delivered.in_order_of(&sim.truth),
+                "seed {seed}: a word was duplicated or reordered: {}",
+                sim.run.transcript()
+            );
+            assert!(
+                delivered.junk <= 2 * junk_sources,
+                "seed {seed}: {} junk words from {junk_sources} junk corruptions",
+                delivered.junk
+            );
+            // The bound is loose on purpose. It catches unbounded loss, not
+            // the exact cost of each path.
+            let missing = truth_words - delivered.names.len();
+            assert!(
+                missing <= 3 * sim.injected.len(),
+                "seed {seed}: lost {missing} of {truth_words} words to {} corruptions",
+                sim.injected.len()
+            );
+        }
+    }
+}

@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+// Application failures carry an RpcError in google.rpc.Status details.
+// Transport and framework failures may have only a gRPC status. Clients use
+// the Aria code when present and fall back to the gRPC status otherwise.
+// Message text is for display, never for identifying the failure.
+message RpcError {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+// One flat vocabulary, ranges per capability: 1-99 generic, 100-199
+// dictation/delivery, 200-299 speech, 300-399 chat, 500-599 speaker,
+// 800-899 listen, 900-999 history. Shared operations may use other ranges.
+// Keep an unknown code and report it; never fail the connection over one.
+enum ErrorCode {
+  // No error on non-failure events. Invalid in RpcError or a FAILED event.
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_REQUEST = 1;
+  ERROR_CODE_BUSY = 2;
+  ERROR_CODE_INTERNAL = 3;
+  ERROR_CODE_CANCELLED = 4;
+  // Missing or bad pairing token on a network transport.
+  ERROR_CODE_UNAUTHENTICATED = 5;
+  // A capability or action this daemon does not serve.
+  ERROR_CODE_UNSUPPORTED = 6;
+  // The daemon is stopping and will not take the request.
+  ERROR_CODE_SHUTTING_DOWN = 7;
+  // The request carried more bytes than the server will hold.
+  ERROR_CODE_PAYLOAD_TOO_LARGE = 8;
+  ERROR_CODE_PERMISSION_DENIED = 9;
+  ERROR_CODE_OVERALL_TIMEOUT = 100;
+  ERROR_CODE_RECORDING_TIMEOUT = 101;
+  ERROR_CODE_DELIVERY_TIMEOUT = 102;
+  ERROR_CODE_CAPTURE_FAILED = 103;
+  ERROR_CODE_NO_SPEECH = 104;
+  ERROR_CODE_TRANSCRIPTION_FAILED = 105;
+  ERROR_CODE_DELIVERY_FAILED = 106;
+  ERROR_CODE_DURABILITY_UNCONFIRMED = 107;
+  ERROR_CODE_DELIVERY_TARGET_CHANGED = 108;
+  ERROR_CODE_SYNTHESIS_FAILED = 200;
+  ERROR_CODE_PLAYBACK_FAILED = 201;
+  ERROR_CODE_SPEECH_TIMEOUT = 202;
+  ERROR_CODE_VOICE_UNAVAILABLE = 203;
+  // The configured agent binary is not installed or not on PATH.
+  ERROR_CODE_AGENT_UNAVAILABLE = 300;
+  ERROR_CODE_AGENT_FAILED = 301;
+  ERROR_CODE_AGENT_TIMEOUT = 302;
+  // No voice-embedding model is installed.
+  ERROR_CODE_SPEAKER_MODEL_MISSING = 500;
+  ERROR_CODE_SPEAKER_ALREADY_ENROLLED = 501;
+  ERROR_CODE_SPEAKER_NOT_ENROLLED = 502;
+  // The samples sound like more than one voice.
+  ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES = 503;
+  ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED = 504;
+  ERROR_CODE_SPEAKER_NO_SPEECH = 505;
+  // System-audio capture needs macOS 14.2 or newer.
+  ERROR_CODE_LISTEN_UNSUPPORTED_OS = 800;
+  // System Audio Recording permission is missing or was denied.
+  ERROR_CODE_LISTEN_PERMISSION_DENIED = 801;
+  ERROR_CODE_LISTEN_CAPTURE_FAILED = 802;
+  ERROR_CODE_HISTORY_MISSING = 900;
+  ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE = 901;
+  ERROR_CODE_HISTORY_UNAVAILABLE = 902;
+  ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE = 903;
+}

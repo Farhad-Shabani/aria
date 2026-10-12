@@ -1,0 +1,17 @@
+[package]
+name                 = "aria-bench-speaker"
+version.workspace    = true
+edition              = "2024"
+description          = "Speaker verification error rates across similarity thresholds"
+license              = "Apache-2.0"
+repository.workspace = true
+publish              = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aria-kit     = { workspace = true }
+aria-speaker = { workspace = true }
+
+thiserror = { workspace = true }

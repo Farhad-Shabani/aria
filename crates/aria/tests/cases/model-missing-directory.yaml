@@ -1,0 +1,11 @@
+name: a missing parakeet model directory fails daemon startup
+config: |
+  transcription:
+    backend: parakeet
+    model: /nonexistent/parakeet
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "the parakeet model cannot be used"
+      - "failed to inspect /nonexistent/parakeet"

@@ -1,0 +1,61 @@
+# Temporary files
+*.wav
+!crates/**/tests/fixtures/*.wav
+*.mp3
+*.log
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# Rust
+/target/
+
+# Xcode and SwiftPM
+*.xcodeproj/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Local overrides
+.env
+.envrc
+config.yaml
+*.local.*
+*.local/
+
+# Agent tooling
+/.claude/
+/.codex/
+
+# Wake-word models ship separately; a checkout keeps its copy here
+/models/
+
+# Speaker enrollments
+/speakers/
+
+# Chat history
+/history/
+
+# Worktrees
+.worktrees/
+
+# Local build output, such as benchmark corpora
+build/
+
+# Benchmark results carry reference and transcript text
+bench-results.jsonl
+bench-results/
+/dist/

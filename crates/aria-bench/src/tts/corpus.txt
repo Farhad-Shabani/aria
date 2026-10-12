@@ -1,0 +1,10 @@
+# Spoken by every backend. One utterance per line; blank lines and lines
+# starting with # are ignored.
+Hello there.
+The quick brown fox jumps over the lazy dog.
+Aria is a local, privacy-first voice assistant.
+It replies in about a second, even on long questions.
+Today is Tuesday, October 14th, 2025.
+She said, meet me at 7:30 near the old bridge.
+The total comes to $42.50, tax included.
+Whisper keeps your words on this machine.

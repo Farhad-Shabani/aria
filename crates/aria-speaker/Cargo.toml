@@ -1,0 +1,15 @@
+[package]
+name                 = "aria-speaker"
+version.workspace    = true
+edition              = "2024"
+description          = "Speaker embeddings with WeSpeaker models, for aria-kit"
+license              = "Apache-2.0"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aria-kit = { workspace = true }
+ort      = { workspace = true }
+realfft  = "3.5"

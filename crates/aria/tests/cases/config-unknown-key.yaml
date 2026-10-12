@@ -1,0 +1,11 @@
+name: an unknown config key fails daemon startup
+config: |
+  transcription:
+    backend: whisper
+    model: ~/model.bin
+  bogus: true
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'unknown configuration field "bogus" at line 4, column 1'

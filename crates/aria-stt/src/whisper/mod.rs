@@ -1,0 +1,325 @@
+//! In-process transcription through whisper.cpp bindings.
+//!
+//! Each decoded word carries whisper.cpp's token timing, which the
+//! streaming path reads.
+//!
+//! ```no_run
+//! use aria_stt::{whisper::Whisper, prelude::*};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let transcription = Transcription::streaming(Whisper::load("model")?)
+//!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
+//! let mut session = Session::microphone(&transcription, &Language::Automatic)?;
+//!
+//! // Committed words arrive as you speak and are never revised.
+//! while let Some(words) = session.next_finalized()? {
+//!     print!("{}", words.as_str());
+//! }
+//!
+//! let transcript = session.stop()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For audio you already hold, [`crate::Transcription::transcribe_file`] decodes a
+//! WAV in one call. Streaming runs at [`CADENCE`].
+
+pub use whisper_rs::install_logging_hooks;
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+    WhisperTokenId,
+};
+
+use aria_kit::backend::BackendError;
+use aria_kit::cancel::CancelToken;
+use aria_kit::transcription::{
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
+    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, validate_model_file,
+    word_timings,
+};
+
+/// Names this engine under `transcription.backend` and in its own errors.
+pub const NAME: &str = "whisper";
+
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const BACKEND: &str = NAME;
+const DECODE_THREADS_FALLBACK: std::ffi::c_int = 4;
+/// whisper.cpp reports token times in centiseconds.
+const TOKEN_TIME_UNITS_PER_SECOND: f32 = 100.0;
+/// Above this no-speech probability, a segment is noise the model put words
+/// to. Whisper's own default.
+const NO_SPEECH_THRESHOLD: f32 = 0.6;
+/// One loudness frame: 512 samples, about 32 ms.
+const LOUDNESS_FRAME_SAMPLES: usize = 512;
+/// Silence cutoff near -43 dBFS, used to reduce hallucinations on quiet audio.
+const SILENCE_FLOOR: f32 = 5e-5;
+
+/// The one-second stride allows time for decoding. The twenty-second cap
+/// keeps the buffer inside Whisper's thirty-second window.
+pub const CADENCE: Cadence = Cadence::from_millis(1000, 20000);
+
+pub struct Whisper {
+    /// One resident decoding state: per-request states fail to encode on
+    /// Metal after the first is freed, and re-init Metal buffers each run.
+    /// Cost: the last transcript stays in memory between requests.
+    state: Mutex<WhisperState>,
+    /// The first special token id. Segment text leaves special tokens out,
+    /// so the word timings must too.
+    eot: WhisperTokenId,
+}
+
+#[derive(Clone)]
+pub struct WhisperConfig {
+    /// The ggml model file.
+    pub model: PathBuf,
+}
+
+impl WhisperConfig {
+    pub fn new(model: impl Into<PathBuf>) -> Self {
+        Self {
+            model: model.into(),
+        }
+    }
+}
+
+impl Whisper {
+    /// Loads the model once; it stays resident for every transcription.
+    pub fn load(model: impl Into<PathBuf>) -> Result<Self, TranscriptionError> {
+        Self::load_from(WhisperConfig::new(model), &CancelToken::never())
+    }
+}
+
+impl Engine for Whisper {
+    const NAME: &'static str = NAME;
+    const INPUT: AudioInputKind = AudioInputKind::Samples;
+
+    type Config = WhisperConfig;
+
+    fn check_from(config: &WhisperConfig) -> Result<PathBuf, TranscriptionError> {
+        validate_model_file(config.model.clone(), BACKEND)
+    }
+
+    fn load_from(config: WhisperConfig, cancel: &CancelToken) -> Result<Self, TranscriptionError> {
+        check_cancelled(cancel)?;
+        let model = Self::check_from(&config)?;
+        let context = WhisperContext::new_with_params(&model, WhisperContextParameters::default())
+            .map_err(|source| load_failed(&model, source))?;
+        let state = context
+            .create_state()
+            .map_err(|source| load_failed(&model, source))?;
+        check_cancelled(cancel)?;
+        Ok(Self {
+            state: Mutex::new(state),
+            eot: context.token_eot(),
+        })
+    }
+}
+
+impl StreamingEngine for Whisper {
+    const STREAM: Stream = Stream::Agreement(CADENCE);
+}
+
+impl Transcriber for Whisper {
+    fn validate_language(
+        &self,
+        _language: &Language,
+        _cancel: &CancelToken,
+    ) -> Result<(), TranscriptionError> {
+        Ok(())
+    }
+
+    fn transcribe_with(
+        &self,
+        audio: TranscriptionAudio<'_>,
+        language: &Language,
+        cancel: &CancelToken,
+    ) -> Result<Hypothesis, TranscriptionError> {
+        check_cancelled(cancel)?;
+        let samples = audio.require_samples(BACKEND)?;
+        if !audible(samples) {
+            return Ok(Hypothesis::new(""));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_inference(&mut state, language, samples, cancel)?;
+        collect_transcript(&state, self.eot)
+    }
+}
+
+fn load_failed(model: &Path, source: whisper_rs::WhisperError) -> TranscriptionError {
+    TranscriptionError::Load {
+        backend: BACKEND,
+        model: model.display().to_string(),
+        source: BackendError::engine(source),
+    }
+}
+
+fn inference_failed(source: whisper_rs::WhisperError) -> TranscriptionError {
+    TranscriptionError::Inference {
+        backend: BACKEND,
+        source: BackendError::engine(source),
+    }
+}
+
+fn run_inference(
+    state: &mut WhisperState,
+    language: &Language,
+    samples: &[f32],
+    cancel: &CancelToken,
+) -> Result<(), TranscriptionError> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let params = decode_params(language, &cancelled);
+    let result = run_with_cancellation(&cancelled, cancel, || state.full(params, samples));
+    match result {
+        Ok(_decoded_segments) => Ok(()),
+        Err(_aborted) if cancelled.load(Ordering::Acquire) => Err(TranscriptionError::Cancelled),
+        Err(error) => Err(inference_failed(error)),
+    }
+}
+
+fn decode_params<'language>(
+    language: &'language Language,
+    cancelled: &Arc<AtomicBool>,
+) -> FullParams<'language, 'static> {
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_language(Some(language.as_str()));
+    params.set_n_threads(decode_threads());
+    params.set_token_timestamps(true);
+    params.set_suppress_nst(true);
+    let abort_flag = Arc::clone(cancelled);
+    // Pre-boxed on purpose: whisper-rs 0.16 stores the callback as
+    // `Box<dyn FnMut() -> bool>` but its C trampoline casts back to the
+    // caller's type. A bare closure is misread as the box and aborts at
+    // random; this exact type makes the cast sound.
+    let abort_when_cancelled: Box<dyn FnMut() -> bool> =
+        Box::new(move || abort_flag.load(Ordering::Acquire));
+    params.set_abort_callback_safe(abort_when_cancelled);
+    params
+}
+
+// whisper.cpp defaults to four threads regardless of core count, so pass the
+// real count.
+fn decode_threads() -> std::ffi::c_int {
+    std::thread::available_parallelism()
+        .map(|cores| cores.get() as std::ffi::c_int)
+        .unwrap_or(DECODE_THREADS_FALLBACK)
+}
+
+/// Whether any frame of the window rises above the silence floor.
+fn audible(samples: &[f32]) -> bool {
+    samples
+        .chunks(LOUDNESS_FRAME_SAMPLES)
+        .map(|frame| frame.iter().map(|sample| sample * sample).sum::<f32>() / frame.len() as f32)
+        .any(|energy| energy >= SILENCE_FLOOR)
+}
+
+/// The segments' text and the timing of each word in it. Segments join with
+/// a space, so a word never spans two.
+fn collect_transcript(
+    state: &WhisperState,
+    eot: WhisperTokenId,
+) -> Result<Hypothesis, TranscriptionError> {
+    let mut text = String::new();
+    let mut words = Vec::new();
+    for segment in state.as_iter() {
+        if segment.no_speech_probability() > NO_SPEECH_THRESHOLD {
+            continue;
+        }
+        let spoken = segment.to_str_lossy().map_err(inference_failed)?;
+        let spoken = spoken.trim();
+        if spoken.is_empty() {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(spoken);
+        let mut tokens = Vec::new();
+        for index in 0..segment.n_tokens() {
+            let Some(token) = segment.get_token(index) else {
+                continue;
+            };
+            if token.token_id() >= eot {
+                continue;
+            }
+            let timed = token.token_data();
+            let timing = TimedWord {
+                start: timed.t0 as f32 / TOKEN_TIME_UNITS_PER_SECOND,
+                end: timed.t1 as f32 / TOKEN_TIME_UNITS_PER_SECOND,
+            };
+            tokens.push((token.to_str_lossy().map_err(inference_failed)?, timing));
+        }
+        words.extend(word_timings(
+            tokens.iter().map(|(text, timing)| (text.as_ref(), *timing)),
+        ));
+    }
+    Ok(Hypothesis::with_words(text, words))
+}
+
+/// Runs `inference` while a watcher mirrors `cancel` into the flag
+/// the abort callback reads; the watcher stops when inference returns.
+fn run_with_cancellation<T: Send>(
+    cancelled: &AtomicBool,
+    cancel: &CancelToken,
+    inference: impl FnOnce() -> T + Send,
+) -> T {
+    let finished = AtomicBool::new(false);
+    thread::scope(|scope| {
+        let watcher = scope.spawn(|| {
+            while !finished.load(Ordering::Acquire) {
+                if cancel.is_cancelled() {
+                    cancelled.store(true, Ordering::Release);
+                    return;
+                }
+                thread::park_timeout(CANCEL_POLL_INTERVAL);
+            }
+        });
+        let result = inference();
+        finished.store(true, Ordering::Release);
+        watcher.thread().unpark();
+        result
+    })
+}
+
+#[cfg(test)]
+mod load_engine_tests {
+    use super::*;
+
+    #[test]
+    fn silence_is_not_audible_and_a_quiet_word_is() {
+        assert!(!audible(&[0.0; 16_000]));
+        assert!(
+            !audible(&[0.003; 16_000]),
+            "room noise stays under the floor"
+        );
+        assert!(audible(&[0.03; 16_000]), "a quiet word rises above it");
+    }
+
+    fn name_of<E: Engine>() -> &'static str {
+        E::NAME
+    }
+
+    #[test]
+    fn the_trait_carries_the_engine_identity() {
+        assert_eq!(name_of::<Whisper>(), NAME);
+    }
+
+    #[test]
+    fn cancelled_load_stops_before_model_validation() {
+        let cancel = CancelToken::new();
+        cancel.cancel();
+
+        let outcome = Whisper::load_from(WhisperConfig::new("/nonexistent/model.bin"), &cancel);
+
+        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+    }
+}

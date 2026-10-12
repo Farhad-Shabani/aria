@@ -1,0 +1,9 @@
+name: an unknown capture backend fails daemon startup
+config: |
+  capture:
+    backend: pulseaudio
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'capture.backend does not accept "pulseaudio"; supported values are microphone and wav-file'

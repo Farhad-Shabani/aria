@@ -1,0 +1,188 @@
+{"input": "THE SOCKET CLOSES", "expected": "the socket closes"}
+{"input": "The socket, closes.", "expected": "the socket closes"}
+{"input": "  spaced   out  ", "expected": "spaced out"}
+{"input": "we won't, we can't", "expected": "we will not we can not"}
+{"input": "it's gone", "expected": "it has gone"}
+{"input": "he'd been there", "expected": "he had been there"}
+{"input": "she's got it", "expected": "she has got it"}
+{"input": "y'all gonna wanna let's ain't", "expected": "you all going to want to let us aint"}
+{"input": "I'd've thought so", "expected": "i would have thought so"}
+{"input": "ma'am, it's mr smith", "expected": "madam it is mister smith"}
+{"input": "dr king and prof jones and lt col hayes", "expected": "doctor king and professor jones and lieutenant colonel hayes"}
+{"input": "st peter and jr and esq", "expected": "saint peter and junior and esquire"}
+{"input": "um the [laughter] socket", "expected": "the socket"}
+{"input": "uh <unk> hmm mmm well", "expected": "well"}
+{"input": "the (background noise) door", "expected": "the door"}
+{"input": "twenty two", "expected": "22"}
+{"input": "one hundred", "expected": "100"}
+{"input": "two hundred and five", "expected": "205"}
+{"input": "two thousand five hundred", "expected": "2500"}
+{"input": "nineteen eighty four", "expected": "1984"}
+{"input": "one oh one", "expected": "101"}
+{"input": "double seven", "expected": "77"}
+{"input": "triple eight", "expected": "888"}
+{"input": "zero", "expected": "0"}
+{"input": "oh oh seven", "expected": "007"}
+{"input": "a hundred and twenty three thousand", "expected": "a 123000"}
+{"input": "the twenty second", "expected": "the 22nd"}
+{"input": "the nineteen sixties", "expected": "the 1960s"}
+{"input": "the first of may", "expected": "the 1st of may"}
+{"input": "the third", "expected": "the 3rd"}
+{"input": "the twelfth", "expected": "the 12th"}
+{"input": "sixes and sevens", "expected": "6s and 7s"}
+{"input": "the hundredth time", "expected": "the 100th time"}
+{"input": "three point five", "expected": "3.5"}
+{"input": "two and a half million", "expected": "2500000"}
+{"input": "minus forty degrees", "expected": "-40 degrees"}
+{"input": "plus one", "expected": "+one"}
+{"input": "negative twenty two point five", "expected": "-22.5"}
+{"input": "twenty dollars", "expected": "$20"}
+{"input": "twenty million dollars", "expected": "$20000000"}
+{"input": "five percent", "expected": "5%"}
+{"input": "five per cent", "expected": "5%"}
+{"input": "twenty dollars and seven cents", "expected": "$20.07"}
+{"input": "three pounds", "expected": "£3"}
+{"input": "fifty euros", "expected": "€50"}
+{"input": "ninety nine cents", "expected": "¢99"}
+{"input": "22", "expected": "22"}
+{"input": "1,234,567 people", "expected": "1234567 people"}
+{"input": "$20 million", "expected": "$20000000"}
+{"input": "3.5%", "expected": "3.5%"}
+{"input": "the 1960s", "expected": "the 1960s"}
+{"input": "274th", "expected": "274th"}
+{"input": "32nd", "expected": "32nd"}
+{"input": "in 1984 he was 22", "expected": "in 1984 he was 22"}
+{"input": "it cost $19.99", "expected": "it cost $19.99"}
+{"input": "the colour of aluminium", "expected": "the color of aluminum"}
+{"input": "he realised the theatre programme", "expected": "he realized the theater program"}
+{"input": "café naïve", "expected": "cafe naive"}
+{"input": "co-operate — really?", "expected": "co operate really"}
+{"input": "a/b testing", "expected": "a b testing"}
+{"input": "MISTER QUILTER IS THE APOSTLE OF THE MIDDLE CLASSES AND WE ARE GLAD TO WELCOME HIS GOSPEL", "expected": "mister quilter is the apostle of the middle classes and we are glad to welcome his gospel"}
+{"input": "Mr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.", "expected": "mister quilter is the apostle of the middle classes and we are glad to welcome his gospel"}
+{"input": "HE HAS GRAVE DOUBTS WHETHER SIR FREDERICK LEIGHTON'S WORK IS REALLY GREEK AFTER ALL", "expected": "he has grave doubts whether sir frederick leighton is work is really greek after all"}
+{"input": "NOR IS MISTER QUILTER'S MANNER LESS INTERESTING THAN HIS MATTER", "expected": "nor is mister quilter is manner less interesting than his matter"}
+{"input": "", "expected": ""}
+{"input": "   ", "expected": ""}
+{"input": "...", "expected": "."}
+{"input": "%", "expected": "%"}
+{"input": "3.5 twelve thirties 007 forty fifteen nineteen 1000 hundred twelfth", "expected": "3.51230s 7401519 1012th"}
+{"input": "thirty 0.07 dollars twenty fifth +7 thousand third 274th triple o", "expected": "30 ¢7 25th 7003rd 274th 000"}
+{"input": "double five million", "expected": "55000000"}
+{"input": "third second billion billion 1984", "expected": "3rd 2nd 1000000000 1984"}
+{"input": "o dollars sixth fifteen point 3.5 pound millionth trillion 100 double billion", "expected": "$0 6th £15.3.5 1000000th 1000000000000 100 double 1000000000"}
+{"input": "1000 1984 three two 0", "expected": "1000 198432 0"}
+{"input": "cent fifteen fifth ninety euros sixties", "expected": "cent 155th €90 60s"}
+{"input": "11 thousandth thirteen nine eleven fourth hundred oh fifteen point and seven dollars twelve", "expected": "11000th 139114th 100015 and $7 12"}
+{"input": "+7 22 fourth one twelve +7", "expected": "7 224th 112 7"}
+{"input": "negative sixties twelve thousand", "expected": "-60s 12000"}
+{"input": "quadrillion five", "expected": "1000000000000005"}
+{"input": "hundred seven", "expected": "107"}
+{"input": "pounds -3 hundred zero -3 and", "expected": "pounds 3000 3 and"}
+{"input": "trillion $20 millionth 32nd eight third dollars second quadrillion hundredth", "expected": "1000000000000 $20000000th 32nd 83rd dollars 2nd 1000000000000000th"}
+{"input": "+7 negative twenty fifteen twenty oh 274th nine hundred dollars million third thirties", "expected": "7 -2015200 274th $900 1000003rd 30s"}
+{"input": "22 274th 32nd thirteen 5% hundredth", "expected": "22 274th 32nd 13 5% 100th"}
+{"input": "second pounds 1 thirty hundredth 11 sixties cents one second 5%", "expected": "2nd pounds 13000th 1160s cents 12nd 5%"}
+{"input": "$20 minus nineteen 274th 22 nineteen four sixth forty half negative fifth pounds thirteen", "expected": "$20 -19 274th 221946th 40 half -5th pounds 13"}
+{"input": "hundred dollars and 1 eleven 5% nineteen 5% second 274th", "expected": "$100 and 111 5% 19 5% 2nd 274th"}
+{"input": "+7 forty cents 274th pounds one plus eight 0.07 thousandth nineteen pound", "expected": "¢740 274th pounds one +8 70th £19"}
+{"input": "ninety thirteen cent", "expected": "¢9013"}
+{"input": "dollar double cent three 274th +7 thirteen 0.07 -3 billion billion thirteen", "expected": "dollar double cent 3 274th 713 0.07 3000000013"}
+{"input": "twenty nine fifth 0 cents oh point point millionth 0.07", "expected": "295th ¢0 0th 0.07"}
+{"input": "fifteen millionth fifth 999", "expected": "15000000th 5th 999"}
+{"input": "fifth percent twentieth +7 twelve +7 ten sixth", "expected": "5th percent 20th 712 7106th"}
+{"input": "thirteen zero 1984 point o trillion 32nd", "expected": "130 1984000000000000 32nd"}
+{"input": "triple sixes 3.5 cent nineteen ten twelfth thirties dollars first nineteen", "expected": "triple 6s ¢3.5 191012th 30s dollars 1st 19"}
+{"input": "1984 thirty eleven 3.5 o", "expected": "19843011 3.50"}
+{"input": "-3 cent eleven two", "expected": "¢3 112"}
+{"input": "double euros 1 forty fifth hundreds 1984 four euro cents twelfth million", "expected": "double euros 145th 100s €19844 cents 12th 1000000"}
+{"input": "third per third thousandth thousandth o fifty three", "expected": "3rd per 3rd 1000th 1000th 053"}
+{"input": "sixes positive 1000 third 1000 o euros minus fifty 1 32nd eight", "expected": "6s +1003rd €10000 -50 one 32nd 8"}
+{"input": "four 1984 nineteen 100 thirteen quadrillion four ten cents nine sixes 32nd sixes", "expected": "4 198419 ¢11300000000000000410 96s 32nd 6s"}
+{"input": "fifth pounds 999 sixth", "expected": "5th pounds 9996th"}
+{"input": "ninety eleven twentieth 1000 triple 100 -3", "expected": "901120th 1000 triple 100 3"}
+{"input": "32nd 22 $20 $20 0.07 four minus dollar third", "expected": "32nd 22 $20 $20 0.074 -dollar 3rd"}
+{"input": "cent $20 five euro cent second second minus minus 0 negative thirteen ten twelfth", "expected": "cent €25 cent 2nd 2nd -0 -131012th"}
+{"input": "eight first point sixes thousandth 0.07 quadrillion per hundred 3.5 twenty $20", "expected": "81st 6s 1000th 70000000000000 per 100 3.520 $20"}
+{"input": "nineteen 274th nine pounds six twenty four nineteen fifth", "expected": "19 274th £9 624195th"}
+{"input": "twelfth thirteen cents 1984 million dollars three", "expected": "12th ¢13 $984001000 3"}
+{"input": "negative seven trillion fifteen 1984 cents seven eleven fifteen 22 fifteen twelve second", "expected": "-7000000000015 ¢1984 71115 2215122nd"}
+{"input": "millionth thousandth and and", "expected": "1000000th 1000th and and"}
+{"input": "positive second hundredth cent sixties pounds percent sixth sixties 3.5", "expected": "+2nd 100th cent 60s pounds percent 6th 60s 3.5"}
+{"input": "seven negative 274th positive and per triple -3 32nd nine sixties forty", "expected": "7 negative 274th +and per triple 3 32nd 960s 40"}
+{"input": "plus plus", "expected": "+plus"}
+{"input": "billion thirties thousand thirteen 1000 sixties two zero fourth", "expected": "1000000030s 1013 1060s 204th"}
+{"input": "dollars 007 four cents first seven nineteen fifty 0.07 plus", "expected": "dollars ¢74 1st 71950 0.07 plus"}
+{"input": "fifty 3.5 +7 32nd trillion", "expected": "50 3.5 7 32nd 1000000000000"}
+{"input": "billion thirteen", "expected": "1000000013"}
+{"input": "thousandth thirties twelfth", "expected": "1000th 30s 12th"}
+{"input": "11 triple 22 1984 seven million +7 thousandth fifteen quadrillion euros", "expected": "11 triple 22 19847000000 7000th €15000000000000000"}
+{"input": "11 hundred two 0.07 third 0 dollar hundredth triple +7 negative five minus sixties", "expected": "1102 0.073rd $0 100th triple 7 -5 -60s"}
+{"input": "5% cent hundred triple percent pounds hundred hundredth 1 euro forty 100 274th", "expected": "5% cent 100 triple percent pounds 10000th one 40 100 274th"}
+{"input": "six one", "expected": "61"}
+{"input": "first minus oh cent trillion dollar sixties", "expected": "1st ¢0 $1000000000000 60s"}
+{"input": "sixth and point pounds zero dollars fourth percent plus hundredth o 274th hundred", "expected": "6th and pounds $0 4th percent +100th 0 274th 100"}
+{"input": "+7 one per oh euro nineteen negative", "expected": "71 per ¢19 negative"}
+{"input": "fifty three 22 positive 0 hundredth one", "expected": "53 22 +0th one"}
+{"input": "plus 100 ninety fourth 274th negative nine", "expected": "+194th 274th -9"}
+{"input": "two point cent", "expected": "¢2"}
+{"input": "0.07 ten four three nineteen sixth positive thousandth forty fifty sixth", "expected": "0.071043196th +1000th 4056th"}
+{"input": "sixties thirties nine positive", "expected": "60s 30s 9 positive"}
+{"input": "positive 274th fifteen two five 11 +7 eleven eleven euros three twenty", "expected": "positive 274th 1525 11 €71111 320"}
+{"input": "5% half 32nd 32nd first trillion fifty dollar euro thirties dollars two sixties", "expected": "5% half 32nd 32nd 1st $1000000000050 euro 30s dollars 260s"}
+{"input": "seven 274th 32nd sixties half", "expected": "7 274th 32nd 60s half"}
+{"input": "dollars two", "expected": "dollars 2"}
+{"input": "sixes fifteen ninety", "expected": "6s 1590"}
+{"input": "sixties minus pounds negative pounds second 0.07 5% 0 first dollars one hundredth", "expected": "60s -pounds -pounds 2nd 0.07 5% 1st dollars 100th"}
+{"input": "100 hundredth euros o fourth three", "expected": "10000th euros 04th 3"}
+{"input": "plus 999 ninety ninety double dollars", "expected": "+9999090 double dollars"}
+{"input": "third eleven oh", "expected": "3rd 110"}
+{"input": "zero nine quadrillion double oh one 1 fourth sixties six $20 1 dollar eight", "expected": "9000000000000000001 14th 60s 6 $20 one 8"}
+{"input": "second minus half hundredth trillion dollar 0", "expected": "2nd minus half 100th $1000000000000 0"}
+{"input": "1000 22 hundredth millionth fourth ten six", "expected": "1000 2200th 1000000th 4th 106"}
+{"input": "euro 007 euro twenty 274th", "expected": "euro €7 20 274th"}
+{"input": "-3 hundredth quadrillion nineteen sixties sixes hundred twentieth first thousandth cents eleven", "expected": "300th 100000000000001960s 6s 120th 1st 1000th cents 11"}
+{"input": "274th nineteen billion second minus", "expected": "274th 19000000002nd minus"}
+{"input": "cents second 1984 fifty seven 5% 3.5 fifty hundredth million first hundred", "expected": "cents 2nd 198457 5% 355th 1000001st 100"}
+{"input": "0.07 two millionth 999 -3 sixties second", "expected": "72000th 999 360s 2nd"}
+{"input": "pounds eleven double", "expected": "pounds 11 double"}
+{"input": "32nd point twenty fifth", "expected": "32nd .25th"}
+{"input": "per third ninety 100 1984 32nd hundredth dollars twelve percent eight billion", "expected": "per 3rd 90 100 1984 32nd 100th dollars 12% 8000000000"}
+{"input": "999 thousand dollar millionth hundred twenty 1000 seven dollar 32nd", "expected": "$999000 1000000th 120 $1007 32nd"}
+{"input": "seven thirties 5% first dollars and 0.07 third +7", "expected": "730s 5% 1st dollars and 0.073rd 7"}
+{"input": "seven millionth second one dollars pounds quadrillion twelve 999", "expected": "7000000th 2nd one pounds 1000000000000012 999"}
+{"input": "three 274th six 007 0.07 1 hundredth cents triple quadrillion", "expected": "3 274th 6 7 0.07 100th cents triple 1000000000000000"}
+{"input": "negative 007 half cent thousand millionth cent zero eight quadrillion", "expected": "-7 half cent 1000th cent 8000000000000000"}
+{"input": "thirty twentieth million double thirteen second 5% plus half", "expected": "3020th 100000013132nd 5% plus half"}
+{"input": "-3 euros nine zero cent ten eleven thirties half second 0.07 twelfth hundredth", "expected": "€3.90 101130s half 2nd 0.0712th 100th"}
+{"input": "positive +7 hundreds fifteen minus 0.07", "expected": "+700s 15 -0.07"}
+{"input": "cent hundred o 1984 5% twelfth 1984 per thousand ninety sixes", "expected": "cent 1000 1984 5% 12th 1984 per 1096s"}
+{"input": "one twentieth twelfth forty", "expected": "120th 12th 40"}
+{"input": "zero ten second sixth +7 274th +7 cent minus trillion", "expected": "0102nd 6th 7 274th ¢7 -1000000000000"}
+{"input": "thousand one euros sixes", "expected": "€1001 6s"}
+{"input": "hundredth eight eight 100 zero zero zero five 1984 positive 0 pound nineteen", "expected": "100th 88 1000005 1984 ¢19"}
+{"input": "one double dollars 22 eight", "expected": "one double dollars 228"}
+{"input": "o twentieth +7 pound thirteen twelve eleven 274th 11 3.5 274th thirty", "expected": "020th £7 131211 274th 11 3.5 274th 30"}
+{"input": "euros 0.07 o", "expected": "euros 0.070"}
+{"input": "euros 0 eleven plus", "expected": "euros 11 plus"}
+{"input": "fifteen hundredth", "expected": "1500th"}
+{"input": "thousandth ten ten thousand twentieth twentieth pound thousandth 22", "expected": "1000th 1010020th 20th pound 1000th 22"}
+{"input": "-3 fifty twelve +7 pound double", "expected": "35012 £7 double"}
+{"input": "sixth fourth $20 thirties zero dollars hundreds 0 twenty 11", "expected": "6th 4th $2030s $0 100s 20 11"}
+{"input": "euro million euros forty one eight quadrillion dollar cents million hundreds hundredth thirty fifth", "expected": "euro €1000000 $418000000000000000 cents 1000000s 100th 35th"}
+{"input": "thousand +7 three third fifth thousand forty sixties +7 ninety 100", "expected": "1000 733rd 5th 104060s 790 100"}
+{"input": "thirteen billion twelfth sixties and thirties oh 22 sixes 5% 11", "expected": "13000000012th 60s and 30s 0 226s 5% 11"}
+{"input": "billion fifth fifth +7 negative fourth trillion", "expected": "1000000005th 5th 7 -4th 1000000000000"}
+{"input": "nine million billion per", "expected": "9000000 per"}
+{"input": "hundredth dollars 0 double negative percent pound seven 274th nineteen", "expected": "100th dollars 0 double -percent pound 7 274th 19"}
+{"input": "twelve 007 thousandth pounds euros thirteen 11 twelve 0.07 007 0 billion", "expected": "12 7000th pounds euros 13 1112 0.07 7 0"}
+{"input": "274th 3.5 pound euro thirty forty billion", "expected": "274th £3.5 euro 3040000000000"}
+{"input": "twelve oh oh 274th second 999 forty forty twelve six", "expected": "1200 274th 2nd 9994040126"}
+{"input": "fourth pound per", "expected": "4th pound per"}
+{"input": "twenty oh quadrillion cent 11 four dollars", "expected": "¢200000000000000000 $114"}
+{"input": "quadrillion million quadrillion eleven fifty thousandth", "expected": "100000000000001150000th"}
+{"input": "11 billion twentieth thousandth cent cent dollar fifth 1984 millionth minus", "expected": "11000000020th 1000th cent cent dollar 5th 984001000th minus"}
+{"input": "cents percent ten five 1 double minus 1000 zero first three euros", "expected": "cents percent 105 one double -100001st €3"}
+{"input": "fifteen minus first 32nd minus", "expected": "15 -1st 32nd minus"}
+{"input": "cent trillion 1984 fourth cent first euros thirty six", "expected": "cent 1000000000000 19844th cent 1st euros 36"}
+{"input": "twentieth -3 hundreds 11 thirty thirteen +7 two twelfth fifth double 22 twenty", "expected": "20th 300s 113013 7212th 5th double 2220"}

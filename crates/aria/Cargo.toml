@@ -1,0 +1,99 @@
+[package]
+name                 = "aria"
+version.workspace    = true
+edition              = "2024"
+description          = "Local, privacy-first voice assistant: the daemon and CLI"
+license              = "AGPL-3.0-only"
+repository.workspace = true
+readme               = "../../README.md"
+
+[lints]
+workspace = true
+
+[package.metadata.cargo-shear]
+# Generated tonic services use ProstCodec.
+ignored = [ "tonic-prost" ]
+
+[dependencies]
+anyhow            = { workspace = true }
+aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
+aria-primitives   = { workspace = true }
+aria-stt          = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
+aria-tts          = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
+aria-wake         = { workspace = true, features = [ "livekit", "openwakeword" ] }
+aria-segmentation = { workspace = true }
+aria-speaker      = { workspace = true }
+clap              = { workspace = true }
+getrandom         = "0.3"
+prost             = "0.14"
+prost-types       = "0.14"
+rcgen             = "0.14"
+rusqlite          = { version = "0.40", features = [ "bundled", "hooks" ] }
+
+rustix             = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+sha2               = "0.10"
+serde-saphyr       = { workspace = true, features = [ "serialize" ] }
+signal-hook        = { version = "0.4", default-features = false }
+subtle             = "2"
+tempfile           = { workspace = true }
+thiserror          = { workspace = true }
+time               = { version = "0.3", features = [ "formatting", "macros" ] }
+tokio              = { version = "1", features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
+tokio-stream       = { version = "0.1", features = [ "net" ] }
+tokio-util         = { version = "0.7", features = [ "rt" ] }
+tonic              = { version = "0.14", features = [ "tls-ring" ] }
+tower              = { version = "0.5", default-features = false }
+tonic-health       = "0.14"
+tonic-prost        = "0.14"
+tonic-reflection   = "0.14"
+tonic-types        = "0.14"
+tracing            = { workspace = true }
+tracing-log        = "0.2"
+tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
+ureq               = { version = "3.4", default-features = false }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2            = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [ "NSArray", "NSItemProvider", "NSString", "std" ] }
+objc2-ui-kit     = { version = "0.3.2", default-features = false, features = [ "UIPasteboard", "std" ] }
+
+# `image-data` is on by default and pulls an image codec the clipboard never
+# needs. Wayland support is the opposite: off unless asked for, and without it
+# the clipboard is X11 only.
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3.6", default-features = false, features = [ "wayland-data-control" ] }
+
+# The MLX sidecar requires child processes, which iOS forbids.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+aria-tts              = { workspace = true, features = [ "qwen-accelerate" ] }
+cidre                 = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+rtrb                  = "0.3"
+objc2                 = "0.6"
+objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
+objc2-core-graphics   = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
+objc2-foundation      = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
+
+[dev-dependencies]
+aria-kit     = { workspace = true, features = [ "test-support" ] }
+aria-harness = { workspace = true }
+# The relay's timeouts are minutes long; its tests advance the clock instead.
+tokio = { version = "1", features = [ "test-util" ] }
+
+[[bench]]
+name    = "dictation_latency"
+harness = false
+
+[[bench]]
+name    = "first_text"
+harness = false
+
+[build-dependencies]
+prost             = "0.14"
+protox            = "0.9"
+tonic-prost-build = "0.14"

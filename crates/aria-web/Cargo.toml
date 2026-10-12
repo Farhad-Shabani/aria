@@ -1,0 +1,28 @@
+[package]
+name                 = "aria-web"
+version.workspace    = true
+edition              = "2024"
+description          = "Aria's dictation pipeline compiled to WebAssembly for the browser"
+license              = "Apache-2.0"
+repository.workspace = true
+
+[lib]
+crate-type = [ "cdylib", "rlib" ]
+
+[lints]
+workspace = true
+
+[package.metadata.cargo-shear]
+# Enables browser entropy for transitive sampling dependencies.
+ignored = [ "getrandom" ]
+
+[dependencies]
+aria-kit     = { workspace = true }
+aria-stt     = { workspace = true, features = [ "whisper-candle" ] }
+thiserror    = { workspace = true }
+wasm-bindgen = "0.2"
+
+# candle seeds its sampling from the platform generator, and the wasm build of
+# getrandom only compiles once a backend names its entropy source.
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.3", features = [ "wasm_js" ] }

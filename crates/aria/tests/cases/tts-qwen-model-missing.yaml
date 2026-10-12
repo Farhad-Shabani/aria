@@ -1,0 +1,11 @@
+name: qwen without its talker weights fails daemon startup
+config: |
+  tts:
+    backend: qwen
+    model: ~/missing/qwen-tts
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'failed to initialize speech'
+      - 'the qwen model cannot be used'

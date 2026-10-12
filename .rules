@@ -1,0 +1,77 @@
+# Aria
+
+Local, privacy-first voice assistant: a Rust daemon, its CLI, the macOS app,
+and the speech toolkit crates they are built from.
+
+## Commands
+
+Run from the repository root. `justfile` owns commands; Cargo manifests own
+package names and engine features. Select the features the changed code needs.
+
+| Task | Command |
+|------|---------|
+| Full local gate | `just check` |
+| Check / lint one Cargo package | `just rust-check <package>` / `just rust-lint <package>` |
+| Test one package | `just rust-test <package> [filter]` |
+| Complete native Rust gate | `just rust-native` |
+| Shell integration and sidecar lint/tests | `just support-check` |
+| macOS app formatting and tests | `just swift-check` |
+| Build `Aria.app` with the daemon inside | `just app` |
+| Affected cross-target gate | `just rust-wasm` / `just rust-linux` |
+| Build the CLI | `cargo build --release --bin aria` |
+
+## Runtime Pitfalls
+
+- The source-built CLI is `target/release/aria`. A running daemon outlives a
+  rebuild; restart it using the intended binary before checking live behavior.
+- `aria config show` reflects the invoking shell. The service has its own
+  environment; restart it after changing `~/.aria/config.yaml`.
+- Keep immutable daemon configuration, daemon-owned shared preferences, and
+  client-local presentation choices separate. Reject unknown configuration keys.
+- Listen transcription and voice tracking read separate
+  `RecordingReader::fork()` readers. Preserve the lag and drain bounds in
+  `crates/aria/src/listen/track.rs`.
+- Setup, model downloads, recording, installation, and service changes have
+  side effects. Validate documentation with help output and dry-runs.
+
+## macOS App
+
+- Edit `clients/project.yml`, then run `just swift-project`; keep personal signing
+  in ignored `clients/project.local.yml`. Regenerate protocol stubs with
+  `just proto-swift`; never hand-edit `clients/Generated/`.
+- Preserve Swift 6 mode; get approval for per-target opt-outs. Keep UI state on
+  `@MainActor` and explicitly hop there from off-main callbacks.
+- Explain the safety invariant for every `nonisolated(unsafe)` or
+  `@unchecked Sendable` use.
+- Never log audio or transcripts; mark log values `.public` only if nonpersonal.
+  Show plain error messages to users; avoid force-unwraps, `try!`, and
+  `fatalError` in production paths.
+- Keep decision logic separate from OS effects so XCTest can cover it without
+  live audio, sockets, or devices. Add protocols only for actual substitution.
+- Use `just swift-fix` for formatting.
+
+## Licensing
+
+- `crates/aria` and the macOS app are AGPL-3.0-only. The library crates and
+  `proto/` are Apache-2.0; keep `crates/aria` out of their dependencies.
+- Files that draw the Aria logo fall under `assets/brand/LICENSE`, not AGPL.
+  List any new one there and give it the same header.
+- Record copied third-party files in `THIRD-PARTY-NOTICES.md`. If the file
+  ships in a published crate, add the notice to that crate's own
+  `THIRD-PARTY-NOTICES.md` too.
+
+## Tests
+
+- Rust unit tests live beside their modules; integration tests live in each
+  Cargo package's `tests/`. Keep fixtures with their consuming package.
+- The optional Python sidecar uses `uv` without a root Python project or
+  activated environment. `just support-check` runs its checks.
+
+## Maintaining Instructions
+
+- Add rules only for recurring, non-obvious mistakes, with a concrete action.
+- Scope rules to the work they affect. Link to detailed references; leave file
+  inventories and API descriptions to the code.
+- During feature or fix work, suggest rule additions for review instead of
+  editing instructions incidentally.
+- Edit `.rules`. `AGENTS.md` and `CLAUDE.md` are symlinks to it.

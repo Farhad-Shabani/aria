@@ -1,0 +1,471 @@
+use std::sync::Arc;
+
+use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
+
+use super::{DeliveryMode, DictationSettings, ExecutionControl, TranscriptSink, Utterance};
+
+/// The frontmost app as a transcript sink. Streaming types each segment as
+/// it arrives; complete types the whole transcript once. A transcript-only
+/// press binds no target and types nothing.
+pub(crate) struct Cursor<D: TextDelivery> {
+    delivery: D,
+    target: Option<Target<D::Prepared>>,
+}
+
+/// Where the dictation under way lands, picked before any text.
+struct Target<P> {
+    mode: DeliveryMode,
+    control: Arc<ExecutionControl>,
+    prepared: P,
+    /// Once any text went out, a space precedes each segment.
+    typed: bool,
+    finished: bool,
+    delivered: Option<DeliveryOutcome>,
+}
+
+impl<D: TextDelivery> Cursor<D> {
+    pub(crate) fn new(delivery: D) -> Self {
+        Self {
+            delivery,
+            target: None,
+        }
+    }
+
+    /// Types `text` where the press landed, or nowhere when the press
+    /// asked only for its transcript.
+    fn deliver(&mut self, mode: DeliveryMode, text: &str) -> Result<(), DeliveryError> {
+        let Some(target) = self.target.as_mut() else {
+            return Ok(());
+        };
+        if target.finished || target.mode != mode {
+            return Ok(());
+        }
+        let spaced = if target.typed {
+            format!(" {text}")
+        } else {
+            text.to_owned()
+        };
+        let outcome =
+            match self
+                .delivery
+                .deliver(&target.prepared, &spaced, should_cancel(&target.control))
+            {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    target.finished = true;
+                    return Err(error);
+                }
+            };
+        target.typed = true;
+        target.delivered = Some(outcome);
+        Ok(())
+    }
+}
+
+impl<D: TextDelivery> TranscriptSink for Cursor<D> {
+    type Error = DeliveryError;
+
+    fn dictation_started(
+        &mut self,
+        settings: &DictationSettings,
+        control: &Arc<ExecutionControl>,
+    ) -> Result<(), DeliveryError> {
+        if settings.transcript_only {
+            self.target = None;
+            return Ok(());
+        }
+        let output = match settings.delivery_mode {
+            DeliveryMode::Complete => settings.output_mode,
+            DeliveryMode::Streaming => streaming_output_mode(settings.output_mode)
+                .ok_or(DeliveryError::InsertionUnsupported)?,
+        };
+        let output = if settings.output_mode == OutputMode::InsertAndSubmit {
+            OutputMode::InsertAndSubmit
+        } else {
+            output
+        };
+        let prepared = self.delivery.prepare(output, should_cancel(control))?;
+        self.target = Some(Target {
+            mode: settings.delivery_mode,
+            control: Arc::clone(control),
+            prepared,
+            typed: false,
+            finished: false,
+            delivered: None,
+        });
+        Ok(())
+    }
+
+    fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DeliveryError> {
+        self.deliver(DeliveryMode::Streaming, utterance.text)
+    }
+
+    fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DeliveryError> {
+        if self.target.as_ref().is_none_or(|target| target.finished) {
+            return Ok(());
+        }
+        self.deliver(DeliveryMode::Complete, utterance.text)?;
+        let Some(target) = self.target.as_mut() else {
+            return Ok(());
+        };
+        target.finished = true;
+        if target.delivered == Some(DeliveryOutcome::Inserted) {
+            self.delivery
+                .finish(&target.prepared, should_cancel(&target.control))?;
+        }
+        Ok(())
+    }
+
+    fn delivered(&self) -> Option<DeliveryOutcome> {
+        self.target.as_ref()?.delivered
+    }
+
+    fn dictation_finished(&mut self) {
+        self.target = None;
+    }
+}
+
+fn should_cancel(control: &ExecutionControl) -> impl Fn() -> bool + '_ {
+    || control.should_stop()
+}
+
+// Streaming inserts each segment as it finalizes, so no whole transcript is
+// left to fall back with: one failed segment would strand a fragment on the
+// clipboard. `InsertOrCopy` therefore streams as plain insertion.
+fn streaming_output_mode(mode: OutputMode) -> Option<OutputMode> {
+    match mode {
+        OutputMode::Insert | OutputMode::InsertAndSubmit | OutputMode::InsertOrCopy => {
+            Some(OutputMode::Insert)
+        }
+        OutputMode::Copy => None,
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::audio::SilenceDuration;
+    use crate::dictation::StopMode;
+    use crate::transcription::Language;
+
+    use super::*;
+
+    pub(crate) struct RecordingDelivery {
+        pub(crate) log: Arc<Mutex<Vec<String>>>,
+        pub(crate) fail: bool,
+    }
+
+    impl TextDelivery for RecordingDelivery {
+        type Prepared = OutputMode;
+
+        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+        const OUTLIVES_PROCESS: bool = true;
+
+        fn prepare(
+            &self,
+            mode: OutputMode,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<Self::Prepared, DeliveryError> {
+            self.log.lock().unwrap().push(format!("prepare:{mode:?}"));
+            Ok(mode)
+        }
+
+        fn finish(
+            &self,
+            prepared: &Self::Prepared,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            if *prepared == OutputMode::InsertAndSubmit {
+                if should_cancel() {
+                    return Err(DeliveryError::Cancelled);
+                }
+                self.log.lock().unwrap().push("submit".to_owned());
+                if self.fail {
+                    return Err(DeliveryError::TargetUnavailable);
+                }
+            }
+            Ok(())
+        }
+
+        fn deliver(
+            &self,
+            _prepared: &Self::Prepared,
+            text: &str,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<DeliveryOutcome, DeliveryError> {
+            self.log.lock().unwrap().push(format!("deliver:{text}"));
+            if self.fail {
+                Err(DeliveryError::TargetUnavailable)
+            } else {
+                Ok(DeliveryOutcome::Inserted)
+            }
+        }
+    }
+
+    pub(crate) fn settings(
+        delivery_mode: DeliveryMode,
+        output_mode: OutputMode,
+    ) -> DictationSettings {
+        DictationSettings {
+            dictation_history: true,
+            history_audio_retention: false,
+            mute_output: false,
+            recognition_language: Language::Automatic,
+            output_mode,
+            delivery_mode,
+            stop_mode: StopMode::Manual,
+            silence_duration: SilenceDuration::default(),
+            own_voice_only: false,
+            project: None,
+            transcript_only: false,
+        }
+    }
+
+    fn cursor() -> (Arc<Mutex<Vec<String>>>, Cursor<RecordingDelivery>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let cursor = Cursor::new(RecordingDelivery {
+            log: Arc::clone(&log),
+            fail: false,
+        });
+        (log, cursor)
+    }
+
+    #[test]
+    fn auto_submit_follows_complete_or_streaming_delivery_once() {
+        for mode in [DeliveryMode::Complete, DeliveryMode::Streaming] {
+            let (log, mut cursor) = cursor();
+            let control = ExecutionControl::for_test(StopMode::Manual);
+            cursor
+                .dictation_started(&settings(mode, OutputMode::InsertAndSubmit), &control)
+                .unwrap();
+            cursor.segment(Utterance::anonymous("hello")).unwrap();
+            cursor.segment(Utterance::anonymous("there")).unwrap();
+            assert!(!log.lock().unwrap().iter().any(|entry| entry == "submit"));
+            cursor
+                .completed(Utterance::anonymous("hello there"))
+                .unwrap();
+            cursor
+                .completed(Utterance::anonymous("hello there"))
+                .unwrap();
+            let expected = match mode {
+                DeliveryMode::Complete => {
+                    vec!["prepare:InsertAndSubmit", "deliver:hello there", "submit"]
+                }
+                DeliveryMode::Streaming => vec![
+                    "prepare:InsertAndSubmit",
+                    "deliver:hello",
+                    "deliver: there",
+                    "submit",
+                ],
+            };
+            assert_eq!(*log.lock().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn failed_streaming_delivery_prevents_submission_at_completion() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::InsertAndSubmit),
+                &control,
+            )
+            .unwrap();
+        cursor.segment(Utterance::anonymous("hello")).unwrap();
+        cursor.delivery.fail = true;
+        assert!(cursor.segment(Utterance::anonymous("there")).is_err());
+        cursor
+            .completed(Utterance::anonymous("hello there"))
+            .unwrap();
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["prepare:InsertAndSubmit", "deliver:hello", "deliver: there"]
+        );
+    }
+
+    #[test]
+    fn failed_submission_is_not_retried_or_retyped() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::InsertAndSubmit),
+                &control,
+            )
+            .unwrap();
+        cursor.segment(Utterance::anonymous("hello")).unwrap();
+        cursor.delivery.fail = true;
+        assert!(cursor.completed(Utterance::anonymous("hello")).is_err());
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["prepare:InsertAndSubmit", "deliver:hello", "submit"]
+        );
+    }
+
+    #[test]
+    fn clipboard_fallback_never_runs_submission() {
+        struct ClipboardFallback;
+
+        impl TextDelivery for ClipboardFallback {
+            type Prepared = ();
+            const DEFAULT_MODE: OutputMode = OutputMode::Copy;
+            const OUTLIVES_PROCESS: bool = true;
+
+            fn prepare(
+                &self,
+                mode: OutputMode,
+                _cancel: impl Fn() -> bool,
+            ) -> Result<(), DeliveryError> {
+                assert_eq!(mode, OutputMode::InsertOrCopy);
+                Ok(())
+            }
+
+            fn deliver(
+                &self,
+                _prepared: &(),
+                _text: &str,
+                _cancel: impl Fn() -> bool,
+            ) -> Result<DeliveryOutcome, DeliveryError> {
+                Ok(DeliveryOutcome::Copied)
+            }
+
+            fn finish(
+                &self,
+                _prepared: &(),
+                _cancel: impl Fn() -> bool,
+            ) -> Result<(), DeliveryError> {
+                panic!("clipboard fallback must not run submission");
+            }
+        }
+
+        let mut cursor = Cursor::new(ClipboardFallback);
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::InsertOrCopy),
+                &control,
+            )
+            .unwrap();
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        assert_eq!(cursor.delivered(), Some(DeliveryOutcome::Copied));
+    }
+
+    #[test]
+    fn streaming_inserts_without_the_clipboard_fallback() {
+        assert_eq!(
+            streaming_output_mode(OutputMode::Insert),
+            Some(OutputMode::Insert)
+        );
+        assert_eq!(
+            streaming_output_mode(OutputMode::InsertOrCopy),
+            Some(OutputMode::Insert)
+        );
+        assert_eq!(
+            streaming_output_mode(OutputMode::InsertAndSubmit),
+            Some(OutputMode::Insert)
+        );
+        assert_eq!(streaming_output_mode(OutputMode::Copy), None);
+    }
+
+    #[test]
+    fn a_transcript_only_press_prepares_and_types_nothing() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+        settings.transcript_only = true;
+
+        cursor.dictation_started(&settings, &control).unwrap();
+        cursor.segment(Utterance::anonymous("hello")).unwrap();
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        assert_eq!(cursor.delivered(), None);
+        cursor.dictation_finished();
+
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn streaming_types_each_segment_with_a_space_after_the_first() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::InsertOrCopy),
+                &control,
+            )
+            .unwrap();
+        cursor.segment(Utterance::anonymous("hello")).unwrap();
+        cursor.segment(Utterance::anonymous("there")).unwrap();
+        cursor
+            .completed(Utterance::anonymous("hello there"))
+            .unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["prepare:Insert", "deliver:hello", "deliver: there"]
+        );
+    }
+
+    #[test]
+    fn complete_types_only_the_whole_transcript() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::InsertOrCopy),
+                &control,
+            )
+            .unwrap();
+        cursor.segment(Utterance::anonymous("hello")).unwrap();
+        cursor
+            .completed(Utterance::anonymous("hello there"))
+            .unwrap();
+
+        assert_eq!(cursor.delivered(), Some(DeliveryOutcome::Inserted));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["prepare:InsertOrCopy", "deliver:hello there"]
+        );
+    }
+
+    #[test]
+    fn streaming_refuses_copy_mode_before_any_text() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+
+        let started = cursor.dictation_started(
+            &settings(DeliveryMode::Streaming, OutputMode::Copy),
+            &control,
+        );
+
+        assert!(matches!(started, Err(DeliveryError::InsertionUnsupported)));
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_new_dictation_starts_without_a_space() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let streaming = settings(DeliveryMode::Streaming, OutputMode::Insert);
+
+        cursor.dictation_started(&streaming, &control).unwrap();
+        cursor.segment(Utterance::anonymous("one")).unwrap();
+        cursor.dictation_finished();
+        cursor.dictation_started(&streaming, &control).unwrap();
+        cursor.segment(Utterance::anonymous("two")).unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "prepare:Insert",
+                "deliver:one",
+                "prepare:Insert",
+                "deliver:two"
+            ]
+        );
+    }
+}

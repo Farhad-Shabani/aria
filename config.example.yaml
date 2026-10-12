@@ -1,0 +1,162 @@
+# Aria daemon configuration
+# `aria setup` writes ~/.aria/config.yaml with the engine choices. Copy this
+# file there instead to hand-tune every key. Setup keeps the values it does
+# not ask about, but its rewrite drops comments; the old file stays at
+# config.yaml.bak.
+
+transcription:
+  backend: whisper
+  model: ~/models/whisper/ggml-large-v3-turbo-q8_0.bin
+
+# Parakeet uses a directory of ONNX files and detects the spoken language.
+# Aria rejects an explicit recognition language other than English.
+# transcription:
+#   backend: parakeet
+#   model: ~/models/parakeet/parakeet-tdt-0.6b-v3
+#   device: cpu   # or gpu
+
+# Moonshine runs in-process on the CPU. Aria supports its English model
+# and accepts no device setting.
+# transcription:
+#   backend: moonshine
+#   model: ~/models/moonshine/base
+
+# Nemotron streams English speech in 560 ms chunks using an encoder cache.
+# The model directory contains encoder.onnx, encoder.onnx.data,
+# decoder_joint.onnx, and tokenizer.model.
+# transcription:
+#   backend: nemotron
+#   model: ~/models/nemotron/nemotron-speech-streaming-en-0.6b
+
+# parakeet-mlx runs on the GPU in a daemon-owned Python process. It needs
+# an interpreter with parakeet-mlx installed. The model is a Hugging Face
+# repository ID, resolved through that interpreter's cache.
+# transcription:
+#   backend: parakeet-mlx
+#   model: mlx-community/parakeet-tdt-0.6b-v3
+#   interpreter: ~/.local/share/aria/parakeet-mlx/bin/python3
+
+# Audio source. Default is the microphone; wav-file replays one fixed
+# 16 kHz mono 16-bit recording for unattended benchmarking and testing.
+# capture:
+#   backend: wav-file
+#   path: ~/recordings/fixture.wav
+
+# Wake-word monitoring is opt-in and runs only in a persistent daemon using the
+# microphone. The classifier's directory must also contain melspectrogram.onnx
+# and embedding_model.onnx. Detection starts normal dictation and stops it on
+# silence; aria dictate remains available.
+# wake:
+#   enabled: true
+#   backend: openwakeword
+#   model: ~/models/wakeword/aria.onnx
+#   threshold: 0.5
+
+# The global dictation hotkey: a clean tap of the key toggles streaming
+# dictation. Enabled by default on macOS; it needs a persistent `aria daemon`
+# and the Accessibility grant on the aria binary (`aria doctor` shows the
+# steps). Which key (right-option by default, or fn) is a user preference
+# set from the Mac app's settings. No Linux backend exists yet.
+# hotkey:
+#   enabled: false
+
+# Recordings relayed off an Apple Watch or iPhone on the local network. The
+# daemon listens on this port, advertises itself over Bonjour as
+# `_aria-grpc._tcp`, and pastes what it hears into the focused app. Needs
+# ffmpeg for the audio the Watch sends (`brew install ffmpeg`).
+#
+# Off unless you ask for it. This port has no authentication and no TLS, so
+# anything that can reach it can put text on this Mac — only turn it on for a
+# network you trust.
+# relay:
+#   enabled: true
+#   port: 9850
+
+# Speech output. The system backend speaks through the platform's own voice
+# program (`say` on macOS, `espeak-ng` on Linux) and needs no model. A voice
+# names one of that program's voices; rate is a multiplier on its natural
+# pace, 0.25 to 4. An `aria say` request may override either per utterance.
+# tts:
+#   backend: system
+#   voice: Samantha
+#   rate: 1.0
+
+# Kokoro synthesizes in-process from an ONNX model and a voices archive, and
+# streams: the first sentence plays while the rest is still synthesizing.
+# `fallback: system` speaks through the platform voice when the model cannot
+# load, decided once at engine build and logged.
+# tts:
+#   backend: kokoro
+#   model: ~/models/kokoro/kokoro.onnx
+#   voices: ~/models/kokoro/voices.bin
+#   voice: af_heart
+#   fallback: system
+
+# Qwen3-TTS CustomVoice runs locally from two Hugging Face snapshots: the
+# talker model and the 12 Hz speech-tokenizer model. The default voice is
+# `vivian`; another configured preset name may be selected here or per request.
+# Base voice cloning is not supported.
+# tts:
+#   backend: qwen
+#   model: ~/models/qwen/qwen3-tts-0.6b-customvoice
+#   tokenizer: ~/models/qwen/qwen3-tts-tokenizer
+#   voice: vivian
+#   fallback: system
+
+# Listen transcribes system audio into ~/.aria/transcripts (macOS 14.2+).
+# It supports parakeet, moonshine, and nemotron. An omitted backend inherits
+# the transcription backend if supported. Each session loads its own engine.
+# listen:
+#   backend: moonshine
+#   model: ~/models/moonshine/base
+#   transcripts_dir: ~/.aria/transcripts
+
+# Dictation and Listen share speaker models and enrolled profiles.
+# `model` defaults to ~/.wespeaker/en/model.onnx; without an installed model,
+# transcripts have no speaker labels.
+#
+# `segmentation_model` estimates who speaks in each audio frame. Without it,
+# Listen estimates speakers from individual transcription segments.
+# speaker:
+#   model: ~/.wespeaker/en/model.onnx
+#   segmentation_model: ~/models/pyannote/segmentation-3.0.onnx
+#   speakers_dir: ~/.aria/speakers
+
+# `aria ask` hands a spoken or typed prompt to a coding agent and prints the
+# reply; it needs the persistent daemon (`aria daemon`). `agent` is the
+# CLI's default for `--agent` (`claude-code` or `codex`, found on PATH);
+# `workdir` pins where the agent works (default: the caller's directory);
+# `project_roots` lists directories whose git repos an ask may name, so
+# "in writ, why does the build fail?" runs in `<root>/Writ` and later asks
+# stay there; `timeout` is seconds per reply, at most 570. Asks run side by
+# side; asks on one conversation (agent and `--session`, default the
+# directory) take turns.
+# ARIA_CHAT_AGENT and ARIA_CHAT_TIMEOUT override.
+# chat:
+#   agent: claude-code   # or codex
+#   workdir: ~/src
+#   project_roots: ["~", "~/Projects"]
+#   timeout: 300.0
+
+# Memory: facts the user states while asking, extracted by `claude` after
+# the fact and shown to the agent on later asks. Off by default; even on,
+# only spoken asks with `own_voice_only` and an enrolled owner feed it.
+# `dir` also holds `lexicon.txt`, the terms that fix misheard words in
+# every transcript whenever that file exists.
+# ARIA_MEMORY_ENABLED, ARIA_MEMORY_EXTRACT_MODEL, ARIA_MEMORY_MAX_FACTS and
+# ARIA_MEMORY_DIR override.
+# memory:
+#   enabled: false
+#   extract_model: sonnet
+#   max_facts_per_session: 10
+#   dir: ~/.aria/memory
+
+# Operator-controlled safety budgets in seconds. User-facing recognition,
+# output, and recording choices belong in preferences, not this file.
+dictation_timeouts:
+  recording: 300.0
+  delivery: 5.0
+  overall: 320.0
+
+# Drops "um", "uh", and repeated words before delivery. Env: ARIA_DICTATION_CLEANUP.
+# dictation_cleanup: false

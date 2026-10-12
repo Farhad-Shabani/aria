@@ -1,0 +1,9 @@
+name: an unsupported tts backend fails daemon startup
+config: |
+  tts:
+    backend: elevenlabs
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'tts.backend does not accept "elevenlabs"; supported values are kokoro, qwen, and system'

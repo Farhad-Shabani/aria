@@ -1,0 +1,85 @@
+name: Aria
+
+# Personal signing (DEVELOPMENT_TEAM etc.) lives in project.local.yml,
+# git-ignored. Without it builds sign ad-hoc, which works but voids the
+# macOS Accessibility grant on every rebuild — so local devs set a team.
+# XcodeGen can't skip a missing include; `just swift-project` seeds an
+# empty overlay when none exists.
+include:
+  - path: project.local.yml
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+
+options:
+  bundleIdPrefix: com.aria
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "26.0"
+
+# The daemon's proto is the one contract every client speaks. Regenerate the
+# Swift stubs with `just proto-swift` after changing proto/.
+packages:
+  grpc-swift-2:
+    url: https://github.com/grpc/grpc-swift-2.git
+    from: 2.0.0
+  grpc-swift-nio-transport:
+    url: https://github.com/grpc/grpc-swift-nio-transport.git
+    from: 2.0.0
+  grpc-swift-protobuf:
+    url: https://github.com/grpc/grpc-swift-protobuf.git
+    from: 2.0.0
+  swift-protobuf:
+    url: https://github.com/apple/swift-protobuf.git
+    from: 1.38.0
+
+targets:
+  Aria:
+    type: application
+    platform: macOS
+    sources:
+      - path: Aria
+        excludes:
+          - Info.plist
+      - path: Shared
+      - path: Generated
+        createIntermediateGroups: true
+    dependencies:
+      - package: grpc-swift-2
+        product: GRPCCore
+      - package: grpc-swift-nio-transport
+        product: GRPCNIOTransportHTTP2
+      - package: grpc-swift-protobuf
+        product: GRPCProtobuf
+      - package: swift-protobuf
+        product: SwiftProtobuf
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.farhad.aria.mac
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: Aria/Info.plist
+        MARKETING_VERSION: "0.0.0"
+        CURRENT_PROJECT_VERSION: "0"
+
+  AriaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/AriaTests
+    dependencies:
+      - target: Aria
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.farhad.aria.mac.tests
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Aria.app/Contents/MacOS/Aria
+
+schemes:
+  Aria:
+    build:
+      targets:
+        Aria: all
+    test:
+      targets:
+        - AriaTests

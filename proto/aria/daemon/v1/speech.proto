@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/errors.proto";
+
+service SpeechService {
+  // Returns when the utterance completes or is interrupted. A replacement
+  // interrupts the daemon's active utterance, regardless of its caller, and
+  // returns RESOURCE_EXHAUSTED if that utterance does not yield within two
+  // seconds. Cancelling the RPC or disconnecting cancels this request.
+  rpc Speak(SpeakRequest) returns (SpeakResponse);
+  // Requests interruption of the daemon's admitted utterance, including
+  // synthesis before playback. Returns before interruption completes; the
+  // outstanding Speak reports its eventual outcome. Does not cancel requests
+  // waiting for admission or initial engine loading.
+  rpc Stop(StopSpeechRequest) returns (StopSpeechResponse);
+}
+
+message SpeakRequest {
+  // Trimmed before validation; nonempty and at most 8 KiB of UTF-8.
+  string text = 1;
+  // Absent uses the configured voice. Trimmed before validation; nonempty,
+  // at most 64 UTF-8 bytes, with no control characters.
+  optional string voice = 2;
+  // Absent uses the configured rate. Finite multiplier from 0.25 to 4,
+  // inclusive; 1.0 is the natural pace.
+  optional float rate = 3;
+}
+
+message SpeakResponse {
+  SpeechOutcome outcome = 1;
+}
+
+message StopSpeechRequest {}
+
+message StopSpeechResponse {
+  // An admitted utterance received the interruption signal. It may still be
+  // synthesizing or playing, and may finish before observing the signal.
+  bool stop_requested = 1;
+}
+
+enum SpeechOutcome {
+  SPEECH_OUTCOME_UNSPECIFIED = 0;
+  SPEECH_OUTCOME_COMPLETED = 1;
+  // Interrupted before completion by Stop or a replacing Speak.
+  SPEECH_OUTCOME_INTERRUPTED = 2;
+}
+
+message SpeechEvent {
+  SpeechStage stage = 1;
+  // Meaningful only when stage is SPEECH_STAGE_FAILED; otherwise UNSPECIFIED.
+  ErrorCode error_code = 2;
+}
+
+enum SpeechStage {
+  SPEECH_STAGE_UNSPECIFIED = 0;
+  // The engine is producing audio that has not reached the speaker yet.
+  SPEECH_STAGE_SYNTHESIZING = 1;
+  // Audio is actually flowing.
+  SPEECH_STAGE_SPEAKING = 2;
+  SPEECH_STAGE_COMPLETED = 3;
+  // Interrupted before completion by Stop or a replacing Speak.
+  SPEECH_STAGE_INTERRUPTED = 4;
+  SPEECH_STAGE_CANCELLED = 5;
+  SPEECH_STAGE_FAILED = 6;
+}

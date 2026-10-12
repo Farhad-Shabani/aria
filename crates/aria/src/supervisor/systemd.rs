@@ -1,0 +1,148 @@
+//! systemd: a user unit under `~/.config/systemd/user`.
+//!
+//! Surviving logout needs `loginctl enable-linger`, which install leaves to
+//! the user.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::{fs, io};
+
+use super::{Job, SupervisorError, UnitSpec, run};
+
+const UNIT: &str = "aria-daemon.service";
+pub(super) const UNIT_FILE: &str = UNIT;
+const SYSTEMCTL: &str = "/usr/bin/systemctl";
+/// The wake unit the Python `setup.sh` registers.
+const LEGACY_UNIT: &str = "aria-wake.service";
+/// What `systemctl` exits with for a unit it does not know.
+const NO_SUCH_UNIT: i32 = 5;
+
+pub(super) fn unit_directory(home: &Path) -> PathBuf {
+    home.join(".config/systemd/user")
+}
+
+pub(super) fn render(spec: &UnitSpec) -> String {
+    let mut environment = String::new();
+    for (name, value) in &spec.environment {
+        environment.push_str(&format!("Environment=\"{name}={}\"\n", quote(value)));
+    }
+    format!(
+        "[Unit]\nDescription=Aria daemon\n\n[Service]\nExecStart=\"{}\" daemon\nRestart=on-failure\n{environment}\n[Install]\nWantedBy=default.target\n",
+        quote(spec.exe.as_os_str())
+    )
+}
+
+pub(super) fn load(_unit: &Path) -> Result<(), SupervisorError> {
+    systemctl(&["daemon-reload"])?;
+    systemctl(&["enable", "--now", UNIT])
+}
+
+pub(super) fn unload() -> Result<(), SupervisorError> {
+    if job()? == Job::Absent {
+        return Ok(());
+    }
+    systemctl(&["disable", "--now", UNIT])
+}
+
+/// `is-enabled` exits non-zero for an unknown unit; a failed call means
+/// not registered. `show` then answers `0` for a unit without a process.
+pub(super) fn job() -> Result<Job, SupervisorError> {
+    match systemctl(&["is-enabled", "--quiet", UNIT]) {
+        Ok(()) => {}
+        Err(SupervisorError::Command { .. }) => return Ok(Job::Absent),
+        Err(error) => return Err(error),
+    }
+    let mut command = Command::new(SYSTEMCTL);
+    command.args(["--user", "show", "--property", "MainPID", "--value", UNIT]);
+    Ok(parse_main_pid(&run(command)?))
+}
+
+/// Stops the legacy wake unit and deletes it, so it stops competing for
+/// the microphone. Answers the unit file it removed.
+pub(super) fn remove_legacy_wake_agent(home: &Path) -> Result<Option<PathBuf>, SupervisorError> {
+    let unit = unit_directory(home).join(LEGACY_UNIT);
+    if !unit.exists() {
+        return Ok(None);
+    }
+    match systemctl(&["disable", "--now", LEGACY_UNIT]) {
+        // A unit systemd never loaded has nothing to stop. Any other
+        // failure means it may still be recording, so the unit stays.
+        Ok(()) => {}
+        Err(SupervisorError::Command { status, .. }) if status.code() == Some(NO_SUCH_UNIT) => {}
+        Err(error) => return Err(error),
+    }
+    match fs::remove_file(&unit) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => return Err(SupervisorError::RemoveUnit { path: unit, source }),
+    }
+    systemctl(&["daemon-reload"])?;
+    Ok(Some(unit))
+}
+
+pub(super) fn start() -> Result<(), SupervisorError> {
+    systemctl(&["start", UNIT])
+}
+
+pub(super) fn stop() -> Result<(), SupervisorError> {
+    systemctl(&["stop", UNIT])
+}
+
+fn parse_main_pid(value: &str) -> Job {
+    match value.trim().parse() {
+        Ok(0) | Err(_) => Job::Idle,
+        Ok(pid) => Job::Running(pid),
+    }
+}
+
+fn systemctl(args: &[&str]) -> Result<(), SupervisorError> {
+    let mut command = Command::new(SYSTEMCTL);
+    command.arg("--user").args(args);
+    run(command).map(drop)
+}
+
+/// Inside a double-quoted unit value systemd C-unescapes backslashes and
+/// expands `%` specifiers. Newlines are refused before rendering.
+fn quote(value: &OsStr) -> String {
+    value
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    #[test]
+    fn the_unit_runs_the_binary_with_the_installing_environment() {
+        let spec = UnitSpec {
+            exe: PathBuf::from("/opt/aria 100%/ar\"ia"),
+            home: PathBuf::from("/home/tester"),
+            environment: vec![
+                ("PATH", OsString::from("/usr/local/bin:/usr/bin")),
+                ("ARIA_RUNTIME_DIR", OsString::from("/run/user/1000/a\\b")),
+            ],
+        };
+
+        assert_eq!(
+            render(&spec),
+            "[Unit]\nDescription=Aria daemon\n\n[Service]\n\
+             ExecStart=\"/opt/aria 100%%/ar\\\"ia\" daemon\nRestart=on-failure\n\
+             Environment=\"PATH=/usr/local/bin:/usr/bin\"\n\
+             Environment=\"ARIA_RUNTIME_DIR=/run/user/1000/a\\\\b\"\n\n\
+             [Install]\nWantedBy=default.target\n"
+        );
+    }
+
+    #[test]
+    fn a_main_pid_of_zero_means_no_process() {
+        assert_eq!(parse_main_pid("0\n"), Job::Idle);
+        assert_eq!(parse_main_pid("4242\n"), Job::Running(4242));
+        assert_eq!(parse_main_pid(""), Job::Idle);
+    }
+}

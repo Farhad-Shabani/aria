@@ -1,0 +1,83 @@
+[workspace.package]
+version    = "0.1.0"
+repository = "https://github.com/Farhad-Shabani/aria"
+
+[workspace]
+members = [
+  "crates/aria",
+  "crates/aria-bench",
+  "crates/aria-bench-speaker",
+  "crates/aria-harness",
+  "crates/aria-kit",
+  "crates/aria-primitives",
+  "crates/aria-stt",
+  "crates/aria-tts",
+  "crates/aria-wake",
+  "crates/aria-segmentation",
+  "crates/aria-speaker",
+  "crates/aria-web",
+]
+default-members = [ "crates/aria" ]
+resolver = "3"
+
+# Favor smaller browser downloads over faster linking.
+[profile.browser]
+inherits      = "release"
+lto           = "fat"
+codegen-units = 1
+strip         = true
+
+# Keep source locations for backtraces without full debug information.
+[profile.dev]
+debug = "line-tables-only"
+
+# Shared by more than one workspace member. A dependency only one member needs
+# stays in that member's manifest.
+[workspace.dependencies]
+# crates.io requires a version beside each internal path.
+aria-harness      = { path = "crates/aria-harness", version = "0.1.0" }
+aria-kit          = { path = "crates/aria-kit", version = "0.1.0" }
+aria-primitives   = { path = "crates/aria-primitives", version = "0.1.0" }
+aria-segmentation = { path = "crates/aria-segmentation", version = "0.1.0" }
+aria-speaker      = { path = "crates/aria-speaker", version = "0.1.0" }
+aria-stt          = { path = "crates/aria-stt", version = "0.1.0" }
+aria-tts          = { path = "crates/aria-tts", version = "0.1.0" }
+aria-wake         = { path = "crates/aria-wake", version = "0.1.0" }
+hound             = "3.5"
+rubato            = "4"
+anyhow            = "1"
+clap              = { version = "4", features = [ "derive" ] }
+# Pinned to what parakeet-rs and silero already resolve to. A second version
+# would link a second copy of the native ONNX Runtime.
+ort          = "=2.0.0-rc.13"
+rustix       = "1"
+serde        = { version = "1", features = [ "derive" ] }
+serde_json   = "1"
+serde-saphyr = { version = "0.0.29", default-features = false, features = [ "deserialize" ] }
+tempfile     = "3"
+thiserror    = "2"
+tracing      = "0.1"
+
+[workspace.lints.rust]
+unsafe_code          = "deny"
+dead_code            = "deny"
+rust_2018_idioms     = { level = "deny", priority = -1 }
+trivial_casts        = "deny"
+unreachable_pub      = "deny"
+unused_import_braces = "deny"
+
+[workspace.lints.clippy]
+dbg_macro                     = "deny"
+debug_assert_with_mut_call    = "deny"
+doc_link_with_quotes          = "deny"
+inefficient_to_string         = "deny"
+manual_ok_or                  = "deny"
+map_flatten                   = "deny"
+match_same_arms               = "deny"
+redundant_clone               = "deny"
+semicolon_if_nothing_returned = "deny"
+todo                          = "deny"
+trait_duplication_in_bounds   = "deny"
+uninlined_format_args         = "deny"
+unimplemented                 = "deny"
+use_self                      = "deny"

@@ -1,0 +1,5 @@
+disallowed-methods = [
+  { path = "std::process::Command::spawn", reason = "child processes require bounded waiting and mandatory cleanup", replacement = "aria_primitives::process::ChildProcess::spawn" },
+  { path = "std::process::Command::output", reason = "child processes require bounded output, waiting, and cleanup", replacement = "aria_primitives::process::ChildProcess" },
+  { path = "std::process::Command::status", reason = "child processes require bounded waiting and mandatory cleanup", replacement = "aria_primitives::process::ChildProcess" },
+]

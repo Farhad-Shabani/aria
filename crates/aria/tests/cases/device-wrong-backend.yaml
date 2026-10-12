@@ -1,0 +1,10 @@
+name: a device setting on a backend without one fails daemon startup
+config: |
+  transcription:
+    backend: moonshine
+    device: gpu
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "transcription.device does not apply to the parakeet backend"

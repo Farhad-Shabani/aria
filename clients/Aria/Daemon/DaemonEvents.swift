@@ -1,0 +1,117 @@
+import Foundation
+import GRPCCore
+import GRPCNIOTransportHTTP2
+
+/// Subscribes to the daemon's event stream over its Unix socket.
+///
+/// The daemon comes and goes, so a dropped stream is normal rather than an
+/// error: report the gap, wait, and subscribe again.
+@MainActor
+final class DaemonEvents {
+    /// One stream, many readers: both overlays watch the same subscription.
+    private var stageHandlers: [(Aria_Daemon_V1_DictationEvent?) -> Void] = []
+    private var captionHandlers: [(Aria_Daemon_V1_CaptionSnapshot?) -> Void] = []
+    private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
+    private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
+    private var levelHandlers: [(Float) -> Void] = []
+
+    /// Called for every dictation event, and with `nil` whenever the stream
+    /// is not carrying events. The whole event, not just its stage: a
+    /// delivered press also says where its text went.
+    func onStage(_ handle: @escaping (Aria_Daemon_V1_DictationEvent?) -> Void) {
+        stageHandlers.append(handle)
+    }
+
+    func onCaption(_ handle: @escaping (Aria_Daemon_V1_CaptionSnapshot?) -> Void) {
+        captionHandlers.append(handle)
+    }
+
+    /// Called for every microphone level while a press records. Lossy at the
+    /// source: a level that did not arrive is a frame, not a gap.
+    func onLevel(_ handle: @escaping (Float) -> Void) {
+        levelHandlers.append(handle)
+    }
+
+    /// Called for every chat stage, and with `nil` whenever the stream is
+    /// not carrying events.
+    func onChat(_ handle: @escaping (Aria_Daemon_V1_ChatEvent?) -> Void) {
+        chatHandlers.append(handle)
+    }
+
+    /// Called for every enrollment stage, and with `nil` whenever the
+    /// stream is not carrying events.
+    func onSpeaker(_ handle: @escaping (Aria_Daemon_V1_SpeakerEvent?) -> Void) {
+        speakerHandlers.append(handle)
+    }
+
+    private static let retryDelay = Duration.seconds(2)
+
+    private var task: Task<Void, Never>?
+
+    func start() {
+        guard task == nil else { return }
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.subscribeOnce()
+                self?.publish(stage: nil)
+                self?.publish(chat: nil)
+                self?.publish(speaker: nil)
+                self?.publish(caption: nil)
+                try? await Task.sleep(for: Self.retryDelay)
+            }
+        }
+    }
+
+    private func publish(stage: Aria_Daemon_V1_DictationEvent?) {
+        for handler in stageHandlers { handler(stage) }
+    }
+
+    private func publish(chat: Aria_Daemon_V1_ChatEvent?) {
+        for handler in chatHandlers { handler(chat) }
+    }
+
+    private func publish(speaker: Aria_Daemon_V1_SpeakerEvent?) {
+        for handler in speakerHandlers { handler(speaker) }
+    }
+
+    private func publish(caption: Aria_Daemon_V1_CaptionSnapshot?) {
+        for handler in captionHandlers { handler(caption) }
+    }
+
+    private func publish(level: Float) {
+        for handler in levelHandlers { handler(level) }
+    }
+
+    private func subscribeOnce() async {
+        do {
+            try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
+                let events = Aria_Daemon_V1_EventsService.Client(wrapping: client)
+                try await events.subscribe(request: ClientRequest(message: .init())) { response in
+                    for try await event in response.messages {
+                        switch event.payload {
+                        case .dictation(let dictation):
+                            await MainActor.run {
+                                self.publish(stage: dictation)
+                                if [.delivered, .failed, .cancelled].contains(dictation.stage) {
+                                    NotificationCenter.default.post(name: .dictationHistoryChanged, object: nil)
+                                }
+                            }
+                        case .caption(let caption):
+                            await MainActor.run { self.publish(caption: caption) }
+                        case .level(let level):
+                            await MainActor.run { self.publish(level: level.level) }
+                        case .chat(let chat):
+                            await MainActor.run { self.publish(chat: chat) }
+                        case .speaker(let speaker):
+                            await MainActor.run { self.publish(speaker: speaker) }
+                        default:
+                            continue
+                        }
+                    }
+                }
+            }
+        } catch {
+            NSLog("DaemonEvents: subscription ended — \(error)")
+        }
+    }
+}

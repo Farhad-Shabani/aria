@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.aria.daemon</string>
+    <key>CFBundleName</key>
+    <string>Aria</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Aria uses the microphone for speech transcription and optional wake-word detection.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Aria transcribes this Mac's system audio into local transcript files when you start listen mode.</string>
+</dict>
+</plist>

@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+service RelayService {
+  // Take one recording from a phone or watch on the LAN, transcribe it
+  // through the model this daemon already holds, and deliver the text the
+  // way a press would. The client sends a `RelayStart`, then `RelayAudio`
+  // chunks, then a `RelayStop` or a half-close.
+  // The recorder stays claimed until the session ends, blocking local dictation.
+  // Cancelling the RPC requests cancellation of transcription and delivery;
+  // it cannot undo text already delivered.
+  // Uploads are capped at 64 MiB, with 4 MiB per message and four concurrent
+  // streams per connection. Audio more than a second past 600 seconds is
+  // rejected; decoding has a separate 60-second deadline.
+  // RelayStart must arrive within 10 seconds. After Start, a 10-second idle
+  // gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
+  // audio arrived. Uploads must finish within 120 seconds after Start.
+  // Failures arrive as a gRPC status rather than an event:
+  //   RESOURCE_EXHAUSTED - a recording is running, an upload limit is exceeded,
+  //     or the audio is too long
+  //   INVALID_ARGUMENT - an unsupported format, missing/late opening RelayStart,
+  //     a second RelayStart, no audio, or PCM ending mid-sample
+  //   DEADLINE_EXCEEDED - an unfinished upload stalls or exceeds 120 seconds,
+  //     or delivery times out
+  //   ABORTED - the delivery target changes
+  //   UNAVAILABLE - the daemon is stopping
+  //   CANCELLED - the client's own stream failed
+  //   INTERNAL - audio decoding, transcription, or delivery failed
+  // Delivery failures do not return the transcript and can include partial delivery.
+  rpc Relay(stream RelayRequest) returns (stream RelayEvent);
+}
+
+message RelayRequest {
+  oneof body {
+    RelayStart start = 1;
+    RelayAudio audio = 2;
+    RelayStop stop = 3;
+  }
+}
+
+// The opening message of a stream. Any other opening message is refused.
+message RelayStart {
+  AudioFormat format = 1;
+}
+
+message RelayAudio {
+  bytes chunk = 1;
+}
+
+// Ends the recording. A half-closed stream ends it too.
+message RelayStop {}
+
+message RelayEvent {
+  RelayStage stage = 1;
+  // The transcript; only on COMPLETED.
+  string text = 2;
+}
+
+enum RelayStage {
+  RELAY_STAGE_UNSPECIFIED = 0;
+  // The upload is complete; decoding and transcription are starting.
+  RELAY_STAGE_TRANSCRIBING = 1;
+  // Transcription and delivery succeeded. Terminal.
+  RELAY_STAGE_COMPLETED = 2;
+  // No audio arrived, or no eligible speech was recognized. Terminal.
+  RELAY_STAGE_NO_SPEECH = 3;
+}
+
+enum AudioFormat {
+  AUDIO_FORMAT_UNSPECIFIED = 0;
+  // AAC in ADTS, or M4A/MP4 with its moov index before the audio, as Apple
+  // recorders write it. The upload is decoded as a stream, so a trailing moov
+  // fails. The container/stream supplies rate and channels.
+  // Decoded to 16 kHz mono.
+  AUDIO_FORMAT_AAC = 1;
+  // Raw mono signed 16-bit little-endian PCM at 16 kHz, without a file header.
+  AUDIO_FORMAT_PCM_S16LE = 2;
+}

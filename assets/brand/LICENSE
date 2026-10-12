@@ -1,0 +1,11 @@
+The Aria name and logo are not licensed under AGPL-3.0 or Apache-2.0.
+All rights reserved. This holds in every form, including the app icon and
+the mark the app draws.
+
+These files carry the logo, so this notice covers them in place of the
+repository's licenses:
+
+- assets/brand/
+- clients/Aria/Aria.icns
+- clients/Aria/App/MenuBarMark.swift
+- clients/Shared/Brand/Mark.swift

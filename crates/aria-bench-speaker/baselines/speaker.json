@@ -1,0 +1,59 @@
+{
+  "measured": "2026-09-08",
+  "model": "wespeaker-voxceleb-resnet34-LM",
+  "reference": {
+    "source": "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM",
+    "vox1_o_clean_lm_no_asnorm": 0.797,
+    "note": "the model card's own figure for this checkpoint without AS-norm"
+  },
+  "runs": [
+    {
+      "corpus": "VoxCeleb1-O",
+      "trials": "veri_test2.txt, the official cleaned list",
+      "count": 37611,
+      "enrollment_samples": 1,
+      "equal_error_percent": 0.86,
+      "equal_error_threshold": 0.358,
+      "gates": {
+        "ENROLLED_THRESHOLD": { "at": 0.5, "false_accept": 0.01, "false_reject": 8.23 },
+        "OWN_VOICE_THRESHOLD": { "at": 0.4, "false_accept": 0.33, "false_reject": 1.82 },
+        "CLUSTER_THRESHOLD": { "at": 0.21, "false_accept": 7.9, "false_reject": 0.05 }
+      }
+    },
+    {
+      "corpus": "VoxCeleb1 test",
+      "trials": "generated, 40 speakers",
+      "count": 3200,
+      "enrollment_samples": 5,
+      "note": "what `aria speaker enroll` actually builds",
+      "equal_error_percent": 0.25,
+      "equal_error_threshold": 0.432,
+      "gates": {
+        "ENROLLED_THRESHOLD": { "at": 0.5, "false_accept": 0.0, "false_reject": 0.69 },
+        "OWN_VOICE_THRESHOLD": { "at": 0.4, "false_accept": 0.25, "false_reject": 0.25 }
+      },
+      "consistency": { "lowest": 0.539, "tenth": 0.594, "median": 0.681 }
+    }
+  ],
+  "consistency_floor": {
+    "corpus": "LibriSpeech test-clean",
+    "chosen": 0.4,
+    "honest_enrollments": 800,
+    "mixed_enrollments": 160,
+    "note": "mixed means one or two of the three samples are another speaker",
+    "sweep": [
+      { "floor": 0.35, "honest_refused": 0.0, "mixed_caught": [82.5, 77.5] },
+      { "floor": 0.4, "honest_refused": 0.0, "mixed_caught": [100.0, 95.0] },
+      { "floor": 0.45, "honest_refused": 0.0, "mixed_caught": [100.0, 100.0] },
+      { "floor": 0.5, "honest_refused": 5.0, "mixed_caught": [100.0, 100.0] }
+    ],
+    "why_not_higher": "the lowest honest enrollment scored 0.463, so 0.45 leaves no room for a noisier room than LibriSpeech's"
+  },
+  "reproduce": [
+    "VoxCeleb1 test audio: huggingface.co/datasets/asahi417/voxceleb1-test-split (ungated, 16 kHz mono)",
+    "official list: robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt, with / rewritten as + to match the mirror's filenames",
+    "LibriSpeech test-clean: openslr.org/resources/12/test-clean.tar.gz, FLAC converted to 16 kHz mono WAV",
+    "generated lists: crates/aria-bench-speaker/scripts/make_trials.py --enroll 5 --per-speaker 40 (add --mix 1 for a spoiled enrollment)",
+    "just bench-speaker <trials.txt>"
+  ]
+}

@@ -1,0 +1,11 @@
+name: a relative model path fails daemon startup
+config: |
+  transcription:
+    backend: whisper
+    model: relative/model.bin
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "the whisper model cannot be used"
+      - "path must be absolute: relative/model.bin"

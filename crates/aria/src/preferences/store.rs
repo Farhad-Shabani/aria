@@ -1,0 +1,338 @@
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
+
+use tokio::sync::watch;
+
+use super::{AskHotkey, Language, PreferenceStoreError, UserPreferences, file};
+use crate::audio::SilenceDuration;
+use crate::delivery::OutputMode;
+use crate::dictation::{DeliveryMode, StopMode};
+use crate::hotkey::HotkeyKey;
+
+const DEFAULT_PREFERENCE_RELATIVE_PATH: &str = ".aria/preferences.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PreferenceSnapshot {
+    pub revision: u64,
+    pub preferences: UserPreferences,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PreferencePatch {
+    pub dictation_history: Option<bool>,
+    pub history_audio_retention: Option<bool>,
+    pub mute_output: Option<bool>,
+    pub recognition_language: Option<Language>,
+    pub output_mode: Option<OutputMode>,
+    pub stop_mode: Option<StopMode>,
+    pub delivery_mode: Option<DeliveryMode>,
+    pub silence_duration: Option<SilenceDuration>,
+    pub own_voice_only: Option<bool>,
+    pub dictation_hotkey: Option<HotkeyKey>,
+    pub ask_hotkey: Option<AskHotkey>,
+    pub project_vocabulary: Option<bool>,
+    pub vocabulary_directory: Option<Option<crate::vocabulary::Directory>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateResult {
+    Updated(PreferenceSnapshot),
+    Conflict(PreferenceSnapshot),
+}
+
+pub(crate) struct PreferenceStore {
+    path: PathBuf,
+    state: Mutex<PreferenceSnapshot>,
+    /// Fires only when the key changes, so the hotkey listener is not
+    /// re-armed by unrelated preference writes.
+    dictation_hotkey: watch::Sender<HotkeyKey>,
+}
+
+impl PreferenceStore {
+    pub(crate) fn default_path(home: &Path) -> PathBuf {
+        home.join(DEFAULT_PREFERENCE_RELATIVE_PATH)
+    }
+
+    pub(crate) fn open(path: impl Into<PathBuf>) -> Result<Self, PreferenceStoreError> {
+        let path = path.into();
+        let snapshot = file::load(&path)?;
+        let (dictation_hotkey, _) = watch::channel(snapshot.preferences.dictation_hotkey);
+        Ok(Self {
+            path,
+            state: Mutex::new(snapshot),
+            dictation_hotkey,
+        })
+    }
+
+    pub(crate) fn dictation_hotkey(&self) -> watch::Receiver<HotkeyKey> {
+        self.dictation_hotkey.subscribe()
+    }
+
+    pub(crate) fn snapshot(&self) -> Result<PreferenceSnapshot, PreferenceStoreError> {
+        Ok(self.lock_state()?.clone())
+    }
+
+    pub(crate) fn update(
+        &self,
+        expected_revision: u64,
+        patch: PreferencePatch,
+    ) -> Result<UpdateResult, PreferenceStoreError> {
+        let mut current = self.lock_state()?;
+        if current.revision != expected_revision {
+            return Ok(UpdateResult::Conflict(current.clone()));
+        }
+
+        let preferences = patch.apply_to(&current.preferences);
+        if preferences == current.preferences {
+            return Ok(UpdateResult::Updated(current.clone()));
+        }
+
+        let revision = current
+            .revision
+            .checked_add(1)
+            .ok_or(PreferenceStoreError::RevisionExhausted)?;
+        let updated = PreferenceSnapshot {
+            revision,
+            preferences,
+        };
+        let prepared = file::prepare(&self.path, &updated)?;
+        let committed = file::commit(prepared, &self.path)?;
+        *current = updated.clone();
+        let key = updated.preferences.dictation_hotkey;
+        self.dictation_hotkey.send_if_modified(|seen| {
+            let changed = *seen != key;
+            *seen = key;
+            changed
+        });
+        committed.confirm_durability()?;
+        Ok(UpdateResult::Updated(updated))
+    }
+
+    fn lock_state(&self) -> Result<MutexGuard<'_, PreferenceSnapshot>, PreferenceStoreError> {
+        self.state
+            .lock()
+            .map_err(|_| PreferenceStoreError::LockPoisoned)
+    }
+}
+
+impl PreferencePatch {
+    fn apply_to(self, current: &UserPreferences) -> UserPreferences {
+        UserPreferences {
+            dictation_history: self.dictation_history.unwrap_or(current.dictation_history),
+            history_audio_retention: self
+                .history_audio_retention
+                .unwrap_or(current.history_audio_retention),
+            mute_output: self.mute_output.unwrap_or(current.mute_output),
+            recognition_language: self
+                .recognition_language
+                .unwrap_or_else(|| current.recognition_language.clone()),
+            output_mode: self.output_mode.unwrap_or(current.output_mode),
+            stop_mode: self.stop_mode.unwrap_or(current.stop_mode),
+            delivery_mode: self.delivery_mode.unwrap_or(current.delivery_mode),
+            silence_duration: self.silence_duration.unwrap_or(current.silence_duration),
+            own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),
+            dictation_hotkey: self.dictation_hotkey.unwrap_or(current.dictation_hotkey),
+            ask_hotkey: self.ask_hotkey.unwrap_or(current.ask_hotkey),
+            project_vocabulary: self
+                .project_vocabulary
+                .unwrap_or(current.project_vocabulary),
+            vocabulary_directory: self
+                .vocabulary_directory
+                .unwrap_or_else(|| current.vocabulary_directory.clone()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_audio_retention_is_opt_in_and_snapshotted() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        let original = store.snapshot().unwrap().preferences;
+        assert!(!original.history_audio_retention);
+        let settings = original.resolve_dictation(crate::dictation::DictationRequest::default());
+        assert!(!settings.history_audio_retention);
+
+        for (revision, enabled) in [(0, true), (1, false)] {
+            store
+                .update(
+                    revision,
+                    PreferencePatch {
+                        history_audio_retention: Some(enabled),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let preferences = PreferenceStore::open(&path)
+                .unwrap()
+                .snapshot()
+                .unwrap()
+                .preferences;
+            assert_eq!(preferences.history_audio_retention, enabled);
+            assert_eq!(
+                preferences
+                    .resolve_dictation(crate::dictation::DictationRequest::default())
+                    .history_audio_retention,
+                enabled
+            );
+            assert!(!settings.history_audio_retention);
+        }
+    }
+
+    #[test]
+    fn mute_output_persists_and_changes_only_future_recordings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        assert!(!store.snapshot().unwrap().preferences.mute_output);
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    mute_output: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let store = PreferenceStore::open(&path).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        assert!(snapshot.preferences.mute_output);
+        let recording = snapshot
+            .preferences
+            .resolve_dictation(crate::dictation::DictationRequest::default());
+
+        store.update(1, PreferencePatch::default()).unwrap();
+        assert!(store.snapshot().unwrap().preferences.mute_output);
+        store
+            .update(
+                1,
+                PreferencePatch {
+                    mute_output: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let preferences = PreferenceStore::open(&path)
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .preferences;
+        assert!(recording.mute_output);
+        assert!(
+            !preferences
+                .resolve_dictation(crate::dictation::DictationRequest::default())
+                .mute_output
+        );
+    }
+
+    #[test]
+    fn disabling_history_survives_restart_and_enters_dictation_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    dictation_history: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let preferences = PreferenceStore::open(&path)
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .preferences;
+        assert!(
+            !preferences
+                .resolve_dictation(crate::dictation::DictationRequest::default())
+                .dictation_history
+        );
+    }
+
+    #[test]
+    fn vocabulary_selection_persists_and_respects_request_overrides() {
+        use crate::dictation::DictationRequest;
+        use crate::vocabulary::{Context, Directory};
+
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).expect("preferences");
+        let selected = Directory::new("/projects/selected".into()).expect("absolute path");
+        let explicit = Directory::new("/projects/explicit".into()).expect("absolute path");
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    project_vocabulary: Some(true),
+                    vocabulary_directory: Some(Some(selected.clone())),
+                    ..PreferencePatch::default()
+                },
+            )
+            .expect("selection persists");
+        let preferences = PreferenceStore::open(&path)
+            .expect("reopen")
+            .snapshot()
+            .expect("snapshot")
+            .preferences;
+        for (context, expected) in [
+            (Context::Default, Some(selected.clone())),
+            (Context::Directory(explicit.clone()), Some(explicit.clone())),
+            (Context::Disabled, None),
+        ] {
+            let settings = preferences.clone().resolve_dictation(DictationRequest {
+                project: context,
+                ..Default::default()
+            });
+            assert_eq!(settings.project, expected);
+        }
+        let disabled = PreferencePatch {
+            project_vocabulary: Some(false),
+            ..Default::default()
+        }
+        .apply_to(&preferences);
+        assert_eq!(disabled.vocabulary_directory, Some(selected));
+        assert_eq!(
+            disabled
+                .resolve_dictation(DictationRequest {
+                    project: Context::Directory(explicit),
+                    ..Default::default()
+                })
+                .project,
+            None
+        );
+        let cleared = PreferencePatch {
+            vocabulary_directory: Some(None),
+            ..Default::default()
+        }
+        .apply_to(&preferences);
+        assert!(cleared.vocabulary_directory.is_none());
+    }
+
+    #[test]
+    fn updating_the_dictation_hotkey_notifies_watchers() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let store = PreferenceStore::open(dir.path().join("preferences.json")).expect("opens");
+        let mut watcher = store.dictation_hotkey();
+
+        let unrelated = PreferencePatch {
+            own_voice_only: Some(true),
+            ..Default::default()
+        };
+        store.update(0, unrelated).expect("updates");
+        assert!(!watcher.has_changed().expect("sender alive"));
+
+        let key = PreferencePatch {
+            dictation_hotkey: Some(HotkeyKey::Fn),
+            ..Default::default()
+        };
+        store.update(1, key).expect("updates");
+        assert!(watcher.has_changed().expect("sender alive"));
+        assert_eq!(*watcher.borrow_and_update(), HotkeyKey::Fn);
+    }
+}

@@ -1,0 +1,41 @@
+name: enrolling a replayed voice stores a profile
+# No microphone and nobody's real voice: the daemon takes its audio from a
+# WAV, so this runs the whole enrollment path off recorded speech. Set
+# ARIA_TEST_SPEECH_WAV to any 16 kHz mono recording with half a second of
+# voice in it, and ARIA_TEST_SPEAKER_MODEL to the WeSpeaker graph `aria setup`
+# fetches. A daemon will not start without a transcription model either, so
+# ARIA_TEST_WHISPER_MODEL is needed too. Any unset, the case skips.
+config: |
+  transcription:
+    backend: whisper
+    model: ${WHISPER_MODEL}
+  capture:
+    backend: wav-file
+    path: ${SPEECH_WAV}
+  speaker:
+    model: ${SPEAKER_MODEL}
+expect:
+  daemon:
+    startup: success
+  client:
+    # Every sample replays the same fixture, so the samples agree perfectly
+    # and the consistency gate is not what this measures. What it measures is
+    # that recording, embedding, averaging, and storing all connect.
+    - run: [speaker, enroll, ada, --samples, "2"]
+      stdout_contains:
+        - "enrolled ada as owner"
+    - run: [speaker, list]
+      stdout_contains:
+        - "ada (owner) — enrolled 20"
+    # The name is taken now, and a second enrollment must say so rather than
+    # overwrite the voice already there.
+    - run: [speaker, enroll, ada, --samples, "2"]
+      exit: failure
+      stderr_contains:
+        - "that name is already enrolled"
+    - run: [speaker, remove, ada]
+      stdout_contains:
+        - "removed ada"
+    - run: [speaker, list]
+      stdout_contains:
+        - "nobody is enrolled"

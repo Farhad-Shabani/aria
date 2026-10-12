@@ -1,0 +1,20 @@
+{"reference": "the socket closes", "hypothesis": "the socket closes", "substitutions": 0, "deletions": 0, "insertions": 0}
+{"reference": "the socket closes", "hypothesis": "", "substitutions": 0, "deletions": 3, "insertions": 0}
+{"reference": "", "hypothesis": "the socket closes", "substitutions": 0, "deletions": 0, "insertions": 3}
+{"reference": "a b c", "hypothesis": "a x c", "substitutions": 1, "deletions": 0, "insertions": 0}
+{"reference": "a b c", "hypothesis": "a c", "substitutions": 0, "deletions": 1, "insertions": 0}
+{"reference": "a b c", "hypothesis": "a b z c", "substitutions": 0, "deletions": 0, "insertions": 1}
+{"reference": "a b c d e", "hypothesis": "a x y d e", "substitutions": 2, "deletions": 0, "insertions": 0}
+{"reference": "a b c", "hypothesis": "x y z", "substitutions": 3, "deletions": 0, "insertions": 0}
+{"reference": "one two three four", "hypothesis": "one three four", "substitutions": 0, "deletions": 1, "insertions": 0}
+{"reference": "one two three four", "hypothesis": "one two two three four", "substitutions": 0, "deletions": 0, "insertions": 1}
+{"reference": "mister quilter is the apostle of the middle classes", "hypothesis": "mr quilter is the apostle of the middle classes", "substitutions": 1, "deletions": 0, "insertions": 0}
+{"reference": "he has grave doubts whether sir frederick leighton is work is really greek after all", "hypothesis": "he has grave doubts whether sir frederick leightons work is really greek after all", "substitutions": 1, "deletions": 1, "insertions": 0}
+{"reference": "nor is mister quilter is manner less interesting than his matter", "hypothesis": "nor is mister quilters manner less interesting than his matter", "substitutions": 1, "deletions": 1, "insertions": 0}
+{"reference": "the quick brown fox jumps over the lazy dog", "hypothesis": "the quick brown fox jumped over a lazy dog", "substitutions": 2, "deletions": 0, "insertions": 0}
+{"reference": "i believe you are mistaken", "hypothesis": "i believe that you are mistaken", "substitutions": 0, "deletions": 0, "insertions": 1}
+{"reference": "i believe that you are mistaken", "hypothesis": "i believe you are mistaken", "substitutions": 0, "deletions": 1, "insertions": 0}
+{"reference": "stuff and nonsense", "hypothesis": "stuff nonsense and", "substitutions": 0, "deletions": 1, "insertions": 1}
+{"reference": "a a a", "hypothesis": "a a a a", "substitutions": 0, "deletions": 0, "insertions": 1}
+{"reference": "a a a a", "hypothesis": "a a a", "substitutions": 0, "deletions": 1, "insertions": 0}
+{"reference": "22 dollars", "hypothesis": "twenty two dollars", "substitutions": 1, "deletions": 0, "insertions": 1}

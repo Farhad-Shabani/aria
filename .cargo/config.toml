@@ -1,0 +1,19 @@
+# ONNX Runtime's WebGPU provider ships libwebgpu_dawn.dylib beside the binary.
+[target.aarch64-apple-darwin]
+rustflags = [ "-C", "link-arg=-Wl,-rpath,@executable_path" ]
+
+# getrandom's wasm build refuses to compile until a backend names its entropy
+# source.
+#
+# No `+simd128`: candle's simd128 path lacks its f16 vector type and does not
+# compile. The build still emits vector instructions where the optimizer finds
+# them, so anything reading the output needs SIMD enabled.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "--cfg",
+  'getrandom_backend="wasm_js"',
+  # A browser has no stack unwinder, so unwinding tables are dead weight in
+  # the download.
+  "-C",
+  "panic=abort",
+]
