@@ -139,6 +139,12 @@ rust-linux:
 rust-clean *args:
     cargo clean {{ args }}
 
+# Write the licenses of everything in the aria binary, for release archives
+notices:
+    cargo about generate --locked -m crates/aria/Cargo.toml \
+        -c licenses/about.toml -o target/THIRD-PARTY-LICENSES.md licenses/about.hbs
+    cat licenses/native.md >> target/THIRD-PARTY-LICENSES.md
+
 # Swift: the macOS app
 
 swift_srcs := "clients/Aria clients/Shared clients/Tests"

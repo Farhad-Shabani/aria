@@ -1,0 +1,19 @@
+# Third-party licenses
+
+The `aria` binary includes these Rust crates. Each license text appears once,
+followed by the crates that use it.
+
+{{#each licenses}}
+## {{{name}}}
+
+Used by:
+
+{{#each used_by}}
+- [{{{crate.name}}} {{{crate.version}}}](https://crates.io/crates/{{{crate.name}}})
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}

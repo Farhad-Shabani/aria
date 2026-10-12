@@ -13,9 +13,11 @@ workspace = true
 
 [features]
 default = [  ]
-kokoro  = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror" ]
-qwen    = [ "dep:candle-core", "dep:candle-nn", "dep:rand", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
-system  = [ "dep:thiserror" ]
+# Kokoro's phonemizer compiles in espeak-ng, which is GPL-3.0-or-later. A
+# binary built with this feature must follow the GPL.
+kokoro = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror" ]
+qwen   = [ "dep:candle-core", "dep:candle-nn", "dep:rand", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
+system = [ "dep:thiserror" ]
 # Apple-only Candle backends; Linux selects the qwen CPU feature.
 # Accelerate is the released macOS path. Metal initialization can panic in Candle 0.11.
 qwen-accelerate = [ "qwen", "candle-core/accelerate", "candle-nn/accelerate" ]
