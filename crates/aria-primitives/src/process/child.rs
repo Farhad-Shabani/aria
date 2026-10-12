@@ -114,10 +114,19 @@ impl ChildProcess {
     }
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, ChildProcessError> {
-        let Some(child) = self.child.as_mut() else {
+        if self.child.is_none() {
             return Ok(self.exit_status);
-        };
-        let status = child.try_wait().map_err(ChildProcessError::Inspect)?;
+        }
+        if !self.child_exited()? {
+            return Ok(None);
+        }
+        // The unreaped leader still holds the group id, so this kill cannot
+        // reach a group that reused it.
+        self.terminate_group()?;
+        let status = self
+            .child_mut()?
+            .try_wait()
+            .map_err(ChildProcessError::Inspect)?;
         if status.is_some() {
             self.child = None;
             self.exit_status = status;
@@ -167,7 +176,6 @@ impl ChildProcess {
 
     /// Whether the child has exited, without reaping it, so its status stays
     /// for whoever waits.
-    #[cfg(target_os = "macos")]
     fn child_exited(&self) -> Result<bool, ChildProcessError> {
         use rustix::process::{WaitId, WaitIdOptions, waitid};
 
@@ -305,6 +313,18 @@ mod tests {
         drop(process);
 
         assert!(gone(grandchild), "the grandchild outlived its group");
+    }
+
+    #[test]
+    fn seeing_the_leader_exit_kills_the_rest_of_its_group() {
+        let (mut process, grandchild) = spawn_group();
+
+        assert!(exited(&mut process), "the shell should exit on its own");
+
+        assert!(
+            gone(grandchild),
+            "the grandchild outlived its reaped leader"
+        );
     }
 
     #[test]
