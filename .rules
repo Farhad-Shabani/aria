@@ -50,6 +50,13 @@ package names and engine features. Select the features the changed code needs.
   live audio, sockets, or devices. Add protocols only for actual substitution.
 - Use `just swift-fix` for formatting.
 
+## Tests
+
+- Rust unit tests live beside their modules; integration tests live in each
+  Cargo package's `tests/`. Keep fixtures with their consuming package.
+- The optional Python sidecar uses `uv` without a root Python project or
+  activated environment. `just support-check` runs its checks.
+
 ## Licensing
 
 - `crates/aria` and the macOS app are AGPL-3.0-only. The library crates and
@@ -59,13 +66,6 @@ package names and engine features. Select the features the changed code needs.
 - Record copied third-party files in `THIRD-PARTY-NOTICES.md`. If the file
   ships in a published crate, add the notice to that crate's own
   `THIRD-PARTY-NOTICES.md` too.
-
-## Tests
-
-- Rust unit tests live beside their modules; integration tests live in each
-  Cargo package's `tests/`. Keep fixtures with their consuming package.
-- The optional Python sidecar uses `uv` without a root Python project or
-  activated environment. `just support-check` runs its checks.
 
 ## Maintaining Instructions
 

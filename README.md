@@ -55,6 +55,12 @@ You can use these Rust crates in your own projects, without the Aria daemon.
 - `aria-web`: the dictation pipeline in the browser, through WebAssembly
 - `aria-primitives`: process, file, and socket building blocks
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributors sign a
+[CLA](https://cla-assistant.io/Farhad-Shabani/aria) on their first pull
+request.
+
 ## License
 
 - The daemon, CLI, macOS app, and the rest of this repository:
