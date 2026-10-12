@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-tts"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Local text-to-speech engines behind aria-kit's synthesis contract"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "text-to-speech", "tts", "speech-synthesis", "kokoro" ]
 
 [lints]
 workspace = true

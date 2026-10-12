@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-segmentation"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Speaker segmentation with pyannote models, for aria-kit"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "diarization", "speaker", "segmentation", "pyannote", "audio" ]
 
 [lints]
 workspace = true

@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-harness"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Black-box acceptance harness that runs a binary against a scenario catalog"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "testing", "acceptance", "harness", "cli" ]
 
 [lints]
 workspace = true

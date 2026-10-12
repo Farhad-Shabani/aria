@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-stt"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Local speech-to-text engines behind aria-kit's transcription contract"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "speech-to-text", "stt", "asr", "whisper", "parakeet" ]
 
 [lints]
 workspace = true

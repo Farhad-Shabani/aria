@@ -1,10 +1,12 @@
 [package]
 name                 = "aria-web"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Aria's dictation pipeline compiled to WebAssembly for the browser"
 license              = "Apache-2.0"
 repository.workspace = true
+readme.workspace     = true
+keywords             = [ "wasm", "webassembly", "speech-to-text", "browser", "dictation" ]
 
 [lib]
 crate-type = [ "cdylib", "rlib" ]

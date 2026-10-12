@@ -1,11 +1,11 @@
 [package]
 name                 = "aria"
 version.workspace    = true
-edition              = "2024"
+edition.workspace    = true
 description          = "Local, privacy-first voice assistant: the daemon and CLI"
 license              = "AGPL-3.0-only"
 repository.workspace = true
-readme               = "../../README.md"
+readme.workspace     = true
 
 [lints]
 workspace = true
