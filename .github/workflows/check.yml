@@ -1,4 +1,4 @@
-name: CI
+name: Checks
 
 on:
   push:
@@ -13,7 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  linux:
+    name: Linux
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     env:
@@ -36,3 +37,24 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
       - name: just check
         run: xvfb-run -a just check
+
+  macos:
+    name: macOS
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: taiki-e/install-action@v2.87.28
+        with:
+          tool: just@1.58.0
+      # Formatting, cargo-shear, and the support checks give the same result
+      # on any platform, so only the Linux job runs them.
+      - name: Lint and test Rust, test the app
+        run: just rust-lint-all rust-test-all swift-check
