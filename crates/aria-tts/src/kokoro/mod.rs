@@ -184,7 +184,8 @@ impl Synthesizer for Kokoro {
 }
 
 impl Synth {
-    /// One model pass: the audio for one chunk of text.
+    /// The audio for one chunk of text, in as many model passes as its
+    /// phonemes need.
     fn synthesize(
         &mut self,
         text: &str,
@@ -198,11 +199,21 @@ impl Synth {
             .g2p
             .g2p(text)
             .map_err(|_word_bearing| unusable("the text could not be turned into phonemes"))?;
-        let mut tokens = vocabulary::tokenize(&phonemes);
-        tokens.truncate(MAX_TOKENS - 2);
-        if tokens.is_empty() {
-            return Ok(Vec::new());
+        let mut audio = Vec::new();
+        for tokens in passes(&phonemes) {
+            audio.extend(self.run(tokens, voice, rate, voices)?);
         }
+        Ok(audio)
+    }
+
+    /// One model pass over tokens that fit its context.
+    fn run(
+        &mut self,
+        mut tokens: Vec<i64>,
+        voice: Option<&str>,
+        rate: SpeakingRate,
+        voices: &VoiceStyles,
+    ) -> Result<Vec<f32>, SynthesisError> {
         let style = voices
             .style(voice, tokens.len())
             .expect("the voice name was checked before synthesis began")
@@ -230,6 +241,28 @@ impl Synth {
     }
 }
 
+/// Token ids for `phonemes`, cut at word gaps into passes that fit the
+/// model's context. Spelled-out words can make one chunk outgrow one pass.
+fn passes(phonemes: &str) -> Vec<Vec<i64>> {
+    let limit = MAX_TOKENS - 2;
+    let mut passes = Vec::new();
+    let mut current = Vec::new();
+    for word in phonemes.split_inclusive(' ') {
+        let word = vocabulary::tokenize(word);
+        if !current.is_empty() && current.len() + word.len() > limit {
+            passes.push(std::mem::take(&mut current));
+        }
+        current.extend(word);
+    }
+    passes.push(current);
+    // A single word past the limit has no gap to cut at.
+    passes
+        .iter()
+        .flat_map(|pass| pass.chunks(limit))
+        .map(<[i64]>::to_vec)
+        .collect()
+}
+
 fn tensor<T: ort::value::PrimitiveTensorElementType + std::fmt::Debug + Clone + 'static>(
     shape: Vec<i64>,
     data: Vec<T>,
@@ -254,6 +287,17 @@ fn unusable(detail: &str) -> SynthesisError {
 #[cfg(test)]
 mod tests {
     use misaki_rs::{G2P, Language};
+
+    use super::{MAX_TOKENS, passes, vocabulary};
+
+    #[test]
+    fn long_phonemes_split_at_words_without_losing_tokens() {
+        let phonemes = "hˈi ".repeat(200);
+        let passes = passes(&phonemes);
+        assert!(passes.len() > 1, "800 tokens should not fit one pass");
+        assert!(passes.iter().all(|pass| pass.len() <= MAX_TOKENS - 2));
+        assert_eq!(passes.concat(), vocabulary::tokenize(&phonemes));
+    }
 
     #[test]
     fn words_outside_the_lexicon_are_spelled_out() {
