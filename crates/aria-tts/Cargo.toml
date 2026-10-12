@@ -13,8 +13,7 @@ workspace = true
 
 [features]
 default = [  ]
-# Kokoro's phonemizer compiles in espeak-ng, which is GPL-3.0-or-later. A
-# binary built with this feature must follow the GPL.
+# Kokoro compiles in espeak-ng, which is GPL-3.0-or-later.
 kokoro = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror" ]
 qwen   = [ "dep:candle-core", "dep:candle-nn", "dep:rand", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
 system = [ "dep:thiserror" ]
@@ -29,15 +28,14 @@ aria-kit = { workspace = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 candle-core = { version = "0.11", optional = true }
 candle-nn   = { version = "0.11", optional = true }
-# misaki's espeak fallback for unknown words carries GPL-3.0 licensing.
-misaki-rs  = { version = "0.3", optional = true }
-npyz       = { version = "0.9", features = [ "npz" ], optional = true }
-ort        = { workspace = true, optional = true }
-rand       = { version = "0.9", optional = true }
-serde      = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-thiserror  = { workspace = true, optional = true }
-tokenizers = { version = "0.21", default-features = false, features = [ "unstable_wasm" ], optional = true }
+misaki-rs   = { version = "0.3", optional = true }
+npyz        = { version = "0.9", features = [ "npz" ], optional = true }
+ort         = { workspace = true, optional = true }
+rand        = { version = "0.9", optional = true }
+serde       = { workspace = true, optional = true }
+serde_json  = { workspace = true, optional = true }
+thiserror   = { workspace = true, optional = true }
+tokenizers  = { version = "0.21", default-features = false, features = [ "unstable_wasm" ], optional = true }
 
 # The kokoro doctest speaks through the default output device.
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]

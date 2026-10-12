@@ -12,4 +12,5 @@ accepted = [
 targets = [ "aarch64-apple-darwin", "x86_64-unknown-linux-gnu" ]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+# Leaves out unpublished workspace crates, including `aria` itself.
 private = { ignore = true }

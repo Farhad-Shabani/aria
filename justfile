@@ -139,11 +139,21 @@ rust-linux:
 rust-clean *args:
     cargo clean {{ args }}
 
-# Write the licenses of everything in the aria binary, for release archives
+# Write the aria binary's third-party licenses to target/THIRD-PARTY-LICENSES.md
 notices:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/THIRD-PARTY-LICENSES.md
+    mkdir -p target
     cargo about generate --locked -m crates/aria/Cargo.toml \
-        -c licenses/about.toml -o target/THIRD-PARTY-LICENSES.md licenses/about.hbs
-    cat licenses/native.md >> target/THIRD-PARTY-LICENSES.md
+        -c licenses/about.toml -o "$out" licenses/about.hbs
+    full_text() { printf '\n### %s\n\n```text\n' "$1"; cat "$2"; printf '```\n'; }
+    {
+        cat licenses/native.md
+        printf '\n## Full license texts\n'
+        full_text "GNU General Public License v3.0" licenses/vendor/GPL-3.0.txt
+        full_text "ONNX Runtime third-party notices" licenses/vendor/onnxruntime-notices.txt
+    } >> "$out"
 
 # Swift: the macOS app
 
