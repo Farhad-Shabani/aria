@@ -109,14 +109,17 @@ fn walk<S: Segmenter, E: Embedder>(
             // is about to run out of audio anyway.
             let _ = merges.send(merged);
         }
-        let behind = audio.held_to().saturating_sub(voices.retained_from());
+        // Capture's total, not this window's edge: audio still queued for the
+        // fork is backlog too.
+        let written = audio.written();
+        let behind = written.saturating_sub(voices.retained_from());
         if behind > MAX_LAG_SAMPLES {
             tracing::warn!(
                 behind_seconds = canonical_duration(behind).as_secs(),
                 skipped_seconds = canonical_duration(behind - MAX_LAG_SAMPLES).as_secs(),
                 "the voice track cannot keep up; this stretch will have no speaker"
             );
-            voices.skip_to(audio.held_to() - MAX_LAG_SAMPLES);
+            voices.skip_to(written - MAX_LAG_SAMPLES);
         }
         tracing::debug!(
             at_seconds = canonical_duration(chunk.at).as_secs(),
@@ -152,7 +155,9 @@ mod tests {
     use aria_kit::segmentation::{Activity, ChunkShape, SegmentationError};
     use aria_kit::speaker::SpeakerError;
 
-    use crate::audio::Recording;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::audio::{Recording, RecordingWriter};
     use crate::speaker::testing::{alone, track_of};
     use crate::speaker::{Diarizer, Grouping};
 
@@ -234,6 +239,29 @@ mod tests {
         }
     }
 
+    /// Counts its chunks. On the first, it pushes `late` samples into capture,
+    /// so they queue behind the window the walk is busy with.
+    struct Interrupting {
+        calls: Arc<AtomicUsize>,
+        capture: Option<RecordingWriter>,
+        late: usize,
+    }
+
+    impl Segmenter for Interrupting {
+        fn shape(&self) -> ChunkShape {
+            Crawling.shape()
+        }
+
+        fn segment(&mut self, _chunk: &[f32]) -> Result<Vec<Activity>, SegmentationError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(mut capture) = self.capture.take() {
+                capture.push(&vec![0.1; self.late]);
+                capture.finish();
+            }
+            Ok(Vec::new())
+        }
+    }
+
     /// Hears nobody, so the walk's cost is the segmenter's alone.
     struct Deaf;
 
@@ -276,6 +304,33 @@ mod tests {
         assert!(
             started.elapsed() < DRAIN_LIMIT * 2,
             "the tail should give up near the drain limit, not walk the whole cap"
+        );
+    }
+
+    #[test]
+    fn audio_queued_behind_the_window_counts_as_backlog() {
+        let (recording, mut capture) = Recording::open();
+        let audio = recording.fork();
+        // The walk takes this whole cap into its window in one read.
+        capture.push(&vec![0.1; MAX_LAG_SAMPLES as usize]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let voices = Arc::new(Mutex::new(PyannoteVoices::new(
+            Interrupting {
+                calls: Arc::clone(&calls),
+                capture: Some(capture),
+                late: MAX_LAG_SAMPLES as usize * 2,
+            },
+            Diarizer::new(Deaf, Vec::new()),
+            Grouping::default(),
+        )));
+        let (sender, _merges) = channel();
+
+        walk(&voices, audio, &sender);
+
+        let window_chunks = MAX_LAG_SAMPLES as usize / HOP_SAMPLES;
+        assert!(
+            calls.load(Ordering::SeqCst) < window_chunks + window_chunks / 3,
+            "the late audio should skip the window the walk was in, not wait behind it"
         );
     }
 
