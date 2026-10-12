@@ -13,10 +13,9 @@ workspace = true
 
 [features]
 default = [  ]
-# Kokoro compiles in espeak-ng, which is GPL-3.0-or-later.
-kokoro = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror" ]
-qwen   = [ "dep:candle-core", "dep:candle-nn", "dep:rand", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
-system = [ "dep:thiserror" ]
+kokoro  = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror" ]
+qwen    = [ "dep:candle-core", "dep:candle-nn", "dep:rand", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
+system  = [ "dep:thiserror" ]
 # Apple-only Candle backends; Linux selects the qwen CPU feature.
 # Accelerate is the released macOS path. Metal initialization can panic in Candle 0.11.
 qwen-accelerate = [ "qwen", "candle-core/accelerate", "candle-nn/accelerate" ]
@@ -28,7 +27,7 @@ aria-kit = { workspace = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 candle-core = { version = "0.11", optional = true }
 candle-nn   = { version = "0.11", optional = true }
-misaki-rs   = { version = "0.3", optional = true }
+misaki-rs   = { version = "0.3", default-features = false, optional = true }
 npyz        = { version = "0.9", features = [ "npz" ], optional = true }
 ort         = { workspace = true, optional = true }
 rand        = { version = "0.9", optional = true }

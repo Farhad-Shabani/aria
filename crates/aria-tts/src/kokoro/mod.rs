@@ -1,7 +1,7 @@
 //! In-process speech synthesis through the Kokoro ONNX model.
 //!
-//! Text becomes phonemes through misaki's G2P (espeak-ng behind it for words
-//! the lexicon lacks), phonemes become token ids, and the model turns tokens
+//! Text becomes phonemes through misaki's G2P, which spells out words its
+//! lexicon lacks. Phonemes become token ids, and the model turns tokens
 //! plus a voice's style vector into 24 kHz audio. Each sentence-sized chunk
 //! is written to the caller as soon as it is synthesized, so playback starts
 //! before the utterance is finished.
@@ -248,5 +248,27 @@ fn unusable(detail: &str) -> SynthesisError {
     SynthesisError::Inference {
         backend: NAME,
         source: BackendError::Unusable(detail.to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use misaki_rs::{G2P, Language};
+
+    #[test]
+    fn words_outside_the_lexicon_are_spelled_out() {
+        let g2p = G2P::new(Language::EnglishUS);
+        let phonemize = |text: &str| g2p.g2p(text).expect("phonemized").0;
+        let spelled: Vec<String> = "zorbquix"
+            .chars()
+            .map(|c| phonemize(&c.to_string()))
+            .collect();
+        let sounds = |phonemes: String| {
+            phonemes
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(sounds(phonemize("zorbquix")), sounds(spelled.join(" ")));
     }
 }
