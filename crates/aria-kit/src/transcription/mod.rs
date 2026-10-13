@@ -31,6 +31,7 @@ pub mod prelude {
     pub use crate::audio::RecordingReader;
     #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
     pub use crate::audio::{Microphone, RecordingMode};
+    pub use crate::cancel::CancelToken;
     pub use crate::speaker::{Diarizer, Embedder};
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub use crate::speaker::{Heard, SegmentLabeler, SegmentReader, Verdict};

@@ -1,0 +1,14 @@
+[book]
+title = "Aria User Guide"
+description = "Install Aria, dictate text, ask questions, and manage your settings."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../../build/user-guide"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/Farhad-Shabani/aria"
+site-url = "/aria/user-guide/"

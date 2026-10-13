@@ -1,0 +1,17 @@
+[book]
+title = "Using Aria Libraries"
+description = "Use Aria's speech libraries in your project."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../../build/dev-guide"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/Farhad-Shabani/aria"
+site-url = "/aria/dev-guide/"
+
+[output.html.playground]
+runnable = false
