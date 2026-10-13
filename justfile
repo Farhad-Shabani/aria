@@ -304,3 +304,20 @@ bench-smoke corpus=(justfile_directory() + "/build/corpus/smoke/manifest.tsv") *
         --model parakeet=~/models/parakeet/parakeet-tdt-0.6b-v3 \
         --model nemotron=~/models/nemotron/nemotron-speech-streaming-en-0.6b \
         {{ flags }}
+
+# Documentation
+
+# Build both books
+book: book-user book-dev
+
+# Build user guide
+book-user:
+    mdbook build book/user-guide
+
+# Build dev guide
+book-dev:
+    mdbook build book/dev-guide
+
+# Serve user guide with live reload
+book-serve guide="user-guide":
+    mdbook serve book/{{ guide }}

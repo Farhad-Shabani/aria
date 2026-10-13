@@ -1,0 +1,53 @@
+name: Books
+
+on:
+  push:
+    branches: [main]
+    paths: [book/**, .github/workflows/books.yml]
+  pull_request:
+    paths: [book/**, .github/workflows/books.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A cancelled deploy can leave the site half-published.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2.87.28
+        with:
+          tool: just@1.58.0,mdbook@0.5.4
+      - name: Build both books
+        run: |
+          just book
+          cp book/index.html build/
+      - if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: build
+
+  deploy:
+    name: Deploy
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1

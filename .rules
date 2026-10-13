@@ -19,6 +19,7 @@ package names and engine features. Select the features the changed code needs.
 | Build `Aria.app` with the daemon inside | `just app` |
 | Affected cross-target gate | `just rust-wasm` / `just rust-linux` |
 | Build the CLI | `cargo build --release --bin aria` |
+| Build / serve books | `just book` / `just book-serve` |
 
 ## Runtime Pitfalls
 
