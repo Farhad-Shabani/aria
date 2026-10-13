@@ -276,6 +276,7 @@ dependencies = [
  "aria-primitives",
  "cpal",
  "hound",
+ "ort",
  "rtrb",
  "rubato",
  "rustix",
