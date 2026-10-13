@@ -63,9 +63,9 @@ request.
 
 ## License
 
-- The daemon, CLI, macOS app, and the rest of this repository:
-  [AGPL-3.0-only](LICENSE-AGPL).
+- The daemon, CLI, macOS app, `aria-bench`, and the rest of this repository:
+  [GPL-3.0-only](LICENSE-GPL).
 - The Aria name and logo: [reserved](assets/brand/LICENSE).
-- The toolkit crates, the bench crates, and the protocol in `proto/`:
+- The toolkit crates, `aria-bench-speaker`, and the protocol in `proto/`:
   [Apache-2.0](LICENSE-APACHE).
 - Copied third-party material: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
