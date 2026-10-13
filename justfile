@@ -22,8 +22,8 @@ fix:
 # Check integration scripts and the optional MLX sidecar
 support-check:
     bash integrations/test.sh
-    uvx ruff check {{ sidecar }} {{ sidecar_tests }}
-    uvx ruff format --check {{ sidecar }} {{ sidecar_tests }}
+    uvx ruff@0.17.0 check {{ sidecar }} {{ sidecar_tests }}
+    uvx ruff@0.17.0 format --check {{ sidecar }} {{ sidecar_tests }}
     uv run --no-project --with pytest pytest -q {{ sidecar_tests }}
 
 # Rust: fast feedback
@@ -64,6 +64,9 @@ rust-lint-all:
 # Run all Rust tests
 rust-test-all:
     cargo test --locked --workspace --all-targets {{ rust_native_features }}
+
+# Check every optional feature on its own
+rust-features: rust-kit-features rust-stt-features rust-tts-features rust-wake-features
 
 # Check the toolkit's hardware and model features one at a time
 rust-kit-features:
@@ -300,9 +303,9 @@ bench-latency-compare baseline current margin="0":
 bench-smoke corpus=(justfile_directory() + "/build/corpus/smoke/manifest.tsv") *flags:
     cargo run --locked --release -p aria-bench -- stt \
         --corpus "{{ absolute_path(corpus) }}" --mode streaming \
-        --model whisper=~/models/whisper/ggml-large-v3-turbo-q8_0.bin \
-        --model parakeet=~/models/parakeet/parakeet-tdt-0.6b-v3 \
-        --model nemotron=~/models/nemotron/nemotron-speech-streaming-en-0.6b \
+        --model whisper={{ home_directory() }}/models/whisper/ggml-large-v3-turbo-q8_0.bin \
+        --model parakeet={{ home_directory() }}/models/parakeet/parakeet-tdt-0.6b-v3 \
+        --model nemotron={{ home_directory() }}/models/nemotron/nemotron-speech-streaming-en-0.6b \
         {{ flags }}
 
 # Documentation

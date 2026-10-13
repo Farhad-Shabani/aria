@@ -34,6 +34,8 @@ stop_daemon() {
         kill -0 "$pid" 2>/dev/null || return 0
         sleep 1
     done
+    echo "the daemon (pid $pid) did not stop; stop it, then rerun" >&2
+    exit 1
 }
 
 if [ "${1:-}" = --uninstall ]; then
@@ -69,11 +71,13 @@ if [ -n "$remote" ]; then
 fi
 (cd "$dist" && grep " $file\$" SHA256SUMS | sha256sum --check --quiet -)
 
-mkdir -p "$bin_dir"
+# Unpacks beside the old install, so a failed extract leaves it in place.
+rm -rf "$lib_dir.new"
+mkdir -p "$bin_dir" "$lib_dir.new"
+tar -xzf "$dist/$file" --strip-components=1 -C "$lib_dir.new"
 stop_daemon
 rm -rf "$lib_dir"
-mkdir -p "$lib_dir"
-tar -xzf "$dist/$file" --strip-components=1 -C "$lib_dir"
+mv "$lib_dir.new" "$lib_dir"
 ln -sfn "$lib_dir/bin/aria" "$bin_dir/aria"
 echo "installed $lib_dir"
 
