@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default        = [  ]
+microphone     = [ "aria-kit/microphone" ]
 moonshine      = [ "dep:ort", "dep:serde", "dep:serde_json", "dep:tracing" ]
 nemotron       = [ "dep:parakeet-rs" ]
 parakeet       = [ "dep:parakeet-rs" ]
