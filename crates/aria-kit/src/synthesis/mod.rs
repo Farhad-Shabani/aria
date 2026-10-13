@@ -28,6 +28,7 @@ pub mod prelude {
     #[cfg(not(target_family = "wasm"))]
     pub use super::{Session, Synthesis};
     pub use super::{SpeakingRate, SpeechText, SynthesisError, Voice};
+    pub use crate::cancel::CancelToken;
 }
 
 const MAX_SPEECH_TEXT_BYTES: usize = 8 * 1024;
