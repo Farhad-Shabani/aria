@@ -22,6 +22,9 @@ pub use session::Session;
 /// delivery, custom cadences — stay out and take an explicit `aria-kit`
 /// dependency.
 pub mod prelude {
+    pub use crate::audio::RecordingReader;
+    #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
+    pub use crate::audio::{Microphone, RecordingMode};
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub use super::session::HeardSession;
     pub use super::{
