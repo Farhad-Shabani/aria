@@ -22,8 +22,8 @@ fix:
 # Check integration scripts and the optional MLX sidecar
 support-check:
     bash integrations/test.sh
-    uvx ruff check {{ sidecar }} {{ sidecar_tests }}
-    uvx ruff format --check {{ sidecar }} {{ sidecar_tests }}
+    uvx ruff@0.17.0 check {{ sidecar }} {{ sidecar_tests }}
+    uvx ruff@0.17.0 format --check {{ sidecar }} {{ sidecar_tests }}
     uv run --no-project --with pytest pytest -q {{ sidecar_tests }}
 
 # Rust: fast feedback
@@ -64,6 +64,9 @@ rust-lint-all:
 # Run all Rust tests
 rust-test-all:
     cargo test --locked --workspace --all-targets {{ rust_native_features }}
+
+# Check every optional feature on its own
+rust-features: rust-kit-features rust-stt-features rust-tts-features rust-wake-features
 
 # Check the toolkit's hardware and model features one at a time
 rust-kit-features:
