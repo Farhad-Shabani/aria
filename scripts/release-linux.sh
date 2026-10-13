@@ -19,6 +19,6 @@ stage="target/linux-stage/aria-$version"
 rm -rf target/linux-stage
 mkdir -p "$stage/bin" "$stage/share/doc/aria"
 cp target/release/aria "$stage/bin/"
-cp LICENSE-AGPL target/THIRD-PARTY-LICENSES.md "$stage/share/doc/aria/"
+cp LICENSE-GPL target/THIRD-PARTY-LICENSES.md "$stage/share/doc/aria/"
 mkdir -p dist
 tar -czf "dist/aria-$version-linux-x86_64.tar.gz" -C target/linux-stage "aria-$version"

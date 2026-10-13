@@ -1,4 +1,4 @@
-// The Aria logo. Not licensed under AGPL-3.0; see assets/brand/LICENSE.
+// The Aria logo. Not licensed under GPL-3.0; see assets/brand/LICENSE.
 
 import AppKit
 

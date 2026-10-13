@@ -28,7 +28,7 @@ For everyday use of the voice assistant, read the
 ## Licensing
 
 The library crates used here are Apache-2.0. The Aria application, CLI, and
-macOS app are AGPL-3.0-only. Depending on `aria-stt`, `aria-tts`, or `aria-kit`
+macOS app are GPL-3.0-only. Depending on `aria-stt`, `aria-tts`, or `aria-kit`
 does not require a dependency on the application crate, `aria`.
 
 Engine dependencies and model weights have their own licenses. Review those
