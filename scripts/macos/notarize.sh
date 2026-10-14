@@ -19,7 +19,9 @@ printf '%s' "$APPLE_NOTARIZATION_KEY" > "$key"
 auth=(--key "$key" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID")
 
 xcrun notarytool submit "$dmg" "${auth[@]}" --wait --output-format json > "$result"
-xcrun notarytool log "$(plutil -extract id raw -o - "$result")" "${auth[@]}"
+# The log only explains the outcome, and Apple can take a moment to post it.
+xcrun notarytool log "$(plutil -extract id raw -o - "$result")" "${auth[@]}" ||
+    echo "the notarization log is not available yet" >&2
 # submit --wait exits 0 on a rejection too; only the status says.
 status=$(plutil -extract status raw -o - "$result")
 if [ "$status" != Accepted ]; then

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Signs Aria.app and packs it into a DMG in dist/. A real identity signs the
-# DMG too, so it can be notarized; ad-hoc leaves it unsigned.
+# Signs Aria.app and packs it into a DMG in the repository's dist/. A real
+# identity signs the DMG too, so it can be notarized; ad-hoc leaves it
+# unsigned.
 #
 # Usage: package.sh <Aria.app> <version>
 set -euo pipefail
@@ -9,7 +10,8 @@ set -euo pipefail
 app="${1:?usage: package.sh <Aria.app> <version>}"
 version="${2:?usage: package.sh <Aria.app> <version>}"
 scripts="$(dirname "${BASH_SOURCE[0]}")"
-dmg="dist/Aria-$version-macos-arm64.dmg"
+dist="$(cd "$scripts/../.." && pwd)/dist"
+dmg="$dist/Aria-$version-macos-arm64.dmg"
 # Ad hoc unless asked, so no personal identity ships in a release.
 export ARIA_SIGN_IDENTITY="${ARIA_SIGN_IDENTITY:--}"
 
@@ -20,7 +22,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 ditto "$app" "$stage/Aria.app"
 ln -s /Applications "$stage/Applications"
-mkdir -p dist
+mkdir -p "$dist"
 hdiutil create -quiet -ov -volname Aria -srcfolder "$stage" -format UDZO "$dmg"
 if [ "$ARIA_SIGN_IDENTITY" != - ]; then
     codesign --force --timestamp --sign "$ARIA_SIGN_IDENTITY" "$dmg"
