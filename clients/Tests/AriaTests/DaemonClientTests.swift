@@ -51,13 +51,17 @@ final class DaemonClientTests: XCTestCase {
     // MARK: - startMethod
 
     func test_startMethod_followsTheAgent() throws {
-        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, override: nil), .kickstart)
-        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .notRegistered, override: nil), .register)
-        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .notFound, override: nil), .register)
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: nil), .kickstart)
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: false, override: nil), .register)
+        XCTAssertEqual(
+            try DaemonClient.startMethod(agentStatus: .notRegistered, jobLoaded: false, override: nil), .register)
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .notFound, jobLoaded: false, override: nil), .register)
     }
 
     func test_startMethod_leavesATurnedOffAgentOff() {
-        XCTAssertThrowsError(try DaemonClient.startMethod(agentStatus: .requiresApproval, override: nil)) { error in
+        XCTAssertThrowsError(
+            try DaemonClient.startMethod(agentStatus: .requiresApproval, jobLoaded: false, override: nil)
+        ) { error in
             guard case DaemonClientError.agentDisabled = error else {
                 return XCTFail("expected agentDisabled, got \(error)")
             }
@@ -66,7 +70,8 @@ final class DaemonClientTests: XCTestCase {
 
     func test_startMethod_spawnsAnOverriddenBinaryWhateverTheAgent() throws {
         let bin = URL(fileURLWithPath: "/opt/aria/target/release/aria")
-        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, override: bin), .spawn(bin))
-        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .requiresApproval, override: bin), .spawn(bin))
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: bin), .spawn(bin))
+        XCTAssertEqual(
+            try DaemonClient.startMethod(agentStatus: .requiresApproval, jobLoaded: false, override: bin), .spawn(bin))
     }
 }

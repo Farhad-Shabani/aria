@@ -33,7 +33,7 @@ enum DaemonClientError: LocalizedError {
 enum StartMethod: Equatable {
     /// `launchctl kickstart` of the app's login agent, which then owns the process.
     case kickstart
-    /// Registers the agent first, then kickstarts it.
+    /// Registers the agent first, so launchd loads its job, then kickstarts it.
     case register
     /// A child `aria daemon` at this binary, owned by nobody but the lock.
     case spawn(URL)
@@ -64,11 +64,12 @@ struct DaemonClient: DaemonControlling {
 
     /// An overridden binary always spawns, so a development build runs
     /// without registering anything. Otherwise the agent runs the daemon,
-    /// and one the user turned off stays off.
-    static func startMethod(agentStatus: SMAppService.Status, override: URL?) throws -> StartMethod {
+    /// and one the user turned off stays off. An enabled agent can still
+    /// lose its job, to `launchctl bootout` for one; registering reloads it.
+    static func startMethod(agentStatus: SMAppService.Status, jobLoaded: Bool, override: URL?) throws -> StartMethod {
         if let override { return .spawn(override) }
         switch agentStatus {
-        case .enabled: return .kickstart
+        case .enabled: return jobLoaded ? .kickstart : .register
         case .notRegistered, .notFound: return .register
         case .requiresApproval: throw DaemonClientError.agentDisabled
         @unknown default: throw DaemonClientError.agentDisabled
@@ -138,7 +139,12 @@ struct DaemonClient: DaemonControlling {
     }
 
     func start() async throws {
-        switch try Self.startMethod(agentStatus: Self.agent.status, override: Self.daemonBinaryOverride()) {
+        let method = try Self.startMethod(
+            agentStatus: Self.agent.status,
+            jobLoaded: Self.agentLoaded(),
+            override: Self.daemonBinaryOverride()
+        )
+        switch method {
         case .kickstart:
             try Self.kickstartAgent()
         case .register:
@@ -170,9 +176,13 @@ struct DaemonClient: DaemonControlling {
     /// the kickstart to report.
     private static func awaitAgentLoaded() async {
         for _ in 0..<agentLoadProbes {
-            if (try? run(launchctl, ["print", agentTarget])) != nil { return }
+            if agentLoaded() { return }
             try? await Task.sleep(for: agentLoadPoll)
         }
+    }
+
+    private static func agentLoaded() -> Bool {
+        (try? run(launchctl, ["print", agentTarget])) != nil
     }
 
     /// Runs a command to completion; a non-zero exit throws its stderr.
