@@ -42,6 +42,12 @@ targets:
       - path: Aria
         excludes:
           - Info.plist
+          - LaunchAgents
+      - path: Aria/LaunchAgents/com.aria.daemon.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
       - path: Shared
       - path: Generated
         createIntermediateGroups: true

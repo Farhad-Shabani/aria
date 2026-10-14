@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 
 enum DaemonState: Equatable {
     case running
@@ -7,6 +8,7 @@ enum DaemonState: Equatable {
 }
 
 protocol DaemonControlling: Sendable {
+    func retireLegacyService() async throws
     func isRunning() async -> Bool
     func start() async throws
     func stop() async throws
@@ -14,11 +16,14 @@ protocol DaemonControlling: Sendable {
 
 enum DaemonClientError: LocalizedError {
     case ariaBinaryMissing(String)
+    case agentDisabled
     case commandFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .ariaBinaryMissing(let path): return "aria binary not found at \(path)"
+        case .agentDisabled:
+            return "Aria is off in the background. Turn it on in System Settings → General → Login Items."
         case .commandFailed(let message): return message
         }
     }
@@ -26,35 +31,60 @@ enum DaemonClientError: LocalizedError {
 
 /// How `start()` brings the daemon up.
 enum StartMethod: Equatable {
-    /// `launchctl kickstart` of the login service, which then owns the process.
+    /// `launchctl kickstart` of the app's login agent, which then owns the process.
     case kickstart
+    /// Registers the agent first, then kickstarts it.
+    case register
     /// A child `aria daemon` at this binary, owned by nobody but the lock.
     case spawn(URL)
 }
 
-/// Starts the registered launchd service, or spawns the CLI when no service exists.
-/// Probes the Unix socket for liveness and stops the PID recorded in the lock file.
-/// Runtime paths and service identity mirror the Rust daemon.
+/// Starts the daemon through the app's login agent, or spawns an overridden
+/// binary during development. Probes the Unix socket for liveness and stops
+/// the PID recorded in the lock file. Runtime paths and the agent's label
+/// mirror the Rust daemon.
 struct DaemonClient: DaemonControlling {
     static let serviceLabel = "com.aria.daemon"
+    private static let legacyRetiredKey = "legacyServiceRetired"
+    private static let agentLoadProbes = 20
+    private static let agentLoadPoll = Duration.milliseconds(100)
 
-    static var servicePlistURL: URL {
+    /// Bundled in `Contents/Library/LaunchAgents`. Without RunAtLoad it
+    /// starts only when the app asks, so quitting Aria keeps it stopped.
+    static var agent: SMAppService { .agent(plistName: "\(serviceLabel).plist") }
+
+    private static var agentTarget: String { "gui/\(getuid())/\(serviceLabel)" }
+    private static var launchctl: URL { URL(fileURLWithPath: "/bin/launchctl") }
+
+    /// What `aria service install` writes. It claims the agent's label.
+    static var legacyServicePlistURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents/\(serviceLabel).plist")
     }
 
-    /// The service wins whenever it is registered, so one supervisor owns the
-    /// process and a crash restarts it. Without it, the first executable
-    /// candidate is spawned; none means the build is missing.
-    static func startMethod(serviceInstalled: Bool, executableCandidates: [URL]) -> StartMethod? {
-        if serviceInstalled { return .kickstart }
-        return executableCandidates.first.map(StartMethod.spawn)
+    /// An overridden binary always spawns, so a development build runs
+    /// without registering anything. Otherwise the agent runs the daemon,
+    /// and one the user turned off stays off.
+    static func startMethod(agentStatus: SMAppService.Status, override: URL?) throws -> StartMethod {
+        if let override { return .spawn(override) }
+        switch agentStatus {
+        case .enabled: return .kickstart
+        case .notRegistered, .notFound: return .register
+        case .requiresApproval: throw DaemonClientError.agentDisabled
+        @unknown default: throw DaemonClientError.agentDisabled
+        }
     }
 
     /// Parses the lock-file PID; missing or invalid contents return nil.
     static func lockedPid(_ contents: String?) -> pid_t? {
         guard let contents else { return nil }
         return pid_t(contents.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    static func daemonBinaryOverride(defaults: UserDefaults = .standard) -> URL? {
+        defaults.string(forKey: "ariaDaemonBinary").map {
+            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+        }
     }
 
     /// Where `aria daemon` lives. The `ariaDaemonBinary` default overrides
@@ -65,8 +95,8 @@ struct DaemonClient: DaemonControlling {
         bundledExecutable: URL? = Bundle.main.executableURL,
         defaults: UserDefaults = .standard
     ) -> [URL] {
-        if let stored = defaults.string(forKey: "ariaDaemonBinary") {
-            return [URL(fileURLWithPath: (stored as NSString).expandingTildeInPath)]
+        if let override = daemonBinaryOverride(defaults: defaults) {
+            return [override]
         }
         // The CLI ships in Contents/Helpers, one directory over from the
         // app binary, so both can be named for Aria on one disk.
@@ -78,6 +108,28 @@ struct DaemonClient: DaemonControlling {
         return [bundled].compactMap { $0 }
     }
 
+    /// The first candidate that can run; none means the build is missing.
+    static func ariaBinary() throws -> URL {
+        let candidates = daemonBinaryCandidates()
+        guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
+            throw DaemonClientError.ariaBinaryMissing(candidates.map(\.path).joined(separator: ", "))
+        }
+        return bin
+    }
+
+    /// Removes the service older setups installed, once, since it shares the
+    /// agent's label. Call it before reading the agent's status. A service
+    /// the user installs later stays theirs.
+    func retireLegacyService() async throws {
+        let defaults = UserDefaults.standard
+        guard Self.daemonBinaryOverride() == nil, !defaults.bool(forKey: Self.legacyRetiredKey) else { return }
+        if FileManager.default.fileExists(atPath: Self.legacyServicePlistURL.path) {
+            // The helper's `service uninstall` boots the job out and deletes its plist.
+            try Self.run(try Self.ariaBinary(), ["service", "uninstall"])
+        }
+        defaults.set(true, forKey: Self.legacyRetiredKey)
+    }
+
     func isRunning() async -> Bool {
         let path = RuntimeFiles.daemonSocketURL.path
         return await Task.detached(priority: .utility) {
@@ -86,29 +138,49 @@ struct DaemonClient: DaemonControlling {
     }
 
     func start() async throws {
-        let candidates = Self.daemonBinaryCandidates()
-        let executables = candidates.filter {
-            FileManager.default.isExecutableFile(atPath: $0.path)
-        }
-        let installed = FileManager.default.fileExists(atPath: Self.servicePlistURL.path)
-        switch Self.startMethod(serviceInstalled: installed, executableCandidates: executables) {
+        switch try Self.startMethod(agentStatus: Self.agent.status, override: Self.daemonBinaryOverride()) {
         case .kickstart:
-            try Self.kickstartService()
+            try Self.kickstartAgent()
+        case .register:
+            do {
+                try Self.agent.register()
+            } catch {
+                throw DaemonClientError.commandFailed(
+                    "could not register Aria's background item: \(error.localizedDescription)"
+                )
+            }
+            await Self.awaitAgentLoaded()
+            try Self.kickstartAgent()
         case .spawn(let bin):
+            guard FileManager.default.isExecutableFile(atPath: bin.path) else {
+                throw DaemonClientError.ariaBinaryMissing(bin.path)
+            }
             try Self.spawnDaemon(at: bin)
-        case nil:
-            throw DaemonClientError.ariaBinaryMissing(
-                candidates.map(\.path).joined(separator: ", ")
-            )
         }
     }
 
     /// A no-op for a job that already has its process, so a launch race with
-    /// the service costs nothing.
-    private static func kickstartService() throws {
+    /// the agent costs nothing.
+    private static func kickstartAgent() throws {
+        try run(launchctl, ["kickstart", agentTarget])
+    }
+
+    /// `register()` returns before launchd loads the job, and a kickstart
+    /// that comes too soon finds no job. One that never loads is left for
+    /// the kickstart to report.
+    private static func awaitAgentLoaded() async {
+        for _ in 0..<agentLoadProbes {
+            if (try? run(launchctl, ["print", agentTarget])) != nil { return }
+            try? await Task.sleep(for: agentLoadPoll)
+        }
+    }
+
+    /// Runs a command to completion; a non-zero exit throws its stderr.
+    private static func run(_ executable: URL, _ arguments: [String]) throws {
+        let name = ([executable.lastPathComponent] + arguments.prefix(1)).joined(separator: " ")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["kickstart", "gui/\(getuid())/\(serviceLabel)"]
+        process.executableURL = executable
+        process.arguments = arguments
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe()
@@ -117,7 +189,7 @@ struct DaemonClient: DaemonControlling {
             try process.run()
         } catch {
             throw DaemonClientError.commandFailed(
-                "launchctl failed to launch: \(error.localizedDescription)"
+                "\(name) failed to launch: \(error.localizedDescription)"
             )
         }
         let output = stderr.fileHandleForReading.readDataToEndOfFile()
@@ -126,7 +198,7 @@ struct DaemonClient: DaemonControlling {
             let message = String(decoding: output, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw DaemonClientError.commandFailed(
-                "launchctl kickstart exited with \(process.terminationStatus): \(message)"
+                "\(name) exited with \(process.terminationStatus): \(message)"
             )
         }
     }
@@ -157,6 +229,12 @@ struct DaemonClient: DaemonControlling {
     /// Synchronous so the app can call it while terminating, when no task
     /// gets to resume.
     static func signalStop() throws {
+        // The agent's daemon reads the login shell's PATH before it takes
+        // its lock; launchd reaches it then too. A job with no process
+        // fails here and falls to the lock, which reports why.
+        if daemonBinaryOverride() == nil, (try? run(launchctl, ["kill", "SIGTERM", agentTarget])) != nil {
+            return
+        }
         let lock = RuntimeFiles.daemonLockURL
         let pid = try Self.heldLockPid(lock)
         guard Self.isAriaProcess(pid) else {

@@ -107,12 +107,23 @@ pub(super) fn job() -> Result<Job, SupervisorError> {
 }
 
 fn job_at(target: &str) -> Result<Job, SupervisorError> {
+    Ok(print(target)?.map_or(Job::Absent, |report| parse_job(&report)))
+}
+
+/// Whether the loaded job came from a plist other than `unit`: Aria.app's
+/// login agent, which launchd reports as submitted by smd.
+pub(super) fn app_owns_job(unit: &Path) -> Result<bool, SupervisorError> {
+    Ok(print(&target())?.is_some_and(|report| loaded_elsewhere(&report, unit)))
+}
+
+/// `launchctl print` for a label; `None` when the domain does not know it.
+fn print(target: &str) -> Result<Option<String>, SupervisorError> {
     let mut command = launchctl();
     command.arg("print").arg(target);
     match run(command) {
-        Ok(report) => Ok(parse_job(&report)),
+        Ok(report) => Ok(Some(report)),
         Err(SupervisorError::Command { status, .. }) if status.code() == Some(NOT_FOUND) => {
-            Ok(Job::Absent)
+            Ok(None)
         }
         Err(error) => Err(error),
     }
@@ -164,6 +175,14 @@ fn parse_job(report: &str) -> Job {
         .filter_map(|line| line.trim().strip_prefix("pid = "))
         .find_map(|pid| pid.trim().parse().ok())
         .map_or(Job::Idle, Job::Running)
+}
+
+/// The job's own `path = ` line comes before any nested section's.
+fn loaded_elsewhere(report: &str, unit: &Path) -> bool {
+    report
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("path = "))
+        .is_some_and(|path| Path::new(path) != unit)
 }
 
 fn launchctl() -> Command {
@@ -247,5 +266,18 @@ mod tests {
         let report = "gui/501/com.aria.daemon = {\n\tstate = running\n\tpid = 4242\n}\n";
         assert_eq!(parse_job(report), Job::Running(4242));
         assert_eq!(parse_job("\tstate = not running\n"), Job::Idle);
+    }
+
+    #[test]
+    fn only_a_job_loaded_from_another_plist_belongs_to_the_app() {
+        let unit = Path::new("/Users/tester/Library/LaunchAgents/com.aria.daemon.plist");
+        let app = "gui/501/com.aria.daemon = {\n\tpath = (submitted by smd.348)\n\tendpoints = {\n\t\tpath = /tmp/other\n\t}\n}\n";
+        let ours = format!(
+            "gui/501/com.aria.daemon = {{\n\tpath = {}\n}}\n",
+            unit.display()
+        );
+        assert!(loaded_elsewhere(app, unit));
+        assert!(!loaded_elsewhere(&ours, unit));
+        assert!(!loaded_elsewhere("\tstate = running\n", unit));
     }
 }

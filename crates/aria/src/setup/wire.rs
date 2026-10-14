@@ -364,6 +364,7 @@ mod tests {
     fn a_running_service_reports_both_pids() {
         let status = Status {
             unit: PathBuf::from("/Library/LaunchAgents/com.aria.daemon.plist"),
+            app_agent: false,
             job: Job::Running(41),
             socket: PathBuf::from("/tmp/aria-501/daemon.sock"),
             daemon: DaemonState::Ready { pid: Some(42) },

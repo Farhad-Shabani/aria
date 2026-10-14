@@ -6,8 +6,13 @@ final class FakeDaemonControl: DaemonControlling, @unchecked Sendable {
     var running = false
     var startError: Error?
     var stopError: Error?
+    var retireError: Error?
     /// Probes that still see the daemon down after `start()` returns.
     var startLag = 0
+
+    func retireLegacyService() async throws {
+        if let error = retireError { throw error }
+    }
 
     func isRunning() async -> Bool {
         if startLag > 0 {
@@ -115,6 +120,15 @@ final class StatusPollerTests: XCTestCase {
         await poller.ensureRunning()
         XCTAssertNil(poller.lastError)
         XCTAssertEqual(poller.state, .running)
+    }
+
+    func test_ensureRunning_startsNothingAfterAFailedRetirement() async {
+        let fake = FakeDaemonControl()
+        fake.retireError = DaemonClientError.commandFailed("uninstall failed")
+        let poller = StatusPoller(client: fake)
+        await poller.ensureRunning()
+        XCTAssertEqual(poller.lastError, "uninstall failed")
+        XCTAssertEqual(fake.calls, [])
     }
 
     func test_restart_stopsThenStartsARunningDaemon() async {

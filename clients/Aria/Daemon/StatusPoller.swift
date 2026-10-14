@@ -38,6 +38,12 @@ final class StatusPoller: ObservableObject {
     /// The app open means the daemon runs: a stopped daemon is started once,
     /// as if the user had pressed the toggle.
     func ensureRunning() async {
+        do {
+            try await client.retireLegacyService()
+        } catch {
+            lastError = error.localizedDescription
+            return
+        }
         await pollOnce()
         if state == .stopped {
             await toggle()
