@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Puts every license the app ships under into Aria.app, then packs it into a
-# DMG in dist/.
+# Puts every license the app ships under into Aria.app, then signs and packs
+# it into a DMG in dist/.
 #
 # Usage: release-macos.sh <version>, after `just app notices`
 set -euo pipefail
@@ -22,14 +22,4 @@ for package in clients/build/mac/SourcePackages/checkouts/*/; do
     ls "$licenses/$name"/LICENSE* >/dev/null
 done
 # Signs again, so the licenses fall under the bundle seal.
-# Ad hoc unless asked, so no personal identity ships in a release.
-ARIA_SIGN_IDENTITY="${ARIA_SIGN_IDENTITY:--}" scripts/bundle.sh "$app"
-
-# The Applications link gives the window its drag-to-install target.
-stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
-ditto "$app" "$stage/Aria.app"
-ln -s /Applications "$stage/Applications"
-mkdir -p dist
-hdiutil create -quiet -ov -volname Aria -srcfolder "$stage" -format UDZO \
-    "dist/Aria-$version-macos-arm64.dmg"
+scripts/package-macos.sh "$app" "$version"

@@ -25,7 +25,7 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install system packages
@@ -34,11 +34,11 @@ jobs:
           sudo apt-get install -y -qq cmake clang libasound2-dev pkg-config espeak-ng xvfb
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: just@1.58.0,taplo@0.10.0,cargo-shear@1.14.0
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: just check
         run: xvfb-run -a just check
 
@@ -50,7 +50,7 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install system packages
@@ -61,8 +61,8 @@ jobs:
         run: |
           rustup toolchain install
           rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2.9.2
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: just@1.58.0
       - name: just rust-features rust-wasm
@@ -73,13 +73,13 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: just@1.58.0
       - name: Lint and test Rust
@@ -90,12 +90,12 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install XcodeGen
         run: brew install xcodegen
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: just@1.58.0
       - name: just swift-check
