@@ -69,25 +69,10 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
-          set -euo pipefail
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          password=$(openssl rand -base64 32)
-          echo "::add-mask::$password"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          certificate=$(mktemp)
-          trap 'rm -f "$certificate"' EXIT
-          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$certificate"
-          # -x keeps the private key from ever being exported again.
-          security import "$certificate" -k "$keychain" -f pkcs12 -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -x
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ {print $2; exit}')
-          [ -n "$identity" ] || { echo "::error::the certificate holds no Developer ID Application identity"; exit 1; }
+          identity=$(scripts/macos/import-certificate.sh "$RUNNER_TEMP/signing.keychain-db")
           echo "ARIA_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: Sign and package
-        run: scripts/package-macos.sh "$RUNNER_TEMP/Aria.app" "${GITHUB_REF_NAME#v}"
+        run: scripts/macos/package.sh "$RUNNER_TEMP/Aria.app" "${GITHUB_REF_NAME#v}"
       - name: Verify the signature
         run: |
           set -euo pipefail
@@ -100,21 +85,7 @@ jobs:
           APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
           APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
           APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-        run: |
-          set -euo pipefail
-          dmg="dist/Aria-${GITHUB_REF_NAME#v}-macos-arm64.dmg"
-          key=$(mktemp)
-          trap 'rm -f "$key"' EXIT
-          printf '%s' "$APPLE_NOTARIZATION_KEY" > "$key"
-          auth=(--key "$key" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID")
-          result="$RUNNER_TEMP/notarization.json"
-          xcrun notarytool submit "$dmg" "${auth[@]}" --wait --output-format json > "$result"
-          xcrun notarytool log "$(plutil -extract id raw -o - "$result")" "${auth[@]}"
-          # submit --wait exits 0 on a rejection too; only the status says.
-          status=$(plutil -extract status raw -o - "$result")
-          [ "$status" = Accepted ] || { echo "::error::notarization ended $status"; exit 1; }
-          xcrun stapler staple "$dmg"
-          spctl -a -vv -t open --context context:primary-signature "$dmg"
+        run: scripts/macos/notarize.sh "dist/Aria-${GITHUB_REF_NAME#v}-macos-arm64.dmg"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos

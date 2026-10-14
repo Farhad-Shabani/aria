@@ -8,10 +8,10 @@
 # and dies on every build. The first codesigning identity signs, or ad-hoc
 # when none exists. Override with ARIA_SIGN_IDENTITY.
 #
-# Usage: sign-macos.sh <Aria.app>
+# Usage: sign.sh <Aria.app>
 set -euo pipefail
 
-app="${1:?usage: sign-macos.sh <Aria.app>}"
+app="${1:?usage: sign.sh <Aria.app>}"
 identity="${ARIA_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk '/\) [0-9A-F]{40} "/ {print $2; exit}')}"
 identity="${identity:--}"
 # Notarization needs the hardened runtime and a timestamp. Ad-hoc code gets

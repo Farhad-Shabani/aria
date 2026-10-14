@@ -11,8 +11,8 @@ set -euo pipefail
 
 app="${1:?usage: bundle.sh <Aria.app>}"
 scripts="$(dirname "${BASH_SOURCE[0]}")"
-release="$(cd "$scripts/.." && pwd)/target/release"
+release="$(cd "$scripts/../.." && pwd)/target/release"
 
 mkdir -p "$app/Contents/Helpers"
 cp -L "$release/aria" "$release/libwebgpu_dawn.dylib" "$app/Contents/Helpers/"
-"$scripts/sign-macos.sh" "$app"
+"$scripts/sign.sh" "$app"
