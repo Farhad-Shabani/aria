@@ -73,8 +73,8 @@ record audio to test microphone permission.
 ## Update or remove
 
 On a Mac, choose **Quit Aria** from its menu, replace Aria in Applications
-with the copy from the new DMG, and open it. To remove Aria, run
-`aria service uninstall`, then move Aria to the Trash.
+with the copy from the new DMG, and open it. To remove Aria, quit it and move
+it to the Trash.
 
 On Linux, rerun the install command to update. To remove Aria:
 

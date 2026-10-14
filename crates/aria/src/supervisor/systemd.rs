@@ -58,6 +58,11 @@ pub(super) fn job() -> Result<Job, SupervisorError> {
     Ok(parse_main_pid(&run(command)?))
 }
 
+/// Only `aria service install` writes this unit, so no other owner exists.
+pub(super) fn app_owns_job(_unit: &Path) -> Result<bool, SupervisorError> {
+    Ok(false)
+}
+
 /// Stops the legacy wake unit and deletes it, so it stops competing for
 /// the microphone. Answers the unit file it removed.
 pub(super) fn remove_legacy_wake_agent(home: &Path) -> Result<Option<PathBuf>, SupervisorError> {

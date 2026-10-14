@@ -31,8 +31,9 @@ use systemd as platform;
 compile_error!("no service supervisor exists for this target");
 
 /// How long a freshly started daemon gets to bind its socket before
-/// `install` and `start` report it as stopped.
-const BIND_TIMEOUT: Duration = Duration::from_secs(5);
+/// `install` and `start` report it as stopped. Covers the login-shell PATH
+/// lookup a daemon started by Aria.app's agent runs first.
+const BIND_TIMEOUT: Duration = Duration::from_secs(10);
 const BIND_POLL: Duration = Duration::from_millis(100);
 /// Covers the daemon's shutdown grace.
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -89,10 +90,14 @@ impl Supervisor {
     }
 
     /// Writes the unit, loads it, and lets the supervisor start the daemon.
-    /// Rerunning replaces the unit and restarts. Refuses while another
-    /// process owns the socket; a job unloaded on that path stays unloaded
-    /// until the next login or the next install.
+    /// Rerunning replaces the unit and restarts. A job Aria.app registered
+    /// under the same label is restarted instead, so one supervisor owns the
+    /// daemon. Refuses while another process owns the socket; a job unloaded
+    /// on that path stays unloaded until the next login or the next install.
     pub fn install(&self) -> Result<Status, SupervisorError> {
+        if platform::app_owns_job(&self.unit)? {
+            return self.restart();
+        }
         platform::unload()?;
         self.refuse_foreign_owner()?;
         self.write_unit()?;
@@ -101,8 +106,11 @@ impl Supervisor {
     }
 
     /// Stops the daemon and removes the unit. Both steps tolerate absence.
+    /// Leaves a job Aria.app registered loaded; only this unit file goes.
     pub fn uninstall(&self) -> Result<Status, SupervisorError> {
-        platform::unload()?;
+        if !platform::app_owns_job(&self.unit)? {
+            platform::unload()?;
+        }
         match fs::remove_file(&self.unit) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -150,9 +158,15 @@ impl Supervisor {
         self.status()
     }
 
+    fn restart(&self) -> Result<Status, SupervisorError> {
+        self.stop()?;
+        self.start()
+    }
+
     pub fn status(&self) -> Result<Status, SupervisorError> {
         Ok(Status {
             unit: self.unit.clone(),
+            app_agent: platform::app_owns_job(&self.unit)?,
             job: platform::job()?,
             socket: self.paths.socket_path().to_path_buf(),
             daemon: self.daemon()?,
@@ -241,6 +255,8 @@ impl UnitSpec {
 
 pub struct Status {
     pub unit: PathBuf,
+    /// Aria.app's login agent holds the job, not `unit`.
+    pub app_agent: bool,
     pub job: Job,
     pub socket: PathBuf,
     pub daemon: DaemonState,

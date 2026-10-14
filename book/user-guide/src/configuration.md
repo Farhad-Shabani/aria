@@ -52,9 +52,12 @@ aria service start
 aria service status
 ```
 
-Starting a service that is already running does not reload it. If the binary
-moved, or an agent was installed outside the service's saved `PATH`, run
-`aria service install` to refresh registration.
+Starting a service that is already running does not reload it.
+
+Restart it too after installing a tool such as `claude`. On a Mac, Aria reads
+your shell's `PATH` each time it starts. On Linux, the service keeps the `PATH`
+it was installed with, so run `aria service install` again. Do the same if the
+`aria` binary moves.
 
 ## Other settings
 

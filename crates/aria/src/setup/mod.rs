@@ -892,6 +892,7 @@ mod tests {
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
+                app_agent: false,
                 job: Job::Absent,
                 socket: PathBuf::from("/nonexistent/daemon.sock"),
                 daemon: supervisor::DaemonState::NotRunning,

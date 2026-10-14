@@ -661,10 +661,12 @@ fn service_status_message(status: &ServiceStatus) -> String {
             }
         },
     };
-    format!(
-        "unit     {} ({job})\ndaemon   {daemon}",
-        status.unit.display()
-    )
+    let unit = if status.app_agent {
+        "Aria.app's login agent".to_owned()
+    } else {
+        status.unit.display().to_string()
+    };
+    format!("unit     {unit} ({job})\ndaemon   {daemon}")
 }
 
 fn run_setup(yes: bool, skip_models: bool) -> anyhow::Result<()> {
@@ -981,15 +983,43 @@ fn answer(prompt: &str) -> anyhow::Result<String> {
 }
 
 fn run_daemon() -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    let login_path = adopt_login_shell_path();
     let daemon = Daemon::open().context("failed to prepare daemon runtime paths")?;
 
     init_daemon_logging(daemon.log_path())?;
     tracing::info!(socket = %daemon.socket_path().display(), "starting Aria daemon");
+    #[cfg(target_os = "macos")]
+    if let Err(error) = login_path {
+        tracing::warn!(
+            error = %error_chain(error.as_ref()),
+            "kept the inherited PATH; agents and tools outside it will not start"
+        );
+    }
 
     daemon
         .run()
         .context("Aria daemon terminated with an error")?;
     Ok(())
+}
+
+/// Restarts the daemon in place with the PATH a terminal would have, so it
+/// finds `claude`, `codex`, and `ffmpeg` however launchd started it. Returns
+/// only when it could not; the restarted daemon's PATH is no longer bare.
+#[cfg(target_os = "macos")]
+fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::process::CommandExt;
+
+    if !aria::daemon::needs_login_shell_path(std::env::var_os("PATH").as_deref()) {
+        return Ok(());
+    }
+    let path = aria::daemon::login_shell_path()?;
+    // Same pid, so launchd still tracks the daemon.
+    let error = std::process::Command::new(std::env::current_exe()?)
+        .args(std::env::args_os().skip(1))
+        .env("PATH", path)
+        .exec();
+    Err(error.into())
 }
 
 fn run_events() -> anyhow::Result<()> {

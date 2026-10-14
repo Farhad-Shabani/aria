@@ -50,28 +50,28 @@ final class DaemonClientTests: XCTestCase {
 
     // MARK: - startMethod
 
-    func test_startMethod_kickstartsTheServiceWheneverInstalled() {
+    func test_startMethod_followsTheAgent() throws {
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: nil), .kickstart)
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: false, override: nil), .register)
+        XCTAssertEqual(
+            try DaemonClient.startMethod(agentStatus: .notRegistered, jobLoaded: false, override: nil), .register)
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .notFound, jobLoaded: false, override: nil), .register)
+    }
+
+    func test_startMethod_leavesATurnedOffAgentOff() {
+        XCTAssertThrowsError(
+            try DaemonClient.startMethod(agentStatus: .requiresApproval, jobLoaded: false, override: nil)
+        ) { error in
+            guard case DaemonClientError.agentDisabled = error else {
+                return XCTFail("expected agentDisabled, got \(error)")
+            }
+        }
+    }
+
+    func test_startMethod_spawnsAnOverriddenBinaryWhateverTheAgent() throws {
         let bin = URL(fileURLWithPath: "/opt/aria/target/release/aria")
+        XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: bin), .spawn(bin))
         XCTAssertEqual(
-            DaemonClient.startMethod(serviceInstalled: true, executableCandidates: [bin]),
-            .kickstart)
-        XCTAssertEqual(
-            DaemonClient.startMethod(serviceInstalled: true, executableCandidates: []),
-            .kickstart)
-    }
-
-    func test_startMethod_spawnsTheFirstExecutableWithoutTheService() {
-        let release = URL(fileURLWithPath: "/opt/aria/target/release/aria")
-        let debug = URL(fileURLWithPath: "/opt/aria/target/debug/aria")
-        XCTAssertEqual(
-            DaemonClient.startMethod(serviceInstalled: false, executableCandidates: [release, debug]),
-            .spawn(release))
-        XCTAssertNil(DaemonClient.startMethod(serviceInstalled: false, executableCandidates: []))
-    }
-
-    func test_servicePlist_mirrorsTheRustLabel() {
-        XCTAssertEqual(DaemonClient.serviceLabel, "com.aria.daemon")
-        XCTAssertTrue(
-            DaemonClient.servicePlistURL.path.hasSuffix("/Library/LaunchAgents/com.aria.daemon.plist"))
+            try DaemonClient.startMethod(agentStatus: .requiresApproval, jobLoaded: false, override: bin), .spawn(bin))
     }
 }

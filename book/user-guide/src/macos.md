@@ -47,8 +47,8 @@ uses the completed text. Output choices are under **Settings → Dictation**.
 ## Keep Aria running
 
 Dictation needs Aria's background service. Opening the app starts it; choosing
-**Quit Aria** stops it. Reopen the app to restore dictation, or use
-`aria service start` for the registered service.
+**Quit Aria** stops it until you open the app again. Keep Aria allowed under
+**System Settings → General → Login Items → Allow in the Background**.
 
 You can enable **Launch at login** under **Settings → General**.
 

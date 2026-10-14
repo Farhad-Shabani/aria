@@ -3,13 +3,11 @@ import Foundation
 import Synchronization
 
 enum SetupClientError: LocalizedError, Equatable {
-    case ariaBinaryMissing(String)
     case cancelled
     case failed(String)
 
     var errorDescription: String? {
         switch self {
-        case .ariaBinaryMissing(let path): return "aria binary not found at \(path)"
         case .cancelled: return "Setup was cancelled."
         case .failed(let message): return message
         }
@@ -21,7 +19,7 @@ enum SetupClientError: LocalizedError, Equatable {
 /// service it installs and the Accessibility grant name one executable.
 enum SetupClient {
     static func inspect() async throws -> Aria_Setup_V1_Inspection {
-        let bin = try binary()
+        let bin = try DaemonClient.ariaBinary()
         return try await Task.detached(priority: .userInitiated) {
             let process = Process()
             process.executableURL = bin
@@ -50,7 +48,7 @@ enum SetupClient {
         _ request: Aria_Setup_V1_ApplyRequest,
         onEvent: @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
     ) async throws -> Aria_Setup_V1_Summary {
-        let bin = try binary()
+        let bin = try DaemonClient.ariaBinary()
         let frame = try SetupFrames.encode(request)
         let child = Mutex(Child())
         let run = Task.detached(priority: .userInitiated) { () throws -> Run in
@@ -150,14 +148,6 @@ enum SetupClient {
     private static func failure(status: Int32, stderr: Data) -> String {
         let message = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "aria setup exited with \(status)" : message
-    }
-
-    private static func binary() throws -> URL {
-        let candidates = DaemonClient.daemonBinaryCandidates()
-        guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
-            throw SetupClientError.ariaBinaryMissing(candidates.map(\.path).joined(separator: ", "))
-        }
-        return bin
     }
 }
 

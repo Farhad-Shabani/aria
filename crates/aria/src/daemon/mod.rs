@@ -20,6 +20,8 @@ mod relay;
 mod server;
 mod service;
 mod session;
+#[cfg(target_os = "macos")]
+mod shell;
 mod shutdown;
 mod speaker;
 mod speech;
@@ -40,6 +42,8 @@ pub use session::{
     ListenStarted, ListenStopped, PendingAsk, RouteError, Routing, StartupError, WakeWordStatus,
     WakeWordStatusError,
 };
+#[cfg(target_os = "macos")]
+pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
 /// What `aria doctor` needs to report about the relay without owning one.

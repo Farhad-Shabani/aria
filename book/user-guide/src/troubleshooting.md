@@ -57,8 +57,9 @@ rerun setup to obtain its model and voices file, or correct their paths.
 ## Ask cannot start
 
 Check that your chosen `claude` or `codex` command works directly with your
-account. If installed after Aria setup or in a different command directory,
-run `aria service install` so the service can find it.
+account. If you installed it after Aria started, [restart the service](#restart).
+On Linux, if it lives outside the service's saved `PATH`, run
+`aria service install` so the service can find it.
 
 Try [a typed question](./voice-chat.md#try-a-typed-question) before a spoken one.
 If typing works but speech does not, check the microphone and recognition model.
