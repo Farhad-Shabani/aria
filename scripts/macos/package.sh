@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 #
-# Signs Aria.app and packs it into a DMG in the repository's dist/. A real
-# identity signs the DMG too, so it can be notarized; ad-hoc leaves it
-# unsigned.
+# Signs Aria.app and packs it into a DMG in the repository's dist/.
 #
 # Usage: package.sh <Aria.app> <version>
 set -euo pipefail

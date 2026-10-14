@@ -1,6 +1,5 @@
 version: 2
 updates:
-  # Keeps the commit-SHA pins on actions current through reviewed PRs.
   - package-ecosystem: github-actions
     directory: /
     schedule:
