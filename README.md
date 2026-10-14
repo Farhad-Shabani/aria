@@ -23,7 +23,14 @@ aria listen start     # transcribe system audio, with speakers
 - **Listen** to system audio on macOS and transcribe it, labeled by speaker.
 - **Learn** your project's vocabulary, to help spell its names right.
 
-## Get started
+## Install
+
+Download the Mac app or the Linux binary from the
+[latest release](https://github.com/Farhad-Shabani/aria/releases/latest).
+The [user guide](https://farhad-shabani.github.io/aria/user-guide/) covers
+installation, setup, and every feature.
+
+## Build from source
 
 ```sh
 cargo build --release --bin aria
@@ -45,6 +52,8 @@ A source build runs as `target/release/aria` in the examples above.
 ## Toolkit
 
 You can use these Rust crates in your own projects, without the Aria daemon.
+The [developer guide](https://farhad-shabani.github.io/aria/dev-guide/) shows
+how.
 
 - `aria-kit`: audio capture, and the traits every engine implements
 - `aria-stt`: speech-recognition engines
