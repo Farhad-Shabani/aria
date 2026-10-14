@@ -13,9 +13,6 @@ keychain="${1:?usage: keychain.sh <keychain path>}"
 : "${MACOS_CERTIFICATE:?}" "${MACOS_CERTIFICATE_PASSWORD:?}"
 
 password=$(openssl rand -base64 32)
-if [ -n "${GITHUB_ACTIONS:-}" ]; then
-    echo "::add-mask::$password"
-fi
 security create-keychain -p "$password" "$keychain"
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$password" "$keychain"
