@@ -69,7 +69,7 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
-          identity=$(scripts/macos/import-certificate.sh "$RUNNER_TEMP/signing.keychain-db")
+          identity=$(scripts/macos/keychain.sh "$RUNNER_TEMP/signing.keychain-db")
           echo "ARIA_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: Sign and package
         run: scripts/macos/package.sh "$RUNNER_TEMP/Aria.app" "${GITHUB_REF_NAME#v}"

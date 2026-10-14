@@ -6,10 +6,10 @@
 #
 # Reads MACOS_CERTIFICATE (a base64 .p12) and MACOS_CERTIFICATE_PASSWORD.
 #
-# Usage: import-certificate.sh <keychain path>
+# Usage: keychain.sh <keychain path>
 set -euo pipefail
 
-keychain="${1:?usage: import-certificate.sh <keychain path>}"
+keychain="${1:?usage: keychain.sh <keychain path>}"
 : "${MACOS_CERTIFICATE:?}" "${MACOS_CERTIFICATE_PASSWORD:?}"
 
 password=$(openssl rand -base64 32)
