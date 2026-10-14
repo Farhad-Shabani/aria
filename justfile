@@ -180,7 +180,7 @@ app: swift-project
     cd clients && xcodebuild -project Aria.xcodeproj -scheme Aria \
         -configuration Release -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
         CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} -quiet build
-    scripts/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
+    scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
 
 # Regenerate the Swift client stubs from the daemon's proto. Health comes
 # along so clients can probe the daemon; the Rust side gets its own copy from
@@ -218,11 +218,11 @@ notices:
 
 # Package Aria.app into a DMG in dist/, with its licenses
 release-macos: app notices
-    scripts/release-macos.sh {{ version }}
+    scripts/macos/release.sh {{ version }}
 
 # Package the aria binary and its licenses into a tarball in dist/
 release-linux: notices
-    scripts/release-linux.sh {{ version }}
+    scripts/linux/release.sh {{ version }}
 
 # Write dist/SHA256SUMS, the manifest install.sh reads
 release-checksums:

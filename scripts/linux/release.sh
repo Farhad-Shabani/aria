@@ -3,14 +3,14 @@
 # Builds the aria binary, then packs it with every license it ships under into
 # a tarball in dist/.
 #
-# Usage: release-linux.sh <version>, after `just notices`
+# Usage: release.sh <version>, after `just notices`
 set -euo pipefail
 
-version="${1:?usage: release-linux.sh <version>}"
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+version="${1:?usage: release.sh <version>}"
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 if [ "$(uname -sm)" != "Linux x86_64" ]; then
-    echo "release-linux.sh builds on Linux x86_64 only" >&2
+    echo "release.sh builds on Linux x86_64 only" >&2
     exit 1
 fi
 
