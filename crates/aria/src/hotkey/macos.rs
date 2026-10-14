@@ -1,4 +1,4 @@
-//! The macOS hotkey listener: an active CGEventTap that passes events through.
+//! The macOS hotkey listener: a listen-only CGEventTap.
 //!
 //! Everything runs on the caller's thread. The tap callback only ever
 //! executes inside [`CFRunLoop::run_in_mode`] on that same thread, so the
@@ -212,16 +212,13 @@ fn create_tap(state: &TapState) -> Option<CFRetained<CFMachPort>> {
     // the frame can return. The callback runs only inside
     // `CFRunLoop::run_in_mode` on this same thread, so the pointer is always
     // valid, never accessed concurrently, and only ever reborrowed shared.
-    // The callback is implemented in this file and returns the event pointer
-    // it was given unchanged, so an active tap passes every event through.
-    // Active rather than listen-only: macOS gates a listen-only tap behind
-    // Input Monitoring, while an active one needs only the Accessibility
-    // grant that typing already requires.
+    // Listen-only: the tap sees copies of events and never holds up input.
+    // An active tap freezes all input once the Accessibility grant is revoked.
     unsafe {
         CGEvent::tap_create(
             CGEventTapLocation::SessionEventTap,
             CGEventTapPlacement::HeadInsertEventTap,
-            CGEventTapOptions::Default,
+            CGEventTapOptions::ListenOnly,
             EVENT_MASK,
             Some(tap_callback),
             user_info,
