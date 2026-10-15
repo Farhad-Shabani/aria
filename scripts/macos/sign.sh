@@ -24,6 +24,8 @@ fi
 find "$app/Contents" -name '*.dylib' -not -path '*/Resources/*' | while read -r library; do
     sign "$library"
 done
-# The daemon, not the app, records the microphone.
-sign --entitlements "$(dirname "${BASH_SOURCE[0]}")/aria.entitlements" "$app/Contents/Helpers/aria"
-sign "$app"
+# macOS charges the daemon's microphone use to the app. Without the
+# entitlement on both, recording is silent and macOS never asks.
+entitlements="$(dirname "${BASH_SOURCE[0]}")/aria.entitlements"
+sign --entitlements "$entitlements" "$app/Contents/Helpers/aria"
+sign --entitlements "$entitlements" "$app"
