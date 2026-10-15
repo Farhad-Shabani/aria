@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSPasteboard, NSRunningApplication};
-use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation, CGPreflightPostEventAccess};
+use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
 use objc2_foundation::NSString;
 
 use super::{
     DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
 };
+use crate::accessibility::Trust;
 
 mod confirmation;
 
@@ -183,14 +184,14 @@ impl TextDelivery for MacOsTextDelivery {
 /// What the insertion guards look at, read all at once so `prepare` and the
 /// re-check in `insert` judge the same facts, and so a test can hand in values.
 struct Facts {
-    permitted: bool,
+    trust: Trust,
     secure_input: bool,
     frontmost: Result<u32, DeliveryError>,
 }
 
 fn observe() -> Facts {
     Facts {
-        permitted: CGPreflightPostEventAccess(),
+        trust: Trust::reuse_or_check(),
         secure_input: secure_input_enabled(),
         frontmost: frontmost_process(),
     }
@@ -201,7 +202,7 @@ fn observe() -> Facts {
 /// Permission is judged first because its refusal is the only one that tells
 /// the user how to fix it.
 fn insertable(facts: Facts) -> Result<u32, DeliveryError> {
-    if !facts.permitted {
+    if !facts.trust.is_trusted() {
         return Err(DeliveryError::InsertionNotPermitted);
     }
     if facts.secure_input {
@@ -453,7 +454,7 @@ mod tests {
     /// test wants.
     fn permitted(frontmost: Result<u32, DeliveryError>) -> Facts {
         Facts {
-            permitted: true,
+            trust: Trust::Trusted,
             secure_input: false,
             frontmost,
         }
@@ -493,7 +494,7 @@ mod tests {
     fn a_refused_guard_sends_the_transcript_to_the_pasteboard() {
         let pasteboard = NSPasteboard::pasteboardWithUniqueName();
         let secure_input = Facts {
-            permitted: true,
+            trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET),
         };
@@ -533,7 +534,7 @@ mod tests {
     #[test]
     fn a_withdrawn_grant_beats_every_other_refusal() {
         let result = insertion(Facts {
-            permitted: false,
+            trust: Trust::Untrusted,
             secure_input: true,
             frontmost: Err(DeliveryError::TargetUnavailable),
         });
@@ -544,7 +545,7 @@ mod tests {
     #[test]
     fn secure_input_is_refused_before_focus_is_judged() {
         let result = insertion(Facts {
-            permitted: true,
+            trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET),
         });
