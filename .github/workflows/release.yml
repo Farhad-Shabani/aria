@@ -85,11 +85,11 @@ jobs:
           APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
           APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
           APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-        run: scripts/macos/notarize.sh "dist/Aria-${GITHUB_REF_NAME#v}-macos-arm64.dmg"
+        run: scripts/macos/notarize.sh "dist/aria-${GITHUB_REF_NAME#v}-macos-arm64.dmg"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
-          path: dist/Aria-*-macos-arm64.dmg
+          path: dist/aria-*-macos-arm64.dmg
           if-no-files-found: error
 
   linux:

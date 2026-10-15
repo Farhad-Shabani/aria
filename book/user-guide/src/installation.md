@@ -6,7 +6,19 @@ Releases run on Apple Silicon Macs with macOS 15 or later, and on x86_64 Linux.
 
 ## Mac
 
-1. Download `Aria-<version>-macos-arm64.dmg`.
+With [Homebrew](https://brew.sh), this installs Aria and links the `aria`
+command:
+
+```sh
+brew install --cask farhad-shabani/tap/aria
+```
+
+If Aria is already in Applications, add `--force` to replace it. Then open Aria
+to finish setup, as in step 3 below.
+
+Without Homebrew:
+
+1. Download the `macos-arm64` DMG.
 2. Open it and drag **Aria** to **Applications**.
 3. Open Aria from Applications. It appears in the menu bar and opens its setup
    window. **Express Setup** uses the defaults; **Customize…** lets you choose
@@ -74,7 +86,8 @@ record audio to test microphone permission.
 
 On a Mac, choose **Quit Aria** from its menu, replace Aria in Applications
 with the copy from the new DMG, and open it. To remove Aria, quit it and move
-it to the Trash.
+it to the Trash. With Homebrew, run `brew upgrade --cask aria` or
+`brew uninstall --cask aria`.
 
 On Linux, rerun the install command to update. To remove Aria:
 
