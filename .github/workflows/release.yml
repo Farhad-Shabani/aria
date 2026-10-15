@@ -76,9 +76,10 @@ jobs:
         run: |
           set -euo pipefail
           codesign --verify --deep --strict "$RUNNER_TEMP/Aria.app"
-          # The daemon cannot record without the audio-input entitlement.
-          entitlements=$(codesign -d --entitlements - "$RUNNER_TEMP/Aria.app/Contents/Helpers/aria")
-          grep -q com.apple.security.device.audio-input <<< "$entitlements"
+          for code in "$RUNNER_TEMP/Aria.app" "$RUNNER_TEMP/Aria.app/Contents/Helpers/aria"; do
+            entitlements=$(codesign -d --entitlements - "$code")
+            grep -q com.apple.security.device.audio-input <<< "$entitlements"
+          done
       - name: Notarize and staple
         env:
           APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
