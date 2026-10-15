@@ -227,7 +227,7 @@ release-linux: notices
 # Write dist/SHA256SUMS, the manifest install.sh reads
 release-checksums:
     cp install.sh dist/install.sh
-    cd dist && shasum -a 256 install.sh Aria-{{ version }}-macos-arm64.dmg aria-{{ version }}-linux-x86_64.tar.gz > SHA256SUMS
+    cd dist && shasum -a 256 install.sh aria-{{ version }}-macos-arm64.dmg aria-{{ version }}-linux-x86_64.tar.gz > SHA256SUMS
 
 # Evaluation and benchmarks
 

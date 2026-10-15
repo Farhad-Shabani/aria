@@ -9,7 +9,7 @@ app="${1:?usage: package.sh <Aria.app> <version>}"
 version="${2:?usage: package.sh <Aria.app> <version>}"
 scripts="$(dirname "${BASH_SOURCE[0]}")"
 dist="$(cd "$scripts/../.." && pwd)/dist"
-dmg="$dist/Aria-$version-macos-arm64.dmg"
+dmg="$dist/aria-$version-macos-arm64.dmg"
 # Ad hoc unless asked, so no personal identity ships in a release.
 export ARIA_SIGN_IDENTITY="${ARIA_SIGN_IDENTITY:--}"
 

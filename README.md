@@ -27,6 +27,12 @@ aria listen start     # transcribe system audio, with speakers
 
 Download the Mac app or the Linux binary from the
 [latest release](https://github.com/Farhad-Shabani/aria/releases/latest).
+On a Mac, Homebrew installs the app and the `aria` command:
+
+```sh
+brew install --cask farhad-shabani/tap/aria
+```
+
 The [user guide](https://farhad-shabani.github.io/aria/user-guide/) covers
 installation, setup, and every feature.
 
