@@ -50,10 +50,9 @@ const BUNDLED_WAKEWORD_DIRS: [&str; 3] = [
     "../share/aria/wakeword",
     "../../models/wakeword",
 ];
-/// The listener retries the tap every `PERMISSION_RETRY` (5 s), so the hotkey
-/// arms within one of those of the grant; a longer wait only delays a user who
-/// has not granted yet.
-const GRANT_WAIT: Duration = Duration::from_secs(10);
+/// The listener re-checks the grant every `PERMISSION_RETRY` (3 s). A longer
+/// wait only delays a user who has not granted yet.
+const GRANT_WAIT: Duration = Duration::from_secs(6);
 const GRANT_POLL: Duration = Duration::from_millis(500);
 /// What the test press answers with. Short, so a slow engine is not the
 /// last thing setup makes someone sit through.

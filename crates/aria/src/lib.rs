@@ -1,6 +1,8 @@
 pub use aria_kit::{audio, synthesis};
 pub use aria_primitives as primitives;
 
+#[cfg(target_os = "macos")]
+pub mod accessibility;
 pub mod chat;
 pub mod config;
 pub mod daemon;

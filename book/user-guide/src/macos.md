@@ -16,9 +16,6 @@ Aria needs two permissions:
   choose `/Applications/Aria.app/Contents/Helpers/aria`. Use **⌘⇧G** in the
   file picker to enter that path.
 
-After granting Accessibility, [restart Aria's service](./troubleshooting.md#restart)
-if insertion still fails.
-
 ## Try it
 
 1. Open an empty document in a text editor and click where you want the text.

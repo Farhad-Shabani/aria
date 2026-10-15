@@ -33,7 +33,7 @@ file that is missing or unreadable needs to be corrected in setup or
 
 If recording works but text does not appear, keep the target app and editable
 field focused. Check [Accessibility permission](./macos.md#permissions) for the
-actual Aria executable, then restart its service. For a terminal recording,
+actual Aria executable. For a terminal recording,
 try `aria dictate --mode copy` and paste to separate insertion from recognition.
 
 On Linux, use copying rather than insertion-only modes. Keep the background
@@ -41,7 +41,7 @@ service running so clipboard text remains available.
 
 ## Restart
 
-After changing engine settings or granting Accessibility access,
+After changing engine settings,
 [restart the service](./configuration.md#apply-changes). Reopening the Mac app
 also starts it.
 

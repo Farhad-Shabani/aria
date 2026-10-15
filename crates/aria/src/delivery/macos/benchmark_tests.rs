@@ -1,4 +1,5 @@
 use super::{DeliveryError, MacOsTextDelivery, OutputMode, TextDelivery};
+use crate::accessibility::Trust;
 use anyhow::Context;
 use std::time::Duration;
 
@@ -10,7 +11,7 @@ mod target;
 fn native_streaming_target_receives_unicode_selection_and_rejects_focus_loss() -> anyhow::Result<()>
 {
     anyhow::ensure!(
-        objc2_core_graphics::CGPreflightPostEventAccess(),
+        Trust::in_process().is_trusted(),
         "grant Accessibility permission to the test executable before this native check"
     );
     let runtime = tokio::runtime::Builder::new_current_thread()

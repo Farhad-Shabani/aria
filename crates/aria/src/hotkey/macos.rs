@@ -18,17 +18,16 @@ use objc2_core_graphics::{
 };
 
 use super::{HotkeyKey, KeyEvent, ListenerEvent, ListenerExit, Press, PressDetector};
+use crate::accessibility::Trust;
 
-/// How long to wait before asking for the tap again while the Accessibility
-/// grant is missing. Granting takes effect within one interval, no restart.
-const PERMISSION_RETRY: Duration = Duration::from_secs(5);
+const PERMISSION_RETRY: Duration = Duration::from_secs(3);
 /// One run-loop slice: bounds shutdown latency, not press latency — the
 /// slice returns early whenever the tap handles an event, and a pending
 /// hold shortens it.
 const RUN_LOOP_SLICE_SECONDS: f64 = 0.1;
 /// How often to confirm the tap is still enabled. macOS silently disables
 /// taps it suspects are stalled, and a disabled tap looks healthy from here.
-const REARM_INTERVAL: Duration = Duration::from_secs(5);
+const REARM_INTERVAL: Duration = Duration::from_secs(3);
 const STOP_POLL: Duration = Duration::from_millis(100);
 
 pub(crate) struct MacOsHotkeyListener;
@@ -106,14 +105,16 @@ impl MacOsHotkeyListener {
             if stopped {
                 return ListenerExit::Shutdown;
             }
-            // The port died; go back to arming, which also covers a revoked
-            // Accessibility grant.
         }
     }
 }
 
-/// Creates the tap and hooks it into this thread's run loop.
+/// Creates the tap and hooks it into this thread's run loop. A tap created
+/// before the grant never recovers.
 fn arm(state: &TapState) -> Option<CFRetained<CFMachPort>> {
+    if !Trust::check_now().is_trusted() {
+        return None;
+    }
     let tap = create_tap(state)?;
     let source = CFMachPort::new_run_loop_source(None, Some(&tap), 0)?;
     let run_loop = CFRunLoop::current()?;
@@ -134,7 +135,6 @@ fn watch(
 ) -> bool {
     let mode = default_mode();
     let mut last_health_check = Instant::now();
-    let mut armed = true;
     loop {
         CFRunLoop::run_in_mode(Some(&mode), state.slice_seconds(), true);
         state.tick();
@@ -150,25 +150,15 @@ fn watch(
                 tracing::warn!(trigger = "hotkey", "event tap port died; re-arming");
                 return false;
             }
-            // macOS disables the tap when the Accessibility grant does not
-            // cover this binary. Re-enabling keeps working once the grant
-            // arrives, so report the state rather than only logging it.
-            if CGEvent::tap_is_enabled(tap) {
-                if !armed {
-                    armed = true;
-                    events(ListenerEvent::Armed);
-                    tracing::info!(trigger = "hotkey", "event tap stayed enabled; armed");
-                }
-            } else {
-                CGEvent::tap_enable(tap, true);
-                if armed {
-                    armed = false;
-                    events(ListenerEvent::AwaitingPermission);
-                    tracing::warn!(
-                        trigger = "hotkey",
-                        "event tap keeps being disabled; the Accessibility grant does not cover this binary"
-                    );
-                }
+            // Re-enabling a tap disabled for a missing grant never works.
+            if !CGEvent::tap_is_enabled(tap) {
+                tracing::warn!(trigger = "hotkey", "event tap disabled; re-arming");
+                return false;
+            }
+            // macOS leaves a running tap alive after the grant is revoked.
+            if !Trust::check_now().is_trusted() {
+                tracing::warn!(trigger = "hotkey", "the grant was revoked; disarming");
+                return false;
             }
         }
     }

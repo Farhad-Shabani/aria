@@ -369,8 +369,7 @@ fn running_daemon(
             format!(
                 "running at {}, but the dictation hotkey is waiting for the Accessibility \
                  grant: System Settings → Privacy & Security → Accessibility → + → {}; \
-                 it arms within ~5s. Typing needs `aria service stop && aria service \
-                 start` as well, because the daemon reads the grant once at startup",
+                 it arms within ~3s",
                 socket.display(),
                 aria_binary_label()
             ),

@@ -42,6 +42,9 @@ struct Cli {
 enum Command {
     #[command(hide = true)]
     Daemon,
+    #[cfg(target_os = "macos")]
+    #[command(name = aria::accessibility::CHECK_SUBCOMMAND, hide = true)]
+    AccessibilityCheck,
     /// Check the configuration, models, and daemon on this machine
     Doctor,
     /// Inspect the configuration the daemon loads
@@ -377,6 +380,10 @@ impl From<CliOutputMode> for OutputMode {
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Daemon => run_daemon(),
+        #[cfg(target_os = "macos")]
+        Command::AccessibilityCheck => {
+            std::process::exit(aria::accessibility::Trust::in_process().exit_code())
+        }
         Command::Doctor => run_doctor(),
         Command::Config {
             command: ConfigCommand::Show,
@@ -710,8 +717,7 @@ fn run_setup(yes: bool, skip_models: bool) -> anyhow::Result<()> {
     if summary.grant == Grant::Waiting {
         println!(
             "next         grant Accessibility: System Settings → Privacy & Security → \
-             Accessibility → + → {}; the hotkey arms within ~5s. Typing needs \
-             `aria service stop && aria service start` as well",
+             Accessibility → + → {}; the hotkey arms within ~3s",
             aria::doctor::aria_binary_label()
         );
     }
