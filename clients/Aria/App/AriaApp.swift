@@ -1,21 +1,6 @@
 import SwiftUI
 
 extension DaemonState {
-    /// The menu bar mark's ribbon: waving while listening, flat when stopped.
-    var markWave: CGFloat {
-        switch self {
-        case .running, .working: return 1
-        case .stopped: return 0
-        }
-    }
-
-    var markAlpha: CGFloat {
-        switch self {
-        case .running, .stopped: return 1
-        case .working: return 0.5
-        }
-    }
-
     var statusLine: String {
         switch self {
         case .running: return "Running"
@@ -122,7 +107,7 @@ struct AriaApp: App {
             .padding(8)
             .frame(width: 280)
         } label: {
-            MenuBarLabel(poller: poller, preferences: preferences, controller: appDelegate)
+            MenuBarLabel(poller: poller, status: appDelegate.status, preferences: preferences, controller: appDelegate)
         }
         .menuBarExtraStyle(.window)
 
@@ -152,12 +137,14 @@ private struct MenuBarLabel: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var poller: StatusPoller
+    @ObservedObject var status: StatusController
     let preferences: DaemonPreferences
     let controller: AppDelegate
 
     var body: some View {
-        Image(nsImage: MenuBarMark.image(wave: poller.state.markWave, alpha: poller.state.markAlpha))
-            .accessibilityLabel("Aria")
+        let state = MenuBarState(daemon: poller.state, pill: status.live)
+        Image(nsImage: MenuBarMark.image(state))
+            .accessibilityLabel(state.accessibilityLabel)
             .onAppear {
                 let openSettings = openSettings
                 controller.settings.register {

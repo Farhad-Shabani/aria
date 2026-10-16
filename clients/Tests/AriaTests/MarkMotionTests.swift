@@ -24,6 +24,25 @@ final class MarkMotionTests: XCTestCase {
         }
     }
 
+    func testSmallRibbonSpansTheHeavierRingsChord() {
+        let (upper, lower) = RibbonMotion.currents(
+            phase: 0, share: { _ in MarkMotion.restShare }, geometry: .smallMark)
+        let inner = MarkTuning.outer - SmallMark.ringWidth
+        let middle = RibbonGeometry.smallMark.middle
+        for end in [upper.first!, upper.last!, lower.first!, lower.last!] {
+            XCTAssertEqual(hypot(end.x - MarkTuning.center, middle - MarkTuning.center), inner, accuracy: 1e-9)
+        }
+    }
+
+    func testSmallRibbonStaysUnderTheRing() {
+        let (upper, lower) = RibbonMotion.currents(
+            phase: 0, share: { _ in MarkMotion.restShare }, geometry: .smallMark)
+        for point in upper + lower {
+            let reach = hypot(point.x - MarkTuning.center, point.y - MarkTuning.center) + SmallMark.ribbonEdge / 2
+            XCTAssertLessThanOrEqual(reach, MarkTuning.outer)
+        }
+    }
+
     func testRestingRibbonIsTheLogosWave() {
         let (upper, _) = RibbonMotion.currents(phase: 0, share: { _ in MarkMotion.restShare }, geometry: .mark)
         let baseline = MarkTuning.center + MarkTuning.shift - MarkTuning.spread / 2
