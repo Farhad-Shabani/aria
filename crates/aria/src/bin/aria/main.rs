@@ -718,7 +718,7 @@ fn run_setup(yes: bool, skip_models: bool) -> anyhow::Result<()> {
         println!(
             "next         grant Accessibility: System Settings → Privacy & Security → \
              Accessibility → + → {}; the hotkey arms within ~3s",
-            aria::doctor::aria_binary_label()
+            aria::doctor::accessibility_target_label()
         );
     }
     if cfg!(target_os = "macos") {

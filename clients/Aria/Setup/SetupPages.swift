@@ -159,7 +159,7 @@ struct InstallingPage: View {
 struct GrantPage: View {
     var body: some View {
         PageNote(symbol: "lock.shield") {
-            Text("In System Settings, open Privacy & Security → Accessibility and switch on aria.")
+            Text("In System Settings, open Privacy & Security → Accessibility and switch on Aria.")
             Text("This page moves on by itself once the hotkey arms.")
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

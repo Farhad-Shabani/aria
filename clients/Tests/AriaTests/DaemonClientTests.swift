@@ -35,7 +35,10 @@ final class DaemonClientTests: XCTestCase {
             bundledExecutable: URL(fileURLWithPath: "/Applications/Aria.app/Contents/MacOS/Aria"),
             defaults: scratchDefaults()
         )
-        XCTAssertEqual(candidates.map(\.path), ["/Applications/Aria.app/Contents/Helpers/aria"])
+        XCTAssertEqual(
+            candidates.map(\.path),
+            ["/Applications/Aria.app/Contents/Helpers/Aria.app/Contents/MacOS/aria"]
+        )
     }
 
     // MARK: - Scratch suite (never touch UserDefaults.standard)

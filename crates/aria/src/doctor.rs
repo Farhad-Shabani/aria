@@ -371,7 +371,7 @@ fn running_daemon(
                  grant: System Settings → Privacy & Security → Accessibility → + → {}; \
                  it arms within ~3s",
                 socket.display(),
-                aria_binary_label()
+                accessibility_target_label()
             ),
         );
     }
@@ -394,13 +394,24 @@ fn serving_suffix(wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> &'
     }
 }
 
-/// The grant follows the real binary, not whichever symlink an installer
-/// put on PATH, so the instruction has to name the resolved path.
-pub fn aria_binary_label() -> String {
+/// What to add under Accessibility: the bundle around the real binary, not a
+/// symlink an installer put on PATH.
+pub fn accessibility_target_label() -> String {
     std::env::current_exe()
         .and_then(std::fs::canonicalize)
-        .map(|path| path.display().to_string())
+        .map(|exe| accessibility_target(&exe).display().to_string())
         .unwrap_or_else(|_| "the aria binary".to_owned())
+}
+
+fn accessibility_target(exe: &Path) -> &Path {
+    let bundle = exe
+        .parent()
+        .filter(|dir| dir.ends_with("Contents/MacOS"))
+        .and_then(|dir| dir.parent()?.parent());
+    match bundle {
+        Some(bundle) if bundle.extension().is_some_and(|ext| ext == "app") => bundle,
+        _ => exe,
+    }
 }
 
 fn wake_is_enabled(wake: Option<&WakeConfig>) -> bool {
@@ -590,5 +601,18 @@ mod tests {
 
         assert!(!healthy.has_failure());
         assert!(broken.has_failure());
+    }
+
+    #[test]
+    fn a_bundled_binary_is_granted_through_its_bundle() {
+        let bundled =
+            Path::new("/Applications/Aria.app/Contents/Helpers/Aria.app/Contents/MacOS/aria");
+        let loose = Path::new("/usr/local/bin/aria");
+
+        assert_eq!(
+            accessibility_target(bundled),
+            Path::new("/Applications/Aria.app/Contents/Helpers/Aria.app")
+        );
+        assert_eq!(accessibility_target(loose), loose);
     }
 }
