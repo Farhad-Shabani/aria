@@ -1,3 +1,7 @@
+# Must match clients/project.yml. `force` overrides the shell.
+[env]
+MACOSX_DEPLOYMENT_TARGET = { value = "15.0", force = true }
+
 # ONNX Runtime's WebGPU provider ships libwebgpu_dawn.dylib beside the binary.
 [target.aarch64-apple-darwin]
 rustflags = [ "-C", "link-arg=-Wl,-rpath,@executable_path" ]

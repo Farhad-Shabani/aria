@@ -2,6 +2,13 @@
 
 <p align="center"><b>Talk to your AI agents without sending them your audio.</b></p>
 
+<p align="center">
+  <a href="https://github.com/Farhad-Shabani/aria/actions/workflows/check.yml"><img src="https://github.com/Farhad-Shabani/aria/actions/workflows/check.yml/badge.svg?branch=main" alt="Checks"></a>
+  <a href="https://github.com/Farhad-Shabani/aria/releases/latest"><img src="https://img.shields.io/github/v/release/Farhad-Shabani/aria" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FFarhad-Shabani%2Faria%2Fmain%2Fclients%2Fproject.yml&query=%24.options.deploymentTarget.macOS&label=macOS&suffix=%2B%20%28Apple%20Silicon%29&color=blue&logo=apple" alt="Minimum macOS on Apple Silicon">
+  <img src="https://img.shields.io/badge/Linux-x86__64-blue?logo=linux" alt="Linux x86_64">
+</p>
+
 Aria hears you, writes what you say, and reads text aloud. It's a voice
 assistant for macOS and Linux, with all speech processing on your machine. It
 also talks to your AI agents and keeps the conversation going. They get your
