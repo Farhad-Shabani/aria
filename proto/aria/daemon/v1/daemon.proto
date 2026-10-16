@@ -8,10 +8,12 @@ syntax = "proto3";
 // directory. Alongside these services the daemon serves grpc.health.v1
 // (readiness) and server reflection (v1 and v1alpha).
 //
-// Relay and health use a separate unauthenticated LAN TCP port. Paired
-// phones access PreferencesService on another port using TLS and
-// `authorization: Bearer <token>`. The Unix socket uses filesystem permissions.
-// LAN preference writes are restricted to relay settings; other services stay local.
+// Paired phones reach RelayService, PreferencesService, and health on a
+// separate LAN TCP port, using TLS and `authorization: Bearer <token>`.
+// PairingService.Pair is the one LAN call without the token: it trades a
+// one-time code for it. The Unix socket uses filesystem permissions. LAN
+// preference writes are restricted to relay settings; other services stay
+// local.
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";

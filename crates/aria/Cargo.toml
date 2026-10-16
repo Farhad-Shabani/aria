@@ -32,6 +32,7 @@ rcgen             = "0.14"
 rusqlite          = { version = "0.40", features = [ "bundled", "hooks" ] }
 
 rustix             = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+rustls-pki-types   = "1"
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 sha2               = "0.10"

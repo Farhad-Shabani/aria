@@ -167,22 +167,36 @@ pub(super) fn build(
     };
     let (history, history_actor) = HistoryRpc::new(transcripts, Arc::clone(&dictation_runtime));
     let preferences_rpc = PreferencesRpc::new(preferences, Arc::clone(&vocabulary));
-    // Minted only for a daemon that relays, and never fatal: a Mac whose
-    // pairing file is unusable still dictates and still relays.
-    let pairing = relay_delivery.as_ref().and_then(|_relay| {
+    // Without usable pairing the relay stays off, but the Mac still dictates.
+    let relay = relay_delivery.and_then(|(delivery, port)| {
         let path = context
             .config_environment
             .home()
             .join(super::relay::PAIRING_RELATIVE_PATH);
-        super::relay::load_pairing(&path, &super::relay::instance_name())
+        let instance = super::relay::instance_name();
+        let pairing = super::relay::load_pairing(&path, &instance)
             .inspect_err(|error| {
                 tracing::error!(
-                    %error,
+                    ?error,
                     path = %path.display(),
-                    "settings pairing is unavailable; the relay runs without it"
+                    "relay is off: pairing material is unusable"
                 );
             })
-            .ok()
+            .ok()?;
+        Some(Relay {
+            rpc: RelayRpc::new(
+                relay_runtime,
+                relay_microphone,
+                delivery,
+                context.paths.spool_dir(),
+                tasks.cancellation(),
+            ),
+            port,
+            preferences: preferences_rpc.clone(),
+            pairing,
+            codes: Arc::new(super::relay::PairingCodes::default()),
+            instance,
+        })
     });
     let services = Services {
         history,
@@ -194,22 +208,11 @@ pub(super) fn build(
             context.config_environment.clone(),
             listen_event_emitter(Arc::clone(&subscriptions)),
         ))),
-        preferences: preferences_rpc.clone(),
+        preferences: preferences_rpc,
         vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary), preference_store),
         speaker: SpeakerRpc::new(speaker),
         events: EventsService::new(subscriptions),
-        relay: relay_delivery.map(|(delivery, port)| Relay {
-            rpc: RelayRpc::new(
-                relay_runtime,
-                relay_microphone,
-                delivery,
-                context.paths.spool_dir(),
-                tasks.cancellation(),
-            ),
-            port,
-            preferences: preferences_rpc,
-            pairing,
-        }),
+        relay,
         health,
     };
     let actors = Actors {

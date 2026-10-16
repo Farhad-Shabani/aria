@@ -29,10 +29,10 @@ use super::hotkey::HotkeyTrigger;
 use super::listen::ListenState;
 use super::memory::MemoryBacklog;
 use super::preferences::PreferencesActor;
-use super::relay::{Advert, LanPreferences, Pairing, require_bearer};
+use super::relay::{Advert, LanPreferences, Pairing, PairingCodes, require_bearer};
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, ListenRpc, PreferencesRpc,
-    RelayRpc, SpeakerRpc, SpeechRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, InviteRpc, ListenRpc,
+    PairingRpc, PreferencesRpc, RelayRpc, SpeakerRpc, SpeechRpc, VocabularyRpc,
 };
 use super::shutdown::ShutdownSignal;
 use super::speaker::SpeakerActor;
@@ -52,14 +52,19 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 /// The largest `RelayRequest` the relay will decode. The phone ships 256 KiB
 /// chunks; this is generous for one of those and nowhere near a session.
 const MAX_RELAY_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-/// How many relay streams may run on one connection. One is doing work —
-/// only one can hold the recorder — and the rest are slack for a client
-/// retrying over a connection it has not yet given up on. Connections
-/// themselves are uncapped; the keepalive below is what reaps the dead ones.
+/// How many streams may run on one LAN connection. Only one relay can hold
+/// the recorder. The rest is slack for a settings or health call, or a
+/// retry. Connections are uncapped; the keepalive below reaps dead ones.
 const MAX_RELAY_STREAMS: usize = 4;
 /// A preference patch is a few hundred bytes; this leaves room for a long
 /// vocabulary path and nothing else.
 const MAX_PREFERENCES_MESSAGE_BYTES: usize = 64 * 1024;
+/// A pairing request carries one 32-character code, and anyone on the LAN
+/// can send one.
+const MAX_PAIR_MESSAGE_BYTES: usize = 1024;
+/// A phone on the LAN finishes its handshake in well under a second. A
+/// connection that has not finished by then holds a socket for nothing.
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
 const RELAY_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -149,13 +154,13 @@ impl Server {
         // to. `_advert` unregisters when this scope ends, panic included.
         let Lan {
             relay: lan,
-            preferences: lan_preferences,
             advert: _advert,
+            invites,
         } = match services.relay.take() {
             Some(relay) => open_relay(relay, &services.health).await,
             None => Lan::default(),
         };
-        let router = build_router(services, &activity).await?;
+        let router = build_router(services, invites, &activity).await?;
         // Before wake or a request can submit work. Tracked, so waiting on
         // tasks waits for each actor — and through it, that capability's jobs.
         tasks.supervise(actors.dictation);
@@ -190,26 +195,22 @@ impl Server {
             UnixListenerStream::new(listener),
             tasks.cancellation().cancelled_owned(),
         );
-        // Three listeners, one stop. The LAN ones are not allowed to end the
+        // Two listeners, one stop. The LAN one is not allowed to end the
         // daemon: a relay that fell over must not take dictation with it.
-        let serve_lan = |listener: Option<RelayServer>, name: &'static str| {
-            let cancelled = tasks.cancellation().cancelled_owned();
-            async move {
-                let Some((router, incoming)) = listener else {
-                    return;
-                };
-                if let Err(error) = router
-                    .serve_with_incoming_shutdown(incoming, cancelled)
-                    .await
-                {
-                    tracing::error!(%error, name, "a LAN listener failed");
-                }
+        let cancelled = tasks.cancellation().cancelled_owned();
+        let relay = async move {
+            let Some((router, incoming)) = lan else {
+                return;
+            };
+            if let Err(error) = router
+                .serve_with_incoming_shutdown(incoming, cancelled)
+                .await
+            {
+                tracing::error!(%error, "the relay listener failed");
             }
         };
-        let relay = serve_lan(lan, "relay");
-        let preferences = serve_lan(lan_preferences, "settings");
         let grpc = async move {
-            let (unix, (), ()) = tokio::join!(unix, relay, preferences);
+            let (unix, ()) = tokio::join!(unix, relay);
             unix
         };
         tokio::pin!(grpc);
@@ -274,14 +275,16 @@ pub(super) struct Services {
 
 /// The relay and the port it answers on, together because "served" and
 /// "where" are the same decision: carried apart, a mismatch binds a port
-/// nobody was told about. Beside it, what a paired phone may reach: the
-/// preferences service and the material that gates it, absent when the
-/// daemon could not mint it.
+/// nobody was told about. Beside it, the preferences a paired phone may
+/// reach on the same port, the pairing that gates both, and the codes a new
+/// phone trades for its token.
 pub(super) struct Relay {
     pub(super) rpc: RelayRpc,
     pub(super) port: u16,
     pub(super) preferences: PreferencesRpc,
-    pub(super) pairing: Option<Pairing>,
+    pub(super) pairing: Pairing,
+    pub(super) codes: Arc<PairingCodes>,
+    pub(super) instance: String,
 }
 
 /// A LAN half of the daemon: a router, and the socket it answers on.
@@ -294,8 +297,10 @@ type RelayRouter = tonic::transport::server::Router;
 #[derive(Default)]
 struct Lan {
     relay: Option<RelayServer>,
-    preferences: Option<RelayServer>,
     advert: Option<Advert>,
+    /// Present exactly when `relay` is: a code is worth showing only while a
+    /// phone can redeem it. Unix socket only.
+    invites: Option<InviteRpc>,
 }
 
 async fn open_relay(relay: Relay, health: &HealthReporter) -> Lan {
@@ -304,7 +309,52 @@ async fn open_relay(relay: Relay, health: &HealthReporter) -> Lan {
         port,
         preferences,
         pairing,
+        codes,
+        instance,
     } = relay;
+    // Its own reporter, not the daemon's. Sharing one would answer a LAN
+    // client's health query for every service it cannot reach, which is a
+    // free inventory of what this Mac runs. The daemon's reporter learns of
+    // the relay too, so a local client can ask whether it opened.
+    let (relay_health, _service) = tonic_health::server::health_reporter();
+    relay_health
+        .set_serving::<wire::relay_service_server::RelayServiceServer<RelayRpc>>()
+        .await;
+    let router = match relay_router(
+        rpc,
+        LanPreferences::new(preferences),
+        Arc::clone(&codes),
+        relay_health,
+        &pairing,
+    ) {
+        Ok(router) => router,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                "the pairing certificate is unusable; the relay is off"
+            );
+            return Lan::default();
+        }
+    };
+    let invites = InviteRpc::new(codes, instance, pairing.certificate_fingerprint);
+    bind_relay(
+        router,
+        port,
+        invites,
+        &pairing.certificate_fingerprint,
+        health,
+    )
+    .await
+}
+
+/// Binds the port and, only then, lets the unix socket issue codes.
+async fn bind_relay(
+    router: RelayRouter,
+    port: u16,
+    invites: InviteRpc,
+    fingerprint: &[u8; 32],
+    health: &HealthReporter,
+) -> Lan {
     let listener = match tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port))
         .await
     {
@@ -316,18 +366,9 @@ async fn open_relay(relay: Relay, health: &HealthReporter) -> Lan {
             return Lan::default();
         }
     };
-    // Its own reporter, not the daemon's. Sharing one would answer a LAN
-    // client's health query for every service it cannot reach, which is a
-    // free inventory of what this Mac runs. The daemon's reporter learns of
-    // the relay too, so a local client can ask whether it opened.
-    let (relay_health, _service) = tonic_health::server::health_reporter();
-    relay_health
-        .set_serving::<wire::relay_service_server::RelayServiceServer<RelayRpc>>()
-        .await;
     health
         .set_serving::<wire::relay_service_server::RelayServiceServer<RelayRpc>>()
         .await;
-    let router = relay_router(rpc, relay_health);
 
     // What the OS actually gave us. A configured port of 0 means an ephemeral
     // one, and advertising the request rather than the result would send
@@ -338,109 +379,82 @@ async fn open_relay(relay: Relay, health: &HealthReporter) -> Lan {
             tracing::error!(%error, "the relay port is unreadable; not advertising");
             return Lan {
                 relay: Some((router, TcpListenerStream::new(listener))),
-                ..Lan::default()
+                advert: None,
+                invites: Some(invites),
             };
         }
     };
-    let (preferences, preferences_port) = match pairing {
-        Some(pairing) => open_preferences(LanPreferences::new(preferences), &pairing).await,
-        None => (None, None),
-    };
-    let advert = Advert::register(port, preferences_port)
+    let advert = Advert::register(port, fingerprint)
         .inspect_err(|error| tracing::error!(%error, "the relay is not discoverable"))
         .ok();
     tracing::info!(port, "relay listening on the LAN");
     Lan {
         relay: Some((router, TcpListenerStream::new(listener))),
-        preferences,
         advert,
+        invites: Some(invites),
     }
 }
 
-/// The settings channel for paired phones: an ephemeral TLS port carrying
-/// only the preferences service. Its port travels in the Bonjour TXT record.
-async fn open_preferences(
-    preferences: LanPreferences,
-    pairing: &Pairing,
-) -> (Option<RelayServer>, Option<u16>) {
-    let router = match preferences_router(preferences, pairing) {
-        Ok(router) => router,
-        Err(error) => {
-            tracing::error!(%error, "the pairing certificate is unusable; settings stay Mac-only");
-            return (None, None);
-        }
-    };
-    let listener = match tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            tracing::error!(%error, "failed to bind the settings port; settings stay Mac-only");
-            return (None, None);
-        }
-    };
-    let port = match listener.local_addr() {
-        Ok(address) => address.port(),
-        Err(error) => {
-            tracing::error!(%error, "the settings port is unreadable; settings stay Mac-only");
-            return (None, None);
-        }
-    };
-    tracing::info!(port, "settings listening for paired phones");
-    (Some((router, TcpListenerStream::new(listener))), Some(port))
-}
-
-/// TLS with the Mac's own certificate, and a bearer check in front of the
-/// one service registered. No health and no reflection: a stranger gets the
-/// certificate and an `UNAUTHENTICATED` status, nothing more.
-fn preferences_router<P>(
+/// What a phone reaches over TCP, all behind TLS: relay, settings, and
+/// health behind a bearer check on each, and Pair, which takes a pairing
+/// code instead. A stranger gets the certificate and `UNAUTHENTICATED`,
+/// nothing more. The generic services let tests build it without a model.
+fn relay_router<R, P>(
+    relay: R,
     preferences: P,
+    codes: Arc<PairingCodes>,
+    health: HealthReporter,
     pairing: &Pairing,
 ) -> std::result::Result<RelayRouter, tonic::transport::Error>
 where
+    R: wire::relay_service_server::RelayService,
     P: wire::preferences_service_server::PreferencesService,
 {
     let identity = Identity::from_pem(&pairing.certificate_pem, &pairing.key_pem);
-    let service = InterceptedService::new(
-        wire::preferences_service_server::PreferencesServiceServer::new(preferences)
-            .max_decoding_message_size(MAX_PREFERENCES_MESSAGE_BYTES),
-        require_bearer(pairing.token.clone()),
-    );
+    let bearer = require_bearer(pairing.token.clone());
+    let pair = PairingRpc::new(codes, pairing.token.clone());
     Ok(tonic::transport::Server::builder()
-        .tls_config(ServerTlsConfig::new().identity(identity))?
-        .concurrency_limit_per_connection(MAX_RELAY_STREAMS)
-        .max_concurrent_streams(Some(MAX_RELAY_STREAMS as u32))
-        .http2_keepalive_interval(Some(RELAY_KEEPALIVE_INTERVAL))
-        .http2_keepalive_timeout(Some(RELAY_KEEPALIVE_TIMEOUT))
-        .add_service(service))
-}
-
-/// Exposes only relay and health services over TCP. The generic relay lets
-/// registration tests run without a model.
-fn relay_router<R>(relay: R, health: HealthReporter) -> RelayRouter
-where
-    R: wire::relay_service_server::RelayService,
-{
-    tonic::transport::Server::builder()
-        // Bound streams per connection because LAN clients are unauthenticated.
+        .tls_config(
+            ServerTlsConfig::new()
+                .identity(identity)
+                .timeout(TLS_HANDSHAKE_TIMEOUT),
+        )?
+        // Even a paired client gets no more streams than a phone needs.
         .concurrency_limit_per_connection(MAX_RELAY_STREAMS)
         .max_concurrent_streams(Some(MAX_RELAY_STREAMS as u32))
         // A phone that walks out of range sends no FIN. Without keepalive the
         // connection sits open until something else times it out.
         .http2_keepalive_interval(Some(RELAY_KEEPALIVE_INTERVAL))
         .http2_keepalive_timeout(Some(RELAY_KEEPALIVE_TIMEOUT))
-        .add_service(
+        .add_service(InterceptedService::new(
             wire::relay_service_server::RelayServiceServer::new(relay)
                 // Bound each message before the handler sees it. The upload
                 // collector separately caps the total session payload.
                 .max_decoding_message_size(MAX_RELAY_MESSAGE_BYTES),
+            bearer.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            wire::preferences_service_server::PreferencesServiceServer::new(preferences)
+                .max_decoding_message_size(MAX_PREFERENCES_MESSAGE_BYTES),
+            bearer.clone(),
+        ))
+        .add_service(
+            wire::pairing_service_server::PairingServiceServer::new(pair)
+                .max_decoding_message_size(MAX_PAIR_MESSAGE_BYTES),
         )
         // The phone checks the Mac is up before it records, and this is the
         // check every gRPC client already has.
-        .add_service(HealthServer::new(HealthService::from_health_reporter(
-            health,
+        .add_service(InterceptedService::new(
+            HealthServer::new(HealthService::from_health_reporter(health)),
+            bearer,
         )))
 }
 
-async fn build_router(services: Services, activity: &Activity) -> Result<ActivityRouter> {
+async fn build_router(
+    services: Services,
+    invites: Option<InviteRpc>,
+    activity: &Activity,
+) -> Result<ActivityRouter> {
     let health_reporter = &services.health;
     health_reporter
         .set_serving::<wire::dictation_service_server::DictationServiceServer<DictationRpc>>()
@@ -469,6 +483,11 @@ async fn build_router(services: Services, activity: &Activity) -> Result<Activit
     health_reporter
         .set_serving::<wire::history_service_server::HistoryServiceServer<HistoryRpc>>()
         .await;
+    if invites.is_some() {
+        health_reporter
+            .set_serving::<wire::invite_service_server::InviteServiceServer<InviteRpc>>()
+            .await;
+    }
     let health = HealthServer::new(HealthService::from_health_reporter(health_reporter.clone()));
 
     // grpcurl still speaks v1alpha, so both reflection versions serve.
@@ -513,6 +532,7 @@ async fn build_router(services: Services, activity: &Activity) -> Result<Activit
         .add_service(wire::history_service_server::HistoryServiceServer::new(
             services.history,
         ))
+        .add_optional_service(invites.map(wire::invite_service_server::InviteServiceServer::new))
         .add_service(health)
         .add_service(reflection_v1)
         .add_service(reflection_v1alpha);
@@ -708,107 +728,8 @@ mod tests {
         }
     }
 
-    /// The service restriction, from the outside: a client on the TCP port
-    /// reaches the relay and the health check and nothing else, however many
-    /// services the unix router grows.
-    #[tokio::test]
-    async fn the_lan_listener_serves_the_relay_and_refuses_everything_else() {
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("an ephemeral port should bind");
-        let address = listener.local_addr().expect("the port should be readable");
-        let (health, _service) = tonic_health::server::health_reporter();
-        let stop = tokio_util::sync::CancellationToken::new();
-        let serving = tokio::spawn(
-            relay_router(SilentRelay, health).serve_with_incoming_shutdown(
-                TcpListenerStream::new(listener),
-                stop.clone().cancelled_owned(),
-            ),
-        );
-
-        let channel = Endpoint::from_shared(format!("http://{address}"))
-            .expect("the endpoint should parse")
-            .connect()
-            .await
-            .expect("the relay listener should accept");
-
-        // Registered here, so it answers on its own terms.
-        let relayed = wire::relay_service_client::RelayServiceClient::new(channel.clone())
-            .relay(tokio_stream::empty())
-            .await
-            .expect_err("the stand-in refuses every stream");
-        // Registered only on the unix router, so the LAN never sees it.
-        let preferences =
-            wire::preferences_service_client::PreferencesServiceClient::new(channel.clone())
-                .get(wire::GetPreferencesRequest {})
-                .await
-                .expect_err("preferences must not be reachable over TCP");
-        let mut history = wire::history_service_client::HistoryServiceClient::new(channel.clone());
-        let list = history
-            .list(wire::ListHistoryRequest {
-                query: String::new(),
-                before_id: None,
-                limit: 10,
-            })
-            .await
-            .expect_err("history must not be reachable over TCP");
-        let get = history
-            .get(wire::GetHistoryRequest { id: 1 })
-            .await
-            .expect_err("history get must not be reachable over TCP");
-        let delete = history
-            .delete(wire::DeleteHistoryRequest { id: 1 })
-            .await
-            .expect_err("history delete must not be reachable over TCP");
-        let retry = history
-            .regenerate(wire::RegenerateHistoryRequest {
-                id: 1,
-                ..Default::default()
-            })
-            .await
-            .expect_err("history retry must not be reachable over TCP");
-        let clear = history
-            .clear(wire::ClearHistoryRequest {})
-            .await
-            .expect_err("history clear must not be reachable over TCP");
-        for status in [list, get, delete, retry, clear] {
-            assert_eq!(status.code(), tonic::Code::Unimplemented);
-        }
-        // The likeliest regression, and the worst: reflection would hand a
-        // stranger the shape of every service the unix socket carries.
-        let reflection =
-            tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient::new(
-                channel,
-            )
-            .server_reflection_info(tokio_stream::empty())
-            .await
-            .expect_err("reflection must not be reachable over TCP");
-
-        assert_eq!(
-            relayed.code(),
-            tonic::Code::Aborted,
-            "the relay's own handler should answer over TCP"
-        );
-        assert_eq!(
-            preferences.code(),
-            tonic::Code::Unimplemented,
-            "the router should not know preferences over TCP"
-        );
-        assert_eq!(
-            reflection.code(),
-            tonic::Code::Unimplemented,
-            "the router should not reflect over TCP"
-        );
-
-        stop.cancel();
-        serving
-            .await
-            .expect("the serve task should join")
-            .expect("the relay listener should stop cleanly");
-    }
-
-    /// Reached only through the interceptor, so a call that lands here
-    /// proves the bearer check passed.
+    /// Refuses every call, like [`SilentRelay`]: an `Aborted` from it proves
+    /// the bearer check passed.
     struct SilentPreferences;
 
     #[tonic::async_trait]
@@ -828,10 +749,11 @@ mod tests {
         }
     }
 
-    /// The settings port, from the outside: TLS with the Mac's certificate,
-    /// the exact token, and nothing but the preferences service.
+    /// The LAN port, from the outside: TLS with the Mac's certificate, the
+    /// exact token in front of relay, settings, and health, and a one-time
+    /// code in front of the token itself.
     #[tokio::test]
-    async fn the_settings_listener_requires_tls_and_the_token() {
+    async fn the_lan_listener_requires_tls_and_the_token() {
         let directory = tempfile::tempdir().expect("a temporary directory should be created");
         let pairing = super::super::relay::load_pairing(
             &directory.path().join("pairing.json"),
@@ -842,15 +764,37 @@ mod tests {
             .await
             .expect("an ephemeral port should bind");
         let address = listener.local_addr().expect("the port should be readable");
+        let (health, _service) = tonic_health::server::health_reporter();
+        let codes = Arc::new(PairingCodes::default());
         let stop = tokio_util::sync::CancellationToken::new();
         let serving = tokio::spawn(
-            preferences_router(SilentPreferences, &pairing)
-                .expect("the minted certificate should be usable")
-                .serve_with_incoming_shutdown(
-                    TcpListenerStream::new(listener),
-                    stop.clone().cancelled_owned(),
-                ),
+            relay_router(
+                SilentRelay,
+                SilentPreferences,
+                Arc::clone(&codes),
+                health,
+                &pairing,
+            )
+            .expect("the minted certificate should be usable")
+            .serve_with_incoming_shutdown(
+                TcpListenerStream::new(listener),
+                stop.clone().cancelled_owned(),
+            ),
         );
+
+        // Plaintext gets no further than the handshake.
+        let plaintext = Endpoint::from_shared(format!("http://{address}"))
+            .expect("the endpoint should parse")
+            .connect()
+            .await;
+        let refused = match plaintext {
+            Err(_) => true,
+            Ok(channel) => HealthClient::new(channel)
+                .check(HealthCheckRequest::default())
+                .await
+                .is_err(),
+        };
+        assert!(refused, "a plaintext client must not be served");
 
         let tls = ClientTlsConfig::new()
             .ca_certificate(Certificate::from_pem(&pairing.certificate_pem))
@@ -863,69 +807,167 @@ mod tests {
             .await
             .expect("a pinned client should connect");
 
-        let unauthenticated =
-            wire::preferences_service_client::PreferencesServiceClient::new(channel.clone())
-                .get(wire::GetPreferencesRequest {})
+        for header in [None, Some("Bearer 0000")] {
+            let relayed = wire::relay_service_client::RelayServiceClient::new(channel.clone())
+                .relay(with_header(tokio_stream::empty(), header))
                 .await
-                .expect_err("no token must be refused");
-        assert_eq!(unauthenticated.code(), tonic::Code::Unauthenticated);
+                .expect_err("the relay must refuse a missing or wrong token");
+            let preferences =
+                wire::preferences_service_client::PreferencesServiceClient::new(channel.clone())
+                    .get(with_header(wire::GetPreferencesRequest {}, header))
+                    .await
+                    .expect_err("preferences must refuse a missing or wrong token");
+            let checked = HealthClient::new(channel.clone())
+                .check(with_header(HealthCheckRequest::default(), header))
+                .await
+                .expect_err("health must refuse a missing or wrong token");
+            for status in [relayed, preferences, checked] {
+                assert_eq!(status.code(), tonic::Code::Unauthenticated, "{header:?}");
+            }
+        }
 
-        let wrong = call_with_bearer(channel.clone(), "Bearer 0000").await;
-        assert_eq!(wrong.code(), tonic::Code::Unauthenticated);
-
-        let right = call_with_bearer(channel.clone(), &bearer(&pairing)).await;
-        assert_eq!(
-            right.code(),
-            tonic::Code::Aborted,
-            "the right token should reach the handler"
-        );
-
-        // Nothing else lives here, token or not.
-        let mut relay_request = tonic::Request::new(tokio_stream::empty());
-        relay_request.metadata_mut().insert(
-            "authorization",
-            bearer(&pairing).parse().expect("the header should parse"),
-        );
+        let right = bearer(&pairing);
+        let right = Some(right.as_str());
         let relayed = wire::relay_service_client::RelayServiceClient::new(channel.clone())
-            .relay(relay_request)
+            .relay(with_header(tokio_stream::empty(), right))
             .await
-            .expect_err("the relay must not answer on the settings port");
-        assert_eq!(relayed.code(), tonic::Code::Unimplemented);
-        let health = HealthClient::new(channel.clone())
-            .check(HealthCheckRequest {
-                service: String::new(),
-            })
+            .expect_err("the stand-in relay refuses every stream");
+        assert_eq!(
+            relayed.code(),
+            tonic::Code::Aborted,
+            "the right token should reach the relay"
+        );
+        let preferences =
+            wire::preferences_service_client::PreferencesServiceClient::new(channel.clone())
+                .get(with_header(wire::GetPreferencesRequest {}, right))
+                .await
+                .expect_err("the stand-in preferences refuse every call");
+        assert_eq!(
+            preferences.code(),
+            tonic::Code::Aborted,
+            "the right token should reach preferences"
+        );
+        let checked = HealthClient::new(channel.clone())
+            .check(with_header(HealthCheckRequest::default(), right))
             .await
-            .expect_err("health must not answer on the settings port");
-        assert_eq!(health.code(), tonic::Code::Unimplemented);
+            .expect("the right token should reach health");
+        assert_eq!(checked.into_inner().status(), ServingStatus::Serving);
+
+        // Pair takes no bearer header: the code is the credential.
+        let pairing_client =
+            wire::pairing_service_client::PairingServiceClient::new(channel.clone());
+        let pair = |code: &str| {
+            let mut client = pairing_client.clone();
+            let request = wire::PairRequest {
+                code: code.to_owned(),
+            };
+            async move { client.pair(request).await }
+        };
+        let (code, _) = codes
+            .issue(Instant::now())
+            .expect("a pairing code should mint");
+        let wrong = pair(&"0".repeat(32))
+            .await
+            .expect_err("a wrong code must not pair");
+        assert_eq!(wrong.code(), tonic::Code::Unauthenticated);
+        assert_eq!(
+            crate::ipc::protocol::rpc_failure(&wrong)
+                .expect("the refusal should carry an RpcFailure")
+                .code,
+            crate::rpc::RpcErrorCode::Unauthenticated
+        );
+        let paired = pair(code.raw())
+            .await
+            .expect("the live code should pair without a bearer header");
+        assert_eq!(paired.into_inner().token, pairing.token.raw());
+        let reused = pair(code.raw())
+            .await
+            .expect_err("a used code must not pair again");
+        assert_eq!(reused.code(), tonic::Code::Unauthenticated);
+
+        // Registered only on the unix router, so the LAN never sees it, token
+        // or not.
+        let history = wire::history_service_client::HistoryServiceClient::new(channel.clone())
+            .list(with_header(
+                wire::ListHistoryRequest {
+                    query: String::new(),
+                    before_id: None,
+                    limit: 10,
+                },
+                right,
+            ))
+            .await
+            .expect_err("history must not be reachable over TCP");
+        let issued = wire::invite_service_client::InviteServiceClient::new(channel.clone())
+            .issue_invite(with_header(wire::IssueInviteRequest {}, right))
+            .await
+            .expect_err("issuing codes must not be reachable over TCP");
+        // The likeliest regression, and the worst: reflection would hand a
+        // stranger the shape of every service the unix socket carries.
         let reflection =
             tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient::new(
-                channel.clone(),
+                channel,
             )
-            .server_reflection_info(tokio_stream::empty())
+            .server_reflection_info(with_header(tokio_stream::empty(), right))
             .await
-            .expect_err("reflection must not answer on the settings port");
-        assert_eq!(reflection.code(), tonic::Code::Unimplemented);
-
-        // Plaintext gets no further than the handshake.
-        let plaintext = Endpoint::from_shared(format!("http://{address}"))
-            .expect("the endpoint should parse")
-            .connect()
-            .await;
-        let refused = match plaintext {
-            Err(_) => true,
-            Ok(channel) => wire::preferences_service_client::PreferencesServiceClient::new(channel)
-                .get(wire::GetPreferencesRequest {})
-                .await
-                .is_err(),
-        };
-        assert!(refused, "a plaintext client must not be served");
+            .expect_err("reflection must not be reachable over TCP");
+        for status in [history, issued, reflection] {
+            assert_eq!(status.code(), tonic::Code::Unimplemented);
+        }
 
         stop.cancel();
         serving
             .await
             .expect("the serve task should join")
-            .expect("the settings listener should stop cleanly");
+            .expect("the LAN listener should stop cleanly");
+    }
+
+    /// A taken port leaves the relay off, and with it the invite service: a
+    /// code issued then would be one no phone could redeem.
+    #[tokio::test]
+    async fn a_taken_port_leaves_invites_unregistered() {
+        let directory = tempfile::tempdir().expect("a temporary directory should be created");
+        let pairing = super::super::relay::load_pairing(
+            &directory.path().join("pairing.json"),
+            "Aria (test)",
+        )
+        .expect("pairing material should mint");
+        let taken = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
+            .await
+            .expect("an ephemeral port should bind");
+        let port = taken
+            .local_addr()
+            .expect("the port should be readable")
+            .port();
+        let (relay_health, _service) = tonic_health::server::health_reporter();
+        let (health, _service) = tonic_health::server::health_reporter();
+        let codes = Arc::new(PairingCodes::default());
+        let router = relay_router(
+            SilentRelay,
+            SilentPreferences,
+            Arc::clone(&codes),
+            relay_health,
+            &pairing,
+        )
+        .expect("the minted certificate should be usable");
+        let invites = InviteRpc::new(
+            codes,
+            "Aria (test)".to_owned(),
+            pairing.certificate_fingerprint,
+        );
+
+        let lan = bind_relay(
+            router,
+            port,
+            invites,
+            &pairing.certificate_fingerprint,
+            &health,
+        )
+        .await;
+
+        assert!(lan.relay.is_none(), "a taken port must not serve a relay");
+        assert!(lan.advert.is_none());
+        assert!(lan.invites.is_none(), "no relay, no codes to issue for it");
     }
 
     fn bearer(pairing: &Pairing) -> String {
@@ -934,16 +976,15 @@ mod tests {
         format!("Bearer {}", pairing.token.raw())
     }
 
-    async fn call_with_bearer(channel: Channel, header: &str) -> Status {
-        let mut request = tonic::Request::new(wire::GetPreferencesRequest {});
-        request.metadata_mut().insert(
-            "authorization",
-            header.parse().expect("the header should parse"),
-        );
-        wire::preferences_service_client::PreferencesServiceClient::new(channel)
-            .get(request)
-            .await
-            .expect_err("the stand-in refuses every call")
+    fn with_header<T>(message: T, authorization: Option<&str>) -> tonic::Request<T> {
+        let mut request = tonic::Request::new(message);
+        if let Some(value) = authorization {
+            request.metadata_mut().insert(
+                "authorization",
+                value.parse().expect("the header should parse"),
+            );
+        }
+        request
     }
 
     #[tokio::test]
@@ -1066,6 +1107,16 @@ mod tests {
                     "{service:?} should be serving"
                 );
             }
+            // An on-demand daemon never runs the relay, so it has no code to
+            // issue.
+            let issuing = health
+                .check(HealthCheckRequest {
+                    service: wire::invite_service_server::InviteServiceServer::<InviteRpc>::NAME
+                        .to_owned(),
+                })
+                .await
+                .expect_err("pairing codes should not be registered without the relay");
+            assert_eq!(issuing.code(), tonic::Code::NotFound);
         });
     }
 

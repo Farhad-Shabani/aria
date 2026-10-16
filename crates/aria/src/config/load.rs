@@ -266,8 +266,8 @@ pub(super) fn load_daemon(
     })
 }
 
-/// Relay clients are unauthenticated and can deliver text to the focused app,
-/// so enabling the LAN listener requires explicit configuration.
+/// A paired phone can type into the focused app, so the LAN listener stays
+/// off until configured.
 const DEFAULT_RELAY_ENABLED: bool = false;
 const DEFAULT_RELAY_PORT: u16 = 9850;
 

@@ -11,6 +11,8 @@ use std::process::{Command, Stdio};
 
 use aria_kit::primitives::process::ChildProcess;
 
+use super::pairing::to_hex;
+
 /// A type of its own, not the retired `_aria-ptt._tcp`. A phone still looking
 /// for the old one must never reach a server that cannot speak its protocol.
 pub(crate) const SERVICE_TYPE: &str = "_aria-grpc._tcp";
@@ -25,12 +27,9 @@ pub(in crate::daemon) struct Advert {
 }
 
 impl Advert {
-    /// `preferences_port` is the TLS port a paired phone uses for settings;
-    /// absent when the daemon has no settings listener.
-    pub(in crate::daemon) fn register(
-        port: u16,
-        preferences_port: Option<u16>,
-    ) -> Result<Self, AdvertError> {
+    /// `id` is the relay certificate's fingerprint: the one thing about this
+    /// Mac that survives a rename, so the phone keys its pairing by it.
+    pub(in crate::daemon) fn register(port: u16, id: &[u8; 32]) -> Result<Self, AdvertError> {
         let host = hostname();
         let instance = instance_name();
         let mut command = Command::new("dns-sd");
@@ -43,8 +42,8 @@ impl Advert {
                 &port.to_string(),
                 TXT_VERSION,
                 &format!("name={host}"),
+                &id_record(id),
             ])
-            .args(preferences_port.map(|port| format!("prefs={port}")))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -62,10 +61,14 @@ impl Advert {
     }
 }
 
-/// The Bonjour instance name. The phone picks its target by it, and the
-/// pairing file records it, so it has to read the same on every restart.
+/// The Bonjour instance name. A label for the user, not an identity: the
+/// phone knows this Mac by the `id` TXT record.
 pub(in crate::daemon) fn instance_name() -> String {
     format!("Aria ({})", hostname())
+}
+
+fn id_record(fingerprint: &[u8; 32]) -> String {
+    format!("id={}", to_hex(fingerprint))
 }
 
 /// The machine's name, as the user sees it in Sharing settings. `hostname`
@@ -98,5 +101,20 @@ mod tests {
 
         assert!(!host.is_empty(), "a nameless machine still gets a name");
         assert!(!host.ends_with(".local"), "the mDNS suffix is trimmed");
+    }
+
+    /// The phone parses this with a fixed-width hex decoder; a stray `0x`,
+    /// uppercase digit, or short string would read as "no id".
+    #[test]
+    fn the_id_record_is_lowercase_hex_of_the_fingerprint() {
+        let mut fingerprint = [0u8; 32];
+        fingerprint[0] = 0x00;
+        fingerprint[1] = 0xab;
+        fingerprint[31] = 0xff;
+
+        let record = id_record(&fingerprint);
+
+        assert_eq!(record, format!("id=00ab{}ff", "00".repeat(29)));
+        assert_eq!(record.len(), "id=".len() + 64);
     }
 }

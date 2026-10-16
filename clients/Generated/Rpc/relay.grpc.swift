@@ -293,3 +293,389 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
         )
     }
 }
+
+// MARK: - aria.daemon.v1.PairingService
+
+/// Namespace containing generated types for the "aria.daemon.v1.PairingService" service.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+public enum Aria_Daemon_V1_PairingService: Sendable {
+    /// Service descriptor for the "aria.daemon.v1.PairingService" service.
+    public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.PairingService")
+    /// Namespace for method metadata.
+    public enum Method: Sendable {
+        /// Namespace for "Pair" metadata.
+        public enum Pair: Sendable {
+            /// Request type for "Pair".
+            public typealias Input = Aria_Daemon_V1_PairRequest
+            /// Response type for "Pair".
+            public typealias Output = Aria_Daemon_V1_PairResponse
+            /// Descriptor for "Pair".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.PairingService"),
+                method: "Pair",
+                type: .unary
+            )
+        }
+        /// Descriptors for all methods in the "aria.daemon.v1.PairingService" service.
+        public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            Pair.descriptor
+        ]
+    }
+}
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension GRPCCore.ServiceDescriptor {
+    /// Service descriptor for the "aria.daemon.v1.PairingService" service.
+    public static let aria_daemon_v1_PairingService = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.PairingService")
+}
+
+// MARK: aria.daemon.v1.PairingService (client)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Aria_Daemon_V1_PairingService {
+    /// Generated client protocol for the "aria.daemon.v1.PairingService" service.
+    ///
+    /// You don't need to implement this protocol directly, use the generated
+    /// implementation, ``Client``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Turns a pairing code from the Mac's screen into the relay's bearer token.
+    /// > The only LAN call that takes no token: the code is the credential. A code
+    /// > lives 60 seconds and works once.
+    /// >   UNAUTHENTICATED - the code is wrong, used, or expired
+    public protocol ClientProtocol: Sendable {
+        /// Call the "Pair" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_PairRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_PairRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_PairResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func pair<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_PairRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_PairRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_PairResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_PairResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+    }
+
+    /// Generated client for the "aria.daemon.v1.PairingService" service.
+    ///
+    /// The ``Client`` provides an implementation of ``ClientProtocol`` which wraps
+    /// a `GRPCCore.GRPCCClient`. The underlying `GRPCClient` provides the long-lived
+    /// means of communication with the remote peer.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Turns a pairing code from the Mac's screen into the relay's bearer token.
+    /// > The only LAN call that takes no token: the code is the credential. A code
+    /// > lives 60 seconds and works once.
+    /// >   UNAUTHENTICATED - the code is wrong, used, or expired
+    public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
+        private let client: GRPCCore.GRPCClient<Transport>
+
+        /// Creates a new client wrapping the provided `GRPCCore.GRPCClient`.
+        ///
+        /// - Parameters:
+        ///   - client: A `GRPCCore.GRPCClient` providing a communication channel to the service.
+        public init(wrapping client: GRPCCore.GRPCClient<Transport>) {
+            self.client = client
+        }
+
+        /// Call the "Pair" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_PairRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_PairRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_PairResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func pair<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_PairRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_PairRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_PairResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_PairResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_PairingService.Method.Pair.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+    }
+}
+
+// Helpers providing default arguments to 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Aria_Daemon_V1_PairingService.ClientProtocol {
+    /// Call the "Pair" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_PairRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func pair<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_PairRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_PairResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.pair(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_PairRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_PairResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// Helpers providing sugared APIs for 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Aria_Daemon_V1_PairingService.ClientProtocol {
+    /// Call the "Pair" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func pair<Result>(
+        _ message: Aria_Daemon_V1_PairRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_PairResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_PairRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.pair(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// MARK: - aria.daemon.v1.InviteService
+
+/// Namespace containing generated types for the "aria.daemon.v1.InviteService" service.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+public enum Aria_Daemon_V1_InviteService: Sendable {
+    /// Service descriptor for the "aria.daemon.v1.InviteService" service.
+    public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.InviteService")
+    /// Namespace for method metadata.
+    public enum Method: Sendable {
+        /// Namespace for "IssueInvite" metadata.
+        public enum IssueInvite: Sendable {
+            /// Request type for "IssueInvite".
+            public typealias Input = Aria_Daemon_V1_IssueInviteRequest
+            /// Response type for "IssueInvite".
+            public typealias Output = Aria_Daemon_V1_IssueInviteResponse
+            /// Descriptor for "IssueInvite".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.InviteService"),
+                method: "IssueInvite",
+                type: .unary
+            )
+        }
+        /// Descriptors for all methods in the "aria.daemon.v1.InviteService" service.
+        public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            IssueInvite.descriptor
+        ]
+    }
+}
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension GRPCCore.ServiceDescriptor {
+    /// Service descriptor for the "aria.daemon.v1.InviteService" service.
+    public static let aria_daemon_v1_InviteService = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.InviteService")
+}
+
+// MARK: aria.daemon.v1.InviteService (client)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Aria_Daemon_V1_InviteService {
+    /// Generated client protocol for the "aria.daemon.v1.InviteService" service.
+    ///
+    /// You don't need to implement this protocol directly, use the generated
+    /// implementation, ``Client``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The invite the Mac app draws as a QR. Served on the unix socket only.
+    public protocol ClientProtocol: Sendable {
+        /// Call the "IssueInvite" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Returns the live code while it is unused and unexpired, else a new one.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_IssueInviteRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_IssueInviteRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_IssueInviteResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func issueInvite<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_IssueInviteRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_IssueInviteRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_IssueInviteResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_IssueInviteResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+    }
+
+    /// Generated client for the "aria.daemon.v1.InviteService" service.
+    ///
+    /// The ``Client`` provides an implementation of ``ClientProtocol`` which wraps
+    /// a `GRPCCore.GRPCCClient`. The underlying `GRPCClient` provides the long-lived
+    /// means of communication with the remote peer.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The invite the Mac app draws as a QR. Served on the unix socket only.
+    public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
+        private let client: GRPCCore.GRPCClient<Transport>
+
+        /// Creates a new client wrapping the provided `GRPCCore.GRPCClient`.
+        ///
+        /// - Parameters:
+        ///   - client: A `GRPCCore.GRPCClient` providing a communication channel to the service.
+        public init(wrapping client: GRPCCore.GRPCClient<Transport>) {
+            self.client = client
+        }
+
+        /// Call the "IssueInvite" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Returns the live code while it is unused and unexpired, else a new one.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_IssueInviteRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_IssueInviteRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_IssueInviteResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func issueInvite<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_IssueInviteRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_IssueInviteRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_IssueInviteResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_IssueInviteResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_InviteService.Method.IssueInvite.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+    }
+}
+
+// Helpers providing default arguments to 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Aria_Daemon_V1_InviteService.ClientProtocol {
+    /// Call the "IssueInvite" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Returns the live code while it is unused and unexpired, else a new one.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_IssueInviteRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func issueInvite<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_IssueInviteRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_IssueInviteResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.issueInvite(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_IssueInviteRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_IssueInviteResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// Helpers providing sugared APIs for 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Aria_Daemon_V1_InviteService.ClientProtocol {
+    /// Call the "IssueInvite" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Returns the live code while it is unused and unexpired, else a new one.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func issueInvite<Result>(
+        _ message: Aria_Daemon_V1_IssueInviteRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_IssueInviteResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_IssueInviteRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.issueInvite(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}

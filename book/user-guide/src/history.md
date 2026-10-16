@@ -48,7 +48,7 @@ previous text in place.
 ## Keep successful recordings
 
 To make future successful dictations available for retry, enable
-**Settings → Dictation → Show Advanced Options → Also retain audio of successful dictations**,
+**Settings → Dictation → Show Advanced Options → Keep recordings for retry**,
 or run:
 
 ```sh

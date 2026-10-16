@@ -33,6 +33,39 @@ service RelayService {
   rpc Relay(stream RelayRequest) returns (stream RelayEvent);
 }
 
+// Turns a pairing code from the Mac's screen into the relay's bearer token.
+// The only LAN call that takes no token: the code is the credential. A code
+// lives 60 seconds and works once.
+//   UNAUTHENTICATED - the code is wrong, used, or expired
+service PairingService {
+  rpc Pair(PairRequest) returns (PairResponse);
+}
+
+// The invite the Mac app draws as a QR. Served on the unix socket only.
+service InviteService {
+  // Returns the live code while it is unused and unexpired, else a new one.
+  rpc IssueInvite(IssueInviteRequest) returns (IssueInviteResponse);
+}
+
+message PairRequest {
+  string code = 1;
+}
+
+message PairResponse {
+  string token = 1;
+}
+
+message IssueInviteRequest {}
+
+message IssueInviteResponse {
+  // The Mac's display name. The phone identifies the Mac by `fingerprint`.
+  string instance = 1;
+  string code = 2;
+  // SHA-256 of the relay certificate's DER bytes; the phone pins it.
+  bytes fingerprint = 3;
+  uint32 expires_in_ms = 4;
+}
+
 message RelayRequest {
   oneof body {
     RelayStart start = 1;
