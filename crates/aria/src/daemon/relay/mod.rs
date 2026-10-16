@@ -11,6 +11,7 @@
 //! a server; only [`crate::daemon::service::RelayRpc`] knows about tonic.
 
 mod advert;
+mod code;
 mod decode;
 mod pairing;
 mod preferences;
@@ -26,9 +27,10 @@ use crate::rpc::{RpcErrorCode, RpcFailure};
 
 pub(crate) use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
+pub(super) use code::PairingCodes;
 pub(crate) use decode::ffmpeg_path;
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
-pub(super) use pairing::{Pairing, load_or_create as load_pairing, require_bearer};
+pub(super) use pairing::{Pairing, Token, load_or_create as load_pairing, require_bearer};
 pub(super) use preferences::LanPreferences;
 
 /// Caps the upload buffer. Decoded audio has a separate duration limit.

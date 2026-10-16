@@ -65,9 +65,9 @@ transcription:
 # `_aria-grpc._tcp`, and pastes what it hears into the focused app. Needs
 # ffmpeg for the audio the Watch sends (`brew install ffmpeg`).
 #
-# Off unless you ask for it. This port has no authentication and no TLS, so
-# anything that can reach it can put text on this Mac — only turn it on for a
-# network you trust.
+# Off unless you ask for it. Only a phone paired with this Mac gets in: the
+# port speaks TLS with the Mac's own certificate and refuses any call without
+# the pairing token. Pair from the Mac app before the first recording.
 # relay:
 #   enabled: true
 #   port: 9850

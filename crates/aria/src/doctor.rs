@@ -290,15 +290,15 @@ fn relay(config: Option<RelayConfig>) -> Check {
             ),
         );
     };
-    // Asked, not assumed: a bind that lost the port only logs, and the daemon
-    // serves on happily without a relay. Reporting the configuration would
-    // call that healthy.
+    // Asked, not assumed: a lost port or unusable pairing file only logs, and
+    // the daemon serves on happily without a relay. Reporting the
+    // configuration would call that healthy.
     if !relay_is_listening(port) {
         return Check::warning(
             RELAY,
             format!(
                 "nothing is listening on port {port}; the daemon is not running, \
-                 or something else took the port"
+                 something else took the port, or its pairing file is unusable"
             ),
         );
     }

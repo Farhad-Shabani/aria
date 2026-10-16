@@ -191,6 +191,7 @@ dependencies = [
  "rtrb",
  "rusqlite",
  "rustix",
+ "rustls-pki-types",
  "serde",
  "serde-saphyr",
  "serde_json",

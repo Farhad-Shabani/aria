@@ -219,14 +219,14 @@ struct DictationSettings: View {
         LabeledContent("History:") {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(
-                    "Also retain audio of successful dictations",
+                    "Keep recordings for retry",
                     isOn: Binding(
                         get: { snapshot.historyAudioRetention },
                         set: { on in Task { await preferences.set { $0.historyAudioRetention = on } } }
                     )
                 )
                 .disabled(!preferences.historyEnabled)
-                Text("Audio is kept up to 24 hours and may include other voices.")
+                Text("Lets you re-transcribe any dictation for 24 hours. Recordings may include other voices.")
                     .settingsFootnote()
             }
         }
