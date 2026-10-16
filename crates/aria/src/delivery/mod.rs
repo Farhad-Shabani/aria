@@ -139,8 +139,8 @@ pub enum DeliveryError {
 
     #[cfg(target_os = "macos")]
     #[error(
-        "insertion needs the Accessibility grant on the aria binary: System Settings \
-         → Privacy & Security → Accessibility → +"
+        "insertion needs the Accessibility grant: System Settings → Privacy & Security \
+         → Accessibility → switch on Aria"
     )]
     InsertionNotPermitted,
 

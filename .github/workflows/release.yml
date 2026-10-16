@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           codesign --verify --deep --strict "$RUNNER_TEMP/Aria.app"
-          for code in "$RUNNER_TEMP/Aria.app" "$RUNNER_TEMP/Aria.app/Contents/Helpers/aria"; do
+          for code in "$RUNNER_TEMP/Aria.app" "$RUNNER_TEMP/Aria.app/Contents/Helpers/Aria.app"; do
             entitlements=$(codesign -d --entitlements - "$code")
             grep -q com.apple.security.device.audio-input <<< "$entitlements"
           done

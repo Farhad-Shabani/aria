@@ -415,7 +415,7 @@ extension SetupState.Step {
         case .choices: "Speech stays on this Mac. You can change these later."
         case .models: "Downloads land in ~/.aria and resume if interrupted."
         case .applying: "This takes a moment. Downloads can be cancelled."
-        case .grant: "The dictation hotkey needs the Accessibility grant on the aria binary."
+        case .grant: "The dictation hotkey needs Aria's Accessibility grant."
         case .voice: "Aria can tell who is speaking once it knows your voice."
         case .tryOut: "One press, start to finish. Nothing is typed into any window."
         case .done: "Aria runs in the background. Find it in the menu bar."

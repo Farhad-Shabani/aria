@@ -91,7 +91,7 @@ struct DaemonClient: DaemonControlling {
     /// Where `aria daemon` lives. The `ariaDaemonBinary` default overrides
     /// everything and is trusted verbatim, so a wrong override fails loudly
     /// with that exact path instead of silently falling back. Otherwise the
-    /// app runs the `aria` it carries in `Contents/Helpers`.
+    /// app runs the `aria` inside its nested `Aria.app` helper.
     static func daemonBinaryCandidates(
         bundledExecutable: URL? = Bundle.main.executableURL,
         defaults: UserDefaults = .standard
@@ -99,12 +99,10 @@ struct DaemonClient: DaemonControlling {
         if let override = daemonBinaryOverride(defaults: defaults) {
             return [override]
         }
-        // The CLI ships in Contents/Helpers, one directory over from the
-        // app binary, so both can be named for Aria on one disk.
         let bundled = bundledExecutable.map {
             $0.deletingLastPathComponent()
                 .deletingLastPathComponent()
-                .appendingPathComponent("Helpers/aria")
+                .appendingPathComponent("Helpers/Aria.app/Contents/MacOS/aria")
         }
         return [bundled].compactMap { $0 }
     }
