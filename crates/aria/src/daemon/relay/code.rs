@@ -12,7 +12,7 @@ use super::pairing::{PairingError, random_hex};
 const CODE_BYTES: usize = 16;
 const CODE_LIFETIME: Duration = Duration::from_secs(60);
 
-/// 16 random bytes as lowercase hex. Its `Debug` never prints the value.
+/// Its `Debug` never prints the value.
 #[derive(Clone, PartialEq, Eq)]
 pub(in crate::daemon) struct PairingCode(String);
 
