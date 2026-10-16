@@ -181,6 +181,7 @@ app: swift-project
         -configuration Release -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
         CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} -quiet build
     scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
+    scripts/macos/check-minos.sh clients/build/mac/Build/Products/Release/Aria.app
 
 # Regenerate the Swift client stubs from the daemon's proto. Health comes
 # along so clients can probe the daemon; the Rust side gets its own copy from
