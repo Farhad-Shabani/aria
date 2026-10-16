@@ -1,77 +1,94 @@
 // The Aria logo. Not licensed under GPL-3.0; see assets/brand/LICENSE.
 
 import AppKit
+import SwiftUI
 
-/// The logo drawn as a menu bar template image: a ring holding the ribbon.
 enum MenuBarMark {
-    // The logo, in its 128-unit box with y down, as the phone and Watch draw it.
-    private static let center = CGFloat(MarkTuning.center)
-    private static let radius = CGFloat(MarkTuning.radius)
-    private static let ringStroke = CGFloat(MarkTuning.ring)
-    private static let edgeStroke = CGFloat(MarkTuning.edge)
-    private static let periods = CGFloat(RibbonTuning.periods)
-    private static let amplitude = CGFloat(MarkTuning.restHeight)
-    private static let spread = CGFloat(MarkTuning.spread)
-    private static let shift = CGFloat(MarkTuning.shift)
-    private static let phaseGap = CGFloat(RibbonTuning.phaseGap)
-    private static let points = 36
-
     /// Menu bar canvas and the ring's outer diameter inside it, in points.
     private static let canvas: CGFloat = 18
     private static let ringSize: CGFloat = 16
+    private static let switchingAlpha: CGFloat = 0.5
+    private static let stoppedAlpha: CGFloat = 0.45
 
-    /// `wave` scales the ribbon's height: 1 is the logo, 0 is a flat band.
-    static func image(wave: CGFloat, alpha: CGFloat) -> NSImage {
+    static func image(_ state: MenuBarState) -> NSImage {
         let image = NSImage(size: NSSize(width: canvas, height: canvas), flipped: true) { _ in
-            let scale = ringSize / (2 * radius + ringStroke)
-            let transform = NSAffineTransform()
-            transform.translateX(by: canvas / 2 - center * scale, yBy: canvas / 2 - center * scale)
-            transform.scale(by: scale)
-            transform.concat()
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            let scale = ringSize / (2 * MarkTuning.outer)
+            context.translateBy(x: canvas / 2 - MarkTuning.center * scale, y: canvas / 2 - MarkTuning.center * scale)
+            context.scaleBy(x: scale, y: scale)
 
-            // One layer, so the ribbon's fill and edge don't double up when dimmed.
-            let context = NSGraphicsContext.current?.cgContext
-            context?.setAlpha(alpha)
-            context?.beginTransparencyLayer(auxiliaryInfo: nil)
-            defer { context?.endTransparencyLayer() }
-            NSColor.black.set()
-            let ring = NSBezierPath(
-                ovalIn: NSRect(x: center - radius, y: center - radius, width: 2 * radius, height: 2 * radius))
-            ring.lineWidth = ringStroke
-            ring.stroke()
-
-            let ribbon = ribbon(wave: wave)
-            ribbon.lineWidth = edgeStroke
-            ribbon.lineJoinStyle = .round
-            ribbon.fill()
-            ribbon.stroke()
+            // One layer, so knockouts clear only the mark and dimmed strokes don't double up.
+            context.setAlpha(alpha(state))
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            defer { context.endTransparencyLayer() }
+            context.setFillColor(NSColor.black.cgColor)
+            context.setStrokeColor(NSColor.black.cgColor)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            draw(state, in: context)
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Aria"
+        image.accessibilityDescription = state.accessibilityLabel
         return image
     }
 
-    private static func ribbon(wave: CGFloat) -> NSBezierPath {
-        let outline = current(0, wave: wave) + current(1, wave: wave).reversed()
-        let path = NSBezierPath()
-        path.move(to: outline[0])
-        for point in outline.dropFirst() { path.line(to: point) }
-        path.close()
-        return path
+    private static func alpha(_ state: MenuBarState) -> CGFloat {
+        switch state {
+        case .switching: return switchingAlpha
+        case .stopped: return stoppedAlpha
+        case .ready, .listening, .working, .done, .attention: return 1
+        }
     }
 
-    /// One current, spanning the ring's inner edge at its baseline.
-    private static func current(_ index: Int, wave: CGFloat) -> [CGPoint] {
-        let side: CGFloat = index == 0 ? -1 : 1
-        let baseline = center + shift + side * spread / 2
-        let inner = radius - ringStroke / 2
-        let half = (inner * inner - (baseline - center) * (baseline - center)).squareRoot()
-        return (0...points).map { step in
-            let p = CGFloat(step) / CGFloat(points)
-            let swing = sin(2 * .pi * periods * p + CGFloat(index) * phaseGap)
-            let y = baseline - wave * amplitude * sin(.pi * p) * swing
-            return CGPoint(x: center - half + 2 * half * p, y: y)
+    private static func draw(_ state: MenuBarState, in context: CGContext) {
+        switch state {
+        case .ready, .switching, .stopped:
+            ringAndRibbon(in: context)
+        case .listening:
+            // Inverted, so a live microphone is unmistakable at a glance.
+            fill(SmallMark.disc, in: context)
+            context.setBlendMode(.clear)
+            ribbon(in: context)
+            context.setBlendMode(.normal)
+        case .working:
+            ring(in: context)
+            for index in -1...1 { fill(SmallMark.dot(index), in: context) }
+        case .done:
+            ring(in: context)
+            stroke(SmallMark.check, width: SmallMark.checkWidth, in: context)
+        case .attention:
+            ringAndRibbon(in: context)
+            context.setBlendMode(.clear)
+            fill(SmallMark.badgeGap, in: context)
+            context.setBlendMode(.normal)
+            fill(SmallMark.badge, in: context)
         }
+    }
+
+    private static func ringAndRibbon(in context: CGContext) {
+        ring(in: context)
+        ribbon(in: context)
+    }
+
+    private static func ring(in context: CGContext) {
+        stroke(SmallMark.ring, width: SmallMark.ringWidth, in: context)
+    }
+
+    private static func ribbon(in context: CGContext) {
+        let ribbon = SmallMark.ribbon
+        fill(ribbon, in: context)
+        stroke(ribbon, width: SmallMark.ribbonEdge, in: context)
+    }
+
+    private static func fill(_ path: Path, in context: CGContext) {
+        context.addPath(path.cgPath)
+        context.fillPath()
+    }
+
+    private static func stroke(_ path: Path, width: Double, in context: CGContext) {
+        context.setLineWidth(width)
+        context.addPath(path.cgPath)
+        context.strokePath()
     }
 }

@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let events = DaemonEvents()
     private let panel = FloatingPanel(width: captionWidth, bottomMargin: captionBottomMargin)
-    private let status: StatusController
+    let status: StatusController
     private let askHotkey: AskHotkeyController
     private var caption = CaptionState()
     private var shownCommitted: String?

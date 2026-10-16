@@ -228,11 +228,15 @@ extension Aria_Daemon_V1_ChatAgent {
     }
 }
 
-/// Shows a dot on screen while a press is in flight.
+/// Shows the status pill while a press or an ask is in flight, and tells
+/// the menu bar what it would show.
 @MainActor
-final class StatusController {
+final class StatusController: ObservableObject {
     static let enabledKey = "statusPillEnabled"
     static let enabledByDefault = true
+
+    /// What the pill would show, for the menu bar, even with the pill turned off.
+    @Published private(set) var live: PillState?
 
     private let events: DaemonEvents
     private let panel = FloatingPanel(width: pillWidth, bottomMargin: pillBottomMargin)
@@ -302,9 +306,11 @@ final class StatusController {
     }
 
     private func render() {
-        let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         // A press is the person's turn; it outranks whatever an agent is doing.
-        let wanted = enabled ? dictation ?? PillState(asks: asks) : nil
+        let live = dictation ?? PillState(asks: asks)
+        if self.live != live { self.live = live }
+        let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
+        let wanted = enabled ? live : nil
         guard wanted != shown else { return }
         shown = wanted
         // A new press starts from silence rather than the last one's level.

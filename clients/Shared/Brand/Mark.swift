@@ -13,6 +13,7 @@ enum MarkTuning {
     static let center = 64.0
     static let radius = 44.0
     static let ring = 7.0
+    static let outer = radius + ring / 2
     /// Outline stroke around the ribbon. Rounds its ends into the ring.
     static let edge = 6.0
     /// Gap between the currents' baselines.
