@@ -55,6 +55,9 @@ const TRIM_QUIET_FRACTION: f32 = 0.05;
 /// Heard words a decode may lose and still count as a revision rather than
 /// a dropped window.
 const TOLERATED_LOSS: usize = 2;
+/// Words a decode may insert or drop ahead of the delivered words and
+/// still be placed by them.
+const PLACEMENT_SHIFT: usize = 2;
 /// Frames a word's timing reaches either side of itself. Timings are coarse,
 /// and a word's edges blur into its neighbours.
 const HEARD_MARGIN_FRAMES: usize = 3;
@@ -538,10 +541,8 @@ impl Agreement {
 
     /// Where the decode's new words begin, and how many words count as out
     /// once it stands as the last decode. A decode that opens where the
-    /// last one did keeps the count: a shorter decode holds nothing new,
-    /// and letting the count follow it down would offer words a second
-    /// time. A decode that opens elsewhere is counted afresh by the
-    /// delivered words it repeats.
+    /// last one did is placed by [`Self::aligned`]. One that opens
+    /// elsewhere is counted afresh by the delivered words it repeats.
     ///
     /// `None` for a decode that cannot be placed — one that ends inside the
     /// delivered words, or shows none of them once some are out. Like an
@@ -551,7 +552,7 @@ impl Agreement {
         // decode by: a heavily revised decode shows one by chance.
         let least = if self.emitted > 0 { 2 } else { 1 };
         let (start, emitted) = match self.aligned(current) {
-            Some(start) if self.emitted > 0 => (start, self.emitted),
+            Some(placed) if self.emitted > 0 => placed,
             _ => {
                 let repeated = self.repeated(current, least)?;
                 (repeated, repeated)
@@ -628,18 +629,71 @@ impl Agreement {
         })
     }
 
-    /// How many opening words of `words` were delivered already, going by
-    /// the last decode: when the two read alike over the delivered words,
-    /// give or take a revision or two, they open at the same place. `None`
-    /// when they do not.
-    fn aligned(&self, words: &[Word]) -> Option<usize> {
+    /// Where a decode that opens like the last one begins its new words,
+    /// and how many words count as out.
+    ///
+    /// The last delivered words mark the place, since an inserted or
+    /// dropped word moves them. When they are gone, the decode revised
+    /// them. It still opens at the same place if it differs from the last
+    /// decode in at most `TOLERATED_LOSS` delivered words. The count then
+    /// stays put: a shorter decode holds nothing new, and lowering the count
+    /// would offer words a second time. `None` otherwise.
+    fn aligned(&self, words: &[Word]) -> Option<(usize, usize)> {
+        if let Some(end) = self.delivered_end(words) {
+            return Some((end, end));
+        }
         let compared = self.emitted.min(words.len()).min(self.candidate.len());
         let revised = self.candidate[..compared]
             .iter()
             .zip(&words[..compared])
             .filter(|(heard, word)| spoken(&heard.text) != spoken(&word.text))
             .count();
-        (revised <= TOLERATED_LOSS).then_some(self.emitted.min(words.len()))
+        (revised <= TOLERATED_LOSS).then_some((self.emitted.min(words.len()), self.emitted))
+    }
+
+    /// Where the last delivered words end in `words`. Tries the last two,
+    /// then the last one alone, searching outward from the count by up to
+    /// `PLACEMENT_SHIFT` words. New audio must follow the match: a revised
+    /// delivered word looks like a dropped one, and only timing tells them
+    /// apart.
+    fn delivered_end(&self, words: &[Word]) -> Option<usize> {
+        let nearest_ends: Vec<usize> =
+            std::iter::once(Some(self.emitted))
+                .chain((1..=PLACEMENT_SHIFT).flat_map(|shift| {
+                    [Some(self.emitted + shift), self.emitted.checked_sub(shift)]
+                }))
+                .flatten()
+                .collect();
+        for count in [2, 1] {
+            let Some(from) = self.delivered.len().checked_sub(count) else {
+                continue;
+            };
+            let run = &self.delivered[from..];
+            let found = nearest_ends.iter().copied().find(|&end| {
+                end >= count
+                    && end <= words.len()
+                    && lcp(run, &words[end - count..]) == count
+                    && self.opens_new_audio(words, end)
+            });
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    /// Whether the word at `end` starts past the delivered audio, within
+    /// `HEARD_MARGIN_FRAMES`. True when there is no such word or no timing
+    /// to compare.
+    fn opens_new_audio(&self, words: &[Word], end: usize) -> bool {
+        let margin = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64;
+        match (
+            words.get(end).and_then(|word| word.span.as_ref()),
+            self.delivered_through,
+        ) {
+            (Some(span), Some(through)) => span.start + margin >= through,
+            _ => true,
+        }
     }
 
     /// A decode that hears several words fewer than the last one did
@@ -1259,6 +1313,31 @@ mod tests {
             );
         }
 
+        /// Back-to-back words, each longer than a timing's blur.
+        fn timed(list: &[&str]) -> Vec<Word> {
+            let word_samples = 10 * TRIM_FRAME_SAMPLES as u64;
+            list.iter()
+                .zip(0u64..)
+                .map(|(word, index)| Word {
+                    text: word.to_string(),
+                    span: Some(index * word_samples..(index + 1) * word_samples),
+                })
+                .collect()
+        }
+
+        #[test]
+        fn a_revised_word_in_a_delivered_slot_is_not_taken_for_a_dropped_one() {
+            let mut agreement = Agreement::default();
+            agreement.agree(timed(&["jumps", "over", "the", "the"]), None);
+            let (first, _) = agreement.agree(timed(&["jumps", "over", "the", "the"]), None);
+            agreement.agree(timed(&["jumps", "over", "the", "lazy", "dog"]), None);
+            let (second, _) =
+                agreement.agree(timed(&["jumps", "over", "the", "lazy", "dog"]), None);
+
+            assert_eq!(text_of(first).as_deref(), Some("jumps over the the"));
+            assert_eq!(text_of(second).as_deref(), Some("dog"));
+        }
+
         #[test]
         fn agreement_delivers_a_confirmed_prefix_once() {
             let mut agreement = Agreement::default();
@@ -1354,6 +1433,40 @@ mod tests {
             // delivered, so the tail commit loses one word.
             assert_eq!(run.segments, ["a b c", "z"]);
             assert_eq!(run.transcript(), "a b c z");
+        }
+
+        #[test]
+        fn a_word_inserted_before_the_delivered_words_does_not_repeat_them() {
+            let run = drive(
+                5_000,
+                vec![loud_batch(); 4],
+                &[
+                    "the quick brown fox jumps",
+                    "the quick brown fox jumps",
+                    "the quick brown red fox jumps over",
+                    "the quick brown red fox jumps over",
+                ],
+            );
+
+            assert_eq!(run.segments, ["the quick brown fox jumps", "over"]);
+            assert_eq!(run.transcript(), "the quick brown fox jumps over");
+        }
+
+        #[test]
+        fn a_word_dropped_before_the_delivered_words_does_not_hide_the_next() {
+            let run = drive(
+                5_000,
+                vec![loud_batch(); 4],
+                &[
+                    "the quick brown fox jumps",
+                    "the quick brown fox jumps",
+                    "the quick brown jumps over",
+                    "the quick brown jumps over",
+                ],
+            );
+
+            assert_eq!(run.segments, ["the quick brown fox jumps", "over"]);
+            assert_eq!(run.transcript(), "the quick brown fox jumps over");
         }
 
         #[test]
@@ -1870,6 +1983,12 @@ mod tests {
             /// One word in the first half is junk: a revision inside what
             /// may already have been delivered.
             Revision,
+            /// A junk word appears in the first half, shifting every word
+            /// after it: the model heard one word as two.
+            Inserted,
+            /// One word in the first half is missing, shifting every word
+            /// after it: the model ran two words together.
+            Dropped,
             /// Eight to twelve words in a row are missing, timings intact:
             /// the model skipped part of its window.
             Partial,
@@ -1877,7 +1996,7 @@ mod tests {
 
         impl Corruption {
             fn adds_junk(self) -> bool {
-                matches!(self, Self::Unstable | Self::Revision)
+                matches!(self, Self::Unstable | Self::Revision | Self::Inserted)
             }
 
             /// The corrupted decode. Junk text is fresh per decode, so junk
@@ -1917,6 +2036,18 @@ mod tests {
                         let target = rng.below((words.len() / 2) as u64) as usize;
                         words[target] = junk(rng);
                     }
+                    // The junk takes the timing of the word it sits before.
+                    Self::Inserted => {
+                        let target = rng.below((words.len() / 2) as u64) as usize;
+                        words.insert(target, junk(rng));
+                        let timing = timings[target];
+                        timings.insert(target, timing);
+                    }
+                    Self::Dropped => {
+                        let target = rng.below((words.len() / 2) as u64) as usize;
+                        words.remove(target);
+                        timings.remove(target);
+                    }
                 }
                 Heard { words, timings }
             }
@@ -1934,6 +2065,8 @@ mod tests {
             short: u64,
             unstable: u64,
             revision: u64,
+            inserted: u64,
+            dropped: u64,
             partial: u64,
         }
 
@@ -1943,6 +2076,8 @@ mod tests {
             short: 0,
             unstable: 0,
             revision: 0,
+            inserted: 0,
+            dropped: 0,
             partial: 0,
         };
 
@@ -1952,6 +2087,8 @@ mod tests {
             short: 10,
             unstable: 15,
             revision: 5,
+            inserted: 5,
+            dropped: 5,
             partial: 10,
         };
 
@@ -1975,6 +2112,10 @@ mod tests {
                     Some(Corruption::Unstable)
                 } else if words >= 4 && rng.chance(self.revision) {
                     Some(Corruption::Revision)
+                } else if words >= 4 && rng.chance(self.inserted) {
+                    Some(Corruption::Inserted)
+                } else if words >= 4 && rng.chance(self.dropped) {
+                    Some(Corruption::Dropped)
                 } else if words >= 14 && rng.chance(self.partial) {
                     Some(Corruption::Partial)
                 } else {
