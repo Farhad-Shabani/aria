@@ -11,8 +11,8 @@ use crate::voice_activity::VoiceActivityError;
 
 #[cfg(feature = "microphone")]
 pub use microphone::{
-    Microphone, MicrophoneBuilder, WakeWordControl, WakeWordEvent, WakeWordMonitor,
-    WakeWordSuspension, check_default_input_device,
+    Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl, WakeWordEvent,
+    WakeWordMonitor, WakeWordSuspension, check_default_input_device,
 };
 pub use wav_replay::{ReplayPace, WavReplayCapture, WavReplayError};
 

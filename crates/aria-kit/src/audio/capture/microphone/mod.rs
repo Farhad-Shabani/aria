@@ -75,23 +75,17 @@ impl MicrophoneBuilder {
     }
 
     pub fn open(self) -> Result<Microphone> {
-        let (spool_dir, maximum_duration, vad) = self.prepare()?;
-        let commands = worker::spawn(spool_dir, maximum_duration, vad)?;
-        Ok(Microphone { commands })
+        self.load()?.open()
     }
 
     pub fn open_with_wake_word<W>(self, detector: W) -> Result<(Microphone, WakeWordMonitor)>
     where
         W: WakeWordDetector + Send + 'static,
     {
-        let (spool_dir, maximum_duration, vad) = self.prepare()?;
-        let (commands, events) =
-            worker::spawn_with_wake_word(spool_dir, maximum_duration, vad, detector)?;
-        let monitor = WakeWordMonitor::new(commands.clone(), events);
-        Ok((Microphone { commands }, monitor))
+        self.load()?.open_with_wake_word(detector)
     }
 
-    fn prepare(self) -> Result<(PathBuf, Duration, SileroVad)> {
+    pub fn load(self) -> Result<PreparedMicrophone> {
         // Refused before any directory or model work, so a bad maximum never
         // hands out a microphone.
         spool::maximum_samples(self.maximum_duration)?;
@@ -102,7 +96,40 @@ impl MicrophoneBuilder {
             None => private_spool_dir()?,
         };
         let vad = SileroVad::load().map_err(MicrophoneError::VoiceActivity)?;
-        Ok((spool_dir, self.maximum_duration, vad))
+        Ok(PreparedMicrophone {
+            spool_dir,
+            maximum_duration: self.maximum_duration,
+            vad,
+        })
+    }
+}
+
+/// A microphone whose fallible setup is done. Opening it starts the worker
+/// thread, which opens the input device.
+pub struct PreparedMicrophone {
+    spool_dir: PathBuf,
+    maximum_duration: Duration,
+    vad: SileroVad,
+}
+
+impl PreparedMicrophone {
+    pub fn open(self) -> Result<Microphone> {
+        let commands = worker::spawn(self.spool_dir, self.maximum_duration, self.vad)?;
+        Ok(Microphone { commands })
+    }
+
+    pub fn open_with_wake_word<W>(self, detector: W) -> Result<(Microphone, WakeWordMonitor)>
+    where
+        W: WakeWordDetector + Send + 'static,
+    {
+        let (commands, events) = worker::spawn_with_wake_word(
+            self.spool_dir,
+            self.maximum_duration,
+            self.vad,
+            detector,
+        )?;
+        let monitor = WakeWordMonitor::new(commands.clone(), events);
+        Ok((Microphone { commands }, monitor))
     }
 }
 
