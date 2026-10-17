@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.aria.daemon</string>
+    <string>io.github.farhad-shabani.aria.daemon</string>
     <key>CFBundleName</key>
     <string>Aria</string>
     <key>NSMicrophoneUsageDescription</key>
