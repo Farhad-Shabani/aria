@@ -106,7 +106,7 @@ fn report(environment: &Environment) -> Result<Report, ConfigError> {
         ("dictation_cleanup_llm", cleanup_llm(&file, environment)),
         ("wake", wake(&file, environment, capture.as_ref())),
         ("hotkey", hotkey(&file, environment)),
-        ("relay", Ok(relay(&file))),
+        ("phone", Ok(relay(&file))),
         ("tts", tts(&file, environment)),
         ("chat", chat(&file, environment, timeouts.as_ref())),
         ("listen", listen(&file, environment, transcription.as_ref())),
@@ -400,15 +400,15 @@ fn hotkey(file: &FileConfig, environment: &Environment) -> Result<Vec<Row>, Conf
 fn relay(file: &FileConfig) -> Vec<Row> {
     let config = load::relay(file);
     let mut rows = vec![row(
-        "relay.enabled",
+        "phone.enabled",
         !matches!(config, RelayConfig::Disabled),
-        Source::file_or_default(file.relay.enabled.is_some()),
+        Source::file_or_default(file.phone.enabled.is_some()),
     )];
     if let RelayConfig::Enabled { port } = config {
         rows.push(row(
-            "relay.port",
+            "phone.port",
             port,
-            Source::file_or_default(file.relay.port.is_some()),
+            Source::file_or_default(file.phone.port.is_some()),
         ));
     }
     rows
@@ -690,7 +690,7 @@ mod tests {
     use std::path::Path;
 
     use super::super::file::{
-        FileCapture, FileChat, FileHotkey, FileListen, FileMemory, FileRelay, FileSpeaker,
+        FileCapture, FileChat, FileHotkey, FileListen, FileMemory, FilePhone, FileSpeaker,
         FileTimeouts, FileTranscription, FileTts, FileWake,
     };
     use super::*;
@@ -925,7 +925,7 @@ mod tests {
             dictation_cleanup: _,
             dictation_backtrack: _,
             dictation_cleanup_llm: _,
-            relay: FileRelay {
+            phone: FilePhone {
                 enabled: _,
                 port: _,
             },
@@ -1108,7 +1108,7 @@ mod tests {
              speaker:\n  model: ~/s\n  segmentation_model: ~/g\n  speakers_dir: ~/d\n\
              wake:\n  enabled: true\n  backend: openwakeword\n  model: ~/w\n  threshold: 0.7\n\
              hotkey:\n  enabled: false\n\
-             relay:\n  enabled: true\n  port: 9999\n\
+             phone:\n  enabled: true\n  port: 9999\n\
              dictation_timeouts:\n  recording: 10\n  delivery: 2\n  overall: 20\n\
              dictation_cleanup: true\n\
              dictation_backtrack: true\n\
@@ -1137,8 +1137,8 @@ mod tests {
             "wake.model",
             "wake.threshold",
             "hotkey.enabled",
-            "relay.enabled",
-            "relay.port",
+            "phone.enabled",
+            "phone.port",
             "tts.backend",
             "tts.model",
             "tts.voices",

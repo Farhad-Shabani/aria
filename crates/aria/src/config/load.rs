@@ -272,9 +272,9 @@ const DEFAULT_RELAY_ENABLED: bool = false;
 const DEFAULT_RELAY_PORT: u16 = 9850;
 
 pub(super) fn relay(file: &FileConfig) -> RelayConfig {
-    if file.relay.enabled.unwrap_or(DEFAULT_RELAY_ENABLED) {
+    if file.phone.enabled.unwrap_or(DEFAULT_RELAY_ENABLED) {
         RelayConfig::Enabled {
-            port: file.relay.port.unwrap_or(DEFAULT_RELAY_PORT),
+            port: file.phone.port.unwrap_or(DEFAULT_RELAY_PORT),
         }
     } else {
         RelayConfig::Disabled

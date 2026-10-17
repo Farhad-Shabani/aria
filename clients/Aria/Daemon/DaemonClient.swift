@@ -116,6 +116,10 @@ struct DaemonClient: DaemonControlling {
         return bin
     }
 
+    static func enablePhonePairing() throws {
+        try run(try ariaBinary(), ["phone", "enable"])
+    }
+
     /// Removes the service older setups installed, once, since it shares the
     /// agent's label. Call it before reading the agent's status. A service
     /// the user installs later stays theirs.

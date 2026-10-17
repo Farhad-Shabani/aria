@@ -208,6 +208,17 @@ pub enum Grant {
     Waiting,
 }
 
+pub fn enable_phone_pairing() -> Result<ConfigWrite, SetupError> {
+    config_file::enable_phone_pairing(&config_path()?)
+}
+
+fn config_path() -> Result<PathBuf, SetupError> {
+    config::default_path().map_err(|source| SetupError::Config {
+        path: PathBuf::from("~/.aria/config.yaml"),
+        source,
+    })
+}
+
 pub fn inspect() -> Result<Inspection, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
     // `current_exe` may answer the symlink an installer put on PATH; the
@@ -215,10 +226,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     let exe = std::env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(SetupError::CurrentExe)?;
-    let config_path = config::default_path().map_err(|source| SetupError::Config {
-        path: PathBuf::from("~/.aria/config.yaml"),
-        source,
-    })?;
+    let config_path = config_path()?;
     let host = Host::probe(home.clone());
     let existing = Existing::read(&config_path)?;
     let service = Supervisor::open()

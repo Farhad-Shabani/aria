@@ -94,7 +94,7 @@ pub(crate) struct FileConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) hotkey: FileHotkey,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) relay: FileRelay,
+    pub(crate) phone: FilePhone,
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) dictation_timeouts: FileTimeouts,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -201,7 +201,7 @@ pub(crate) struct FileHotkey {
 
 #[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct FileRelay {
+pub(crate) struct FilePhone {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

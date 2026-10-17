@@ -22,7 +22,7 @@ use crate::rpc::{RpcErrorCode, RpcFailure};
 
 /// Where the material lives under the user's home. The Mac app deletes this
 /// file to revoke every phone, so its path is pinned by a test.
-pub(crate) const RELATIVE_PATH: &str = ".aria/relay/pairing.json";
+pub(crate) const RELATIVE_PATH: &str = ".aria/phone/pairing.json";
 const MAX_FILE_BYTES: u64 = 16 * 1024;
 const TOKEN_BYTES: usize = 32;
 /// The certificate's subject alternative name. The phone never checks it;
@@ -233,7 +233,7 @@ mod tests {
     use super::*;
 
     fn pairing_path(directory: &tempfile::TempDir) -> std::path::PathBuf {
-        directory.path().join("relay").join("pairing.json")
+        directory.path().join("phone").join("pairing.json")
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
     /// Files already on disk must keep loading.
     #[test]
     fn the_file_shape_is_stable() {
-        assert_eq!(RELATIVE_PATH, ".aria/relay/pairing.json");
+        assert_eq!(RELATIVE_PATH, ".aria/phone/pairing.json");
         let directory = tempfile::tempdir().unwrap();
         let path = pairing_path(&directory);
         load_or_create(&path, "Aria (studio)").unwrap();

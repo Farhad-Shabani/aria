@@ -1,4 +1,5 @@
-//! The five choices setup owns inside `~/.aria/config.yaml`.
+//! What Aria writes inside `~/.aria/config.yaml`: setup's five choices, and
+//! the phone pairing switch.
 
 use std::fs;
 use std::fs::Permissions;
@@ -10,8 +11,11 @@ use crate::config::{self, FileConfig};
 
 use super::SetupError;
 
-const HEADER: &str = "# Written by `aria setup`. Hand edits are kept; a rerun that changes an\n\
-                      # answer rewrites this file and leaves the old one at config.yaml.bak.\n";
+const HEADER: &str = "# Written by Aria. Hand edits are kept, but comments are not.\n\
+                      # A hand-written original is kept at config.yaml.bak.\n";
+/// Every header Aria has written starts this way, so a file from an older
+/// release isn't taken for a hand-written one.
+const WRITTEN_BY_ARIA: &str = "# Written by ";
 /// The mode a hand-written config would have. The temporary file starts at
 /// 0600, which would silently tighten what the user already chose.
 const CONFIG_FILE_MODE: u32 = 0o644;
@@ -57,42 +61,51 @@ impl Existing {
 }
 
 impl Selections {
-    /// Rewrites the file with these five keys set and everything else as it
-    /// was. Comments do not survive, so an unchanged result is not written,
-    /// and the first rewrite of a hand-written file keeps it beside.
     pub(super) fn write(&self, path: &Path) -> Result<ConfigWrite, SetupError> {
-        // A symlinked config belongs to whatever it points at; renaming onto
-        // the link would leave that file stale and untouched.
-        let path = &fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let mut file = read(path)?;
-        file.transcription.backend = Some(self.stt.clone());
-        file.tts.backend = Some(self.tts.clone());
-        file.chat.agent = Some(self.chat.clone());
-        file.wake.enabled = Some(self.wake);
-        file.hotkey.enabled = Some(self.hotkey);
-        let text = format!(
-            "{HEADER}{}",
-            serde_saphyr::to_string(&file).map_err(|source| SetupError::ConfigWrite {
-                path: path.to_path_buf(),
-                source,
-            })?
-        );
-
-        let previous = fs::read_to_string(path).ok();
-        if previous.as_deref() == Some(text.as_str()) {
-            return Ok(ConfigWrite::Unchanged);
-        }
-        // Only the file setup did not write is worth keeping: a second
-        // backup of its own output would bury the user's original.
-        let backup = previous
-            .filter(|previous| !previous.starts_with(HEADER))
-            .map(|_| path.with_extension("yaml.bak"));
-        if let Some(backup) = &backup {
-            fs::copy(path, backup).map_err(|source| io_error("back up", backup, source))?;
-        }
-        replace(path, &text)?;
-        Ok(ConfigWrite::Written { backup })
+        rewrite(path, |file| {
+            file.transcription.backend = Some(self.stt.clone());
+            file.tts.backend = Some(self.tts.clone());
+            file.chat.agent = Some(self.chat.clone());
+            file.wake.enabled = Some(self.wake);
+            file.hotkey.enabled = Some(self.hotkey);
+        })
     }
+}
+
+pub(super) fn enable_phone_pairing(path: &Path) -> Result<ConfigWrite, SetupError> {
+    rewrite(path, |file| file.phone.enabled = Some(true))
+}
+
+/// Comments don't survive a rewrite. So an unchanged result isn't written,
+/// and a hand-written file is first copied to config.yaml.bak.
+fn rewrite(path: &Path, edit: impl FnOnce(&mut FileConfig)) -> Result<ConfigWrite, SetupError> {
+    // A symlinked config belongs to whatever it points at; renaming onto
+    // the link would leave that file stale and untouched.
+    let path = &fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut file = read(path)?;
+    edit(&mut file);
+    let text = format!(
+        "{HEADER}{}",
+        serde_saphyr::to_string(&file).map_err(|source| SetupError::ConfigWrite {
+            path: path.to_path_buf(),
+            source,
+        })?
+    );
+
+    let previous = fs::read_to_string(path).ok();
+    if previous.as_deref() == Some(text.as_str()) {
+        return Ok(ConfigWrite::Unchanged);
+    }
+    // Only a file Aria did not write is worth keeping: a second backup of
+    // Aria's own output would bury the user's original.
+    let backup = previous
+        .filter(|previous| !previous.starts_with(WRITTEN_BY_ARIA))
+        .map(|_| path.with_extension("yaml.bak"));
+    if let Some(backup) = &backup {
+        fs::copy(path, backup).map_err(|source| io_error("back up", backup, source))?;
+    }
+    replace(path, &text)?;
+    Ok(ConfigWrite::Written { backup })
 }
 
 fn read(path: &Path) -> Result<FileConfig, SetupError> {
@@ -226,6 +239,28 @@ mod tests {
     }
 
     #[test]
+    fn a_file_an_older_release_wrote_keeps_the_hand_written_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let hand_written = "# mine\ntts:\n  backend: system\n";
+        fs::write(path.with_extension("yaml.bak"), hand_written).unwrap();
+        fs::write(
+            &path,
+            "# Written by `aria setup`. Hand edits are kept; a rerun that changes an\n\
+             # answer rewrites this file and leaves the old one at config.yaml.bak.\n\
+             tts:\n  backend: system\n",
+        )
+        .unwrap();
+
+        enable_phone_pairing(&path).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(path.with_extension("yaml.bak")).unwrap(),
+            hand_written
+        );
+    }
+
+    #[test]
     fn a_rewrite_keeps_the_mode_a_hand_written_file_has() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
@@ -254,6 +289,31 @@ mod tests {
                 .contains("backend: kokoro"),
             "the real file is the one written"
         );
+    }
+
+    #[test]
+    fn enabling_phone_pairing_fills_an_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "").unwrap();
+
+        enable_phone_pairing(&path).unwrap();
+
+        assert_eq!(read(&path).unwrap().phone.enabled, Some(true));
+    }
+
+    #[test]
+    fn enabling_phone_pairing_keeps_its_port_and_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "phone:\n  port: 9999\ntts:\n  rate: 1.5\n").unwrap();
+
+        enable_phone_pairing(&path).unwrap();
+
+        let file = read(&path).unwrap();
+        assert_eq!(file.phone.enabled, Some(true));
+        assert_eq!(file.phone.port, Some(9999));
+        assert!(fs::read_to_string(&path).unwrap().contains("rate: 1.5"));
     }
 
     #[test]

@@ -85,6 +85,11 @@ enum Command {
         #[arg(long)]
         skip_models: bool,
     },
+    /// Let paired phones and watches send recordings to this Mac
+    Phone {
+        #[command(subcommand)]
+        command: PhoneCommand,
+    },
     /// Keep the daemon running across logins
     Service {
         #[command(subcommand)]
@@ -238,6 +243,12 @@ enum ConfigCommand {
     /// it. A daemon started by `aria service` sees the file, not this
     /// shell's variables, and reads it only at start
     Show,
+}
+
+#[derive(Subcommand)]
+enum PhoneCommand {
+    /// Turn on phone pairing. It takes effect when the daemon restarts
+    Enable,
 }
 
 #[derive(Subcommand)]
@@ -404,6 +415,9 @@ fn main() -> anyhow::Result<()> {
         Command::Wake {
             command: WakeCommand::Log,
         } => run_wake_log(),
+        Command::Phone {
+            command: PhoneCommand::Enable,
+        } => run_phone_enable(),
         Command::Service { command } => run_service(command),
         Command::Setup {
             command: None,
@@ -638,6 +652,15 @@ fn run_service(command: ServiceCommand) -> anyhow::Result<()> {
 
 fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
+}
+
+fn run_phone_enable() -> anyhow::Result<()> {
+    let write = aria::setup::enable_phone_pairing().context("failed to turn on phone pairing")?;
+    println!("config       {}", config_write_message(&write));
+    if write != ConfigWrite::Unchanged {
+        println!("restart the daemon to apply: aria service stop, then aria service start");
+    }
+    Ok(())
 }
 
 fn config_write_message(write: &ConfigWrite) -> String {
@@ -2050,6 +2073,17 @@ mod tests {
             Command::Setup {
                 command: Some(SetupCommand::Apply),
                 ..
+            }
+        ));
+    }
+
+    #[test]
+    fn phone_enable_parses_as_the_app_sends_it() {
+        let cli = Cli::try_parse_from(["aria", "phone", "enable"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Phone {
+                command: PhoneCommand::Enable
             }
         ));
     }
