@@ -1,5 +1,5 @@
-//! Composition of a dictation capability: backend selection, capture and wake
-//! pairing, model-loading policy, and the coordinator the runtime executes.
+//! Composition of a dictation capability: engine selection, model-loading
+//! policy, and the coordinator the runtime executes.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -7,14 +7,11 @@ use std::sync::Arc;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::Layered;
 
-use super::super::capture::CaptureBackend;
+use super::super::capture::{CaptureBackend, PreparedCapture};
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
-use crate::config::{
-    CaptureConfig, ConfigError, DictationConfig, SpeakerConfig, TranscriptionConfig, WakeBackend,
-    WakeConfig,
-};
+use crate::config::{ConfigError, DictationConfig, SpeakerConfig, TranscriptionConfig};
 use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
     CleanupError, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
@@ -23,8 +20,7 @@ use crate::dictation::{
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
-    Engine, Language, Mode, Streaming, StreamingEngine, Transcript, Transcription,
-    TranscriptionError, Whole,
+    Engine, Language, Mode, StreamingEngine, Transcript, Transcription, TranscriptionError, Whole,
 };
 use crate::vocabulary::{Directory, Vocabulary};
 
@@ -37,8 +33,6 @@ use aria_stt::nemotron::{Nemotron, NemotronConfig};
 use aria_stt::parakeet::{Parakeet, ParakeetConfig};
 #[cfg(target_os = "macos")]
 use aria_stt::parakeet_mlx::{ParakeetMlx, ParakeetMlxConfig};
-use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
-use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
 use crate::microphone::Gate;
 use crate::speaker;
@@ -194,13 +188,82 @@ impl ModelLoading {
     }
 }
 
+/// Type-erased so capture can open between selecting the engine and building
+/// its pipeline.
+type SelectedEngine = Box<dyn FnOnce(ExecutionParts) -> RuntimeExecutor>;
+
+fn select_engine(
+    config: TranscriptionConfig,
+    loading: ModelLoading,
+) -> Result<SelectedEngine, DictationInitializationError> {
+    match config {
+        TranscriptionConfig::Whisper { model } => {
+            streaming::<Whisper>(WhisperConfig::new(model), loading)
+        }
+        TranscriptionConfig::WhisperCandle { model_directory } => {
+            whole::<WhisperCandle>(WhisperCandleConfig::new(model_directory), loading)
+        }
+        TranscriptionConfig::Parakeet {
+            model_directory,
+            device,
+        } => streaming::<Parakeet>(ParakeetConfig::new(model_directory, device), loading),
+        TranscriptionConfig::Moonshine { model_directory } => {
+            streaming::<Moonshine>(MoonshineConfig::new(model_directory), loading)
+        }
+        TranscriptionConfig::Nemotron { model_directory } => {
+            streaming::<Nemotron>(NemotronConfig::new(model_directory), loading)
+        }
+        #[cfg(target_os = "macos")]
+        TranscriptionConfig::ParakeetMlx { model, interpreter } => {
+            whole::<ParakeetMlx>(ParakeetMlxConfig { interpreter, model }, loading)
+        }
+        #[cfg(not(target_os = "macos"))]
+        TranscriptionConfig::ParakeetMlx { .. } => Err(
+            DictationInitializationError::Transcription(TranscriptionError::UnsupportedBackend {
+                backend: crate::config::backend::PARAKEET_MLX,
+            }),
+        ),
+    }
+}
+
+/// A whole-mode engine reads the finished recording, so its input kind
+/// decides whether the pipeline hands it samples or a WAV file.
+fn whole<E>(
+    config: E::Config,
+    loading: ModelLoading,
+) -> Result<SelectedEngine, DictationInitializationError>
+where
+    E: Engine,
+    E::Config: Clone + Send + Sync + 'static,
+{
+    let model = loading.load::<E>(config)?;
+    let transcription = Transcription::complete(E::INPUT, model);
+    Ok(Box::new(move |parts: ExecutionParts| {
+        parts.finish(transcription)
+    }))
+}
+
+fn streaming<E>(
+    config: E::Config,
+    loading: ModelLoading,
+) -> Result<SelectedEngine, DictationInitializationError>
+where
+    E: StreamingEngine,
+    E::Config: Clone + Send + Sync + 'static,
+{
+    let model = loading.load::<E>(config)?;
+    let transcription = Transcription::stream(E::STREAM, model);
+    Ok(Box::new(move |parts: ExecutionParts| {
+        parts.finish(transcription)
+    }))
+}
+
 /// Everything a dictation pipeline needs except the engine.
 struct ExecutionParts {
     capture: Arc<CaptureBackend>,
     delivery: PlatformTextDelivery,
     transcripts: Arc<TranscriptStore>,
     wake: Option<WakeWordControl>,
-    loading: ModelLoading,
     speaker: SpeakerConfig,
     vocabulary: Arc<VocabularyRuntime>,
     cleanup: bool,
@@ -209,66 +272,6 @@ struct ExecutionParts {
 }
 
 impl ExecutionParts {
-    fn build(
-        self,
-        config: TranscriptionConfig,
-    ) -> Result<RuntimeExecutor, DictationInitializationError> {
-        match config {
-            TranscriptionConfig::Whisper { model } => {
-                self.streaming::<Whisper>(WhisperConfig::new(model))
-            }
-            TranscriptionConfig::WhisperCandle { model_directory } => {
-                self.whole::<WhisperCandle>(WhisperCandleConfig::new(model_directory))
-            }
-            TranscriptionConfig::Parakeet {
-                model_directory,
-                device,
-            } => self.streaming::<Parakeet>(ParakeetConfig::new(model_directory, device)),
-            TranscriptionConfig::Moonshine { model_directory } => {
-                self.streaming::<Moonshine>(MoonshineConfig::new(model_directory))
-            }
-            TranscriptionConfig::Nemotron { model_directory } => {
-                self.streaming::<Nemotron>(NemotronConfig::new(model_directory))
-            }
-            #[cfg(target_os = "macos")]
-            TranscriptionConfig::ParakeetMlx { model, interpreter } => {
-                self.whole::<ParakeetMlx>(ParakeetMlxConfig { interpreter, model })
-            }
-            #[cfg(not(target_os = "macos"))]
-            TranscriptionConfig::ParakeetMlx { .. } => {
-                Err(DictationInitializationError::Transcription(
-                    TranscriptionError::UnsupportedBackend {
-                        backend: crate::config::backend::PARAKEET_MLX,
-                    },
-                ))
-            }
-        }
-    }
-
-    /// A whole-mode engine reads the finished recording, so its input kind
-    /// decides whether the pipeline hands it samples or a WAV file.
-    fn whole<E>(self, config: E::Config) -> Result<RuntimeExecutor, DictationInitializationError>
-    where
-        E: Engine,
-        E::Config: Clone + Send + Sync + 'static,
-    {
-        let model = self.loading.load::<E>(config)?;
-        Ok(self.finish::<E, Whole>(Transcription::complete(E::INPUT, model)))
-    }
-
-    fn streaming<E>(
-        self,
-        config: E::Config,
-    ) -> Result<RuntimeExecutor, DictationInitializationError>
-    where
-        E: StreamingEngine,
-        E::Config: Clone + Send + Sync + 'static,
-    {
-        let model = self.loading.load::<E>(config)?;
-        let transcription = Transcription::stream(E::STREAM, model);
-        Ok(self.finish::<E, Streaming>(transcription))
-    }
-
     /// The one place the concrete pipeline becomes a boxed executor, so the
     /// engine, its mode, and its cadence stay static until here.
     fn finish<E, M>(self, transcription: Transcription<ModelLoad<E>, M>) -> RuntimeExecutor
@@ -304,6 +307,8 @@ pub(super) struct BuiltDictation {
     pub(super) wake_control: Option<WakeWordControl>,
 }
 
+/// Every other fallible step runs before the engine loads. Capture opens
+/// last, so a failed eager load never opens the input device.
 pub(super) fn build_dictation(
     setup: DictationSetup,
     spool_dir: &Path,
@@ -330,26 +335,28 @@ pub(super) fn build_dictation(
         speaker,
         vocabulary,
     } = setup;
-    let (capture, wake) = build_capture(capture, wake, spool_dir, timeouts.recording)?;
-    let capture = Arc::new(capture);
-    let wake_control = wake.as_ref().map(WakeWordMonitor::control);
     let delivery = PlatformTextDelivery::new(timeouts.delivery)
         .map_err(DictationInitializationError::Delivery)?;
     let policy =
         DictationPolicy::new(timeouts.overall).map_err(DictationInitializationError::Policy)?;
-    let execution = ExecutionParts {
+    let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording)?;
+    let engine = select_engine(transcription, loading)?;
+    let (capture, wake) = capture
+        .open()
+        .map_err(DictationInitializationError::Capture)?;
+    let capture = Arc::new(capture);
+    let wake_control = wake.as_ref().map(WakeWordMonitor::control);
+    let execution = engine(ExecutionParts {
         capture: Arc::clone(&capture),
         delivery,
         transcripts,
         wake: wake_control.clone(),
-        loading,
         speaker,
         vocabulary,
         cleanup,
         backtrack,
         cleanup_llm,
-    }
-    .build(transcription)?;
+    });
     Ok(BuiltDictation {
         coordinator: DictationCoordinator::new(policy, execution, microphone),
         wake,
@@ -420,62 +427,52 @@ fn retry_model<E: Engine>(
     Ok(Transcription::complete(E::INPUT, model))
 }
 
-fn build_capture(
-    capture: CaptureConfig,
-    wake: WakeConfig,
-    spool_dir: &Path,
-    recording_timeout: std::time::Duration,
-) -> Result<(CaptureBackend, Option<WakeWordMonitor>), DictationInitializationError> {
-    match wake {
-        WakeConfig::Disabled => CaptureBackend::new(capture, spool_dir, recording_timeout)
-            .map(|capture| (capture, None))
-            .map_err(DictationInitializationError::Capture),
-        WakeConfig::Enabled {
-            backend,
-            classifier,
-            threshold,
-        } => {
-            if !matches!(capture, CaptureConfig::Microphone) {
-                return Err(DictationInitializationError::Config(
-                    ConfigError::WakeRequiresMicrophone,
-                ));
-            }
-            let (capture, monitor) = match backend {
-                WakeBackend::OpenWakeWord => {
-                    let config = OpenWakeWordConfig::new(classifier, threshold)
-                        .map_err(DictationInitializationError::WakeConfiguration)?;
-                    let detector = OpenWakeWord::load_from(&config)
-                        .map_err(DictationInitializationError::WakeModel)?;
-                    build_wake_word_capture(detector, spool_dir, recording_timeout)
-                }
-                WakeBackend::LiveKit => {
-                    let config = LiveKitConfig::new(classifier, threshold)
-                        .map_err(DictationInitializationError::WakeConfiguration)?;
-                    let detector = LiveKitWakeWord::load_from(&config)
-                        .map_err(DictationInitializationError::WakeModel)?;
-                    build_wake_word_capture(detector, spool_dir, recording_timeout)
-                }
-            }?;
-            Ok((capture, Some(monitor)))
-        }
-    }
-}
-
-fn build_wake_word_capture<W>(
-    detector: W,
-    spool_dir: &Path,
-    recording_timeout: std::time::Duration,
-) -> Result<(CaptureBackend, WakeWordMonitor), DictationInitializationError>
-where
-    W: aria_kit::wake_word::WakeWordDetector + Send + 'static,
-{
-    CaptureBackend::with_wake_word(detector, spool_dir, recording_timeout)
-        .map_err(DictationInitializationError::Capture)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::audio::ReplayPace;
+    use crate::config::{CaptureConfig, WakeConfig};
+
+    #[test]
+    fn capture_is_validated_before_the_model_loads() {
+        let home = tempfile::tempdir().unwrap();
+        let environment = crate::config::Environment::in_home(home.path().to_owned());
+        let mut config = DictationConfig::load(&environment).unwrap();
+        config.transcription = TranscriptionConfig::Whisper {
+            model: home.path().join("missing-model.bin"),
+        };
+        config.capture = CaptureConfig::WavFile {
+            path: home.path().join("missing-capture.wav"),
+            pace: ReplayPace::Immediate,
+        };
+        let (vocabulary, _worker) = VocabularyRuntime::new(
+            home.path().join("vocabulary"),
+            None,
+            false,
+            crate::vocabulary::extract::LocalExtractor,
+        );
+        let setup = DictationSetup {
+            dictation: config,
+            wake: WakeConfig::Disabled,
+            speaker: SpeakerConfig::load(&environment).unwrap(),
+            vocabulary,
+        };
+
+        let outcome = build_dictation(
+            setup,
+            home.path(),
+            home.path(),
+            Arc::new(TranscriptStore::new()),
+            ModelLoading::Eager,
+            Gate::new(),
+        );
+
+        assert!(matches!(
+            outcome,
+            Err(DictationInitializationError::Capture(_))
+        ));
+    }
 
     #[test]
     fn capture_free_retry_validates_cleanup_before_model_loading() {

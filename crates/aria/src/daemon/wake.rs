@@ -1,22 +1,70 @@
-//! The wake word as a dictation trigger, owned by a persistent daemon.
+//! Wake-word detection in the daemon: the detector the configuration selects,
+//! how it rides the microphone, and the trigger that turns a detection into a
+//! dictation.
 
+use std::path::PathBuf;
 use std::time::Duration;
+
+use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
+use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
 use tokio_util::sync::CancellationToken;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 
-use crate::audio::{WakeWordEvent, WakeWordMonitor};
+use crate::audio::{CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor};
+use crate::config::WakeBackend;
 use crate::dictation::{
     DeliveryMode, DictationError, DictationOutcome, DictationRequest, StopMode,
 };
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 
+use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;
 use super::dictation::{DictationCallError, DictationHandle};
 use super::tasks::Supervised;
 
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+pub(in crate::daemon) enum WakeDetector {
+    OpenWakeWord(Box<OpenWakeWord>),
+    LiveKit(Box<LiveKitWakeWord>),
+}
+
+impl WakeDetector {
+    pub(super) fn load(
+        backend: WakeBackend,
+        classifier: PathBuf,
+        threshold: f32,
+    ) -> Result<Self, DictationInitializationError> {
+        match backend {
+            WakeBackend::OpenWakeWord => {
+                let config = OpenWakeWordConfig::new(classifier, threshold)
+                    .map_err(DictationInitializationError::WakeConfiguration)?;
+                OpenWakeWord::load_from(&config)
+                    .map(|detector| Self::OpenWakeWord(Box::new(detector)))
+                    .map_err(DictationInitializationError::WakeModel)
+            }
+            WakeBackend::LiveKit => {
+                let config = LiveKitConfig::new(classifier, threshold)
+                    .map_err(DictationInitializationError::WakeConfiguration)?;
+                LiveKitWakeWord::load_from(&config)
+                    .map(|detector| Self::LiveKit(Box::new(detector)))
+                    .map_err(DictationInitializationError::WakeModel)
+            }
+        }
+    }
+
+    pub(super) fn open_microphone(
+        self,
+        microphone: PreparedMicrophone,
+    ) -> Result<(Microphone, WakeWordMonitor), CaptureError> {
+        match self {
+            Self::OpenWakeWord(detector) => microphone.open_with_wake_word(*detector),
+            Self::LiveKit(detector) => microphone.open_with_wake_word(*detector),
+        }
+    }
+}
 
 pub(super) struct WakeTrigger {
     monitor: WakeWordMonitor,
