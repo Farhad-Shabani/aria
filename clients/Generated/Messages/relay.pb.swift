@@ -31,7 +31,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
   public typealias RawValue = Int
   case unspecified // = 0
 
-  /// The upload is complete; decoding and transcription are starting.
+  /// The upload is complete; transcription is starting.
   case transcribing // = 1
 
   /// Transcription and delivery succeeded. Terminal.
@@ -79,14 +79,8 @@ public nonisolated enum Aria_Daemon_V1_AudioFormat: SwiftProtobuf.Enum, Swift.Ca
   public typealias RawValue = Int
   case unspecified // = 0
 
-  /// AAC in ADTS, or M4A/MP4 with its moov index before the audio, as Apple
-  /// recorders write it. The upload is decoded as a stream, so a trailing moov
-  /// fails. The container/stream supplies rate and channels.
-  /// Decoded to 16 kHz mono.
-  case aac // = 1
-
   /// Raw mono signed 16-bit little-endian PCM at 16 kHz, without a file header.
-  case pcmS16Le // = 2
+  case pcmS16Le // = 1
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -96,8 +90,7 @@ public nonisolated enum Aria_Daemon_V1_AudioFormat: SwiftProtobuf.Enum, Swift.Ca
   public init?(rawValue: Int) {
     switch rawValue {
     case 0: self = .unspecified
-    case 1: self = .aac
-    case 2: self = .pcmS16Le
+    case 1: self = .pcmS16Le
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -105,8 +98,7 @@ public nonisolated enum Aria_Daemon_V1_AudioFormat: SwiftProtobuf.Enum, Swift.Ca
   public var rawValue: Int {
     switch self {
     case .unspecified: return 0
-    case .aac: return 1
-    case .pcmS16Le: return 2
+    case .pcmS16Le: return 1
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -114,7 +106,6 @@ public nonisolated enum Aria_Daemon_V1_AudioFormat: SwiftProtobuf.Enum, Swift.Ca
   // The compiler won't synthesize support with the UNRECOGNIZED case.
   public static let allCases: [Aria_Daemon_V1_AudioFormat] = [
     .unspecified,
-    .aac,
     .pcmS16Le,
   ]
 
@@ -277,7 +268,7 @@ nonisolated extension Aria_Daemon_V1_RelayStage: SwiftProtobuf._ProtoNameProvidi
 }
 
 nonisolated extension Aria_Daemon_V1_AudioFormat: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AUDIO_FORMAT_UNSPECIFIED\0\u{1}AUDIO_FORMAT_AAC\0\u{1}AUDIO_FORMAT_PCM_S16LE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AUDIO_FORMAT_UNSPECIFIED\0\u{1}AUDIO_FORMAT_PCM_S16LE\0")
 }
 
 nonisolated extension Aria_Daemon_V1_PairRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

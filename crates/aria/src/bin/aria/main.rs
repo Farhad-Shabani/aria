@@ -1035,7 +1035,7 @@ fn run_daemon() -> anyhow::Result<()> {
 }
 
 /// Restarts the daemon in place with the PATH a terminal would have, so it
-/// finds `claude`, `codex`, and `ffmpeg` however launchd started it. Returns
+/// finds `claude` and `codex` however launchd started it. Returns
 /// only when it could not; the restarted daemon's PATH is no longer bare.
 #[cfg(target_os = "macos")]
 fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {

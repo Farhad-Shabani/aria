@@ -11,7 +11,7 @@ use crate::config::{
     ListenConfig, RelayConfig, SpeakerConfig, TranscriptionConfig, WakeBackend, WakeConfig,
     WakeWordOverride,
 };
-use crate::daemon::{RELAY_SERVICE_TYPE, ffmpeg_path};
+use crate::daemon::RELAY_SERVICE_TYPE;
 use crate::delivery::{PlatformTextDelivery, TextDelivery};
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
@@ -269,8 +269,7 @@ fn listen() -> Check {
     }
 }
 
-/// The relay is optional, so nothing here fails: a Mac without ffmpeg simply
-/// cannot take the Watch's AAC, and everything else still works.
+/// The relay is optional, so nothing here fails.
 fn relay(config: Option<RelayConfig>) -> Check {
     let Some(config) = config else {
         return Check::warning(PHONE, UNCONFIGURED);
@@ -280,15 +279,6 @@ fn relay(config: Option<RelayConfig>) -> Check {
             PHONE,
             "disabled; run `aria phone enable` to take recordings from an iPhone or Apple Watch"
                 .to_owned(),
-        );
-    };
-    let Some(ffmpeg) = ffmpeg_path() else {
-        return Check::warning(
-            PHONE,
-            format!(
-                "port {port}: ffmpeg is not installed, so audio relayed from the \
-                 Watch cannot be decoded: brew install ffmpeg"
-            ),
         );
     };
     // Asked, not assumed: a lost port or unusable pairing file only logs, and
@@ -305,11 +295,7 @@ fn relay(config: Option<RelayConfig>) -> Check {
     }
     Check::ok(
         PHONE,
-        format!(
-            "listening on port {port}, advertised as {RELAY_SERVICE_TYPE}, decoding \
-             with {}",
-            ffmpeg.display()
-        ),
+        format!("listening on port {port}, advertised as {RELAY_SERVICE_TYPE}"),
     )
 }
 

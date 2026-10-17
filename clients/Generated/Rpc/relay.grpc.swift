@@ -68,9 +68,9 @@ extension Aria_Daemon_V1_RelayService {
         /// > The recorder stays claimed until the session ends, blocking local dictation.
         /// > Cancelling the RPC requests cancellation of transcription and delivery;
         /// > it cannot undo text already delivered.
-        /// > Uploads are capped at 64 MiB, with 4 MiB per message and four concurrent
-        /// > streams per connection. Audio more than a second past 600 seconds is
-        /// > rejected; decoding has a separate 60-second deadline.
+        /// > Uploads are capped at 4 MiB per message and four concurrent streams per
+        /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
+        /// > PCM) is refused as it streams.
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
         /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
         /// > audio arrived. Uploads must finish within 120 seconds after Start.
@@ -84,7 +84,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   ABORTED - the delivery target changes
         /// >   UNAVAILABLE - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
-        /// >   INTERNAL - audio decoding, transcription, or delivery failed
+        /// >   INTERNAL - transcription or delivery failed
         /// > Delivery failures do not return the transcript and can include partial delivery.
         ///
         /// - Parameters:
@@ -132,9 +132,9 @@ extension Aria_Daemon_V1_RelayService {
         /// > The recorder stays claimed until the session ends, blocking local dictation.
         /// > Cancelling the RPC requests cancellation of transcription and delivery;
         /// > it cannot undo text already delivered.
-        /// > Uploads are capped at 64 MiB, with 4 MiB per message and four concurrent
-        /// > streams per connection. Audio more than a second past 600 seconds is
-        /// > rejected; decoding has a separate 60-second deadline.
+        /// > Uploads are capped at 4 MiB per message and four concurrent streams per
+        /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
+        /// > PCM) is refused as it streams.
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
         /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
         /// > audio arrived. Uploads must finish within 120 seconds after Start.
@@ -148,7 +148,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   ABORTED - the delivery target changes
         /// >   UNAVAILABLE - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
-        /// >   INTERNAL - audio decoding, transcription, or delivery failed
+        /// >   INTERNAL - transcription or delivery failed
         /// > Delivery failures do not return the transcript and can include partial delivery.
         ///
         /// - Parameters:
@@ -193,9 +193,9 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > The recorder stays claimed until the session ends, blocking local dictation.
     /// > Cancelling the RPC requests cancellation of transcription and delivery;
     /// > it cannot undo text already delivered.
-    /// > Uploads are capped at 64 MiB, with 4 MiB per message and four concurrent
-    /// > streams per connection. Audio more than a second past 600 seconds is
-    /// > rejected; decoding has a separate 60-second deadline.
+    /// > Uploads are capped at 4 MiB per message and four concurrent streams per
+    /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
+    /// > PCM) is refused as it streams.
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
     /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
     /// > audio arrived. Uploads must finish within 120 seconds after Start.
@@ -209,7 +209,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   ABORTED - the delivery target changes
     /// >   UNAVAILABLE - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
-    /// >   INTERNAL - audio decoding, transcription, or delivery failed
+    /// >   INTERNAL - transcription or delivery failed
     /// > Delivery failures do not return the transcript and can include partial delivery.
     ///
     /// - Parameters:
@@ -248,9 +248,9 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > The recorder stays claimed until the session ends, blocking local dictation.
     /// > Cancelling the RPC requests cancellation of transcription and delivery;
     /// > it cannot undo text already delivered.
-    /// > Uploads are capped at 64 MiB, with 4 MiB per message and four concurrent
-    /// > streams per connection. Audio more than a second past 600 seconds is
-    /// > rejected; decoding has a separate 60-second deadline.
+    /// > Uploads are capped at 4 MiB per message and four concurrent streams per
+    /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
+    /// > PCM) is refused as it streams.
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
     /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
     /// > audio arrived. Uploads must finish within 120 seconds after Start.
@@ -264,7 +264,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   ABORTED - the delivery target changes
     /// >   UNAVAILABLE - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
-    /// >   INTERNAL - audio decoding, transcription, or delivery failed
+    /// >   INTERNAL - transcription or delivery failed
     /// > Delivery failures do not return the transcript and can include partial delivery.
     ///
     /// - Parameters:
