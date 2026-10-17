@@ -90,13 +90,13 @@ impl ListenState {
         // Read per Start, so a broken listen section never blocks the daemon.
         let config = ListenConfig::load(&self.environment)
             .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
+        let speaker = SpeakerConfig::load(&self.environment)
+            .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
         let (sink, transcript) = match output {
             Some(path) => TranscriptFile::create_at(path),
             None => TranscriptFile::create(&config.transcripts_dir),
         }
         .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
-        let speaker = SpeakerConfig::load(&self.environment)
-            .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
         let (capture, recording) = SystemAudioCapture::spawn().map_err(failure)?;
         let stopper = capture.stopper();
         let cancel = CancelToken::new();

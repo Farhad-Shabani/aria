@@ -12,6 +12,7 @@ final class SetupStateTests: XCTestCase {
         var applyError: Error?
         var applyContinuation: CheckedContinuation<Aria_Setup_V1_Summary, Error>?
         var stoppedDaemon = 0
+        var startedDaemon = 0
         var armed = false
         var speakers = [Aria_Daemon_V1_EnrolledSpeaker]()
         var enrolledNames = [String]()
@@ -29,6 +30,7 @@ final class SetupStateTests: XCTestCase {
                     return try await withCheckedThrowingContinuation { self.applyContinuation = $0 }
                 },
                 stopDaemon: { self.stoppedDaemon += 1 },
+                startDaemon: { self.startedDaemon += 1 },
                 hotkeyArmed: { self.armed },
                 openAccessibility: {},
                 speakers: { self.speakers },
@@ -228,6 +230,7 @@ final class SetupStateTests: XCTestCase {
 
         harness.applyContinuation?.resume(returning: harness.summary)
         await waitUntil { state.step == .voice }
+        XCTAssertEqual(harness.startedDaemon, 0, "the service owns the daemon after a finished apply")
 
         state.voiceName = " Ada "
         state.recordVoice()
@@ -279,6 +282,7 @@ final class SetupStateTests: XCTestCase {
         state.cancel()
         harness.applyContinuation?.resume(throwing: SetupClientError.cancelled)
         await waitUntil { state.step == .models }
+        XCTAssertEqual(harness.startedDaemon, 1, "a cancelled apply must restart the daemon it stopped")
     }
 
     func test_applyFailure_isShownAndRetryReinspects() async {
@@ -291,9 +295,25 @@ final class SetupStateTests: XCTestCase {
         state.next()
         state.next()
         await waitUntil { state.step == .failed("curl exited with 22") }
+        XCTAssertEqual(harness.startedDaemon, 1, "a failed apply must restart the daemon it stopped")
 
         state.retry()
         await waitUntil { state.step == .welcome }
+    }
+
+    func test_applyFailure_leavesAServiceDaemonAlone() async {
+        let harness = Harness()
+        harness.inspection.service.job = .running
+        harness.applyError = SetupClientError.failed("curl exited with 22")
+        let state = SetupState(effects: harness.effects)
+        state.start()
+        await waitUntil { state.step == .welcome }
+        state.next()
+        state.next()
+        state.next()
+        await waitUntil { state.step == .failed("curl exited with 22") }
+        XCTAssertEqual(harness.stoppedDaemon, 0)
+        XCTAssertEqual(harness.startedDaemon, 0, "the service supervises its own daemon")
     }
 
     func test_grantWaits_untilTheHotkeyArms() async {

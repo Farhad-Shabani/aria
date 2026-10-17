@@ -13,8 +13,7 @@ pub(super) struct Asset {
     pub(super) bytes: u64,
     /// Whether it is fetched when nobody answers.
     pub(super) default: bool,
-    /// Home-relative destinations. The asset counts as in place once the
-    /// first one exists.
+    /// Home-relative destinations.
     pub(super) files: &'static [(&'static str, Source)],
 }
 
@@ -88,7 +87,10 @@ pub(super) const EXTRAS: [Asset; 2] = [
 ];
 
 pub(super) fn present(home: &Path, asset: &Asset) -> bool {
-    home.join(asset.files[0].0).exists()
+    asset
+        .files
+        .iter()
+        .all(|(relative, _)| home.join(relative).exists())
 }
 
 /// Fetches every file of an asset. `received` gets the byte count on disk
@@ -151,14 +153,17 @@ mod tests {
     }
 
     #[test]
-    fn the_first_file_marks_an_asset_present() {
+    fn an_asset_is_present_only_with_every_file() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!present(dir.path(), &WHISPER));
+        let [(model, _), (voices, _)] = KOKORO.files else {
+            panic!("kokoro ships a model and its voices");
+        };
+        fs::create_dir_all(dir.path().join(model).parent().unwrap()).unwrap();
 
-        let marker = dir.path().join(WHISPER.files[0].0);
-        fs::create_dir_all(marker.parent().unwrap()).unwrap();
-        fs::write(&marker, b"").unwrap();
+        fs::write(dir.path().join(model), b"").unwrap();
+        assert!(!present(dir.path(), &KOKORO));
 
-        assert!(present(dir.path(), &WHISPER));
+        fs::write(dir.path().join(voices), b"").unwrap();
+        assert!(present(dir.path(), &KOKORO));
     }
 }

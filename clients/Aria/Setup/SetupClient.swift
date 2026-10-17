@@ -165,6 +165,15 @@ extension SetupState.Effects {
                 }
                 await SetupClient.awaitDaemonExit()
             },
+            startDaemon: {
+                do {
+                    // A new Task, so a cancelled apply cannot cut short the
+                    // agent-load wait inside `start`.
+                    try await Task { try await DaemonClient().start() }.value
+                } catch {
+                    NSLog("SetupState: daemon not restarted after apply — \(error)")
+                }
+            },
             hotkeyArmed: { await HealthClient.serving(HealthClient.hotkeyService) },
             openAccessibility: {
                 let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
