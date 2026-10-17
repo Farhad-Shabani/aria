@@ -1,5 +1,5 @@
-//! Composition of a dictation capability: backend selection, capture and wake
-//! pairing, model-loading policy, and the coordinator the runtime executes.
+//! Composition of a dictation capability: engine selection, model-loading
+//! policy, and the coordinator the runtime executes.
 
 use std::path::Path;
 use std::sync::Arc;

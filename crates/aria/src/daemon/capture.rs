@@ -1,16 +1,15 @@
 //! The capture source the daemon's configuration selects.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
-
-use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
-use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
 use crate::audio::{
     AudioCapture, CaptureError, Microphone, PreparedMicrophone, RecordingMode, RecordingReader,
     StopSignal, WakeWordMonitor, WavReplayCapture,
 };
-use crate::config::{CaptureConfig, ConfigError, WakeBackend, WakeConfig};
+use crate::config::{CaptureConfig, ConfigError, WakeConfig};
+
+use super::wake::WakeDetector;
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon) enum CaptureLoadError {
@@ -115,51 +114,12 @@ impl PreparedCapture {
     }
 }
 
-pub(in crate::daemon) enum WakeDetector {
-    OpenWakeWord(Box<OpenWakeWord>),
-    LiveKit(Box<LiveKitWakeWord>),
-}
-
-impl WakeDetector {
-    fn load(
-        backend: WakeBackend,
-        classifier: PathBuf,
-        threshold: f32,
-    ) -> Result<Self, CaptureLoadError> {
-        match backend {
-            WakeBackend::OpenWakeWord => {
-                let config = OpenWakeWordConfig::new(classifier, threshold)
-                    .map_err(CaptureLoadError::WakeConfiguration)?;
-                OpenWakeWord::load_from(&config)
-                    .map(|detector| Self::OpenWakeWord(Box::new(detector)))
-                    .map_err(CaptureLoadError::WakeModel)
-            }
-            WakeBackend::LiveKit => {
-                let config = LiveKitConfig::new(classifier, threshold)
-                    .map_err(CaptureLoadError::WakeConfiguration)?;
-                LiveKitWakeWord::load_from(&config)
-                    .map(|detector| Self::LiveKit(Box::new(detector)))
-                    .map_err(CaptureLoadError::WakeModel)
-            }
-        }
-    }
-
-    fn open_microphone(
-        self,
-        microphone: PreparedMicrophone,
-    ) -> Result<(Microphone, WakeWordMonitor), CaptureError> {
-        match self {
-            Self::OpenWakeWord(detector) => microphone.open_with_wake_word(*detector),
-            Self::LiveKit(detector) => microphone.open_with_wake_word(*detector),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::audio::ReplayPace;
+    use crate::config::WakeBackend;
 
     #[test]
     fn a_wake_word_on_a_replayed_capture_is_refused() {
