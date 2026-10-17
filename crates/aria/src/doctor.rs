@@ -33,7 +33,7 @@ const WAKE_WORD_MODEL: &str = "wake-word model";
 const SPEAKER_MODEL: &str = "speaker model";
 const SEGMENTATION_MODEL: &str = "segmentation model";
 const LISTEN: &str = "listen";
-const RELAY: &str = "relay";
+const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
 
 const UNCONFIGURED: &str = "not checked: the configuration failed to load";
@@ -273,17 +273,18 @@ fn listen() -> Check {
 /// cannot take the Watch's AAC, and everything else still works.
 fn relay(config: Option<RelayConfig>) -> Check {
     let Some(config) = config else {
-        return Check::warning(RELAY, UNCONFIGURED);
+        return Check::warning(PHONE, UNCONFIGURED);
     };
     let Some(port) = config.port() else {
         return Check::warning(
-            RELAY,
-            "disabled; set relay.enabled to take recordings from a Watch or iPhone".to_owned(),
+            PHONE,
+            "disabled; run `aria phone enable` to take recordings from an iPhone or Apple Watch"
+                .to_owned(),
         );
     };
     let Some(ffmpeg) = ffmpeg_path() else {
         return Check::warning(
-            RELAY,
+            PHONE,
             format!(
                 "port {port}: ffmpeg is not installed, so audio relayed from the \
                  Watch cannot be decoded: brew install ffmpeg"
@@ -295,7 +296,7 @@ fn relay(config: Option<RelayConfig>) -> Check {
     // configuration would call that healthy.
     if !relay_is_listening(port) {
         return Check::warning(
-            RELAY,
+            PHONE,
             format!(
                 "nothing is listening on port {port}; the daemon is not running, \
                  something else took the port, or its pairing file is unusable"
@@ -303,7 +304,7 @@ fn relay(config: Option<RelayConfig>) -> Check {
         );
     }
     Check::ok(
-        RELAY,
+        PHONE,
         format!(
             "listening on port {port}, advertised as {RELAY_SERVICE_TYPE}, decoding \
              with {}",
