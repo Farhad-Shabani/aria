@@ -116,8 +116,8 @@ struct DaemonClient: DaemonControlling {
         return bin
     }
 
-    static func enablePhonePairing() throws {
-        try run(try ariaBinary(), ["phone", "enable"])
+    static func setPhonePairing(_ enabled: Bool) throws {
+        try run(try ariaBinary(), ["phone", enabled ? "enable" : "disable"])
     }
 
     /// Removes the service older setups installed, once, since it shares the
