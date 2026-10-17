@@ -13,11 +13,8 @@ struct SettingsView: View {
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
             DictationSettings(preferences: preferences)
                 .tabItem { Label("Dictation", systemImage: "mic") }
-            // Phone pairing ships only in the official build, which sets this flag.
-            #if PHONE_PAIRING
-                PhoneSettings(poller: poller)
-                    .tabItem { Label("Phone", systemImage: "iphone") }
-            #endif
+            PhoneSettings(poller: poller)
+                .tabItem { Label("Phone", systemImage: "iphone") }
             AboutSettings()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
