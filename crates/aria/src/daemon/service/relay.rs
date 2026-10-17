@@ -160,7 +160,7 @@ impl Session {
         let observer = events.clone();
         let shutdown = self.shutdown.clone();
         let cancel = CancelToken::from_fn(move || shutdown.is_cancelled() || observer.is_closed());
-        let heard = tokio::task::spawn_blocking(move || hear(self, &audio, &cancel)).await;
+        let heard = tokio::task::spawn_blocking(move || hear(self, audio, &cancel)).await;
 
         // Every outcome ends the Mac's dictation status.
         let event = match heard {
@@ -217,7 +217,7 @@ fn stage(stage: wire::RelayStage) -> wire::RelayEvent {
 /// which is an outcome rather than a failure.
 fn hear(
     session: Session,
-    audio: &[u8],
+    audio: Vec<u8>,
     cancel: &CancelToken,
 ) -> Result<Option<(String, DeliveryOutcome)>, RpcFailure> {
     let Session {
@@ -230,11 +230,15 @@ fn hear(
         _claim,
         ..
     } = session;
-    let samples = relay::decode(opening, audio).map_err(|error| error.failure())?;
+    let samples = relay::decode(opening, &audio).map_err(|error| error.failure())?;
+    // A full recording is about 19 MB as bytes and again as samples, and
+    // transcription reads neither.
+    drop(audio);
 
     // File-based engines need a WAV. The recording owns its temporary file.
     let mut recording = RecordingReader::from_pcm16_in(&spool_dir, &samples)
         .map_err(|error| failure(RpcErrorCode::CaptureFailed, &error))?;
+    drop(samples);
 
     let text = match dictation.transcribe(&mut recording, &settings, cancel) {
         Ok(transcript) => transcript.into_text(),

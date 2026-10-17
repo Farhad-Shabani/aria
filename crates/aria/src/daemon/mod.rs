@@ -47,7 +47,7 @@ pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
 /// What `aria doctor` needs to report about the relay without owning one.
-pub(crate) use relay::{SERVICE_TYPE as RELAY_SERVICE_TYPE, ffmpeg_path};
+pub(crate) use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 pub use speech::SpeechInitializationError;
 
 pub use crate::chat::{

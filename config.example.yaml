@@ -62,8 +62,7 @@ transcription:
 
 # Recordings relayed off an Apple Watch or iPhone on the local network. The
 # daemon listens on this port, advertises itself over Bonjour as
-# `_aria-grpc._tcp`, and pastes what it hears into the focused app. Needs
-# ffmpeg for the audio the Watch sends (`brew install ffmpeg`).
+# `_aria-grpc._tcp`, and pastes what it hears into the focused app.
 #
 # Off unless you ask for it. Only a phone paired with this Mac gets in: the
 # port speaks TLS with the Mac's own certificate and refuses any call without

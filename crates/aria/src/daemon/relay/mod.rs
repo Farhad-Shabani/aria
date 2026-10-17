@@ -3,7 +3,7 @@
 //! The client records, then uploads: by the time the first byte reaches this
 //! daemon the utterance is already over. So there is no voice-activity gate
 //! and no silence stop here — the recorder on the wrist decided both. What is
-//! left is the size cap, the timeouts, and the decode.
+//! left is the size cap and the timeouts.
 //!
 //! Upload limits prevent a stalled client from holding the recorder indefinitely.
 //!
@@ -28,13 +28,12 @@ use crate::rpc::{RpcErrorCode, RpcFailure};
 pub(crate) use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
 pub(super) use code::PairingCodes;
-pub(crate) use decode::ffmpeg_path;
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
 pub(super) use pairing::{Pairing, Token, load_or_create as load_pairing, require_bearer};
 pub(super) use preferences::LanPreferences;
 
-/// Caps the upload buffer. Decoded audio has a separate duration limit.
-const MAX_AUDIO_BYTES: usize = 64 * 1024 * 1024;
+/// The longest recording's PCM, so an oversized upload stops as it streams.
+const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;
 /// Maximum wait between upload messages; the client sends a completed recording.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Caps total upload time even when messages arrive within the idle timeout.
@@ -48,7 +47,7 @@ pub(super) struct Opening {
 impl Opening {
     fn accept(start: wire::RelayStart) -> Result<Self, RelayError> {
         let format = match start.format() {
-            wire::AudioFormat::Unspecified => return Err(RelayError::FormatUnspecified),
+            wire::AudioFormat::Unspecified => return Err(RelayError::UnsupportedFormat),
             format => format,
         };
         Ok(Self { format })
@@ -152,10 +151,9 @@ where
 /// Turns collected bytes into the canonical PCM the engine reads.
 pub(super) fn decode(opening: Opening, audio: &[u8]) -> Result<Vec<i16>, RelayError> {
     let samples = match opening.format {
-        wire::AudioFormat::Aac => decode::aac_to_pcm16(audio),
         wire::AudioFormat::PcmS16le => decode::pcm16_from_bytes(audio),
         // `Opening::accept` refuses it, so nothing reaches here.
-        wire::AudioFormat::Unspecified => return Err(RelayError::FormatUnspecified),
+        wire::AudioFormat::Unspecified => return Err(RelayError::UnsupportedFormat),
     };
     samples.map_err(RelayError::Decode)
 }
@@ -168,8 +166,8 @@ pub(super) enum RelayError {
     #[error("a second RelayStart arrived mid-stream")]
     RestartedMidStream,
 
-    #[error("the audio format is unspecified; the relay needs AAC or PCM_S16LE")]
-    FormatUnspecified,
+    #[error("the audio format is missing or unsupported; the relay takes PCM_S16LE")]
+    UnsupportedFormat,
 
     #[error("the stream sent more than {MAX_AUDIO_BYTES} bytes of audio")]
     TooLarge,
@@ -203,7 +201,7 @@ impl RelayError {
         match self {
             Self::NotStarted
             | Self::RestartedMidStream
-            | Self::FormatUnspecified
+            | Self::UnsupportedFormat
             | Self::Decode(DecodeError::Empty | DecodeError::OddPcmLength { .. }) => {
                 RpcErrorCode::InvalidRequest
             }
@@ -211,7 +209,6 @@ impl RelayError {
             Self::Busy => RpcErrorCode::Busy,
             Self::SessionTimeout | Self::UploadStalled => RpcErrorCode::OverallTimeout,
             Self::ShuttingDown => RpcErrorCode::ShuttingDown,
-            Self::Decode(_) => RpcErrorCode::Internal,
             Self::ClientStream(_) => RpcErrorCode::Cancelled,
         }
     }
@@ -263,21 +260,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn known_formats_open_without_rate_metadata() {
-        for format in [wire::AudioFormat::Aac, wire::AudioFormat::PcmS16le] {
-            let mut stream = requests(vec![start(format)]);
+    async fn pcm_opens_without_rate_metadata() {
+        let mut stream = requests(vec![start(wire::AudioFormat::PcmS16le)]);
 
-            let opening = open(&mut stream)
-                .await
-                .expect("the format defines its rate");
+        let opening = open(&mut stream)
+            .await
+            .expect("the format defines its rate");
 
-            assert_eq!(opening.format, format);
-        }
+        assert_eq!(opening.format, wire::AudioFormat::PcmS16le);
     }
 
     #[tokio::test]
     async fn unspecified_and_unknown_formats_are_refused() {
-        for format in [0, i32::MAX] {
+        for format in [0, 2, i32::MAX] {
             let mut stream = requests(vec![wire::RelayRequest {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format,
@@ -288,7 +283,7 @@ mod tests {
                 .await
                 .expect_err("a known format is required");
 
-            assert!(matches!(error, RelayError::FormatUnspecified));
+            assert!(matches!(error, RelayError::UnsupportedFormat));
         }
     }
 
@@ -424,12 +419,11 @@ mod tests {
             code(decode::DecodeError::OddPcmLength { bytes: 3 }),
             RpcErrorCode::InvalidRequest
         );
-        assert_eq!(code(decode::DecodeError::NoOutput), RpcErrorCode::Internal);
     }
 
     #[tokio::test]
     async fn a_second_start_mid_stream_is_refused() {
-        let mut stream = requests(vec![chunk(b"one"), start(wire::AudioFormat::Aac)]);
+        let mut stream = requests(vec![chunk(b"one"), start(wire::AudioFormat::PcmS16le)]);
 
         let error = collect(&mut stream, &CancellationToken::new())
             .await
