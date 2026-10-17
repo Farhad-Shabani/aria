@@ -133,11 +133,11 @@ struct AboutSettings: View {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle(
                     "Automatically check for updates",
-                    isOn: Binding(get: { updates.checksAutomatically }, set: updates.setChecksAutomatically)
+                    isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })
                 )
                 Toggle(
                     "Automatically download and install",
-                    isOn: Binding(get: { updates.installsAutomatically }, set: updates.setInstallsAutomatically)
+                    isOn: Binding(get: { updates.installsAutomatically }, set: { updates.setInstallsAutomatically($0) })
                 )
                 .disabled(!updates.checksAutomatically)
             }
