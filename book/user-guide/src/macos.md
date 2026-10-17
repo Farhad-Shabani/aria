@@ -42,6 +42,17 @@ stop. With it off, Aria types finalized segments while you speak.
 If output is set to copy, paste the transcript after recording; copying always
 uses the completed text. Output choices are under **Settings → Dictation**.
 
+## Dictate from iPhone and Apple Watch
+
+Switch on **Phone Pairing** under **Settings → Phone**. Aria restarts and shows
+a code for Aria for iPhone to scan. Switching it off keeps paired phones for
+next time.
+
+**Copy Code** puts the code on the clipboard, marked hidden from clipboard
+managers and wiped when the code expires. Universal Clipboard may still carry
+it to your other devices meanwhile. **Revoke All…** unpairs every phone: Aria
+restarts with a new code, and each phone scans again.
+
 ## Keep Aria running
 
 Dictation needs Aria's background service. Opening the app starts it; choosing
