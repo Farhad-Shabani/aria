@@ -75,8 +75,10 @@ impl Daemon {
 
     /// Serves on its own thread. The returned handle stops and joins it;
     /// SIGINT and SIGTERM also stop it.
+    // Signals install before the build for the same reason as in `run`.
     pub fn spawn(self) -> Result<RunningDaemon, DaemonError> {
-        let inner = spawn_runtime(&self.paths, self.lifetime, self.wake_word)?;
+        let shutdown = ShutdownSignal::install().map_err(DaemonError::Shutdown)?;
+        let inner = spawn_runtime(&self.paths, self.lifetime, self.wake_word, shutdown)?;
         Ok(RunningDaemon {
             paths: self.paths,
             inner,
@@ -232,14 +234,12 @@ impl Drop for SpawnedRuntime {
 
 /// Binds in the calling thread, so a socket already owned by another
 /// daemon surfaces synchronously as a bind error.
-// Signals install before the build for the same reason as in `run`: a
-// persistent build blocks on model load, and a signal during it must queue.
 pub(super) fn spawn_runtime(
     paths: &PreparedRuntimePaths,
     lifetime: DaemonLifetime,
     wake_word: WakeWordOverride,
+    shutdown: ShutdownSignal,
 ) -> Result<SpawnedRuntime, DaemonError> {
-    let shutdown = ShutdownSignal::install().map_err(DaemonError::Shutdown)?;
     let server = assembly::build(paths, lifetime, wake_word)?;
     let stopper = DaemonStopper {
         writer: Arc::new(shutdown.stopper_writer().map_err(DaemonError::Shutdown)?),
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn a_stopper_byte_triggers_the_shutdown_signal() {
-        let mut shutdown = ShutdownSignal::install().expect("shutdown handling should install");
+        let mut shutdown = ShutdownSignal::new().expect("the shutdown pipe should open");
         let stopper = DaemonStopper {
             writer: Arc::new(shutdown.stopper_writer().expect("the writer should clone")),
         };

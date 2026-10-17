@@ -13,9 +13,9 @@ use crate::primitives::wakeup::{Wakeup, WakeupError};
 
 type Result<T> = std::result::Result<T, ShutdownError>;
 
-/// How many `ShutdownSignal`s are alive in this process. The lock also
-/// serializes every write to the disposition flag: a drop racing an install
-/// must not leave a serving daemon with termination-by-default enabled.
+/// How many installed `ShutdownSignal`s are alive in this process. The
+/// lock also serializes every write to the disposition flag: a drop racing an
+/// install must not leave a serving daemon with termination-by-default enabled.
 static ACTIVE_SIGNALS: Mutex<usize> = Mutex::new(0);
 
 /// When true, a termination signal runs its default action. signal-hook
@@ -24,7 +24,7 @@ static ACTIVE_SIGNALS: Mutex<usize> = Mutex::new(0);
 static TERMINATE_BY_DEFAULT: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 /// Registers the process-lifetime fallback actions once. They run before the
-/// pipe actions and do nothing while a daemon is serving.
+/// pipe actions and do nothing while an installed `ShutdownSignal` is alive.
 fn default_disposition_flag() -> Result<&'static Arc<AtomicBool>> {
     if let Some(flag) = TERMINATE_BY_DEFAULT.get() {
         return Ok(flag);
@@ -39,38 +39,31 @@ fn default_disposition_flag() -> Result<&'static Arc<AtomicBool>> {
     Ok(TERMINATE_BY_DEFAULT.get_or_init(|| flag))
 }
 
-/// Converts process termination signals into normal file-descriptor readiness.
+/// Converts a stopper byte, and process termination signals once installed,
+/// into normal file-descriptor readiness.
 pub(super) struct ShutdownSignal {
+    /// Declared first, so it drops before the pipe closes.
+    process: Option<ProcessSignals>,
     wakeup: Wakeup,
-    registrations: Vec<SigId>,
 }
 
 impl ShutdownSignal {
-    /// Registers SIGINT and SIGTERM for this process. Their default
-    /// disposition returns once every `ShutdownSignal` has dropped.
-    pub(super) fn install() -> Result<Self> {
-        let flag = default_disposition_flag()?;
+    /// Wakes only on a stopper byte, and registers nothing for process
+    /// signals.
+    pub(super) fn new() -> Result<Self> {
         let wakeup = Wakeup::new().map_err(ShutdownError::Wakeup)?;
-
-        let interrupt = register_signal(SIGINT, clone_writer(&wakeup)?)?;
-        let terminate = match register_signal(SIGTERM, clone_writer(&wakeup)?) {
-            Ok(registration) => registration,
-            Err(error) => {
-                signal_hook::low_level::unregister(interrupt);
-                return Err(error);
-            }
-        };
-
-        {
-            let mut active = lock_active_signals();
-            *active += 1;
-            flag.store(false, Ordering::SeqCst);
-        }
-
         Ok(Self {
+            process: None,
             wakeup,
-            registrations: vec![interrupt, terminate],
         })
+    }
+
+    /// Registers SIGINT and SIGTERM for this process. Their default
+    /// disposition returns once every installed `ShutdownSignal` drops.
+    pub(super) fn install() -> Result<Self> {
+        let mut signal = Self::new()?;
+        signal.process = Some(ProcessSignals::register(&signal.wakeup)?);
+        Ok(signal)
     }
 
     /// An owned writer whose bytes read as a shutdown request.
@@ -90,9 +83,39 @@ impl ShutdownSignal {
     }
 }
 
-impl Drop for ShutdownSignal {
+/// SIGINT and SIGTERM routed into a wakeup pipe.
+struct ProcessSignals {
+    registrations: [SigId; 2],
+}
+
+impl ProcessSignals {
+    fn register(wakeup: &Wakeup) -> Result<Self> {
+        let flag = default_disposition_flag()?;
+
+        let interrupt = register_signal(SIGINT, clone_writer(wakeup)?)?;
+        let terminate = match register_signal(SIGTERM, clone_writer(wakeup)?) {
+            Ok(registration) => registration,
+            Err(error) => {
+                signal_hook::low_level::unregister(interrupt);
+                return Err(error);
+            }
+        };
+
+        {
+            let mut active = lock_active_signals();
+            *active += 1;
+            flag.store(false, Ordering::SeqCst);
+        }
+
+        Ok(Self {
+            registrations: [interrupt, terminate],
+        })
+    }
+}
+
+impl Drop for ProcessSignals {
     fn drop(&mut self) {
-        for registration in self.registrations.drain(..) {
+        for registration in self.registrations {
             signal_hook::low_level::unregister(registration);
         }
         let mut active = lock_active_signals();
