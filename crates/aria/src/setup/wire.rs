@@ -141,10 +141,11 @@ impl From<&ModelState> for generated::Model {
         Self {
             name: model.name.to_owned(),
             title: model.title.to_owned(),
-            bytes: model.bytes,
-            present: model.present,
-            default: model.default,
             engine: model.engine.unwrap_or_default().to_owned(),
+            bytes: model.bytes,
+            default: model.default,
+            present: model.present,
+            external: model.external,
         }
     }
 }

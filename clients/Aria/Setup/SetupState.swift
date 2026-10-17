@@ -92,7 +92,7 @@ final class SetupState: ObservableObject {
         -> [Aria_Setup_V1_Model]
     {
         inspection.models.filter { model in
-            !model.present
+            !model.present && !model.external
                 && (model.engine.isEmpty || model.engine == selections.stt || model.engine == selections.tts)
         }
     }

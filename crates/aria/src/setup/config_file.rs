@@ -50,15 +50,14 @@ pub enum ConfigWrite {
 }
 
 impl Existing {
-    pub(super) fn read(path: &Path) -> Result<Self, SetupError> {
-        let file = read(path)?;
-        Ok(Self {
-            stt: file.transcription.backend,
-            tts: file.tts.backend,
-            chat: file.chat.agent,
+    pub(super) fn of(file: &FileConfig) -> Self {
+        Self {
+            stt: file.transcription.backend.clone(),
+            tts: file.tts.backend.clone(),
+            chat: file.chat.agent.clone(),
             wake: file.wake.enabled,
             hotkey: file.hotkey.enabled,
-        })
+        }
     }
 }
 
@@ -71,13 +70,27 @@ pub(super) struct PreparedConfig {
 
 impl Selections {
     pub(super) fn prepare(&self, path: &Path) -> Result<PreparedConfig, SetupError> {
-        prepare_rewrite(path, |file| {
-            file.transcription.backend = Some(self.stt.clone());
-            file.tts.backend = Some(self.tts.clone());
-            file.chat.agent = Some(self.chat.clone());
-            file.wake.enabled = Some(self.wake);
-            file.hotkey.enabled = Some(self.hotkey);
-        })
+        prepare_rewrite(path, |file| self.apply_to(file))
+    }
+
+    /// Writes the answers into `file`. Switching a section's engine clears its
+    /// engine-specific keys, so the new engine never gets the old model path.
+    pub(super) fn apply_to(&self, file: &mut FileConfig) {
+        if config::transcription_engine(file) != self.stt {
+            file.transcription.model = None;
+            file.transcription.device = None;
+            file.transcription.interpreter = None;
+        }
+        if config::tts_engine(file) != self.tts {
+            file.tts.model = None;
+            file.tts.voices = None;
+            file.tts.tokenizer = None;
+        }
+        file.transcription.backend = Some(self.stt.clone());
+        file.tts.backend = Some(self.tts.clone());
+        file.chat.agent = Some(self.chat.clone());
+        file.wake.enabled = Some(self.wake);
+        file.hotkey.enabled = Some(self.hotkey);
     }
 }
 
@@ -151,7 +164,7 @@ fn prepare_rewrite(
     })
 }
 
-fn read(path: &Path) -> Result<FileConfig, SetupError> {
+pub(super) fn read(path: &Path) -> Result<FileConfig, SetupError> {
     config::read_file(path).map_err(|source| SetupError::Config {
         path: path.to_path_buf(),
         source,
@@ -202,7 +215,7 @@ mod tests {
         let path = dir.path().join(".aria/config.yaml");
 
         let first = selections().prepare(&path).unwrap().commit().unwrap();
-        let read = Existing::read(&path).unwrap();
+        let read = Existing::of(&read(&path).unwrap());
 
         assert_eq!(first, ConfigWrite::Written { backup: None });
         assert_eq!(
@@ -214,6 +227,43 @@ mod tests {
                 wake: Some(true),
                 hotkey: Some(false),
             }
+        );
+    }
+
+    #[test]
+    fn a_new_engine_drops_the_old_engine_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            "transcription: {backend: whisper, model: ~/w.bin}\n\
+             tts: {backend: kokoro, model: ~/k.onnx}\n",
+        )
+        .unwrap();
+
+        selections().prepare(&path).unwrap().commit().unwrap();
+        let file = read(&path).unwrap();
+
+        assert_eq!(file.transcription.model, None, "parakeet replaced whisper");
+        assert_eq!(file.tts.model.as_deref(), Some("~/k.onnx"), "kokoro stayed");
+    }
+
+    /// No backend key means the default engine, so picking it is no switch.
+    #[test]
+    fn the_default_engine_keeps_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "transcription: {model: ~/w.bin}\n").unwrap();
+        let whisper = Selections {
+            stt: "whisper".to_owned(),
+            ..selections()
+        };
+
+        whisper.prepare(&path).unwrap().commit().unwrap();
+
+        assert_eq!(
+            read(&path).unwrap().transcription.model.as_deref(),
+            Some("~/w.bin")
         );
     }
 
@@ -387,7 +437,7 @@ mod tests {
         fs::write(&path, "transcription:\n  backend: futuristic\n").unwrap();
 
         assert_eq!(
-            Existing::read(&path).unwrap().stt,
+            Existing::of(&read(&path).unwrap()).stt,
             Some("futuristic".to_owned())
         );
     }

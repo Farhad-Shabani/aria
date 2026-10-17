@@ -436,16 +436,20 @@ public nonisolated struct Aria_Setup_V1_Model: Sendable {
 
   public var title: String = String()
 
+  /// The engine key that wants it; empty for one every install wants.
+  public var engine: String = String()
+
   /// What the transfer moves.
   public var bytes: UInt64 = 0
-
-  public var present: Bool = false
 
   /// Whether it is fetched when nobody answers.
   public var `default`: Bool = false
 
-  /// The engine key that wants it; empty for one every install wants.
-  public var engine: String = String()
+  public var present: Bool = false
+
+  /// Config points its engine at files elsewhere, so setup has nothing to
+  /// fetch.
+  public var external: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -949,7 +953,7 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Model"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}bytes\0\u{1}present\0\u{1}default\0\u{1}engine\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}engine\0\u{1}bytes\0\u{1}default\0\u{1}present\0\u{1}external\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -959,10 +963,11 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.title) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.bytes) }()
-      case 4: try { try decoder.decodeSingularBoolField(value: &self.present) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.engine) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.bytes) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.`default`) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.engine) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.present) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.external) }()
       default: break
       }
     }
@@ -975,17 +980,20 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.title.isEmpty {
       try visitor.visitSingularStringField(value: self.title, fieldNumber: 2)
     }
-    if self.bytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.bytes, fieldNumber: 3)
+    if !self.engine.isEmpty {
+      try visitor.visitSingularStringField(value: self.engine, fieldNumber: 3)
     }
-    if self.present != false {
-      try visitor.visitSingularBoolField(value: self.present, fieldNumber: 4)
+    if self.bytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.bytes, fieldNumber: 4)
     }
     if self.`default` != false {
       try visitor.visitSingularBoolField(value: self.`default`, fieldNumber: 5)
     }
-    if !self.engine.isEmpty {
-      try visitor.visitSingularStringField(value: self.engine, fieldNumber: 6)
+    if self.present != false {
+      try visitor.visitSingularBoolField(value: self.present, fieldNumber: 6)
+    }
+    if self.external != false {
+      try visitor.visitSingularBoolField(value: self.external, fieldNumber: 7)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -993,10 +1001,11 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
   public static func ==(lhs: Aria_Setup_V1_Model, rhs: Aria_Setup_V1_Model) -> Bool {
     if lhs.name != rhs.name {return false}
     if lhs.title != rhs.title {return false}
-    if lhs.bytes != rhs.bytes {return false}
-    if lhs.present != rhs.present {return false}
-    if lhs.`default` != rhs.`default` {return false}
     if lhs.engine != rhs.engine {return false}
+    if lhs.bytes != rhs.bytes {return false}
+    if lhs.`default` != rhs.`default` {return false}
+    if lhs.present != rhs.present {return false}
+    if lhs.external != rhs.external {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -21,15 +21,18 @@ use super::{
 use super::{ChatAgent, ChatConfig, chat_agent};
 
 pub(super) const DEFAULT_CONFIG_RELATIVE_PATH: &str = ".aria/config.yaml";
+/// Where setup downloads models, relative to home. The default model paths
+/// below sit inside it.
+const MODELS_DIR: &str = ".aria/models";
 
 const DEFAULT_BACKEND: &str = backend::WHISPER;
-const DEFAULT_WHISPER_MODEL: &str = "~/models/whisper/ggml-large-v3-turbo-q8_0.bin";
-const DEFAULT_WHISPER_CANDLE_MODEL: &str = "~/models/whisper-candle/tiny.en";
-const DEFAULT_PARAKEET_MODEL: &str = "~/models/parakeet/parakeet-tdt-0.6b-v3";
-const DEFAULT_MOONSHINE_MODEL: &str = "~/models/moonshine/base";
-const DEFAULT_NEMOTRON_MODEL: &str = "~/models/nemotron/nemotron-speech-streaming-en-0.6b";
+const DEFAULT_WHISPER_MODEL: &str = "whisper/ggml-large-v3-turbo-q8_0.bin";
+const DEFAULT_WHISPER_CANDLE_MODEL: &str = "whisper-candle/tiny.en";
+const DEFAULT_PARAKEET_MODEL: &str = "parakeet/parakeet-tdt-0.6b-v3";
+const DEFAULT_MOONSHINE_MODEL: &str = "moonshine/base";
+const DEFAULT_NEMOTRON_MODEL: &str = "nemotron/nemotron-speech-streaming-en-0.6b";
 const DEFAULT_WAKE_BACKEND: &str = wake_backend::OPEN_WAKE_WORD;
-const DEFAULT_WAKE_MODEL: &str = "~/models/wakeword/aria.onnx";
+const DEFAULT_WAKE_MODEL: &str = "wakeword/aria.onnx";
 const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
@@ -44,14 +47,14 @@ const DEFAULT_TTS_BACKEND: &str = tts_backend::SYSTEM;
 const DEFAULT_CHAT_AGENT: &str = chat_agent::CLAUDE_CODE;
 /// Long enough for an agent to read a repo and think.
 const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
-const DEFAULT_KOKORO_MODEL: &str = "~/models/kokoro/kokoro.onnx";
-const DEFAULT_KOKORO_VOICES: &str = "~/models/kokoro/voices.bin";
-const DEFAULT_QWEN_MODEL_DIR: &str = "~/models/qwen/qwen3-tts-0.6b-customvoice";
-const DEFAULT_QWEN_TOKENIZER_DIR: &str = "~/models/qwen/qwen3-tts-tokenizer";
+const DEFAULT_KOKORO_MODEL: &str = "kokoro/kokoro.onnx";
+const DEFAULT_KOKORO_VOICES: &str = "kokoro/voices.bin";
+const DEFAULT_QWEN_MODEL_DIR: &str = "qwen/qwen3-tts-0.6b-customvoice";
+const DEFAULT_QWEN_TOKENIZER_DIR: &str = "qwen/qwen3-tts-tokenizer";
 
 const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = "~/.aria/transcripts";
-const DEFAULT_SPEAKER_MODEL: &str = "~/.wespeaker/en/model.onnx";
-const DEFAULT_SEGMENTATION_MODEL: &str = "~/models/pyannote/segmentation-3.0.onnx";
+const DEFAULT_SPEAKER_MODEL: &str = "wespeaker/en/model.onnx";
+const DEFAULT_SEGMENTATION_MODEL: &str = "pyannote/segmentation-3.0.onnx";
 const DEFAULT_SPEAKERS_DIR: &str = "~/.aria/speakers";
 const DEFAULT_MEMORY_DIR: &str = "~/.aria/memory";
 const DEFAULT_MEMORY_EXTRACT_MODEL: &str = "sonnet";
@@ -186,8 +189,7 @@ impl Environment {
         })
     }
 
-    /// Nothing set but the home, for tests that resolve from a file alone.
-    #[cfg(test)]
+    /// No overrides: config comes from the file alone.
     pub(crate) fn in_home(home: PathBuf) -> Self {
         Self {
             home,
@@ -378,15 +380,13 @@ pub(super) fn speaker(
     file: &FileConfig,
     environment: &Environment,
 ) -> Result<SpeakerConfig, ConfigError> {
-    let model = string_value(
+    let model = optional_string_value(
         environment.speaker_model.as_deref(),
         file.speaker.model.as_deref(),
-        DEFAULT_SPEAKER_MODEL,
     );
-    let segmentation_model = string_value(
+    let segmentation_model = optional_string_value(
         environment.segmentation_model.as_deref(),
         file.speaker.segmentation_model.as_deref(),
-        DEFAULT_SEGMENTATION_MODEL,
     );
     let speakers_dir = string_value(
         environment.speakers_dir.as_deref(),
@@ -394,9 +394,16 @@ pub(super) fn speaker(
         DEFAULT_SPEAKERS_DIR,
     );
     Ok(SpeakerConfig {
-        model: expand_home(&non_empty(model, "speaker.model")?, &environment.home)?,
-        segmentation_model: expand_home(
-            &non_empty(segmentation_model, "speaker.segmentation_model")?,
+        model: model_location(
+            model,
+            DEFAULT_SPEAKER_MODEL,
+            "speaker.model",
+            &environment.home,
+        )?,
+        segmentation_model: model_location(
+            segmentation_model,
+            DEFAULT_SEGMENTATION_MODEL,
+            "speaker.segmentation_model",
             &environment.home,
         )?,
         speakers_dir: expand_home(
@@ -548,8 +555,8 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
         tts_backend::KOKORO => {
             reject_tts_setting(tokenizer.is_some(), "tts.tokenizer", tts_backend::KOKORO)?;
             TtsBackend::Kokoro {
-                model: tts_path(model, DEFAULT_KOKORO_MODEL, "tts.model", &environment.home)?,
-                voices: tts_path(
+                model: model_location(model, DEFAULT_KOKORO_MODEL, "tts.model", &environment.home)?,
+                voices: model_location(
                     voices,
                     DEFAULT_KOKORO_VOICES,
                     "tts.voices",
@@ -560,13 +567,13 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
         tts_backend::QWEN => {
             reject_tts_setting(voices.is_some(), "tts.voices", tts_backend::QWEN)?;
             TtsBackend::Qwen {
-                model_dir: tts_path(
+                model_dir: model_location(
                     model,
                     DEFAULT_QWEN_MODEL_DIR,
                     "tts.model",
                     &environment.home,
                 )?,
-                tokenizer_dir: tts_path(
+                tokenizer_dir: model_location(
                     tokenizer,
                     DEFAULT_QWEN_TOKENIZER_DIR,
                     "tts.tokenizer",
@@ -610,15 +617,117 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
     })
 }
 
-fn tts_path(
+/// The configured path, else `default` inside the models directory.
+fn model_location(
     value: Option<String>,
     default: &'static str,
     field: &'static str,
     home: &Path,
 ) -> Result<PathBuf, ConfigError> {
-    let value = value.unwrap_or_else(|| default.to_owned());
-    let value = non_empty(value, field)?;
-    expand_home(&value, home)
+    match value {
+        Some(value) => expand_home(&non_empty(value, field)?, home),
+        None => Ok(models_dir(home).join(default)),
+    }
+}
+
+/// The transcription engine `file` names, or the default.
+pub(crate) fn transcription_engine(file: &FileConfig) -> &str {
+    file.transcription
+        .backend
+        .as_deref()
+        .unwrap_or(DEFAULT_BACKEND)
+}
+
+/// The speech engine `file` names, or the default.
+pub(crate) fn tts_engine(file: &FileConfig) -> &str {
+    file.tts.backend.as_deref().unwrap_or(DEFAULT_TTS_BACKEND)
+}
+
+pub(crate) fn models_dir(home: &Path) -> PathBuf {
+    home.join(MODELS_DIR)
+}
+
+/// A model file or folder Aria loads. `section` is the config.yaml section
+/// that loads it. `engine` is `None` for the speaker models, which have no
+/// engine choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoadedModel {
+    pub(crate) section: &'static str,
+    pub(crate) engine: Option<&'static str>,
+    pub(crate) path: PathBuf,
+}
+
+/// The models `file` makes Aria load. Environment overrides are ignored,
+/// since the service runs without them.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct LoadedModels {
+    pub(crate) models: Vec<LoadedModel>,
+    /// Sections with an error, so their models are unknown. `aria doctor`
+    /// names the error.
+    pub(crate) unresolved: Vec<&'static str>,
+}
+
+pub(crate) fn loaded_models(file: &FileConfig, home: &Path) -> LoadedModels {
+    let environment = Environment::in_home(home.to_path_buf());
+    let mut loaded = LoadedModels::default();
+    match transcription(file, &environment) {
+        Ok(transcription) => {
+            let engine = transcription.backend_name();
+            if let Some(path) = transcription.model_path() {
+                loaded.add("transcription", Some(engine), path);
+            }
+        }
+        Err(_) => loaded.unresolved.push("transcription"),
+    }
+    match listen(file, &environment) {
+        Ok(listen) => {
+            let engine = listen.transcription.backend_name();
+            let path = listen.transcription.model_directory();
+            loaded.add("listen", Some(engine), path);
+        }
+        // Listen without a backend inherits transcription's. If that engine
+        // cannot stream, listen is simply off.
+        Err(_) if file.listen.backend.is_none() => {}
+        Err(_) => loaded.unresolved.push("listen"),
+    }
+    match tts(file, &environment) {
+        Ok(tts) => {
+            let engine = Some(tts.backend.name());
+            match tts.backend {
+                TtsBackend::Kokoro { model, voices } => {
+                    loaded.add("tts", engine, model);
+                    loaded.add("tts", engine, voices);
+                }
+                TtsBackend::Qwen {
+                    model_dir,
+                    tokenizer_dir,
+                } => {
+                    loaded.add("tts", engine, model_dir);
+                    loaded.add("tts", engine, tokenizer_dir);
+                }
+                TtsBackend::System => {}
+            }
+        }
+        Err(_) => loaded.unresolved.push("tts"),
+    }
+    match speaker(file, &environment) {
+        Ok(speaker) => {
+            loaded.add("speaker", None, speaker.model);
+            loaded.add("speaker", None, speaker.segmentation_model);
+        }
+        Err(_) => loaded.unresolved.push("speaker"),
+    }
+    loaded
+}
+
+impl LoadedModels {
+    fn add(&mut self, section: &'static str, engine: Option<&'static str>, path: PathBuf) {
+        self.models.push(LoadedModel {
+            section,
+            engine,
+            path,
+        });
+    }
 }
 
 fn reject_tts_setting(
@@ -729,22 +838,6 @@ pub(super) fn cleanup_llm(
     Ok(Some(config.clone()))
 }
 
-/// Where a backend's model lives unless configured otherwise; None for a
-/// backend that needs no file on disk.
-pub(crate) fn default_model_path(backend_name: &str, home: &Path) -> Option<PathBuf> {
-    let value = match backend_name {
-        backend::WHISPER => DEFAULT_WHISPER_MODEL,
-        backend::WHISPER_CANDLE => DEFAULT_WHISPER_CANDLE_MODEL,
-        backend::PARAKEET => DEFAULT_PARAKEET_MODEL,
-        backend::MOONSHINE => DEFAULT_MOONSHINE_MODEL,
-        backend::NEMOTRON => DEFAULT_NEMOTRON_MODEL,
-        tts_backend::KOKORO => DEFAULT_KOKORO_MODEL,
-        tts_backend::QWEN => DEFAULT_QWEN_MODEL_DIR,
-        _ => return None,
-    };
-    expand_home(value, home).ok()
-}
-
 /// The file `load` reads. It need not exist; a missing one leaves
 /// every setting at its default.
 pub(crate) fn default_path() -> Result<PathBuf, ConfigError> {
@@ -849,8 +942,8 @@ pub(super) fn wake(
     }
 
     let model = match (model, backend) {
-        (Some(model), _) => model,
-        (None, WakeBackend::OpenWakeWord) => DEFAULT_WAKE_MODEL.to_owned(),
+        (Some(model), _) => Some(model),
+        (None, WakeBackend::OpenWakeWord) => None,
         // No aria-trained livekit head ships with Aria, and the openWakeWord
         // default would load into the wrong backend.
         (None, WakeBackend::LiveKit) => {
@@ -860,8 +953,7 @@ pub(super) fn wake(
             });
         }
     };
-    let model = non_empty(model, "wake.model")?;
-    let classifier = expand_home(&model, &environment.home)?;
+    let classifier = model_location(model, DEFAULT_WAKE_MODEL, "wake.model", &environment.home)?;
     Ok(WakeConfig::Enabled {
         backend,
         classifier,
@@ -996,20 +1088,45 @@ impl TranscriptionSettings {
 
         match self.backend.as_str() {
             backend::WHISPER => Ok(TranscriptionConfig::Whisper {
-                model: model_path(self.model, DEFAULT_WHISPER_MODEL, home)?,
+                model: model_location(
+                    self.model,
+                    DEFAULT_WHISPER_MODEL,
+                    "transcription.model",
+                    home,
+                )?,
             }),
             backend::WHISPER_CANDLE => Ok(TranscriptionConfig::WhisperCandle {
-                model_directory: model_path(self.model, DEFAULT_WHISPER_CANDLE_MODEL, home)?,
+                model_directory: model_location(
+                    self.model,
+                    DEFAULT_WHISPER_CANDLE_MODEL,
+                    "transcription.model",
+                    home,
+                )?,
             }),
             backend::PARAKEET => Ok(TranscriptionConfig::Parakeet {
-                model_directory: model_path(self.model, DEFAULT_PARAKEET_MODEL, home)?,
+                model_directory: model_location(
+                    self.model,
+                    DEFAULT_PARAKEET_MODEL,
+                    "transcription.model",
+                    home,
+                )?,
                 device: transcription_device(self.device)?,
             }),
             backend::MOONSHINE => Ok(TranscriptionConfig::Moonshine {
-                model_directory: model_path(self.model, DEFAULT_MOONSHINE_MODEL, home)?,
+                model_directory: model_location(
+                    self.model,
+                    DEFAULT_MOONSHINE_MODEL,
+                    "transcription.model",
+                    home,
+                )?,
             }),
             backend::NEMOTRON => Ok(TranscriptionConfig::Nemotron {
-                model_directory: model_path(self.model, DEFAULT_NEMOTRON_MODEL, home)?,
+                model_directory: model_location(
+                    self.model,
+                    DEFAULT_NEMOTRON_MODEL,
+                    "transcription.model",
+                    home,
+                )?,
             }),
             backend::PARAKEET_MLX => {
                 let interpreter = self.interpreter.ok_or(ConfigError::MissingValue {
@@ -1060,16 +1177,6 @@ fn transcription_device(device: Option<String>) -> Result<TranscriptionDevice, C
             supported: "cpu and gpu",
         }),
     }
-}
-
-fn model_path(
-    model: Option<String>,
-    default: &'static str,
-    home: &Path,
-) -> Result<PathBuf, ConfigError> {
-    let model = model.unwrap_or_else(|| default.to_owned());
-    let model = non_empty(model, "transcription.model")?;
-    expand_home(&model, home)
 }
 
 pub(super) fn timeouts(
@@ -1478,7 +1585,7 @@ mod tests {
             wake,
             WakeConfig::Enabled {
                 backend: WakeBackend::OpenWakeWord,
-                classifier: PathBuf::from("/home/user/models/wakeword/aria.onnx"),
+                classifier: PathBuf::from("/home/user/.aria/models/wakeword/aria.onnx"),
                 threshold: DEFAULT_WAKE_THRESHOLD,
             }
         );
@@ -1586,14 +1693,16 @@ mod tests {
             (
                 "whisper",
                 TranscriptionConfig::Whisper {
-                    model: PathBuf::from("/home/user/models/whisper/ggml-large-v3-turbo-q8_0.bin"),
+                    model: PathBuf::from(
+                        "/home/user/.aria/models/whisper/ggml-large-v3-turbo-q8_0.bin",
+                    ),
                 },
             ),
             (
                 "parakeet",
                 TranscriptionConfig::Parakeet {
                     model_directory: PathBuf::from(
-                        "/home/user/models/parakeet/parakeet-tdt-0.6b-v3",
+                        "/home/user/.aria/models/parakeet/parakeet-tdt-0.6b-v3",
                     ),
                     device: TranscriptionDevice::Cpu,
                 },
@@ -1601,14 +1710,14 @@ mod tests {
             (
                 "moonshine",
                 TranscriptionConfig::Moonshine {
-                    model_directory: PathBuf::from("/home/user/models/moonshine/base"),
+                    model_directory: PathBuf::from("/home/user/.aria/models/moonshine/base"),
                 },
             ),
             (
                 "nemotron",
                 TranscriptionConfig::Nemotron {
                     model_directory: PathBuf::from(
-                        "/home/user/models/nemotron/nemotron-speech-streaming-en-0.6b",
+                        "/home/user/.aria/models/nemotron/nemotron-speech-streaming-en-0.6b",
                     ),
                 },
             ),
@@ -1821,8 +1930,8 @@ mod tests {
         assert_eq!(
             tts.backend,
             TtsBackend::Kokoro {
-                model: PathBuf::from("/home/user/models/kokoro/kokoro.onnx"),
-                voices: PathBuf::from("/home/user/models/kokoro/voices.bin"),
+                model: PathBuf::from("/home/user/.aria/models/kokoro/kokoro.onnx"),
+                voices: PathBuf::from("/home/user/.aria/models/kokoro/voices.bin"),
             }
         );
         assert_eq!(tts.fallback, TtsFallback::System);
@@ -1864,8 +1973,8 @@ mod tests {
         assert_eq!(
             tts.backend,
             TtsBackend::Qwen {
-                model_dir: PathBuf::from("/home/user/models/qwen/qwen3-tts-0.6b-customvoice"),
-                tokenizer_dir: PathBuf::from("/home/user/models/qwen/qwen3-tts-tokenizer"),
+                model_dir: PathBuf::from("/home/user/.aria/models/qwen/qwen3-tts-0.6b-customvoice"),
+                tokenizer_dir: PathBuf::from("/home/user/.aria/models/qwen/qwen3-tts-tokenizer"),
             }
         );
     }
@@ -1940,6 +2049,52 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_config_loads_the_default_models() {
+        let home = Path::new("/home/user");
+        let loaded = loaded_models(&FileConfig::default(), home);
+        let models = home.join(".aria/models");
+
+        assert!(loaded.unresolved.is_empty(), "{:?}", loaded.unresolved);
+        assert_eq!(
+            loaded.models,
+            [
+                LoadedModel {
+                    section: "transcription",
+                    engine: Some(backend::WHISPER),
+                    path: models.join("whisper/ggml-large-v3-turbo-q8_0.bin"),
+                },
+                LoadedModel {
+                    section: "speaker",
+                    engine: None,
+                    path: models.join("wespeaker/en/model.onnx"),
+                },
+                LoadedModel {
+                    section: "speaker",
+                    engine: None,
+                    path: models.join("pyannote/segmentation-3.0.onnx"),
+                },
+            ],
+            "whisper cannot stream, so listen loads nothing"
+        );
+    }
+
+    #[test]
+    fn a_configured_model_path_is_the_one_loaded() {
+        let mut file = FileConfig::default();
+        file.transcription.backend = Some(backend::PARAKEET.to_owned());
+        file.transcription.model = Some("~/tdt".to_owned());
+
+        let loaded = loaded_models(&file, Path::new("/home/user")).models;
+
+        assert!(
+            loaded.iter().any(|model| model.section == "transcription"
+                && model.path == Path::new("/home/user/tdt"))
+        );
+        assert!(loaded.iter().any(|model| model.section == "listen"
+            && model.path == Path::new("/home/user/tdt")));
+    }
+
+    #[test]
     fn listen_inherits_a_streaming_transcription_backend() {
         let mut file = FileConfig::default();
         file.transcription.backend = Some("moonshine".to_owned());
@@ -1950,7 +2105,7 @@ mod tests {
             listen,
             ListenConfig {
                 transcription: ListenTranscription::Moonshine {
-                    model_directory: PathBuf::from("/home/user/models/moonshine/base"),
+                    model_directory: PathBuf::from("/home/user/.aria/models/moonshine/base"),
                 },
                 transcripts_dir: PathBuf::from("/home/user/.aria/transcripts"),
             }

@@ -78,7 +78,7 @@ fn read_text(path: &Path) -> Result<Option<String>, ConfigError> {
         .map_err(ConfigError::InvalidUtf8)
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileConfig {
     #[serde(skip_serializing_if = "is_default")]
@@ -118,7 +118,7 @@ pub(crate) struct LlmCleanupConfig {
     pub(crate) model: String,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileMemory {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,7 +131,7 @@ pub(crate) struct FileMemory {
     pub(crate) dir: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileChat {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,7 +144,7 @@ pub(crate) struct FileChat {
     pub(crate) timeout: Option<f64>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileSpeaker {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -155,7 +155,7 @@ pub(crate) struct FileSpeaker {
     pub(crate) speakers_dir: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileCapture {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,7 +166,7 @@ pub(crate) struct FileCapture {
     pub(crate) pace: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileTranscription {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,7 +179,7 @@ pub(crate) struct FileTranscription {
     pub(crate) interpreter: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileListen {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,14 +192,14 @@ pub(crate) struct FileListen {
     pub(crate) transcripts_dir: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileHotkey {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) enabled: Option<bool>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FilePhone {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,7 +208,7 @@ pub(crate) struct FilePhone {
     pub(crate) port: Option<u16>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileWake {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -221,7 +221,7 @@ pub(crate) struct FileWake {
     pub(crate) threshold: Option<f32>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileTts {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -240,7 +240,7 @@ pub(crate) struct FileTts {
     pub(crate) fallback: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileTimeouts {
     #[serde(skip_serializing_if = "Option::is_none")]

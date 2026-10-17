@@ -300,13 +300,15 @@ bench-latency-compare baseline current margin="0":
         ARIA_BENCH_COMPARE="{{ absolute_path(current) }}" \
         ARIA_BENCH_MAX_REGRESSION_MS="{{ margin }}" cargo bench --locked --bench dictation_latency
 
+models_dir := home_directory() + "/.aria/models"
+
 # Six existing speech cases; pass --baseline for a required quality comparison
 bench-smoke corpus=(justfile_directory() + "/build/corpus/smoke/manifest.tsv") *flags:
     cargo run --locked --release -p aria-bench -- stt \
         --corpus "{{ absolute_path(corpus) }}" --mode streaming \
-        --model whisper={{ home_directory() }}/models/whisper/ggml-large-v3-turbo-q8_0.bin \
-        --model parakeet={{ home_directory() }}/models/parakeet/parakeet-tdt-0.6b-v3 \
-        --model nemotron={{ home_directory() }}/models/nemotron/nemotron-speech-streaming-en-0.6b \
+        --model whisper={{ models_dir }}/whisper/ggml-large-v3-turbo-q8_0.bin \
+        --model parakeet={{ models_dir }}/parakeet/parakeet-tdt-0.6b-v3 \
+        --model nemotron={{ models_dir }}/nemotron/nemotron-speech-streaming-en-0.6b \
         {{ flags }}
 
 # Documentation

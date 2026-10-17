@@ -85,6 +85,11 @@ enum Command {
         #[arg(long)]
         skip_models: bool,
     },
+    /// See and remove the models setup downloaded
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommand,
+    },
     /// Let paired phones and watches send recordings to this Mac
     Phone {
         #[command(subcommand)]
@@ -193,6 +198,15 @@ enum SpeakerCommand {
     /// Show who is enrolled
     List,
     /// Forget one voice
+    Remove { name: String },
+}
+
+#[derive(Subcommand)]
+enum ModelsCommand {
+    /// Show each model, its size, and what uses it
+    List,
+    /// Delete a downloaded model that is not in use
+    #[command(visible_alias = "rm")]
     Remove { name: String },
 }
 
@@ -428,6 +442,7 @@ fn main() -> anyhow::Result<()> {
             command: Some(command),
             ..
         } => run_setup_for_app(command),
+        Command::Models { command } => run_models(command),
         Command::Dictate {
             mode,
             toggle,
@@ -798,6 +813,31 @@ fn try_out_message(tried: &TryOut) -> Option<String> {
 
 fn pid_suffix(pid: Option<u32>) -> String {
     pid.map(|pid| format!(", pid {pid}")).unwrap_or_default()
+}
+
+fn run_models(command: ModelsCommand) -> anyhow::Result<()> {
+    match command {
+        ModelsCommand::List => {
+            for model in aria::setup::models::list()? {
+                let used_by = model
+                    .used_by
+                    .map(|section| format!("in use: {section}"))
+                    .unwrap_or_default();
+                let row = format!(
+                    "{:<16}{:>8}   {:<11} {used_by}",
+                    model.name,
+                    aria::setup::size(model.bytes),
+                    model.on_disk.as_str()
+                );
+                println!("{}", row.trim_end());
+            }
+        }
+        ModelsCommand::Remove { name } => {
+            let freed = aria::setup::models::remove(&name)?;
+            println!("removed {name}, freed {}", aria::setup::size(freed));
+        }
+    }
+    Ok(())
 }
 
 fn run_doctor() -> anyhow::Result<()> {
@@ -1815,6 +1855,18 @@ mod tests {
             assert!(output.contains("application-marker"));
             assert!(!output.contains("private-response-marker"));
             assert!(!output.contains("private-header-marker"));
+        }
+    }
+
+    #[test]
+    fn models_remove_parses_a_name() {
+        for verb in ["remove", "rm"] {
+            assert!(matches!(
+                Cli::try_parse_from(["aria", "models", verb, "parakeet"])
+                    .unwrap()
+                    .command,
+                Command::Models { command: ModelsCommand::Remove { name } } if name == "parakeet"
+            ));
         }
     }
 

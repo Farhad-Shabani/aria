@@ -16,8 +16,8 @@ below for English audio. Setup does not download this model for you.
 1. Download the model's three files:
 
    ```sh
-   mkdir -p ~/models/moonshine/base
-   cd ~/models/moonshine/base
+   mkdir -p ~/.aria/models/moonshine/base
+   cd ~/.aria/models/moonshine/base
    base=https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad
    curl -fLO "$base/onnx/encoder_model.onnx"
    curl -fLO "$base/onnx/decoder_model_merged.onnx"
@@ -29,7 +29,7 @@ below for English audio. Setup does not download this model for you.
 ```yaml
 listen:
   backend: moonshine
-  model: ~/models/moonshine/base
+  model: ~/.aria/models/moonshine/base
   transcripts_dir: ~/.aria/transcripts
 ```
 

@@ -3,7 +3,7 @@
 //! ```text
 //! just corpus 100
 //! aria-bench stt --corpus build/corpus/manifest.tsv \
-//!     --model parakeet=~/models/parakeet/parakeet-tdt-0.6b-v3
+//!     --model parakeet=~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -21,12 +21,12 @@ const EXAMPLES: &str = "\
 Examples:
   # One engine, named explicitly
   aria-bench stt --corpus build/corpus/manifest.tsv \\
-      --model parakeet=~/models/parakeet/parakeet-tdt-0.6b-v3
+      --model parakeet=~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 
   # Several engines; each --model adds one
   aria-bench stt --corpus build/corpus/manifest.tsv \\
-      --model whisper=~/models/whisper/ggml-large-v3-turbo-q8_0.bin \\
-      --model moonshine=~/models/moonshine/base
+      --model whisper=~/.aria/models/whisper/ggml-large-v3-turbo-q8_0.bin \\
+      --model moonshine=~/.aria/models/moonshine/base
 
   # No --model: the ARIA_TEST_*_MODEL variables name the engines
   aria-bench stt --corpus build/corpus/manifest.tsv";
