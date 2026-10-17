@@ -9,9 +9,10 @@ final class SetupState: ObservableObject {
         var apply:
             (Aria_Setup_V1_ApplyRequest, @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void) async throws
                 -> Aria_Setup_V1_Summary
-        /// Stops a daemon nobody supervises and waits for it to let go of
-        /// the socket, so the service can take it.
+        /// Stops a daemon nobody supervises, so the service can take its
+        /// socket. Gives up after a bounded wait.
         var stopDaemon: () async -> Void
+        var startDaemon: () async -> Void
         var hotkeyArmed: () async -> Bool
         var openAccessibility: () -> Void
         var speakers: () async throws -> [Aria_Daemon_V1_EnrolledSpeaker]
@@ -308,15 +309,18 @@ final class SetupState: ObservableObject {
         applyTask = Task {
             // The service refuses a socket some other daemon owns, and the
             // app spawns one itself while no service exists.
-            if inspection.service.job == .absent { await effects.stopDaemon() }
+            let stopped = inspection.service.job == .absent
+            if stopped { await effects.stopDaemon() }
             do {
                 let summary = try await effects.apply(request) { event in
                     Task { @MainActor [weak self] in self?.absorb(event) }
                 }
                 await finishApply(summary)
             } catch SetupClientError.cancelled {
+                if stopped { await effects.startDaemon() }
                 step = origin
             } catch {
+                if stopped { await effects.startDaemon() }
                 step = .failed(error.localizedDescription)
             }
         }

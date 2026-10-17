@@ -1,10 +1,10 @@
 //! `aria setup`: the guided first run. `inspect` looks at what this
-//! machine has. `apply` writes the engines to config.yaml, fetches the
-//! models they need plus the ones `aria listen` uses, and installs the
-//! daemon as a service. Neither asks anything. `run` is the terminal front
+//! machine has. `apply` fetches the models the chosen engines need plus the
+//! ones `aria listen` uses, writes the engines to config.yaml, and installs
+//! the daemon as a service. Neither asks anything. `run` is the terminal front
 //! over them; Aria.app drives the same two through `aria setup inspect` and
 //! `aria setup apply`. Every answer defaults to what is configured, and
-//! `--yes` keeps a configured answer exactly, so the unattended rerun the
+//! `--yes` keeps every configured engine, so the unattended rerun the
 //! installer makes never rewrites a working choice.
 //!
 //! The terminal run then ends on something that works rather than on a
@@ -367,8 +367,8 @@ fn default_choice(choices: &[Choice]) -> &Choice {
         .unwrap_or(&choices[0])
 }
 
-/// Writes the config, installs the wake-word models, fetches the accepted
-/// downloads, registers the service, and waits for the hotkey to arm.
+/// Installs the wake-word models, fetches the accepted downloads, writes the
+/// config, registers the service, and waits for the hotkey to arm.
 /// `observe` gets each step and download as it happens; an error from it
 /// ends the run at that point, a download included. The voice and the
 /// test press are left for the caller: each needs a person.
@@ -389,7 +389,10 @@ pub fn apply(
     }
 
     observe(SetupEvent::Started(Step::Config))?;
-    let config = selections.write(&inspection.config_path)?;
+    // Staged here so a bad config fails before any download. Staged again
+    // after the models, from a fresh read, so a failed download leaves the
+    // config untouched and the write keeps edits made meanwhile.
+    selections.prepare(&inspection.config_path)?;
 
     observe(SetupEvent::Started(Step::Wakeword))?;
     let wakeword = install_wakeword(&inspection.exe, &inspection.home.join("models/wakeword"))?;
@@ -418,6 +421,7 @@ pub fn apply(
         };
         models.push((model.name, outcome));
     }
+    let config = selections.prepare(&inspection.config_path)?.commit()?;
 
     observe(SetupEvent::Started(Step::Service))?;
     let legacy_agent =
@@ -910,6 +914,19 @@ mod tests {
         }
     }
 
+    fn writable_inspection(home: &Path) -> Inspection {
+        let mut inspection = inspection(configured());
+        inspection.config_path = home.join(".aria/config.yaml");
+        inspection
+    }
+
+    fn no_downloads() -> ApplyOptions {
+        ApplyOptions {
+            downloads: Vec::new(),
+            transfer_meter: false,
+        }
+    }
+
     fn configured() -> Existing {
         Existing {
             stt: Some("whisper".to_owned()),
@@ -1088,16 +1105,13 @@ mod tests {
     /// where it is instead of finishing unwatched.
     #[test]
     fn apply_stops_when_the_observer_fails() {
-        let inspection = inspection(configured());
-        let options = ApplyOptions {
-            downloads: Vec::new(),
-            transfer_meter: false,
-        };
+        let home = tempfile::tempdir().unwrap();
+        let inspection = writable_inspection(home.path());
         let mut seen = Vec::new();
 
         let result = apply(
             &Selections::defaults(&inspection),
-            &options,
+            &no_downloads(),
             &inspection,
             &mut |event| {
                 seen.push(event);
@@ -1110,6 +1124,56 @@ mod tests {
         assert!(matches!(result, Err(SetupError::Respond(_))));
         assert_eq!(seen, [SetupEvent::Started(Step::Config)]);
         assert!(!inspection.config_path.exists(), "nothing was written");
+    }
+
+    #[test]
+    fn a_run_stopped_at_the_models_leaves_the_config_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let inspection = writable_inspection(home.path());
+
+        let result = apply(
+            &Selections::defaults(&inspection),
+            &no_downloads(),
+            &inspection,
+            &mut |event| match event {
+                SetupEvent::Started(Step::Models) => Err(SetupError::Respond(io::Error::from(
+                    io::ErrorKind::BrokenPipe,
+                ))),
+                _ => Ok(()),
+            },
+        );
+
+        assert!(matches!(result, Err(SetupError::Respond(_))));
+        assert!(
+            !inspection.config_path.exists(),
+            "the config waits for the models"
+        );
+    }
+
+    #[test]
+    fn an_edit_during_the_downloads_survives_the_config_write() {
+        let home = tempfile::tempdir().unwrap();
+        let inspection = writable_inspection(home.path());
+
+        let result = apply(
+            &Selections::defaults(&inspection),
+            &no_downloads(),
+            &inspection,
+            &mut |event| match event {
+                SetupEvent::Started(Step::Models) => {
+                    fs::write(&inspection.config_path, "tts:\n  rate: 1.5\n").unwrap();
+                    Ok(())
+                }
+                SetupEvent::Started(Step::Service) => Err(SetupError::Respond(io::Error::from(
+                    io::ErrorKind::BrokenPipe,
+                ))),
+                _ => Ok(()),
+            },
+        );
+
+        assert!(matches!(result, Err(SetupError::Respond(_))));
+        let text = fs::read_to_string(&inspection.config_path).unwrap();
+        assert!(text.contains("rate: 1.5"), "{text}");
     }
 
     #[test]

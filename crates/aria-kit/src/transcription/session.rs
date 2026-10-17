@@ -75,6 +75,8 @@ impl<'a, T: Transcriber, M: Mode, L: Layer> Session<'a, T, M, L> {
         transcription: &'a Transcription<T, M, L>,
         language: &'a Language,
     ) -> Result<Self, TranscriptionError> {
+        // Recording starts first: `start` can block, and speech during it
+        // must not be lost.
         let mut microphone = Microphone::open().map_err(TranscriptionError::Capture)?;
         let (recording, stopper) = microphone
             .record(RecordingMode::UntilStopped)

@@ -7,6 +7,8 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use tempfile::NamedTempFile;
+
 use crate::config::{self, FileConfig};
 
 use super::SetupError;
@@ -60,9 +62,16 @@ impl Existing {
     }
 }
 
+pub(super) struct PreparedConfig {
+    path: PathBuf,
+    previous: Option<String>,
+    /// `None` when the rewrite matches the file.
+    staged: Option<NamedTempFile>,
+}
+
 impl Selections {
-    pub(super) fn write(&self, path: &Path) -> Result<ConfigWrite, SetupError> {
-        rewrite(path, |file| {
+    pub(super) fn prepare(&self, path: &Path) -> Result<PreparedConfig, SetupError> {
+        prepare_rewrite(path, |file| {
             file.transcription.backend = Some(self.stt.clone());
             file.tts.backend = Some(self.tts.clone());
             file.chat.agent = Some(self.chat.clone());
@@ -72,45 +81,74 @@ impl Selections {
     }
 }
 
+impl PreparedConfig {
+    pub(super) fn commit(self) -> Result<ConfigWrite, SetupError> {
+        let Self {
+            path,
+            previous,
+            staged,
+        } = self;
+        let Some(staged) = staged else {
+            return Ok(ConfigWrite::Unchanged);
+        };
+        // Only a file Aria did not write is worth keeping: a second backup of
+        // Aria's own output would bury the user's original.
+        let backup = previous
+            .filter(|previous| !previous.starts_with(WRITTEN_BY_ARIA))
+            .map(|_| path.with_extension("yaml.bak"));
+        if let Some(backup) = &backup {
+            fs::copy(&path, backup).map_err(|source| io_error("back up", backup, source))?;
+        }
+        staged
+            .persist(&path)
+            .map_err(|error| io_error("replace", &path, error.error))?;
+        // The rename is durable only once the directory itself is synced.
+        let directory = path.parent().unwrap_or(Path::new("."));
+        fs::File::open(directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|source| io_error("flush", directory, source))?;
+        Ok(ConfigWrite::Written { backup })
+    }
+}
+
 pub(super) fn set_phone_pairing(path: &Path, enabled: bool) -> Result<ConfigWrite, SetupError> {
     // Off is the default, so a hand-written file that never mentions phone
     // pairing is left alone, comments and all.
     if read(path)?.phone.enabled.unwrap_or(false) == enabled {
         return Ok(ConfigWrite::Unchanged);
     }
-    rewrite(path, |file| file.phone.enabled = Some(enabled))
+    prepare_rewrite(path, |file| file.phone.enabled = Some(enabled))?.commit()
 }
 
-/// Comments don't survive a rewrite. So an unchanged result isn't written,
+/// Comments don't survive a rewrite. So an unchanged result isn't staged,
 /// and a hand-written file is first copied to config.yaml.bak.
-fn rewrite(path: &Path, edit: impl FnOnce(&mut FileConfig)) -> Result<ConfigWrite, SetupError> {
+fn prepare_rewrite(
+    path: &Path,
+    edit: impl FnOnce(&mut FileConfig),
+) -> Result<PreparedConfig, SetupError> {
     // A symlinked config belongs to whatever it points at; renaming onto
     // the link would leave that file stale and untouched.
-    let path = &fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut file = read(path)?;
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut file = read(&path)?;
     edit(&mut file);
     let text = format!(
         "{HEADER}{}",
         serde_saphyr::to_string(&file).map_err(|source| SetupError::ConfigWrite {
-            path: path.to_path_buf(),
+            path: path.clone(),
             source,
         })?
     );
-
-    let previous = fs::read_to_string(path).ok();
-    if previous.as_deref() == Some(text.as_str()) {
-        return Ok(ConfigWrite::Unchanged);
-    }
-    // Only a file Aria did not write is worth keeping: a second backup of
-    // Aria's own output would bury the user's original.
-    let backup = previous
-        .filter(|previous| !previous.starts_with(WRITTEN_BY_ARIA))
-        .map(|_| path.with_extension("yaml.bak"));
-    if let Some(backup) = &backup {
-        fs::copy(path, backup).map_err(|source| io_error("back up", backup, source))?;
-    }
-    replace(path, &text)?;
-    Ok(ConfigWrite::Written { backup })
+    let previous = fs::read_to_string(&path).ok();
+    let staged = if previous.as_deref() == Some(text.as_str()) {
+        None
+    } else {
+        Some(stage(&path, &text)?)
+    };
+    Ok(PreparedConfig {
+        path,
+        previous,
+        staged,
+    })
 }
 
 fn read(path: &Path) -> Result<FileConfig, SetupError> {
@@ -120,13 +158,12 @@ fn read(path: &Path) -> Result<FileConfig, SetupError> {
     })
 }
 
-/// Writes through a sibling temporary file, so a crash leaves the old
-/// config or the new one, never half of either. The rename is durable only
-/// once the directory itself is synced.
-fn replace(path: &Path, text: &str) -> Result<(), SetupError> {
+/// Writes to a sibling temporary file, so a crash leaves the old config or
+/// the new one, never half of either.
+fn stage(path: &Path, text: &str) -> Result<NamedTempFile, SetupError> {
     let directory = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(directory).map_err(|source| io_error("create", directory, source))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)
+    let mut temporary = NamedTempFile::new_in(directory)
         .map_err(|source| io_error("create a temporary for", path, source))?;
     temporary
         .as_file()
@@ -134,12 +171,7 @@ fn replace(path: &Path, text: &str) -> Result<(), SetupError> {
         .and_then(|()| temporary.write_all(text.as_bytes()))
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|source| io_error("write", path, source))?;
-    temporary
-        .persist(path)
-        .map_err(|error| io_error("replace", path, error.error))?;
-    fs::File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|source| io_error("flush", directory, source))
+    Ok(temporary)
 }
 
 fn io_error(action: &'static str, path: &Path, source: std::io::Error) -> SetupError {
@@ -169,7 +201,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".aria/config.yaml");
 
-        let first = selections().write(&path).unwrap();
+        let first = selections().prepare(&path).unwrap().commit().unwrap();
         let read = Existing::read(&path).unwrap();
 
         assert_eq!(first, ConfigWrite::Written { backup: None });
@@ -189,10 +221,10 @@ mod tests {
     fn an_unchanged_rerun_touches_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        selections().write(&path).unwrap();
+        selections().prepare(&path).unwrap().commit().unwrap();
         let written = fs::metadata(&path).unwrap().modified().unwrap();
 
-        let again = selections().write(&path).unwrap();
+        let again = selections().prepare(&path).unwrap().commit().unwrap();
 
         assert_eq!(again, ConfigWrite::Unchanged);
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), written);
@@ -206,7 +238,7 @@ mod tests {
         let hand_written = "tts:\n  backend: system\n  rate: 1.5\n";
         fs::write(&path, hand_written).unwrap();
 
-        let write = selections().write(&path).unwrap();
+        let write = selections().prepare(&path).unwrap().commit().unwrap();
 
         // The reported path is the resolved one, which on macOS means
         // /private/var rather than the /var symlink a tempdir hands out.
@@ -230,11 +262,11 @@ mod tests {
         let path = dir.path().join("config.yaml");
         let hand_written = "# mine\ntts:\n  backend: system\n";
         fs::write(&path, hand_written).unwrap();
-        selections().write(&path).unwrap();
+        selections().prepare(&path).unwrap().commit().unwrap();
 
         let mut second = selections();
         second.wake = false;
-        second.write(&path).unwrap();
+        second.prepare(&path).unwrap().commit().unwrap();
 
         assert_eq!(
             fs::read_to_string(path.with_extension("yaml.bak")).unwrap(),
@@ -270,7 +302,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
 
-        selections().write(&path).unwrap();
+        selections().prepare(&path).unwrap().commit().unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, CONFIG_FILE_MODE, "{mode:o}");
@@ -285,7 +317,7 @@ mod tests {
         let link = dir.path().join("config.yaml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        selections().write(&link).unwrap();
+        selections().prepare(&link).unwrap().commit().unwrap();
 
         assert!(link.symlink_metadata().unwrap().is_symlink(), "link stands");
         assert!(
