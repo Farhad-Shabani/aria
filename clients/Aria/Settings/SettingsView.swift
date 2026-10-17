@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var preferences: DaemonPreferences
     @ObservedObject var poller: StatusPoller
+    let updates: UpdateController
 
     var body: some View {
         TabView {
@@ -15,7 +16,7 @@ struct SettingsView: View {
                 .tabItem { Label("Dictation", systemImage: "mic") }
             PhoneSettings(poller: poller)
                 .tabItem { Label("Phone", systemImage: "iphone") }
-            AboutSettings()
+            AboutSettings(updates: updates)
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 520)
@@ -105,22 +106,58 @@ struct ShortcutsSettings: View {
 }
 
 struct AboutSettings: View {
+    @ObservedObject var updates: UpdateController
     private let info = Bundle.main.infoDictionary ?? [:]
+    private static let legal = "https://github.com/Farhad-Shabani/aria/blob/main/legal/"
+    private let licenses = Bundle.main.resourceURL?.appending(path: "Licenses")
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .frame(width: 64, height: 64)
-            Text(info["CFBundleDisplayName"] as? String ?? "Aria")
-                .font(.title2)
-            Text(
-                "Version \(info["CFBundleShortVersionString"] as? String ?? "?") "
-                    + "(\(info["CFBundleVersion"] as? String ?? "?"))"
-            )
-            .foregroundStyle(.secondary)
+        VStack(spacing: 16) {
+            HStack(spacing: 16) {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .frame(width: 64, height: 64)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(info["CFBundleDisplayName"] as? String ?? "Aria")
+                        .font(.title2)
+                    Text("Version \(info["CFBundleShortVersionString"] as? String ?? "?")")
+                        .foregroundStyle(.secondary)
+                    if let copyright = info["NSHumanReadableCopyright"] as? String {
+                        Text(copyright)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(
+                    "Automatically check for updates",
+                    isOn: Binding(get: { updates.checksAutomatically }, set: updates.setChecksAutomatically)
+                )
+                Toggle(
+                    "Automatically download and install",
+                    isOn: Binding(get: { updates.installsAutomatically }, set: updates.setInstallsAutomatically)
+                )
+                .disabled(!updates.checksAutomatically)
+            }
+            Button("Check for Updates…") { updates.checkForUpdates() }
+                .disabled(!updates.canCheck)
+            Divider()
+            HStack(spacing: 16) {
+                Button("Privacy Policy") { open(Self.legal + "privacy-policy.md") }
+                Button("Terms of Service") { open(Self.legal + "terms.md") }
+                if let licenses, FileManager.default.fileExists(atPath: licenses.path) {
+                    Button("Licenses") { NSWorkspace.shared.open(licenses) }
+                }
+            }
+            .buttonStyle(.link)
         }
         .padding(24)
+    }
+
+    private func open(_ link: String) {
+        if let url = URL(string: link) { NSWorkspace.shared.open(url) }
     }
 }
 

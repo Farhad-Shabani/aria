@@ -52,6 +52,8 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     environment: release
+    outputs:
+      dmg-artifact-id: ${{ steps.dmg.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,10 +88,46 @@ jobs:
           APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
           APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
         run: scripts/macos/notarize.sh "dist/aria-${GITHUB_REF_NAME#v}-macos-arm64.dmg"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - id: dmg
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
           path: dist/aria-*-macos-arm64.dmg
+          if-no-files-found: error
+
+  appcast:
+    name: Sign the update feed
+    needs: macos-sign
+    runs-on: macos-26
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.macos-sign.outputs.dmg-artifact-id }}
+          path: dist
+      - name: Fetch Sparkle's sign_update
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c  $RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c
+          mkdir "$RUNNER_TEMP/sparkle"
+          tar -xJf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle" ./bin/sign_update
+      - name: Write the appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/macos/appcast.sh "$RUNNER_TEMP/sparkle/bin/sign_update" \
+            "dist/aria-$version-macos-arm64.dmg" "$version" "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appcast
+          path: dist/appcast.xml
           if-no-files-found: error
 
   linux:
@@ -124,7 +162,7 @@ jobs:
 
   checksums:
     name: Checksums
-    needs: [macos-sign, linux]
+    needs: [macos-sign, appcast, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -134,10 +172,10 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: just@1.58.0
-      # Only what ships: the notarized DMG and the Linux tarball.
+      # Only what ships: the notarized DMG, its feed, and the Linux tarball.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: '{macos,linux}'
+          pattern: '{macos,appcast,linux}'
           path: dist
           merge-multiple: true
       - name: just release-checksums

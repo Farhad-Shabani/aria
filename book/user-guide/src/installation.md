@@ -84,9 +84,9 @@ record audio to test microphone permission.
 
 ## Update or remove
 
-On a Mac, choose **Quit Aria** from its menu, replace Aria in Applications
-with the copy from the new DMG, and open it. To remove Aria, quit it and move
-it to the Trash. With Homebrew, run `brew upgrade --cask aria` or
+On a Mac, Aria offers new releases itself. Choose **Check for Updates…** from
+its menu to check now, or set automatic checks and installs in
+**Settings → About**. To remove Aria, quit it and move it to the Trash. With Homebrew, run `brew upgrade --cask aria` or
 `brew uninstall --cask aria`.
 
 On Linux, rerun the install command to update. To remove Aria:

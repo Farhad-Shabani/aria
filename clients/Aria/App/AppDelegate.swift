@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = WindowPresentation()
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
+    let updates = UpdateController()
 
     static let enabledKey = "captionsEnabled"
     static let setupOfferedKey = "setupOffered"
