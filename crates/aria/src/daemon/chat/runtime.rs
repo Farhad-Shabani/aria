@@ -201,7 +201,13 @@ impl ChatRuntime {
             model: request.model.as_deref(),
             resume: resume.as_deref(),
         });
-        session.prompt(prompt, recorder, cancel, timeout)?;
+        let prompted = session.prompt(prompt, recorder, cancel, timeout);
+        // The agent may have deleted the session it was asked to resume.
+        // Kept, its id would fail every later ask on this key.
+        if resume.is_some() && matches!(prompted, Err(AgentError::Failed(_))) {
+            self.sessions.forget(&key)?;
+        }
+        prompted?;
         if let Some(resume) = session.resume_id() {
             self.sessions.record(key, resume)?;
         }
