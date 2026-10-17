@@ -54,13 +54,16 @@ enum Availability {
 message Model {
   string name = 1;
   string title = 2;
+  // The engine key that wants it; empty for one every install wants.
+  string engine = 3;
   // What the transfer moves.
-  uint64 bytes = 3;
-  bool present = 4;
+  uint64 bytes = 4;
   // Whether it is fetched when nobody answers.
   bool default = 5;
-  // The engine key that wants it; empty for one every install wants.
-  string engine = 6;
+  bool present = 6;
+  // Config points its engine at files elsewhere, so setup has nothing to
+  // fetch.
+  bool external = 7;
 }
 
 // One thing a run still has to put in place.

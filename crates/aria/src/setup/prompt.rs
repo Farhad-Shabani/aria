@@ -166,10 +166,9 @@ impl<'a, R: BufRead, W: Write> Prompts<'a, R, W> {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::path::PathBuf;
 
     use super::*;
-    use crate::setup::backends::{Backend, Host, Tts, choices};
+    use crate::setup::backends::{Backend, Host, Stt, Tts, choices};
 
     fn prompts<'a>(
         input: &'a mut Cursor<String>,
@@ -236,21 +235,20 @@ mod tests {
         );
     }
 
-    /// A home with no models: system and kokoro are ready, qwen is missing.
+    /// A Mac with a system voice.
     fn bare_host() -> Host {
         Host {
             macos: true,
-            home: PathBuf::from("/nonexistent"),
             system_voice: Availability::Ready,
         }
     }
 
-    fn pick_tts(text: &str, current: Option<&str>, yes: bool) -> (&'static str, String) {
+    fn pick<B: Backend>(text: &str, current: Option<&str>, yes: bool) -> (&'static str, String) {
         let mut input = Cursor::new(text.to_owned());
         let mut output = Vec::new();
-        let choices = choices::<Tts>(current, &bare_host());
+        let choices = choices::<B>(current, &bare_host());
         let picked = prompts(&mut input, &mut output, yes)
-            .pick(Tts::TITLE, &choices)
+            .pick(B::TITLE, &choices)
             .unwrap()
             .key;
         (picked, String::from_utf8(output).unwrap())
@@ -258,24 +256,23 @@ mod tests {
 
     #[test]
     fn pick_takes_a_number_or_the_default() {
-        assert_eq!(pick_tts("2\n", None, false).0, "kokoro");
-        assert_eq!(pick_tts("\n", None, false).0, "system");
-        assert_eq!(pick_tts("\n", Some("kokoro"), false).0, "kokoro");
+        assert_eq!(pick::<Tts>("2\n", None, false).0, "kokoro");
+        assert_eq!(pick::<Tts>("\n", None, false).0, "system");
+        assert_eq!(pick::<Tts>("\n", Some("kokoro"), false).0, "kokoro");
     }
 
-    /// A missing model is a fix to print, not a reason to switch: the model
-    /// may sit at a path the config names and setup does not check.
+    /// A missing prerequisite is a fix to print, not a reason to switch.
     #[test]
-    fn pick_keeps_a_configured_choice_whose_model_is_missing() {
-        let (picked, shown) = pick_tts("\n", Some("qwen"), false);
+    fn pick_keeps_a_configured_choice_that_is_missing() {
+        let (picked, shown) = pick::<Stt>("\n", Some("parakeet-mlx"), false);
 
-        assert_eq!(picked, "qwen");
-        assert!(shown.contains("Choice [3]"), "{shown}");
+        assert_eq!(picked, "parakeet-mlx");
+        assert!(shown.contains("Choice [6]"), "{shown}");
     }
 
     #[test]
     fn pick_falls_back_only_when_nothing_is_configured() {
-        let (picked, shown) = pick_tts("\n", Some("not-a-backend"), false);
+        let (picked, shown) = pick::<Tts>("\n", Some("not-a-backend"), false);
 
         assert_eq!(picked, "system");
         assert!(shown.contains("Choice [1]"), "{shown}");
@@ -283,23 +280,23 @@ mod tests {
 
     #[test]
     fn pick_asks_again_after_a_bad_number() {
-        let (picked, shown) = pick_tts("9\nx\n2\n", None, false);
+        let (picked, shown) = pick::<Tts>("9\nx\n2\n", None, false);
 
         assert_eq!(picked, "kokoro");
         assert_eq!(shown.matches("Choice [").count(), 3, "{shown}");
     }
 
     #[test]
-    fn pick_allows_a_backend_that_only_lacks_its_model() {
-        let (picked, shown) = pick_tts("3\n", None, false);
+    fn pick_allows_a_backend_that_is_missing() {
+        let (picked, shown) = pick::<Stt>("6\n", None, false);
 
-        assert_eq!(picked, "qwen");
+        assert_eq!(picked, "parakeet-mlx");
         assert!(shown.contains("before it works"), "{shown}");
     }
 
     #[test]
     fn yes_picks_the_default_without_printing() {
-        let (picked, shown) = pick_tts("2\n", None, true);
+        let (picked, shown) = pick::<Tts>("2\n", None, true);
 
         assert_eq!(picked, "system");
         assert!(shown.is_empty());

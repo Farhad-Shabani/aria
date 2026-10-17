@@ -2,8 +2,8 @@
 # Installs Aria on Linux from ARIA_DIST, the release folder this script sits
 # in, or else the latest GitHub release, then hands off to `aria setup`.
 # macOS installs from the DMG instead. Re-running upgrades in place.
-# `--uninstall` reverses it and leaves ~/models and ~/.aria alone. Every other
-# argument goes to setup.
+# `--uninstall` reverses it and leaves ~/.aria, models included, alone.
+# Every other argument goes to setup.
 set -euo pipefail
 
 releases="https://github.com/Farhad-Shabani/aria/releases"
@@ -45,7 +45,7 @@ if [ "${1:-}" = --uninstall ]; then
     stop_daemon
     rm -rf "$lib_dir"
     rm -f "$bin_dir/aria"
-    echo "removed aria; ~/models and ~/.aria were left alone"
+    echo "removed aria; ~/.aria and its models were left alone"
     exit 0
 fi
 

@@ -4,29 +4,30 @@
 # not ask about, but its rewrite drops comments; the old file stays at
 # config.yaml.bak.
 
+# Setup downloads models into ~/.aria/models. Set `model` only for a copy
+# kept elsewhere.
 transcription:
   backend: whisper
-  model: ~/models/whisper/ggml-large-v3-turbo-q8_0.bin
 
 # Parakeet uses a directory of ONNX files and detects the spoken language.
 # Aria rejects an explicit recognition language other than English.
 # transcription:
 #   backend: parakeet
-#   model: ~/models/parakeet/parakeet-tdt-0.6b-v3
+#   model: ~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 #   device: cpu   # or gpu
 
 # Moonshine runs in-process on the CPU. Aria supports its English model
 # and accepts no device setting.
 # transcription:
 #   backend: moonshine
-#   model: ~/models/moonshine/base
+#   model: ~/.aria/models/moonshine/base
 
 # Nemotron streams English speech in 560 ms chunks using an encoder cache.
 # The model directory contains encoder.onnx, encoder.onnx.data,
 # decoder_joint.onnx, and tokenizer.model.
 # transcription:
 #   backend: nemotron
-#   model: ~/models/nemotron/nemotron-speech-streaming-en-0.6b
+#   model: ~/.aria/models/nemotron/nemotron-speech-streaming-en-0.6b
 
 # parakeet-mlx runs on the GPU in a daemon-owned Python process. It needs
 # an interpreter with parakeet-mlx installed. The model is a Hugging Face
@@ -49,7 +50,7 @@ transcription:
 # wake:
 #   enabled: true
 #   backend: openwakeword
-#   model: ~/models/wakeword/aria.onnx
+#   model: ~/.aria/models/wakeword/aria.onnx
 #   threshold: 0.5
 
 # The global dictation hotkey: a clean tap of the key toggles streaming
@@ -88,8 +89,8 @@ transcription:
 # load, decided once at engine build and logged.
 # tts:
 #   backend: kokoro
-#   model: ~/models/kokoro/kokoro.onnx
-#   voices: ~/models/kokoro/voices.bin
+#   model: ~/.aria/models/kokoro/kokoro.onnx
+#   voices: ~/.aria/models/kokoro/voices.bin
 #   voice: af_heart
 #   fallback: system
 
@@ -99,8 +100,8 @@ transcription:
 # Base voice cloning is not supported.
 # tts:
 #   backend: qwen
-#   model: ~/models/qwen/qwen3-tts-0.6b-customvoice
-#   tokenizer: ~/models/qwen/qwen3-tts-tokenizer
+#   model: ~/.aria/models/qwen/qwen3-tts-0.6b-customvoice
+#   tokenizer: ~/.aria/models/qwen/qwen3-tts-tokenizer
 #   voice: vivian
 #   fallback: system
 
@@ -109,18 +110,18 @@ transcription:
 # the transcription backend if supported. Each session loads its own engine.
 # listen:
 #   backend: moonshine
-#   model: ~/models/moonshine/base
+#   model: ~/.aria/models/moonshine/base
 #   transcripts_dir: ~/.aria/transcripts
 
 # Dictation and Listen share speaker models and enrolled profiles.
-# `model` defaults to ~/.wespeaker/en/model.onnx; without an installed model,
-# transcripts have no speaker labels.
+# `model` defaults to ~/.aria/models/wespeaker/en/model.onnx; without an
+# installed model, transcripts have no speaker labels.
 #
 # `segmentation_model` estimates who speaks in each audio frame. Without it,
 # Listen estimates speakers from individual transcription segments.
 # speaker:
-#   model: ~/.wespeaker/en/model.onnx
-#   segmentation_model: ~/models/pyannote/segmentation-3.0.onnx
+#   model: ~/.aria/models/wespeaker/en/model.onnx
+#   segmentation_model: ~/.aria/models/pyannote/segmentation-3.0.onnx
 #   speakers_dir: ~/.aria/speakers
 
 # `aria ask` hands a spoken or typed prompt to a coding agent and prints the

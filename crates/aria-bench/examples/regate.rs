@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let samples: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
 
     let mut gate = SileroVad::load()?;
-    let model = std::env::var("HOME")? + "/.wespeaker/en/model.onnx";
+    let model = std::env::var("HOME")? + "/.aria/models/wespeaker/en/model.onnx";
     let mut speaker = WeSpeaker::load(std::path::Path::new(&model))?;
 
     let mut rows = String::new();

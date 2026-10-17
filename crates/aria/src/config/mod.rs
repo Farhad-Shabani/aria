@@ -256,6 +256,16 @@ impl ListenTranscription {
             Self::Nemotron { .. } => backend::NEMOTRON,
         }
     }
+
+    pub(crate) fn model_directory(self) -> PathBuf {
+        match self {
+            Self::Parakeet {
+                model_directory, ..
+            }
+            | Self::Moonshine { model_directory }
+            | Self::Nemotron { model_directory } => model_directory,
+        }
+    }
 }
 
 /// Where the voice-embedding model and the enrolled profiles live. One
@@ -299,7 +309,8 @@ impl ListenConfig {
 
 pub(crate) use file::{FileConfig, read as read_file};
 pub(crate) use load::{
-    Environment, UNATTENDED_ENV, default_model_path, default_path, memory_directory,
+    Environment, LoadedModel, UNATTENDED_ENV, default_path, loaded_models, memory_directory,
+    models_dir, transcription_engine, tts_engine,
 };
 pub use show::show;
 
@@ -328,6 +339,22 @@ pub enum TranscriptionConfig {
 }
 
 impl TranscriptionConfig {
+    /// `None` for parakeet-mlx, which fetches its model by name.
+    pub(crate) fn model_path(self) -> Option<PathBuf> {
+        match self {
+            Self::Whisper { model, .. } => Some(model),
+            Self::WhisperCandle {
+                model_directory, ..
+            }
+            | Self::Parakeet {
+                model_directory, ..
+            }
+            | Self::Moonshine { model_directory }
+            | Self::Nemotron { model_directory } => Some(model_directory),
+            Self::ParakeetMlx { .. } => None,
+        }
+    }
+
     pub(crate) fn for_backend(
         &self,
         backend: &str,

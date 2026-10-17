@@ -66,8 +66,8 @@ in `~/.aria/config.yaml`, using their actual paths. Setup's default paths are:
 ```yaml
 tts:
   backend: kokoro
-  model: ~/models/kokoro/kokoro.onnx
-  voices: ~/models/kokoro/voices.bin
+  model: ~/.aria/models/kokoro/kokoro.onnx
+  voices: ~/.aria/models/kokoro/voices.bin
   voice: af_heart
   rate: 1.0
 ```

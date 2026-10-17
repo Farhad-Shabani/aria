@@ -14,7 +14,7 @@ stream already used by the daemon; stop the daemon to stop its capture.
 First make [ordinary dictation](./transcription.md) work. You need a persistent
 daemon using microphone capture and a compatible wake-word model.
 Aria ships no wake-word model. Place an openWakeWord classifier in
-`~/models/wakeword` as `aria.onnx`, beside `melspectrogram.onnx` and
+`~/.aria/models/wakeword` as `aria.onnx`, beside `melspectrogram.onnx` and
 `embedding_model.onnx`.
 
 Enable monitoring in `~/.aria/config.yaml`:
@@ -23,7 +23,7 @@ Enable monitoring in `~/.aria/config.yaml`:
 wake:
   enabled: true
   backend: openwakeword
-  model: ~/models/wakeword/aria.onnx
+  model: ~/.aria/models/wakeword/aria.onnx
   threshold: 0.5
 ```
 

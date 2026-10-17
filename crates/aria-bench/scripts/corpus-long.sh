@@ -14,7 +14,7 @@
 # build/corpus/librispeech. To measure against it:
 #
 #   aria-bench stt --corpus build/corpus-long/manifest.tsv --cadence 750/20000 \
-#       --model parakeet=~/models/parakeet/parakeet-tdt-0.6b-v3
+#       --model parakeet=~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 
 set -euo pipefail
 

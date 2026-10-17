@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! aria-bench stt --corpus build/corpus/manifest.tsv
-//! aria-bench tts --kokoro ~/models/kokoro/kokoro.onnx --kokoro-voices ~/models/kokoro/voices.bin
+//! aria-bench tts --kokoro ~/.aria/models/kokoro/kokoro.onnx --kokoro-voices ~/.aria/models/kokoro/voices.bin
 //! ```
 
 mod diarize;

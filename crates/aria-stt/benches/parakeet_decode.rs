@@ -6,7 +6,7 @@
 //! Run with:
 //!
 //! ```text
-//! ARIA_TEST_PARAKEET_MODEL=~/models/parakeet/parakeet-tdt-0.6b-v3 \
+//! ARIA_TEST_PARAKEET_MODEL=~/.aria/models/parakeet/parakeet-tdt-0.6b-v3 \
 //!   ARIA_TEST_PARAKEET_WAV=~/recordings/parakeet-window.wav \
 //!   cargo bench -p aria-stt --features parakeet --bench parakeet_decode
 //! ```

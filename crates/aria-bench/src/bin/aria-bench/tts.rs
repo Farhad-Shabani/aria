@@ -2,9 +2,9 @@
 //!
 //! ```text
 //! aria-bench tts \
-//!     --qwen ~/models/qwen/qwen3-tts-0.6b-customvoice \
-//!     --qwen-tokenizer ~/models/qwen/qwen3-tts-tokenizer \
-//!     --asr-parakeet ~/models/parakeet/parakeet-tdt-0.6b-v3
+//!     --qwen ~/.aria/models/qwen/qwen3-tts-0.6b-customvoice \
+//!     --qwen-tokenizer ~/.aria/models/qwen/qwen3-tts-tokenizer \
+//!     --asr-parakeet ~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 //! ```
 
 use std::path::{Path, PathBuf};

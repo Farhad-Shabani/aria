@@ -386,6 +386,13 @@ final class SetupStateTests: XCTestCase {
         )
     }
 
+    func test_planSkipsAModelConfiguredElsewhere() {
+        var inspection = Self.freshMac()
+        inspection.models[0].external = true
+
+        XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.name).contains("whisper"))
+    }
+
     func test_wizardIsOfferedOnce() {
         var missing = Aria_Setup_V1_Missing()
         missing.kind = .grant

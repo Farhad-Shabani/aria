@@ -20,7 +20,7 @@ const GATES: [(&str, f32); 3] = [
 /// Candidate enrollment consistency thresholds for comparing rejection rates.
 const CONSISTENCY_FLOORS: [f32; 6] = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55];
 
-const DEFAULT_MODEL: &str = ".wespeaker/en/model.onnx";
+const DEFAULT_MODEL: &str = ".aria/models/wespeaker/en/model.onnx";
 
 fn main() -> ExitCode {
     let mut arguments = std::env::args_os().skip(1);

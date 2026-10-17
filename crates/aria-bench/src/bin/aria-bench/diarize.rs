@@ -12,6 +12,13 @@ use clap::Parser;
 
 use crate::flag_path::expand;
 
+/// A model's path under the directory `aria setup` downloads into.
+macro_rules! model {
+    ($path:literal) => {
+        concat!("~/.aria/models/", $path)
+    };
+}
+
 const EXAMPLES: &str = "\
 Examples:
   aria-bench diarize
@@ -23,19 +30,19 @@ Examples:
 #[command(about = "Speaker-label accuracy on synthesized conversations", after_help = EXAMPLES)]
 pub(crate) struct Cli {
     /// kokoro TTS ONNX model
-    #[arg(long, default_value = "~/models/kokoro/kokoro.onnx")]
+    #[arg(long, default_value = model!("kokoro/kokoro.onnx"))]
     kokoro: String,
     /// kokoro voice styles file
-    #[arg(long, default_value = "~/models/kokoro/voices.bin")]
+    #[arg(long, default_value = model!("kokoro/voices.bin"))]
     kokoro_voices: String,
     /// Parakeet model directory
-    #[arg(long, default_value = "~/models/parakeet/parakeet-tdt-0.6b-v3")]
+    #[arg(long, default_value = model!("parakeet/parakeet-tdt-0.6b-v3"))]
     parakeet: String,
     /// Run parakeet on the GPU instead of the CPU
     #[arg(long)]
     gpu: bool,
     /// wespeaker speaker-embedding ONNX model
-    #[arg(long, default_value = "~/.wespeaker/en/model.onnx")]
+    #[arg(long, default_value = model!("wespeaker/en/model.onnx"))]
     speaker_model: String,
     /// Label this recording instead of the synthesized scenarios
     #[arg(long, requires = "rttm")]
@@ -53,7 +60,7 @@ pub(crate) struct Cli {
     #[arg(long, requires = "audio", conflicts_with_all = ["by_voice", "word_timeline"])]
     segmented: bool,
     /// pyannote segmentation ONNX model
-    #[arg(long, default_value = "~/models/pyannote/segmentation-3.0.onnx")]
+    #[arg(long, default_value = model!("pyannote/segmentation-3.0.onnx"))]
     segmentation_model: String,
     /// Milliseconds each segmentation chunk advances
     #[arg(long, requires = "segmented", default_value_t = 1000)]

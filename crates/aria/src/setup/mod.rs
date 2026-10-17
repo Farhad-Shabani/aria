@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::config::{self, ConfigError};
+use crate::config::{self, ConfigError, FileConfig};
 use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, guided};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::process::ChildProcessError;
@@ -33,6 +33,7 @@ mod assets;
 mod backends;
 mod config_file;
 mod download;
+pub mod models;
 mod prompt;
 pub mod wire;
 
@@ -42,6 +43,8 @@ use backends::{Backend, Chat, Host, Stt, Tts, choices};
 pub use config_file::{ConfigWrite, Existing, Selections};
 use prompt::Prompts;
 
+/// Where setup installs the wake-word models, inside the models directory.
+const WAKEWORD_DIR: &str = "wakeword";
 const WAKEWORD_FILES: [&str; 3] = ["aria.onnx", "melspectrogram.onnx", "embedding_model.onnx"];
 /// Where the wake-word models sit relative to the binary: the app bundle,
 /// the Linux tarball, and a source checkout.
@@ -90,12 +93,15 @@ pub struct Inspection {
 pub struct ModelState {
     pub name: &'static str,
     pub title: &'static str,
-    pub bytes: u64,
-    pub present: bool,
-    /// Whether it is fetched when nobody answers.
-    pub default: bool,
     /// The engine that wants it; `None` for one every install wants.
     pub engine: Option<&'static str>,
+    pub bytes: u64,
+    /// Whether it is fetched when nobody answers.
+    pub default: bool,
+    pub present: bool,
+    /// Config points its engine at files elsewhere, so setup has nothing to
+    /// fetch.
+    pub external: bool,
     asset: &'static Asset,
 }
 
@@ -221,14 +227,16 @@ fn config_path() -> Result<PathBuf, SetupError> {
 
 pub fn inspect() -> Result<Inspection, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
+    let models_dir = config::models_dir(&home);
     // `current_exe` may answer the symlink an installer put on PATH; the
     // bundled files sit beside the real binary.
     let exe = std::env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(SetupError::CurrentExe)?;
     let config_path = config_path()?;
-    let host = Host::probe(home.clone());
-    let existing = Existing::read(&config_path)?;
+    let host = Host::probe();
+    let file = config_file::read(&config_path)?;
+    let existing = Existing::of(&file);
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.status())
         .map_err(SetupError::Service)?;
@@ -243,10 +251,10 @@ pub fn inspect() -> Result<Inspection, SetupError> {
         stt: choices::<Stt>(existing.stt.as_deref(), &host),
         tts: choices::<Tts>(existing.tts.as_deref(), &host),
         chat: choices::<Chat>(existing.chat.as_deref(), &host),
-        models: model_states(&home),
+        models: model_states(&home, &file),
         wakeword_installed: WAKEWORD_FILES
             .iter()
-            .all(|file| home.join("models/wakeword").join(file).is_file()),
+            .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         existing,
         service,
@@ -270,9 +278,10 @@ impl Inspection {
         selections: &'a Selections,
     ) -> impl Iterator<Item = &'a ModelState> + 'a {
         self.models.iter().filter(move |model| {
-            model
-                .engine
-                .is_none_or(|engine| engine == selections.stt || engine == selections.tts)
+            !model.external
+                && model
+                    .engine
+                    .is_none_or(|engine| engine == selections.stt || engine == selections.tts)
         })
     }
 
@@ -299,7 +308,9 @@ impl Inspection {
         missing.extend(
             self.models
                 .iter()
-                .filter(|model| !model.present && model.engine.is_some_and(configured_engine))
+                .filter(|model| {
+                    !model.present && !model.external && model.engine.is_some_and(configured_engine)
+                })
                 .map(|model| Missing::Model(model.name)),
         );
         if self.service.job == Job::Absent {
@@ -315,25 +326,37 @@ impl Inspection {
 
 /// Every model setup knows, in the order it offers them: what the speech
 /// engines want first, then what every install wants.
-fn model_states(home: &Path) -> Vec<ModelState> {
-    fn by_engine<B: Backend>() -> impl Iterator<Item = (&'static Asset, Option<&'static str>)> {
-        B::ALL.iter().flat_map(|backend| {
+fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
+    let models_dir = config::models_dir(home);
+    let loaded = config::loaded_models(file, home).models;
+    // Only the asset's own section counts. Listen's custom moonshine path
+    // does not change where transcription looks.
+    let external = |asset: &Asset, engine: Option<&str>, section: &str| {
+        let mut section = loaded.iter().filter(|model| model.section == section);
+        let configured = section.clone().any(|model| model.engine == engine);
+        configured && !section.any(|model| assets::holds(&models_dir, asset, &model.path))
+    };
+    fn by_engine<B: Backend>(
+        section: &'static str,
+    ) -> impl Iterator<Item = (&'static Asset, Option<&'static str>, &'static str)> {
+        B::ALL.iter().flat_map(move |backend| {
             backend
                 .assets()
                 .iter()
-                .map(move |asset| (asset, Some(backend.key())))
+                .map(move |asset| (asset, Some(backend.key()), section))
         })
     }
-    by_engine::<Stt>()
-        .chain(by_engine::<Tts>())
-        .chain(EXTRAS.iter().map(|asset| (asset, None)))
-        .map(|(asset, engine)| ModelState {
+    by_engine::<Stt>("transcription")
+        .chain(by_engine::<Tts>("tts"))
+        .chain(EXTRAS.iter().map(|asset| (asset, None, "speaker")))
+        .map(|(asset, engine, section)| ModelState {
             name: asset.name,
             title: asset.title,
-            bytes: asset.bytes,
-            present: assets::present(home, asset),
-            default: asset.default,
             engine,
+            bytes: asset.bytes,
+            default: asset.default,
+            present: assets::present(&models_dir, asset),
+            external: external(asset, engine, section),
             asset,
         })
         .collect()
@@ -394,17 +417,19 @@ pub fn apply(
     // config untouched and the write keeps edits made meanwhile.
     selections.prepare(&inspection.config_path)?;
 
+    let models_dir = config::models_dir(&inspection.home);
     observe(SetupEvent::Started(Step::Wakeword))?;
-    let wakeword = install_wakeword(&inspection.exe, &inspection.home.join("models/wakeword"))?;
+    let wakeword = install_wakeword(&inspection.exe, &models_dir.join(WAKEWORD_DIR))?;
 
     observe(SetupEvent::Started(Step::Models))?;
     let mut models = Vec::new();
     for model in inspection.wanted(selections) {
-        let outcome = if model.present {
+        // Check the disk again: a model may have been removed since inspection.
+        let outcome = if assets::present(&models_dir, model.asset) {
             Outcome::Present
         } else if options.downloads.iter().any(|name| name == model.name) {
             assets::obtain(
-                &inspection.home,
+                &models_dir,
                 model.asset,
                 options.transfer_meter,
                 &mut |received| {
@@ -528,7 +553,8 @@ fn ask_selections(
     })
 }
 
-fn size(bytes: u64) -> String {
+/// Formats a byte count for display, like "2.5 GB".
+pub fn size(bytes: u64) -> String {
     const GB: u64 = 1_000_000_000;
     const MB: u64 = 1_000_000;
     if bytes >= GB {
@@ -717,6 +743,18 @@ pub enum SetupError {
     #[error("setup knows no model named {name}")]
     UnknownModel { name: String },
 
+    #[error("{name} is in use by `{section}` in config.yaml; change that section first")]
+    ModelInUse {
+        name: &'static str,
+        section: &'static str,
+    },
+
+    #[error("`{section}` in config.yaml does not load; fix it first (`aria doctor` says why)")]
+    ConfigUnresolved { section: &'static str },
+
+    #[error("{name} is not on disk")]
+    ModelNotInstalled { name: &'static str },
+
     #[error("failed to read the setup request")]
     Request(#[source] io::Error),
 
@@ -784,6 +822,44 @@ mod tests {
     fn touch(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"").unwrap();
+    }
+
+    /// Setup must put the speaker, segmentation, and wake-word models where the
+    /// daemon loads them.
+    #[test]
+    fn shared_models_land_where_the_daemon_loads_them() {
+        use crate::config::{
+            DaemonConfig, Environment, SpeakerConfig, WakeConfig, WakeWordOverride,
+        };
+
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join(".aria/config.yaml");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, "wake: {enabled: true}\n").unwrap();
+        let environment = Environment::in_home(home.path().to_path_buf());
+        let extras: Vec<PathBuf> = EXTRAS
+            .iter()
+            .flat_map(|asset| asset.files)
+            .map(|(relative, _)| config::models_dir(home.path()).join(relative))
+            .collect();
+
+        let speaker = SpeakerConfig::load(&environment).unwrap();
+        assert!(
+            extras.contains(&speaker.model),
+            "{}",
+            speaker.model.display()
+        );
+        assert!(extras.contains(&speaker.segmentation_model));
+
+        let daemon = DaemonConfig::load(&environment, WakeWordOverride::Inherit).unwrap();
+        let WakeConfig::Enabled { classifier, .. } = daemon.wake else {
+            panic!("the config enables the wake word");
+        };
+        assert_eq!(
+            classifier.parent(),
+            Some(config::models_dir(home.path()).join(WAKEWORD_DIR).as_path())
+        );
+        assert!(WAKEWORD_FILES.iter().any(|file| classifier.ends_with(file)));
     }
 
     #[test]
@@ -883,7 +959,6 @@ mod tests {
     fn bare_host() -> Host {
         Host {
             macos: true,
-            home: PathBuf::from("/nonexistent"),
             system_voice: Availability::Ready,
         }
     }
@@ -891,13 +966,14 @@ mod tests {
     /// A machine with nothing on it but what `existing` says.
     fn inspection(existing: Existing) -> Inspection {
         let host = bare_host();
+        let home = PathBuf::from("/nonexistent");
         Inspection {
             config_path: PathBuf::from("/nonexistent/config.yaml"),
             macos: true,
             stt: choices::<Stt>(existing.stt.as_deref(), &host),
             tts: choices::<Tts>(existing.tts.as_deref(), &host),
             chat: choices::<Chat>(existing.chat.as_deref(), &host),
-            models: model_states(&host.home),
+            models: model_states(&home, &FileConfig::default()),
             wakeword_installed: false,
             wakeword_bundled: true,
             existing,
@@ -909,7 +985,7 @@ mod tests {
                 daemon: supervisor::DaemonState::NotRunning,
             },
             grant: Grant::NotNeeded,
-            home: host.home,
+            home,
             exe: PathBuf::from("/nonexistent/aria"),
         }
     }
@@ -1024,6 +1100,58 @@ mod tests {
                 Missing::Service,
             ]
         );
+    }
+
+    /// A model config points elsewhere is the user's: setup neither fetches it
+    /// nor calls it missing. Kokoro still needs its default voices, so it
+    /// stays wanted.
+    #[test]
+    fn an_engine_with_its_own_model_path_wants_no_download() {
+        let mut inspection = inspection(Existing {
+            stt: Some("parakeet".to_owned()),
+            ..configured()
+        });
+        let file = serde_saphyr::from_str(
+            "transcription: {backend: parakeet, model: /elsewhere/tdt}\n\
+             tts: {backend: kokoro, model: /elsewhere/kokoro.onnx}",
+        )
+        .unwrap();
+        inspection.models = model_states(&inspection.home, &file);
+        let selections = Selections::defaults(&inspection);
+        let wanted: Vec<_> = inspection
+            .downloads_for(&selections)
+            .iter()
+            .map(|model| model.name)
+            .collect();
+
+        assert!(!wanted.contains(&"parakeet"), "{wanted:?}");
+        assert!(!inspection.missing().contains(&Missing::Model("parakeet")));
+        assert!(inspection.missing().contains(&Missing::Model("kokoro")));
+    }
+
+    /// Listen's custom moonshine path does not cover transcription, which
+    /// loads the default one.
+    #[test]
+    fn a_model_kept_elsewhere_for_listen_still_downloads_for_transcription() {
+        let mut inspection = inspection(Existing {
+            stt: Some("moonshine".to_owned()),
+            ..configured()
+        });
+        let file = serde_saphyr::from_str(
+            "transcription: {backend: whisper}\n\
+             listen: {backend: moonshine, model: /elsewhere/moonshine}",
+        )
+        .unwrap();
+        inspection.models = model_states(&inspection.home, &file);
+        let selections = Selections::defaults(&inspection);
+
+        let wanted: Vec<_> = inspection
+            .downloads_for(&selections)
+            .iter()
+            .map(|model| model.name)
+            .collect();
+
+        assert!(wanted.contains(&"moonshine"), "{wanted:?}");
     }
 
     #[test]

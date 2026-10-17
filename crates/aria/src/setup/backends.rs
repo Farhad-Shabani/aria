@@ -1,9 +1,8 @@
 //! The choices setup offers, and what this machine can run.
 
 use std::env;
-use std::path::PathBuf;
 
-use crate::config::{backend, chat_agent, default_model_path, tts_backend};
+use crate::config::{backend, chat_agent, tts_backend};
 use crate::primitives::file_inspection::InspectedFile;
 
 use super::assets::{self, Asset};
@@ -63,15 +62,13 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
 /// What is known about this machine before any question is asked.
 pub(super) struct Host {
     pub(super) macos: bool,
-    pub(super) home: PathBuf,
     pub(super) system_voice: Availability,
 }
 
 impl Host {
-    pub(super) fn probe(home: PathBuf) -> Self {
+    pub(super) fn probe() -> Self {
         Self {
             macos: cfg!(target_os = "macos"),
-            home,
             system_voice: match aria_tts::system::SystemVoice::new() {
                 Ok(_) => Availability::Ready,
                 Err(error) => Availability::Missing {
@@ -93,18 +90,6 @@ impl Host {
                 })
             })
             .unwrap_or(false)
-    }
-
-    /// Ready when the backend's default model is on disk; the fix names
-    /// where to put it.
-    fn model_availability(&self, backend_name: &str) -> Availability {
-        match default_model_path(backend_name, &self.home) {
-            Some(path) if path.exists() => Availability::Ready,
-            Some(path) => Availability::Missing {
-                fix: format!("place the model at {}", path.display()),
-            },
-            None => Availability::Ready,
-        }
     }
 }
 
@@ -165,21 +150,28 @@ impl Backend for Stt {
 
     fn availability(self, host: &Host) -> Availability {
         match self {
-            Self::Whisper => Availability::Ready,
+            Self::Whisper
+            | Self::WhisperCandle
+            | Self::Parakeet
+            | Self::Moonshine
+            | Self::Nemotron => Availability::Ready,
             Self::ParakeetMlx if !host.macos => Availability::Unsupported {
                 why: "needs macOS (MLX)",
             },
             Self::ParakeetMlx => Availability::Missing {
                 fix: "set transcription.interpreter to a Python with parakeet-mlx".to_owned(),
             },
-            _ => host.model_availability(self.key()),
         }
     }
 
     fn assets(self) -> &'static [Asset] {
         match self {
             Self::Whisper => &[assets::WHISPER],
-            _ => &[],
+            Self::WhisperCandle => &[assets::WHISPER_CANDLE],
+            Self::Parakeet => &[assets::PARAKEET],
+            Self::Moonshine => &[assets::MOONSHINE],
+            Self::Nemotron => &[assets::NEMOTRON],
+            Self::ParakeetMlx => &[],
         }
     }
 }
@@ -214,15 +206,15 @@ impl Backend for Tts {
     fn availability(self, host: &Host) -> Availability {
         match self {
             Self::System => host.system_voice.clone(),
-            Self::Kokoro => Availability::Ready,
-            Self::Qwen => host.model_availability(self.key()),
+            Self::Kokoro | Self::Qwen => Availability::Ready,
         }
     }
 
     fn assets(self) -> &'static [Asset] {
         match self {
+            Self::System => &[],
             Self::Kokoro => &[assets::KOKORO],
-            _ => &[],
+            Self::Qwen => &[assets::QWEN],
         }
     }
 }
@@ -272,32 +264,46 @@ impl Backend for Chat {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+    use crate::config::{self, FileConfig};
 
+    /// Setup must download each model to the path the daemon loads it from.
     #[test]
-    fn a_model_backend_is_missing_until_its_files_exist() {
-        let dir = tempfile::tempdir().unwrap();
-        let host = Host {
-            macos: true,
-            home: dir.path().to_path_buf(),
-            system_voice: Availability::Ready,
-        };
-
-        assert!(matches!(
-            Stt::Parakeet.availability(&host),
-            Availability::Missing { .. }
-        ));
-
-        let model = default_model_path(backend::PARAKEET, dir.path()).unwrap();
-        std::fs::create_dir_all(&model).unwrap();
-        assert_eq!(Stt::Parakeet.availability(&host), Availability::Ready);
+    fn every_model_lands_where_the_daemon_loads_it() {
+        let home = Path::new("/home/someone");
+        let models_dir = config::models_dir(home);
+        let engines = Stt::ALL
+            .iter()
+            .map(|stt| ("transcription", stt.key(), stt.assets()))
+            .chain(Tts::ALL.iter().map(|tts| ("tts", tts.key(), tts.assets())));
+        for (section, key, assets) in engines {
+            let file: FileConfig =
+                serde_saphyr::from_str(&format!("{section}: {{backend: {key}}}")).unwrap();
+            let loaded: Vec<_> = config::loaded_models(&file, home)
+                .models
+                .into_iter()
+                .filter(|model| model.section == section)
+                .collect();
+            assert_eq!(assets.is_empty(), loaded.is_empty(), "{key}");
+            for model in loaded {
+                let lands = assets
+                    .iter()
+                    .any(|asset| assets::holds(&models_dir, asset, &model.path));
+                assert!(
+                    lands,
+                    "{key} downloads nothing into {}",
+                    model.path.display()
+                );
+            }
+        }
     }
 
     #[test]
     fn mlx_needs_macos() {
         let host = Host {
             macos: false,
-            home: PathBuf::from("/nonexistent"),
             system_voice: Availability::Ready,
         };
 

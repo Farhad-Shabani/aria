@@ -63,7 +63,8 @@ The Mac app and the Linux installer both start setup. To run it again:
 aria setup
 ```
 
-Choose **Whisper** for a first transcription. Setup can download its model.
+Choose **Whisper** for a first transcription. Setup downloads the model for
+any engine you choose, except Parakeet (MLX), which needs its own Python.
 For speech output, the system voice needs no model. You can leave optional
 features at their defaults. Choosing a chat agent does not contact it; an
 agent account is needed only for [Ask](./voice-chat.md).
@@ -82,6 +83,19 @@ aria doctor
 Doctor reports configuration, model-path, and service problems. It does not
 record audio to test microphone permission.
 
+### Free model space
+
+A model stays on disk after you switch engines. To see each model and remove one
+you no longer use:
+
+```sh
+aria models list
+aria models remove parakeet
+```
+
+Aria keeps a model your configuration still uses. Setup downloads a removed
+model again if you choose its engine later.
+
 ## Update or remove
 
 On a Mac, Aria offers new releases itself. Choose **Check for Updates…** from
@@ -95,7 +109,7 @@ On Linux, rerun the install command to update. To remove Aria:
 curl -fsSL https://github.com/Farhad-Shabani/aria/releases/latest/download/install.sh | bash -s -- --uninstall
 ```
 
-Removing Aria leaves your models and `~/.aria` in place. To delete saved
+Removing Aria leaves `~/.aria`, models included, in place. To delete saved
 dictations, use the [history controls](./history.md#delete) first.
 
 ## Build from source
