@@ -31,6 +31,7 @@ use crate::config::WakeWordOverride;
 
 use super::assembly::DaemonError;
 use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
+use super::shutdown::ShutdownSignal;
 
 pub(super) const STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
@@ -62,7 +63,17 @@ impl DaemonSession {
         // would otherwise strand the connect-only retry loop.
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         loop {
-            match spawn_runtime(paths, DaemonLifetime::OnDemand, WakeWordOverride::Inherit) {
+            // The process embedding this daemon owns its signals: `aria
+            // dictate` stops the press on Ctrl-C, which a draining daemon
+            // would cancel.
+            let shutdown = ShutdownSignal::new()
+                .map_err(|error| StartupError::Build(DaemonError::Shutdown(error)))?;
+            match spawn_runtime(
+                paths,
+                DaemonLifetime::OnDemand,
+                WakeWordOverride::Inherit,
+                shutdown,
+            ) {
                 Ok(daemon) => return start_temporary(daemon, paths, deadline),
                 Err(error) if error.is_socket_owned_elsewhere() => {}
                 Err(error) => return Err(StartupError::Build(error)),

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 
 use anyhow::Context;
-use signal_hook::consts::SIGINT;
+use signal_hook::consts::{SIGINT, SIGTERM};
 
 use aria::daemon::{DaemonSession, DeliveryMode, DictationStage, RecordingId, Ticket};
 
@@ -17,6 +17,9 @@ use super::lock;
 
 /// 128 + SIGINT: the status a shell reports for a command Ctrl-C ended.
 pub(crate) const INTERRUPTED: i32 = 130;
+
+/// 128 + SIGTERM.
+const TERMINATED: i32 = 143;
 
 /// What the next press does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,28 +133,23 @@ impl Interrupt {
         // ends the process before the pipe could act on it again.
         signal_hook::flag::register_conditional_default(SIGINT, ends_process)
             .context("failed to watch for Ctrl-C")?;
-        let (reader, writer) = UnixStream::pair().context("failed to open the interrupt pipe")?;
-        let pipe = signal_hook::low_level::pipe::register(SIGINT, writer)
-            .context("failed to watch for Ctrl-C")?;
-        thread::spawn({
+        let pipe = watch(SIGINT, {
             let router = Arc::clone(&router);
             move || {
-                let mut reader = reader;
-                let mut byte = [0u8; 1];
-                loop {
-                    match reader.read(&mut byte) {
-                        Ok(1) => {}
-                        // `read` does not retry itself, and a signal
-                        // without SA_RESTART would end the watch for good.
-                        Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-                        _ => break,
-                    }
-                    if let Flow::Quit = router.press() {
-                        quit();
-                    }
+                if let Flow::Quit = router.press() {
+                    quit();
                 }
             }
-        });
+        })
+        .context("failed to watch for Ctrl-C")?;
+        // Kept for the rest of the process. A daemon this command started
+        // lives in it and leaves termination to it, so nothing else would
+        // hand the terminal back.
+        watch(SIGTERM, || {
+            restore_terminal();
+            std::process::exit(TERMINATED)
+        })
+        .context("failed to watch for termination")?;
         Ok(Self { router, pipe })
     }
 
@@ -239,6 +237,28 @@ impl Drop for Interrupt {
         signal_hook::low_level::unregister(self.pipe);
         self.router.ends_process.store(true, Ordering::Relaxed);
     }
+}
+
+/// Runs `on_signal` on a thread of its own each time `signal` arrives.
+fn watch(
+    signal: i32,
+    mut on_signal: impl FnMut() + Send + 'static,
+) -> std::io::Result<signal_hook::SigId> {
+    let (mut reader, writer) = UnixStream::pair()?;
+    let registration = signal_hook::low_level::pipe::register(signal, writer)?;
+    thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        loop {
+            match reader.read(&mut byte) {
+                Ok(1) => on_signal(),
+                // `read` does not retry itself, and a signal without
+                // SA_RESTART would end the watch for good.
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                _ => break,
+            }
+        }
+    });
+    Ok(registration)
 }
 
 /// Hands the terminal back before going, on whichever thread got there.
