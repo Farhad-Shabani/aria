@@ -253,16 +253,15 @@ where
             // Held only for the transcription stage: the meter ends with
             // capture, and the pill has its next stage to draw by then.
             let meter = Meter::watching(&recording, control, events);
-            let heard = self.hear(&settings, &mut recording, control, events, sinks, corrector);
-            drop(meter);
-            log_capture_stage(&recording, stage_started);
             // Transcription can fail before it has read the press to its end —
             // an unsupported language is refused on the first line. Capture would
-            // otherwise keep running until its own timeout, holding the worker
-            // against the next press.
-            if heard.is_err() {
-                control.request_recording_stop();
-            }
+            // otherwise keep running until its own timeout, and the meter above
+            // would wait on it before anything could stop it.
+            let heard = self
+                .hear(&settings, &mut recording, control, events, sinks, corrector)
+                .map_err(|error| stop_recording(control, error));
+            drop(meter);
+            log_capture_stage(&recording, stage_started);
             let (transcript, mut completion) = heard?;
             tracing::info!(
                 stage = "transcription",
@@ -2845,6 +2844,41 @@ mod tests {
                 "completed:hello"
             ]
         );
+    }
+
+    #[test]
+    fn an_early_failure_stops_the_recording() {
+        let directory = tempfile::tempdir().expect("test directory is created");
+        // Realtime and longer than the press's 5 s budget, so only a stop
+        // ends capture before the bound.
+        let capture = WavReplayCapture::new(
+            directory.path(),
+            Duration::from_secs(20),
+            &fixture_of(directory.path(), 160_000),
+            ReplayPace::Realtime,
+        )
+        .expect("fixture is replayable");
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            unlabeled(),
+            Cursor::new(RecordingDelivery {
+                log: Arc::new(Mutex::new(Vec::new())),
+                fail: true,
+            }),
+        );
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let started = std::time::Instant::now();
+
+        let result = pipeline.execute(
+            settings(DeliveryMode::Streaming, OutputMode::Insert),
+            &control,
+            &DictationEventEmitter::unsubscribed(),
+            None,
+        );
+
+        assert!(matches!(result, Err(DictationError::Delivery(_))));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
