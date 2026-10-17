@@ -9,8 +9,8 @@ use std::{fs, io};
 
 use super::{Job, SupervisorError, UnitSpec, run};
 
-const LABEL: &str = "com.aria.daemon";
-pub(super) const UNIT_FILE: &str = "com.aria.daemon.plist";
+const LABEL: &str = "io.github.farhad-shabani.aria.daemon";
+pub(super) const UNIT_FILE: &str = "io.github.farhad-shabani.aria.daemon.plist";
 const LAUNCHCTL: &str = "/bin/launchctl";
 /// What `launchctl` exits with for a label the domain does not know.
 const NOT_FOUND: i32 = 113;
@@ -229,7 +229,7 @@ mod tests {
 
         let plist = render(&spec);
 
-        assert!(plist.contains("<string>com.aria.daemon</string>"));
+        assert!(plist.contains("<string>io.github.farhad-shabani.aria.daemon</string>"));
         assert!(
             plist.contains(
                 "<string>/opt/aria &amp; co/aria</string>\n        <string>daemon</string>"
@@ -263,17 +263,19 @@ mod tests {
 
     #[test]
     fn a_job_with_a_process_reports_its_pid() {
-        let report = "gui/501/com.aria.daemon = {\n\tstate = running\n\tpid = 4242\n}\n";
+        let report = "gui/501/io.github.farhad-shabani.aria.daemon = {\n\tstate = running\n\tpid = 4242\n}\n";
         assert_eq!(parse_job(report), Job::Running(4242));
         assert_eq!(parse_job("\tstate = not running\n"), Job::Idle);
     }
 
     #[test]
     fn only_a_job_loaded_from_another_plist_belongs_to_the_app() {
-        let unit = Path::new("/Users/tester/Library/LaunchAgents/com.aria.daemon.plist");
-        let app = "gui/501/com.aria.daemon = {\n\tpath = (submitted by smd.348)\n\tendpoints = {\n\t\tpath = /tmp/other\n\t}\n}\n";
+        let unit = Path::new(
+            "/Users/tester/Library/LaunchAgents/io.github.farhad-shabani.aria.daemon.plist",
+        );
+        let app = "gui/501/io.github.farhad-shabani.aria.daemon = {\n\tpath = (submitted by smd.348)\n\tendpoints = {\n\t\tpath = /tmp/other\n\t}\n}\n";
         let ours = format!(
-            "gui/501/com.aria.daemon = {{\n\tpath = {}\n}}\n",
+            "gui/501/io.github.farhad-shabani.aria.daemon = {{\n\tpath = {}\n}}\n",
             unit.display()
         );
         assert!(loaded_elsewhere(app, unit));

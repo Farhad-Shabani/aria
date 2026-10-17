@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.aria.daemon</string>
+    <string>io.github.farhad-shabani.aria.daemon</string>
     <key>BundleProgram</key>
     <string>Contents/Helpers/Aria.app/Contents/MacOS/aria</string>
     <key>ProgramArguments</key>

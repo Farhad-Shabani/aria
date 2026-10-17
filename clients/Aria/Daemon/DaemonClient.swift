@@ -44,7 +44,7 @@ enum StartMethod: Equatable {
 /// the PID recorded in the lock file. Runtime paths and the agent's label
 /// mirror the Rust daemon.
 struct DaemonClient: DaemonControlling {
-    static let serviceLabel = "com.aria.daemon"
+    static let serviceLabel = "io.github.farhad-shabani.aria.daemon"
     private static let legacyRetiredKey = "legacyServiceRetired"
     private static let agentLoadProbes = 20
     private static let agentLoadPoll = Duration.milliseconds(100)

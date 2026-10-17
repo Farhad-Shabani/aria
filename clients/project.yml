@@ -13,7 +13,7 @@ settings:
     SWIFT_VERSION: "6.0"
 
 options:
-  bundleIdPrefix: com.aria
+  bundleIdPrefix: io.github.farhad-shabani
   deploymentTarget:
     macOS: "15.0"
   xcodeVersion: "26.0"
@@ -43,7 +43,7 @@ targets:
         excludes:
           - Info.plist
           - LaunchAgents
-      - path: Aria/LaunchAgents/com.aria.daemon.plist
+      - path: Aria/LaunchAgents/io.github.farhad-shabani.aria.daemon.plist
         buildPhase:
           copyFiles:
             destination: wrapper
@@ -62,7 +62,7 @@ targets:
         product: SwiftProtobuf
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.farhad.aria.mac
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.farhad-shabani.aria.mac
         GENERATE_INFOPLIST_FILE: false
         INFOPLIST_FILE: Aria/Info.plist
         MARKETING_VERSION: "0.0.0"
@@ -78,7 +78,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: true
-        PRODUCT_BUNDLE_IDENTIFIER: com.farhad.aria.mac.tests
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.farhad-shabani.aria.mac.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Aria.app/Contents/MacOS/Aria
 
 schemes:
