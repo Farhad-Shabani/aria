@@ -249,6 +249,8 @@ enum ConfigCommand {
 enum PhoneCommand {
     /// Turn on phone pairing. It takes effect when the daemon restarts
     Enable,
+    /// Turn off phone pairing. Paired phones stay paired for next time
+    Disable,
 }
 
 #[derive(Subcommand)]
@@ -415,9 +417,7 @@ fn main() -> anyhow::Result<()> {
         Command::Wake {
             command: WakeCommand::Log,
         } => run_wake_log(),
-        Command::Phone {
-            command: PhoneCommand::Enable,
-        } => run_phone_enable(),
+        Command::Phone { command } => run_phone(command),
         Command::Service { command } => run_service(command),
         Command::Setup {
             command: None,
@@ -654,8 +654,10 @@ fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 
-fn run_phone_enable() -> anyhow::Result<()> {
-    let write = aria::setup::enable_phone_pairing().context("failed to turn on phone pairing")?;
+fn run_phone(command: PhoneCommand) -> anyhow::Result<()> {
+    let enabled = matches!(command, PhoneCommand::Enable);
+    let write =
+        aria::setup::set_phone_pairing(enabled).context("failed to switch phone pairing")?;
     println!("config       {}", config_write_message(&write));
     if write != ConfigWrite::Unchanged {
         println!("restart the daemon to apply: aria service stop, then aria service start");
@@ -2078,12 +2080,19 @@ mod tests {
     }
 
     #[test]
-    fn phone_enable_parses_as_the_app_sends_it() {
+    fn phone_commands_parse_as_the_app_sends_them() {
         let cli = Cli::try_parse_from(["aria", "phone", "enable"]).unwrap();
         assert!(matches!(
             cli.command,
             Command::Phone {
                 command: PhoneCommand::Enable
+            }
+        ));
+        let cli = Cli::try_parse_from(["aria", "phone", "disable"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Phone {
+                command: PhoneCommand::Disable
             }
         ));
     }

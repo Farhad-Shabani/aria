@@ -208,8 +208,8 @@ pub enum Grant {
     Waiting,
 }
 
-pub fn enable_phone_pairing() -> Result<ConfigWrite, SetupError> {
-    config_file::enable_phone_pairing(&config_path()?)
+pub fn set_phone_pairing(enabled: bool) -> Result<ConfigWrite, SetupError> {
+    config_file::set_phone_pairing(&config_path()?, enabled)
 }
 
 fn config_path() -> Result<PathBuf, SetupError> {

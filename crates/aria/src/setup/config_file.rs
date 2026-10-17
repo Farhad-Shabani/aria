@@ -72,8 +72,13 @@ impl Selections {
     }
 }
 
-pub(super) fn enable_phone_pairing(path: &Path) -> Result<ConfigWrite, SetupError> {
-    rewrite(path, |file| file.phone.enabled = Some(true))
+pub(super) fn set_phone_pairing(path: &Path, enabled: bool) -> Result<ConfigWrite, SetupError> {
+    // Off is the default, so a hand-written file that never mentions phone
+    // pairing is left alone, comments and all.
+    if read(path)?.phone.enabled.unwrap_or(false) == enabled {
+        return Ok(ConfigWrite::Unchanged);
+    }
+    rewrite(path, |file| file.phone.enabled = Some(enabled))
 }
 
 /// Comments don't survive a rewrite. So an unchanged result isn't written,
@@ -252,7 +257,7 @@ mod tests {
         )
         .unwrap();
 
-        enable_phone_pairing(&path).unwrap();
+        set_phone_pairing(&path, true).unwrap();
 
         assert_eq!(
             fs::read_to_string(path.with_extension("yaml.bak")).unwrap(),
@@ -297,9 +302,36 @@ mod tests {
         let path = dir.path().join("config.yaml");
         fs::write(&path, "").unwrap();
 
-        enable_phone_pairing(&path).unwrap();
+        set_phone_pairing(&path, true).unwrap();
 
         assert_eq!(read(&path).unwrap().phone.enabled, Some(true));
+    }
+
+    #[test]
+    fn turning_phone_pairing_off_when_unset_touches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let hand_written = "# mine\ntts:\n  backend: system\n";
+        fs::write(&path, hand_written).unwrap();
+
+        assert_eq!(
+            set_phone_pairing(&path, false).unwrap(),
+            ConfigWrite::Unchanged
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), hand_written);
+    }
+
+    #[test]
+    fn turning_phone_pairing_off_keeps_its_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "phone:\n  enabled: true\n  port: 9999\n").unwrap();
+
+        set_phone_pairing(&path, false).unwrap();
+
+        let file = read(&path).unwrap();
+        assert_eq!(file.phone.enabled, Some(false));
+        assert_eq!(file.phone.port, Some(9999));
     }
 
     #[test]
@@ -308,7 +340,7 @@ mod tests {
         let path = dir.path().join("config.yaml");
         fs::write(&path, "phone:\n  port: 9999\ntts:\n  rate: 1.5\n").unwrap();
 
-        enable_phone_pairing(&path).unwrap();
+        set_phone_pairing(&path, true).unwrap();
 
         let file = read(&path).unwrap();
         assert_eq!(file.phone.enabled, Some(true));
