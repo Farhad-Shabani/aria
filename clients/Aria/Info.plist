@@ -30,5 +30,17 @@
 	<string>Aria transcribes this Mac's system audio into local transcript files when you start listen mode.</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Farhad Shabani</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/Farhad-Shabani/aria/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ukMb+DsoVYqB20cGSoJrlcdDLsAVB5cO8q5Je4hCiWg=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

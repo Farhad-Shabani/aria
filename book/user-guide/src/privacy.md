@@ -30,6 +30,13 @@ read-only agent settings restrict edits; they do not make the agent offline.
 Starting a fresh Ask conversation does not delete earlier records. Clearing
 Aria's dictation history does not delete agent conversations.
 
+## Updates
+
+The Mac app checks GitHub for a new release about once a day. The check sends
+the request GitHub sees from any download, such as your IP address and the app
+version. Turn it off in **Settings → About** with
+**Automatically check for updates**.
+
 ## Files and folders
 
 [System-audio transcripts](./listen.md#transcript-files) are separate files with

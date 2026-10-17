@@ -88,6 +88,7 @@ struct AriaApp: App {
                         }
                     }
                     .keyboardShortcut(",")
+                    CheckForUpdatesButton(updates: appDelegate.updates)
                     Button {
                         appDelegate.setup.request()
                     } label: {
@@ -112,7 +113,7 @@ struct AriaApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(preferences: preferences, poller: poller)
+            SettingsView(preferences: preferences, poller: poller, updates: appDelegate.updates)
         }
         .windowResizability(.contentSize)
 
@@ -165,6 +166,20 @@ private struct MenuBarLabel: View {
                 guard state == .running else { return }
                 Task { await preferences.sync() }
             }
+    }
+}
+
+private struct CheckForUpdatesButton: View {
+    @ObservedObject var updates: UpdateController
+
+    var body: some View {
+        Button {
+            updates.checkForUpdates()
+        } label: {
+            Text("Check for Updates…")
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .disabled(!updates.canCheck)
     }
 }
 

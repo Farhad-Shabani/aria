@@ -33,6 +33,9 @@ packages:
   swift-protobuf:
     url: https://github.com/apple/swift-protobuf.git
     from: 1.38.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle.git
+    from: 2.10.0
 
 targets:
   Aria:
@@ -60,6 +63,7 @@ targets:
         product: GRPCProtobuf
       - package: swift-protobuf
         product: SwiftProtobuf
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.farhad-shabani.aria.mac

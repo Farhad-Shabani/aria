@@ -24,6 +24,12 @@ fi
 find "$app/Contents" -name '*.dylib' -not -path '*/Resources/*' | while read -r library; do
     sign "$library"
 done
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+sign "$sparkle/Versions/B/XPCServices/Installer.xpc"
+sign --preserve-metadata=entitlements "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+sign "$sparkle/Versions/B/Autoupdate"
+sign "$sparkle/Versions/B/Updater.app"
+sign "$sparkle"
 # Without the entitlement, recording is silent and macOS never asks. The
 # app needs it too: a daemon the app spawns itself is charged to the app.
 entitlements="$(dirname "${BASH_SOURCE[0]}")/aria.entitlements"

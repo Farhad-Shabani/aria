@@ -179,7 +179,7 @@ app: swift-project
     cargo build --locked --release --bin aria
     cd clients && xcodebuild -project Aria.xcodeproj -scheme Aria \
         -configuration Release -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
-        CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} -quiet build
+        CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} CURRENT_PROJECT_VERSION={{ version }} -quiet build
     scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
     scripts/macos/check-minos.sh clients/build/mac/Build/Products/Release/Aria.app
 
