@@ -78,13 +78,6 @@ impl MicrophoneBuilder {
         self.load()?.open()
     }
 
-    pub fn open_with_wake_word<W>(self, detector: W) -> Result<(Microphone, WakeWordMonitor)>
-    where
-        W: WakeWordDetector + Send + 'static,
-    {
-        self.load()?.open_with_wake_word(detector)
-    }
-
     pub fn load(self) -> Result<PreparedMicrophone> {
         // Refused before any directory or model work, so a bad maximum never
         // hands out a microphone.

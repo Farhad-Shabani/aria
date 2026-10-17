@@ -7,7 +7,7 @@ use std::sync::Arc;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::Layered;
 
-use super::super::capture::{CaptureBackend, CaptureLoadError, PreparedCapture};
+use super::super::capture::{CaptureBackend, PreparedCapture};
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
@@ -130,17 +130,6 @@ impl From<&DictationInitializationError> for RpcErrorCode {
             DictationInitializationError::Capture(_) => Self::CaptureFailed,
             DictationInitializationError::Transcription(_) => Self::TranscriptionFailed,
             DictationInitializationError::Delivery(_) => Self::DeliveryFailed,
-        }
-    }
-}
-
-impl From<CaptureLoadError> for DictationInitializationError {
-    fn from(error: CaptureLoadError) -> Self {
-        match error {
-            CaptureLoadError::Config(error) => Self::Config(error),
-            CaptureLoadError::Capture(error) => Self::Capture(error),
-            CaptureLoadError::WakeConfiguration(error) => Self::WakeConfiguration(error),
-            CaptureLoadError::WakeModel(error) => Self::WakeModel(error),
         }
     }
 }

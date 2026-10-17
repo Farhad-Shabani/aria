@@ -9,22 +9,8 @@ use crate::audio::{
 };
 use crate::config::{CaptureConfig, ConfigError, WakeConfig};
 
+use super::DictationInitializationError;
 use super::wake::WakeDetector;
-
-#[derive(Debug, thiserror::Error)]
-pub(in crate::daemon) enum CaptureLoadError {
-    #[error("failed to load dictation configuration")]
-    Config(#[source] ConfigError),
-
-    #[error("failed to initialize audio capture")]
-    Capture(#[source] CaptureError),
-
-    #[error("failed to configure wake-word detection")]
-    WakeConfiguration(#[source] aria_wake::ConfigError),
-
-    #[error("failed to load the wake-word model")]
-    WakeModel(#[source] aria_wake::Error),
-}
 
 pub(in crate::daemon) enum CaptureBackend {
     Microphone(Microphone),
@@ -60,17 +46,17 @@ impl PreparedCapture {
         wake: WakeConfig,
         spool_dir: &Path,
         recording_timeout: Duration,
-    ) -> Result<Self, CaptureLoadError> {
+    ) -> Result<Self, DictationInitializationError> {
         match capture {
             CaptureConfig::WavFile { path, pace } => {
                 if matches!(wake, WakeConfig::Enabled { .. }) {
-                    return Err(CaptureLoadError::Config(
+                    return Err(DictationInitializationError::Config(
                         ConfigError::WakeRequiresMicrophone,
                     ));
                 }
                 WavReplayCapture::new(spool_dir, recording_timeout, &path, pace)
                     .map(Self::Replay)
-                    .map_err(CaptureLoadError::Capture)
+                    .map_err(DictationInitializationError::Capture)
             }
             CaptureConfig::Microphone => {
                 let wake = match wake {
@@ -85,7 +71,7 @@ impl PreparedCapture {
                     .spool_dir(spool_dir)
                     .maximum_duration(recording_timeout)
                     .load()
-                    .map_err(CaptureLoadError::Capture)?;
+                    .map_err(DictationInitializationError::Capture)?;
                 Ok(Self::Microphone {
                     microphone: Box::new(microphone),
                     wake,
@@ -138,7 +124,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            Err(CaptureLoadError::Config(
+            Err(DictationInitializationError::Config(
                 ConfigError::WakeRequiresMicrophone
             ))
         ));

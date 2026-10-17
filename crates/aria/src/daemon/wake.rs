@@ -19,7 +19,7 @@ use crate::dictation::{
 };
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 
-use super::capture::CaptureLoadError;
+use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;
 use super::dictation::{DictationCallError, DictationHandle};
 use super::tasks::Supervised;
@@ -36,21 +36,21 @@ impl WakeDetector {
         backend: WakeBackend,
         classifier: PathBuf,
         threshold: f32,
-    ) -> Result<Self, CaptureLoadError> {
+    ) -> Result<Self, DictationInitializationError> {
         match backend {
             WakeBackend::OpenWakeWord => {
                 let config = OpenWakeWordConfig::new(classifier, threshold)
-                    .map_err(CaptureLoadError::WakeConfiguration)?;
+                    .map_err(DictationInitializationError::WakeConfiguration)?;
                 OpenWakeWord::load_from(&config)
                     .map(|detector| Self::OpenWakeWord(Box::new(detector)))
-                    .map_err(CaptureLoadError::WakeModel)
+                    .map_err(DictationInitializationError::WakeModel)
             }
             WakeBackend::LiveKit => {
                 let config = LiveKitConfig::new(classifier, threshold)
-                    .map_err(CaptureLoadError::WakeConfiguration)?;
+                    .map_err(DictationInitializationError::WakeConfiguration)?;
                 LiveKitWakeWord::load_from(&config)
                     .map(|detector| Self::LiveKit(Box::new(detector)))
-                    .map_err(CaptureLoadError::WakeModel)
+                    .map_err(DictationInitializationError::WakeModel)
             }
         }
     }
