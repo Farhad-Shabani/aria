@@ -36,7 +36,7 @@ tracing         = { workspace = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cpal   = { version = "0.18", optional = true }
 hound  = { workspace = true }
-rtrb   = { version = "0.3", optional = true }
+rtrb   = { version = "0.4", optional = true }
 rubato = { workspace = true }
 
 rustix   = { workspace = true, features = [ "fs", "process" ], optional = true }

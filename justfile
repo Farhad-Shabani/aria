@@ -47,9 +47,10 @@ rust_native_features := if os() == "macos" { "--all-features" } else { "" }
 # Check the complete Rust workspace for the native host
 rust-native: rust-format rust-deps rust-lint-all rust-test-all
 
-# Check dependency usage and unlinked Rust source files
+# Check dependency usage, unlinked Rust files, advisories, and licenses
 rust-deps:
     cargo shear --locked --deny-warnings
+    cargo deny --locked check
 
 # Check Rust and TOML formatting
 rust-format:

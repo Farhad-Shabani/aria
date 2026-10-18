@@ -76,7 +76,7 @@ aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
 [target.'cfg(target_os = "macos")'.dependencies]
 aria-tts              = { workspace = true, features = [ "qwen-accelerate" ] }
 cidre                 = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
-rtrb                  = "0.3"
+rtrb                  = "0.4"
 objc2                 = "0.6"
 objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }

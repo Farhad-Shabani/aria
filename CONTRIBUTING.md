@@ -16,7 +16,8 @@ change, open an issue first and agree on the scope.
 - Run `just check` before you push. If you changed `clients/`, also run
   `just swift-check` on macOS.
 - The checks need [just](https://just.systems), [Taplo](https://taplo.tamasfe.dev),
-  [cargo-shear](https://github.com/Boshen/cargo-shear), and
+  [cargo-shear](https://github.com/Boshen/cargo-shear),
+  [cargo-deny](https://github.com/EmbarkStudios/cargo-deny), and
   [uv](https://docs.astral.sh/uv/). The app checks need Xcode and
   [XcodeGen](https://github.com/yonaskolb/XcodeGen). On Linux, install the
   system packages that [the CI workflow](.github/workflows/check.yml) lists.
