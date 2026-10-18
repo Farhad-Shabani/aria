@@ -10,6 +10,8 @@ enum PillState: Equatable {
     /// The press delivered: where, and how many words.
     case delivered(DeliveryOutcome, words: Int)
     case cancelled
+    /// Focus moved, so typing stopped. Not a failure.
+    case interrupted
     /// A press that failed, in the words the person needs.
     case failed(String)
     /// An ask in flight: `claude · reading`, and since when.
@@ -27,6 +29,8 @@ enum PillState: Equatable {
         case .delivering: self = .delivering
         case .delivered: self = .delivered(DeliveryOutcome(event.outcome), words: Int(event.wordCount))
         case .cancelled: self = .cancelled
+        case .failed where [.deliveryTargetChanged, .deliveryInterrupted].contains(event.errorCode):
+            self = .interrupted
         case .failed: self = .failed(event.errorCode.dictationMessage)
         // A segment lands while the speaker is still talking, so it says
         // nothing about the press.
@@ -62,6 +66,7 @@ enum PillState: Equatable {
         case .recording, .transcribing, .delivering, .asking: return nil
         case .delivered, .replied: return .milliseconds(1200)
         case .cancelled: return .milliseconds(800)
+        case .interrupted: return .seconds(2)
         // Long enough to read, and the next press clears it anyway.
         case .failed, .noReply: return .seconds(5)
         }
@@ -75,6 +80,8 @@ enum PillState: Equatable {
             return Color(red: 0.90, green: 0.75, blue: 0.48)
         case .delivered, .replied:
             return Color(red: 0.48, green: 0.80, blue: 0.59)
+        case .interrupted:
+            return Color(white: 0.72)
         }
     }
 
@@ -83,7 +90,8 @@ enum PillState: Equatable {
     var motion: Motion {
         switch self {
         case .asking, .delivering: return .breathe
-        case .recording, .transcribing, .delivered, .cancelled, .failed, .replied, .noReply: return .still
+        case .recording, .transcribing, .delivered, .cancelled, .interrupted, .failed, .replied, .noReply:
+            return .still
         }
     }
 
@@ -97,6 +105,7 @@ enum PillState: Equatable {
             let count = words == 1 ? "1 word" : "\(words) words"
             return outcome == .copied ? "copied · \(count)" : count
         case .cancelled: return "cancelled"
+        case .interrupted: return "stopped · focus moved"
         case .failed(let message): return message
         case .asking(let label, _): return label
         case .replied(let agent): return "\(agent) · replied"
@@ -138,7 +147,6 @@ extension Aria_Daemon_V1_ErrorCode {
         case .noSpeech: return "No speech detected"
         case .captureFailed: return "Recording failed — check your mic"
         case .transcriptionFailed: return "Transcription failed"
-        case .deliveryTargetChanged: return "The target changed — insertion stopped"
         case .deliveryFailed, .deliveryTimeout: return "The transcript could not be delivered"
         case .recordingTimeout, .overallTimeout: return "The press ran past its time limit"
         default: return "Dictation failed"
@@ -387,6 +395,8 @@ private struct Mark: View {
             Glyph(name: "checkmark", tint: state.tint)
         case .cancelled:
             Glyph(name: "xmark", tint: state.tint)
+        case .interrupted:
+            Glyph(name: "hand.raised", tint: state.tint)
         case .failed, .noReply, .asking:
             // Keyed on the motion: a new motion is a new dot with its own
             // loop, while a label change under the same motion keeps this one.

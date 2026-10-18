@@ -32,5 +32,6 @@ final class MenuBarStateTests: XCTestCase {
     func test_idleIsReady() {
         XCTAssertEqual(state(), .ready)
         XCTAssertEqual(state(pill: .cancelled), .ready)
+        XCTAssertEqual(state(pill: .interrupted), .ready)
     }
 }

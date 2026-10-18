@@ -122,6 +122,9 @@ pub(crate) enum DictationError {
     #[error("text delivery target changed before insertion")]
     DeliveryTargetChanged,
 
+    #[error("typing stopped partway because focus or the caret moved")]
+    DeliveryInterrupted,
+
     #[error("audio capture failed: {0}")]
     Capture(#[source] crate::audio::CaptureError),
 
@@ -181,6 +184,7 @@ impl From<&DictationError> for RpcErrorCode {
             DictationError::RecordingTimeout(_) => Self::RecordingTimeout,
             DictationError::DeliveryTimeout(_) => Self::DeliveryTimeout,
             DictationError::DeliveryTargetChanged => Self::DeliveryTargetChanged,
+            DictationError::DeliveryInterrupted => Self::DeliveryInterrupted,
             DictationError::Capture(_) => Self::CaptureFailed,
             DictationError::NoSpeech => Self::NoSpeech,
             DictationError::Transcription(_) => Self::TranscriptionFailed,

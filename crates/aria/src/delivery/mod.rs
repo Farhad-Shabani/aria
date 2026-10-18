@@ -129,7 +129,7 @@ pub enum DeliveryError {
     #[error("text delivery could not identify an available destination")]
     TargetUnavailable,
 
-    #[error("the application selected for insertion is no longer frontmost")]
+    #[error("the application, field, or caret position selected for insertion changed")]
     TargetChanged,
 
     #[error("insertion is not available on {}", std::env::consts::OS)]

@@ -104,7 +104,9 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         RpcErrorCode::ListenPermissionDenied | RpcErrorCode::PermissionDenied => {
             tonic::Code::PermissionDenied
         }
-        RpcErrorCode::DeliveryTargetChanged => tonic::Code::Aborted,
+        RpcErrorCode::DeliveryTargetChanged | RpcErrorCode::DeliveryInterrupted => {
+            tonic::Code::Aborted
+        }
         RpcErrorCode::Internal
         | RpcErrorCode::CaptureFailed
         | RpcErrorCode::TranscriptionFailed
@@ -1583,6 +1585,7 @@ impl From<RpcErrorCode> for i32 {
             RpcErrorCode::ShuttingDown => wire::ErrorCode::ShuttingDown,
             RpcErrorCode::PayloadTooLarge => wire::ErrorCode::PayloadTooLarge,
             RpcErrorCode::PermissionDenied => wire::ErrorCode::PermissionDenied,
+            RpcErrorCode::DurabilityUnconfirmed => wire::ErrorCode::DurabilityUnconfirmed,
             RpcErrorCode::OverallTimeout => wire::ErrorCode::OverallTimeout,
             RpcErrorCode::RecordingTimeout => wire::ErrorCode::RecordingTimeout,
             RpcErrorCode::DeliveryTimeout => wire::ErrorCode::DeliveryTimeout,
@@ -1590,8 +1593,8 @@ impl From<RpcErrorCode> for i32 {
             RpcErrorCode::NoSpeech => wire::ErrorCode::NoSpeech,
             RpcErrorCode::TranscriptionFailed => wire::ErrorCode::TranscriptionFailed,
             RpcErrorCode::DeliveryFailed => wire::ErrorCode::DeliveryFailed,
-            RpcErrorCode::DurabilityUnconfirmed => wire::ErrorCode::DurabilityUnconfirmed,
             RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
+            RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
             RpcErrorCode::SynthesisFailed => wire::ErrorCode::SynthesisFailed,
             RpcErrorCode::PlaybackFailed => wire::ErrorCode::PlaybackFailed,
             RpcErrorCode::SpeechTimeout => wire::ErrorCode::SpeechTimeout,
@@ -1632,6 +1635,7 @@ impl TryFrom<i32> for RpcErrorCode {
             Ok(wire::ErrorCode::ShuttingDown) => Self::ShuttingDown,
             Ok(wire::ErrorCode::PayloadTooLarge) => Self::PayloadTooLarge,
             Ok(wire::ErrorCode::PermissionDenied) => Self::PermissionDenied,
+            Ok(wire::ErrorCode::DurabilityUnconfirmed) => Self::DurabilityUnconfirmed,
             Ok(wire::ErrorCode::OverallTimeout) => Self::OverallTimeout,
             Ok(wire::ErrorCode::RecordingTimeout) => Self::RecordingTimeout,
             Ok(wire::ErrorCode::DeliveryTimeout) => Self::DeliveryTimeout,
@@ -1639,8 +1643,8 @@ impl TryFrom<i32> for RpcErrorCode {
             Ok(wire::ErrorCode::NoSpeech) => Self::NoSpeech,
             Ok(wire::ErrorCode::TranscriptionFailed) => Self::TranscriptionFailed,
             Ok(wire::ErrorCode::DeliveryFailed) => Self::DeliveryFailed,
-            Ok(wire::ErrorCode::DurabilityUnconfirmed) => Self::DurabilityUnconfirmed,
             Ok(wire::ErrorCode::DeliveryTargetChanged) => Self::DeliveryTargetChanged,
+            Ok(wire::ErrorCode::DeliveryInterrupted) => Self::DeliveryInterrupted,
             Ok(wire::ErrorCode::SynthesisFailed) => Self::SynthesisFailed,
             Ok(wire::ErrorCode::PlaybackFailed) => Self::PlaybackFailed,
             Ok(wire::ErrorCode::SpeechTimeout) => Self::SpeechTimeout,
@@ -1764,6 +1768,7 @@ mod tests {
             DictationError::RecordingTimeout(Duration::ZERO),
             DictationError::DeliveryTimeout(Duration::ZERO),
             DictationError::DeliveryTargetChanged,
+            DictationError::DeliveryInterrupted,
             DictationError::NoSpeech,
         ];
 

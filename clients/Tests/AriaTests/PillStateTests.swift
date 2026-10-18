@@ -87,11 +87,15 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState(event), .delivered(.unknown, words: 1))
     }
 
-    func test_targetChangeDoesNotClaimEarlierTextWasUndelivered() {
+    func test_aFocusChangeEndsCalmlyWhetherOrNotTextLanded() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .failed
         event.errorCode = .deliveryTargetChanged
-        XCTAssertEqual(PillState(event), .failed("The target changed — insertion stopped"))
+        XCTAssertEqual(PillState(event), .interrupted)
+        event.errorCode = .deliveryInterrupted
+        XCTAssertEqual(PillState(event), .interrupted)
+        XCTAssertEqual(PillState(event)?.label, "stopped · focus moved")
+        XCTAssertEqual(PillState.interrupted.life, .seconds(2))
     }
 
     func test_aSegmentDoesNotChangeThePill() {
