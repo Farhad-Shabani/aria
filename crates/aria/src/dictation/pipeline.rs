@@ -5,6 +5,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Embedder, Heard, HeardUpdate};
 use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::{self, Layer, Layered};
+use aria_kit::voice_activity::{SileroVad, VoiceActivityDetector};
 
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
 use crate::delivery::{DeliveryOutcome, Placement};
@@ -14,6 +15,7 @@ use crate::transcription::{
 };
 
 use super::Meter;
+use super::speech::{PressSpeech, SpeechTally};
 use super::{
     CaptionSnapshot, Corrector, DeliveryMode, DictationError, DictationEventEmitter,
     DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, StopMode,
@@ -22,13 +24,16 @@ use super::{
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
-pub(crate) struct DictationPipeline<C, T, M: Mode, E, S, L = ()> {
+pub(crate) struct DictationPipeline<C, T, M: Mode, E, V, S, L = ()> {
     capture: C,
     transcription: Transcription<T, M>,
     /// Whose voice each segment is in. One reader across presses, so a
     /// voice keeps its label from one dictation to the next. Locked: presses
     /// come one at a time, but not from one thread.
     reader: Mutex<SegmentReader<E>>,
+    /// Judges whether a press held speech. `None` trusts every press.
+    /// Locked for the same reason as the reader.
+    speech: Mutex<Option<SpeechTally<V>>>,
     /// Locked for the same reason as the reader.
     sinks: Mutex<S>,
     cleanup: bool,
@@ -36,7 +41,7 @@ pub(crate) struct DictationPipeline<C, T, M: Mode, E, S, L = ()> {
     layers: L,
 }
 
-impl<C, T, M: Mode, E, S> DictationPipeline<C, T, M, E, S> {
+impl<C, T, M: Mode, E, S> DictationPipeline<C, T, M, E, SileroVad, S> {
     pub(crate) fn new(
         capture: C,
         transcription: Transcription<T, M>,
@@ -47,6 +52,7 @@ impl<C, T, M: Mode, E, S> DictationPipeline<C, T, M, E, S> {
             capture,
             transcription,
             reader: Mutex::new(reader),
+            speech: Mutex::new(None),
             sinks: Mutex::new(sinks),
             cleanup: false,
             backtrack: false,
@@ -55,15 +61,16 @@ impl<C, T, M: Mode, E, S> DictationPipeline<C, T, M, E, S> {
     }
 }
 
-impl<C, T, M: Mode, E, S, L: Layer> DictationPipeline<C, T, M, E, S, L> {
+impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
     pub(crate) fn with<N: Layer>(
         self,
         layer: N,
-    ) -> DictationPipeline<C, T, M, E, S, Layered<N, L>> {
+    ) -> DictationPipeline<C, T, M, E, V, S, Layered<N, L>> {
         DictationPipeline {
             capture: self.capture,
             transcription: self.transcription,
             reader: self.reader,
+            speech: self.speech,
             sinks: self.sinks,
             cleanup: self.cleanup,
             backtrack: self.backtrack,
@@ -81,8 +88,32 @@ impl<C, T, M: Mode, E, S, L: Layer> DictationPipeline<C, T, M, E, S, L> {
         self
     }
 
+    /// Types none of a press's words until `detector` hears speech in it.
+    /// Without a detector, every press counts as speech.
+    pub(crate) fn hearing_speech<W: VoiceActivityDetector>(
+        self,
+        detector: Option<W>,
+    ) -> DictationPipeline<C, T, M, E, W, S, L> {
+        DictationPipeline {
+            capture: self.capture,
+            transcription: self.transcription,
+            reader: self.reader,
+            speech: Mutex::new(detector.map(SpeechTally::new)),
+            sinks: self.sinks,
+            cleanup: self.cleanup,
+            backtrack: self.backtrack,
+            layers: self.layers,
+        }
+    }
+
     fn reader(&self) -> MutexGuard<'_, SegmentReader<E>> {
         self.reader
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn speech(&self) -> MutexGuard<'_, Option<SpeechTally<V>>> {
+        self.speech
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -138,7 +169,7 @@ impl<C, T, M: Mode, E, S, L: Layer> DictationPipeline<C, T, M, E, S, L> {
     }
 }
 
-impl<C, T, M: Mode, E, S, L: Layer> DictationPipeline<C, T, M, E, S, L>
+impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L>
 where
     E: aria_kit::speaker::Embedder,
 {
@@ -149,7 +180,9 @@ where
     }
 }
 
-impl<C, T: Transcriber, M: Mode, E: Embedder, S, L: Layer> DictationPipeline<C, T, M, E, S, L> {
+impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: Layer>
+    DictationPipeline<C, T, M, E, V, S, L>
+{
     /// Transcribes caller-provided audio with the shared engine and speaker filter.
     /// Returns text without publishing it to sinks.
     pub(crate) fn transcribe(
@@ -162,6 +195,9 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, S, L: Layer> DictationPipeline<C, 
     ) -> Result<Transcript, DictationError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
+        }
+        if !self.holds_speech(recording) {
+            return Err(DictationError::NoSpeech);
         }
         let mut reader = self.reader();
         reader.rewind();
@@ -181,9 +217,17 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, S, L: Layer> DictationPipeline<C, 
             .and_then(|transcript| self.finalize(transcript, corrector, cancel))
             .map_err(DictationError::from)
     }
+
+    /// Whether a recording the caller already holds has speech in it.
+    fn holds_speech(&self, recording: &mut RecordingReader) -> bool {
+        let mut tally = self.speech();
+        let mut speech = PressSpeech::new(tally.as_mut(), recording);
+        speech.hear_rest();
+        speech.heard()
+    }
 }
 
-impl<C, T, M, E, S, L: Layer> DictationPipeline<C, T, M, E, S, L>
+impl<C, T, M, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L>
 where
     C: AudioCapture,
     T: Transcriber,
@@ -191,6 +235,7 @@ where
     E: Embedder,
     S: TranscriptSink,
     S::Error: Into<DictationError>,
+    V: VoiceActivityDetector,
 {
     pub(crate) fn execute(
         &self,
@@ -339,6 +384,8 @@ where
         reader
             .labeler_mut()
             .set_only_own_voice(settings.own_voice_only);
+        let mut tally = self.speech();
+        let mut speech = PressSpeech::new(tally.as_mut(), recording);
         let mut operation = self.open(settings, control).map_err(started)?;
         // Complete delivery filters audio before decoding. Streaming instead
         // checks the predicted voice for each finalized segment.
@@ -346,11 +393,19 @@ where
             DeliveryMode::Complete => own_voice_recording(recording, reader.labeler_mut())?,
             DeliveryMode::Streaming => None,
         };
+        if gated.is_some() {
+            // Filtering read the whole press, so it can be judged now.
+            speech.hear_rest();
+        }
         let recording = gated.as_mut().unwrap_or(recording);
         let mut published = Published::new(settings, control, events, started_at);
         let previews = (published.caption.is_some() || published.streaming)
             && M::INCREMENTAL
             && !settings.own_voice_only;
+        // Words finalized before the press held speech are the decoder
+        // guessing at silence. The operation's transcript still carries them.
+        let mut guessed = false;
+        let mut trusted = Vec::new();
         loop {
             let update = if previews {
                 reader.next_update(&mut operation, recording)
@@ -360,8 +415,12 @@ where
                     .map(|heard| heard.map(HeardUpdate::Finalized))
             }
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
+            speech.hear_through(recording.held_to());
             match update {
+                Some(HeardUpdate::Finalized(_)) if !speech.heard() => guessed = true,
+                Some(HeardUpdate::Provisional(_)) if !speech.heard() => {}
                 Some(HeardUpdate::Finalized(heard)) => {
+                    trusted.push(heard.segment.as_str().to_owned());
                     let text = corrected_text(heard.segment.as_str(), corrector, self.cleanup);
                     published.segment(heard, text.as_deref(), sinks)?;
                 }
@@ -371,9 +430,18 @@ where
                 None => break,
             }
         }
+        speech.hear_rest();
+        if !speech.heard() {
+            return Err(started(TranscriptionError::NoSpeech));
+        }
         let transcript = operation
             .finish(recording)
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
+        let transcript = if guessed {
+            Transcript::new(trusted.join(" ")).map_err(started)?
+        } else {
+            transcript
+        };
         let transcript = match settings.delivery_mode {
             DeliveryMode::Complete => {
                 let control = Arc::clone(control);
@@ -911,6 +979,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::dictation::speech::tests::Loud;
 
     struct Answering(&'static str);
 
@@ -1193,7 +1262,14 @@ mod tests {
 
     fn revising<S>(
         sinks: S,
-    ) -> DictationPipeline<Pushed, Revising, Streaming, aria_speaker::wespeaker::WeSpeaker, S> {
+    ) -> DictationPipeline<
+        Pushed,
+        Revising,
+        Streaming,
+        aria_speaker::wespeaker::WeSpeaker,
+        SileroVad,
+        S,
+    > {
         let capture = Arc::new(Mutex::new(None));
         DictationPipeline::new(
             Pushed(Arc::clone(&capture)),
@@ -2742,6 +2818,235 @@ mod tests {
 
         assert!(matches!(result, Err(DictationError::NoSpeech)));
         assert_eq!(*log.lock().unwrap(), ["prepare:Insert"]);
+    }
+
+    /// One press through a pipeline that judges speech with `detector`, and
+    /// what reached the sinks.
+    fn press<C: AudioCapture, T: Transcriber, M: Mode, V: VoiceActivityDetector>(
+        capture: C,
+        transcription: Transcription<T, M>,
+        detector: Option<V>,
+        delivery: DeliveryMode,
+    ) -> (Result<DictationResult, DictationError>, Vec<String>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let pipeline = DictationPipeline::new(
+            capture,
+            transcription,
+            unlabeled(),
+            (
+                RecordingSink {
+                    log: Arc::clone(&log),
+                },
+                Cursor::new(RecordingDelivery {
+                    log: Arc::clone(&log),
+                    fail: false,
+                }),
+            ),
+        )
+        .hearing_speech(detector);
+        let result = pipeline.execute(
+            settings(delivery, OutputMode::Insert),
+            &ExecutionControl::for_test(StopMode::Manual),
+            &DictationEventEmitter::unsubscribed(),
+            None,
+        );
+        let log = log.lock().unwrap().clone();
+        (result, log)
+    }
+
+    fn delivered(log: &[String]) -> String {
+        log.iter()
+            .filter_map(|entry| entry.strip_prefix("deliver:"))
+            .collect()
+    }
+
+    /// A decoder can name a word in a press nobody spoke into, whichever
+    /// way it reads the press.
+    #[test]
+    fn a_press_without_speech_types_nothing() {
+        let gate = crate::speaker::speech_gate;
+        let agreement =
+            || Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("Mm-hmm."));
+        let presses = [
+            press(capture().1, agreement(), gate(), DeliveryMode::Streaming),
+            press(capture().1, agreement(), gate(), DeliveryMode::Complete),
+            press(
+                capture().1,
+                Transcription::complete_samples(Answering("Mm-hmm.")),
+                gate(),
+                DeliveryMode::Complete,
+            ),
+            press(
+                capture().1,
+                Transcription::complete_wav(Answering("Mm-hmm.")),
+                gate(),
+                DeliveryMode::Complete,
+            ),
+        ];
+
+        for (index, (result, log)) in presses.into_iter().enumerate() {
+            assert!(
+                matches!(result, Err(DictationError::NoSpeech)),
+                "press {index}"
+            );
+            assert_eq!(log, ["prepare:Insert"], "press {index}");
+        }
+    }
+
+    /// The speech check must hear the press however the engine reads it: a
+    /// whole-recording WAV engine keeps none of the samples it decodes.
+    #[test]
+    fn a_press_with_speech_types_its_words() {
+        let agreement =
+            || Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello"));
+        let presses = [
+            press(
+                capture().1,
+                agreement(),
+                Some(Loud),
+                DeliveryMode::Streaming,
+            ),
+            press(capture().1, agreement(), Some(Loud), DeliveryMode::Complete),
+            press(
+                capture().1,
+                Transcription::complete_samples(Answering("hello")),
+                Some(Loud),
+                DeliveryMode::Complete,
+            ),
+            press(
+                capture().1,
+                Transcription::complete_wav(Answering("hello")),
+                Some(Loud),
+                DeliveryMode::Complete,
+            ),
+        ];
+
+        for (index, (result, log)) in presses.into_iter().enumerate() {
+            assert_eq!(
+                result.expect("the press is heard").text,
+                "hello",
+                "press {index}"
+            );
+            assert_eq!(delivered(&log), "hello", "press {index}");
+        }
+    }
+
+    /// Silence, then speech. The decoder settles on a word during the
+    /// silence, then hears the speech.
+    struct GuessingThenHearing {
+        capture: Arc<Mutex<Option<RecordingWriter>>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Transcriber for GuessingThenHearing {
+        fn validate_language(
+            &self,
+            _language: &Language,
+            _cancel: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
+            Ok(())
+        }
+
+        fn transcribe_with(
+            &self,
+            _audio: TranscriptionAudio<'_>,
+            _language: &Language,
+            _cancel: &CancelToken,
+        ) -> Result<Hypothesis, TranscriptionError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut capture = self.capture.lock().unwrap();
+            match call {
+                0 => capture.as_mut().unwrap().push(&[0.0; 1600]),
+                1 => capture.as_mut().unwrap().push(&[0.5; 8000]),
+                2 => capture.as_mut().unwrap().push(&[0.5; 1600]),
+                _ => {
+                    if let Some(capture) = capture.take() {
+                        capture.finish();
+                    }
+                }
+            }
+            Ok(Hypothesis::new(if call < 2 {
+                "Mm-hmm."
+            } else {
+                "Mm-hmm. hello"
+            }))
+        }
+    }
+
+    /// Opens on silence, then lets `GuessingThenHearing` feed the rest.
+    struct Silent(Arc<Mutex<Option<RecordingWriter>>>);
+
+    impl AudioCapture for Silent {
+        fn start(
+            &self,
+            _mode: RecordingMode,
+            _stop: StopSignal,
+        ) -> Result<RecordingReader, CaptureError> {
+            let (recording, mut push) = Recording::open();
+            push.push(&[0.0; 8000]);
+            *self.0.lock().unwrap() = Some(push);
+            Ok(recording)
+        }
+    }
+
+    #[test]
+    fn words_guessed_before_the_speech_are_not_delivered() {
+        for delivery in [DeliveryMode::Streaming, DeliveryMode::Complete] {
+            let writer = Arc::new(Mutex::new(None));
+            let (result, log) = press(
+                Silent(Arc::clone(&writer)),
+                Transcription::agreement(
+                    Cadence::from_millis(100, 20_000),
+                    GuessingThenHearing {
+                        capture: writer,
+                        calls: std::sync::atomic::AtomicUsize::new(0),
+                    },
+                ),
+                Some(Loud),
+                delivery,
+            );
+
+            assert_eq!(
+                result.expect("the press is heard").text,
+                "hello",
+                "{delivery:?}"
+            );
+            assert_eq!(delivered(&log), "hello", "{delivery:?}");
+        }
+    }
+
+    #[test]
+    fn a_relayed_recording_without_speech_is_refused() {
+        let (directory, capture) = capture();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete_samples(Answering("Mm-hmm.")),
+            unlabeled(),
+            (),
+        )
+        .hearing_speech(Some(Loud));
+        let mut silent =
+            RecordingReader::from_samples_in(directory.path(), &[0.0; 16_000]).unwrap();
+        let mut spoken =
+            RecordingReader::from_samples_in(directory.path(), &[0.5; 16_000]).unwrap();
+
+        let refused = pipeline.transcribe(
+            &mut silent,
+            &Language::Automatic,
+            false,
+            None,
+            &CancelToken::never(),
+        );
+        let heard = pipeline.transcribe(
+            &mut spoken,
+            &Language::Automatic,
+            false,
+            None,
+            &CancelToken::never(),
+        );
+
+        assert!(matches!(refused, Err(DictationError::NoSpeech)));
+        assert_eq!(heard.expect("the recording is heard").as_str(), "Mm-hmm.");
     }
 
     /// The pill reads where the text went off this event, so the outcome

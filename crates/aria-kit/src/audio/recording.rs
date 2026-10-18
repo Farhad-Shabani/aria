@@ -160,6 +160,17 @@ struct Queue {
 }
 
 impl State {
+    /// Opens a queue for one more reader.
+    fn enrol(&mut self) -> u64 {
+        let id = self.next_queue;
+        self.next_queue += 1;
+        self.queues.push(Queue {
+            id,
+            pending: Vec::new(),
+        });
+        id
+    }
+
     /// One reader's queue. A live `RecordingReader` always has one — its
     /// `Drop` is what retires it — so a missing queue is a bug rather than an
     /// ending.
@@ -291,12 +302,7 @@ impl Recording {
     /// shifts every position that reader ever reports.
     fn enrol(&self) -> (u64, u64) {
         let mut state = self.lock();
-        let id = state.next_queue;
-        state.next_queue += 1;
-        state.queues.push(Queue {
-            id,
-            pending: Vec::new(),
-        });
+        let id = state.enrol();
         (id, state.appended as u64)
     }
 
@@ -437,6 +443,32 @@ impl RecordingReader {
             recording: Arc::clone(&self.recording),
             samples: Vec::new(),
             offset: from,
+            keep_samples: true,
+            queue,
+            owns_outcome: false,
+            outcome: None,
+        }
+    }
+
+    /// A fork that opens where this reader's window opens, not where capture
+    /// stands. It copies what this reader holds and what it has yet to take,
+    /// so audio written before the fork is not lost to it.
+    pub fn fork_window(&mut self) -> Self {
+        // Taking this reader's queue and opening the fork's under one lock
+        // leaves no write between them for the fork to miss.
+        let mut state = self.recording.lock();
+        let pending = std::mem::take(&mut state.queue(self.queue).pending);
+        let queue = state.enrol();
+        drop(state);
+        if self.keep_samples {
+            self.samples.extend(pending);
+        } else {
+            self.offset += pending.len() as u64;
+        }
+        Self {
+            recording: Arc::clone(&self.recording),
+            samples: self.samples.clone(),
+            offset: self.offset,
             keep_samples: true,
             queue,
             owns_outcome: false,
@@ -686,6 +718,38 @@ mod tests {
             3,
             "and still counts from the first sample ever"
         );
+    }
+
+    #[test]
+    fn a_window_fork_keeps_audio_written_before_it() {
+        let (mut recording, mut capture) = Recording::open();
+        capture.push(&[0.1, 0.2]);
+        let mut forked = recording.fork_window();
+        capture.push(&[0.3]);
+        capture.finish();
+
+        forked.fill().expect("the fork ends");
+        recording.fill().expect("the recording ends");
+
+        assert_eq!(forked.held_from(), 0);
+        assert_eq!(forked.samples(), [0.1, 0.2, 0.3]);
+        assert_eq!(recording.samples(), [0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn a_window_fork_opens_where_the_reader_still_holds() {
+        let (mut recording, mut capture) = Recording::open();
+        capture.push(&[0.1, 0.2]);
+        recording.take().expect("the first batch arrives");
+        recording.release_before(1);
+        let mut forked = recording.fork_window();
+        capture.push(&[0.3]);
+        capture.finish();
+
+        forked.fill().expect("the fork ends");
+
+        assert_eq!(forked.held_from(), 1);
+        assert_eq!(forked.samples(), [0.2, 0.3]);
     }
 
     #[test]
