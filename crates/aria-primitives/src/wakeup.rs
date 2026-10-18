@@ -5,7 +5,6 @@
 //! What the bytes mean is the caller's business.
 
 use std::io::{self, Read, Write};
-use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::net::UnixStream;
 
 const DRAIN_BUFFER_BYTES: usize = 64;
@@ -27,8 +26,9 @@ impl Wakeup {
         Ok(Self { reader, writer })
     }
 
-    pub fn as_fd(&self) -> BorrowedFd<'_> {
-        self.reader.as_fd()
+    /// For an async reactor, and anything else that takes an owned reader.
+    pub fn clone_reader(&self) -> Result<UnixStream, WakeupError> {
+        self.reader.try_clone().map_err(WakeupError::Duplicate)
     }
 
     /// For a signal handler, and anything else that takes an owned writer.

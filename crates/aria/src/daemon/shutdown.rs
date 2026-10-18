@@ -6,8 +6,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use signal_hook::SigId;
 use signal_hook::consts::{SIGINT, SIGTERM};
-use tokio::io::Interest;
-use tokio::io::unix::AsyncFd;
 
 use crate::primitives::wakeup::{Wakeup, WakeupError};
 
@@ -74,10 +72,9 @@ impl ShutdownSignal {
     /// Completes once a signal or stopper byte arrives. Must run inside a
     /// tokio runtime.
     pub(super) async fn triggered(&mut self) -> Result<()> {
-        let watcher = AsyncFd::with_interest(self.wakeup.as_fd(), Interest::READABLE)
-            .map_err(ShutdownError::Watch)?;
-        let guard = watcher.readable().await.map_err(ShutdownError::Watch)?;
-        drop(guard);
+        let reader = self.wakeup.clone_reader().map_err(ShutdownError::Wakeup)?;
+        let watcher = tokio::net::UnixStream::from_std(reader).map_err(ShutdownError::Watch)?;
+        watcher.readable().await.map_err(ShutdownError::Watch)?;
         drop(watcher);
         self.wakeup.drain().map_err(ShutdownError::Wakeup)
     }
