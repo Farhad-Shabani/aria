@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
-use crate::delivery::DeliveryOutcome;
+use crate::delivery::{DeliveryOutcome, Placement};
 
 /// What the pipeline heard in one stretch of speech.
 ///
@@ -68,6 +68,11 @@ pub(crate) trait TranscriptSink {
 
     /// Where the text went, once any did. A sink that types nothing says so.
     fn delivered(&self) -> Option<DeliveryOutcome> {
+        None
+    }
+
+    /// Where the next streamed text would land on screen.
+    fn placement(&self) -> Option<Placement> {
         None
     }
 

@@ -503,7 +503,7 @@ fn event_emitter(
             if let (Some(local), DictationEvent::Stage(stage)) = (&local, &event) {
                 local.observe(stage, message.suppress_cues);
             }
-            if matches!(event, DictationEvent::Level(_)) {
+            if matches!(event, DictationEvent::Level(_) | DictationEvent::Ghost(_)) {
                 subscriptions.broadcast_lossy(event);
             } else {
                 subscriptions.broadcast(event);

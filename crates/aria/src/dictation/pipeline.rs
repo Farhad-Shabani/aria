@@ -7,7 +7,7 @@ use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::{self, Layer, Layered};
 
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
-use crate::delivery::DeliveryOutcome;
+use crate::delivery::{DeliveryOutcome, Placement};
 use crate::speaker::{SegmentLabeler, SegmentReader, Verdict};
 use crate::transcription::{
     Language, Mode, Operation, Transcriber, Transcript, Transcription, TranscriptionError,
@@ -16,8 +16,8 @@ use crate::transcription::{
 use super::Meter;
 use super::{
     CaptionSnapshot, Corrector, DeliveryMode, DictationError, DictationEventEmitter,
-    DictationResult, DictationSettings, DictationStage, ExecutionControl, StopMode, TranscriptSink,
-    Utterance,
+    DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, StopMode,
+    TranscriptSink, Utterance,
 };
 
 /// Records a press, hears it, and publishes each segment to its sinks.
@@ -348,7 +348,9 @@ where
         };
         let recording = gated.as_mut().unwrap_or(recording);
         let mut published = Published::new(settings, control, events, started_at);
-        let previews = published.caption.is_some() && M::INCREMENTAL && !settings.own_voice_only;
+        let previews = (published.caption.is_some() || published.streaming)
+            && M::INCREMENTAL
+            && !settings.own_voice_only;
         loop {
             let update = if previews {
                 reader.next_update(&mut operation, recording)
@@ -365,7 +367,7 @@ where
                 }
                 // A preview is the decoder's guess; only a finalized segment
                 // is worth correcting.
-                Some(HeardUpdate::Provisional(text)) => published.provisional(&text),
+                Some(HeardUpdate::Provisional(text)) => published.provisional(&text, sinks),
                 None => break,
             }
         }
@@ -503,6 +505,8 @@ impl<'a> Published<'a> {
             // everything said up to here.
             self.control.request_recording_stop();
             self.failure = Some(error);
+            self.events
+                .emit(GhostSnapshot::empty(self.control.recording_id()));
             return Ok(());
         }
         if self.streaming && first {
@@ -525,6 +529,8 @@ impl<'a> Published<'a> {
             .emit(DictationStage::SegmentTranscribed(Arc::from(text)));
         if self.streaming {
             self.events.emit(DictationStage::SegmentDelivered);
+            self.events
+                .emit(GhostSnapshot::empty(self.control.recording_id()));
         }
         Ok(())
     }
@@ -560,10 +566,22 @@ impl<'a> Published<'a> {
         Ok((transcript, self.completion))
     }
 
-    fn provisional(&mut self, text: &str) {
+    fn provisional<S: TranscriptSink>(&mut self, text: &str, sinks: &S) {
         if let Some(caption) = &mut self.caption {
             caption.provisional = caption_suffix(text);
             self.events.emit(caption.clone());
+        }
+        if self.streaming && self.failure.is_none() {
+            self.events.emit(GhostSnapshot {
+                recording: self.control.recording_id(),
+                text: caption_suffix(text),
+                // Empty text skips the Accessibility read.
+                placement: if text.is_empty() {
+                    None
+                } else {
+                    sinks.placement()
+                },
+            });
         }
     }
 
@@ -750,6 +768,10 @@ where
         self.0.delivered().or(self.1.delivered())
     }
 
+    fn placement(&self) -> Option<Placement> {
+        self.0.placement().or_else(|| self.1.placement())
+    }
+
     fn dictation_finished(&mut self) {
         self.0.dictation_finished();
         self.1.dictation_finished();
@@ -879,12 +901,12 @@ mod tests {
     use crate::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
     };
-    use crate::delivery::OutputMode;
-    use crate::dictation::cursor::tests::{RecordingDelivery, settings};
+    use crate::delivery::{DeliveryError, OutputMode, TextDelivery};
+    use crate::dictation::cursor::tests::{PLACED, PlacedDelivery, RecordingDelivery, settings};
     use crate::dictation::{Cursor, RecordingId};
     use crate::rpc::RpcErrorCode;
     use crate::transcription::{
-        Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Transcription,
+        Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcription,
         TranscriptionAudio,
     };
 
@@ -1117,56 +1139,63 @@ mod tests {
         (events, receive)
     }
 
-    #[test]
-    fn incremental_caption_mode_consumes_previews_during_capture() {
-        struct Pushed(Arc<Mutex<Option<RecordingWriter>>>);
-        impl AudioCapture for Pushed {
-            fn start(
-                &self,
-                _mode: RecordingMode,
-                _stop: StopSignal,
-            ) -> Result<RecordingReader, CaptureError> {
-                let (recording, mut push) = Recording::open();
-                push.push(&[0.5; 8000]);
-                *self.0.lock().unwrap() = Some(push);
-                Ok(recording)
-            }
+    /// Audio that keeps arriving until `Revising` has decoded twice.
+    struct Pushed(Arc<Mutex<Option<RecordingWriter>>>);
+
+    impl AudioCapture for Pushed {
+        fn start(
+            &self,
+            _mode: RecordingMode,
+            _stop: StopSignal,
+        ) -> Result<RecordingReader, CaptureError> {
+            let (recording, mut push) = Recording::open();
+            push.push(&[0.5; 8000]);
+            *self.0.lock().unwrap() = Some(push);
+            Ok(recording)
         }
-        struct Revising {
-            capture: Arc<Mutex<Option<RecordingWriter>>>,
-            calls: std::sync::atomic::AtomicUsize,
+    }
+
+    /// Hears "turn lift", then revises it to "turn left", so the first
+    /// decode is only a preview.
+    struct Revising {
+        capture: Arc<Mutex<Option<RecordingWriter>>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Transcriber for Revising {
+        fn validate_language(
+            &self,
+            _language: &Language,
+            _cancel: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
+            Ok(())
         }
-        impl Transcriber for Revising {
-            fn validate_language(
-                &self,
-                _language: &Language,
-                _cancel: &CancelToken,
-            ) -> Result<(), TranscriptionError> {
-                Ok(())
+        fn transcribe_with(
+            &self,
+            _audio: TranscriptionAudio<'_>,
+            _language: &Language,
+            _cancel: &CancelToken,
+        ) -> Result<Hypothesis, TranscriptionError> {
+            let first = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+            let mut capture = self.capture.lock().unwrap();
+            if first {
+                capture.as_mut().unwrap().push(&[0.5; 8000]);
+            } else if let Some(capture) = capture.take() {
+                capture.finish();
             }
-            fn transcribe_with(
-                &self,
-                _audio: TranscriptionAudio<'_>,
-                _language: &Language,
-                _cancel: &CancelToken,
-            ) -> Result<Hypothesis, TranscriptionError> {
-                let first = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
-                let mut capture = self.capture.lock().unwrap();
-                if first {
-                    capture.as_mut().unwrap().push(&[0.5; 8000]);
-                } else if let Some(capture) = capture.take() {
-                    capture.finish();
-                }
-                Ok(Hypothesis::new(if first {
-                    "turn lift"
-                } else {
-                    "turn left"
-                }))
-            }
+            Ok(Hypothesis::new(if first {
+                "turn lift"
+            } else {
+                "turn left"
+            }))
         }
+    }
+
+    fn revising<S>(
+        sinks: S,
+    ) -> DictationPipeline<Pushed, Revising, Streaming, aria_speaker::wespeaker::WeSpeaker, S> {
         let capture = Arc::new(Mutex::new(None));
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let pipeline = DictationPipeline::new(
+        DictationPipeline::new(
             Pushed(Arc::clone(&capture)),
             Transcription::agreement(
                 Cadence::from_millis(500, 20_000),
@@ -1176,16 +1205,22 @@ mod tests {
                 },
             ),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
-        );
+            sinks,
+        )
+    }
+
+    #[test]
+    fn incremental_caption_mode_consumes_previews_during_capture() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let pipeline = revising((
+            RecordingSink {
+                log: Arc::clone(&log),
+            },
+            Cursor::new(RecordingDelivery {
+                log: Arc::clone(&log),
+                fail: false,
+            }),
+        ));
         let (events, snapshots) = caption_events();
         let result = pipeline
             .execute(
@@ -1241,9 +1276,9 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("turn lift at the light");
-        published.provisional("turn left");
-        published.provisional("");
+        published.provisional("turn lift at the light", &sinks);
+        published.provisional("turn left", &sinks);
+        published.provisional("", &sinks);
         assert_eq!(*log.lock().unwrap(), ["prepare:Insert"]);
 
         let directory = tempfile::tempdir().unwrap();
@@ -1257,7 +1292,7 @@ mod tests {
             .next(&mut operation, &mut recording)
             .unwrap()
             .unwrap();
-        published.provisional("uncommitted guess");
+        published.provisional("uncommitted guess", &sinks);
         published.segment(heard, None, &mut sinks).unwrap();
         assert_eq!(
             *log.lock().unwrap(),
@@ -1299,7 +1334,10 @@ mod tests {
         let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
         let mut published = Published::new(&settings, &control, &events, Instant::now());
-        published.provisional(&text);
+        let sink = RecordingSink {
+            log: Arc::new(Mutex::new(Vec::new())),
+        };
+        published.provisional(&text, &sink);
         drop(published);
         drop(events);
         assert_eq!(
@@ -2390,7 +2428,6 @@ mod tests {
                 }
                 published.segment(heard, corrected, &mut sinks).unwrap();
             }
-            // A failed delivery stops listening.
             assert_eq!(capture.should_stop(), fail);
             let result = published.finish(whole, &mut sinks);
             if fail {
@@ -2432,13 +2469,127 @@ mod tests {
         assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
 
+    fn ghost_events() -> (
+        DictationEventEmitter,
+        std::sync::mpsc::Receiver<GhostSnapshot>,
+    ) {
+        let (send, receive) = std::sync::mpsc::channel();
+        let events = DictationEventEmitter::forwarded_by(move |event| {
+            if let super::super::DictationEvent::Ghost(ghost) = event {
+                let _ = send.send(ghost);
+            }
+        });
+        (events, receive)
+    }
+
+    #[test]
+    fn streaming_ghosts_preview_at_the_caret_and_clear_once_typed() {
+        let (events, ghosts) = ghost_events();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let mut sinks = (
+            RecordingSink {
+                log: Arc::new(Mutex::new(Vec::new())),
+            },
+            Cursor::new(PlacedDelivery),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        published.provisional("turn lift", &sinks);
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut recording =
+            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
+        let transcription = Transcription::complete_samples(Answering("turn left"));
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+        let heard = unlabeled()
+            .next(&mut operation, &mut recording)
+            .unwrap()
+            .unwrap();
+        published.segment(heard, None, &mut sinks).unwrap();
+        published.provisional("", &sinks);
+        drop(published);
+        drop(events);
+
+        let ghosts: Vec<_> = ghosts.iter().collect();
+        assert_eq!(ghosts.len(), 3);
+        assert_eq!(ghosts[0].text.as_ref(), "turn lift");
+        assert_eq!(
+            ghosts[0].placement.as_ref().map(|placed| placed.caret),
+            Some(PLACED)
+        );
+        assert!(ghosts[1..].iter().all(|ghost| ghost.text.is_empty()));
+        assert!(ghosts[1..].iter().all(|ghost| ghost.placement.is_none()));
+    }
+
+    #[test]
+    fn a_segment_that_fails_to_type_clears_its_ghost() {
+        let (events, ghosts) = ghost_events();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let mut sinks = (
+            RecordingSink {
+                log: Arc::new(Mutex::new(Vec::new())),
+            },
+            Cursor::new(FocusMovesAfter {
+                typed: 0,
+                delivered: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        published.provisional("one", &sinks);
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut recording =
+            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
+        let transcription = Transcription::complete_samples(Answering("one"));
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+        let heard = unlabeled()
+            .next(&mut operation, &mut recording)
+            .unwrap()
+            .unwrap();
+        published.segment(heard, None, &mut sinks).unwrap();
+        drop(published);
+        drop(events);
+
+        let texts: Vec<_> = ghosts.iter().map(|ghost| ghost.text.to_string()).collect();
+        assert_eq!(texts, ["one", ""]);
+    }
+
+    #[test]
+    fn own_voice_streaming_shows_no_ghost_words() {
+        for own_voice in [false, true] {
+            let pipeline = revising(RecordingSink {
+                log: Arc::new(Mutex::new(Vec::new())),
+            });
+            let (events, ghosts) = ghost_events();
+            let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+            settings.own_voice_only = own_voice;
+            pipeline
+                .execute(
+                    settings,
+                    &ExecutionControl::for_test(StopMode::Manual),
+                    &events,
+                    None,
+                )
+                .unwrap();
+            drop(events);
+            let ghosts: Vec<_> = ghosts.iter().collect();
+            assert_eq!(
+                ghosts.iter().any(|ghost| !ghost.text.is_empty()),
+                !own_voice
+            );
+        }
+    }
+
     /// Types the first `typed` segments, then refuses as if focus moved.
     struct FocusMovesAfter {
         typed: usize,
         delivered: std::sync::atomic::AtomicUsize,
     }
 
-    impl crate::delivery::TextDelivery for FocusMovesAfter {
+    impl TextDelivery for FocusMovesAfter {
         type Prepared = ();
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
         const OUTLIVES_PROCESS: bool = true;
@@ -2447,7 +2598,7 @@ mod tests {
             &self,
             _mode: OutputMode,
             _should_cancel: impl Fn() -> bool,
-        ) -> Result<(), crate::delivery::DeliveryError> {
+        ) -> Result<(), DeliveryError> {
             Ok(())
         }
 
@@ -2455,7 +2606,7 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
-        ) -> Result<(), crate::delivery::DeliveryError> {
+        ) -> Result<(), DeliveryError> {
             Ok(())
         }
 
@@ -2464,14 +2615,14 @@ mod tests {
             _prepared: &(),
             _text: &str,
             _should_cancel: impl Fn() -> bool,
-        ) -> Result<crate::delivery::DeliveryOutcome, crate::delivery::DeliveryError> {
+        ) -> Result<DeliveryOutcome, DeliveryError> {
             let delivered = self
                 .delivered
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if delivered < self.typed {
-                Ok(crate::delivery::DeliveryOutcome::Inserted)
+                Ok(DeliveryOutcome::Inserted)
             } else {
-                Err(crate::delivery::DeliveryError::TargetChanged)
+                Err(DeliveryError::TargetChanged)
             }
         }
     }

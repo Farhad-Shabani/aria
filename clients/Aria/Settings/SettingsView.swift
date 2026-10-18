@@ -33,6 +33,8 @@ struct GeneralSettings: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.enabledByDefault
+    @AppStorage(GhostController.enabledKey)
+    private var ghostTextEnabled = GhostController.enabledByDefault
 
     var body: some View {
         Form {
@@ -40,7 +42,11 @@ struct GeneralSettings: View {
                 Toggle("Launch at login", isOn: $launchAtLogin)
             }
             LabeledContent("Overlay:") {
-                Toggle("Show status pill", isOn: $statusPillEnabled)
+                VStack(alignment: .leading) {
+                    Toggle("Show status pill", isOn: $statusPillEnabled)
+                    Toggle("Show words before they're typed", isOn: $ghostTextEnabled)
+                        .help("When delivering while speaking, words Aria hasn't typed yet show faintly at the cursor.")
+                }
             }
             .settingsGroup()
             LabeledContent("History:") {

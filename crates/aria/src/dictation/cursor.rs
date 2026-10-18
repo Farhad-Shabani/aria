@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::delivery::{Caret, DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
+use crate::delivery::{Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery};
 
 use super::{DeliveryMode, DictationSettings, ExecutionControl, TranscriptSink, Utterance};
 
@@ -119,6 +119,14 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         self.target.as_ref()?.delivered
     }
 
+    fn placement(&self) -> Option<Placement> {
+        let target = self.target.as_ref()?;
+        if target.finished || target.mode != DeliveryMode::Streaming {
+            return None;
+        }
+        self.delivery.placement(&target.prepared)
+    }
+
     fn dictation_finished(&mut self) {
         self.target = None;
     }
@@ -145,6 +153,7 @@ pub(super) mod tests {
     use std::sync::{Arc, Mutex};
 
     use crate::audio::SilenceDuration;
+    use crate::delivery::Rect;
     use crate::dictation::StopMode;
     use crate::transcription::Language;
 
@@ -199,6 +208,55 @@ pub(super) mod tests {
             } else {
                 Ok(DeliveryOutcome::Inserted)
             }
+        }
+    }
+
+    /// Types everything and reports one fixed caret.
+    pub(crate) struct PlacedDelivery;
+
+    pub(crate) const PLACED: Rect = Rect {
+        x: 100.0,
+        y: 200.0,
+        width: 1.0,
+        height: 16.0,
+    };
+
+    impl TextDelivery for PlacedDelivery {
+        type Prepared = ();
+        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+        const OUTLIVES_PROCESS: bool = true;
+
+        fn prepare(
+            &self,
+            _mode: OutputMode,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+
+        fn finish(
+            &self,
+            _prepared: &(),
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+
+        fn deliver(
+            &self,
+            _prepared: &(),
+            _text: &str,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<DeliveryOutcome, DeliveryError> {
+            Ok(DeliveryOutcome::Inserted)
+        }
+
+        fn placement(&self, _prepared: &()) -> Option<Placement> {
+            Some(Placement {
+                caret: PLACED,
+                field: None,
+                font: None,
+            })
         }
     }
 
@@ -350,6 +408,23 @@ pub(super) mod tests {
             .unwrap();
         cursor.completed(Utterance::anonymous("hello")).unwrap();
         assert_eq!(cursor.delivered(), Some(DeliveryOutcome::Copied));
+    }
+
+    #[test]
+    fn placement_is_reported_only_while_streaming() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        for (mode, placed) in [
+            (DeliveryMode::Streaming, true),
+            (DeliveryMode::Complete, false),
+        ] {
+            let mut cursor = Cursor::new(PlacedDelivery);
+            cursor
+                .dictation_started(&settings(mode, OutputMode::Insert), &control)
+                .unwrap();
+            assert_eq!(cursor.placement().is_some(), placed);
+            cursor.completed(Utterance::anonymous("hello")).unwrap();
+            assert!(cursor.placement().is_none());
+        }
     }
 
     #[test]

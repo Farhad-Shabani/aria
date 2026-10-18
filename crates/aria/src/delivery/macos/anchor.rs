@@ -48,6 +48,23 @@ impl Anchoring {
         }
     }
 
+    /// The field and its caret offset, while the caret rests where the next
+    /// segment types.
+    pub(super) fn resting_caret(
+        &self,
+        process: u32,
+        deadline: Instant,
+    ) -> Option<(arc::R<ax::UiElement>, cf::Index)> {
+        match self {
+            Self::Anchored(anchor) => anchor.resting_caret(deadline),
+            Self::Pending => caret::read_focus(process, deadline)
+                .ok()
+                .filter(|focus| focus.selection.len == 0)
+                .map(|focus| (focus.field, focus.selection.loc)),
+            Self::Unavailable => None,
+        }
+    }
+
     pub(super) fn after_typing(&mut self, text: &str) {
         if let Self::Anchored(anchor) = self {
             anchor.expected_caret = advanced(anchor.expected_caret, text);
@@ -84,6 +101,27 @@ impl Anchor {
             self.observe(ending, deadline)
         })?;
         Ok(())
+    }
+
+    fn resting_caret(&self, deadline: Instant) -> Option<(arc::R<ax::UiElement>, cf::Index)> {
+        let focused = caret::focused_field(&self.application, deadline).ok()?;
+        if !self.field.equal(&focused) {
+            return None;
+        }
+        // A selection, inline completions included, hides the ghost so it
+        // never covers highlighted text.
+        let selection = caret::selection(&self.field, deadline).ok()?;
+        if selection.len != 0 {
+            return None;
+        }
+        if selection.loc == self.expected_caret {
+            return Some((focused, selection.loc));
+        }
+        // If the app changed the typed text's length, its ending still marks
+        // where typing continues.
+        let ending = self.ending.as_deref()?;
+        (self.text_before(ending, selection.loc, deadline).as_deref() == Some(ending))
+            .then_some((focused, selection.loc))
     }
 
     fn observe(&self, ending: &str, deadline: Instant) -> Result<Verdict, &'static str> {

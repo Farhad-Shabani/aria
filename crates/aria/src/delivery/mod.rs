@@ -73,6 +73,35 @@ pub(crate) trait TextDelivery: Send + Sync + 'static {
     fn caret(&self, _prepared: &Self::Prepared) -> Caret {
         Caret::default()
     }
+
+    /// Where `deliver` would type, on screen, or `None` without a visible
+    /// caret.
+    fn placement(&self, _prepared: &Self::Prepared) -> Option<Placement> {
+        None
+    }
+}
+
+/// The caret of the field being typed into, so text can be drawn beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Placement {
+    pub caret: Rect,
+    pub field: Option<Rect>,
+    pub font: Option<Font>,
+}
+
+/// Screen points measured from the primary display's top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Font {
+    pub name: String,
+    pub size: f64,
 }
 
 #[cfg(target_os = "macos")]

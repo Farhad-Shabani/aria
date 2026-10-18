@@ -103,6 +103,34 @@ message CaptionSnapshot {
   bool ended = 4;
 }
 
+// Words streaming has heard but not typed yet, sent with each changed decode
+// preview. Empty once a segment is typed or fails to type. A full subscriber
+// queue drops one without closing the subscription; the next replaces it.
+message GhostSnapshot {
+  uint64 recording_id = 1;
+  string text = 2;
+  // Unset when the caret's position is unknown.
+  Placement placement = 3;
+}
+
+// The caret of the field being typed into. Rects are screen points measured
+// from the primary display's top-left corner.
+message Placement {
+  Rect caret = 1;
+  // Unset when the app reports no frame for the field.
+  Rect field = 2;
+  // Empty when the app reports no font.
+  string font_name = 3;
+  double font_size = 4;
+}
+
+message Rect {
+  double x = 1;
+  double y = 2;
+  double width = 3;
+  double height = 4;
+}
+
 // How loud the microphone is while a press records. A full subscriber
 // queue drops the level without closing the subscription.
 message MicLevel {
@@ -651,5 +679,6 @@ message Event {
     SpeakerEvent speaker = 5;
     CaptionSnapshot caption = 6;
     MicLevel level = 7;
+    GhostSnapshot ghost = 8;
   }
 }

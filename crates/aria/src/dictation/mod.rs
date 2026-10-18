@@ -24,7 +24,9 @@ use backtrack::Backtrack;
 pub use cleanup::{CleanupError, LlmCleanup};
 pub(crate) use cursor::Cursor;
 pub use event::DictationStage;
-pub(crate) use event::{CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD};
+pub(crate) use event::{
+    CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD, GhostSnapshot,
+};
 pub(crate) use execution::{
     DictationCoordinator, DictationError, DictationExecutor, DictationPolicy, DictationPolicyError,
     ExecutionControl,

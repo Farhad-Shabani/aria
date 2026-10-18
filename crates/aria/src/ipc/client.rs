@@ -793,7 +793,11 @@ pub enum DaemonEvent {
 /// chat event must: without its agent, the ask it answers would wait forever.
 fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> {
     match event.payload {
-        Some(wire::event::Payload::Caption(_) | wire::event::Payload::Level(_)) => None,
+        Some(
+            wire::event::Payload::Caption(_)
+            | wire::event::Payload::Ghost(_)
+            | wire::event::Payload::Level(_),
+        ) => None,
         Some(wire::event::Payload::Dictation(event)) => match DictationStage::try_from(&event) {
             Ok(stage) => Some(Ok(DaemonEvent::Dictation(stage))),
             Err(error) => {

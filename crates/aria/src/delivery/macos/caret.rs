@@ -42,7 +42,7 @@ pub(super) fn read(process: u32) -> (Caret, Option<Focus>) {
     (caret, focus.ok())
 }
 
-fn read_focus(process: u32, deadline: Instant) -> Result<Focus, &'static str> {
+pub(super) fn read_focus(process: u32, deadline: Instant) -> Result<Focus, &'static str> {
     // `prepare` checked this before recording; it may have turned on since.
     if super::secure_input_enabled() {
         return Err("secure input");
@@ -159,36 +159,39 @@ pub(super) fn limit(element: &ax::UiElement, deadline: Instant) -> Result<(), &'
         .map_err(|_| "timeout refused")
 }
 
-#[allow(
-    unsafe_code,
-    reason = "cidre 0.28 wraps no parameterized attribute read; the \
-              invariants live on the SAFETY comment below"
-)]
 pub(super) fn string_for_range(
     field: &ax::UiElement,
     loc: cf::Index,
     len: cf::Index,
 ) -> Option<String> {
     let range = ax::Value::with_cf_range(&cf::Range { loc, len });
-    let mut value: Option<arc::R<cf::Type>> = None;
-    // SAFETY: every reference outlives the call. On success the function
-    // stores one retained object in `value`, which `arc::R` then owns.
-    let status = unsafe {
-        AXUIElementCopyParameterizedAttributeValue(
-            field,
-            ax::param_attr::string_for_range(),
-            &range,
-            &mut value,
-        )
-    };
-    if status.is_err() {
-        return None;
-    }
-    let text = value?;
+    let text = parameterized(field, ax::param_attr::string_for_range(), &range)?;
     let text = text.try_as_string()?;
     Some(decode(
         (0..text.len()).map(|index| text.character_at_index(index)),
     ))
+}
+
+#[allow(
+    unsafe_code,
+    reason = "cidre 0.28 wraps no parameterized attribute read; the \
+              invariants live on the SAFETY comment below"
+)]
+pub(super) fn parameterized(
+    element: &ax::UiElement,
+    attribute: &ax::ParamAttr,
+    parameter: &cf::Type,
+) -> Option<arc::R<cf::Type>> {
+    let mut value: Option<arc::R<cf::Type>> = None;
+    // SAFETY: every reference outlives the call. On success the function
+    // stores one retained object in `value`, which `arc::R` then owns.
+    let status = unsafe {
+        AXUIElementCopyParameterizedAttributeValue(element, attribute, parameter, &mut value)
+    };
+    if status.is_err() {
+        return None;
+    }
+    value
 }
 
 /// Decodes UTF-16 and drops unpaired halves, which a read starting or ending

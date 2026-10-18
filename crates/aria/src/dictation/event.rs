@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::level::MicLevel;
-use crate::delivery::DeliveryOutcome;
+use crate::delivery::{DeliveryOutcome, Placement};
 use crate::event::EventEmitter;
 use crate::rpc::RpcErrorCode;
 
@@ -91,10 +91,41 @@ impl std::fmt::Debug for CaptionSnapshot {
     }
 }
 
+/// Words streaming has heard but not typed yet, and where to draw them.
+/// Sent with each changed decode preview, and empty once a segment is typed
+/// or fails to type.
+#[derive(Clone, PartialEq)]
+pub(crate) struct GhostSnapshot {
+    pub recording: RecordingId,
+    pub text: Arc<str>,
+    pub placement: Option<Placement>,
+}
+
+impl GhostSnapshot {
+    pub(super) fn empty(recording: RecordingId) -> Self {
+        Self {
+            recording,
+            text: Arc::from(""),
+            placement: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for GhostSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GhostSnapshot")
+            .field("recording", &self.recording)
+            .field("placement", &self.placement)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DictationEvent {
     Stage(DictationStage),
     Caption(CaptionSnapshot),
+    Ghost(GhostSnapshot),
     /// How loud the microphone is, while one is recording.
     Level(MicLevel),
 }
@@ -108,6 +139,12 @@ impl From<DictationStage> for DictationEvent {
 impl From<CaptionSnapshot> for DictationEvent {
     fn from(caption: CaptionSnapshot) -> Self {
         Self::Caption(caption)
+    }
+}
+
+impl From<GhostSnapshot> for DictationEvent {
+    fn from(ghost: GhostSnapshot) -> Self {
+        Self::Ghost(ghost)
     }
 }
 
