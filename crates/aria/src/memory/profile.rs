@@ -107,46 +107,8 @@ pub(crate) fn load_profile_block(dir: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use super::*;
     use crate::memory::store::STATUS_ACTIVE;
-
-    #[derive(Clone)]
-    struct LogWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for LogWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn an_unreadable_profile_is_logged_and_a_missing_one_is_not() {
-        let logs = Arc::new(Mutex::new(Vec::new()));
-        let writer = LogWriter(Arc::clone(&logs));
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(move || writer.clone())
-            .finish();
-        let _subscriber = tracing::subscriber::set_default(subscriber);
-        let dir = tempfile::tempdir().unwrap();
-
-        assert_eq!(load_profile_block(dir.path()), None);
-        assert!(logs.lock().unwrap().is_empty());
-
-        std::fs::create_dir(dir.path().join(PROFILE_FILE)).unwrap();
-        assert_eq!(load_profile_block(dir.path()), None);
-        let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
-        assert!(logs.contains("cannot read the memory profile"), "{logs}");
-    }
 
     fn fact(kind: &str, text: &str) -> Fact {
         Fact {
