@@ -34,9 +34,11 @@ impl Cue {
         }
         match stage {
             DictationStage::Recording(..) => Some(Self::Start),
-            // Stopping partway is an ending, not a failure.
+            // A focus change is an ending, not a failure.
             DictationStage::Delivered { .. }
-            | DictationStage::Failed(RpcErrorCode::DeliveryInterrupted) => Some(Self::Stop),
+            | DictationStage::Failed(
+                RpcErrorCode::DeliveryTargetChanged | RpcErrorCode::DeliveryInterrupted,
+            ) => Some(Self::Stop),
             DictationStage::Failed(_) => Some(Self::Error),
             DictationStage::Transcribing
             | DictationStage::Delivering
@@ -90,7 +92,7 @@ mod tests {
             ),
             (
                 DictationStage::Failed(RpcErrorCode::DeliveryTargetChanged),
-                Cue::Error,
+                Cue::Stop,
             ),
         ];
         for (stage, cue) in stages {

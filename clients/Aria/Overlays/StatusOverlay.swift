@@ -10,7 +10,7 @@ enum PillState: Equatable {
     /// The press delivered: where, and how many words.
     case delivered(DeliveryOutcome, words: Int)
     case cancelled
-    /// Typing stopped partway because focus moved. Not a failure.
+    /// Focus moved, so typing stopped. Not a failure.
     case interrupted
     /// A press that failed, in the words the person needs.
     case failed(String)
@@ -29,7 +29,8 @@ enum PillState: Equatable {
         case .delivering: self = .delivering
         case .delivered: self = .delivered(DeliveryOutcome(event.outcome), words: Int(event.wordCount))
         case .cancelled: self = .cancelled
-        case .failed where event.errorCode == .deliveryInterrupted: self = .interrupted
+        case .failed where [.deliveryTargetChanged, .deliveryInterrupted].contains(event.errorCode):
+            self = .interrupted
         case .failed: self = .failed(event.errorCode.dictationMessage)
         // A segment lands while the speaker is still talking, so it says
         // nothing about the press.
@@ -146,7 +147,6 @@ extension Aria_Daemon_V1_ErrorCode {
         case .noSpeech: return "No speech detected"
         case .captureFailed: return "Recording failed — check your mic"
         case .transcriptionFailed: return "Transcription failed"
-        case .deliveryTargetChanged: return "The target changed — insertion stopped"
         case .deliveryFailed, .deliveryTimeout: return "The transcript could not be delivered"
         case .recordingTimeout, .overallTimeout: return "The press ran past its time limit"
         default: return "Dictation failed"
