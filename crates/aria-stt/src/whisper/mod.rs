@@ -68,6 +68,10 @@ const SILENCE_FLOOR: f32 = 5e-5;
 /// keeps the buffer inside Whisper's thirty-second window.
 pub const CADENCE: Cadence = Cadence::from_millis(1000, 20000);
 
+/// On macOS, drop every `Whisper` before the process exits. ggml's Metal
+/// teardown aborts the process when a model is still loaded, so an engine in
+/// a `static` or on a thread still running at exit turns a clean exit into
+/// SIGABRT.
 pub struct Whisper {
     /// One resident decoding state: per-request states fail to encode on
     /// Metal after the first is freed, and re-init Metal buffers each run.
