@@ -8,6 +8,10 @@ repository.workspace = true
 readme.workspace     = true
 keywords             = [ "wasm", "webassembly", "speech-to-text", "browser", "dictation" ]
 
+[package.metadata.docs.rs]
+# The public API is wasm-only.
+targets = [ "wasm32-unknown-unknown" ]
+
 [lib]
 crate-type = [ "cdylib", "rlib" ]
 

@@ -8,6 +8,9 @@ repository.workspace = true
 readme.workspace     = true
 keywords             = [ "wake-word", "hotword", "keyword-spotting", "openwakeword", "voice" ]
 
+[package.metadata.docs.rs]
+features = [ "livekit", "openwakeword" ]
+
 [lints]
 workspace = true
 

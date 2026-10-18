@@ -15,7 +15,7 @@ use crate::qwen::nn::{apply_rope, rms_norm, rope_angles};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TransformerError {
-    #[error("qwen: transformer forward failed: {0}")]
+    #[error("qwen: transformer forward failed")]
     Forward(#[from] candle_core::Error),
 }
 

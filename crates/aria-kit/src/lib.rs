@@ -1,5 +1,7 @@
 //! Shared audio workflows and engine contracts for transcription, synthesis, and voice analysis.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod audio;
 pub mod backend;
 pub use aria_primitives as primitives;

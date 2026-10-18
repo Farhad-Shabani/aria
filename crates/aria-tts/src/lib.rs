@@ -1,3 +1,11 @@
+//! Local text-to-speech engines behind `aria-kit`'s synthesis contract.
+//!
+//! Each engine is a module behind a Cargo feature, and none is on by default:
+//! `kokoro`, `qwen`, and `system` for the platform's own voice. The root
+//! re-exports the synthesis prelude.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub use aria_kit::synthesis::prelude;
 pub use aria_kit::synthesis::prelude::*;
 

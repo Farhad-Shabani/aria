@@ -33,7 +33,7 @@ pub fn instruct_text(instruct: &str) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum TextError {
-    #[error("qwen: cannot read {file}: {source}")]
+    #[error("qwen: cannot read {file}")]
     Read {
         file: &'static str,
         source: std::io::Error,

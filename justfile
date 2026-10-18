@@ -61,9 +61,10 @@ rust-format:
 rust-lint-all:
     cargo clippy --locked --workspace --all-targets {{ rust_native_features }} -- -D warnings
 
-# Run all Rust tests
+# Run all Rust tests. `--all-targets` leaves out doctests, so they run on their own.
 rust-test-all:
     cargo test --locked --workspace --all-targets {{ rust_native_features }}
+    cargo test --locked --workspace --doc {{ rust_native_features }}
 
 # Check every optional feature on its own
 rust-features: rust-kit-features rust-stt-features rust-tts-features rust-wake-features

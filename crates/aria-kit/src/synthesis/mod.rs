@@ -68,7 +68,9 @@ pub trait Synthesizer: Send + Sync + 'static {
 
     /// Whether this engine delivers sound itself rather than writing PCM: a
     /// platform voice program synthesizes and plays in one stroke.
-    /// `Synthesis::speak` skips its own playback for such an engine.
+    /// `Synthesis::speak` skips its own playback for such an engine. A
+    /// wrapper around another synthesizer must forward this, or `start`
+    /// hands back an empty session instead of refusing.
     fn plays_audio_itself(&self) -> bool {
         false
     }
@@ -104,6 +106,10 @@ impl<T: Synthesizer + ?Sized> Synthesizer for std::sync::Arc<T> {
     ) -> Result<(), SynthesisError> {
         (**self).synthesize_with(text, voice, rate, out, cancel)
     }
+
+    fn plays_audio_itself(&self) -> bool {
+        (**self).plays_audio_itself()
+    }
 }
 
 impl<T: Synthesizer + ?Sized> Synthesizer for Box<T> {
@@ -120,6 +126,10 @@ impl<T: Synthesizer + ?Sized> Synthesizer for Box<T> {
         cancel: &CancelToken,
     ) -> Result<(), SynthesisError> {
         (**self).synthesize_with(text, voice, rate, out, cancel)
+    }
+
+    fn plays_audio_itself(&self) -> bool {
+        (**self).plays_audio_itself()
     }
 }
 

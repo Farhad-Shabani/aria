@@ -93,7 +93,7 @@ impl Mel {
         let mut outputs = self
             .session
             .run(ort::inputs!["input" => input])
-            .map_err(Error::Inference)?;
+            .map_err(|error| Error::Inference(error.into()))?;
         let values = output(&mut outputs, "melspectrogram", "output", None)?;
         if values.is_empty() || !values.len().is_multiple_of(MEL_BINS) {
             return Err(Error::Incompatible {
@@ -156,7 +156,7 @@ impl Embedding {
         let mut outputs = self
             .session
             .run(ort::inputs!["input_1" => input])
-            .map_err(Error::Inference)?;
+            .map_err(|error| Error::Inference(error.into()))?;
         output(
             &mut outputs,
             "embedding",
@@ -204,7 +204,7 @@ impl Classifier {
         let mut outputs = self
             .session
             .run(ort::inputs![signature.input => input])
-            .map_err(Error::Inference)?;
+            .map_err(|error| Error::Inference(error.into()))?;
         let values = output(&mut outputs, "classifier", signature.output, Some(&[1, 1]))?;
         let [probability] = values.as_slice() else {
             return Err(Error::Incompatible {
@@ -227,6 +227,8 @@ pub(crate) struct ClassifierSignature {
     pub(crate) output_shape: &'static [i64],
 }
 
+// ONNX Runtime errors are boxed so the pinned `ort` version stays out of the
+// public API.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("the {role} wake-word model cannot be used")]
@@ -240,11 +242,11 @@ pub enum Error {
     Load {
         role: &'static str,
         #[source]
-        source: ort::Error,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     #[error("wake-word inference failed")]
-    Inference(#[source] ort::Error),
+    Inference(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     #[error("the {role} wake-word model is incompatible: {detail}")]
     Incompatible { role: &'static str, detail: String },
@@ -260,7 +262,10 @@ fn trusted_model(path: &Path, role: &'static str) -> Result<PathBuf, Error> {
 fn load(path: &Path, role: &'static str) -> Result<Session, Error> {
     Session::builder()
         .and_then(|mut builder| builder.commit_from_file(path))
-        .map_err(|source| Error::Load { role, source })
+        .map_err(|source| Error::Load {
+            role,
+            source: source.into(),
+        })
 }
 
 struct TensorSignature<'a> {
@@ -334,7 +339,7 @@ fn output(
     })?;
     let (shape, values) = value
         .try_extract_tensor::<f32>()
-        .map_err(Error::Inference)?;
+        .map_err(|error| Error::Inference(error.into()))?;
     if expected_shape.is_some_and(|expected| &shape[..] != expected) {
         return Err(Error::Incompatible {
             role,
@@ -345,7 +350,7 @@ fn output(
 }
 
 fn tensor(shape: &[i64], values: Vec<f32>) -> Result<Tensor<f32>, Error> {
-    Tensor::from_array((shape, values)).map_err(Error::Inference)
+    Tensor::from_array((shape, values)).map_err(|error| Error::Inference(error.into()))
 }
 
 #[cfg(test)]
