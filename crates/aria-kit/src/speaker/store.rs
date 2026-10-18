@@ -29,44 +29,46 @@ impl ProfileStore {
         }
     }
 
-    /// Every readable profile, sorted by name.
-    ///
-    /// A profile that will not load is skipped with a warning: one unreadable
-    /// file must not cost a session every other enrolled voice. A directory
+    /// Every profile in the directory. One unreadable file does not hide the
+    /// others; it comes back in [`StoredProfiles::unreadable`]. A directory
     /// that does not exist means nobody has enrolled, which is ordinary.
-    pub fn read_all(&self) -> Vec<Profile> {
-        let Ok(entries) = std::fs::read_dir(&self.directory) else {
-            return Vec::new();
+    pub fn read_all(&self) -> Result<StoredProfiles, ProfileError> {
+        let entries = match std::fs::read_dir(&self.directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(StoredProfiles::default());
+            }
+            Err(error) => return Err(ProfileError::List(error)),
         };
-        let mut profiles = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
+        let mut stored = StoredProfiles::default();
+        for entry in entries {
+            let path = entry.map_err(ProfileError::List)?.path();
             if path.extension().is_none_or(|extension| extension != "json") {
-                // Loud, because a profile this build cannot read is a person
-                // it will not recognize, and silence looks like nobody
-                // enrolled. The path stays out: the stem is their name.
+                // A profile this build cannot read is a person it will not
+                // recognize. The path stays out: the stem is their name.
                 tracing::warn!(
                     "a file in the speakers directory is not a profile this build reads"
                 );
                 continue;
             }
             match self.read(&path) {
-                Ok(Some(profile)) => profiles.push(profile),
+                Ok(Some(profile)) => stored.profiles.push(profile),
                 Ok(None) => {}
-                Err(error) => tracing::warn!(%error, "skipping an unreadable speaker profile"),
+                Err(error) => stored.unreadable.push(error),
             }
         }
-        profiles.sort_by(|a, b| a.name.cmp(&b.name));
-        profiles
+        stored.profiles.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(stored)
     }
 
     /// The profiles `engine` measured, at the width it produces. Everything
     /// else was made by a different model and cannot be compared.
-    pub fn read_for(&self, engine: &str, dimension: usize) -> Vec<Profile> {
-        self.read_all()
-            .into_iter()
-            .filter(|profile| profile.engine == engine && profile.vector.len() == dimension)
-            .collect()
+    pub fn read_for(&self, engine: &str, dimension: usize) -> Result<StoredProfiles, ProfileError> {
+        let mut stored = self.read_all()?;
+        stored
+            .profiles
+            .retain(|profile| profile.engine == engine && profile.vector.len() == dimension);
+        Ok(stored)
     }
 
     /// Stores a profile. `Replace::Never` refuses when a profile is already
@@ -131,6 +133,16 @@ impl ProfileStore {
     }
 }
 
+/// What a read of the speakers directory found.
+#[derive(Debug, Default)]
+pub struct StoredProfiles {
+    /// Sorted by name.
+    pub profiles: Vec<Profile>,
+    /// Each one is a person no session will recognize until it is fixed or
+    /// enrolled again. The path is withheld: its stem is the person's name.
+    pub unreadable: Vec<ProfileError>,
+}
+
 /// The on-disk shape. Unknown fields are refused: a profile written by a
 /// newer Aria is not one this build can judge a voice with.
 #[derive(Serialize, Deserialize)]
@@ -167,6 +179,9 @@ pub enum Replace {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileError {
+    #[error("the speakers directory could not be listed")]
+    List(#[source] std::io::Error),
+
     #[error("the profile could not be read")]
     Read(#[source] DocumentError),
 
@@ -197,6 +212,17 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn profiles(store: &ProfileStore) -> Vec<Profile> {
+        store.read_all().expect("the directory lists").profiles
+    }
+
+    fn names(store: &ProfileStore) -> Vec<String> {
+        profiles(store)
+            .iter()
+            .map(|profile| profile.name.to_string())
+            .collect()
+    }
+
     /// A store in a directory that lives as long as the test holds the pair.
     fn store() -> (tempfile::TempDir, ProfileStore) {
         let home = tempfile::tempdir().expect("a temporary directory");
@@ -222,7 +248,7 @@ mod tests {
             .save(&alex, Replace::Never)
             .expect("the profile is written");
 
-        assert_eq!(store.read_all(), vec![alex]);
+        assert_eq!(profiles(&store), vec![alex]);
     }
 
     #[test]
@@ -237,11 +263,7 @@ mod tests {
                 .expect("the profile is written");
         }
 
-        let names: Vec<String> = store
-            .read_all()
-            .iter()
-            .map(|profile| profile.name.to_string())
-            .collect();
+        let names = names(&store);
         assert_eq!(names, ["ada", "zoe"]);
     }
 
@@ -261,7 +283,10 @@ mod tests {
             )
             .expect("the profile is written");
 
-        let usable = store.read_for("wespeaker", 2);
+        let usable = store
+            .read_for("wespeaker", 2)
+            .expect("the directory lists")
+            .profiles;
         assert_eq!(usable.len(), 1);
         assert_eq!(usable[0].name.as_str(), "ada");
     }
@@ -276,11 +301,12 @@ mod tests {
             )
             .expect("the profile is written");
 
-        assert!(store.read_for("wespeaker", 2).is_empty());
+        let stored = store.read_for("wespeaker", 2).expect("the directory lists");
+        assert!(stored.profiles.is_empty());
     }
 
     #[test]
-    fn one_unreadable_profile_does_not_cost_the_others() {
+    fn one_unreadable_profile_does_not_hide_the_others() {
         let (home, store) = store();
         store
             .save(
@@ -290,22 +316,20 @@ mod tests {
             .expect("the profile is written");
         std::fs::write(home.path().join("broken.json"), b"{").expect("the file is written");
 
-        let names: Vec<String> = store
-            .read_all()
+        let stored = store.read_all().expect("the directory lists");
+        let names: Vec<&str> = stored
+            .profiles
             .iter()
-            .map(|profile| profile.name.to_string())
+            .map(|profile| profile.name.as_str())
             .collect();
         assert_eq!(names, ["ada"]);
+        assert_eq!(stored.unreadable.len(), 1);
     }
 
     #[test]
     fn an_empty_speakers_directory_means_nobody_enrolled() {
         let home = tempfile::tempdir().expect("a temporary directory");
-        assert!(
-            ProfileStore::open(home.path().join("absent"))
-                .read_all()
-                .is_empty()
-        );
+        assert!(profiles(&ProfileStore::open(home.path().join("absent"))).is_empty());
     }
 
     #[test]
@@ -321,7 +345,7 @@ mod tests {
 
         assert!(store.remove(&ada).expect("the delete succeeds"));
         assert!(!store.remove(&ada).expect("the delete succeeds"));
-        assert!(store.read_all().is_empty());
+        assert!(profiles(&store).is_empty());
     }
 
     #[test]
@@ -337,12 +361,12 @@ mod tests {
             store.save(&second, Replace::Never),
             Err(ProfileError::AlreadyStored)
         ));
-        assert_eq!(store.read_all(), vec![first]);
+        assert_eq!(profiles(&store), vec![first]);
 
         store
             .save(&second, Replace::Allowed)
             .expect("the profile is replaced");
-        assert_eq!(store.read_all(), vec![second]);
+        assert_eq!(profiles(&store), vec![second]);
     }
 
     #[test]
@@ -363,11 +387,7 @@ mod tests {
         std::fs::set_permissions(&tampered, std::fs::Permissions::from_mode(0o600))
             .expect("the mode is set");
 
-        let names: Vec<String> = store
-            .read_all()
-            .iter()
-            .map(|profile| profile.name.to_string())
-            .collect();
+        let names = names(&store);
         assert_eq!(names, ["ada"]);
     }
 

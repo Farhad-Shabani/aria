@@ -132,8 +132,7 @@ impl Speakers {
     }
 
     pub(crate) fn list(&self) -> Vec<EnrolledSpeaker> {
-        self.store
-            .read_all()
+        crate::speaker::usable_profiles(self.store.read_all())
             .iter()
             .map(EnrolledSpeaker::from)
             .collect()
@@ -195,7 +194,7 @@ impl<C: AudioCapture> Enroller<C> {
             });
         }
 
-        let enrolled = self.store.read_all();
+        let enrolled = crate::speaker::usable_profiles(self.store.read_all());
         if !request.replace && enrolled.iter().any(|profile| profile.name == request.name) {
             return Err(EnrollError::AlreadyEnrolled);
         }

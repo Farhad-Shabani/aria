@@ -32,7 +32,7 @@ pub use labeler::{
 pub use profile::enrolled_voice;
 pub use profile::{Profile, Role, SpeakerName, SpeakerNameError};
 #[cfg(not(target_family = "wasm"))]
-pub use store::{ProfileError, ProfileStore, Replace};
+pub use store::{ProfileError, ProfileStore, Replace, StoredProfiles};
 
 /// Turns audio into a comparable voice vector.
 ///

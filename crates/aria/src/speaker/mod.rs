@@ -13,8 +13,8 @@ use crate::config::SpeakerConfig;
 
 pub use aria_kit::speaker::{
     Diarizer, Enrolled, Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace,
-    Role, SegmentLabeler, SegmentReader, SpeakerName, SpeakerNameError, Verdict, normalized, open,
-    settle,
+    Role, SegmentLabeler, SegmentReader, SpeakerName, SpeakerNameError, StoredProfiles, Verdict,
+    normalized, open, settle,
 };
 pub use aria_kit::voice_activity::speech_gate;
 #[cfg(test)]
@@ -48,7 +48,26 @@ pub(crate) fn reader(config: &SpeakerConfig) -> SegmentReader<WeSpeaker> {
 /// The profiles the shipped embedder can compare against. One enrollment
 /// serves every feature that recognizes a speaker.
 pub(crate) fn enrolled(config: &SpeakerConfig) -> Vec<Profile> {
-    ProfileStore::open(&config.speakers_dir).read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM)
+    usable_profiles(
+        ProfileStore::open(&config.speakers_dir)
+            .read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM),
+    )
+}
+
+/// The profiles that loaded. A failed read is logged and left out, so one
+/// broken file does not cost a session every other enrolled voice.
+pub fn usable_profiles(stored: Result<StoredProfiles, ProfileError>) -> Vec<Profile> {
+    let stored = match stored {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::warn!(%error, "the speakers directory is unreadable; nobody is recognized");
+            return Vec::new();
+        }
+    };
+    for error in &stored.unreadable {
+        tracing::warn!(%error, "skipping an unreadable speaker profile");
+    }
+    stored.profiles
 }
 
 /// The voice track listen runs beside its transcriber. `None` when no

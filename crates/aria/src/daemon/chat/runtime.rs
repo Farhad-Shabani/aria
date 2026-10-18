@@ -263,8 +263,7 @@ impl ChatRuntime {
                 return None;
             }
         };
-        ProfileStore::open(&config.speakers_dir)
-            .read_all()
+        crate::speaker::usable_profiles(ProfileStore::open(&config.speakers_dir).read_all())
             .into_iter()
             .find(|profile| profile.role == Role::Owner)
             .map(|profile| profile.name.as_str().to_owned())
