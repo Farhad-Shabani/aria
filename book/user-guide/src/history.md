@@ -31,6 +31,8 @@ aria history list
 
 The list shows each entry's ID, status, recording availability (available,
 expired, or unavailable), and its full text.
+For scripts, add `--json` to print one JSON array. Each entry also carries
+`created_at_ms` and `application`.
 
 ## Retry
 
