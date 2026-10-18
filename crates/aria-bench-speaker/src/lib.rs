@@ -99,7 +99,13 @@ fn embedding(
     recording: &Path,
 ) -> Result<Option<Vec<f32>>, VerifyError> {
     if !seen.contains_key(recording) {
-        let samples = read_wav(recording)?;
+        let clip = read_wav(recording)?;
+        if !clip.is_canonical() {
+            return Err(VerifyError::NotCanonical {
+                path: recording.to_path_buf(),
+            });
+        }
+        let samples = clip.into_samples();
         let embedded = engine.embed(&samples).map_err(VerifyError::Model)?;
         seen.insert(recording.to_path_buf(), embedded);
     }
@@ -121,11 +127,14 @@ pub enum VerifyError {
     #[error("{}:{line}: the label must be 1 for one voice or 0 for two", path.display())]
     Label { path: PathBuf, line: usize },
 
-    /// Anything but 16 kHz mono is refused rather than resampled: capture
-    /// only ever hands the model canonical audio, so measuring anything else
-    /// would measure a resampler nobody runs.
     #[error("the recording could not be read")]
     Wav(#[from] WavError),
+
+    /// Refused rather than resampled: capture only ever hands the model
+    /// canonical audio, so measuring anything else would measure a resampler
+    /// nobody runs.
+    #[error("the recording {} is not at 16 kHz", path.display())]
+    NotCanonical { path: PathBuf },
 
     #[error("the speaker model could not be used")]
     Model(#[source] SpeakerError),

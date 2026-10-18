@@ -4,11 +4,9 @@
 use std::ops::Range;
 use std::path::Path;
 
-use aria::speaker::Diarizer;
 use aria_kit::audio::read_wav;
-use aria_kit::speaker::Engine as _;
 use aria_kit::voice_activity::SileroVad;
-use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
+use aria_speaker::wespeaker::Config as SpeakerConfig;
 
 use crate::diarize::cluster::{Stop, group};
 use crate::diarize::{BenchError, Embedded, Labeled, SAMPLE_RATE, Turn, sequence};
@@ -48,10 +46,7 @@ pub fn label_by_voice(
             .any(|region| window.speaks_for.contains(&region.start));
     }
 
-    let mut diarizer = Diarizer::new(
-        WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)?,
-        Vec::new(),
-    );
+    let mut diarizer = crate::diarize::diarizer(speaker)?;
     let voices: Vec<Option<Vec<f32>>> = windows
         .iter()
         .map(|window| diarizer.embed(&samples[window.heard.clone()]))
@@ -179,10 +174,11 @@ fn merge(turns: &mut Vec<Turn>) {
 }
 
 pub(crate) fn read(wav: &Path) -> Result<Vec<f32>, BenchError> {
-    read_wav(wav).map_err(|source| BenchError::Wav {
+    let clip = read_wav(wav).map_err(|source| BenchError::Wav {
         scenario: "recording",
         source,
-    })
+    })?;
+    Ok(clip.into_canonical()?.into_samples())
 }
 
 pub(crate) fn speech(samples: &[f32]) -> Result<Vec<Range<usize>>, BenchError> {

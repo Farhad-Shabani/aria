@@ -32,7 +32,9 @@ use std::time::Duration;
 
 use aria::speaker::Diarizer;
 use aria::transcription::{StreamingEngine, Transcription, TranscriptionError};
-use aria_kit::audio::{CANONICAL_SAMPLE_RATE, CaptureError, ReplayPace, ResampleError, WavError};
+use aria_kit::audio::{
+    CANONICAL_SAMPLE_RATE, CaptureError, ClipError, ReplayPace, ResampleError, WavError,
+};
 use aria_kit::speaker::{Engine as _, SpeakerError};
 use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
 use aria_kit::voice_activity::VoiceActivityError;
@@ -368,6 +370,13 @@ pub enum BenchError {
         scenario: &'static str,
         #[source]
         source: aria_kit::synthesis::SynthesisError,
+    },
+
+    #[error("the {scenario} scenario's synthesizer reported an unusable sample rate")]
+    SampleRate {
+        scenario: &'static str,
+        #[source]
+        source: ClipError,
     },
 
     #[error("failed to resample synthesized speech to 16 kHz")]

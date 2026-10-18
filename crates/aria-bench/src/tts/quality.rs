@@ -12,9 +12,7 @@ use aria::config::TranscriptionDevice;
 use aria::transcription::{
     Language, LanguageCode, Transcriber, Transcript, Transcription, TranscriptionError, Whole,
 };
-use aria_kit::audio::{
-    CANONICAL_SAMPLE_RATE, CaptureError, RecordingReader, ResampleError, Resampler,
-};
+use aria_kit::audio::{CaptureError, Clip, ClipError, RecordingReader, ResampleError};
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::error_chain;
 use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
@@ -95,7 +93,10 @@ impl Heard {
 /// Why a synthesized attempt could not become canonical audio for the judge.
 #[derive(Debug, thiserror::Error)]
 enum RecordingFailure {
-    #[error("cannot convert the speech to {} Hz PCM", CANONICAL_SAMPLE_RATE)]
+    #[error("the engine reported an unusable sample rate")]
+    SampleRate(#[from] ClipError),
+
+    #[error("cannot convert the speech to 16 kHz")]
     Resample(#[from] ResampleError),
 
     #[error("cannot spool the judged recording")]
@@ -124,7 +125,10 @@ pub(super) fn hear_back(
         return Heard::failed(reference_words, error);
     }
 
-    let recording = match judged_recording(recordings, &synthesized.samples, engine.sample_rate()) {
+    let speech = Clip::new(engine.sample_rate(), synthesized.samples)
+        .map_err(RecordingFailure::from)
+        .and_then(|speech| judged_recording(recordings, speech));
+    let recording = match speech {
         Ok(recording) => recording,
         Err(failure) => {
             let detail = error_chain(&failure);
@@ -156,11 +160,10 @@ pub(super) fn hear_back(
 
 /// Canonical audio for the judge, spooled as 16-bit PCM the way capture
 /// spools it. The spool deletes itself when the judge drops it.
-fn judged_recording(
-    recordings: &Path,
-    samples: &[f32],
-    sample_rate: u32,
-) -> Result<RecordingReader, RecordingFailure> {
-    let canonical = Resampler::convert(sample_rate, samples)?;
-    Ok(RecordingReader::from_samples_in(recordings, &canonical)?)
+fn judged_recording(recordings: &Path, speech: Clip) -> Result<RecordingReader, RecordingFailure> {
+    let canonical = speech.into_canonical()?;
+    Ok(RecordingReader::from_samples_in(
+        recordings,
+        canonical.samples(),
+    )?)
 }

@@ -187,7 +187,8 @@ mod tests {
     fn an_empty_slot_respawns_and_a_bad_interpreter_makes_that_a_load_error() {
         let path =
             std::env::temp_dir().join(format!("parakeet-mlx-respawn-{}.wav", std::process::id()));
-        aria_kit::audio::write_wav(&path, &[0.0]).expect("the fixture should write");
+        aria_kit::audio::write_wav(&path, &aria_kit::audio::Clip::canonical(vec![0.0]))
+            .expect("the fixture should write");
         let mut recording = aria_kit::audio::RecordingReader::from_wav_file(&path)
             .expect("the fixture should load");
 

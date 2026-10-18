@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use aria_kit::audio::{RecordingReader, f32_from_pcm16, write_wav};
+use aria_kit::audio::{Clip, RecordingReader, f32_from_pcm16, write_wav};
 use aria_kit::backend::BackendError;
 use aria_stt::{parakeet_mlx::ParakeetMlx, prelude::*};
 
@@ -39,7 +39,7 @@ fn engine() -> Option<ParakeetMlx> {
 fn fixture_wav(name: &str, samples: impl Iterator<Item = i16>) -> PathBuf {
     let path = std::env::temp_dir().join(format!("parakeet-mlx-{}-{name}.wav", std::process::id()));
     let samples: Vec<f32> = samples.map(f32_from_pcm16).collect();
-    write_wav(&path, &samples).expect("the fixture should write");
+    write_wav(&path, &Clip::canonical(samples)).expect("the fixture should write");
     path
 }
 

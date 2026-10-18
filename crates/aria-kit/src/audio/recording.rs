@@ -364,7 +364,8 @@ enum Ending {
 }
 
 impl RecordingReader {
-    /// A finished recording of `samples`, held in memory.
+    /// A finished recording of canonical 16 kHz mono `samples`, held in
+    /// memory.
     pub fn from_samples(samples: &[f32]) -> Self {
         let (reader, mut writer) = Recording::open();
         writer.push(samples);
@@ -372,7 +373,7 @@ impl RecordingReader {
         reader
     }
 
-    /// A finished recording of `samples`, saved as a private WAV in
+    /// [`RecordingReader::from_samples`], saved as a private WAV in
     /// `spool_dir`.
     #[cfg(not(target_family = "wasm"))]
     pub fn from_samples_in(
@@ -383,7 +384,8 @@ impl RecordingReader {
         Self::from_pcm16_in(spool_dir, &pcm16)
     }
 
-    /// [`RecordingReader::from_samples_in`] for samples already in 16-bit PCM.
+    /// A finished recording of canonical samples already in 16-bit PCM, saved
+    /// as a private WAV in `spool_dir`.
     #[cfg(not(target_family = "wasm"))]
     pub fn from_pcm16_in(
         spool_dir: &std::path::Path,
