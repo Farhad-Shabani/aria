@@ -1,5 +1,5 @@
-//! Whether a recording held speech. A decoder can name words in silence,
-//! and nothing in the words tells them apart, so the audio decides.
+//! Whether a recording held speech. A decoder can name words in silence
+//! that look like real ones, so the audio decides.
 
 use std::time::Duration;
 
@@ -12,9 +12,8 @@ use crate::audio::{CaptureError, RecordingReader};
 /// noise-only recordings measure 0 ms; a lone short word, 290 ms or more.
 const MIN_SPEECH: Duration = Duration::from_millis(100);
 
-/// Adds up the speech a detector finds in a stream read in pieces. A
-/// piece's unfinished frame waits for the next one, so uneven reads score
-/// like one read at once. A final unfinished frame is never scored.
+/// Adds up the speech a detector finds in a stream read in pieces. An
+/// unfinished frame waits for the next piece; a final one is never scored.
 pub(super) struct Tally<V> {
     detector: V,
     frame: Vec<i16>,
@@ -56,16 +55,15 @@ impl<V: VoiceActivityDetector> Tally<V> {
     }
 }
 
-/// Scans one recording for speech on a fork of it, so it hears every
-/// sample however little of it the decoder keeps.
+/// Scans a recording for speech on its own fork, so it hears every sample
+/// whatever the decoder keeps.
 pub(super) struct Scan<'a, V> {
     /// `None` once speech is heard, or when there is no detector to judge by.
     listening: Option<(&'a mut Tally<V>, RecordingReader)>,
 }
 
 impl<'a, V: VoiceActivityDetector> Scan<'a, V> {
-    /// Opens before anything reads `recording`, so the fork starts where it
-    /// does. Without a detector, every recording counts as speech.
+    /// Call before anything reads `recording`, so the fork starts where it does.
     pub(super) fn new(tally: Option<&'a mut Tally<V>>, recording: &mut RecordingReader) -> Self {
         let listening = tally.map(|tally| {
             tally.reset();
@@ -78,8 +76,8 @@ impl<'a, V: VoiceActivityDetector> Scan<'a, V> {
         self.listening.is_none()
     }
 
-    /// Scores the recording up to stream `position`, and no further: audio past
-    /// it may be speech the words so far were not heard from.
+    /// Scores up to stream `position` only. Speech after it did not produce
+    /// the words read so far.
     pub(super) fn hear_through(&mut self, position: u64) {
         self.hear(|fork| fork.fill_through(position).map(drop), position);
     }
@@ -124,7 +122,6 @@ fn unjudged(error: impl std::fmt::Display) -> bool {
 pub(crate) mod tests {
     use super::*;
 
-    /// Hears speech in any frame that is not silent.
     pub(crate) struct Loud;
 
     impl VoiceActivityDetector for Loud {

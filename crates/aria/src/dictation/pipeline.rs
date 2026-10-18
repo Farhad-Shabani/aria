@@ -31,8 +31,8 @@ pub(crate) struct DictationPipeline<C, T, M: Mode, E, V, S, L = ()> {
     /// voice keeps its label from one dictation to the next. Locked: presses
     /// come one at a time, but not from one thread.
     reader: Mutex<SegmentReader<E>>,
-    /// Judges whether a recording held speech. `None` trusts every one.
-    /// Locked for the same reason as the reader.
+    /// `None` counts every recording as speech. Locked for the same reason
+    /// as the reader.
     tally: Mutex<Option<Tally<V>>>,
     /// Locked for the same reason as the reader.
     sinks: Mutex<S>,
@@ -88,8 +88,8 @@ impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
         self
     }
 
-    /// Types none of a recording's words until `detector` hears speech in
-    /// it. Without a detector, every recording counts as speech.
+    /// Types no words from a recording until `detector` hears speech in it.
+    /// With `None`, every recording counts as speech.
     pub(crate) fn hearing_speech<W: VoiceActivityDetector>(
         self,
         detector: Option<W>,
@@ -218,7 +218,6 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
             .map_err(DictationError::from)
     }
 
-    /// Whether a recording the caller already holds has speech in it.
     fn holds_speech(&self, recording: &mut RecordingReader) -> bool {
         let mut tally = self.tally();
         let mut scan = Scan::new(tally.as_mut(), recording);
@@ -394,7 +393,7 @@ where
             DeliveryMode::Streaming => None,
         };
         if gated.is_some() {
-            // Filtering read the whole press, so it can be judged now.
+            // Own-voice filtering already read the whole press, so judge it now.
             scan.hear_rest();
         }
         let recording = gated.as_mut().unwrap_or(recording);
@@ -2820,8 +2819,7 @@ mod tests {
         assert_eq!(*log.lock().unwrap(), ["prepare:Insert"]);
     }
 
-    /// One press through a pipeline that judges speech with `detector`, and
-    /// what reached the sinks.
+    /// Runs one press and returns its result and the sink log.
     fn press<C: AudioCapture, T: Transcriber, M: Mode, V: VoiceActivityDetector>(
         capture: C,
         transcription: Transcription<T, M>,
@@ -2860,8 +2858,6 @@ mod tests {
             .collect()
     }
 
-    /// A decoder can name a word in a press nobody spoke into, whichever
-    /// way it reads the press.
     #[test]
     fn a_press_without_speech_types_nothing() {
         let gate = crate::speaker::speech_gate;
@@ -2893,8 +2889,8 @@ mod tests {
         }
     }
 
-    /// The speech check must hear the press however the engine reads it: a
-    /// whole-recording WAV engine keeps none of the samples it decodes.
+    /// A whole-recording WAV engine keeps none of the samples it decodes, so
+    /// the speech check must hear the press on its own.
     #[test]
     fn a_press_with_speech_types_its_words() {
         let agreement =
@@ -2931,8 +2927,7 @@ mod tests {
         }
     }
 
-    /// Silence, then speech. The decoder settles on a word during the
-    /// silence, then hears the speech.
+    /// Settles on a word during the silence, then hears the speech after it.
     struct GuessingThenHearing {
         capture: Arc<Mutex<Option<RecordingWriter>>>,
         calls: std::sync::atomic::AtomicUsize,

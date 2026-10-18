@@ -160,7 +160,6 @@ struct Queue {
 }
 
 impl State {
-    /// Opens a queue for one more reader.
     fn enrol(&mut self) -> u64 {
         let id = self.next_queue;
         self.next_queue += 1;
@@ -450,12 +449,10 @@ impl RecordingReader {
         }
     }
 
-    /// A fork that opens where this reader's window opens, not where capture
-    /// stands. It copies what this reader holds and what it has yet to take,
-    /// so audio written before the fork is not lost to it.
+    /// A fork that starts from this reader's window, not where capture
+    /// stands. It copies what this reader holds once it takes its queue.
     pub fn fork_window(&mut self) -> Self {
-        // Taking this reader's queue and opening the fork's under one lock
-        // leaves no write between them for the fork to miss.
+        // One lock for both steps, so no write lands between them.
         let mut state = self.recording.lock();
         let pending = std::mem::take(&mut state.queue(self.queue).pending);
         let queue = state.enrol();
