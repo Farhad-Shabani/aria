@@ -31,9 +31,16 @@ pub(super) fn read(
         .then(|| attributed(field, caret - 1, deadline))
         .flatten();
     let before = before.as_deref().and_then(attributes::attr_string);
-    let previous = (caret > 0 && !before.is_some_and(breaks_line))
+    let previous = (caret > 0)
         .then(|| bounds(field, caret - 1, 1, deadline))
-        .flatten();
+        .flatten()
+        .map(|rect| {
+            if before.is_some_and(breaks_line) {
+                Previous::LineBreak(rect)
+            } else {
+                Previous::Character(rect)
+            }
+        });
     let caret_rect = choose_caret(at_caret, previous, frame)?;
     let font = before.and_then(font_of);
     Some(Placement {
@@ -43,25 +50,40 @@ pub(super) fn read(
     })
 }
 
+/// The character before the caret, as the app measures it.
+#[derive(Clone, Copy)]
+enum Previous {
+    Character(Rect),
+    /// Its rectangle can run to the end of its line, so its right edge is no
+    /// caret.
+    LineBreak(Rect),
+}
+
 /// Picks the caret rectangle from the zero-width one and the previous
-/// character's right edge, or `None` when neither is believable or the pick
-/// falls outside the field.
+/// character, or `None` when neither is believable or the pick falls outside
+/// the field.
 fn choose_caret(
     at_caret: Option<Rect>,
-    previous: Option<Rect>,
+    previous: Option<Previous>,
     field: Option<Rect>,
 ) -> Option<Rect> {
     let at_caret = at_caret.filter(plausible);
-    let edge = previous.filter(plausible).map(|character| Rect {
-        x: character.x + character.width,
-        width: 0.0,
-        ..character
-    });
-    let chosen = match (at_caret, edge) {
-        (Some(at_caret), Some(edge)) if near(at_caret, edge) || below(at_caret, edge) => at_caret,
-        (_, Some(edge)) => edge,
-        (Some(at_caret), None) => at_caret,
-        (None, None) => return None,
+    let chosen = match previous {
+        Some(Previous::LineBreak(line_break)) if plausible(&line_break) => {
+            next_line(at_caret?, line_break)
+        }
+        Some(Previous::Character(character)) if plausible(&character) => {
+            let edge = Rect {
+                x: character.x + character.width,
+                width: 0.0,
+                ..character
+            };
+            match at_caret {
+                Some(at_caret) if near(at_caret, edge) || below(at_caret, edge) => at_caret,
+                _ => edge,
+            }
+        }
+        _ => at_caret?,
     };
     field
         .is_none_or(|field| inside(chosen, field))
@@ -74,6 +96,18 @@ fn plausible(rect: &Rect) -> bool {
 
 fn near(at_caret: Rect, edge: Rect) -> bool {
     (at_caret.x - edge.x).abs() <= CARET_DRIFT && (at_caret.y - edge.y).abs() < edge.height / 2.0
+}
+
+/// Some apps, Notes among them, report a caret after a line break on the
+/// break's own line. It belongs at the start of the next one.
+fn next_line(at_caret: Rect, line_break: Rect) -> Rect {
+    if below(at_caret, line_break) {
+        return at_caret;
+    }
+    Rect {
+        y: line_break.y + line_break.height,
+        ..at_caret
+    }
 }
 
 /// A caret on a later line than the previous character follows a line break.
@@ -116,8 +150,6 @@ fn attributed(
     caret::parameterized(field, ax::param_attr::attr_string_for_range(), &range)
 }
 
-/// A line break's rectangle can run to the end of its line, so its right
-/// edge is no caret.
 fn breaks_line(character: &cf::AttrString) -> bool {
     let string = character.string();
     !string.is_empty() && matches!(string.character_at_index(0), 0x0A | 0x0D | 0x2028 | 0x2029)
@@ -250,7 +282,7 @@ mod tests {
         let at_caret = rect(110.0, 50.0, 0.0, 16.0);
         let previous = rect(100.0, 50.0, 8.0, 16.0);
         assert_eq!(
-            choose_caret(Some(at_caret), Some(previous), None),
+            choose_caret(Some(at_caret), Some(Previous::Character(previous)), None),
             Some(at_caret)
         );
     }
@@ -260,7 +292,7 @@ mod tests {
         let stray = rect(400.0, 50.0, 0.0, 16.0);
         let previous = rect(100.0, 50.0, 8.0, 16.0);
         assert_eq!(
-            choose_caret(Some(stray), Some(previous), None),
+            choose_caret(Some(stray), Some(Previous::Character(previous)), None),
             Some(rect(108.0, 50.0, 0.0, 16.0))
         );
     }
@@ -270,9 +302,26 @@ mod tests {
         let next_line = rect(20.0, 70.0, 0.0, 16.0);
         let previous = rect(300.0, 50.0, 8.0, 16.0);
         assert_eq!(
-            choose_caret(Some(next_line), Some(previous), None),
+            choose_caret(Some(next_line), Some(Previous::Character(previous)), None),
             Some(next_line)
         );
+    }
+
+    #[test]
+    fn a_caret_after_a_line_break_starts_the_next_line() {
+        // Notes' own numbers: the caret comes back on the break's line.
+        let line_break = Previous::LineBreak(rect(1006.0, 185.0, 330.0, 16.0));
+        let reported = rect(680.0, 186.0, 0.0, 16.0);
+        assert_eq!(
+            choose_caret(Some(reported), Some(line_break), None),
+            Some(rect(680.0, 201.0, 0.0, 16.0))
+        );
+        let already_below = rect(680.0, 201.0, 0.0, 16.0);
+        assert_eq!(
+            choose_caret(Some(already_below), Some(line_break), None),
+            Some(already_below)
+        );
+        assert_eq!(choose_caret(None, Some(line_break), None), None);
     }
 
     #[test]
@@ -284,7 +333,10 @@ mod tests {
             None
         );
         assert_eq!(choose_caret(Some(empty), None, None), None);
-        assert_eq!(choose_caret(Some(giant), Some(empty), None), None);
+        assert_eq!(
+            choose_caret(Some(giant), Some(Previous::Character(empty)), None),
+            None
+        );
     }
 
     #[test]
