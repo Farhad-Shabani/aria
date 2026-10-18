@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::Layered;
+use aria_kit::voice_activity::SileroVad;
 
 use super::super::capture::{CaptureBackend, PreparedCapture};
 use super::super::vocabulary::Runtime as VocabularyRuntime;
@@ -47,8 +48,15 @@ type Sinks = (History, Cursor<PlatformTextDelivery>);
 type CompletionLayers = Layered<Option<LlmCleanup>, ()>;
 
 struct EngineExecution<E: Engine, M: Mode> {
-    pipeline:
-        DictationPipeline<Arc<CaptureBackend>, ModelLoad<E>, M, WeSpeaker, Sinks, CompletionLayers>,
+    pipeline: DictationPipeline<
+        Arc<CaptureBackend>,
+        ModelLoad<E>,
+        M,
+        WeSpeaker,
+        SileroVad,
+        Sinks,
+        CompletionLayers,
+    >,
     wake: Option<WakeWordControl>,
     /// Read before every press: a voice enrolled since the daemon started
     /// must be recognized without restarting it.
@@ -291,6 +299,7 @@ impl ExecutionParts {
             )
             .cleaning(self.cleanup)
             .backtracking(self.backtrack)
+            .hearing_speech(speaker::speech_gate())
             .with(self.cleanup_llm),
             wake: self.wake,
             speaker: self.speaker,
@@ -408,6 +417,7 @@ pub(super) fn transcribe_retry(
     let pipeline = DictationPipeline::new((), transcription, speaker::reader(speaker), ())
         .cleaning(config.cleanup)
         .backtracking(config.backtrack)
+        .hearing_speech(speaker::speech_gate())
         .with(cleanup_llm);
     pipeline.refresh_enrolled(speaker::enrolled(speaker));
     pipeline.transcribe(

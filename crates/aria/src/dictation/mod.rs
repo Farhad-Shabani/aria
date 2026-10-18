@@ -16,6 +16,7 @@ mod level;
 #[cfg(target_os = "macos")]
 mod output;
 mod pipeline;
+mod speech;
 pub(crate) mod subscribers;
 mod transcripts;
 

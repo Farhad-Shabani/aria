@@ -54,7 +54,7 @@ pub(crate) const PCM_SCALE: f32 = 32_768.0;
 
 /// The nearest 16-bit sample to `sample`, saturating outside -1.0..1.0.
 #[cfg(not(target_family = "wasm"))]
-pub(crate) fn pcm16_from_f32(sample: f32) -> i16 {
+pub fn pcm16_from_f32(sample: f32) -> i16 {
     (sample * PCM_SCALE)
         .round()
         .clamp(-PCM_SCALE, PCM_SCALE - 1.0) as i16
