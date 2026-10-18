@@ -53,9 +53,12 @@ const BACKEND: &str = NAME;
 const DECODE_THREADS_FALLBACK: std::ffi::c_int = 4;
 /// whisper.cpp reports token times in centiseconds.
 const TOKEN_TIME_UNITS_PER_SECOND: f32 = 100.0;
-/// Above this no-speech probability, a segment is noise the model put words
-/// to. Whisper's own default.
+/// Whisper's own silence rule: a segment is noise the model put words to only
+/// when the no-speech probability is high and the words are also unlikely.
+/// whisper.cpp copies the window's no-speech probability onto every segment
+/// it decodes there, so the probability alone drops clear speech.
 const NO_SPEECH_THRESHOLD: f32 = 0.6;
+const LOG_PROBABILITY_THRESHOLD: f32 = -1.0;
 /// One loudness frame: 512 samples, about 32 ms.
 const LOUDNESS_FRAME_SAMPLES: usize = 512;
 /// Silence cutoff near -43 dBFS, used to reduce hallucinations on quiet audio.
@@ -231,19 +234,13 @@ fn collect_transcript(
     let mut text = String::new();
     let mut words = Vec::new();
     for segment in state.as_iter() {
-        if segment.no_speech_probability() > NO_SPEECH_THRESHOLD {
-            continue;
-        }
         let spoken = segment.to_str_lossy().map_err(inference_failed)?;
         let spoken = spoken.trim();
         if spoken.is_empty() {
             continue;
         }
-        if !text.is_empty() {
-            text.push(' ');
-        }
-        text.push_str(spoken);
         let mut tokens = Vec::new();
+        let mut log_probabilities = Vec::new();
         for index in 0..segment.n_tokens() {
             let Some(token) = segment.get_token(index) else {
                 continue;
@@ -256,13 +253,32 @@ fn collect_transcript(
                 start: timed.t0 as f32 / TOKEN_TIME_UNITS_PER_SECOND,
                 end: timed.t1 as f32 / TOKEN_TIME_UNITS_PER_SECOND,
             };
+            log_probabilities.push(timed.plog);
             tokens.push((token.to_str_lossy().map_err(inference_failed)?, timing));
         }
+        if is_silence(segment.no_speech_probability(), &log_probabilities) {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(spoken);
         words.extend(word_timings(
             tokens.iter().map(|(text, timing)| (text.as_ref(), *timing)),
         ));
     }
     Ok(Hypothesis::with_words(text, words))
+}
+
+fn is_silence(no_speech_probability: f32, log_probabilities: &[f32]) -> bool {
+    let unlikely_words = match log_probabilities.len() {
+        0 => true,
+        count => {
+            let average = log_probabilities.iter().sum::<f32>() / count as f32;
+            average < LOG_PROBABILITY_THRESHOLD
+        }
+    };
+    no_speech_probability > NO_SPEECH_THRESHOLD && unlikely_words
 }
 
 /// Runs `inference` while a watcher mirrors `cancel` into the flag
@@ -302,6 +318,20 @@ mod load_engine_tests {
             "room noise stays under the floor"
         );
         assert!(audible(&[0.03; 16_000]), "a quiet word rises above it");
+    }
+
+    #[test]
+    fn a_segment_is_silence_only_when_its_words_are_also_unlikely() {
+        let confident = [-0.1, -0.3, -0.2];
+        let doubtful = [-1.5, -2.0, -1.2];
+
+        assert!(
+            !is_silence(0.72, &confident),
+            "a window-wide no-speech score must not drop clear speech"
+        );
+        assert!(is_silence(0.72, &doubtful));
+        assert!(!is_silence(0.2, &doubtful));
+        assert!(is_silence(0.72, &[]));
     }
 
     fn name_of<E: Engine>() -> &'static str {
