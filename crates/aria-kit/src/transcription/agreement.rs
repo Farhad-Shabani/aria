@@ -217,7 +217,10 @@ impl AgreementState {
             .fill_through(self.decoded_end + self.cadence.stride_samples as u64)
             .map_err(TranscriptionError::Capture)?;
         check_cancelled(cancel)?;
-        let available = recording.held_to();
+        // The cap bounds a decode that fell behind capture; without it a
+        // finished recording decodes as one window.
+        let buffer_end = self.buffer_start + self.cadence.max_buffer_samples as u64;
+        let available = recording.held_to().min(buffer_end);
         if available == self.decoded_end && recording.reached_end() {
             return Ok(None);
         }
@@ -254,7 +257,7 @@ impl AgreementState {
         let skipped = self.skipped_speech(&loudness, &heard);
         let (confirmed, settled) = self.agreement.agree(heard, skipped);
         let confirmed = self.commit(confirmed);
-        if recording.reached_end() {
+        if recording.reached_end() && available == recording.held_to() {
             return self.finish_after(confirmed);
         }
 
@@ -1595,11 +1598,11 @@ mod tests {
 
         #[test]
         fn a_cap_forced_cut_commits_every_word_exactly_once() {
-            let run = drive_whole(4 * STRIDE, 300, &["p q r s t"]);
+            let run = drive_whole(4 * STRIDE, 300, &["p q r s t", ""]);
 
             assert_eq!(run.segments, ["p q r s t"]);
             assert_eq!(run.transcript(), "p q r s t");
-            assert_eq!(run.windows, [4 * STRIDE]);
+            assert_eq!(run.windows, [3 * STRIDE, STRIDE]);
         }
 
         #[test]
@@ -1628,6 +1631,19 @@ mod tests {
             assert_eq!(run.windows, [whole]);
             assert_eq!(run.segments, ["whole buffer"]);
             assert_eq!(run.transcript(), "whole buffer");
+        }
+
+        #[test]
+        fn a_finished_recording_longer_than_the_cap_decodes_in_capped_windows() {
+            let max_buffer_ms = 5_000;
+            let max_window =
+                canonical_samples(Duration::from_millis(max_buffer_ms as u64)) as usize;
+            let whole = 3 * max_window;
+            let run = drive_whole(whole, max_buffer_ms, &["one", "two", "three"]);
+
+            assert_eq!(run.windows, [max_window, max_window, max_window]);
+            assert_eq!(run.segments, ["one", "two", "three"]);
+            assert_eq!(run.transcript(), "one two three");
         }
 
         #[test]
@@ -1719,6 +1735,8 @@ mod tests {
                 answers.push(running.clone());
             }
             answers.push(format!("{running} eighteen nineteen"));
+            // The audio after the cap's cut decodes as its own window.
+            answers.push(String::new());
             let answers: Vec<&str> = answers.iter().map(String::as_str).collect();
 
             let mut batches = vec![loud_batch()];
