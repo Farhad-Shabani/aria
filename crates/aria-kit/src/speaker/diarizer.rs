@@ -191,13 +191,19 @@ fn absorb<'a>(cluster: &'a mut Cluster, embedding: &[f32]) -> &'a str {
 
 /// The enrolled profile this embedding is close enough to claim.
 fn enrolled_name<'a>(enrolled: &'a [Profile], embedding: &[f32]) -> Option<&'a SpeakerName> {
+    enrolled_match(enrolled, embedding).map(|at| &enrolled[at].name)
+}
+
+/// Where in `enrolled` the profile this embedding claims sits.
+fn enrolled_match(enrolled: &[Profile], embedding: &[f32]) -> Option<usize> {
     closest(
         enrolled
             .iter()
-            .map(|profile| (&profile.name, dot(&profile.vector, embedding))),
+            .map(|profile| dot(&profile.vector, embedding))
+            .enumerate(),
     )
     .filter(|(_, similarity)| *similarity >= ENROLLED_THRESHOLD)
-    .map(|(name, _)| name)
+    .map(|(at, _)| at)
 }
 
 fn closest<T>(candidates: impl Iterator<Item = (T, f32)>) -> Option<(T, f32)> {
@@ -212,6 +218,9 @@ fn closest<T>(candidates: impl Iterator<Item = (T, f32)>) -> Option<(T, f32)> {
 
 /// Average-linkage agglomerative clustering at the gate. With unit vectors
 /// the inter-cluster average cosine is `dot(sumA, sumB) / (nA * nB)`.
+/// A paragraph that claims an enrolled profile anchors its group to that
+/// person, and groups anchored to different people never merge: enrolled
+/// voices often sit closer than the cluster gate.
 // Each merge rescans every pair, so this is O(n³) in a session's
 // paragraphs. A linkage matrix would help if hours-long sessions drag at stop.
 fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<String>> {
@@ -219,6 +228,8 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
         sum: Vec<f32>,
         count: usize,
         members: Vec<usize>,
+        /// Where in `enrolled` this group's person sits.
+        profile: Option<usize>,
     }
     let mut groups: Vec<Group> = paragraphs
         .iter()
@@ -228,6 +239,7 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
                 sum: embedding.clone(),
                 count: 1,
                 members: vec![index],
+                profile: enrolled_match(enrolled, embedding),
             })
         })
         .collect();
@@ -236,6 +248,11 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
         let mut best: Option<(usize, usize, f32)> = None;
         for a in 0..groups.len() {
             for b in a + 1..groups.len() {
+                if let (Some(first), Some(second)) = (groups[a].profile, groups[b].profile)
+                    && first != second
+                {
+                    continue;
+                }
                 let similarity = dot(&groups[a].sum, &groups[b].sum)
                     / (groups[a].count * groups[b].count) as f32;
                 if best.is_none_or(|(_, _, top)| similarity > top) {
@@ -256,23 +273,27 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
         }
         keeper.count += absorbed.count;
         keeper.members.extend(absorbed.members);
+        keeper.profile = keeper.profile.or(absorbed.profile);
     }
 
     groups.sort_by_key(|group| group.members.iter().min().copied());
     let mut labels = vec![None; paragraphs.len()];
     let mut numbered = 0;
     for group in &groups {
-        let name = closest(enrolled.iter().map(|profile| {
-            (
-                &profile.name,
-                dot(&profile.vector, &group.sum) / group.count as f32,
-            )
-        }))
-        .filter(|(_, similarity)| *similarity >= ENROLLED_THRESHOLD)
-        .map(|(name, _)| name.to_string())
-        .unwrap_or_else(|| {
-            numbered += 1;
-            format!("Speaker {numbered}")
+        let anchored = group.profile.map(|at| enrolled[at].name.to_string());
+        let name = anchored.unwrap_or_else(|| {
+            closest(enrolled.iter().map(|profile| {
+                (
+                    &profile.name,
+                    dot(&profile.vector, &group.sum) / group.count as f32,
+                )
+            }))
+            .filter(|(_, similarity)| *similarity >= ENROLLED_THRESHOLD)
+            .map(|(name, _)| name.to_string())
+            .unwrap_or_else(|| {
+                numbered += 1;
+                format!("Speaker {numbered}")
+            })
         });
         for &member in &group.members {
             labels[member] = Some(name.clone());
@@ -419,5 +440,20 @@ mod tests {
         let labels = recluster(&enrolled, &paragraphs);
         assert_eq!(labels[0].as_deref(), Some("alex"));
         assert_eq!(labels[1].as_deref(), Some("Speaker 1"));
+    }
+
+    #[test]
+    fn recluster_keeps_two_enrolled_people_apart_when_their_voices_are_close() {
+        let close_to_a = normalized(vec![0.32, 0.95, 0.0, 0.0]).expect("nonzero");
+        let enrolled = vec![
+            super::super::enrolled_voice("alex", Role::Owner, A.to_vec()),
+            super::super::enrolled_voice("blake", Role::Guest, close_to_a.clone()),
+        ];
+        let paragraphs = vec![Some(A.to_vec()), Some(close_to_a)];
+
+        let labels = recluster(&enrolled, &paragraphs);
+
+        assert_eq!(labels[0].as_deref(), Some("alex"));
+        assert_eq!(labels[1].as_deref(), Some("blake"));
     }
 }
