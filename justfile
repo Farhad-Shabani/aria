@@ -149,7 +149,7 @@ rust-clean *args:
 swift_srcs := "clients/Aria clients/Shared clients/Tests"
 
 # Run the macOS app checks
-swift-check: swift-format swift-test
+swift-check: swift-format swift-stubs swift-test
 
 # Check Swift formatting and lints (swift-format ships in the Xcode toolchain)
 swift-format:
@@ -185,15 +185,27 @@ app: swift-project
     scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
     scripts/macos/check-minos.sh clients/build/mac/Build/Products/Release/Aria.app
 
-# Regenerate the Swift client stubs from the daemon's proto. Health comes
-# along so clients can probe the daemon; the Rust side gets its own copy from
-# tonic-health.
+swift_resolved := "clients/Aria.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+swift_plugins := "clients/build/protoc-plugins"
+
 # Generate Swift client stubs from the daemon protocol
-proto-swift:
+proto-swift: (_swift-stubs "clients/Generated")
+
+# Check the committed Swift stubs match the daemon protocol
+swift-stubs: (_swift-stubs "clients/build/stubs")
+    diff -r clients/build/stubs clients/Generated
+
+# Health comes along so clients can probe the daemon. The Rust side gets its
+# own copy from tonic-health.
+_swift-stubs out: _swift-plugins
+    rm -rf {{ out }}/Messages {{ out }}/Rpc
+    mkdir -p {{ out }}/Messages {{ out }}/Rpc
     protoc --proto_path=proto \
-        --swift_out=clients/Generated/Messages \
+        --plugin={{ swift_plugins }}/build/release/protoc-gen-swift \
+        --plugin={{ swift_plugins }}/build/release/protoc-gen-grpc-swift-2 \
+        --swift_out={{ out }}/Messages \
         --swift_opt=Visibility=Public,FileNaming=DropPath \
-        --grpc-swift-2_out=clients/Generated/Rpc \
+        --grpc-swift-2_out={{ out }}/Rpc \
         --grpc-swift-2_opt=Visibility=Public,Client=true,Server=false,FileNaming=DropPath \
         proto/aria/daemon/v1/daemon.proto \
         proto/aria/daemon/v1/errors.proto \
@@ -201,6 +213,23 @@ proto-swift:
         proto/aria/daemon/v1/speech.proto \
         proto/aria/setup/v1/setup.proto \
         proto/grpc/health/v1/health.proto
+
+# The plugins build at the app's pinned versions, so the stubs match the
+# libraries the app links.
+_swift-plugins:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version=$(jq -er '.pins[] | select(.identity == "grpc-swift-protobuf") | .state.version' {{ swift_resolved }})
+    source={{ swift_plugins }}/grpc-swift-protobuf-$version
+    if [ ! -d "$source" ]; then
+        git clone --quiet --depth 1 --branch "$version" \
+            https://github.com/grpc/grpc-swift-protobuf.git "$source"
+    fi
+    cp {{ swift_resolved }} "$source/Package.resolved"
+    for product in protoc-gen-swift protoc-gen-grpc-swift-2; do
+        swift build --package-path "$source" --scratch-path {{ swift_plugins }}/build \
+            -c release --only-use-versions-from-resolved-file --product "$product" --quiet
+    done
 
 # Release
 

@@ -85,9 +85,9 @@ extension Aria_Daemon_V1_SpeechService {
         ///   - serializer: A serializer for `Aria_Daemon_V1_SpeakRequest` messages.
         ///   - deserializer: A deserializer for `Aria_Daemon_V1_SpeakResponse` messages.
         ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response, the result of which is
-        ///       returned to the caller. Returning from the closure will cancel the RPC if it
-        ///       hasn't already finished.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
         /// - Returns: The result of `handleResponse`.
         func speak<Result>(
             request: GRPCCore.ClientRequest<Aria_Daemon_V1_SpeakRequest>,
@@ -111,9 +111,9 @@ extension Aria_Daemon_V1_SpeechService {
         ///   - serializer: A serializer for `Aria_Daemon_V1_StopSpeechRequest` messages.
         ///   - deserializer: A deserializer for `Aria_Daemon_V1_StopSpeechResponse` messages.
         ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response, the result of which is
-        ///       returned to the caller. Returning from the closure will cancel the RPC if it
-        ///       hasn't already finished.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
         /// - Returns: The result of `handleResponse`.
         func stop<Result>(
             request: GRPCCore.ClientRequest<Aria_Daemon_V1_StopSpeechRequest>,
@@ -154,9 +154,9 @@ extension Aria_Daemon_V1_SpeechService {
         ///   - serializer: A serializer for `Aria_Daemon_V1_SpeakRequest` messages.
         ///   - deserializer: A deserializer for `Aria_Daemon_V1_SpeakResponse` messages.
         ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response, the result of which is
-        ///       returned to the caller. Returning from the closure will cancel the RPC if it
-        ///       hasn't already finished.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
         /// - Returns: The result of `handleResponse`.
         public func speak<Result>(
             request: GRPCCore.ClientRequest<Aria_Daemon_V1_SpeakRequest>,
@@ -191,9 +191,9 @@ extension Aria_Daemon_V1_SpeechService {
         ///   - serializer: A serializer for `Aria_Daemon_V1_StopSpeechRequest` messages.
         ///   - deserializer: A deserializer for `Aria_Daemon_V1_StopSpeechResponse` messages.
         ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response, the result of which is
-        ///       returned to the caller. Returning from the closure will cancel the RPC if it
-        ///       hasn't already finished.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
         /// - Returns: The result of `handleResponse`.
         public func stop<Result>(
             request: GRPCCore.ClientRequest<Aria_Daemon_V1_StopSpeechRequest>,
@@ -231,9 +231,9 @@ extension Aria_Daemon_V1_SpeechService.ClientProtocol {
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_SpeakRequest` message.
     ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response, the result of which is
-    ///       returned to the caller. Returning from the closure will cancel the RPC if it
-    ///       hasn't already finished.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
     /// - Returns: The result of `handleResponse`.
     public func speak<Result>(
         request: GRPCCore.ClientRequest<Aria_Daemon_V1_SpeakRequest>,
@@ -263,9 +263,9 @@ extension Aria_Daemon_V1_SpeechService.ClientProtocol {
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_StopSpeechRequest` message.
     ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response, the result of which is
-    ///       returned to the caller. Returning from the closure will cancel the RPC if it
-    ///       hasn't already finished.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
     /// - Returns: The result of `handleResponse`.
     public func stop<Result>(
         request: GRPCCore.ClientRequest<Aria_Daemon_V1_StopSpeechRequest>,
@@ -300,9 +300,9 @@ extension Aria_Daemon_V1_SpeechService.ClientProtocol {
     ///   - message: request message to send.
     ///   - metadata: Additional metadata to send, defaults to empty.
     ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response, the result of which is
-    ///       returned to the caller. Returning from the closure will cancel the RPC if it
-    ///       hasn't already finished.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
     /// - Returns: The result of `handleResponse`.
     public func speak<Result>(
         _ message: Aria_Daemon_V1_SpeakRequest,
@@ -336,9 +336,9 @@ extension Aria_Daemon_V1_SpeechService.ClientProtocol {
     ///   - message: request message to send.
     ///   - metadata: Additional metadata to send, defaults to empty.
     ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response, the result of which is
-    ///       returned to the caller. Returning from the closure will cancel the RPC if it
-    ///       hasn't already finished.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
     /// - Returns: The result of `handleResponse`.
     public func stop<Result>(
         _ message: Aria_Daemon_V1_StopSpeechRequest,

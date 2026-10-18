@@ -18,8 +18,9 @@ change, open an issue first and agree on the scope.
 - The checks need [just](https://just.systems), [Taplo](https://taplo.tamasfe.dev),
   [cargo-shear](https://github.com/Boshen/cargo-shear),
   [cargo-deny](https://github.com/EmbarkStudios/cargo-deny), and
-  [uv](https://docs.astral.sh/uv/). The app checks need Xcode and
-  [XcodeGen](https://github.com/yonaskolb/XcodeGen). On Linux, install the
+  [uv](https://docs.astral.sh/uv/). The app checks need Xcode,
+  [XcodeGen](https://github.com/yonaskolb/XcodeGen), and
+  [protoc](https://protobuf.dev/installation/). On Linux, install the
   system packages that [the CI workflow](.github/workflows/check.yml) lists.
 - In the description, explain the problem, the change, and how you checked
   it.
