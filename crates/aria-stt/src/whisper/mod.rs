@@ -41,8 +41,8 @@ use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
-    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, validate_model_file,
-    word_timings,
+    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
+    validate_model_file, word_timings,
 };
 
 /// Names this engine under `transcription.backend` and in its own errors.
@@ -80,6 +80,9 @@ pub struct Whisper {
     /// The first special token id. Segment text leaves special tokens out,
     /// so the word timings must too.
     eot: WhisperTokenId,
+    /// An English-only `.en` model decodes as English whatever language the
+    /// request names, so that request is refused instead of ignored.
+    multilingual: bool,
 }
 
 #[derive(Clone)]
@@ -125,6 +128,7 @@ impl Engine for Whisper {
         Ok(Self {
             state: Mutex::new(state),
             eot: context.token_eot(),
+            multilingual: context.is_multilingual(),
         })
     }
 }
@@ -136,10 +140,10 @@ impl StreamingEngine for Whisper {
 impl Transcriber for Whisper {
     fn validate_language(
         &self,
-        _language: &Language,
+        language: &Language,
         _cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        Ok(())
+        supported_language(self.multilingual, language)
     }
 
     fn transcribe_with(
@@ -168,6 +172,13 @@ fn load_failed(model: &Path, source: whisper_rs::WhisperError) -> TranscriptionE
         model: model.display().to_string(),
         source: BackendError::engine(source),
     }
+}
+
+fn supported_language(multilingual: bool, language: &Language) -> Result<(), TranscriptionError> {
+    if multilingual {
+        return Ok(());
+    }
+    english_only(BACKEND, language)
 }
 
 fn inference_failed(source: whisper_rs::WhisperError) -> TranscriptionError {
@@ -275,13 +286,9 @@ fn collect_transcript(
 }
 
 fn is_silence(no_speech_probability: f32, log_probabilities: &[f32]) -> bool {
-    let unlikely_words = match log_probabilities.len() {
-        0 => true,
-        count => {
-            let average = log_probabilities.iter().sum::<f32>() / count as f32;
-            average < LOG_PROBABILITY_THRESHOLD
-        }
-    };
+    let unlikely_words = log_probabilities.is_empty()
+        || (log_probabilities.iter().sum::<f32>() / log_probabilities.len() as f32)
+            < LOG_PROBABILITY_THRESHOLD;
     no_speech_probability > NO_SPEECH_THRESHOLD && unlikely_words
 }
 
@@ -312,6 +319,8 @@ fn run_with_cancellation<T: Send>(
 
 #[cfg(test)]
 mod load_engine_tests {
+    use aria_kit::transcription::LanguageCode;
+
     use super::*;
 
     #[test]
@@ -336,6 +345,21 @@ mod load_engine_tests {
         assert!(is_silence(0.72, &doubtful));
         assert!(!is_silence(0.2, &doubtful));
         assert!(is_silence(0.72, &[]));
+    }
+
+    #[test]
+    fn an_english_only_model_refuses_other_languages_and_a_multilingual_one_takes_any() {
+        let french = Language::Specific(LanguageCode::new("fr").expect("fr is a valid code"));
+        let english = Language::Specific(LanguageCode::english());
+
+        assert!(supported_language(true, &french).is_ok());
+        assert!(supported_language(false, &english).is_ok());
+        assert!(supported_language(false, &Language::Automatic).is_ok());
+        assert!(matches!(
+            supported_language(false, &french),
+            Err(TranscriptionError::UnsupportedLanguage { backend, language })
+                if backend == BACKEND && language == "fr"
+        ));
     }
 
     fn name_of<E: Engine>() -> &'static str {
