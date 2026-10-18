@@ -87,6 +87,9 @@ rust-stt-features:
     for engine in parakeet moonshine nemotron whisper whisper-candle parakeet-mlx; do
         cargo check --locked -p aria-stt --no-default-features --all-targets --features "$engine"
     done
+    if [ "$(uname -s)" = Darwin ]; then
+        cargo check --locked -p aria-stt --no-default-features --all-targets --features parakeet-gpu
+    fi
 
 # Check TTS engines without relying on another engine's features
 rust-tts-features:
