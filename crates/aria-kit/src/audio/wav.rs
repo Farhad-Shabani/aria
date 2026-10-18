@@ -274,7 +274,6 @@ mod tests {
     #[test]
     fn a_wav_declaring_an_absurd_rate_is_refused() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        let path = directory.path().join("absurd.wav");
         // Prime, so nothing divides out of the resampler's FFT size.
         let rate = 1_000_000_007;
         let spec = hound::WavSpec {
@@ -283,11 +282,9 @@ mod tests {
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
         };
-        let mut writer = hound::WavWriter::create(&path, spec).expect("the WAV is writable");
-        writer.write_sample(0_i16).expect("the sample is writable");
-        writer.finalize().expect("the WAV finalizes");
+        let fixture = write_fixture(directory.path(), spec, 1);
 
-        let outcome = read_wav(&path);
+        let outcome = read_wav(&fixture);
 
         assert!(matches!(
             outcome,

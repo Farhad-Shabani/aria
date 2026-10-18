@@ -264,10 +264,12 @@ mod tests {
 
     use super::*;
 
+    const FRAME: usize = 4;
+
     struct FixedVad(f32);
 
     impl VoiceActivityDetector for FixedVad {
-        const FRAME_SAMPLES: usize = 4;
+        const FRAME_SAMPLES: usize = FRAME;
 
         fn probability(
             &mut self,
@@ -283,7 +285,7 @@ mod tests {
     }
 
     impl VoiceActivityDetector for SpeechThenSilence {
-        const FRAME_SAMPLES: usize = 4;
+        const FRAME_SAMPLES: usize = FRAME;
 
         fn probability(
             &mut self,
@@ -318,7 +320,7 @@ mod tests {
     struct FailingVad;
 
     impl VoiceActivityDetector for FailingVad {
-        const FRAME_SAMPLES: usize = 4;
+        const FRAME_SAMPLES: usize = FRAME;
 
         fn probability(
             &mut self,
@@ -328,17 +330,19 @@ mod tests {
         }
     }
 
+    /// A monitor whose detector fires on `frame`, and the events it publishes.
+    fn monitor(frame: usize) -> (WakeMonitor<DetectsOnFrame>, Receiver<WakeWordEvent>) {
+        let (events, detections) = sync_channel(1);
+        let monitor = WakeMonitor::new(DetectsOnFrame { frame, calls: 0 }, events, FRAME);
+        (monitor, detections)
+    }
+
     #[test]
     fn recording_completion_does_not_rearm_a_triggered_monitor() {
-        let (events, _detections) = sync_channel(1);
-        let mut monitor = WakeMonitor::new(
-            DetectsOnFrame { frame: 1, calls: 0 },
-            events,
-            FixedVad::FRAME_SAMPLES,
-        );
+        let (mut monitor, _detections) = monitor(1);
         let mut vad = FixedVad(1.0);
 
-        monitor.observe(&mut vad, &[0; FixedVad::FRAME_SAMPLES]);
+        monitor.observe(&mut vad, &[0; FRAME]);
         monitor.recording_finished();
 
         assert!(matches!(monitor.state, WakeMonitorState::Triggered));
@@ -346,15 +350,10 @@ mod tests {
 
     #[test]
     fn idle_vad_rejects_a_wake_detection_without_speech() {
-        let (events, detections) = sync_channel(1);
-        let mut monitor = WakeMonitor::new(
-            DetectsOnFrame { frame: 1, calls: 0 },
-            events,
-            FixedVad::FRAME_SAMPLES,
-        );
+        let (mut monitor, detections) = monitor(1);
         let mut vad = FixedVad(SPEECH_THRESHOLD - 0.1);
 
-        let observation = monitor.observe(&mut vad, &[0; FixedVad::FRAME_SAMPLES]);
+        let observation = monitor.observe(&mut vad, &[0; FRAME]);
 
         assert!(matches!(observation, IdleObservation::Continue));
         assert!(matches!(monitor.state, WakeMonitorState::Armed));
@@ -364,15 +363,10 @@ mod tests {
 
     #[test]
     fn idle_vad_buffers_partial_frames() {
-        let (events, detections) = sync_channel(1);
-        let mut monitor = WakeMonitor::new(
-            DetectsOnFrame { frame: 1, calls: 0 },
-            events,
-            FixedVad::FRAME_SAMPLES,
-        );
+        let (mut monitor, detections) = monitor(1);
         let mut vad = FixedVad(SPEECH_THRESHOLD);
 
-        let partial = monitor.observe(&mut vad, &[0; FixedVad::FRAME_SAMPLES - 1]);
+        let partial = monitor.observe(&mut vad, &[0; FRAME - 1]);
         let complete = monitor.observe(&mut vad, &[0]);
 
         assert!(matches!(partial, IdleObservation::Continue));
@@ -386,15 +380,10 @@ mod tests {
 
     #[test]
     fn idle_vad_failure_suspends_wake_monitoring() {
-        let (events, detections) = sync_channel(1);
-        let mut monitor = WakeMonitor::new(
-            DetectsOnFrame { frame: 1, calls: 0 },
-            events,
-            FailingVad::FRAME_SAMPLES,
-        );
+        let (mut monitor, detections) = monitor(1);
         let mut vad = FailingVad;
 
-        let observation = monitor.observe(&mut vad, &[0; FailingVad::FRAME_SAMPLES]);
+        let observation = monitor.observe(&mut vad, &[0; FRAME]);
 
         assert!(matches!(observation, IdleObservation::Continue));
         assert!(matches!(monitor.state, WakeMonitorState::Failed));
@@ -408,15 +397,10 @@ mod tests {
 
     #[test]
     fn a_detection_on_silence_counts_when_speech_was_just_heard() {
-        let (events, detections) = sync_channel(1);
-        let mut monitor = WakeMonitor::new(
-            DetectsOnFrame { frame: 3, calls: 0 },
-            events,
-            SpeechThenSilence::FRAME_SAMPLES,
-        );
+        let (mut monitor, detections) = monitor(3);
         let mut vad = SpeechThenSilence { frames: 0 };
 
-        let observation = monitor.observe(&mut vad, &[0; 5 * SpeechThenSilence::FRAME_SAMPLES]);
+        let observation = monitor.observe(&mut vad, &[0; 5 * FRAME]);
 
         assert!(matches!(
             observation,
@@ -427,22 +411,11 @@ mod tests {
 
     #[test]
     fn a_detection_long_after_the_last_speech_is_rejected() {
-        let (events, detections) = sync_channel(1);
-        let frames_past_lookback = SPEECH_LOOKBACK_SAMPLES / SpeechThenSilence::FRAME_SAMPLES + 2;
-        let mut monitor = WakeMonitor::new(
-            DetectsOnFrame {
-                frame: frames_past_lookback,
-                calls: 0,
-            },
-            events,
-            SpeechThenSilence::FRAME_SAMPLES,
-        );
+        let frames_past_lookback = SPEECH_LOOKBACK_SAMPLES / FRAME + 2;
+        let (mut monitor, detections) = monitor(frames_past_lookback);
         let mut vad = SpeechThenSilence { frames: 0 };
 
-        let observation = monitor.observe(
-            &mut vad,
-            &vec![0; frames_past_lookback * SpeechThenSilence::FRAME_SAMPLES],
-        );
+        let observation = monitor.observe(&mut vad, &vec![0; frames_past_lookback * FRAME]);
 
         assert!(matches!(observation, IdleObservation::Continue));
         assert!(detections.try_recv().is_err());
