@@ -267,7 +267,10 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum IdleObservation {
     Continue,
-    Detected,
+    Detected {
+        /// Where the audio after the wake word begins in the observed samples.
+        command_start: usize,
+    },
 }
 
 pub(super) trait IdleMonitor {
