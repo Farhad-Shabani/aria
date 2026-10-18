@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use crate::config::{self, ConfigError, FileConfig};
 use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, StopMode, guided};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
+use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
 use crate::runtime::PreparedRuntimePaths;
@@ -517,7 +518,11 @@ pub fn run(
     // microphone. `--yes` is the installer's unattended rerun, which must
     // never sit waiting for someone to speak.
     let hands_on = options.interactive && !options.yes;
-    let session = hands_on.then(live_daemon).flatten();
+    let session = if hands_on {
+        live_daemon(&mut prompts)?
+    } else {
+        None
+    };
     (summary.enrolled, summary.tried) = match &session {
         Some(session) if voice_model_present(&summary.models) => (
             enroll_voice(&mut prompts, session)?,
@@ -574,9 +579,20 @@ fn voice_model_present(models: &[(&'static str, Outcome)]) -> bool {
 
 /// The daemon setup just installed, once it answers. `None` is ordinary:
 /// the steps that need one skip themselves rather than fail the run.
-fn live_daemon() -> Option<DaemonSession> {
-    let paths = PreparedRuntimePaths::for_current_user().ok()?;
-    DaemonSession::connect_at(&paths).ok()
+fn live_daemon(
+    prompts: &mut Prompts<'_, impl BufRead, impl Write>,
+) -> Result<Option<DaemonSession>, SetupError> {
+    let paths = match PreparedRuntimePaths::for_current_user() {
+        Ok(paths) => paths,
+        Err(error) => {
+            prompts.note(&format!(
+                "Skipping the voice steps: {}",
+                error_chain(&error)
+            ))?;
+            return Ok(None);
+        }
+    };
+    Ok(DaemonSession::connect_at(&paths).ok())
 }
 
 /// Asks for a voice and records it through the daemon that was just

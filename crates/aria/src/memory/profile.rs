@@ -88,7 +88,19 @@ pub fn write_profile(store: &Store, dir: &Path) -> Result<(), StoreError> {
 /// The block as written, or `None` when there is none or it cannot be
 /// read: memory never fails an ask.
 pub(crate) fn load_profile_block(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join(PROFILE_FILE)).ok()?;
+    let path = dir.join(PROFILE_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "cannot read the memory profile; answering without it"
+            );
+            return None;
+        }
+    };
     let trimmed = text.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }

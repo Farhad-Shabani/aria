@@ -25,6 +25,11 @@ fn runs_as(stream: &UnixStream, uid: u32) -> bool {
             );
             false
         }
+        // The app's liveness probe hangs up before its user can be read.
+        Err(error) if error.kind() == io::ErrorKind::NotConnected => {
+            tracing::debug!("a peer hung up before its user could be read");
+            false
+        }
         Err(error) => {
             tracing::warn!(%error, "refused a connection whose user is unknown");
             false
