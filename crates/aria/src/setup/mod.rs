@@ -21,9 +21,10 @@ use std::time::{Duration, Instant};
 use crate::config::{self, ConfigError, FileConfig};
 use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, StopMode, guided};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
+use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
-use crate::runtime::PreparedRuntimePaths;
+use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::speech::SpeechRequest;
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
@@ -517,7 +518,11 @@ pub fn run(
     // microphone. `--yes` is the installer's unattended rerun, which must
     // never sit waiting for someone to speak.
     let hands_on = options.interactive && !options.yes;
-    let session = hands_on.then(live_daemon).flatten();
+    let session = if hands_on {
+        live_daemon(&mut prompts, PreparedRuntimePaths::for_current_user())?
+    } else {
+        None
+    };
     (summary.enrolled, summary.tried) = match &session {
         Some(session) if voice_model_present(&summary.models) => (
             enroll_voice(&mut prompts, session)?,
@@ -574,9 +579,21 @@ fn voice_model_present(models: &[(&'static str, Outcome)]) -> bool {
 
 /// The daemon setup just installed, once it answers. `None` is ordinary:
 /// the steps that need one skip themselves rather than fail the run.
-fn live_daemon() -> Option<DaemonSession> {
-    let paths = PreparedRuntimePaths::for_current_user().ok()?;
-    DaemonSession::connect_at(&paths).ok()
+fn live_daemon(
+    prompts: &mut Prompts<'_, impl BufRead, impl Write>,
+    paths: Result<PreparedRuntimePaths, RuntimeError>,
+) -> Result<Option<DaemonSession>, SetupError> {
+    let paths = match paths {
+        Ok(paths) => paths,
+        Err(error) => {
+            prompts.note(&format!(
+                "Skipping the voice steps: {}",
+                error_chain(&error)
+            ))?;
+            return Ok(None);
+        }
+    };
+    Ok(DaemonSession::connect_at(&paths).ok())
 }
 
 /// Asks for a voice and records it through the daemon that was just
@@ -1152,6 +1169,22 @@ mod tests {
             .collect();
 
         assert!(wanted.contains(&"moonshine"), "{wanted:?}");
+    }
+
+    #[test]
+    fn an_unusable_runtime_directory_is_reported() {
+        let (mut input, mut output) = (&b""[..], Vec::new());
+        let mut prompts = Prompts::new(&mut input, &mut output, false, false, false);
+        let paths = Err(RuntimeError::NotAbsolute {
+            path: PathBuf::from("relative"),
+        });
+
+        let session = live_daemon(&mut prompts, paths).unwrap();
+
+        assert!(session.is_none());
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Skipping the voice steps"), "{output}");
+        assert!(output.contains("must be absolute"), "{output}");
     }
 
     #[test]

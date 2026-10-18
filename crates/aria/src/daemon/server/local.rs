@@ -25,6 +25,11 @@ fn runs_as(stream: &UnixStream, uid: u32) -> bool {
             );
             false
         }
+        // The app's liveness probe hangs up before its user can be read.
+        Err(error) if error.kind() == io::ErrorKind::NotConnected => {
+            tracing::debug!("a peer hung up before its user could be read");
+            false
+        }
         Err(error) => {
             tracing::warn!(%error, "refused a connection whose user is unknown");
             false
@@ -43,5 +48,20 @@ mod tests {
 
         assert!(runs_as(&client, uid));
         assert!(!runs_as(&client, uid + 1));
+    }
+
+    // Linux keeps the peer's credentials after it leaves; macOS does not.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_peer_that_already_hung_up_has_no_user() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let path = directory.path().join("probe.sock");
+        let listener = UnixListener::bind(&path).expect("listener");
+
+        drop(std::os::unix::net::UnixStream::connect(&path).expect("probe"));
+        let (stream, _) = listener.accept().await.expect("accepted probe");
+
+        let error = stream.peer_cred().expect_err("the probe is gone");
+        assert_eq!(error.kind(), io::ErrorKind::NotConnected);
     }
 }
