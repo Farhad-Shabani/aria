@@ -233,9 +233,9 @@ where
     T: Transcriber,
     M: Mode,
     E: Embedder,
+    V: VoiceActivityDetector,
     S: TranscriptSink,
     S::Error: Into<DictationError>,
-    V: VoiceActivityDetector,
 {
     pub(crate) fn execute(
         &self,
