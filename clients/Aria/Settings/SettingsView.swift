@@ -44,8 +44,8 @@ struct GeneralSettings: View {
             LabeledContent("On screen:") {
                 VStack(alignment: .leading) {
                     Toggle("Show status pill", isOn: $statusPillEnabled)
-                    Toggle("Show words before they're typed", isOn: $ghostTextEnabled)
-                        .help("When delivering while speaking, words Aria hasn't typed yet show faintly at the cursor.")
+                    Toggle("Show inline preview", isOn: $ghostTextEnabled)
+                        .help("Words Aria hasn't typed yet appear faintly at the cursor.")
                 }
             }
             .settingsGroup()
