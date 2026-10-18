@@ -13,10 +13,10 @@ use aria_kit::synthesis::{
 use crate::audio::{SilenceDuration, SilenceDurationError};
 use crate::chat::{AskTarget, ChatReply, ChatRequest, ChatStage, ChatStageKind, Step, Ticket};
 use crate::config::ChatAgent;
-use crate::delivery::DeliveryOutcome;
+use crate::delivery::{DeliveryOutcome, Placement, Rect};
 use crate::dictation::{
     CaptionSnapshot, DeliveryMode, DictationEvent, DictationOutcome, DictationRequest,
-    DictationStage, MicLevel, OutputMode, RecordingId, StopMode,
+    DictationStage, GhostSnapshot, MicLevel, OutputMode, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
 use crate::hotkey::HotkeyKey;
@@ -213,6 +213,9 @@ impl From<DictationEvent> for wire::Event {
             DictationEvent::Caption(caption) => Self {
                 payload: Some(wire::event::Payload::Caption(caption.into())),
             },
+            DictationEvent::Ghost(ghost) => Self {
+                payload: Some(wire::event::Payload::Ghost(ghost.into())),
+            },
             DictationEvent::Level(level) => Self {
                 payload: Some(wire::event::Payload::Level(level.into())),
             },
@@ -227,6 +230,41 @@ impl From<CaptionSnapshot> for wire::CaptionSnapshot {
             committed: caption.committed.to_string(),
             provisional: caption.provisional.to_string(),
             ended: caption.ended,
+        }
+    }
+}
+
+impl From<GhostSnapshot> for wire::GhostSnapshot {
+    fn from(ghost: GhostSnapshot) -> Self {
+        Self {
+            recording_id: ghost.recording.0,
+            text: ghost.text.to_string(),
+            placement: ghost.placement.map(Into::into),
+        }
+    }
+}
+
+impl From<Placement> for wire::Placement {
+    fn from(placement: Placement) -> Self {
+        let (font_name, font_size) = placement
+            .font
+            .map_or((String::new(), 0.0), |font| (font.name, font.size));
+        Self {
+            caret: Some(placement.caret.into()),
+            field: placement.field.map(Into::into),
+            font_name,
+            font_size,
+        }
+    }
+}
+
+impl From<Rect> for wire::Rect {
+    fn from(rect: Rect) -> Self {
+        Self {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
         }
     }
 }
@@ -1831,6 +1869,39 @@ mod tests {
             assert_eq!(snapshot.provisional, "private provisional words");
             assert_eq!(snapshot.ended, ended);
         }
+    }
+
+    #[test]
+    fn ghost_snapshots_carry_their_placement_and_redact_debug_text() {
+        let ghost = GhostSnapshot {
+            recording: RecordingId(42),
+            text: Arc::from("private unconfirmed words"),
+            placement: Some(Placement {
+                caret: Rect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 1.0,
+                    height: 16.0,
+                },
+                field: None,
+                font: Some(crate::delivery::Font {
+                    name: "Helvetica".to_owned(),
+                    size: 13.0,
+                }),
+            }),
+        };
+        assert!(!format!("{ghost:?}").contains("private"));
+        let encoded = wire::Event::from(DictationEvent::Ghost(ghost)).encode_to_vec();
+        let decoded = wire::Event::decode(encoded.as_slice()).expect("event decodes");
+        let Some(wire::event::Payload::Ghost(snapshot)) = decoded.payload else {
+            panic!("a ghost keeps its own payload");
+        };
+        assert_eq!(snapshot.text, "private unconfirmed words");
+        let placement = snapshot.placement.expect("placement survives");
+        assert_eq!(placement.caret.expect("caret survives").height, 16.0);
+        assert_eq!(placement.field, None);
+        assert_eq!(placement.font_name, "Helvetica");
+        assert_eq!(placement.font_size, 13.0);
     }
 
     #[test]

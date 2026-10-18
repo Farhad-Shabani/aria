@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let events = DaemonEvents()
     private let panel = FloatingPanel(width: captionWidth, bottomMargin: captionBottomMargin)
     let status: StatusController
+    private let ghost: GhostController
     private let askHotkey: AskHotkeyController
     private var caption = CaptionState()
     private var shownCommitted: String?
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         status = StatusController(events: events)
+        ghost = GhostController(events: events)
         askHotkey = AskHotkeyController(events: events)
         super.init()
     }
@@ -83,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         status.start()
+        ghost.start()
         events.start()
         offerSetupOnce()
     }

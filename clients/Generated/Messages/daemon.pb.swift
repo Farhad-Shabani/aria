@@ -965,6 +965,92 @@ public nonisolated struct Aria_Daemon_V1_CaptionSnapshot: Sendable {
   public init() {}
 }
 
+/// Words streaming has heard but not typed yet, sent with each changed decode
+/// preview. Empty once a segment is typed or fails to type. A full subscriber
+/// queue drops one without closing the subscription; the next replaces it.
+public nonisolated struct Aria_Daemon_V1_GhostSnapshot: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var recordingID: UInt64 = 0
+
+  public var text: String = String()
+
+  /// Unset when the caret's position is unknown.
+  public var placement: Aria_Daemon_V1_Placement {
+    get {_placement ?? Aria_Daemon_V1_Placement()}
+    set {_placement = newValue}
+  }
+  /// Returns true if `placement` has been explicitly set.
+  public var hasPlacement: Bool {self._placement != nil}
+  /// Clears the value of `placement`. Subsequent reads from it will return its default value.
+  public mutating func clearPlacement() {self._placement = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _placement: Aria_Daemon_V1_Placement? = nil
+}
+
+/// The caret of the field being typed into. Rects are screen points measured
+/// from the primary display's top-left corner.
+public nonisolated struct Aria_Daemon_V1_Placement: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var caret: Aria_Daemon_V1_Rect {
+    get {_caret ?? Aria_Daemon_V1_Rect()}
+    set {_caret = newValue}
+  }
+  /// Returns true if `caret` has been explicitly set.
+  public var hasCaret: Bool {self._caret != nil}
+  /// Clears the value of `caret`. Subsequent reads from it will return its default value.
+  public mutating func clearCaret() {self._caret = nil}
+
+  /// Unset when the app reports no frame for the field.
+  public var field: Aria_Daemon_V1_Rect {
+    get {_field ?? Aria_Daemon_V1_Rect()}
+    set {_field = newValue}
+  }
+  /// Returns true if `field` has been explicitly set.
+  public var hasField: Bool {self._field != nil}
+  /// Clears the value of `field`. Subsequent reads from it will return its default value.
+  public mutating func clearField() {self._field = nil}
+
+  /// Empty when the app reports no font.
+  public var fontName: String = String()
+
+  public var fontSize: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _caret: Aria_Daemon_V1_Rect? = nil
+  fileprivate var _field: Aria_Daemon_V1_Rect? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_Rect: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var x: Double = 0
+
+  public var y: Double = 0
+
+  public var width: Double = 0
+
+  public var height: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// How loud the microphone is while a press records. A full subscriber
 /// queue drops the level without closing the subscription.
 public nonisolated struct Aria_Daemon_V1_MicLevel: Sendable {
@@ -2133,6 +2219,14 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     set {payload = .level(newValue)}
   }
 
+  public var ghost: Aria_Daemon_V1_GhostSnapshot {
+    get {
+      if case .ghost(let v)? = payload {return v}
+      return Aria_Daemon_V1_GhostSnapshot()
+    }
+    set {payload = .ghost(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -2143,6 +2237,7 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     case speaker(Aria_Daemon_V1_SpeakerEvent)
     case caption(Aria_Daemon_V1_CaptionSnapshot)
     case level(Aria_Daemon_V1_MicLevel)
+    case ghost(Aria_Daemon_V1_GhostSnapshot)
 
   }
 
@@ -2611,6 +2706,144 @@ nonisolated extension Aria_Daemon_V1_CaptionSnapshot: SwiftProtobuf.Message, Swi
     if lhs.committed != rhs.committed {return false}
     if lhs.provisional != rhs.provisional {return false}
     if lhs.ended != rhs.ended {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_GhostSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GhostSnapshot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0\u{1}text\0\u{1}placement\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.recordingID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._placement) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.recordingID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.recordingID, fieldNumber: 1)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
+    }
+    try { if let v = self._placement {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_GhostSnapshot, rhs: Aria_Daemon_V1_GhostSnapshot) -> Bool {
+    if lhs.recordingID != rhs.recordingID {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs._placement != rhs._placement {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_Placement: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Placement"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}caret\0\u{1}field\0\u{3}font_name\0\u{3}font_size\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._caret) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._field) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.fontName) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.fontSize) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._caret {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._field {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if !self.fontName.isEmpty {
+      try visitor.visitSingularStringField(value: self.fontName, fieldNumber: 3)
+    }
+    if self.fontSize.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.fontSize, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_Placement, rhs: Aria_Daemon_V1_Placement) -> Bool {
+    if lhs._caret != rhs._caret {return false}
+    if lhs._field != rhs._field {return false}
+    if lhs.fontName != rhs.fontName {return false}
+    if lhs.fontSize != rhs.fontSize {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_Rect: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Rect"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}x\0\u{1}y\0\u{1}width\0\u{1}height\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularDoubleField(value: &self.x) }()
+      case 2: try { try decoder.decodeSingularDoubleField(value: &self.y) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.width) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.height) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.x.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.x, fieldNumber: 1)
+    }
+    if self.y.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.y, fieldNumber: 2)
+    }
+    if self.width.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.width, fieldNumber: 3)
+    }
+    if self.height.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.height, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_Rect, rhs: Aria_Daemon_V1_Rect) -> Bool {
+    if lhs.x != rhs.x {return false}
+    if lhs.y != rhs.y {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4581,7 +4814,7 @@ nonisolated extension Aria_Daemon_V1_SubscribeRequest: SwiftProtobuf.Message, Sw
 
 nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4680,6 +4913,19 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
           self.payload = .level(v)
         }
       }()
+      case 8: try {
+        var v: Aria_Daemon_V1_GhostSnapshot?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .ghost(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .ghost(v)
+        }
+      }()
       default: break
       }
     }
@@ -4718,6 +4964,10 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
     case .level?: try {
       guard case .level(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    }()
+    case .ghost?: try {
+      guard case .ghost(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
     }()
     case nil: break
     }

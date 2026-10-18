@@ -33,14 +33,20 @@ struct GeneralSettings: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.enabledByDefault
+    @AppStorage(GhostController.enabledKey)
+    private var ghostTextEnabled = GhostController.enabledByDefault
 
     var body: some View {
         Form {
             LabeledContent("Startup:") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
             }
-            LabeledContent("Overlay:") {
-                Toggle("Show status pill", isOn: $statusPillEnabled)
+            LabeledContent("On screen:") {
+                VStack(alignment: .leading) {
+                    Toggle("Show status pill", isOn: $statusPillEnabled)
+                    Toggle("Show inline preview", isOn: $ghostTextEnabled)
+                        .help("Words Aria hasn't typed yet appear faintly at the cursor.")
+                }
             }
             .settingsGroup()
             LabeledContent("History:") {

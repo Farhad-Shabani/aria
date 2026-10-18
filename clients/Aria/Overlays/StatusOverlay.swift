@@ -257,12 +257,12 @@ final class StatusController: ObservableObject {
     /// Clears a finished press once its words have been read.
     private var expiry: Task<Void, Never>?
 
-    /// Shares the caption's stream: one subscription feeds both overlays.
+    /// Shares the caption's stream: one subscription feeds every overlay.
     init(events: DaemonEvents) {
         self.events = events
     }
 
-    /// The caller starts the stream once both overlays have registered.
+    /// The caller starts the stream once every overlay has registered.
     func start() {
         UserDefaults.standard.register(defaults: [Self.enabledKey: Self.enabledByDefault])
         events.onStage { [weak self] event in

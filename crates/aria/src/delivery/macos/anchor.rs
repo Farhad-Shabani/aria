@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use cidre::{arc, ax, cf};
 
 use super::caret::{self, Focus};
+use super::element;
 use crate::delivery::DeliveryError;
 
 /// How long a busy app may take to apply the last segment.
@@ -45,6 +46,23 @@ impl Anchoring {
                 Ok(())
             }
             Self::Unavailable => Ok(()),
+        }
+    }
+
+    /// The field and its caret offset, while the caret rests where the next
+    /// segment types.
+    pub(super) fn resting_caret(
+        &self,
+        process: u32,
+        deadline: Instant,
+    ) -> Option<(arc::R<ax::UiElement>, cf::Index)> {
+        match self {
+            Self::Anchored(anchor) => anchor.resting_caret(deadline),
+            Self::Pending => caret::read_focus(process, deadline)
+                .ok()
+                .filter(|focus| focus.selection.len == 0)
+                .map(|focus| (focus.field, focus.selection.loc)),
+            Self::Unavailable => None,
         }
     }
 
@@ -86,18 +104,39 @@ impl Anchor {
         Ok(())
     }
 
+    fn resting_caret(&self, deadline: Instant) -> Option<(arc::R<ax::UiElement>, cf::Index)> {
+        let focused = element::focused_field(&self.application, deadline).ok()?;
+        if !self.field.equal(&focused) {
+            return None;
+        }
+        // A selection, inline completions included, hides the ghost so it
+        // never covers highlighted text.
+        let selection = element::selection(&self.field, deadline).ok()?;
+        if selection.len != 0 {
+            return None;
+        }
+        if selection.loc == self.expected_caret {
+            return Some((focused, selection.loc));
+        }
+        // If the app changed the typed text's length, its ending still marks
+        // where typing continues.
+        let ending = self.ending.as_deref()?;
+        (self.text_before(ending, selection.loc, deadline).as_deref() == Some(ending))
+            .then_some((focused, selection.loc))
+    }
+
     fn observe(&self, ending: &str, deadline: Instant) -> Result<Verdict, &'static str> {
-        let focused = caret::focused_field(&self.application, deadline)?;
+        let focused = element::focused_field(&self.application, deadline)?;
         if !self.field.equal(&focused) {
             return Ok(Verdict::Moved("another field took focus"));
         }
-        let selection = caret::selection(&self.field, deadline)?;
+        let selection = element::selection(&self.field, deadline)?;
         let at_expected = selection.loc == self.expected_caret;
         let before = (selection.len == 0 && !at_expected)
             .then(|| self.text_before(ending, selection.loc, deadline))
             .flatten();
         let field_length = (selection.len > 0 && at_expected)
-            .then(|| caret::field_length(&self.field, deadline).ok())
+            .then(|| element::field_length(&self.field, deadline).ok())
             .flatten();
         Ok(judge(
             self.expected_caret,
@@ -113,8 +152,8 @@ impl Anchor {
         if caret < units {
             return None;
         }
-        caret::limit(&self.field, deadline).ok()?;
-        caret::string_for_range(&self.field, caret - units, units)
+        element::limit(&self.field, deadline).ok()?;
+        element::string_for_range(&self.field, caret - units, units)
     }
 }
 
@@ -167,7 +206,7 @@ fn advanced(caret: cf::Index, text: &str) -> cf::Index {
 fn ending_of(text: &str) -> String {
     let units: Vec<u16> = text.encode_utf16().collect();
     let start = units.len().saturating_sub(ENDING_UNITS);
-    caret::decode(units[start..].iter().copied())
+    element::decode(units[start..].iter().copied())
 }
 
 /// Polls until the caret sits after the typed text. A clear move stops typing

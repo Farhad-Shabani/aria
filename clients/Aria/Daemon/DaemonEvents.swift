@@ -8,9 +8,10 @@ import GRPCNIOTransportHTTP2
 /// error: report the gap, wait, and subscribe again.
 @MainActor
 final class DaemonEvents {
-    /// One stream, many readers: both overlays watch the same subscription.
+    /// One stream, many readers: every overlay watches the same subscription.
     private var stageHandlers: [(Aria_Daemon_V1_DictationEvent?) -> Void] = []
     private var captionHandlers: [(Aria_Daemon_V1_CaptionSnapshot?) -> Void] = []
+    private var ghostHandlers: [(Aria_Daemon_V1_GhostSnapshot?) -> Void] = []
     private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
     private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
     private var levelHandlers: [(Float) -> Void] = []
@@ -24,6 +25,12 @@ final class DaemonEvents {
 
     func onCaption(_ handle: @escaping (Aria_Daemon_V1_CaptionSnapshot?) -> Void) {
         captionHandlers.append(handle)
+    }
+
+    /// Called for every ghost, and with `nil` whenever the stream is not
+    /// carrying events. Lossy at the source: the next ghost replaces a lost one.
+    func onGhost(_ handle: @escaping (Aria_Daemon_V1_GhostSnapshot?) -> Void) {
+        ghostHandlers.append(handle)
     }
 
     /// Called for every microphone level while a press records. Lossy at the
@@ -57,6 +64,7 @@ final class DaemonEvents {
                 self?.publish(chat: nil)
                 self?.publish(speaker: nil)
                 self?.publish(caption: nil)
+                self?.publish(ghost: nil)
                 try? await Task.sleep(for: Self.retryDelay)
             }
         }
@@ -76,6 +84,10 @@ final class DaemonEvents {
 
     private func publish(caption: Aria_Daemon_V1_CaptionSnapshot?) {
         for handler in captionHandlers { handler(caption) }
+    }
+
+    private func publish(ghost: Aria_Daemon_V1_GhostSnapshot?) {
+        for handler in ghostHandlers { handler(ghost) }
     }
 
     private func publish(level: Float) {
@@ -98,6 +110,8 @@ final class DaemonEvents {
                             }
                         case .caption(let caption):
                             await MainActor.run { self.publish(caption: caption) }
+                        case .ghost(let ghost):
+                            await MainActor.run { self.publish(ghost: ghost) }
                         case .level(let level):
                             await MainActor.run { self.publish(level: level.level) }
                         case .chat(let chat):

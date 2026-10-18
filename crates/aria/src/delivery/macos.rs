@@ -3,16 +3,15 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_ulong;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use cidre::{ax, cf};
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSPasteboard, NSRunningApplication};
 use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
 use objc2_foundation::NSString;
 
 use super::{
-    Caret, DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text,
+    Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery, validate_text,
     validate_timeout,
 };
 use crate::accessibility::Trust;
@@ -20,6 +19,8 @@ use crate::accessibility::Trust;
 mod anchor;
 mod caret;
 mod confirmation;
+mod element;
+mod placement;
 
 #[cfg(test)]
 mod benchmark_tests;
@@ -215,6 +216,20 @@ impl TextDelivery for MacOsTextDelivery {
             MacOsDeliveryTarget::Clipboard => Caret::default(),
         }
     }
+
+    fn placement(&self, prepared: &Self::Prepared) -> Option<Placement> {
+        let MacOsDeliveryTarget::Application { process, anchoring } = prepared else {
+            return None;
+        };
+        autoreleasepool(|_| {
+            if insertable(observe()).ok()? != *process {
+                return None;
+            }
+            let deadline = Instant::now() + placement::READ_BUDGET;
+            let (field, caret) = anchoring.borrow().resting_caret(*process, deadline)?;
+            placement::read(&field, caret, deadline)
+        })
+    }
 }
 
 /// What the insertion guards look at, read all at once so `prepare` and the
@@ -320,21 +335,6 @@ fn insert_or_copy(
             Err(refusal)
         }
     }
-}
-
-/// The range an Accessibility selection attribute holds, or `None` when the
-/// application answered with another type.
-#[allow(
-    unsafe_code,
-    reason = "AXValue is a transparent CF type; the runtime type is checked before casting"
-)]
-fn selection_range(value: &cf::Type) -> Option<cf::Range> {
-    if value.get_type_id() != ax::Value::type_id() {
-        return None;
-    }
-    // SAFETY: the type ID identifies an AXValue, and the borrow retains its owner.
-    let value = unsafe { &*std::ptr::from_ref(value).cast::<ax::Value>() };
-    value.cf_range()
 }
 
 /// Whether any process has secure keyboard entry on — a password field, or
@@ -585,16 +585,6 @@ mod tests {
             pasteboard_text(&pasteboard).as_deref(),
             Some(TEST_TRANSCRIPT)
         );
-    }
-
-    #[test]
-    fn range_readback_checks_the_external_type() {
-        let range = cf::Range { loc: 2, len: 3 };
-        let value = ax::Value::with_cf_range(&range);
-        let actual = selection_range(&value).expect("AX range");
-        assert_eq!(actual.loc, range.loc);
-        assert_eq!(actual.len, range.len);
-        assert!(selection_range(&cf::String::from_str("wrong type")).is_none());
     }
 
     #[test]
