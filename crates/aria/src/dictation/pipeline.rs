@@ -361,12 +361,7 @@ where
             match update {
                 Some(HeardUpdate::Finalized(heard)) => {
                     let text = corrected_text(heard.segment.as_str(), corrector, self.cleanup);
-                    published.segment(
-                        heard,
-                        text.as_deref(),
-                        operation.completed().is_some(),
-                        sinks,
-                    )?;
+                    published.segment(heard, text.as_deref(), sinks)?;
                 }
                 // A preview is the decoder's guess; only a finalized segment
                 // is worth correcting.
@@ -462,7 +457,6 @@ impl<'a> Published<'a> {
         &mut self,
         heard: Heard,
         corrected: Option<&str>,
-        completed: bool,
         sinks: &mut S,
     ) -> Result<(), DictationError>
     where
@@ -495,11 +489,19 @@ impl<'a> Published<'a> {
         });
         if let Err(error) = published {
             let error = self.delivery_error(error);
-            if !self.streaming || !completed {
+            if !self.streaming {
                 return Err(error);
             }
-            // Drain a completed decoder without further delivery so history
-            // retains all accepted segments, including the failed delivery.
+            let error = match error {
+                // Text already landed, so typing stopped partway.
+                DictationError::DeliveryTargetChanged if !first => {
+                    DictationError::DeliveryInterrupted
+                }
+                error => error,
+            };
+            // Stop listening, then drain without typing, so history keeps
+            // everything said up to here.
+            self.control.request_recording_stop();
             self.failure = Some(error);
             return Ok(());
         }
@@ -1256,9 +1258,7 @@ mod tests {
             .unwrap()
             .unwrap();
         published.provisional("uncommitted guess");
-        published
-            .segment(heard, None, operation.completed().is_some(), &mut sinks)
-            .unwrap();
+        published.segment(heard, None, &mut sinks).unwrap();
         assert_eq!(
             *log.lock().unwrap(),
             ["prepare:Insert", "segment:turn left"]
@@ -2361,6 +2361,7 @@ mod tests {
                 }),
             );
             sinks.dictation_started(&settings, &control).unwrap();
+            let capture = control.start_recording(&events).unwrap();
             let whole = Transcript::new(if own_voice {
                 "db2 private run db2"
             } else {
@@ -2387,10 +2388,10 @@ mod tests {
                 if stranger {
                     heard.verdict = Verdict::Stranger;
                 }
-                published
-                    .segment(heard, corrected, true, &mut sinks)
-                    .unwrap();
+                published.segment(heard, corrected, &mut sinks).unwrap();
             }
+            // A failed delivery stops listening.
+            assert_eq!(capture.should_stop(), fail);
             let result = published.finish(whole, &mut sinks);
             if fail {
                 assert!(matches!(result, Err(DictationError::Delivery(_))));
@@ -2431,6 +2432,91 @@ mod tests {
         assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
 
+    /// Types the first `typed` segments, then refuses as if focus moved.
+    struct FocusMovesAfter {
+        typed: usize,
+        delivered: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::delivery::TextDelivery for FocusMovesAfter {
+        type Prepared = ();
+        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+        const OUTLIVES_PROCESS: bool = true;
+
+        fn prepare(
+            &self,
+            _mode: OutputMode,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), crate::delivery::DeliveryError> {
+            Ok(())
+        }
+
+        fn finish(
+            &self,
+            _prepared: &(),
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), crate::delivery::DeliveryError> {
+            Ok(())
+        }
+
+        fn deliver(
+            &self,
+            _prepared: &(),
+            _text: &str,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<crate::delivery::DeliveryOutcome, crate::delivery::DeliveryError> {
+            let delivered = self
+                .delivered
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if delivered < self.typed {
+                Ok(crate::delivery::DeliveryOutcome::Inserted)
+            } else {
+                Err(crate::delivery::DeliveryError::TargetChanged)
+            }
+        }
+    }
+
+    #[test]
+    fn a_focus_change_after_typed_text_reads_as_stopped_partway() {
+        for typed in [0, 1] {
+            let directory = tempfile::tempdir().unwrap();
+            let control = ExecutionControl::for_test(StopMode::Manual);
+            let events = DictationEventEmitter::unsubscribed();
+            let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+            let mut published = Published::new(&settings, &control, &events, Instant::now());
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let mut sinks = (
+                RecordingSink {
+                    log: Arc::clone(&log),
+                },
+                Cursor::new(FocusMovesAfter {
+                    typed,
+                    delivered: std::sync::atomic::AtomicUsize::new(0),
+                }),
+            );
+            sinks.dictation_started(&settings, &control).unwrap();
+            for text in ["one", "two"] {
+                let transcription = Transcription::complete_samples(Answering(text));
+                let mut operation = transcription.start(&Language::Automatic).unwrap();
+                let mut recording =
+                    RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
+                let heard = unlabeled()
+                    .next(&mut operation, &mut recording)
+                    .unwrap()
+                    .unwrap();
+                published.segment(heard, None, &mut sinks).unwrap();
+            }
+
+            let result = published.finish(Transcript::new("one two").unwrap(), &mut sinks);
+
+            if typed == 0 {
+                assert!(matches!(result, Err(DictationError::DeliveryTargetChanged)));
+            } else {
+                assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
+            }
+        }
+    }
+
     #[test]
     fn a_streamed_segment_of_only_fillers_is_neither_typed_nor_kept() {
         let directory = tempfile::tempdir().unwrap();
@@ -2458,9 +2544,7 @@ mod tests {
                 .next(&mut operation, &mut recording)
                 .unwrap()
                 .unwrap();
-            published
-                .segment(heard, corrected, true, &mut sinks)
-                .unwrap();
+            published.segment(heard, corrected, &mut sinks).unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
 

@@ -17,7 +17,7 @@ enum MenuBarState: Equatable {
         case (.running, .transcribing), (.running, .delivering), (.running, .asking): self = .working
         case (.running, .delivered), (.running, .replied): self = .done
         case (.running, .failed), (.running, .noReply): self = .attention
-        case (.running, .cancelled), (.running, nil): self = .ready
+        case (.running, .cancelled), (.running, .interrupted), (.running, nil): self = .ready
         }
     }
 

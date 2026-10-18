@@ -45,9 +45,11 @@ Insertion requires Accessibility access, and the intended app and field must
 stay focused.
 
 `--mode insert` types the completed transcript. `--stream` types finalized
-segments while you speak. Use `--mode insert-or-copy` if you want copying when
-insertion cannot begin. Linux uses the clipboard and does not support
-insertion-only modes.
+segments while you speak. Switching apps stops it. So does clicking or typing,
+in apps that report their text cursor. What you said so far stays in
+[history](./history.md#saving) when saving is on. Use `--mode insert-or-copy`
+if you want copying when insertion cannot begin. Linux uses the clipboard and
+does not support insertion-only modes.
 
 Aria adds a space where the text needs one. Dictating “Hello.” and then
 “How are you” types “Hello. How are you”.

@@ -55,6 +55,7 @@ fn message(code: RpcErrorCode) -> &'static str {
         RpcErrorCode::CaptureFailed => "Recording failed. Check your mic.",
         RpcErrorCode::TranscriptionFailed => "Transcription failed.",
         RpcErrorCode::DeliveryTargetChanged => "The window changed, so nothing was inserted.",
+        RpcErrorCode::DeliveryInterrupted => "Focus moved, so typing stopped.",
         RpcErrorCode::DeliveryFailed | RpcErrorCode::DeliveryTimeout => {
             "The transcript could not be delivered."
         }

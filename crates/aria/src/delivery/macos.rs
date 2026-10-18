@@ -17,12 +17,14 @@ use super::{
 };
 use crate::accessibility::Trust;
 
+mod anchor;
 mod caret;
 mod confirmation;
 
 #[cfg(test)]
 mod benchmark_tests;
 
+use anchor::Anchoring;
 use confirmation::Confirmation;
 
 const PLAIN_TEXT_TYPE: &str = "public.utf8-plain-text";
@@ -51,7 +53,10 @@ pub(crate) struct MacOsTextDelivery {
 }
 
 pub(crate) enum MacOsDeliveryTarget {
-    Application(u32),
+    Application {
+        process: u32,
+        anchoring: RefCell<Anchoring>,
+    },
     ApplicationAndSubmit {
         process: u32,
         confirmation: RefCell<Confirmation>,
@@ -59,6 +64,15 @@ pub(crate) enum MacOsDeliveryTarget {
     },
     ApplicationOrClipboard(u32),
     Clipboard,
+}
+
+impl MacOsDeliveryTarget {
+    fn application(process: u32) -> Self {
+        Self::Application {
+            process,
+            anchoring: RefCell::new(Anchoring::Pending),
+        }
+    }
 }
 
 impl MacOsTextDelivery {
@@ -86,7 +100,7 @@ impl TextDelivery for MacOsTextDelivery {
             // Asked while there is still nothing to lose: a refusal ends the
             // press before a transcript exists.
             OutputMode::Insert => {
-                autoreleasepool(|_| Ok(MacOsDeliveryTarget::Application(insertable(observe())?)))
+                autoreleasepool(|_| Ok(MacOsDeliveryTarget::application(insertable(observe())?)))
             }
             OutputMode::InsertAndSubmit => autoreleasepool(|_| {
                 let process = insertable(observe())?;
@@ -150,8 +164,12 @@ impl TextDelivery for MacOsTextDelivery {
         }
 
         autoreleasepool(|_| match prepared {
-            MacOsDeliveryTarget::Application(process) => {
-                insert(*process, text, &should_cancel, observe())
+            MacOsDeliveryTarget::Application { process, anchoring } => {
+                let mut anchoring = anchoring.borrow_mut();
+                anchoring.before_typing()?;
+                let outcome = insert(*process, text, &should_cancel, observe())?;
+                anchoring.after_typing(text);
+                Ok(outcome)
             }
             MacOsDeliveryTarget::ApplicationAndSubmit {
                 process,
@@ -185,10 +203,14 @@ impl TextDelivery for MacOsTextDelivery {
 
     fn caret(&self, prepared: &Self::Prepared) -> Caret {
         match prepared {
-            MacOsDeliveryTarget::Application(process)
-            | MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
+            MacOsDeliveryTarget::Application { process, anchoring } => autoreleasepool(|_| {
+                let (caret, focus) = caret::read(*process);
+                anchoring.borrow_mut().start(focus);
+                caret
+            }),
+            MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
             | MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
-                autoreleasepool(|_| caret::read(*process))
+                autoreleasepool(|_| caret::read(*process).0)
             }
             MacOsDeliveryTarget::Clipboard => Caret::default(),
         }
@@ -642,7 +664,7 @@ mod tests {
     #[test]
     fn deliver_rejects_an_already_cancelled_request() {
         let delivery = MacOsTextDelivery::new(TEST_TIMEOUT).expect("delivery should initialize");
-        let target = MacOsDeliveryTarget::Application(PREPARED_TARGET);
+        let target = MacOsDeliveryTarget::application(PREPARED_TARGET);
 
         let result = delivery.deliver(&target, TEST_TRANSCRIPT, || true);
 
