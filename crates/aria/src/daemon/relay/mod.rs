@@ -29,7 +29,10 @@ pub(crate) use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
 pub(super) use code::PairingCodes;
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
-pub(super) use pairing::{Pairing, Token, load_or_create as load_pairing, require_bearer};
+pub(super) use pairing::{
+    Pairing, PairingError, Phones, fingerprint, load_or_create as load_pairing, presented,
+    require_paired,
+};
 pub(super) use preferences::LanPreferences;
 
 /// The longest recording's PCM, so an oversized upload stops as it streams.

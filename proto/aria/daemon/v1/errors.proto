@@ -24,7 +24,7 @@ enum ErrorCode {
   ERROR_CODE_BUSY = 2;
   ERROR_CODE_INTERNAL = 3;
   ERROR_CODE_CANCELLED = 4;
-  // Missing or bad pairing token on a network transport.
+  // A network caller this Mac has not paired, or a bad pairing code.
   ERROR_CODE_UNAUTHENTICATED = 5;
   // A capability or action this daemon does not serve.
   ERROR_CODE_UNSUPPORTED = 6;

@@ -1,5 +1,5 @@
-//! The one-time code the Mac app draws as a QR. A phone trades it for the
-//! bearer token, so the QR never carries the token itself.
+//! The one-time code the Mac app draws as a QR. A phone presents it once to
+//! have its certificate pinned.
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
@@ -69,6 +69,12 @@ impl PairingCodes {
             *current = None;
         }
         matches
+    }
+
+    pub(in crate::daemon) fn is_live(&self, now: Instant) -> bool {
+        self.lock()
+            .as_ref()
+            .is_some_and(|live| now < live.expires_at)
     }
 
     // The guarded value is a plain `Option` that no panic can leave half
@@ -151,6 +157,20 @@ mod tests {
         assert!(codes.redeem(fresh.raw(), later));
         let (after_use, _) = codes.issue(later).unwrap();
         assert_ne!(after_use, fresh);
+    }
+
+    #[test]
+    fn a_code_is_live_from_issue_until_it_expires_or_redeems() {
+        let codes = PairingCodes::default();
+        let now = Instant::now();
+        assert!(!codes.is_live(now));
+
+        let (code, _) = codes.issue(now).unwrap();
+        assert!(codes.is_live(now));
+        assert!(!codes.is_live(now + CODE_LIFETIME));
+
+        assert!(codes.redeem(code.raw(), now));
+        assert!(!codes.is_live(now));
     }
 
     #[test]

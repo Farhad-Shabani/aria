@@ -1,5 +1,5 @@
 //! The preferences a paired phone may change: the ones a relayed recording
-//! reads. Everything else is refused here, so a token grants no hotkey, no
+//! reads. Everything else is refused here, so pairing grants no hotkey, no
 //! Mac-side audio control, and no folder path on this Mac. Reads return the
 //! whole snapshot; only writes are scoped.
 

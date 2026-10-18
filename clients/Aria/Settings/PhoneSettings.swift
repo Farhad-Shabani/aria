@@ -314,24 +314,27 @@ struct PhoneSettings: View {
     private func revoke() async {
         pairingTarget = true
         defer { pairingTarget = nil }
+        status = .restarting
         do {
-            try PairingFile.remove()
+            try await poller.restart(whileStopped: { try PairingFile.remove() })
+            actionError = nil
         } catch {
             actionError = "Phones could not be revoked: \(error.localizedDescription)"
-            return
         }
-        actionError = nil
-        await restart()
+        status = .loading
+        _ = await load()
     }
 
-    /// The poller skips a restart while it is already starting or stopping
+    /// The poller refuses a restart while it is already starting or stopping
     /// Aria from the menu bar, so the change waits for the next start.
     private func restart() async {
-        if poller.state == .working {
+        status = .restarting
+        do {
+            try await poller.restart()
+        } catch StatusPoller.RestartFailure.busy {
             actionError = "Aria is busy. The change applies when it next starts."
-        } else {
-            status = .restarting
-            await poller.restart()
+        } catch {
+            actionError = error.localizedDescription
         }
         status = .loading
         _ = await load()

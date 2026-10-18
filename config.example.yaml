@@ -66,8 +66,8 @@ transcription:
 # `_aria-grpc._tcp`, and pastes what it hears into the focused app.
 #
 # Off unless you ask for it. Only a phone paired with this Mac gets in: the
-# port speaks TLS with the Mac's own certificate and refuses any call without
-# the pairing token. Pair from the Mac app before the first recording.
+# port speaks mutual TLS, and a phone the Mac has not pinned gets no
+# handshake. Pair from the Mac app before the first recording.
 # `aria phone enable` and `aria phone disable` switch it; restart the daemon
 # to apply.
 # phone:

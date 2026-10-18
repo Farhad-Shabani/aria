@@ -1,20 +1,14 @@
-//! What a phone needs to reach this Mac's relay: a bearer token it
-//! presents, and a certificate it pins. Both are minted once and kept in a
-//! private file; deleting that file and restarting the daemon revokes every
-//! paired phone at once.
-//!
-//! The certificate is what makes the token safe to send. Without it any host
-//! advertising this Mac's name over Bonjour would be handed the token on the
-//! phone's first call.
+//! This Mac's certificate, which phones pin, and the phones it pins in turn.
+//! One private file holds both. Deleting it and restarting the daemon
+//! revokes every phone.
 
-use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
 use tonic::{Request, Status};
 
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
@@ -24,36 +18,63 @@ use crate::rpc::{RpcErrorCode, RpcFailure};
 /// file to revoke every phone, so its path is pinned by a test.
 pub(crate) const RELATIVE_PATH: &str = ".aria/phone/pairing.json";
 const MAX_FILE_BYTES: u64 = 16 * 1024;
-const TOKEN_BYTES: usize = 32;
+const MAX_PHONES: usize = 16;
 /// The certificate's subject alternative name. The phone never checks it;
 /// the pin is the check.
 const CERTIFICATE_NAME: &str = "aria.local";
 const CERTIFICATE_LIFETIME_DAYS: i64 = 3650;
 
-#[derive(Clone)]
 pub(in crate::daemon) struct Pairing {
-    pub(in crate::daemon) token: Token,
     pub(in crate::daemon) certificate_pem: String,
     pub(in crate::daemon) key_pem: String,
-    /// SHA-256 of the certificate's DER bytes, the value a phone pins.
+    /// The value a phone pins.
     pub(in crate::daemon) certificate_fingerprint: [u8; 32],
+    pub(in crate::daemon) phones: Arc<Phones>,
 }
 
-/// 32 random bytes as lowercase hex. Its `Debug` never prints the value.
-#[derive(Clone, PartialEq, Eq)]
-pub(in crate::daemon) struct Token(String);
+/// The phones this Mac pins, by certificate fingerprint. Once the daemon
+/// runs, the only writer of the pairing file.
+#[derive(Debug)]
+pub(in crate::daemon) struct Phones {
+    path: PathBuf,
+    /// Held for the whole of a write. Handshakes read `paired`, so they
+    /// never wait on the disk.
+    writing: Mutex<()>,
+    paired: Mutex<Vec<[u8; 32]>>,
+}
 
-impl Token {
-    /// The value a client sends. The daemon hands it out only to a phone
-    /// that redeems a pairing code.
-    pub(in crate::daemon) fn raw(&self) -> &str {
-        &self.0
+impl Phones {
+    pub(in crate::daemon) fn contains(&self, fingerprint: &[u8; 32]) -> bool {
+        self.paired().contains(fingerprint)
     }
-}
 
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Token(redacted)")
+    /// Pins `fingerprint`, on disk before in memory. Pinning a paired phone
+    /// again changes nothing.
+    pub(in crate::daemon) fn admit(&self, fingerprint: [u8; 32]) -> Result<(), PairingError> {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        {
+            let paired = self.paired();
+            if paired.contains(&fingerprint) {
+                return Ok(());
+            }
+            if paired.len() >= MAX_PHONES {
+                return Err(PairingError::Full);
+            }
+        }
+        let document = PrivateDocument::new(&self.path, MAX_FILE_BYTES);
+        let mut stored = document
+            .read::<StoredPairing>()?
+            .ok_or(PairingError::Missing)?;
+        stored.phones.push(fingerprint);
+        write(&document, &stored)?;
+        self.paired().push(fingerprint);
+        Ok(())
+    }
+
+    // A push is the only change, and it either happened or did not, so a
+    // poisoned lock still holds a usable list.
+    fn paired(&self) -> std::sync::MutexGuard<'_, Vec<[u8; 32]>> {
+        self.paired.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -61,9 +82,9 @@ impl fmt::Debug for Token {
 #[serde(deny_unknown_fields)]
 struct StoredPairing {
     instance: String,
-    token: String,
     certificate_pem: String,
     key_pem: String,
+    phones: Vec<[u8; 32]>,
 }
 
 /// Reads the material, minting it on first use. A changed hostname rewrites
@@ -93,11 +114,20 @@ pub(in crate::daemon) fn load_or_create(
         }
     };
     Ok(Pairing {
-        token: Token(stored.token),
-        certificate_fingerprint: fingerprint,
         certificate_pem: stored.certificate_pem,
         key_pem: stored.key_pem,
+        certificate_fingerprint: fingerprint,
+        phones: Arc::new(Phones {
+            path: path.to_owned(),
+            writing: Mutex::new(()),
+            paired: Mutex::new(stored.phones),
+        }),
     })
+}
+
+/// SHA-256 of a certificate's DER bytes: how either side names the other.
+pub(in crate::daemon) fn fingerprint(der: &[u8]) -> [u8; 32] {
+    Sha256::digest(der).into()
 }
 
 /// The stored material and its fingerprint. `None` when there is none or it
@@ -118,13 +148,9 @@ fn read_usable(
         }
         Err(error) => return Err(error.into()),
     };
-    if !is_well_formed(&stored.token) {
-        tracing::warn!("the stored pairing token is malformed; minting new pairing material");
-        return Ok(None);
-    }
     match CertificateDer::from_pem_slice(stored.certificate_pem.as_bytes()) {
         Ok(der) => {
-            let fingerprint = Sha256::digest(der).into();
+            let fingerprint = fingerprint(&der);
             Ok(Some((stored, fingerprint)))
         }
         Err(error) => {
@@ -150,8 +176,6 @@ fn write(document: &PrivateDocument, stored: &StoredPairing) -> Result<(), Pairi
 }
 
 fn generate(instance: &str) -> Result<(StoredPairing, [u8; 32]), PairingError> {
-    let token = random_hex(TOKEN_BYTES)?;
-
     let mut params = rcgen::CertificateParams::new(vec![CERTIFICATE_NAME.to_owned()])?;
     params
         .distinguished_name
@@ -163,11 +187,11 @@ fn generate(instance: &str) -> Result<(StoredPairing, [u8; 32]), PairingError> {
 
     let stored = StoredPairing {
         instance: instance.to_owned(),
-        token,
         certificate_pem: certificate.pem(),
         key_pem: key.serialize_pem(),
+        phones: Vec::new(),
     };
-    Ok((stored, Sha256::digest(certificate.der()).into()))
+    Ok((stored, fingerprint(certificate.der())))
 }
 
 pub(super) fn random_hex(byte_count: usize) -> Result<String, PairingError> {
@@ -180,35 +204,22 @@ pub(super) fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn is_well_formed(token: &str) -> bool {
-    token.len() == TOKEN_BYTES * 2
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+/// The fingerprint of the peer's certificate.
+pub(in crate::daemon) fn presented<T>(request: &Request<T>) -> Option<[u8; 32]> {
+    let certificates = request.peer_certs()?;
+    certificates.first().map(|leaf| fingerprint(leaf))
 }
 
-/// A tonic interceptor: the request carries `authorization: Bearer <token>`
-/// or it is refused before any handler runs. The compare is constant-time;
-/// the header value is never logged.
-pub(in crate::daemon) fn require_bearer(
-    token: Token,
+pub(in crate::daemon) fn require_paired(
+    phones: Arc<Phones>,
 ) -> impl FnMut(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync + 'static {
-    move |request| {
-        let presented = request
-            .metadata()
-            .get("authorization")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "));
-        match presented {
-            Some(presented) if bool::from(presented.as_bytes().ct_eq(token.0.as_bytes())) => {
-                Ok(request)
-            }
-            _ => Err(RpcFailure::new(
-                RpcErrorCode::Unauthenticated,
-                "pair this device with the Mac first",
-            )
-            .into()),
-        }
+    move |request| match presented(&request) {
+        Some(fingerprint) if phones.contains(&fingerprint) => Ok(request),
+        _ => Err(RpcFailure::new(
+            RpcErrorCode::Unauthenticated,
+            "pair this device with the Mac first",
+        )
+        .into()),
     }
 }
 
@@ -222,18 +233,30 @@ pub(in crate::daemon) enum PairingError {
 
     #[error("failed to mint the pairing certificate")]
     Certificate(#[from] rcgen::Error),
+
+    #[error("this Mac already pairs {MAX_PHONES} phones")]
+    Full,
+
+    #[error("the pairing file is gone")]
+    Missing,
 }
 
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 
-    use tonic::metadata::MetadataValue;
-
     use super::*;
 
     fn pairing_path(directory: &tempfile::TempDir) -> std::path::PathBuf {
         directory.path().join("phone").join("pairing.json")
+    }
+
+    fn stored(path: &Path) -> StoredPairing {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    fn phone(index: u8) -> [u8; 32] {
+        [index; 32]
     }
 
     #[test]
@@ -244,12 +267,11 @@ mod tests {
         let first = load_or_create(&path, "Aria (studio)").unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        assert!(is_well_formed(&first.token.0));
         assert!(first.certificate_pem.contains("BEGIN CERTIFICATE"));
         assert!(first.key_pem.contains("PRIVATE KEY"));
+        assert!(stored(&path).phones.is_empty());
 
         let second = load_or_create(&path, "Aria (studio)").unwrap();
-        assert_eq!(second.token, first.token);
         assert_eq!(second.certificate_pem, first.certificate_pem);
     }
 
@@ -259,11 +281,12 @@ mod tests {
         let path = pairing_path(&directory);
 
         let before = load_or_create(&path, "Aria (old)").unwrap();
+        before.phones.admit(phone(1)).unwrap();
         let after = load_or_create(&path, "Aria (new)").unwrap();
 
-        assert_eq!(after.token, before.token);
-        let stored: StoredPairing = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(stored.instance, "Aria (new)");
+        assert_eq!(after.certificate_pem, before.certificate_pem);
+        assert!(after.phones.contains(&phone(1)));
+        assert_eq!(stored(&path).instance, "Aria (new)");
     }
 
     #[test]
@@ -278,19 +301,54 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_token_is_replaced_with_fresh_material() {
+    fn a_paired_phone_survives_a_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = pairing_path(&directory);
+        let pairing = load_or_create(&path, "Aria (studio)").unwrap();
+
+        pairing.phones.admit(phone(1)).unwrap();
+        pairing.phones.admit(phone(1)).unwrap();
+
+        assert!(pairing.phones.contains(&phone(1)));
+        assert!(!pairing.phones.contains(&phone(2)));
+        let reloaded = load_or_create(&path, "Aria (studio)").unwrap();
+        assert!(reloaded.phones.contains(&phone(1)));
+        assert_eq!(stored(&path).phones, [phone(1)]);
+    }
+
+    #[test]
+    fn pairing_past_the_cap_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = pairing_path(&directory);
+        let pairing = load_or_create(&path, "Aria (studio)").unwrap();
+        for index in 0..MAX_PHONES {
+            pairing.phones.admit(phone(index as u8)).unwrap();
+        }
+
+        let refused = pairing.phones.admit(phone(MAX_PHONES as u8));
+
+        assert!(matches!(refused, Err(PairingError::Full)));
+        assert!(!pairing.phones.contains(&phone(MAX_PHONES as u8)));
+        assert_eq!(stored(&path).phones.len(), MAX_PHONES);
+    }
+
+    #[test]
+    fn a_bearer_era_file_is_replaced_with_fresh_material() {
         let directory = tempfile::tempdir().unwrap();
         let path = pairing_path(&directory);
         let before = load_or_create(&path, "Aria (studio)").unwrap();
-
-        let mut stored: StoredPairing =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        stored.token = "short".to_owned();
-        std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+        let bearer_era = serde_json::json!({
+            "instance": "Aria (studio)",
+            "token": "a".repeat(64),
+            "certificate_pem": before.certificate_pem,
+            "key_pem": before.key_pem,
+        });
+        std::fs::write(&path, serde_json::to_vec(&bearer_era).unwrap()).unwrap();
 
         let after = load_or_create(&path, "Aria (studio)").unwrap();
-        assert!(is_well_formed(&after.token.0));
+
         assert_ne!(after.certificate_pem, before.certificate_pem);
+        assert!(stored(&path).phones.is_empty());
     }
 
     #[test]
@@ -299,14 +357,11 @@ mod tests {
         let path = pairing_path(&directory);
         let before = load_or_create(&path, "Aria (studio)").unwrap();
 
-        let mut stored: StoredPairing =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        stored.certificate_pem = "-----BEGIN CERTIFICATE-----\nnot base64!\n".to_owned();
-        std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+        let mut corrupt = stored(&path);
+        corrupt.certificate_pem = "-----BEGIN CERTIFICATE-----\nnot base64!\n".to_owned();
+        std::fs::write(&path, serde_json::to_vec(&corrupt).unwrap()).unwrap();
 
         let after = load_or_create(&path, "Aria (studio)").unwrap();
-        assert!(is_well_formed(&after.token.0));
-        assert_ne!(after.token, before.token);
         assert!(after.certificate_pem.contains("BEGIN CERTIFICATE"));
         assert_ne!(
             after.certificate_fingerprint,
@@ -322,12 +377,10 @@ mod tests {
         std::fs::write(&path, b"{ not json").unwrap();
 
         let after = load_or_create(&path, "Aria (studio)").unwrap();
-        assert!(is_well_formed(&after.token.0));
-        let stored: StoredPairing = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(stored.token, after.token.0);
+        assert_eq!(stored(&path).certificate_pem, after.certificate_pem);
     }
 
-    /// Files already on disk must keep loading.
+    /// The Mac app deletes this path to revoke every phone.
     #[test]
     fn the_file_shape_is_stable() {
         assert_eq!(RELATIVE_PATH, ".aria/phone/pairing.json");
@@ -343,40 +396,6 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(keys, ["certificate_pem", "instance", "key_pem", "token"]);
-    }
-
-    fn request_with(header: Option<&str>) -> Request<()> {
-        let mut request = Request::new(());
-        if let Some(header) = header {
-            request
-                .metadata_mut()
-                .insert("authorization", MetadataValue::try_from(header).unwrap());
-        }
-        request
-    }
-
-    #[test]
-    fn the_bearer_check_admits_only_the_exact_token() {
-        let token = Token("a".repeat(64));
-        let mut check = require_bearer(token);
-
-        let failure = check(request_with(None)).unwrap_err();
-        assert_eq!(failure.code(), tonic::Code::Unauthenticated);
-        assert_eq!(
-            crate::ipc::protocol::rpc_failure(&failure).unwrap().code,
-            RpcErrorCode::Unauthenticated
-        );
-        assert!(check(request_with(Some("Bearer bbbb"))).is_err());
-        assert!(check(request_with(Some(&"a".repeat(64)))).is_err());
-        assert!(check(request_with(Some(&format!("Bearer {}", "a".repeat(64))))).is_ok());
-    }
-
-    #[test]
-    fn a_token_never_prints_itself() {
-        assert_eq!(
-            format!("{:?}", Token("secret".to_owned())),
-            "Token(redacted)"
-        );
+        assert_eq!(keys, ["certificate_pem", "instance", "key_pem", "phones"]);
     }
 }
