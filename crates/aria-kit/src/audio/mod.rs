@@ -33,7 +33,7 @@ pub use capture::{
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 pub use capture::{
     Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl, WakeWordEvent,
-    WakeWordMonitor, WakeWordSuspension, check_default_input_device,
+    WakeWordFailure, WakeWordMonitor, WakeWordSuspension, check_default_input_device,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use spool::{SpoolError, remove_all_spools};

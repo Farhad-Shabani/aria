@@ -3,16 +3,27 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::time::Duration;
 
-use crate::voice_activity::{SPEECH_THRESHOLD, VoiceActivityDetector};
+use crate::audio::canonical_samples;
+use crate::voice_activity::{SPEECH_THRESHOLD, VoiceActivityDetector, VoiceActivityError};
 use crate::wake_word::{WakeWordDetector, WakeWordMatch};
 
 use super::worker::{Command, IdleMonitor, IdleObservation};
 use super::{MicrophoneError, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum WakeWordEvent {
     Detected,
-    Failed,
+    /// Monitoring stopped and stays stopped until the microphone reopens.
+    Failed(WakeWordFailure),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WakeWordFailure {
+    #[error("voice-activity detection failed")]
+    VoiceActivity(#[source] VoiceActivityError),
+
+    #[error("wake-word detection failed")]
+    Detector(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub struct WakeWordMonitor {
@@ -82,7 +93,7 @@ impl Drop for WakeWordSuspension {
 /// How recently speech must have been heard for a detection to count. Wake
 /// classifiers score a window of a second or more and fire up to a few hundred
 /// milliseconds after the word ends, often on a silent frame.
-const SPEECH_LOOKBACK_SAMPLES: usize = 16_000;
+const SPEECH_LOOKBACK_SAMPLES: usize = canonical_samples(Duration::from_secs(1)) as usize;
 
 pub(super) struct WakeMonitor<W> {
     detector: W,
@@ -97,6 +108,12 @@ enum WakeMonitorState {
     Armed,
     Suspended,
     Triggered,
+    Failed,
+}
+
+enum Frame {
+    Quiet,
+    Detected,
     Failed,
 }
 
@@ -137,41 +154,43 @@ impl<W: WakeWordDetector> WakeMonitor<W> {
 
     fn publish(&self, event: WakeWordEvent) {
         match self.events.try_send(event) {
-            Ok(()) | Err(TrySendError::Full(_)) => {}
+            Ok(()) | Err(TrySendError::Full(WakeWordEvent::Detected)) => {}
+            Err(TrySendError::Full(WakeWordEvent::Failed(failure))) => {
+                tracing::warn!(error = %failure, "wake-word monitoring failed; the event queue was full");
+            }
             Err(TrySendError::Disconnected(_)) => {
                 tracing::info!("wake-word monitor stopped; event receiver closed");
             }
         }
     }
 
-    fn fail(&mut self, error: &dyn std::fmt::Display, operation: &'static str) {
+    fn fail(&mut self, failure: WakeWordFailure) {
         self.state = WakeMonitorState::Failed;
-        tracing::warn!(%error, operation, "wake-word monitoring failed and is suspended");
-        self.publish(WakeWordEvent::Failed);
+        self.publish(WakeWordEvent::Failed(failure));
     }
 
-    fn observe_frame<V: VoiceActivityDetector>(&mut self, vad: &mut V) -> bool {
+    fn observe_frame<V: VoiceActivityDetector>(&mut self, vad: &mut V) -> Frame {
         let probability = match vad.probability(&self.vad_frame) {
             Ok(probability) => probability,
             Err(error) => {
-                self.fail(&error, "voice_activity_detection");
-                return false;
+                self.fail(WakeWordFailure::VoiceActivity(error));
+                return Frame::Failed;
             }
         };
         let detection = match self.detector.detect(&self.vad_frame) {
             Ok(detection) => detection,
             Err(error) => {
-                self.fail(&error, "wake_word_detection");
-                return false;
+                self.fail(WakeWordFailure::Detector(Box::new(error)));
+                return Frame::Failed;
             }
         };
         self.track_speech(probability);
         if detection == WakeWordMatch::Detected && self.heard_speech_recently() {
             self.state = WakeMonitorState::Triggered;
             self.publish(WakeWordEvent::Detected);
-            return true;
+            return Frame::Detected;
         }
-        false
+        Frame::Quiet
     }
 }
 
@@ -188,15 +207,16 @@ impl<W: WakeWordDetector> IdleMonitor for WakeMonitor<W> {
         for (index, &sample) in samples.iter().enumerate() {
             self.vad_frame.push(sample);
             if self.vad_frame.len() == V::FRAME_SAMPLES {
-                let detected = self.observe_frame(vad);
+                let frame = self.observe_frame(vad);
                 self.vad_frame.clear();
-                if detected {
-                    return IdleObservation::Detected {
-                        command_start: index + 1,
-                    };
-                }
-                if self.state == WakeMonitorState::Failed {
-                    return IdleObservation::Continue;
+                match frame {
+                    Frame::Quiet => {}
+                    Frame::Detected => {
+                        return IdleObservation::Detected {
+                            command_start: index + 1,
+                        };
+                    }
+                    Frame::Failed => return IdleObservation::Continue,
                 }
             }
         }
@@ -258,7 +278,6 @@ mod tests {
         }
     }
 
-    /// Speech on the first frame only, then silence.
     struct SpeechThenSilence {
         frames: usize,
     }
@@ -309,26 +328,11 @@ mod tests {
         }
     }
 
-    struct DetectsWakeWord {
-        calls: usize,
-    }
-
-    impl WakeWordDetector for DetectsWakeWord {
-        type Error = Infallible;
-
-        fn detect(&mut self, _canonical_samples: &[i16]) -> Result<WakeWordMatch, Self::Error> {
-            self.calls += 1;
-            Ok(WakeWordMatch::Detected)
-        }
-
-        fn reset(&mut self) {}
-    }
-
     #[test]
     fn recording_completion_does_not_rearm_a_triggered_monitor() {
         let (events, _detections) = sync_channel(1);
         let mut monitor = WakeMonitor::new(
-            DetectsWakeWord { calls: 0 },
+            DetectsOnFrame { frame: 1, calls: 0 },
             events,
             FixedVad::FRAME_SAMPLES,
         );
@@ -344,7 +348,7 @@ mod tests {
     fn idle_vad_rejects_a_wake_detection_without_speech() {
         let (events, detections) = sync_channel(1);
         let mut monitor = WakeMonitor::new(
-            DetectsWakeWord { calls: 0 },
+            DetectsOnFrame { frame: 1, calls: 0 },
             events,
             FixedVad::FRAME_SAMPLES,
         );
@@ -362,7 +366,7 @@ mod tests {
     fn idle_vad_buffers_partial_frames() {
         let (events, detections) = sync_channel(1);
         let mut monitor = WakeMonitor::new(
-            DetectsWakeWord { calls: 0 },
+            DetectsOnFrame { frame: 1, calls: 0 },
             events,
             FixedVad::FRAME_SAMPLES,
         );
@@ -384,7 +388,7 @@ mod tests {
     fn idle_vad_failure_suspends_wake_monitoring() {
         let (events, detections) = sync_channel(1);
         let mut monitor = WakeMonitor::new(
-            DetectsWakeWord { calls: 0 },
+            DetectsOnFrame { frame: 1, calls: 0 },
             events,
             FailingVad::FRAME_SAMPLES,
         );
@@ -396,7 +400,10 @@ mod tests {
         assert!(matches!(monitor.state, WakeMonitorState::Failed));
         assert!(!monitor.requires_live_stream());
         assert_eq!(monitor.detector.calls, 0);
-        assert!(matches!(detections.try_recv(), Ok(WakeWordEvent::Failed)));
+        assert!(matches!(
+            detections.try_recv(),
+            Ok(WakeWordEvent::Failed(WakeWordFailure::VoiceActivity(_)))
+        ));
     }
 
     #[test]

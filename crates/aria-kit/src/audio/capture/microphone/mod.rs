@@ -20,7 +20,9 @@ use crate::wake_word::WakeWordDetector;
 use super::{AudioCapture, MicrophoneError, RecordingMode};
 
 pub use stream::check_default_input_device;
-pub use wake_word::{WakeWordControl, WakeWordEvent, WakeWordMonitor, WakeWordSuspension};
+pub use wake_word::{
+    WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
+};
 
 const DEFAULT_MAXIMUM_DURATION: Duration = Duration::from_secs(60);
 
