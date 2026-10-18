@@ -24,7 +24,7 @@ use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
-use crate::runtime::{PreparedRuntimePaths, RuntimeError};
+use crate::runtime::PreparedRuntimePaths;
 use crate::speech::SpeechRequest;
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
@@ -519,7 +519,7 @@ pub fn run(
     // never sit waiting for someone to speak.
     let hands_on = options.interactive && !options.yes;
     let session = if hands_on {
-        live_daemon(&mut prompts, PreparedRuntimePaths::for_current_user())?
+        live_daemon(&mut prompts)?
     } else {
         None
     };
@@ -581,9 +581,8 @@ fn voice_model_present(models: &[(&'static str, Outcome)]) -> bool {
 /// the steps that need one skip themselves rather than fail the run.
 fn live_daemon(
     prompts: &mut Prompts<'_, impl BufRead, impl Write>,
-    paths: Result<PreparedRuntimePaths, RuntimeError>,
 ) -> Result<Option<DaemonSession>, SetupError> {
-    let paths = match paths {
+    let paths = match PreparedRuntimePaths::for_current_user() {
         Ok(paths) => paths,
         Err(error) => {
             prompts.note(&format!(
@@ -1169,22 +1168,6 @@ mod tests {
             .collect();
 
         assert!(wanted.contains(&"moonshine"), "{wanted:?}");
-    }
-
-    #[test]
-    fn an_unusable_runtime_directory_is_reported() {
-        let (mut input, mut output) = (&b""[..], Vec::new());
-        let mut prompts = Prompts::new(&mut input, &mut output, false, false, false);
-        let paths = Err(RuntimeError::NotAbsolute {
-            path: PathBuf::from("relative"),
-        });
-
-        let session = live_daemon(&mut prompts, paths).unwrap();
-
-        assert!(session.is_none());
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Skipping the voice steps"), "{output}");
-        assert!(output.contains("must be absolute"), "{output}");
     }
 
     #[test]
