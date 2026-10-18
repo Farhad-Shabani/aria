@@ -15,7 +15,7 @@ use crate::ipc::{ClientError, ConnectError, Liveness, ProbeError, probe_daemon};
 use crate::primitives::local_socket::owner_pid;
 use crate::primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
 use crate::primitives::user_home::{self, UserHomeError};
-use crate::runtime::{PreparedRuntimePaths, RUNTIME_DIR_ENV, RuntimeError, RuntimePaths};
+use crate::runtime::{PreparedRuntimePaths, RUNTIME_DIR_ENV, RuntimeError};
 
 #[cfg(target_os = "macos")]
 mod launchd;
@@ -66,9 +66,7 @@ impl Supervisor {
             .and_then(fs::canonicalize)
             .map_err(SupervisorError::CurrentExe)?;
         let home = user_home::resolve().map_err(SupervisorError::Home)?;
-        let paths = RuntimePaths::for_current_user()
-            .prepare()
-            .map_err(SupervisorError::Runtime)?;
+        let paths = PreparedRuntimePaths::for_current_user().map_err(SupervisorError::Runtime)?;
         let environment = [("PATH", std::env::var_os("PATH"))]
             .into_iter()
             .chain([(RUNTIME_DIR_ENV, std::env::var_os(RUNTIME_DIR_ENV))])

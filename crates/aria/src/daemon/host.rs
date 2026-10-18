@@ -112,11 +112,11 @@ impl DaemonBuilder {
 
     pub fn open(self) -> Result<Daemon, RuntimeError> {
         let paths = match self.runtime_dir {
-            Some(directory) => RuntimePaths::in_directory(directory),
-            None => RuntimePaths::for_current_user(),
+            Some(directory) => RuntimePaths::in_directory(directory).prepare()?,
+            None => PreparedRuntimePaths::for_current_user()?,
         };
         Ok(Daemon {
-            paths: paths.prepare()?,
+            paths,
             lifetime: self.lifetime,
             wake_word: self.wake_word,
         })

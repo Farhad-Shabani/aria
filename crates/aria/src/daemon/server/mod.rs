@@ -6,13 +6,13 @@
 
 mod activity;
 mod lan;
+mod local;
 
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio_stream::wrappers::UnixListenerStream;
 use tonic_health::pb::health_server::HealthServer;
 use tonic_health::server::{HealthReporter, HealthService};
 
@@ -174,7 +174,7 @@ impl Server {
         );
 
         let unix = router.serve_with_incoming_shutdown(
-            UnixListenerStream::new(listener),
+            local::same_user(listener),
             tasks.cancellation().cancelled_owned(),
         );
         // Two listeners, one stop. The LAN one is not allowed to end the

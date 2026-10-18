@@ -16,7 +16,7 @@ use crate::delivery::{PlatformTextDelivery, TextDelivery};
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
-use crate::runtime::{PreparedRuntimePaths, RuntimeError, RuntimePaths};
+use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::transcription::check_model;
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
@@ -74,7 +74,7 @@ pub fn diagnose() -> Report {
     // force on top of it.
     let config = Environment::capture()
         .and_then(|environment| DaemonConfig::load(&environment, WakeWordOverride::Inherit));
-    let prepared = RuntimePaths::for_current_user().prepare();
+    let prepared = PreparedRuntimePaths::for_current_user();
 
     Report {
         checks: vec![

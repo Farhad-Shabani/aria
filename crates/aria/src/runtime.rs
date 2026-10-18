@@ -1,8 +1,11 @@
 //! Per-user paths shared by the daemon and its clients.
 
+use std::fs::DirBuilder;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use crate::primitives::private_fs::{PrivateDirectoryError, prepare_directory};
+use crate::primitives::user_home::{self, UserHomeError};
 
 type Result<T> = std::result::Result<T, RuntimeError>;
 
@@ -25,11 +28,12 @@ pub struct PreparedRuntimePaths {
 }
 
 impl RuntimePaths {
-    pub fn for_current_user() -> Self {
-        match std::env::var_os(RUNTIME_DIR_ENV) {
-            Some(directory) => Self::in_directory(PathBuf::from(directory)),
-            None => Self::for_uid(rustix::process::getuid().as_raw()),
-        }
+    fn for_current_user() -> Result<Self> {
+        let directory = match std::env::var_os(RUNTIME_DIR_ENV) {
+            Some(directory) => PathBuf::from(directory),
+            None => default_directory(&user_home::resolve().map_err(RuntimeError::Home)?),
+        };
+        Ok(Self::in_directory(directory))
     }
 
     /// Creates and validates the private directory containing runtime state.
@@ -39,13 +43,19 @@ impl RuntimePaths {
                 path: self.directory,
             });
         }
+        if let Some(parent) = self.directory.parent() {
+            DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .map_err(|source| RuntimeError::Parent {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+        }
         prepare_private_directory(&self.directory)?;
         prepare_private_directory(&self.spool_dir)?;
         Ok(PreparedRuntimePaths { paths: self })
-    }
-
-    fn for_uid(uid: u32) -> Self {
-        Self::in_directory(PathBuf::from(format!("/tmp/aria-{uid}")))
     }
 
     pub(crate) fn in_directory(directory: PathBuf) -> Self {
@@ -66,6 +76,10 @@ impl RuntimePaths {
 }
 
 impl PreparedRuntimePaths {
+    pub fn for_current_user() -> Result<Self> {
+        RuntimePaths::for_current_user()?.prepare()
+    }
+
     pub(crate) fn directory(&self) -> &Path {
         &self.paths.directory
     }
@@ -97,6 +111,11 @@ impl PreparedRuntimePaths {
     }
 }
 
+// Under the user's home, so no other user can claim the path first.
+fn default_directory(home: &Path) -> PathBuf {
+    home.join(".aria/daemon")
+}
+
 fn prepare_private_directory(path: &Path) -> Result<()> {
     prepare_directory(path).map_err(|source| RuntimeError::Directory {
         path: path.to_path_buf(),
@@ -106,8 +125,18 @@ fn prepare_private_directory(path: &Path) -> Result<()> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
+    #[error("cannot find the runtime directory")]
+    Home(#[source] UserHomeError),
+
     #[error("runtime directory path must be absolute: {}", path.display())]
     NotAbsolute { path: PathBuf },
+
+    #[error("cannot create {}", path.display())]
+    Parent {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("runtime directory {} is not usable", path.display())]
     Directory {
@@ -132,6 +161,29 @@ mod tests {
 
         assert!(paths.socket.ends_with("daemon.sock"));
         assert!(paths.lock.ends_with("daemon.lock"));
+    }
+
+    #[test]
+    fn the_default_directory_is_under_home() {
+        assert_eq!(
+            default_directory(Path::new("/Users/tester")),
+            Path::new("/Users/tester/.aria/daemon")
+        );
+    }
+
+    #[test]
+    fn prepare_creates_missing_parents() {
+        let fixture = Fixture::new();
+        let paths = RuntimePaths::in_directory(fixture.root().join("home/.aria/daemon"));
+
+        paths
+            .clone()
+            .prepare()
+            .expect("runtime directory should be created with its parents");
+
+        let parent = fs::symlink_metadata(fixture.root().join("home/.aria"))
+            .expect("the created parent should exist");
+        assert_eq!(parent.permissions().mode() & 0o777, 0o700);
     }
 
     #[test]

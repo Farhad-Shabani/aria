@@ -21,7 +21,7 @@ use crate::ipc::{
 use crate::listen::ListenStage;
 use crate::preferences::{PreferencePatch, PreferenceSnapshot, UpdateResult};
 use crate::rpc::RpcErrorCode;
-use crate::runtime::{PreparedRuntimePaths, RuntimeError, RuntimePaths};
+use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::speaker::SpeakerName;
 use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
@@ -47,9 +47,7 @@ impl DaemonSession {
     /// Opens against the current user's daemon, starting a temporary one
     /// when none is running and the platform allows it.
     pub fn open() -> Result<Self, StartupError> {
-        let paths = RuntimePaths::for_current_user()
-            .prepare()
-            .map_err(StartupError::Runtime)?;
+        let paths = PreparedRuntimePaths::for_current_user().map_err(StartupError::Runtime)?;
         Self::open_at(&paths)
     }
 
@@ -94,9 +92,8 @@ impl DaemonSession {
     }
 
     pub fn wake_word_status() -> Result<WakeWordStatus, WakeWordStatusError> {
-        let paths = RuntimePaths::for_current_user()
-            .prepare()
-            .map_err(WakeWordStatusError::Runtime)?;
+        let paths =
+            PreparedRuntimePaths::for_current_user().map_err(WakeWordStatusError::Runtime)?;
         Self::wake_word_status_at(&paths)
     }
 

@@ -14,7 +14,7 @@ use aria::daemon::{
 use aria::doctor::Status;
 use aria::primitives::error_chain;
 use aria::rpc::RpcErrorCode;
-use aria::runtime::RuntimePaths;
+use aria::runtime::PreparedRuntimePaths;
 use aria::setup::{ConfigWrite, Enrolled, Grant, Options as SetupOptions, TryOut};
 use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
 use aria::synthesis::{SpeakingRate, SpeechText, Voice};
@@ -484,8 +484,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn run_speaker(command: SpeakerCommand) -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     // Enrollment records through the daemon's microphone, so it needs the
     // daemon that owns one; a temporary on-demand daemon has none.
@@ -568,8 +567,7 @@ fn run_say(
     rate: Option<f32>,
     stop: bool,
 ) -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     init_daemon_logging(paths.log_path())?;
     let session = DaemonSession::open_at(&paths)?;
@@ -624,8 +622,7 @@ fn run_wake() -> anyhow::Result<()> {
 }
 
 fn run_wake_log() -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     let tail = read_log_tail(paths.log_path().to_path_buf())?;
     if tail.is_empty() {
@@ -1096,8 +1093,7 @@ fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_events() -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     let events = DaemonSession::connect_at(&paths)?.events()?;
     let mut stdout = std::io::stdout();
@@ -1200,7 +1196,7 @@ fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let paths = RuntimePaths::for_current_user().prepare()?;
+    let paths = PreparedRuntimePaths::for_current_user()?;
     let session = DaemonSession::connect_at(&paths)?;
     match command {
         HistoryCommand::Clear { .. } => {
@@ -1341,7 +1337,7 @@ fn history_audio_label(audio: aria::history::AudioAvailability) -> &'static str 
 
 fn run_vocabulary(command: VocabularyCommand) -> anyhow::Result<()> {
     use aria::preferences::{PreferencePatch, UpdateResult};
-    let paths = RuntimePaths::for_current_user().prepare()?;
+    let paths = PreparedRuntimePaths::for_current_user()?;
     let session = DaemonSession::connect_at(&paths)?;
     let status =
         match command {
@@ -1411,8 +1407,7 @@ fn run_dictate(
     stream: bool,
     no_project: bool,
 ) -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     init_daemon_logging(paths.log_path())?;
     let session = Arc::new(DaemonSession::open_at(&paths)?);
@@ -1472,8 +1467,7 @@ struct AskArgs {
 }
 
 fn run_ask(args: AskArgs) -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     init_daemon_logging(paths.log_path())?;
 
@@ -1641,8 +1635,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
 }
 
 fn run_listen(command: ListenCommand) -> anyhow::Result<()> {
-    let paths = RuntimePaths::for_current_user()
-        .prepare()
+    let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
     let session = DaemonSession::connect_at(&paths)?;
     match command {

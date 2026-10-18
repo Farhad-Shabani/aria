@@ -24,7 +24,9 @@ use crate::delivery::{DeliveryError, OutputMode};
 use crate::event::EventEmitter;
 use crate::rpc::RpcErrorCode;
 
-pub(crate) use agents::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAgent, CodexAgent, parse_claude};
+pub(crate) use agents::{
+    CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAgent, CodexAgent, claude_command, parse_claude,
+};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub(crate) use sessions::{SessionStore, SessionStoreError};
