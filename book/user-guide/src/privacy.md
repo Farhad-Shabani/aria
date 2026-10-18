@@ -21,6 +21,10 @@ Copying exposes text to apps and clipboard managers that can read your
 clipboard. Typing inserts it into the focused app, which controls its own
 saving and sharing. Cancelling Aria cannot recall text already delivered.
 
+On a Mac, Aria reads two characters before the cursor and one after it, to
+decide where spaces go. It skips password fields, and never saves or logs
+these characters.
+
 ## Questions
 
 [Ask](./voice-chat.md) uses Claude Code or Codex. The agent may send the question

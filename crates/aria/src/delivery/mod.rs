@@ -19,6 +19,8 @@ pub(crate) use macos::MacOsTextDelivery as PlatformTextDelivery;
 #[cfg(not(any(target_os = "ios", target_os = "linux", target_os = "macos")))]
 compile_error!("no text-delivery adapter exists for this target");
 
+pub(crate) use aria_kit::transcription::Caret;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
     Insert,
@@ -65,6 +67,12 @@ pub(crate) trait TextDelivery: Send + Sync + 'static {
         text: &str,
         should_cancel: impl Fn() -> bool,
     ) -> Result<DeliveryOutcome, DeliveryError>;
+
+    /// The text beside the caret where `deliver` would type. Unknown unless
+    /// the destination shows it.
+    fn caret(&self, _prepared: &Self::Prepared) -> Caret {
+        Caret::default()
+    }
 }
 
 #[cfg(target_os = "macos")]

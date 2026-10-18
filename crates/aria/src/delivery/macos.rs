@@ -5,16 +5,19 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_ulong;
 use std::time::Duration;
 
+use cidre::{ax, cf};
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSPasteboard, NSRunningApplication};
 use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
 use objc2_foundation::NSString;
 
 use super::{
-    DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
+    Caret, DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text,
+    validate_timeout,
 };
 use crate::accessibility::Trust;
 
+mod caret;
 mod confirmation;
 
 #[cfg(test)]
@@ -179,6 +182,17 @@ impl TextDelivery for MacOsTextDelivery {
             }
         })
     }
+
+    fn caret(&self, prepared: &Self::Prepared) -> Caret {
+        match prepared {
+            MacOsDeliveryTarget::Application(process)
+            | MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
+            | MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
+                autoreleasepool(|_| caret::read(*process))
+            }
+            MacOsDeliveryTarget::Clipboard => Caret::default(),
+        }
+    }
 }
 
 /// What the insertion guards look at, read all at once so `prepare` and the
@@ -271,7 +285,8 @@ fn insert_or_copy(
     if should_cancel() {
         return Err(DeliveryError::Cancelled);
     }
-    match write_transcript(pasteboard, text) {
+    // The spaces chosen for the caret don't belong on the clipboard.
+    match write_transcript(pasteboard, text.trim_matches(' ')) {
         Ok(()) => {
             tracing::warn!(%refusal, "insertion refused; the transcript is on the clipboard");
             Ok(DeliveryOutcome::Copied)
@@ -283,6 +298,21 @@ fn insert_or_copy(
             Err(refusal)
         }
     }
+}
+
+/// The range an Accessibility selection attribute holds, or `None` when the
+/// application answered with another type.
+#[allow(
+    unsafe_code,
+    reason = "AXValue is a transparent CF type; the runtime type is checked before casting"
+)]
+fn selection_range(value: &cf::Type) -> Option<cf::Range> {
+    if value.get_type_id() != ax::Value::type_id() {
+        return None;
+    }
+    // SAFETY: the type ID identifies an AXValue, and the borrow retains its owner.
+    let value = unsafe { &*std::ptr::from_ref(value).cast::<ax::Value>() };
+    value.cf_range()
 }
 
 /// Whether any process has secure keyboard entry on — a password field, or
@@ -513,6 +543,36 @@ mod tests {
             pasteboard_text(&pasteboard).as_deref(),
             Some(TEST_TRANSCRIPT)
         );
+    }
+
+    #[test]
+    fn a_refused_guard_copies_the_transcript_without_caret_spacing() {
+        let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+        let spaced = format!(" {TEST_TRANSCRIPT} ");
+
+        insert_or_copy(
+            PREPARED_TARGET,
+            &spaced,
+            &|| false,
+            permitted(Ok(PREPARED_TARGET + 1)),
+            &pasteboard,
+        )
+        .expect("the pasteboard should take the transcript");
+
+        assert_eq!(
+            pasteboard_text(&pasteboard).as_deref(),
+            Some(TEST_TRANSCRIPT)
+        );
+    }
+
+    #[test]
+    fn range_readback_checks_the_external_type() {
+        let range = cf::Range { loc: 2, len: 3 };
+        let value = ax::Value::with_cf_range(&range);
+        let actual = selection_range(&value).expect("AX range");
+        assert_eq!(actual.loc, range.loc);
+        assert_eq!(actual.len, range.len);
+        assert!(selection_range(&cf::String::from_str("wrong type")).is_none());
     }
 
     #[test]

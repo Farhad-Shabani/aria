@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use cidre::{arc, ax, cf};
+use cidre::{arc, ax};
 
 use crate::delivery::DeliveryError;
 
@@ -98,7 +98,8 @@ impl Confirmation {
             .element
             .attr_value(ax::attr::selected_text_range())
             .map_err(|_| DeliveryError::SubmissionUnconfirmed)?;
-        let selection = selection_range(&selection)?;
+        let selection =
+            super::selection_range(&selection).ok_or(DeliveryError::SubmissionUnconfirmed)?;
         self.check_focus(deadline)?;
         remaining(deadline, self.timeout)?;
         Ok(Snapshot {
@@ -187,19 +188,6 @@ fn set_timeout(
     element
         .set_messaging_timeout_secs(remaining(deadline, timeout)?.as_secs_f32())
         .map_err(|_| DeliveryError::SubmissionUnconfirmed)
-}
-
-#[allow(
-    unsafe_code,
-    reason = "AXValue is a transparent CF type; the runtime type is checked before casting"
-)]
-fn selection_range(value: &cf::Type) -> Result<cf::Range, DeliveryError> {
-    if value.get_type_id() != ax::Value::type_id() {
-        return Err(DeliveryError::SubmissionUnconfirmed);
-    }
-    // SAFETY: the type ID identifies an AXValue, and the borrow retains its owner.
-    let value = unsafe { &*std::ptr::from_ref(value).cast::<ax::Value>() };
-    value.cf_range().ok_or(DeliveryError::SubmissionUnconfirmed)
 }
 
 #[cfg(test)]
@@ -306,15 +294,5 @@ mod tests {
             ));
             assert!(refusal.into_inner().is_none());
         }
-    }
-
-    #[test]
-    fn range_readback_checks_the_external_type() {
-        let range = cf::Range { loc: 2, len: 3 };
-        let value = ax::Value::with_cf_range(&range);
-        let actual = selection_range(&value).expect("AX range");
-        assert_eq!(actual.loc, range.loc);
-        assert_eq!(actual.len, range.len);
-        assert!(selection_range(&cf::String::from_str("wrong type")).is_err());
     }
 }
