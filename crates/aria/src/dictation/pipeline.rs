@@ -109,7 +109,7 @@ impl<C, T, M: Mode, E, S, L: Layer> DictationPipeline<C, T, M, E, S, L> {
             transcript
         };
         check_cancelled(cancel)?;
-        let transcript = corrected(transcript, corrector, self.cleanup);
+        let transcript = corrected(transcript, corrector, self.cleanup)?;
         check_cancelled(cancel)?;
         if !self.layers.enabled() {
             return Ok(transcript);
@@ -412,14 +412,16 @@ fn corrected_text(text: &str, corrector: Option<&dyn Corrector>, cleanup: bool) 
         .or(cleaned)
 }
 
+/// [`TranscriptionError::NoSpeech`] when nothing was worth keeping.
 fn corrected(
     transcript: Transcript,
     corrector: Option<&dyn Corrector>,
     cleanup: bool,
-) -> Transcript {
-    corrected_text(transcript.as_str(), corrector, cleanup)
-        .and_then(|text| Transcript::new(text).ok())
-        .unwrap_or(transcript)
+) -> Result<Transcript, TranscriptionError> {
+    match corrected_text(transcript.as_str(), corrector, cleanup) {
+        Some(text) => Transcript::new(text),
+        None => Ok(transcript),
+    }
 }
 
 /// What one dictation has put out so far, with the events and logs each
@@ -2418,6 +2420,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_whole_transcript_of_only_fillers_is_no_speech() {
+        let transcript = Transcript::new("um").unwrap();
+
+        let result = corrected(transcript, None, true);
+
+        assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
 
     #[test]
