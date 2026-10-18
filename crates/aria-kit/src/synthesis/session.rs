@@ -335,6 +335,15 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn a_boxed_or_shared_engine_still_plays_audio_itself() {
+        let boxed: Box<dyn Synthesizer> = Box::new(Fake::with(Behavior::Direct));
+        let shared = Arc::new(Fake::with(Behavior::Direct));
+
+        assert!(Synthesizer::plays_audio_itself(&boxed));
+        assert!(Synthesizer::plays_audio_itself(&shared));
+    }
+
     #[cfg(feature = "playback")]
     #[test]
     fn a_direct_engine_speaks_without_a_pcm_session() {

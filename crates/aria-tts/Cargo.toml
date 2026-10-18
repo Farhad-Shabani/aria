@@ -8,6 +8,10 @@ repository.workspace = true
 readme.workspace     = true
 keywords             = [ "text-to-speech", "tts", "speech-synthesis", "kokoro" ]
 
+[package.metadata.docs.rs]
+# The Apple-only qwen-accelerate and qwen-metal stay out: docs.rs builds on Linux.
+features = [ "kokoro", "qwen", "system" ]
+
 [lints]
 workspace = true
 

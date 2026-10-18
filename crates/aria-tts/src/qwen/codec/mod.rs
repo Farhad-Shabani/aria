@@ -28,7 +28,7 @@ pub const LEFT_CONTEXT_FRAMES: usize = 25;
 pub enum CodecError {
     #[error("qwen: codec expects {expected} codebooks per frame, got {got}")]
     CodebookCount { expected: usize, got: usize },
-    #[error("qwen: codec decode failed: {0}")]
+    #[error("qwen: codec decode failed")]
     Decode(#[from] candle_core::Error),
     #[error("qwen: codec load failed: {0}")]
     Load(String),

@@ -8,6 +8,9 @@ repository.workspace = true
 readme.workspace     = true
 keywords             = [ "speech-to-text", "stt", "asr", "whisper", "parakeet" ]
 
+[package.metadata.docs.rs]
+features = [ "microphone", "moonshine", "nemotron", "parakeet", "parakeet-mlx", "whisper", "whisper-candle" ]
+
 [lints]
 workspace = true
 

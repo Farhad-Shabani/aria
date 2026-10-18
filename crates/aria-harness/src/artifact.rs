@@ -117,9 +117,9 @@ fn write_artifact(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
-    #[error("benchmark artifact I/O failed: {0}")]
+    #[error("benchmark artifact I/O failed")]
     Io(#[from] std::io::Error),
-    #[error("benchmark artifact encoding failed: {0}")]
+    #[error("benchmark artifact encoding failed")]
     Json(#[from] serde_json::Error),
     #[error("cannot fingerprint directory symlink or special file: {0}")]
     Unsupported(String),

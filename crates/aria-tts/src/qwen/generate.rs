@@ -21,11 +21,11 @@ pub enum GenerateError {
     UnsupportedLanguage { language: String },
     #[error("qwen: generation was cancelled")]
     Cancelled,
-    #[error("qwen: generation failed: {0}")]
+    #[error("qwen: generation failed")]
     Forward(#[from] candle_core::Error),
     #[error(transparent)]
     Sampling(#[from] SamplingError),
-    #[error("qwen: generation failed: {0}")]
+    #[error(transparent)]
     Transformer(#[from] crate::qwen::transformer::TransformerError),
 }
 
@@ -217,5 +217,28 @@ impl<'a> CustomVoiceGenerator<'a> {
         }
 
         Ok(codes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aria_kit::primitives::error_chain;
+
+    use super::GenerateError;
+    use crate::qwen::transformer::TransformerError;
+
+    #[test]
+    fn a_nested_failure_names_its_cause_once() {
+        let cause = candle_core::Error::Msg("shape mismatch".to_owned());
+        let error = GenerateError::from(TransformerError::from(cause));
+
+        let chain = error_chain(&error);
+
+        assert_eq!(chain.matches("shape mismatch").count(), 1, "{chain}");
+        assert_eq!(
+            chain.matches("transformer forward failed").count(),
+            1,
+            "{chain}"
+        );
     }
 }

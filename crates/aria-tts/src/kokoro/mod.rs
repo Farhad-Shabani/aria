@@ -17,7 +17,8 @@
 //! let mut pcm = [0.0; 1024];
 //! while session.read(&mut pcm)? != 0 {}
 //!
-//! let cancel = aria_kit::cancel::CancelToken::new();
+//! // Speaking aloud needs `aria-kit` with its `playback` feature.
+//! let cancel = CancelToken::new();
 //! speech.speak_with(
 //!     &SpeechText::new("A longer announcement.")?,
 //!     Some(&Voice::new("af_bella")?),

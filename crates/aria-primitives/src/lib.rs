@@ -1,5 +1,7 @@
 //! Foundational capabilities shared by Aria subsystems.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod cancel;
 #[cfg(not(target_family = "wasm"))]
 pub mod file_inspection;

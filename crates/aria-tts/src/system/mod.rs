@@ -18,7 +18,7 @@
 //!     &SpeechText::new("Ready when you are.")?,
 //!     None,
 //!     SpeakingRate::standard(),
-//!     &aria_kit::cancel::CancelToken::never(),
+//!     &CancelToken::never(),
 //! )?;
 //! # Ok(())
 //! # }
