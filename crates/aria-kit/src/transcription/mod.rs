@@ -978,7 +978,7 @@ pub enum TranscriptionError {
         source: BackendError,
     },
 
-    #[error("{backend} detects the spoken language itself and cannot honour {language:?}")]
+    #[error("{backend} cannot transcribe {language:?}")]
     UnsupportedLanguage {
         backend: &'static str,
         language: String,

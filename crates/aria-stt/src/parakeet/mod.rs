@@ -34,8 +34,8 @@ use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
-    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
-    validate_model_directory, word_timings,
+    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, validate_model_directory,
+    word_timings,
 };
 
 /// Names this engine under `transcription.backend` and in its own errors.
@@ -118,12 +118,14 @@ impl StreamingEngine for Parakeet {
 }
 
 impl Transcriber for Parakeet {
+    /// Accepts any language: the engine takes no language input, so a
+    /// requested language goes unused.
     fn validate_language(
         &self,
-        language: &Language,
+        _language: &Language,
         _cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        english_only(BACKEND, language)
+        Ok(())
     }
 
     fn transcribe_with(

@@ -8,7 +8,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
 use aria_kit::transcription::{
     AudioInputKind, Engine, Hypothesis, Language, Transcriber, TranscriptionAudio,
-    TranscriptionError, check_cancelled, english_only,
+    TranscriptionError, check_cancelled,
 };
 
 use super::protocol::{BACKEND, Phase, start, still_serving, transcribe};
@@ -97,12 +97,14 @@ impl Engine for ParakeetMlx {
 }
 
 impl Transcriber for ParakeetMlx {
+    /// Accepts any language: the engine takes no language input, so a
+    /// requested language goes unused.
     fn validate_language(
         &self,
-        language: &Language,
+        _language: &Language,
         _cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        english_only(BACKEND, language)
+        Ok(())
     }
 
     fn transcribe_with(
