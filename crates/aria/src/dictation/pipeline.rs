@@ -15,7 +15,7 @@ use crate::transcription::{
 };
 
 use super::Meter;
-use super::speech::{PressSpeech, SpeechTally};
+use super::speech::{Scan, Tally};
 use super::{
     CaptionSnapshot, Corrector, DeliveryMode, DictationError, DictationEventEmitter,
     DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, StopMode,
@@ -31,9 +31,9 @@ pub(crate) struct DictationPipeline<C, T, M: Mode, E, V, S, L = ()> {
     /// voice keeps its label from one dictation to the next. Locked: presses
     /// come one at a time, but not from one thread.
     reader: Mutex<SegmentReader<E>>,
-    /// Judges whether a press held speech. `None` trusts every press.
+    /// Judges whether a recording held speech. `None` trusts every one.
     /// Locked for the same reason as the reader.
-    speech: Mutex<Option<SpeechTally<V>>>,
+    tally: Mutex<Option<Tally<V>>>,
     /// Locked for the same reason as the reader.
     sinks: Mutex<S>,
     cleanup: bool,
@@ -52,7 +52,7 @@ impl<C, T, M: Mode, E, S> DictationPipeline<C, T, M, E, SileroVad, S> {
             capture,
             transcription,
             reader: Mutex::new(reader),
-            speech: Mutex::new(None),
+            tally: Mutex::new(None),
             sinks: Mutex::new(sinks),
             cleanup: false,
             backtrack: false,
@@ -70,7 +70,7 @@ impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
             capture: self.capture,
             transcription: self.transcription,
             reader: self.reader,
-            speech: self.speech,
+            tally: self.tally,
             sinks: self.sinks,
             cleanup: self.cleanup,
             backtrack: self.backtrack,
@@ -88,8 +88,8 @@ impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
         self
     }
 
-    /// Types none of a press's words until `detector` hears speech in it.
-    /// Without a detector, every press counts as speech.
+    /// Types none of a recording's words until `detector` hears speech in
+    /// it. Without a detector, every recording counts as speech.
     pub(crate) fn hearing_speech<W: VoiceActivityDetector>(
         self,
         detector: Option<W>,
@@ -98,7 +98,7 @@ impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
             capture: self.capture,
             transcription: self.transcription,
             reader: self.reader,
-            speech: Mutex::new(detector.map(SpeechTally::new)),
+            tally: Mutex::new(detector.map(Tally::new)),
             sinks: self.sinks,
             cleanup: self.cleanup,
             backtrack: self.backtrack,
@@ -112,8 +112,8 @@ impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn speech(&self) -> MutexGuard<'_, Option<SpeechTally<V>>> {
-        self.speech
+    fn tally(&self) -> MutexGuard<'_, Option<Tally<V>>> {
+        self.tally
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -220,10 +220,10 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
 
     /// Whether a recording the caller already holds has speech in it.
     fn holds_speech(&self, recording: &mut RecordingReader) -> bool {
-        let mut tally = self.speech();
-        let mut speech = PressSpeech::new(tally.as_mut(), recording);
-        speech.hear_rest();
-        speech.heard()
+        let mut tally = self.tally();
+        let mut scan = Scan::new(tally.as_mut(), recording);
+        scan.hear_rest();
+        scan.heard()
     }
 }
 
@@ -384,8 +384,8 @@ where
         reader
             .labeler_mut()
             .set_only_own_voice(settings.own_voice_only);
-        let mut tally = self.speech();
-        let mut speech = PressSpeech::new(tally.as_mut(), recording);
+        let mut tally = self.tally();
+        let mut scan = Scan::new(tally.as_mut(), recording);
         let mut operation = self.open(settings, control).map_err(started)?;
         // Complete delivery filters audio before decoding. Streaming instead
         // checks the predicted voice for each finalized segment.
@@ -395,7 +395,7 @@ where
         };
         if gated.is_some() {
             // Filtering read the whole press, so it can be judged now.
-            speech.hear_rest();
+            scan.hear_rest();
         }
         let recording = gated.as_mut().unwrap_or(recording);
         let mut published = Published::new(settings, control, events, started_at);
@@ -415,10 +415,10 @@ where
                     .map(|heard| heard.map(HeardUpdate::Finalized))
             }
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
-            speech.hear_through(recording.held_to());
+            scan.hear_through(recording.held_to());
             match update {
-                Some(HeardUpdate::Finalized(_)) if !speech.heard() => guessed = true,
-                Some(HeardUpdate::Provisional(_)) if !speech.heard() => {}
+                Some(HeardUpdate::Finalized(_)) if !scan.heard() => guessed = true,
+                Some(HeardUpdate::Provisional(_)) if !scan.heard() => {}
                 Some(HeardUpdate::Finalized(heard)) => {
                     trusted.push(heard.segment.as_str().to_owned());
                     let text = corrected_text(heard.segment.as_str(), corrector, self.cleanup);
@@ -430,8 +430,8 @@ where
                 None => break,
             }
         }
-        speech.hear_rest();
-        if !speech.heard() {
+        scan.hear_rest();
+        if !scan.heard() {
             return Err(started(TranscriptionError::NoSpeech));
         }
         let transcript = operation

@@ -1,5 +1,5 @@
-//! Whether a press held speech. A decoder can name words in a silent press,
-//! and nothing in the words tells them apart, so the press's audio decides.
+//! Whether a recording held speech. A decoder can name words in silence,
+//! and nothing in the words tells them apart, so the audio decides.
 
 use std::time::Duration;
 
@@ -8,20 +8,20 @@ use aria_kit::voice_activity::{SPEECH_THRESHOLD, VoiceActivityDetector, VoiceAct
 
 use crate::audio::{CaptureError, RecordingReader};
 
-/// Speech a press must hold before its words are trusted. Silent and
-/// noise-only presses measure 0 ms; a lone short word, 290 ms or more.
-const MIN_PRESS_SPEECH: Duration = Duration::from_millis(100);
+/// Speech a recording must hold before its words are trusted. Silent and
+/// noise-only recordings measure 0 ms; a lone short word, 290 ms or more.
+const MIN_SPEECH: Duration = Duration::from_millis(100);
 
 /// Adds up the speech a detector finds in a stream read in pieces. A
 /// piece's unfinished frame waits for the next one, so uneven reads score
 /// like one read at once. A final unfinished frame is never scored.
-pub(super) struct SpeechTally<V> {
+pub(super) struct Tally<V> {
     detector: V,
     frame: Vec<i16>,
     speech_samples: u64,
 }
 
-impl<V: VoiceActivityDetector> SpeechTally<V> {
+impl<V: VoiceActivityDetector> Tally<V> {
     pub(super) fn new(detector: V) -> Self {
         Self {
             detector,
@@ -56,20 +56,17 @@ impl<V: VoiceActivityDetector> SpeechTally<V> {
     }
 }
 
-/// Listens to one press on a fork of its recording, so it hears every
+/// Scans one recording for speech on a fork of it, so it hears every
 /// sample however little of it the decoder keeps.
-pub(super) struct PressSpeech<'a, V> {
+pub(super) struct Scan<'a, V> {
     /// `None` once speech is heard, or when there is no detector to judge by.
-    listening: Option<(&'a mut SpeechTally<V>, RecordingReader)>,
+    listening: Option<(&'a mut Tally<V>, RecordingReader)>,
 }
 
-impl<'a, V: VoiceActivityDetector> PressSpeech<'a, V> {
-    /// Opens before anything reads `recording`, so the fork starts with the
-    /// press. Without a detector, every press counts as speech.
-    pub(super) fn new(
-        tally: Option<&'a mut SpeechTally<V>>,
-        recording: &mut RecordingReader,
-    ) -> Self {
+impl<'a, V: VoiceActivityDetector> Scan<'a, V> {
+    /// Opens before anything reads `recording`, so the fork starts where it
+    /// does. Without a detector, every recording counts as speech.
+    pub(super) fn new(tally: Option<&'a mut Tally<V>>, recording: &mut RecordingReader) -> Self {
         let listening = tally.map(|tally| {
             tally.reset();
             (tally, recording.fork_window())
@@ -81,13 +78,13 @@ impl<'a, V: VoiceActivityDetector> PressSpeech<'a, V> {
         self.listening.is_none()
     }
 
-    /// Scores the press up to stream `position`, and no further: audio past
+    /// Scores the recording up to stream `position`, and no further: audio past
     /// it may be speech the words so far were not heard from.
     pub(super) fn hear_through(&mut self, position: u64) {
         self.hear(|fork| fork.fill_through(position).map(drop), position);
     }
 
-    /// Scores the rest of the press, waiting for capture to end.
+    /// Scores the rest of the recording, waiting for capture to end.
     pub(super) fn hear_rest(&mut self) {
         self.hear(RecordingReader::fill, u64::MAX);
     }
@@ -104,7 +101,7 @@ impl<'a, V: VoiceActivityDetector> PressSpeech<'a, V> {
         let end = position.min(fork.held_to());
         let heard = match filled {
             Ok(()) => match tally.feed(fork.span(fork.held_from()..end)) {
-                Ok(()) => tally.speech() >= MIN_PRESS_SPEECH,
+                Ok(()) => tally.speech() >= MIN_SPEECH,
                 Err(error) => unjudged(error),
             },
             Err(error) => unjudged(error),
@@ -116,10 +113,10 @@ impl<'a, V: VoiceActivityDetector> PressSpeech<'a, V> {
     }
 }
 
-/// A press that cannot be judged counts as speech: losing words is worse
-/// than letting a guess through.
+/// A recording that cannot be judged counts as speech: losing words is
+/// worse than letting a guess through.
 fn unjudged(error: impl std::fmt::Display) -> bool {
-    tracing::warn!(%error, "the press could not be judged for speech; its words pass");
+    tracing::warn!(%error, "the recording could not be judged for speech; its words pass");
     true
 }
 
@@ -146,7 +143,7 @@ pub(crate) mod tests {
 
     #[test]
     fn only_frames_the_detector_calls_speech_count() {
-        let mut tally = SpeechTally::new(Loud);
+        let mut tally = Tally::new(Loud);
 
         tally
             .feed(&[0.0, 0.0, 0.0, 0.0, LOUD, 0.0, 0.0, 0.0])
@@ -158,10 +155,10 @@ pub(crate) mod tests {
     #[test]
     fn uneven_pieces_score_like_one_read() {
         let stream = [0.0, 0.0, 0.0, LOUD, 0.0, 0.0, LOUD, 0.0, 0.0, 0.0];
-        let mut whole = SpeechTally::new(Loud);
+        let mut whole = Tally::new(Loud);
         whole.feed(&stream).unwrap();
 
-        let mut pieces = SpeechTally::new(Loud);
+        let mut pieces = Tally::new(Loud);
         for piece in [&stream[..3], &stream[3..5], &stream[5..]] {
             pieces.feed(piece).unwrap();
         }
@@ -172,7 +169,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_unfinished_frame_is_not_scored() {
-        let mut tally = SpeechTally::new(Loud);
+        let mut tally = Tally::new(Loud);
 
         tally.feed(&[LOUD, LOUD, LOUD]).unwrap();
 
@@ -181,7 +178,7 @@ pub(crate) mod tests {
 
     #[test]
     fn reset_forgets_the_last_stream() {
-        let mut tally = SpeechTally::new(Loud);
+        let mut tally = Tally::new(Loud);
         tally.feed(&[LOUD, 0.0, 0.0]).unwrap();
 
         tally.reset();
