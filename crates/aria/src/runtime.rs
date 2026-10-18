@@ -174,10 +174,7 @@ mod tests {
     #[test]
     fn prepare_creates_missing_parents() {
         let fixture = Fixture::new();
-        let paths = RuntimePaths::in_directory(fixture.root().join("home/.aria/daemon"));
-
-        paths
-            .clone()
+        RuntimePaths::in_directory(fixture.root().join("home/.aria/daemon"))
             .prepare()
             .expect("runtime directory should be created with its parents");
 
