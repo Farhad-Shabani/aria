@@ -10,6 +10,8 @@ enum DaemonState: Equatable {
 protocol DaemonControlling: Sendable {
     func retireLegacyService() async throws
     func isRunning() async -> Bool
+    /// The daemon process is gone: nothing holds its lock.
+    func hasExited() async -> Bool
     func start() async throws
     func stop() async throws
 }
@@ -140,6 +142,13 @@ struct DaemonClient: DaemonControlling {
         }.value
     }
 
+    func hasExited() async -> Bool {
+        let lock = RuntimeFiles.daemonLockURL
+        return await Task.detached(priority: .utility) {
+            !Self.lockIsHeld(lock)
+        }.value
+    }
+
     func start() async throws {
         let method = try Self.startMethod(
             agentStatus: Self.agent.status,
@@ -264,15 +273,12 @@ struct DaemonClient: DaemonControlling {
     /// The PID recorded in a lock file some process still holds. A free
     /// lock means no owner — its contents are a leftover, not a PID.
     private static func heldLockPid(_ lock: URL) throws -> pid_t {
-        let fd = open(lock.path, O_RDONLY)
-        guard fd >= 0 else {
+        guard FileManager.default.fileExists(atPath: lock.path) else {
             throw DaemonClientError.commandFailed(
                 "daemon is not running: no lock file at \(lock.path)"
             )
         }
-        defer { close(fd) }
-        if flock(fd, LOCK_EX | LOCK_NB) == 0 {
-            flock(fd, LOCK_UN)
+        guard lockIsHeld(lock) else {
             throw DaemonClientError.commandFailed(
                 "daemon is not running: nothing holds \(lock.path)"
             )
@@ -284,6 +290,15 @@ struct DaemonClient: DaemonControlling {
             )
         }
         return pid
+    }
+
+    private static func lockIsHeld(_ lock: URL) -> Bool {
+        let fd = open(lock.path, O_RDONLY)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { return true }
+        flock(fd, LOCK_UN)
+        return false
     }
 
     private static func isAriaProcess(_ pid: pid_t) -> Bool {

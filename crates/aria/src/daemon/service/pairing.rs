@@ -1,5 +1,5 @@
-//! Pairing a phone: the Mac app shows a one-time code, and the phone trades
-//! it for the relay's bearer token.
+//! Pairing a phone: the Mac app shows a one-time code, and the phone
+//! presents it to have its certificate pinned.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,17 +10,17 @@ use crate::ipc::wire;
 use crate::primitives::error_chain;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
-use super::super::relay::{PairingCodes, Token};
+use super::super::relay::{PairingCodes, PairingError, Phones, presented};
 
-/// Served on the LAN without a bearer check: the code is the credential.
+/// Served on the LAN to unpaired phones too: the code is the credential.
 pub(in crate::daemon) struct PairingRpc {
     codes: Arc<PairingCodes>,
-    token: Token,
+    phones: Arc<Phones>,
 }
 
 impl PairingRpc {
-    pub(in crate::daemon) fn new(codes: Arc<PairingCodes>, token: Token) -> Self {
-        Self { codes, token }
+    pub(in crate::daemon) fn new(codes: Arc<PairingCodes>, phones: Arc<Phones>) -> Self {
+        Self { codes, phones }
     }
 }
 
@@ -31,15 +31,14 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
         request: Request<wire::PairRequest>,
     ) -> Result<Response<wire::PairResponse>, Status> {
         const METHOD: &str = "PairingService/Pair";
-        if !self
-            .codes
-            .redeem(&request.into_inner().code, Instant::now())
-        {
+        let phone = presented(&request);
+        let code = request.into_inner().code;
+        let Some(phone) = phone.filter(|_| self.codes.redeem(&code, Instant::now())) else {
             let failure = RpcFailure::new(
                 RpcErrorCode::Unauthenticated,
                 "the pairing code is wrong, used, or expired",
             );
-            // No bearer gates this method, so anyone on the LAN can make it
+            // Unpaired phones reach this method, so a stranger can make it
             // log. Quieter than `super::failed`, and never the code.
             tracing::debug!(
                 method = METHOD,
@@ -47,11 +46,28 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                 "request failed"
             );
             return Err(failure.into());
-        }
+        };
+        let phones = Arc::clone(&self.phones);
+        tokio::task::spawn_blocking(move || phones.admit(phone))
+            .await
+            .map_err(|_panicked| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new(RpcErrorCode::Internal, "pinning the phone failed"),
+                )
+            })?
+            .map_err(|error| {
+                let code = match error {
+                    PairingError::Full => RpcErrorCode::PermissionDenied,
+                    PairingError::Document(_)
+                    | PairingError::Random(_)
+                    | PairingError::Certificate(_)
+                    | PairingError::Missing => RpcErrorCode::Internal,
+                };
+                super::failed(METHOD, RpcFailure::new(code, error_chain(&error)))
+            })?;
         tracing::info!(method = METHOD, status = "ok", "request served");
-        Ok(Response::new(wire::PairResponse {
-            token: self.token.raw().to_owned(),
-        }))
+        Ok(Response::new(wire::PairResponse {}))
     }
 }
 

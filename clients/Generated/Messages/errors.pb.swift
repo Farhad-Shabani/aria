@@ -36,7 +36,7 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
   case `internal` // = 3
   case cancelled // = 4
 
-  /// Missing or bad pairing token on a network transport.
+  /// A network caller this Mac has not paired, or a bad pairing code.
   case unauthenticated // = 5
 
   /// A capability or action this daemon does not serve.

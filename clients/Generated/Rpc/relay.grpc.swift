@@ -340,10 +340,12 @@ extension Aria_Daemon_V1_PairingService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Turns a pairing code from the Mac's screen into the relay's bearer token.
-    /// > The only LAN call that takes no token: the code is the credential. A code
-    /// > lives 60 seconds and works once.
+    /// > Pins the certificate the phone presented on this connection, in exchange
+    /// > for the pairing code on the Mac's screen. The only LAN call an unpaired
+    /// > phone may make: the code is the credential. A code lives 60 seconds and
+    /// > works once.
     /// >   UNAUTHENTICATED - the code is wrong, used, or expired
+    /// >   PERMISSION_DENIED - the Mac already pairs as many phones as it allows
     public protocol ClientProtocol: Sendable {
         /// Call the "Pair" method.
         ///
@@ -373,10 +375,12 @@ extension Aria_Daemon_V1_PairingService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Turns a pairing code from the Mac's screen into the relay's bearer token.
-    /// > The only LAN call that takes no token: the code is the credential. A code
-    /// > lives 60 seconds and works once.
+    /// > Pins the certificate the phone presented on this connection, in exchange
+    /// > for the pairing code on the Mac's screen. The only LAN call an unpaired
+    /// > phone may make: the code is the credential. A code lives 60 seconds and
+    /// > works once.
     /// >   UNAUTHENTICATED - the code is wrong, used, or expired
+    /// >   PERMISSION_DENIED - the Mac already pairs as many phones as it allows
     public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
         private let client: GRPCCore.GRPCClient<Transport>
 

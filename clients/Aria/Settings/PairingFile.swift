@@ -7,6 +7,8 @@ enum PairingFile {
         .appendingPathComponent(".aria/phone/pairing.json")
 
     /// Revokes every phone: the daemon mints new material on its next start.
+    /// Call it only while the daemon is stopped; a running one may write the
+    /// file back.
     static func remove() throws {
         do {
             try FileManager.default.removeItem(at: url)
