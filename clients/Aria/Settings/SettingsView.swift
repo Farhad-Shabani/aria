@@ -41,7 +41,7 @@ struct GeneralSettings: View {
             LabeledContent("Startup:") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
             }
-            LabeledContent("Overlay:") {
+            LabeledContent("On screen:") {
                 VStack(alignment: .leading) {
                     Toggle("Show status pill", isOn: $statusPillEnabled)
                     Toggle("Show words before they're typed", isOn: $ghostTextEnabled)

@@ -43,7 +43,7 @@ While Aria types segments, words it has heard but not typed yet show faintly
 at the cursor. Aria may still change them before it types them. Apps that do
 not report their cursor show none, and neither does **Only type my own voice**.
 Turn them off with **Show words before they're typed** under **Settings →
-General → Overlay**.
+General → On screen**.
 
 If output is set to copy, paste the transcript after recording; copying always
 uses the completed text. Output choices are under **Settings → Dictation**.
