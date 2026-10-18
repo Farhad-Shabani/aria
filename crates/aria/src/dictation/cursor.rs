@@ -506,7 +506,7 @@ pub(super) mod tests {
         }
 
         fn caret(&self, _prepared: &OutputMode) -> Caret {
-            self.caret.clone()
+            self.caret
         }
     }
 

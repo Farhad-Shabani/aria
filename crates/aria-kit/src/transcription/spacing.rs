@@ -1,9 +1,5 @@
 //! Spacing between inserted text and the text already beside the caret.
 
-/// How many characters before the caret the rule looks at. Two tell an
-/// opening straight quote from a closing one.
-const BEFORE_CHARS: usize = 2;
-
 /// The cursor in a text field, which adds the spaces text needs when typed
 /// there.
 ///
@@ -19,9 +15,12 @@ const BEFORE_CHARS: usize = 2;
 /// assert_eq!(caret.insert("How are you"), " How are you");
 /// assert_eq!(caret.insert("today?"), " today?");
 /// ```
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Caret {
-    before: String,
+    before: Option<char>,
+    /// The character before `before`, which tells an opening straight quote
+    /// from a closing one.
+    before_that: Option<char>,
     after: Option<char>,
 }
 
@@ -29,14 +28,16 @@ impl Caret {
     /// A caret with `before` to its left and `after` to its right. Pass the
     /// whole field split at the cursor; only the characters next to it count.
     pub fn between(before: &str, after: &str) -> Self {
+        let mut preceding = before.chars().rev();
         Self {
-            before: last_chars(before),
+            before: preceding.next(),
+            before_that: preceding.next(),
             after: after.chars().next(),
         }
     }
 
     /// Returns `text` with any spaces it needs, then moves the caret past it.
-    /// To retry a failed typing, insert again from a clone taken before.
+    /// To retry a failed typing, insert again from a copy taken before.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert(&mut self, text: &str) -> String {
         let mut spaced = String::with_capacity(text.len() + 2);
@@ -47,12 +48,16 @@ impl Caret {
         if self.needs_trailing_space(text) {
             spaced.push(' ');
         }
-        self.before = last_chars(&format!("{}{spaced}", self.before));
+        let mut typed = spaced.chars().rev();
+        if let Some(last) = typed.next() {
+            self.before_that = typed.next().or(self.before);
+            self.before = Some(last);
+        }
         spaced
     }
 
     fn needs_leading_space(&self, text: &str) -> bool {
-        let Some(previous) = self.before.chars().last() else {
+        let Some(previous) = self.before else {
             return false;
         };
         let Some(first) = text.chars().next() else {
@@ -88,18 +93,8 @@ impl Caret {
         if !matches!(previous, '"' | '\'') {
             return false;
         }
-        self.before
-            .chars()
-            .rev()
-            .nth(1)
-            .is_none_or(char::is_whitespace)
+        self.before_that.is_none_or(char::is_whitespace)
     }
-}
-
-/// The end of `text` the rule looks at.
-fn last_chars(text: &str) -> String {
-    let skip = text.chars().count().saturating_sub(BEFORE_CHARS);
-    text.chars().skip(skip).collect()
 }
 
 const OPENERS: [char; 9] = ['(', '[', '{', '/', '-', '@', '#', '“', '‘'];
@@ -223,6 +218,10 @@ mod tests {
         assert_eq!(caret.insert("hello"), "hello ");
         assert_eq!(caret, Caret::between("o ", "w"));
         assert_eq!(caret.insert("there"), "there ");
+
+        let mut sentence = Caret::between("He said", "");
+        assert_eq!(sentence.insert("."), ".");
+        assert_eq!(sentence, Caret::between("d.", ""));
 
         let mut unknown = Caret::default();
         assert_eq!(unknown.insert("I"), "I");
