@@ -11,6 +11,7 @@ use crate::dictation::subscribers::DictationSubscribers;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, MAX_DICTATION_TIMEOUT, RecordingId,
+    StopMode,
 };
 use crate::event::EventEmitter;
 use crate::history::{HistoryEntry, HistoryError, RetryOptions};
@@ -280,7 +281,7 @@ impl DictationRuntime {
             .map(|snapshot| {
                 snapshot
                     .preferences
-                    .resolve_dictation(DictationRequest::default())
+                    .resolve_dictation(DictationRequest::new(StopMode::OnSilence))
             })
             .map_err(DictationRuntimeError::Preferences)
     }
@@ -577,7 +578,7 @@ mod event_tests {
         assert!(
             runtime
                 .execute(
-                    DictationRequest::default(),
+                    DictationRequest::new(StopMode::OnSilence),
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -596,7 +597,7 @@ mod event_tests {
         assert!(
             runtime
                 .execute(
-                    DictationRequest::default(),
+                    DictationRequest::new(StopMode::OnSilence),
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -950,7 +951,7 @@ mod history_tests {
             &original,
             current
                 .clone()
-                .resolve_dictation(DictationRequest::default()),
+                .resolve_dictation(DictationRequest::new(StopMode::OnSilence)),
             None,
         )
         .unwrap();
@@ -963,7 +964,7 @@ mod history_tests {
         assert!(matches!(
             retry_settings(
                 &original,
-                current.resolve_dictation(DictationRequest::default()),
+                current.resolve_dictation(DictationRequest::new(StopMode::OnSilence)),
                 None,
             ),
             Err(HistoryError::ProjectUnavailable)

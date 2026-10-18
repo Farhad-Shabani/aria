@@ -272,7 +272,7 @@ mod tests {
     }
 
     fn settings() -> DictationSettings {
-        UserPreferences::default().resolve_dictation(DictationRequest::default())
+        UserPreferences::default().resolve_dictation(DictationRequest::new(StopMode::OnSilence))
     }
 
     fn entries(store: &TranscriptStore) -> Vec<HistoryEntry> {

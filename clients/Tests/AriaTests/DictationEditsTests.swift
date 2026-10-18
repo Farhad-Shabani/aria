@@ -34,7 +34,6 @@ final class DictationEditsTests: XCTestCase {
         var patch = Aria_Daemon_V1_PreferencePatch()
         patch.recognitionLanguage = "de"
         patch.outputMode = .copy
-        patch.stopMode = .manual
         patch.deliveryMode = .complete
         patch.silenceDurationMs = 2500
         patch.ownVoiceOnly = true

@@ -505,8 +505,9 @@ mod tests {
         );
         let audio = crate::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
-        let settings = crate::preferences::UserPreferences::default()
-            .resolve_dictation(crate::dictation::DictationRequest::default());
+        let settings = crate::preferences::UserPreferences::default().resolve_dictation(
+            crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+        );
         let result = transcribe_retry(
             config,
             &speaker,

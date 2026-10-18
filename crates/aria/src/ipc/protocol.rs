@@ -874,12 +874,10 @@ impl From<DictationRequest> for wire::StartDictationRequest {
             output_mode: request
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
-            stop_mode: request
-                .stop_mode
-                .map(|mode| wire::StopMode::from(mode) as i32),
             delivery_mode: request
                 .delivery_mode
                 .map(|mode| wire::DeliveryMode::from(mode) as i32),
+            stop_mode: wire::StopMode::from(request.stop_mode) as i32,
             transcript_only: request.transcript_only,
             project: request.project.into(),
         }
@@ -894,14 +892,11 @@ impl TryFrom<wire::StartDictationRequest> for DictationRequest {
             .output_mode
             .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
             .transpose()?;
-        let stop_mode = request
-            .stop_mode
-            .map(|value| decode_enum::<wire::StopMode>(value, "stop mode"))
-            .transpose()?;
         let delivery_mode = request
             .delivery_mode
             .map(|value| decode_enum::<wire::DeliveryMode>(value, "delivery mode"))
             .transpose()?;
+        let stop_mode = decode_enum::<wire::StopMode>(request.stop_mode, "stop mode")?;
 
         Ok(Self {
             output_mode,
@@ -1286,7 +1281,6 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
                     preferences.output_mode,
                     "output mode",
                 )?,
-                stop_mode: decode_enum::<wire::StopMode>(preferences.stop_mode, "stop mode")?,
                 delivery_mode: decode_enum::<wire::DeliveryMode>(
                     preferences.delivery_mode,
                     "delivery mode",
@@ -1325,9 +1319,6 @@ impl From<PreferencePatch> for wire::PreferencePatch {
             output_mode: patch
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
-            stop_mode: patch
-                .stop_mode
-                .map(|mode| wire::StopMode::from(mode) as i32),
             delivery_mode: patch
                 .delivery_mode
                 .map(|mode| wire::DeliveryMode::from(mode) as i32),
@@ -1361,7 +1352,6 @@ impl From<&PreferenceSnapshot> for wire::PreferenceSnapshot {
                     .as_str()
                     .to_owned(),
                 output_mode: wire::OutputMode::from(snapshot.preferences.output_mode) as i32,
-                stop_mode: wire::StopMode::from(snapshot.preferences.stop_mode) as i32,
                 delivery_mode: wire::DeliveryMode::from(snapshot.preferences.delivery_mode) as i32,
                 silence_duration_ms: snapshot.preferences.silence_duration.get().as_millis() as u64,
                 own_voice_only: snapshot.preferences.own_voice_only,
@@ -1416,10 +1406,6 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
             output_mode: patch
                 .output_mode
                 .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
-                .transpose()?,
-            stop_mode: patch
-                .stop_mode
-                .map(|value| decode_enum::<wire::StopMode>(value, "stop mode"))
                 .transpose()?,
             delivery_mode: patch
                 .delivery_mode
@@ -2084,7 +2070,7 @@ mod tests {
         let request = DictationRequest {
             output_mode: Some(OutputMode::Copy),
             delivery_mode: Some(DeliveryMode::Complete),
-            stop_mode: None,
+            stop_mode: StopMode::Manual,
             transcript_only: true,
             project: crate::vocabulary::Context::Default,
         };
@@ -2094,6 +2080,17 @@ mod tests {
             DictationRequest::try_from(sent).expect("the request should decode"),
             request
         );
+    }
+
+    #[test]
+    fn a_request_without_a_stop_mode_is_refused() {
+        assert!(matches!(
+            DictationRequest::try_from(wire::StartDictationRequest::default()),
+            Err(ProtocolError::InvalidEnum {
+                field: "stop mode",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2160,7 +2157,7 @@ mod tests {
         ] {
             let request = DictationRequest {
                 project,
-                ..Default::default()
+                ..DictationRequest::new(StopMode::OnSilence)
             };
             assert_eq!(
                 DictationRequest::try_from(wire::StartDictationRequest::from(request.clone()))
@@ -2174,6 +2171,7 @@ mod tests {
                     wire::ProjectVocabularyDisabled {},
                 ),
             ),
+            stop_mode: wire::StopMode::OnSilence as i32,
             ..Default::default()
         };
         assert_eq!(
@@ -2185,6 +2183,7 @@ mod tests {
                 project: Some(wire::start_dictation_request::Project::ProjectDirectory(
                     path.into(),
                 )),
+                stop_mode: wire::StopMode::OnSilence as i32,
                 ..Default::default()
             };
             assert!(DictationRequest::try_from(request).is_err());

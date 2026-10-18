@@ -143,7 +143,7 @@ pub(super) async fn record(
         let mut stream = client.start(wire::StartDictationRequest {
             output_mode: Some(if streaming { wire::OutputMode::Insert } else { wire::OutputMode::Copy } as i32),
             delivery_mode: Some(if streaming { wire::DeliveryMode::Streaming } else { wire::DeliveryMode::Complete } as i32),
-            stop_mode: streaming.then_some(wire::StopMode::Manual as i32),
+            stop_mode: if streaming { wire::StopMode::Manual } else { wire::StopMode::OnSilence } as i32,
             ..Default::default()
         }).await?.into_inner();
         let mut events = Vec::new();

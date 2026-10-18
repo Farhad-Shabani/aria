@@ -157,7 +157,7 @@ impl DaemonSession {
     /// call stopped a recording already running instead of starting one.
     pub fn transcribe(
         &self,
-        stop_mode: Option<StopMode>,
+        stop_mode: StopMode,
         observe: impl FnMut(&DictationStage),
     ) -> Result<Option<DictationResult>, ClientError> {
         self.transcribe_in(stop_mode, crate::vocabulary::Context::Default, observe)
@@ -165,7 +165,7 @@ impl DaemonSession {
 
     pub fn transcribe_in(
         &self,
-        stop_mode: Option<StopMode>,
+        stop_mode: StopMode,
         project: crate::vocabulary::Context,
         observe: impl FnMut(&DictationStage),
     ) -> Result<Option<DictationResult>, ClientError> {
@@ -484,7 +484,7 @@ fn reply_from(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Clarify {
     /// Ask aloud and record one answer, ending it the same way as the ask.
-    Aloud { stop_mode: Option<StopMode> },
+    Aloud { stop_mode: StopMode },
     /// Refuse: nobody is listening for a question.
     Refuse,
 }

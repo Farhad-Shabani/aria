@@ -18,7 +18,7 @@ struct DictationSettings: View {
                         delivery(snapshot).settingsGroup()
                         voice(snapshot).settingsGroup()
                         vocabulary(snapshot).settingsGroup()
-                        stopping(snapshot).settingsGroup()
+                        silence.settingsGroup()
                         history(snapshot).settingsGroup()
                     }
                 }
@@ -179,21 +179,9 @@ struct DictationSettings: View {
         }
     }
 
-    private func stopping(_ snapshot: Aria_Daemon_V1_UserPreferences) -> some View {
-        LabeledContent("Stopping:") {
+    private var silence: some View {
+        LabeledContent("Silence:") {
             VStack(alignment: .leading, spacing: 4) {
-                Picker(
-                    "Stop",
-                    selection: Binding(
-                        get: { snapshot.stopMode },
-                        set: { mode in Task { await preferences.set { $0.stopMode = mode } } }
-                    )
-                ) {
-                    Text("On silence").tag(Aria_Daemon_V1_StopMode.onSilence)
-                    Text("Manually").tag(Aria_Daemon_V1_StopMode.manual)
-                }
-                .labelsHidden()
-                .fixedSize()
                 HStack {
                     Slider(
                         value: $silenceSeconds,
@@ -208,8 +196,7 @@ struct DictationSettings: View {
                     Text(String(format: "%.1f s of silence", silenceSeconds))
                         .monospacedDigit()
                 }
-                .disabled(snapshot.stopMode != .onSilence)
-                Text("Applies to wake-word and command-line dictation.")
+                Text("Ends wake-word and command-line dictation without --toggle. Hotkeys stop on tap or release.")
                     .settingsFootnote()
             }
         }

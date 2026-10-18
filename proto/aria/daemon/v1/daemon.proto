@@ -40,7 +40,8 @@ service DictationService {
 message StartDictationRequest {
   // Absent mode overrides use stored preferences; explicit UNSPECIFIED is invalid.
   optional OutputMode output_mode = 1;
-  optional StopMode stop_mode = 2;
+  // Required: no stored preference applies, so UNSPECIFIED is invalid.
+  StopMode stop_mode = 2;
   optional DeliveryMode delivery_mode = 3;
   // Hand the transcript back without delivering it anywhere.
   bool transcript_only = 4;
@@ -196,18 +197,17 @@ message UserPreferences {
   // A language code such as "en" or "en-us", or "auto" to detect.
   string recognition_language = 1;
   OutputMode output_mode = 2;
-  StopMode stop_mode = 3;
-  DeliveryMode delivery_mode = 4;
+  DeliveryMode delivery_mode = 3;
   // Whole milliseconds, 100 to 10000 inclusive.
-  uint64 silence_duration_ms = 5;
-  bool own_voice_only = 6;
-  HotkeyKey dictation_hotkey = 7;
-  AskHotkey ask_hotkey = 8;
-  bool project_vocabulary = 9;
-  optional string vocabulary_directory = 10;
-  bool dictation_history = 11;
-  bool history_audio_retention = 12;
-  bool mute_output = 13;
+  uint64 silence_duration_ms = 4;
+  bool own_voice_only = 5;
+  HotkeyKey dictation_hotkey = 6;
+  AskHotkey ask_hotkey = 7;
+  bool project_vocabulary = 8;
+  optional string vocabulary_directory = 9;
+  bool dictation_history = 10;
+  bool history_audio_retention = 11;
+  bool mute_output = 12;
 }
 
 message PreferencePatch {
@@ -215,20 +215,19 @@ message PreferencePatch {
   // A language code such as "en" or "en-us", or "auto" to detect.
   optional string recognition_language = 1;
   optional OutputMode output_mode = 2;
-  optional StopMode stop_mode = 3;
-  optional DeliveryMode delivery_mode = 4;
+  optional DeliveryMode delivery_mode = 3;
   // Whole milliseconds, 100 to 10000 inclusive.
-  optional uint64 silence_duration_ms = 5;
+  optional uint64 silence_duration_ms = 4;
   // Filter for enrolled owner voices when a speaker model and owner exist.
-  optional bool own_voice_only = 6;
-  optional HotkeyKey dictation_hotkey = 7;
-  AskHotkey ask_hotkey = 8;
-  optional bool project_vocabulary = 9;
+  optional bool own_voice_only = 5;
+  optional HotkeyKey dictation_hotkey = 6;
+  AskHotkey ask_hotkey = 7;
+  optional bool project_vocabulary = 8;
   // Empty clears the selected directory; absent leaves it unchanged.
-  optional string vocabulary_directory = 10;
-  optional bool dictation_history = 11;
-  optional bool history_audio_retention = 12;
-  optional bool mute_output = 13;
+  optional string vocabulary_directory = 9;
+  optional bool dictation_history = 10;
+  optional bool history_audio_retention = 11;
+  optional bool mute_output = 12;
 }
 
 enum OutputMode {

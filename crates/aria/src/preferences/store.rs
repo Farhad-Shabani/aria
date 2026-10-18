@@ -6,7 +6,7 @@ use tokio::sync::watch;
 use super::{AskHotkey, Language, PreferenceStoreError, UserPreferences, file};
 use crate::audio::SilenceDuration;
 use crate::delivery::OutputMode;
-use crate::dictation::{DeliveryMode, StopMode};
+use crate::dictation::DeliveryMode;
 use crate::hotkey::HotkeyKey;
 
 const DEFAULT_PREFERENCE_RELATIVE_PATH: &str = ".aria/preferences.json";
@@ -24,7 +24,6 @@ pub struct PreferencePatch {
     pub mute_output: Option<bool>,
     pub recognition_language: Option<Language>,
     pub output_mode: Option<OutputMode>,
-    pub stop_mode: Option<StopMode>,
     pub delivery_mode: Option<DeliveryMode>,
     pub silence_duration: Option<SilenceDuration>,
     pub own_voice_only: Option<bool>,
@@ -127,7 +126,6 @@ impl PreferencePatch {
                 .recognition_language
                 .unwrap_or_else(|| current.recognition_language.clone()),
             output_mode: self.output_mode.unwrap_or(current.output_mode),
-            stop_mode: self.stop_mode.unwrap_or(current.stop_mode),
             delivery_mode: self.delivery_mode.unwrap_or(current.delivery_mode),
             silence_duration: self.silence_duration.unwrap_or(current.silence_duration),
             own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),
@@ -154,7 +152,9 @@ mod tests {
         let store = PreferenceStore::open(&path).unwrap();
         let original = store.snapshot().unwrap().preferences;
         assert!(!original.history_audio_retention);
-        let settings = original.resolve_dictation(crate::dictation::DictationRequest::default());
+        let settings = original.resolve_dictation(crate::dictation::DictationRequest::new(
+            crate::dictation::StopMode::OnSilence,
+        ));
         assert!(!settings.history_audio_retention);
 
         for (revision, enabled) in [(0, true), (1, false)] {
@@ -175,7 +175,9 @@ mod tests {
             assert_eq!(preferences.history_audio_retention, enabled);
             assert_eq!(
                 preferences
-                    .resolve_dictation(crate::dictation::DictationRequest::default())
+                    .resolve_dictation(crate::dictation::DictationRequest::new(
+                        crate::dictation::StopMode::OnSilence
+                    ))
                     .history_audio_retention,
                 enabled
             );
@@ -201,9 +203,12 @@ mod tests {
         let store = PreferenceStore::open(&path).unwrap();
         let snapshot = store.snapshot().unwrap();
         assert!(snapshot.preferences.mute_output);
-        let recording = snapshot
-            .preferences
-            .resolve_dictation(crate::dictation::DictationRequest::default());
+        let recording =
+            snapshot
+                .preferences
+                .resolve_dictation(crate::dictation::DictationRequest::new(
+                    crate::dictation::StopMode::OnSilence,
+                ));
 
         store.update(1, PreferencePatch::default()).unwrap();
         assert!(store.snapshot().unwrap().preferences.mute_output);
@@ -224,7 +229,9 @@ mod tests {
         assert!(recording.mute_output);
         assert!(
             !preferences
-                .resolve_dictation(crate::dictation::DictationRequest::default())
+                .resolve_dictation(crate::dictation::DictationRequest::new(
+                    crate::dictation::StopMode::OnSilence
+                ))
                 .mute_output
         );
     }
@@ -250,14 +257,16 @@ mod tests {
             .preferences;
         assert!(
             !preferences
-                .resolve_dictation(crate::dictation::DictationRequest::default())
+                .resolve_dictation(crate::dictation::DictationRequest::new(
+                    crate::dictation::StopMode::OnSilence
+                ))
                 .dictation_history
         );
     }
 
     #[test]
     fn vocabulary_selection_persists_and_respects_request_overrides() {
-        use crate::dictation::DictationRequest;
+        use crate::dictation::{DictationRequest, StopMode};
         use crate::vocabulary::{Context, Directory};
 
         let directory = tempfile::tempdir().expect("a temporary directory");
@@ -287,7 +296,7 @@ mod tests {
         ] {
             let settings = preferences.clone().resolve_dictation(DictationRequest {
                 project: context,
-                ..Default::default()
+                ..DictationRequest::new(StopMode::OnSilence)
             });
             assert_eq!(settings.project, expected);
         }
@@ -301,7 +310,7 @@ mod tests {
             disabled
                 .resolve_dictation(DictationRequest {
                     project: Context::Directory(explicit),
-                    ..Default::default()
+                    ..DictationRequest::new(StopMode::OnSilence)
                 })
                 .project,
             None

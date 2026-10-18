@@ -51,7 +51,7 @@ aria ask \
   --project "$PWD"
 ```
 
-Speak, then pause. With the default stop setting, silence ends the recording.
+Speak, then pause. Silence ends the recording.
 The answer appears in the terminal. If a spoken question fails, try the typed
 example again to distinguish an agent problem from a recording problem.
 

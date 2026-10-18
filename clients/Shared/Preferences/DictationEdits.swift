@@ -61,7 +61,6 @@ extension Aria_Daemon_V1_PreferencePatch {
     func apply(to preferences: inout Aria_Daemon_V1_UserPreferences) {
         if hasRecognitionLanguage { preferences.recognitionLanguage = recognitionLanguage }
         if hasOutputMode { preferences.outputMode = outputMode }
-        if hasStopMode { preferences.stopMode = stopMode }
         if hasDeliveryMode { preferences.deliveryMode = deliveryMode }
         if hasSilenceDurationMs { preferences.silenceDurationMs = silenceDurationMs }
         if hasOwnVoiceOnly { preferences.ownVoiceOnly = ownVoiceOnly }
