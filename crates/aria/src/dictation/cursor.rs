@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
+use crate::delivery::{Caret, DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
 
 use super::{DeliveryMode, DictationSettings, ExecutionControl, TranscriptSink, Utterance};
 
@@ -17,8 +17,9 @@ struct Target<P> {
     mode: DeliveryMode,
     control: Arc<ExecutionControl>,
     prepared: P,
-    /// Once any text went out, a space precedes each segment.
-    typed: bool,
+    /// Read from the field before the first segment, then moved past each
+    /// segment typed.
+    caret: Option<Caret>,
     finished: bool,
     delivered: Option<DeliveryOutcome>,
 }
@@ -40,11 +41,10 @@ impl<D: TextDelivery> Cursor<D> {
         if target.finished || target.mode != mode {
             return Ok(());
         }
-        let spaced = if target.typed {
-            format!(" {text}")
-        } else {
-            text.to_owned()
-        };
+        let spaced = target
+            .caret
+            .get_or_insert_with(|| self.delivery.caret(&target.prepared))
+            .insert(text);
         let outcome =
             match self
                 .delivery
@@ -56,7 +56,6 @@ impl<D: TextDelivery> Cursor<D> {
                     return Err(error);
                 }
             };
-        target.typed = true;
         target.delivered = Some(outcome);
         Ok(())
     }
@@ -89,7 +88,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
             mode: settings.delivery_mode,
             control: Arc::clone(control),
             prepared,
-            typed: false,
+            caret: None,
             finished: false,
             delivered: None,
         });
@@ -466,6 +465,99 @@ pub(super) mod tests {
                 "prepare:Insert",
                 "deliver:two"
             ]
+        );
+    }
+
+    /// A field that reports `caret`.
+    struct FieldWithText {
+        delivery: RecordingDelivery,
+        caret: Caret,
+    }
+
+    impl TextDelivery for FieldWithText {
+        type Prepared = OutputMode;
+
+        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+        const OUTLIVES_PROCESS: bool = true;
+
+        fn prepare(
+            &self,
+            mode: OutputMode,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<OutputMode, DeliveryError> {
+            self.delivery.prepare(mode, should_cancel)
+        }
+
+        fn finish(
+            &self,
+            prepared: &OutputMode,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            self.delivery.finish(prepared, should_cancel)
+        }
+
+        fn deliver(
+            &self,
+            prepared: &OutputMode,
+            text: &str,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<DeliveryOutcome, DeliveryError> {
+            self.delivery.deliver(prepared, text, should_cancel)
+        }
+
+        fn caret(&self, _prepared: &OutputMode) -> Caret {
+            self.caret
+        }
+    }
+
+    fn streamed_into(before: &str, after: &str, segments: &[&str]) -> Vec<String> {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut cursor = Cursor::new(FieldWithText {
+            delivery: RecordingDelivery {
+                log: Arc::clone(&log),
+                fail: false,
+            },
+            caret: Caret::between(before, after),
+        });
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+        for segment in segments {
+            cursor.segment(Utterance::anonymous(segment)).unwrap();
+        }
+        let log = log.lock().unwrap();
+        log[1..].to_vec()
+    }
+
+    #[test]
+    fn text_after_a_sentence_starts_with_a_space() {
+        assert_eq!(
+            streamed_into("Hello.", "", &["How are you"]),
+            ["deliver: How are you"]
+        );
+    }
+
+    #[test]
+    fn later_segments_are_spaced_by_what_was_typed() {
+        assert_eq!(
+            streamed_into("(", "", &["hello", "there"]),
+            ["deliver:hello", "deliver: there"]
+        );
+        assert_eq!(
+            streamed_into("", "", &["你好", "世界"]),
+            ["deliver:你好", "deliver:世界"]
+        );
+    }
+
+    #[test]
+    fn a_word_after_the_caret_keeps_its_distance() {
+        assert_eq!(
+            streamed_into("", "w", &["hello", "there"]),
+            ["deliver:hello ", "deliver:there "]
         );
     }
 }

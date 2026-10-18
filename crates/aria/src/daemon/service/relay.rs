@@ -276,7 +276,8 @@ fn deliver<D: TextDelivery>(
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let should_cancel = || cancel.is_cancelled();
     let prepared = delivery.prepare(mode, should_cancel)?;
-    let outcome = delivery.deliver(&prepared, text, should_cancel)?;
+    let text = delivery.caret(&prepared).insert(text);
+    let outcome = delivery.deliver(&prepared, &text, should_cancel)?;
     if outcome == DeliveryOutcome::Inserted {
         delivery.finish(&prepared, should_cancel)?;
     }
@@ -304,10 +305,15 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::delivery::Caret;
 
-    /// Inserts everything and writes down each step it was asked for.
+    /// Inserts everything at `caret` and writes down each step it was
+    /// asked for.
     #[derive(Default)]
-    struct Steps(Mutex<Vec<String>>);
+    struct Steps {
+        log: Mutex<Vec<String>>,
+        caret: Caret,
+    }
 
     impl TextDelivery for Steps {
         type Prepared = OutputMode;
@@ -329,7 +335,7 @@ mod tests {
             _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
             if *prepared == OutputMode::InsertAndSubmit {
-                self.0.lock().unwrap().push("submit".to_owned());
+                self.log.lock().unwrap().push("submit".to_owned());
             }
             Ok(())
         }
@@ -340,8 +346,12 @@ mod tests {
             text: &str,
             _should_cancel: impl Fn() -> bool,
         ) -> Result<DeliveryOutcome, DeliveryError> {
-            self.0.lock().unwrap().push(format!("deliver:{text}"));
+            self.log.lock().unwrap().push(format!("deliver:{text}"));
             Ok(DeliveryOutcome::Inserted)
+        }
+
+        fn caret(&self, _prepared: &OutputMode) -> Caret {
+            self.caret
         }
     }
 
@@ -358,6 +368,18 @@ mod tests {
         .expect("delivers");
 
         assert_eq!(outcome, DeliveryOutcome::Inserted);
-        assert_eq!(*steps.0.lock().unwrap(), ["deliver:ship it", "submit"]);
+        assert_eq!(*steps.log.lock().unwrap(), ["deliver:ship it", "submit"]);
+    }
+
+    #[test]
+    fn a_phone_dictation_is_spaced_by_the_text_at_the_caret() {
+        let steps = Steps {
+            caret: Caret::between("Done.", ""),
+            ..Steps::default()
+        };
+
+        deliver(&steps, OutputMode::Insert, "Ship it", &CancelToken::never()).expect("delivers");
+
+        assert_eq!(*steps.log.lock().unwrap(), ["deliver: Ship it"]);
     }
 }

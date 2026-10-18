@@ -348,9 +348,10 @@ impl Delivery {
     /// Types the reply at the target; a failure is reported, not fatal,
     /// because the reply itself still reaches the caller.
     fn deliver(self, text: &str, cancel: &CancelToken) -> Option<RpcErrorCode> {
+        let text = self.platform.caret(&self.target).insert(text);
         match self
             .platform
-            .deliver(&self.target, text, || cancel.is_cancelled())
+            .deliver(&self.target, &text, || cancel.is_cancelled())
             .and_then(|outcome| {
                 if outcome == crate::delivery::DeliveryOutcome::Inserted {
                     self.platform

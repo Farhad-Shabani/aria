@@ -143,5 +143,35 @@ Run `cargo test`. `correct` returns `Some` when it changes text and `None`
 when it leaves text alone. Add cases for your own terms and for ordinary text
 that must stay unchanged.
 
+## Spaces at the cursor
+
+Typing a transcript into a field that already holds text can glue words
+together:
+
+```text
+field:   Hello.|
+typed:   How are you
+result:  Hello.How are you
+```
+
+`Caret` adds the missing space. Give it the text on each side of the cursor,
+then type what `insert` returns:
+
+```rust
+use aria_stt::Caret;
+
+// The field holds "Hello." and the cursor is at its end, so nothing follows.
+let mut caret = Caret::between("Hello.", "");
+assert_eq!(caret.insert("How are you"), " How are you");
+
+// The caret remembers what it returned, so the next segment spaces too.
+assert_eq!(caret.insert("today?"), " today?");
+```
+
+- Split the field at the cursor: `Caret::between(&field[..cursor], &field[cursor..])`.
+- If you can't read the field, use `Caret::default()`. Text then goes in
+  unchanged.
+- For live transcription, keep one caret and call `insert` for each segment.
+
 To use the same transcription with microphone input, continue to
 [Microphone transcription](./recording.md).

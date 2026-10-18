@@ -49,6 +49,9 @@ segments while you speak. Use `--mode insert-or-copy` if you want copying when
 insertion cannot begin. Linux uses the clipboard and does not support
 insertion-only modes.
 
+Aria adds a space where the text needs one. Dictating “Hello.” and then
+“How are you” types “Hello. How are you”.
+
 ## Spoken corrections
 
 To correct a simple change of mind in the completed text, add this setting to
