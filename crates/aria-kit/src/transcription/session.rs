@@ -17,7 +17,7 @@ use crate::audio::{Microphone, RecordingMode};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 use crate::speaker::{Diarizer, Embedder, Heard, SegmentLabeler, SegmentReader, Verdict};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-use crate::voice_activity::speech_gate;
+use crate::voice_activity::{SileroVad, VoiceActivityError};
 
 /// One transcription run over audio that arrives while the run is live.
 ///
@@ -108,11 +108,15 @@ impl<'a, T: Transcriber, L: Layer> Session<'a, T, Streaming, L> {
     /// The same session, with every committed segment's voice named by
     /// `voices`, behind the bundled speech gate.
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub fn hearing<E: Embedder>(self, voices: Diarizer<E>) -> HeardSession<'a, T, E, L> {
-        self.with_reader(SegmentReader::new(SegmentLabeler::new(
-            speech_gate(),
+    pub fn hearing<E: Embedder>(
+        self,
+        voices: Diarizer<E>,
+    ) -> Result<HeardSession<'a, T, E, L>, VoiceActivityError> {
+        let gate = SileroVad::load()?;
+        Ok(self.with_reader(SegmentReader::new(SegmentLabeler::new(
+            Some(gate),
             Some(voices),
-        )))
+        ))))
     }
 
     /// The same session, with every committed segment judged by a reader

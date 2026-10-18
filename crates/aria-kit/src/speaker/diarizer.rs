@@ -2,7 +2,7 @@
 //! session. Any [`Embedder`] supplies the embeddings; the thresholds and the
 //! clustering policy live here.
 
-use super::{Embedder, Engine, Profile, Role, SpeakerName};
+use super::{Embedder, Profile, Role, SpeakerError, SpeakerName};
 
 /// Minimum similarity for claiming an enrolled name.
 pub const ENROLLED_THRESHOLD: f32 = 0.5;
@@ -24,23 +24,6 @@ struct Cluster {
     sum: Vec<f32>,
 }
 
-/// Loads a diarizer with caller-supplied profiles. Logs model errors and returns
-/// `None`, allowing the caller to continue without labels.
-pub fn open<E: Engine>(config: E::Config, enrolled: Vec<Profile>) -> Option<Diarizer<E>> {
-    // Never enrolling is ordinary, so an absent model is not a warning.
-    if let Err(error) = E::check_from(&config) {
-        tracing::info!(%error, "no speaker model; the transcript stays unlabeled");
-        return None;
-    }
-    match E::load_from(config) {
-        Ok(embedder) => Some(Diarizer::new(embedder, enrolled)),
-        Err(error) => {
-            tracing::warn!(%error, "speaker model unusable; the transcript stays unlabeled");
-            None
-        }
-    }
-}
-
 impl<E: Embedder> Diarizer<E> {
     /// A diarizer over an engine the caller already loaded.
     pub fn new(embedder: E, enrolled: Vec<Profile>) -> Self {
@@ -52,16 +35,9 @@ impl<E: Embedder> Diarizer<E> {
     }
 
     /// A unit-norm embedding for one segment's audio window, or `None` when
-    /// none can be trusted. A broken model degrades the same way a quiet
-    /// window does, one warning apart.
-    pub fn embed(&mut self, window: &[f32]) -> Option<Vec<f32>> {
-        match self.embedder.embed(window) {
-            Ok(embedding) => embedding,
-            Err(error) => {
-                tracing::warn!(%error, "speaker embedding failed");
-                None
-            }
-        }
+    /// the window holds too little voice to trust.
+    pub fn embed(&mut self, window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
+        self.embedder.embed(window)
     }
 
     /// The live, tentative label for an embedding. `speaking` is the label

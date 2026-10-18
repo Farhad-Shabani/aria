@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use crate::backend::{BackendError, ModelError};
 
-pub use diarizer::{CLUSTER_THRESHOLD, Diarizer, ENROLLED_THRESHOLD, open, settle};
+pub use diarizer::{CLUSTER_THRESHOLD, Diarizer, ENROLLED_THRESHOLD, settle};
 #[cfg(not(target_family = "wasm"))]
 pub use enrollment::{Enrolled, Enrollment, EnrollmentError, MIN_SAMPLES, centroid, consistency};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]

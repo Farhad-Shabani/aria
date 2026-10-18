@@ -5,6 +5,8 @@
 mod voices;
 
 use aria_kit::segmentation::Engine as SegmentationEngine;
+use aria_kit::speaker::Engine as SpeakerEngine;
+use aria_kit::voice_activity::SileroVad;
 use aria_segmentation::pyannote::{self, Pyannote};
 
 use aria_speaker::wespeaker::{self, WeSpeaker};
@@ -14,9 +16,8 @@ use crate::config::SpeakerConfig;
 pub use aria_kit::speaker::{
     Diarizer, Enrolled, Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace,
     Role, SegmentLabeler, SegmentReader, SpeakerName, SpeakerNameError, StoredProfiles, Verdict,
-    normalized, open, settle,
+    normalized, settle,
 };
-pub use aria_kit::voice_activity::speech_gate;
 #[cfg(test)]
 pub(crate) use voices::testing;
 pub use voices::{
@@ -31,12 +32,31 @@ pub type VoiceTrack = PyannoteVoices<Pyannote, WeSpeaker>;
 /// The diarizer dictation and listen share. `None` when no embedding model
 /// is installed, which is ordinary — it ships with nothing.
 pub(crate) fn diarizer(config: &SpeakerConfig) -> Option<Diarizer<WeSpeaker>> {
-    open::<WeSpeaker>(
-        wespeaker::Config {
-            model: config.model.clone(),
-        },
-        enrolled(config),
-    )
+    let model = wespeaker::Config {
+        model: config.model.clone(),
+    };
+    // Never enrolling is ordinary, so an absent model is not a warning.
+    if let Err(error) = WeSpeaker::check_from(&model) {
+        tracing::info!(%error, "no speaker model; the transcript stays unlabeled");
+        return None;
+    }
+    match WeSpeaker::load_from(model) {
+        Ok(embedder) => Some(Diarizer::new(embedder, enrolled(config))),
+        Err(error) => {
+            tracing::warn!(%error, "speaker model unusable; the transcript stays unlabeled");
+            None
+        }
+    }
+}
+
+/// The bundled speech gate, or none when the model will not load: audio then
+/// passes ungated rather than the session failing.
+pub fn speech_gate() -> Option<SileroVad> {
+    SileroVad::load()
+        .inspect_err(
+            |error| tracing::warn!(%error, "no voice-activity model; audio is not speech-gated"),
+        )
+        .ok()
 }
 
 /// The segment reader dictation and listen run. The speech gate marks

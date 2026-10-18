@@ -8,7 +8,7 @@ use std::path::Path;
 
 use aria_kit::backend::BackendError;
 use aria_kit::speaker::SpeakerError;
-use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
+use aria_speaker::wespeaker::Config as SpeakerConfig;
 use ort::session::Session;
 use ort::value::Tensor;
 
@@ -81,9 +81,7 @@ pub fn label_by_segmentation(
         .map(|&start| segment(&mut session, &samples, start))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let Some(mut diarizer) = aria::speaker::open::<WeSpeaker>(speaker, Vec::new()) else {
-        return Err(BenchError::NoSpeakerModel);
-    };
+    let mut diarizer = crate::diarize::diarizer(speaker)?;
     let mut voices = Vec::new();
     for (chunk, mask) in masks.iter().enumerate() {
         for local in 0..LOCAL_SPEAKERS {
@@ -95,7 +93,7 @@ pub fn label_by_segmentation(
                 chunk,
                 local,
                 span: at(starts[chunk])..at(starts[chunk] + WINDOW_SAMPLES),
-                embedding: diarizer.embed(&heard),
+                embedding: diarizer.embed(&heard).map_err(BenchError::SpeakerModel)?,
             });
         }
     }

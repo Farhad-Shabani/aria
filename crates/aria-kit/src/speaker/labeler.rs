@@ -10,7 +10,7 @@ use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::transcription::{
     Layer, Operation, Transcriber, TranscriptSegment, TranscriptUpdate, TranscriptionError,
 };
-use crate::voice_activity::SileroVad;
+use crate::voice_activity::{SileroVad, Speech};
 
 /// Minimum detected speech per window; shorter windows are discarded.
 const MIN_SPEECH_SAMPLES: usize = canonical_samples(Duration::from_millis(200)) as usize;
@@ -123,7 +123,10 @@ impl<E: Embedder> SegmentLabeler<E> {
         }
         self.diarizer.as_ref()?;
         let regions = match self.vad.as_mut() {
-            Some(vad) => vad.speech_regions(samples),
+            Some(vad) => vad.speech_regions(samples).unwrap_or_else(|error| {
+                tracing::warn!(%error, "voice-activity inference failed; audio passes ungated");
+                std::iter::once(0..samples.len()).collect()
+            }),
             None => std::iter::once(0..samples.len()).collect(),
         };
         let mut kept = Vec::new();
@@ -136,7 +139,7 @@ impl<E: Embedder> SegmentLabeler<E> {
             let embedding = self
                 .diarizer
                 .as_mut()
-                .and_then(|diarizer| diarizer.embed(heard));
+                .and_then(|diarizer| embed_or_skip(diarizer, heard));
             let stranger = embedding
                 .as_deref()
                 .and_then(|embedding| self.judge(voice.len(), embedding))
@@ -170,7 +173,15 @@ impl<E: Embedder> SegmentLabeler<E> {
     /// timings can stretch a word over a pause.
     pub fn observe(&mut self, window: &[f32], silence_before: u64) -> Verdict {
         let mut gap = silence_before as usize;
-        let speech = self.vad.as_mut().map(|vad| vad.speech(window));
+        let speech = self.vad.as_mut().map(|vad| {
+            vad.speech(window).unwrap_or_else(|error| {
+                tracing::warn!(%error, "voice-activity inference failed; audio passes ungated");
+                Speech {
+                    regions: std::iter::once(0..window.len()).collect(),
+                    samples: window.to_vec(),
+                }
+            })
+        });
         if let Some(speech) = &speech {
             let regions = &speech.regions;
             let leading = regions.first().map_or(window.len(), |run| run.start);
@@ -200,7 +211,7 @@ impl<E: Embedder> SegmentLabeler<E> {
         let embedding = self
             .diarizer
             .as_mut()
-            .and_then(|diarizer| diarizer.embed(voice));
+            .and_then(|diarizer| embed_or_skip(diarizer, voice));
         let label = match (&embedding, self.diarizer.as_mut()) {
             (Some(embedding), Some(diarizer)) => {
                 Some(diarizer.label(embedding, self.previous.as_deref()))
@@ -231,7 +242,7 @@ impl<E: Embedder> SegmentLabeler<E> {
         self.turn.extend_from_slice(voice);
         let excess = self.turn.len().saturating_sub(TURN_VOICE_SAMPLES);
         self.turn.drain(..excess);
-        self.turn_voice = diarizer.embed(&self.turn);
+        self.turn_voice = embed_or_skip(diarizer, &self.turn);
     }
 
     /// The final labels for the session's paragraphs; all `None` without a
@@ -242,6 +253,15 @@ impl<E: Embedder> SegmentLabeler<E> {
             None => vec![None; paragraphs.len()],
         }
     }
+}
+
+/// A model failure leaves the window unlabeled, as a quiet window is: one
+/// broken embedding must not end the session.
+fn embed_or_skip<E: Embedder>(diarizer: &mut Diarizer<E>, window: &[f32]) -> Option<Vec<f32>> {
+    diarizer.embed(window).unwrap_or_else(|error| {
+        tracing::warn!(%error, "speaker embedding failed");
+        None
+    })
 }
 
 /// Walks the finalized segments of one recording: cuts each segment's audio
@@ -555,6 +575,37 @@ mod tests {
         fn dimension(&self) -> usize {
             2
         }
+    }
+
+    /// A model that fails on every window.
+    struct Broken;
+
+    impl Embedder for Broken {
+        fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
+            Err(SpeakerError::Inference {
+                backend: "broken",
+                source: crate::backend::BackendError::engine(std::io::Error::other("no model")),
+            })
+        }
+
+        fn dimension(&self) -> usize {
+            2
+        }
+    }
+
+    #[test]
+    fn a_failing_speaker_model_keeps_the_segment_unlabeled() {
+        let mut labeler = SegmentLabeler::new(None, Some(Diarizer::new(Broken, Vec::new())));
+
+        let verdict = labeler.observe(&[0.0; 16_000], TURN_GAP_SAMPLES);
+
+        assert!(matches!(
+            verdict,
+            Verdict::Keep {
+                label: None,
+                embedding: None
+            }
+        ));
     }
 
     fn labeler(voice: [f32; 2]) -> SegmentLabeler<Voice> {

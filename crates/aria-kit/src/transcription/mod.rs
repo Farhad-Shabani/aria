@@ -37,8 +37,6 @@ pub mod prelude {
     pub use crate::speaker::{Diarizer, Embedder};
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub use crate::speaker::{Heard, SegmentLabeler, SegmentReader, Verdict};
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub use crate::voice_activity::speech_gate;
 }
 
 const MAX_LANGUAGE_CODE_BYTES: usize = 64;

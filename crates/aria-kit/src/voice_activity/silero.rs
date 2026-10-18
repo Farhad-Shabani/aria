@@ -20,16 +20,6 @@ const TIMELINE_THRESHOLD: f32 = 0.1;
 /// where a word gets cut in half.
 const EDGE_PAD_SAMPLES: usize = 1_600;
 
-/// The bundled speech gate, or none when the model will not load — audio
-/// then passes ungated rather than the session failing.
-pub fn speech_gate() -> Option<SileroVad> {
-    SileroVad::load()
-        .inspect_err(
-            |error| tracing::warn!(%error, "no voice-activity model; audio is not speech-gated"),
-        )
-        .ok()
-}
-
 pub struct SileroVad {
     session: Session,
     stream: StreamState,
@@ -50,45 +40,45 @@ impl SileroVad {
     /// Where the voice is inside a window, as sample ranges — the answer a
     /// caller wants when it needs to know *when* somebody spoke rather than
     /// only what the speech sounded like.
-    pub fn speech_regions(&mut self, window: &[f32]) -> Vec<Range<usize>> {
-        let scores = self.scores(window);
-        regions(&scores, window)
+    pub fn speech_regions(
+        &mut self,
+        window: &[f32],
+    ) -> Result<Vec<Range<usize>>, VoiceActivityError> {
+        let scores = self.scores(window)?;
+        Ok(regions(&scores, window))
     }
 
     /// Both answers about a window from one pass over the model: where the
     /// voice is, and the samples of it worth feeding a model. The second
     /// keeps the strict threshold, since padding a run there would only mix
     /// silence back into what it hands on.
-    pub fn speech(&mut self, window: &[f32]) -> Speech {
-        let scores = self.scores(window);
-        Speech {
+    pub fn speech(&mut self, window: &[f32]) -> Result<Speech, VoiceActivityError> {
+        let scores = self.scores(window)?;
+        Ok(Speech {
             regions: regions(&scores, window),
-            samples: runs_at(&scores, SPEECH_THRESHOLD, window.len())
+            samples: runs_at(&scores, SPEECH_THRESHOLD)
                 .into_iter()
                 .flat_map(|run| window[run].iter().copied())
                 .collect(),
-        }
+        })
     }
 
     /// Each frame's speech probability, with the samples it covers. The last
     /// frame is padded to length rather than dropped, because it sits
-    /// exactly where a word gets cut off. `None` when inference failed: the
-    /// window then passes whole rather than muted.
-    fn scores(&mut self, window: &[f32]) -> Option<Vec<(Range<usize>, f32)>> {
+    /// exactly where a word gets cut off.
+    fn scores(&mut self, window: &[f32]) -> Result<Vec<(Range<usize>, f32)>, VoiceActivityError> {
         let mut scores = Vec::with_capacity(window.len().div_ceil(FRAME_SAMPLES));
         for (index, frame) in window.chunks(FRAME_SAMPLES).enumerate() {
             let at = index * FRAME_SAMPLES;
             self.frame[..frame.len()].copy_from_slice(frame);
             self.frame[frame.len()..].fill(0.0);
-            match self.session.infer_chunk(&mut self.stream, &self.frame) {
-                Ok(probability) => scores.push((at..at + frame.len(), probability)),
-                Err(error) => {
-                    tracing::warn!(%error, "voice-activity inference failed; window passes ungated");
-                    return None;
-                }
-            }
+            let probability = self
+                .session
+                .infer_chunk(&mut self.stream, &self.frame)
+                .map_err(|source| VoiceActivityError::Inference(Box::new(source)))?;
+            scores.push((at..at + frame.len(), probability));
         }
-        Some(scores)
+        Ok(scores)
     }
 }
 
@@ -98,24 +88,13 @@ pub struct Speech {
     pub samples: Vec<f32>,
 }
 
-fn regions(scores: &Option<Vec<(Range<usize>, f32)>>, window: &[f32]) -> Vec<Range<usize>> {
-    widen(
-        &runs_at(scores, TIMELINE_THRESHOLD, window.len()),
-        window.len(),
-    )
+fn regions(scores: &[(Range<usize>, f32)], window: &[f32]) -> Vec<Range<usize>> {
+    widen(&runs_at(scores, TIMELINE_THRESHOLD), window.len())
 }
 
 /// The unbroken stretches scored at or above `threshold`; adjacent frames
-/// merge into one run. A failed pass is one run over the whole window.
-fn runs_at(
-    scores: &Option<Vec<(Range<usize>, f32)>>,
-    threshold: f32,
-    window_samples: usize,
-) -> Vec<Range<usize>> {
-    let Some(scores) = scores else {
-        let whole = 0..window_samples;
-        return Vec::from([whole]);
-    };
+/// merge into one run.
+fn runs_at(scores: &[(Range<usize>, f32)], threshold: f32) -> Vec<Range<usize>> {
     let mut runs: Vec<Range<usize>> = Vec::new();
     for (frame, probability) in scores {
         if *probability < threshold {

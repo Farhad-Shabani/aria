@@ -4,7 +4,10 @@
 use std::ops::Range;
 use std::path::Path;
 
+use aria::speaker::Diarizer;
 use aria_kit::audio::read_wav;
+use aria_kit::speaker::Engine as _;
+use aria_kit::voice_activity::SileroVad;
 use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 
 use crate::diarize::cluster::{Stop, group};
@@ -45,13 +48,15 @@ pub fn label_by_voice(
             .any(|region| window.speaks_for.contains(&region.start));
     }
 
-    let Some(mut diarizer) = aria::speaker::open::<WeSpeaker>(speaker, Vec::new()) else {
-        return Err(BenchError::NoSpeakerModel);
-    };
+    let mut diarizer = Diarizer::new(
+        WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)?,
+        Vec::new(),
+    );
     let voices: Vec<Option<Vec<f32>>> = windows
         .iter()
         .map(|window| diarizer.embed(&samples[window.heard.clone()]))
-        .collect();
+        .collect::<Result<_, _>>()
+        .map_err(BenchError::SpeakerModel)?;
 
     // A similarity threshold must serve every recording; a speaker count is
     // a fact about this one. Given a count, the windows are grouped until
@@ -181,10 +186,9 @@ pub(crate) fn read(wav: &Path) -> Result<Vec<f32>, BenchError> {
 }
 
 pub(crate) fn speech(samples: &[f32]) -> Result<Vec<Range<usize>>, BenchError> {
-    match aria::speaker::speech_gate() {
-        Some(mut vad) => Ok(vad.speech_regions(samples)),
-        None => Err(BenchError::NoSpeakerModel),
-    }
+    SileroVad::load()
+        .and_then(|mut vad| vad.speech_regions(samples))
+        .map_err(BenchError::SpeechGate)
 }
 
 #[cfg(test)]

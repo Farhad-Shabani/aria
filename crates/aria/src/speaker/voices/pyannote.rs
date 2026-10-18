@@ -196,10 +196,14 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
                     frames.iter().filter(|frame| frame.speaks(local)).count() >= MIN_ACTIVE_FRAMES
                 })
                 .filter_map(|local| {
-                    let values = self
-                        .diarizer
-                        .embed(&masked(&audio, &frames, local, &self.grid))?;
-                    Some(Voiceprint { local, values })
+                    let heard = masked(&audio, &frames, local, &self.grid);
+                    match self.diarizer.embed(&heard) {
+                        Ok(values) => values.map(|values| Voiceprint { local, values }),
+                        Err(error) => {
+                            tracing::warn!(%error, "speaker embedding failed");
+                            None
+                        }
+                    }
                 })
                 .collect();
             return Some(Chunk { at, frames, voices });
