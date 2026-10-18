@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use cidre::{arc, ax, cf};
 
-use super::caret;
+use super::element;
 use crate::delivery::{Font, Placement, Rect};
 
 /// Past it, no ghost shows until the next preview.
@@ -123,7 +123,7 @@ fn inside(rect: Rect, field: Rect) -> bool {
 }
 
 fn frame(field: &ax::UiElement, deadline: Instant) -> Option<Rect> {
-    caret::limit(field, deadline).ok()?;
+    element::limit(field, deadline).ok()?;
     field.frame().ok()?.cg_rect().map(rect)
 }
 
@@ -133,10 +133,10 @@ fn bounds(
     len: cf::Index,
     deadline: Instant,
 ) -> Option<Rect> {
-    caret::limit(field, deadline).ok()?;
+    element::limit(field, deadline).ok()?;
     let range = ax::Value::with_cf_range(&cf::Range { loc, len });
-    let value = caret::parameterized(field, ax::param_attr::bounds_for_range(), &range)?;
-    super::ax_value(&value)?.cg_rect().map(rect)
+    let value = element::parameterized(field, ax::param_attr::bounds_for_range(), &range)?;
+    element::ax_value(&value)?.cg_rect().map(rect)
 }
 
 /// The character at `loc`, with its attributes.
@@ -145,9 +145,9 @@ fn attributed(
     loc: cf::Index,
     deadline: Instant,
 ) -> Option<arc::R<cf::Type>> {
-    caret::limit(field, deadline).ok()?;
+    element::limit(field, deadline).ok()?;
     let range = ax::Value::with_cf_range(&cf::Range { loc, len: 1 });
-    caret::parameterized(field, ax::param_attr::attr_string_for_range(), &range)
+    element::parameterized(field, ax::param_attr::attr_string_for_range(), &range)
 }
 
 fn breaks_line(character: &cf::AttrString) -> bool {

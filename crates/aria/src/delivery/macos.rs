@@ -5,7 +5,6 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_ulong;
 use std::time::{Duration, Instant};
 
-use cidre::{ax, cf};
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSPasteboard, NSRunningApplication};
 use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
@@ -20,6 +19,7 @@ use crate::accessibility::Trust;
 mod anchor;
 mod caret;
 mod confirmation;
+mod element;
 mod placement;
 
 #[cfg(test)]
@@ -337,24 +337,6 @@ fn insert_or_copy(
     }
 }
 
-/// The range an Accessibility selection attribute holds, or `None` when the
-/// application answered with another type.
-fn selection_range(value: &cf::Type) -> Option<cf::Range> {
-    ax_value(value)?.cf_range()
-}
-
-#[allow(
-    unsafe_code,
-    reason = "AXValue is a transparent CF type; the runtime type is checked before casting"
-)]
-fn ax_value(value: &cf::Type) -> Option<&ax::Value> {
-    if value.get_type_id() != ax::Value::type_id() {
-        return None;
-    }
-    // SAFETY: the type ID identifies an AXValue, and the borrow retains its owner.
-    Some(unsafe { &*std::ptr::from_ref(value).cast::<ax::Value>() })
-}
-
 /// Whether any process has secure keyboard entry on — a password field, or
 /// Terminal's Secure Keyboard Entry. The window server then drops synthetic
 /// keystrokes without a word, so this is the only way to learn it first.
@@ -603,16 +585,6 @@ mod tests {
             pasteboard_text(&pasteboard).as_deref(),
             Some(TEST_TRANSCRIPT)
         );
-    }
-
-    #[test]
-    fn range_readback_checks_the_external_type() {
-        let range = cf::Range { loc: 2, len: 3 };
-        let value = ax::Value::with_cf_range(&range);
-        let actual = selection_range(&value).expect("AX range");
-        assert_eq!(actual.loc, range.loc);
-        assert_eq!(actual.len, range.len);
-        assert!(selection_range(&cf::String::from_str("wrong type")).is_none());
     }
 
     #[test]

@@ -98,8 +98,8 @@ impl Confirmation {
             .element
             .attr_value(ax::attr::selected_text_range())
             .map_err(|_| DeliveryError::SubmissionUnconfirmed)?;
-        let selection =
-            super::selection_range(&selection).ok_or(DeliveryError::SubmissionUnconfirmed)?;
+        let selection = super::element::selection_range(&selection)
+            .ok_or(DeliveryError::SubmissionUnconfirmed)?;
         self.check_focus(deadline)?;
         remaining(deadline, self.timeout)?;
         Ok(Snapshot {
