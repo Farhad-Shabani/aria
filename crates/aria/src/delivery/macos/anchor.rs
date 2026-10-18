@@ -4,6 +4,10 @@
 //! Smart quotes change characters but not length, so the caret's offset
 //! decides first. If an app changed the length, the last typed characters
 //! before the caret decide instead. They are never logged.
+//!
+//! Some fields, terminals among them, report one caret offset however much
+//! text lands. When the second segment finds the caret still where the first
+//! began, only the field is checked from then on.
 
 use std::time::{Duration, Instant};
 
@@ -37,7 +41,7 @@ impl Anchoring {
         }
     }
 
-    /// Refuses when the caret left the end of the text typed last.
+    /// Refuses when typing would land away from the text typed last.
     pub(super) fn before_typing(&mut self) -> Result<(), DeliveryError> {
         match self {
             Self::Anchored(anchor) => anchor.check(),
@@ -68,8 +72,7 @@ impl Anchoring {
 
     pub(super) fn after_typing(&mut self, text: &str) {
         if let Self::Anchored(anchor) = self {
-            anchor.expected_caret = advanced(anchor.expected_caret, text);
-            anchor.ending = Some(ending_of(text));
+            anchor.after_typing(text);
         }
     }
 }
@@ -81,6 +84,18 @@ pub(crate) struct Anchor {
     expected_caret: cf::Index,
     /// The end of the text typed last. `None` before the first segment.
     ending: Option<String>,
+    tracking: Tracking,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Tracking {
+    /// Holds the caret's offset before the first segment, until a check
+    /// judges it.
+    Untested(cf::Index),
+    /// The caret moves with typed text, so it shows where typing goes.
+    Caret,
+    /// The caret stayed where the first segment began, so it shows nothing.
+    Field,
 }
 
 impl Anchor {
@@ -90,6 +105,7 @@ impl Anchor {
             field: focus.field,
             expected_caret: focus.selection.loc,
             ending: None,
+            tracking: Tracking::Untested(focus.selection.loc),
         }
     }
 
@@ -98,10 +114,41 @@ impl Anchor {
             return Ok(());
         };
         let deadline = Instant::now() + CATCH_UP_BUDGET;
-        self.expected_caret = wait_for_caret(self.expected_caret, deadline, || {
-            self.observe(ending, deadline)
-        })?;
+        let settled = match self.tracking {
+            Tracking::Untested(_) | Tracking::Caret => {
+                wait_for_caret(deadline, || self.observe(ending, deadline))
+            }
+            Tracking::Field => self.observe_field(deadline),
+        };
+        self.settle(settled)
+    }
+
+    /// The first check comes a whole segment after the first one landed. A
+    /// caret still at its start by then means the field never moves it.
+    fn settle(&mut self, settled: Settled) -> Result<(), DeliveryError> {
+        match settled {
+            Settled::After(caret) => {
+                self.expected_caret = caret;
+                if matches!(self.tracking, Tracking::Untested(_)) {
+                    self.tracking = Tracking::Caret;
+                }
+            }
+            Settled::Short(caret) if self.tracking == Tracking::Untested(caret) => {
+                tracing::debug!("caret stays put as text lands; only the field is checked");
+                self.tracking = Tracking::Field;
+            }
+            Settled::Short(_) => return Err(target_changed("caret short of the typed text")),
+            Settled::Moved(reason) => return Err(target_changed(reason)),
+            Settled::Unknown(reason) => {
+                tracing::debug!(reason, "insertion point unreadable; typing goes on");
+            }
+        }
         Ok(())
+    }
+
+    fn after_typing(&mut self, text: &str) {
+        self.expected_caret = advanced(self.expected_caret, text);
+        self.ending = Some(ending_of(text));
     }
 
     fn resting_caret(&self, deadline: Instant) -> Option<(arc::R<ax::UiElement>, cf::Index)> {
@@ -147,6 +194,14 @@ impl Anchor {
         ))
     }
 
+    fn observe_field(&self, deadline: Instant) -> Settled {
+        match element::focused_field(&self.application, deadline) {
+            Ok(focused) if self.field.equal(&focused) => Settled::After(self.expected_caret),
+            Ok(_) => Settled::Moved("another field took focus"),
+            Err(reason) => Settled::Unknown(reason),
+        }
+    }
+
     fn text_before(&self, ending: &str, caret: cf::Index, deadline: Instant) -> Option<String> {
         let units = cf::Index::try_from(ending.encode_utf16().count()).ok()?;
         if caret < units {
@@ -161,8 +216,9 @@ impl Anchor {
 enum Verdict {
     /// The caret sits right after the typed text, at this offset.
     Continues(cf::Index),
-    /// The app may still be applying the typed text.
-    Behind,
+    /// The caret sits short of the typed text, at this offset. The app may
+    /// still be applying it.
+    Behind(cf::Index),
     Moved(&'static str),
 }
 
@@ -191,7 +247,7 @@ fn judge(
         return Verdict::Continues(selection.loc);
     }
     if selection.len == 0 && selection.loc < expected_caret {
-        return Verdict::Behind;
+        return Verdict::Behind(selection.loc);
     }
     Verdict::Moved("caret moved")
 }
@@ -209,30 +265,37 @@ fn ending_of(text: &str) -> String {
     element::decode(units[start..].iter().copied())
 }
 
-/// Polls until the caret sits after the typed text. A clear move stops typing
-/// at once, and a caret still behind at `deadline` stops it too. A field that
-/// stays unreadable proves nothing, so typing goes on at `expected_caret`.
+#[derive(Debug, PartialEq, Eq)]
+enum Settled {
+    After(cf::Index),
+    Short(cf::Index),
+    Moved(&'static str),
+    /// Every read failed, which is no sign the caret moved.
+    Unknown(&'static str),
+}
+
+/// Polls until the caret sits after the typed text or clearly moved. Past
+/// `deadline`, the last caret seen decides.
 fn wait_for_caret(
-    expected_caret: cf::Index,
     deadline: Instant,
     mut observe: impl FnMut() -> Result<Verdict, &'static str>,
-) -> Result<cf::Index, DeliveryError> {
+) -> Settled {
+    let mut short = None;
     loop {
-        let unreadable = match observe() {
-            Ok(Verdict::Continues(caret)) => return Ok(caret),
-            Ok(Verdict::Moved(reason)) => return Err(target_changed(reason)),
-            Ok(Verdict::Behind) => None,
-            Err(reason) => Some(reason),
+        let settled = match observe() {
+            Ok(Verdict::Continues(caret)) => return Settled::After(caret),
+            Ok(Verdict::Moved(reason)) => return Settled::Moved(reason),
+            Ok(Verdict::Behind(caret)) => {
+                short = Some(caret);
+                Settled::Short(caret)
+            }
+            Err(reason) => short.map_or(Settled::Unknown(reason), Settled::Short),
         };
         let Some(remaining) = deadline
             .checked_duration_since(Instant::now())
             .filter(|remaining| !remaining.is_zero())
         else {
-            let Some(reason) = unreadable else {
-                return Err(target_changed("caret short of the typed text"));
-            };
-            tracing::debug!(reason, "insertion point unreadable; typing goes on");
-            return Ok(expected_caret);
+            return settled;
         };
         std::thread::sleep(POLL_INTERVAL.min(remaining));
     }
@@ -283,7 +346,7 @@ mod tests {
 
     #[test]
     fn a_caret_short_of_the_text_may_still_catch_up() {
-        assert_eq!(judge(9, "there", caret(4), None, None), Verdict::Behind);
+        assert_eq!(judge(9, "there", caret(4), None, None), Verdict::Behind(4));
     }
 
     #[test]
@@ -302,10 +365,80 @@ mod tests {
             field: ax::UiElement::with_app_pid(1),
             expected_caret: 5,
             ending: None,
+            tracking: Tracking::Caret,
         };
 
         assert!(anchor.check().is_ok());
         assert_eq!(anchor.expected_caret, 5);
+    }
+
+    #[test]
+    fn a_lone_segment_returns_without_waiting_for_the_caret() {
+        let mut anchor = Anchor {
+            application: ax::UiElement::with_app_pid(1),
+            field: ax::UiElement::with_app_pid(1),
+            expected_caret: 5,
+            ending: None,
+            tracking: Tracking::Untested(5),
+        };
+        let started = Instant::now();
+
+        anchor.after_typing("hello");
+
+        assert!(started.elapsed() < CATCH_UP_BUDGET / 2);
+        assert_eq!(anchor.expected_caret, 10);
+    }
+
+    fn typed_anchor() -> Anchor {
+        Anchor {
+            application: ax::UiElement::with_app_pid(1),
+            field: ax::UiElement::with_app_pid(1),
+            expected_caret: 9,
+            ending: Some("hello".to_owned()),
+            tracking: Tracking::Caret,
+        }
+    }
+
+    #[test]
+    fn a_caret_still_at_its_start_by_the_first_check_is_ignored() {
+        let mut anchor = typed_anchor();
+        anchor.tracking = Tracking::Untested(4);
+
+        let result = anchor.settle(Settled::Short(4));
+
+        assert!(result.is_ok());
+        assert_eq!(anchor.tracking, Tracking::Field);
+    }
+
+    #[test]
+    fn a_caret_that_moved_with_the_first_segment_is_tracked() {
+        let mut anchor = typed_anchor();
+        anchor.tracking = Tracking::Untested(4);
+
+        let result = anchor.settle(Settled::After(10));
+
+        assert!(result.is_ok());
+        assert_eq!(anchor.tracking, Tracking::Caret);
+        assert_eq!(anchor.expected_caret, 10);
+    }
+
+    #[test]
+    fn a_caret_short_of_the_text_but_off_its_start_stops_the_first_check() {
+        let mut anchor = typed_anchor();
+        anchor.tracking = Tracking::Untested(4);
+
+        let result = anchor.settle(Settled::Short(6));
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+    }
+
+    #[test]
+    fn a_tracked_caret_back_at_the_start_stops_typing() {
+        let mut anchor = typed_anchor();
+
+        let result = anchor.settle(Settled::Short(4));
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
     }
 
     #[test]
@@ -330,18 +463,18 @@ mod tests {
     #[test]
     fn a_caret_that_catches_up_continues() {
         let mut reads = [
-            Ok(Verdict::Behind),
+            Ok(Verdict::Behind(4)),
             Err("no selection"),
             Ok(Verdict::Continues(9)),
         ]
         .into_iter();
         let deadline = Instant::now() + Duration::from_secs(1);
 
-        let result = wait_for_caret(9, deadline, || {
+        let result = wait_for_caret(deadline, || {
             reads.next().expect("must stop at the caught-up caret")
         });
 
-        assert_eq!(result.unwrap(), 9);
+        assert_eq!(result, Settled::After(9));
         assert!(reads.next().is_none());
     }
 
@@ -350,28 +483,44 @@ mod tests {
         let mut reads = [Ok(Verdict::Moved("caret moved"))].into_iter();
         let deadline = Instant::now() + Duration::from_secs(60);
 
-        let result = wait_for_caret(9, deadline, || {
+        let result = wait_for_caret(deadline, || {
             reads.next().expect("must stop at the first clear move")
         });
 
-        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+        assert_eq!(result, Settled::Moved("caret moved"));
     }
 
     #[test]
-    fn a_caret_that_never_catches_up_stops_typing() {
+    fn a_caret_that_never_catches_up_settles_short() {
         let deadline = Instant::now() + Duration::from_millis(20);
 
-        let result = wait_for_caret(9, deadline, || Ok(Verdict::Behind));
+        let result = wait_for_caret(deadline, || Ok(Verdict::Behind(4)));
 
-        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+        assert_eq!(result, Settled::Short(4));
     }
 
     #[test]
-    fn an_unreadable_field_keeps_typing_at_the_expected_offset() {
+    fn a_read_cut_off_by_the_deadline_keeps_the_short_caret() {
+        let mut first = true;
         let deadline = Instant::now() + Duration::from_millis(20);
 
-        let result = wait_for_caret(9, deadline, || Err("no selection"));
+        let result = wait_for_caret(deadline, || {
+            if std::mem::take(&mut first) {
+                Ok(Verdict::Behind(4))
+            } else {
+                Err("read budget spent")
+            }
+        });
 
-        assert_eq!(result.unwrap(), 9);
+        assert_eq!(result, Settled::Short(4));
+    }
+
+    #[test]
+    fn an_unreadable_field_proves_nothing() {
+        let deadline = Instant::now() + Duration::from_millis(20);
+
+        let result = wait_for_caret(deadline, || Err("no selection"));
+
+        assert_eq!(result, Settled::Unknown("no selection"));
     }
 }
