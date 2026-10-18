@@ -756,14 +756,8 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {self._outputMode = nil}
 
-  public var stopMode: Aria_Daemon_V1_StopMode {
-    get {_stopMode ?? .unspecified}
-    set {_stopMode = newValue}
-  }
-  /// Returns true if `stopMode` has been explicitly set.
-  public var hasStopMode: Bool {self._stopMode != nil}
-  /// Clears the value of `stopMode`. Subsequent reads from it will return its default value.
-  public mutating func clearStopMode() {self._stopMode = nil}
+  /// Required: no stored preference applies, so UNSPECIFIED is invalid.
+  public var stopMode: Aria_Daemon_V1_StopMode = .unspecified
 
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_deliveryMode ?? .unspecified}
@@ -808,7 +802,6 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   public init() {}
 
   fileprivate var _outputMode: Aria_Daemon_V1_OutputMode? = nil
-  fileprivate var _stopMode: Aria_Daemon_V1_StopMode? = nil
   fileprivate var _deliveryMode: Aria_Daemon_V1_DeliveryMode? = nil
 }
 
@@ -1196,11 +1189,6 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
     set {_uniqueStorage()._outputMode = newValue}
   }
 
-  public var stopMode: Aria_Daemon_V1_StopMode {
-    get {_storage._stopMode}
-    set {_uniqueStorage()._stopMode = newValue}
-  }
-
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode}
     set {_uniqueStorage()._deliveryMode = newValue}
@@ -1291,15 +1279,6 @@ public nonisolated struct Aria_Daemon_V1_PreferencePatch: @unchecked Sendable {
   public var hasOutputMode: Bool {_storage._outputMode != nil}
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {_uniqueStorage()._outputMode = nil}
-
-  public var stopMode: Aria_Daemon_V1_StopMode {
-    get {_storage._stopMode ?? .unspecified}
-    set {_uniqueStorage()._stopMode = newValue}
-  }
-  /// Returns true if `stopMode` has been explicitly set.
-  public var hasStopMode: Bool {_storage._stopMode != nil}
-  /// Clears the value of `stopMode`. Subsequent reads from it will return its default value.
-  public mutating func clearStopMode() {_uniqueStorage()._stopMode = nil}
 
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode ?? .unspecified}
@@ -2323,7 +2302,7 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self._outputMode) }()
-      case 2: try { try decoder.decodeSingularEnumField(value: &self._stopMode) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.stopMode) }()
       case 3: try { try decoder.decodeSingularEnumField(value: &self._deliveryMode) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.transcriptOnly) }()
       case 5: try {
@@ -2360,9 +2339,9 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
     try { if let v = self._outputMode {
       try visitor.visitSingularEnumField(value: v, fieldNumber: 1)
     } }()
-    try { if let v = self._stopMode {
-      try visitor.visitSingularEnumField(value: v, fieldNumber: 2)
-    } }()
+    if self.stopMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.stopMode, fieldNumber: 2)
+    }
     try { if let v = self._deliveryMode {
       try visitor.visitSingularEnumField(value: v, fieldNumber: 3)
     } }()
@@ -2385,7 +2364,7 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
 
   public static func ==(lhs: Aria_Daemon_V1_StartDictationRequest, rhs: Aria_Daemon_V1_StartDictationRequest) -> Bool {
     if lhs._outputMode != rhs._outputMode {return false}
-    if lhs._stopMode != rhs._stopMode {return false}
+    if lhs.stopMode != rhs.stopMode {return false}
     if lhs._deliveryMode != rhs._deliveryMode {return false}
     if lhs.transcriptOnly != rhs.transcriptOnly {return false}
     if lhs.project != rhs.project {return false}
@@ -3084,12 +3063,11 @@ nonisolated extension Aria_Daemon_V1_PreferenceConflict: SwiftProtobuf.Message, 
 
 nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UserPreferences"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recognition_language\0\u{3}output_mode\0\u{3}stop_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}own_voice_only\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_history\0\u{3}history_audio_retention\0\u{3}mute_output\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recognition_language\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}own_voice_only\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_history\0\u{3}history_audio_retention\0\u{3}mute_output\0")
 
   fileprivate class _StorageClass {
     var _recognitionLanguage: String = String()
     var _outputMode: Aria_Daemon_V1_OutputMode = .unspecified
-    var _stopMode: Aria_Daemon_V1_StopMode = .unspecified
     var _deliveryMode: Aria_Daemon_V1_DeliveryMode = .unspecified
     var _silenceDurationMs: UInt64 = 0
     var _ownVoiceOnly: Bool = false
@@ -3112,7 +3090,6 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
     init(copying source: _StorageClass) {
       _recognitionLanguage = source._recognitionLanguage
       _outputMode = source._outputMode
-      _stopMode = source._stopMode
       _deliveryMode = source._deliveryMode
       _silenceDurationMs = source._silenceDurationMs
       _ownVoiceOnly = source._ownVoiceOnly
@@ -3143,17 +3120,16 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
         switch fieldNumber {
         case 1: try { try decoder.decodeSingularStringField(value: &_storage._recognitionLanguage) }()
         case 2: try { try decoder.decodeSingularEnumField(value: &_storage._outputMode) }()
-        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._stopMode) }()
-        case 4: try { try decoder.decodeSingularEnumField(value: &_storage._deliveryMode) }()
-        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._silenceDurationMs) }()
-        case 6: try { try decoder.decodeSingularBoolField(value: &_storage._ownVoiceOnly) }()
-        case 7: try { try decoder.decodeSingularEnumField(value: &_storage._dictationHotkey) }()
-        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._askHotkey) }()
-        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._projectVocabulary) }()
-        case 10: try { try decoder.decodeSingularStringField(value: &_storage._vocabularyDirectory) }()
-        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
-        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
-        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._muteOutput) }()
+        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._deliveryMode) }()
+        case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._silenceDurationMs) }()
+        case 5: try { try decoder.decodeSingularBoolField(value: &_storage._ownVoiceOnly) }()
+        case 6: try { try decoder.decodeSingularEnumField(value: &_storage._dictationHotkey) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._askHotkey) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._projectVocabulary) }()
+        case 9: try { try decoder.decodeSingularStringField(value: &_storage._vocabularyDirectory) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
+        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._muteOutput) }()
         default: break
         }
       }
@@ -3172,38 +3148,35 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
       if _storage._outputMode != .unspecified {
         try visitor.visitSingularEnumField(value: _storage._outputMode, fieldNumber: 2)
       }
-      if _storage._stopMode != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._stopMode, fieldNumber: 3)
-      }
       if _storage._deliveryMode != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._deliveryMode, fieldNumber: 4)
+        try visitor.visitSingularEnumField(value: _storage._deliveryMode, fieldNumber: 3)
       }
       if _storage._silenceDurationMs != 0 {
-        try visitor.visitSingularUInt64Field(value: _storage._silenceDurationMs, fieldNumber: 5)
+        try visitor.visitSingularUInt64Field(value: _storage._silenceDurationMs, fieldNumber: 4)
       }
       if _storage._ownVoiceOnly != false {
-        try visitor.visitSingularBoolField(value: _storage._ownVoiceOnly, fieldNumber: 6)
+        try visitor.visitSingularBoolField(value: _storage._ownVoiceOnly, fieldNumber: 5)
       }
       if _storage._dictationHotkey != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._dictationHotkey, fieldNumber: 7)
+        try visitor.visitSingularEnumField(value: _storage._dictationHotkey, fieldNumber: 6)
       }
       try { if let v = _storage._askHotkey {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
       } }()
       if _storage._projectVocabulary != false {
-        try visitor.visitSingularBoolField(value: _storage._projectVocabulary, fieldNumber: 9)
+        try visitor.visitSingularBoolField(value: _storage._projectVocabulary, fieldNumber: 8)
       }
       try { if let v = _storage._vocabularyDirectory {
-        try visitor.visitSingularStringField(value: v, fieldNumber: 10)
+        try visitor.visitSingularStringField(value: v, fieldNumber: 9)
       } }()
       if _storage._dictationHistory != false {
-        try visitor.visitSingularBoolField(value: _storage._dictationHistory, fieldNumber: 11)
+        try visitor.visitSingularBoolField(value: _storage._dictationHistory, fieldNumber: 10)
       }
       if _storage._historyAudioRetention != false {
-        try visitor.visitSingularBoolField(value: _storage._historyAudioRetention, fieldNumber: 12)
+        try visitor.visitSingularBoolField(value: _storage._historyAudioRetention, fieldNumber: 11)
       }
       if _storage._muteOutput != false {
-        try visitor.visitSingularBoolField(value: _storage._muteOutput, fieldNumber: 13)
+        try visitor.visitSingularBoolField(value: _storage._muteOutput, fieldNumber: 12)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -3216,7 +3189,6 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
         let rhs_storage = _args.1
         if _storage._recognitionLanguage != rhs_storage._recognitionLanguage {return false}
         if _storage._outputMode != rhs_storage._outputMode {return false}
-        if _storage._stopMode != rhs_storage._stopMode {return false}
         if _storage._deliveryMode != rhs_storage._deliveryMode {return false}
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._ownVoiceOnly != rhs_storage._ownVoiceOnly {return false}
@@ -3238,12 +3210,11 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
 
 nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PreferencePatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recognition_language\0\u{3}output_mode\0\u{3}stop_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}own_voice_only\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_history\0\u{3}history_audio_retention\0\u{3}mute_output\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recognition_language\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}own_voice_only\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_history\0\u{3}history_audio_retention\0\u{3}mute_output\0")
 
   fileprivate class _StorageClass {
     var _recognitionLanguage: String? = nil
     var _outputMode: Aria_Daemon_V1_OutputMode? = nil
-    var _stopMode: Aria_Daemon_V1_StopMode? = nil
     var _deliveryMode: Aria_Daemon_V1_DeliveryMode? = nil
     var _silenceDurationMs: UInt64? = nil
     var _ownVoiceOnly: Bool? = nil
@@ -3266,7 +3237,6 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
     init(copying source: _StorageClass) {
       _recognitionLanguage = source._recognitionLanguage
       _outputMode = source._outputMode
-      _stopMode = source._stopMode
       _deliveryMode = source._deliveryMode
       _silenceDurationMs = source._silenceDurationMs
       _ownVoiceOnly = source._ownVoiceOnly
@@ -3297,17 +3267,16 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
         switch fieldNumber {
         case 1: try { try decoder.decodeSingularStringField(value: &_storage._recognitionLanguage) }()
         case 2: try { try decoder.decodeSingularEnumField(value: &_storage._outputMode) }()
-        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._stopMode) }()
-        case 4: try { try decoder.decodeSingularEnumField(value: &_storage._deliveryMode) }()
-        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._silenceDurationMs) }()
-        case 6: try { try decoder.decodeSingularBoolField(value: &_storage._ownVoiceOnly) }()
-        case 7: try { try decoder.decodeSingularEnumField(value: &_storage._dictationHotkey) }()
-        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._askHotkey) }()
-        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._projectVocabulary) }()
-        case 10: try { try decoder.decodeSingularStringField(value: &_storage._vocabularyDirectory) }()
-        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
-        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
-        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._muteOutput) }()
+        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._deliveryMode) }()
+        case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._silenceDurationMs) }()
+        case 5: try { try decoder.decodeSingularBoolField(value: &_storage._ownVoiceOnly) }()
+        case 6: try { try decoder.decodeSingularEnumField(value: &_storage._dictationHotkey) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._askHotkey) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._projectVocabulary) }()
+        case 9: try { try decoder.decodeSingularStringField(value: &_storage._vocabularyDirectory) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
+        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._muteOutput) }()
         default: break
         }
       }
@@ -3326,38 +3295,35 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
       try { if let v = _storage._outputMode {
         try visitor.visitSingularEnumField(value: v, fieldNumber: 2)
       } }()
-      try { if let v = _storage._stopMode {
+      try { if let v = _storage._deliveryMode {
         try visitor.visitSingularEnumField(value: v, fieldNumber: 3)
       } }()
-      try { if let v = _storage._deliveryMode {
-        try visitor.visitSingularEnumField(value: v, fieldNumber: 4)
-      } }()
       try { if let v = _storage._silenceDurationMs {
-        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 5)
+        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 4)
       } }()
       try { if let v = _storage._ownVoiceOnly {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 6)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 5)
       } }()
       try { if let v = _storage._dictationHotkey {
-        try visitor.visitSingularEnumField(value: v, fieldNumber: 7)
+        try visitor.visitSingularEnumField(value: v, fieldNumber: 6)
       } }()
       try { if let v = _storage._askHotkey {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
       } }()
       try { if let v = _storage._projectVocabulary {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 9)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 8)
       } }()
       try { if let v = _storage._vocabularyDirectory {
-        try visitor.visitSingularStringField(value: v, fieldNumber: 10)
+        try visitor.visitSingularStringField(value: v, fieldNumber: 9)
       } }()
       try { if let v = _storage._dictationHistory {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 11)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 10)
       } }()
       try { if let v = _storage._historyAudioRetention {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 12)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 11)
       } }()
       try { if let v = _storage._muteOutput {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 13)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 12)
       } }()
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -3370,7 +3336,6 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
         let rhs_storage = _args.1
         if _storage._recognitionLanguage != rhs_storage._recognitionLanguage {return false}
         if _storage._outputMode != rhs_storage._outputMode {return false}
-        if _storage._stopMode != rhs_storage._stopMode {return false}
         if _storage._deliveryMode != rhs_storage._deliveryMode {return false}
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._ownVoiceOnly != rhs_storage._ownVoiceOnly {return false}

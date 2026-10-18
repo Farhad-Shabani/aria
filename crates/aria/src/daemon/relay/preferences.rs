@@ -54,7 +54,6 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
     let wire::PreferencePatch {
         recognition_language,
         output_mode,
-        stop_mode,
         delivery_mode,
         silence_duration_ms,
         own_voice_only,
@@ -67,7 +66,6 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         mute_output,
     } = patch;
     let mac_only = [
-        ("stop_mode", stop_mode.is_some()),
         ("delivery_mode", delivery_mode.is_some()),
         ("silence_duration_ms", silence_duration_ms.is_some()),
         ("dictation_hotkey", dictation_hotkey.is_some()),
@@ -140,10 +138,6 @@ mod tests {
     #[test]
     fn mac_only_fields_are_refused() {
         let cases = [
-            wire::PreferencePatch {
-                stop_mode: Some(wire::StopMode::Manual as i32),
-                ..Default::default()
-            },
             wire::PreferencePatch {
                 delivery_mode: Some(wire::DeliveryMode::Streaming as i32),
                 ..Default::default()

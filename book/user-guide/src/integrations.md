@@ -19,8 +19,8 @@ these commands:
 - **Aria Dictate** starts manual dictation with live insertion. Set output
   to an insertion mode under **Settings → Dictation** first; it cannot use
   Copy output. Run the command again to stop. For copying, use the next command.
-- **Aria Dictate to Clipboard** copies the completed transcript. It uses your
-  saved stop setting, which is silence by default.
+- **Aria Dictate to Clipboard** copies the completed transcript. It stops on
+  silence.
 - **Aria Ask** opens Terminal, records a question, and prints the reply. It
   requires an authenticated agent as described in [Ask](./voice-chat.md).
 

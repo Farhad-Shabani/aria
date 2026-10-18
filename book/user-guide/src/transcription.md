@@ -12,9 +12,9 @@ aria dictate \
   --mode copy
 ```
 
-Say a short sentence, then pause. With the default stop setting, 1.5 seconds
-of silence ends the recording. After processing finishes, paste into an empty
-text field and check the words.
+Say a short sentence, then pause. By default, 1.5 seconds of silence ends the
+recording. After processing finishes, paste into an empty text field and check
+the words.
 
 Copying replaces the clipboard.
 
@@ -34,8 +34,8 @@ aria dictate \
 Speak, then press **Esc** when the terminal shows the stop prompt. Aria stops
 recording, finishes transcription, and copies the result.
 
-Without `--toggle`, Aria uses your saved stop setting. Recordings stop after
-five minutes at most.
+Without `--toggle`, silence ends the recording. Recordings stop after five
+minutes at most.
 
 ## Mac insertion
 

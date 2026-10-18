@@ -104,7 +104,7 @@ enum Command {
     Dictate {
         #[arg(long, value_enum)]
         mode: Option<CliOutputMode>,
-        /// Record until stopped by hand, instead of stopping on silence
+        /// Record until you press Esc or run the command again, not until silence
         #[arg(long)]
         toggle: bool,
         /// Insert finalized transcript segments while recording continues
@@ -139,7 +139,7 @@ enum Command {
         /// Deliver the reply like a transcript instead of printing it
         #[arg(long, value_enum)]
         mode: Option<CliOutputMode>,
-        /// Record until stopped by hand, instead of stopping on silence
+        /// Record until you press Esc or run the command again, not until silence
         #[arg(long)]
         toggle: bool,
         /// Cancel a pending ask by its ticket instead of asking
@@ -1068,9 +1068,11 @@ fn run_daemon() -> anyhow::Result<()> {
         );
     }
 
-    daemon
-        .run()
-        .context("Aria daemon terminated with an error")?;
+    // The Mac app's service drops stderr, so the error must reach the log.
+    if let Err(error) = daemon.run() {
+        tracing::error!(error = %error_chain(&error), "Aria daemon terminated with an error");
+        return Err(error).context("Aria daemon terminated with an error");
+    }
     Ok(())
 }
 
@@ -1433,7 +1435,11 @@ fn run_dictate(
         DictationRequest {
             output_mode: mode.map(Into::into),
             delivery_mode: Some(delivery),
-            stop_mode: toggle.then_some(StopMode::Manual),
+            stop_mode: if toggle {
+                StopMode::Manual
+            } else {
+                StopMode::OnSilence
+            },
             transcript_only: false,
             project,
         },
@@ -1490,7 +1496,11 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
             Ok::<_, anyhow::Error>(aria::vocabulary::Directory::new(path)?)
         })
         .transpose()?;
-    let stop_mode = args.toggle.then_some(StopMode::Manual);
+    let stop_mode = if args.toggle {
+        StopMode::Manual
+    } else {
+        StopMode::OnSilence
+    };
     let mut interrupt = Interrupt::install(&session)?;
     let (text, spoken) = match args.text {
         Some(text) => (text, None),

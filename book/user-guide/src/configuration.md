@@ -14,7 +14,7 @@ Open **Settings…** from Aria's menu:
   the Ask shortcut.
 - **Dictation** selects language and output, and can mute your speakers while
   recording. **Show Advanced Options** contains delivery, voice filtering,
-  project vocabulary, stopping, and retained audio.
+  project vocabulary, silence duration, and retained audio.
 
 The language picker offers English, the default, and automatic detection.
 These choices still depend on the selected model's supported languages.

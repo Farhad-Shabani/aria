@@ -65,14 +65,26 @@ pub enum DeliveryMode {
 }
 
 /// What one dictation should do; `None` means the daemon's preference.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationRequest {
     pub output_mode: Option<OutputMode>,
     pub delivery_mode: Option<DeliveryMode>,
-    pub stop_mode: Option<StopMode>,
+    pub stop_mode: StopMode,
     /// Hand the transcript back without delivering it anywhere.
     pub transcript_only: bool,
     pub project: crate::vocabulary::Context,
+}
+
+impl DictationRequest {
+    pub fn new(stop_mode: StopMode) -> Self {
+        Self {
+            output_mode: None,
+            delivery_mode: None,
+            stop_mode,
+            transcript_only: false,
+            project: crate::vocabulary::Context::Default,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

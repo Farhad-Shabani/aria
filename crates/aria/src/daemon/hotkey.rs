@@ -187,7 +187,11 @@ impl HotkeyTrigger {
         tracing::info!(trigger = "hotkey", "tap");
         let dictation = self.dictation.clone();
         tokio::spawn(async move {
-            log_outcome(dictation.start(manual_dictation()).await);
+            log_outcome(
+                dictation
+                    .start(DictationRequest::new(StopMode::Manual))
+                    .await,
+            );
         });
     }
 
@@ -209,7 +213,10 @@ impl HotkeyTrigger {
                     recording.send_replace(Some(id));
                 }
             });
-            let pending = match dictation.submit(manual_dictation(), Some(events)).await {
+            let pending = match dictation
+                .submit(DictationRequest::new(StopMode::Manual), Some(events))
+                .await
+            {
                 Ok(pending) => pending,
                 Err(error) => return log_outcome(Err(error)),
             };
@@ -253,16 +260,6 @@ impl HotkeyTrigger {
 fn end_hold(hold: &mut Option<oneshot::Sender<HoldEnd>>, end: HoldEnd) {
     if let Some(hold) = hold.take() {
         let _ = hold.send(end);
-    }
-}
-
-fn manual_dictation() -> DictationRequest {
-    DictationRequest {
-        output_mode: None,
-        delivery_mode: None,
-        stop_mode: Some(StopMode::Manual),
-        transcript_only: false,
-        project: crate::vocabulary::Context::Default,
     }
 }
 

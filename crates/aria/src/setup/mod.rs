@@ -19,7 +19,7 @@ use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
 use crate::config::{self, ConfigError, FileConfig};
-use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, guided};
+use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, StopMode, guided};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
@@ -637,7 +637,7 @@ fn try_it_out(
     }
 
     prompts.note("Say something, then stop talking.")?;
-    let heard = match session.transcribe(None, |_stage| {}) {
+    let heard = match session.transcribe(StopMode::OnSilence, |_stage| {}) {
         Ok(Some(heard)) => heard.text,
         // This request only stopped a recording already running, so nothing was heard.
         Ok(None) => return Ok(TryOut::Failed("the recording was stopped".to_owned())),

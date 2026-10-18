@@ -8,7 +8,7 @@ use super::{
 };
 use crate::audio::SilenceDuration;
 use crate::delivery::OutputMode;
-use crate::dictation::{DeliveryMode, StopMode};
+use crate::dictation::DeliveryMode;
 use crate::hotkey::HotkeyKey;
 use crate::primitives::private_document::{self, DocumentError, PreparedWrite, PrivateDocument};
 
@@ -97,7 +97,6 @@ impl StoredDocument {
                 mute_output: self.preferences.mute_output,
                 recognition_language,
                 output_mode: self.preferences.output_mode.into(),
-                stop_mode: self.preferences.stop_mode.into(),
                 delivery_mode: self.preferences.delivery_mode.into(),
                 silence_duration: SilenceDuration::new(Duration::from_millis(
                     self.preferences.silence_duration_ms,
@@ -141,7 +140,6 @@ impl From<&PreferenceSnapshot> for StoredDocument {
                     .as_str()
                     .to_owned(),
                 output_mode: snapshot.preferences.output_mode.into(),
-                stop_mode: snapshot.preferences.stop_mode.into(),
                 delivery_mode: snapshot.preferences.delivery_mode.into(),
                 silence_duration_ms: snapshot.preferences.silence_duration.get().as_millis() as u64,
                 own_voice_only: snapshot.preferences.own_voice_only,
@@ -169,7 +167,6 @@ struct StoredPreferences {
     mute_output: bool,
     recognition_language: String,
     output_mode: StoredOutputMode,
-    stop_mode: StoredStopMode,
     #[serde(default = "default_stored_delivery_mode")]
     delivery_mode: StoredDeliveryMode,
     silence_duration_ms: u64,
@@ -221,31 +218,6 @@ impl From<StoredOutputMode> for OutputMode {
             StoredOutputMode::InsertAndSubmit => Self::InsertAndSubmit,
             StoredOutputMode::InsertOrCopy => Self::InsertOrCopy,
             StoredOutputMode::Copy => Self::Copy,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum StoredStopMode {
-    OnSilence,
-    Manual,
-}
-
-impl From<StopMode> for StoredStopMode {
-    fn from(value: StopMode) -> Self {
-        match value {
-            StopMode::OnSilence => Self::OnSilence,
-            StopMode::Manual => Self::Manual,
-        }
-    }
-}
-
-impl From<StoredStopMode> for StopMode {
-    fn from(value: StoredStopMode) -> Self {
-        match value {
-            StoredStopMode::OnSilence => Self::OnSilence,
-            StoredStopMode::Manual => Self::Manual,
         }
     }
 }
@@ -370,12 +342,24 @@ mod tests {
     }
 
     #[test]
-    fn an_older_file_loads_with_defaults() {
-        let document: StoredDocument = serde_json::from_str(
+    fn a_file_with_a_stop_mode_is_refused() {
+        let error = serde_json::from_str::<StoredDocument>(
             r#"{"revision":2,"preferences":{"recognition_language":"en","output_mode":"insert",
                 "stop_mode":"on_silence","delivery_mode":"streaming","silence_duration_ms":1500}}"#,
         )
-        .expect("an older file still parses");
+        .err()
+        .expect("a stored stop mode is refused");
+
+        assert!(error.to_string().contains("unknown field `stop_mode`"));
+    }
+
+    #[test]
+    fn a_file_without_optional_fields_loads_with_defaults() {
+        let document: StoredDocument = serde_json::from_str(
+            r#"{"revision":2,"preferences":{"recognition_language":"en","output_mode":"insert",
+                "delivery_mode":"streaming","silence_duration_ms":1500}}"#,
+        )
+        .expect("a file without optional fields still parses");
 
         assert!(document.preferences.dictation_history);
         assert!(!document.preferences.history_audio_retention);

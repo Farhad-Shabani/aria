@@ -144,7 +144,7 @@ impl WakeTrigger {
             output_mode: None,
             // Hands-free: always one insert at silence, never live keystrokes.
             delivery_mode: Some(DeliveryMode::Complete),
-            stop_mode: Some(StopMode::OnSilence),
+            stop_mode: StopMode::OnSilence,
             transcript_only: false,
             project: crate::vocabulary::Context::Default,
         };

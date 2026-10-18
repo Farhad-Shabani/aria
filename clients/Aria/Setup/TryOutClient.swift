@@ -18,6 +18,7 @@ enum TryOutError: LocalizedError {
 enum TryOutClient {
     static func transcribe() async throws -> String {
         var request = Aria_Daemon_V1_StartDictationRequest()
+        request.stopMode = .onSilence
         request.transcriptOnly = true
         request.deliveryMode = .complete
         var options = CallOptions.defaults

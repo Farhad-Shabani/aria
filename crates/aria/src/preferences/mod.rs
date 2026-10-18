@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::audio::{SilenceDuration, SilenceDurationError};
 use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
-use crate::dictation::{DeliveryMode, DictationRequest, DictationSettings, StopMode};
+use crate::dictation::{DeliveryMode, DictationRequest, DictationSettings};
 use crate::hotkey::HotkeyKey;
 use crate::primitives::private_document::DocumentError;
 use crate::transcription::{Language, LanguageCode, LanguageCodeError};
@@ -22,7 +22,6 @@ pub struct UserPreferences {
     pub mute_output: bool,
     pub recognition_language: Language,
     pub output_mode: OutputMode,
-    pub stop_mode: StopMode,
     pub delivery_mode: DeliveryMode,
     pub silence_duration: SilenceDuration,
     /// Dictation types only what an enrolled voice said.
@@ -117,7 +116,6 @@ impl Default for UserPreferences {
             mute_output: false,
             recognition_language: Language::Specific(LanguageCode::english()),
             output_mode: PlatformTextDelivery::DEFAULT_MODE,
-            stop_mode: StopMode::OnSilence,
             delivery_mode: DeliveryMode::Streaming,
             silence_duration: SilenceDuration::default(),
             own_voice_only: false,
@@ -138,7 +136,7 @@ impl UserPreferences {
             recognition_language: self.recognition_language,
             output_mode: request.output_mode.unwrap_or(self.output_mode),
             delivery_mode: request.delivery_mode.unwrap_or(self.delivery_mode),
-            stop_mode: request.stop_mode.unwrap_or(self.stop_mode),
+            stop_mode: request.stop_mode,
             silence_duration: self.silence_duration,
             own_voice_only: self.own_voice_only,
             transcript_only: request.transcript_only,
