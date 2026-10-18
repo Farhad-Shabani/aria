@@ -16,7 +16,7 @@ ARIA_LAUNCHER_LOG="${TMPDIR:-/tmp}/aria-launcher-$(id -u).log"
 ensure_daemon() {
     "$ARIA" --version >/dev/null || return
 
-    local socket="${ARIA_RUNTIME_DIR:-/tmp/aria-$(id -u)}/daemon.sock"
+    local socket="${ARIA_RUNTIME_DIR:-$HOME/.aria/daemon}/daemon.sock"
     if [[ ! -S "$socket" ]]; then
         "$ARIA" daemon </dev/null >>"$ARIA_LAUNCHER_LOG" 2>&1 &
         disown

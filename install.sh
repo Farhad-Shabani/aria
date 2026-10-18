@@ -25,7 +25,7 @@ lib_dir="$HOME/.local/lib/aria"
 # A running daemon keeps the socket and would make the service install
 # refuse. Its pid is in the lock file.
 stop_daemon() {
-    lock="${ARIA_RUNTIME_DIR:-/tmp/aria-$(id -u)}/daemon.lock"
+    lock="${ARIA_RUNTIME_DIR:-$HOME/.aria/daemon}/daemon.lock"
     [ -r "$lock" ] || return 0
     pid=$(cat "$lock" 2>/dev/null || true)
     case "$pid" in ''|*[!0-9]*) return 0 ;; esac

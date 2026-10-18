@@ -9,7 +9,7 @@ use aria_kit::cancel::CancelToken;
 use serde_json::{Map, Value};
 
 use super::store::{KINDS, STATUS_ACTIVE, STATUS_PENDING, Store, StoreError, Turn};
-use crate::chat::{AgentError, CLAUDE_BINARY, parse_claude, run_cli};
+use crate::chat::{AgentError, claude_command, parse_claude, run_cli};
 
 /// At or above this a fact goes straight into the profile.
 const AUTO_CONFIDENCE: f64 = 0.85;
@@ -61,14 +61,12 @@ impl ClaudeExtractor {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(CLAUDE_BINARY);
+        let mut command = claude_command();
         command
             .args(["-p", "--output-format", "stream-json", "--verbose"])
             .args(["--restricted", "--tools", "", "--strict-mcp-config"])
             .args(["--system-prompt", &self.system_prompt])
             .args(["--model", &self.model])
-            .env_remove("CLAUDECODE")
-            .env_remove("CLAUDE_CODE")
             .current_dir(&self.workdir);
         command
     }

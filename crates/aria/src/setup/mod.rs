@@ -23,7 +23,7 @@ use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, StopMode, gui
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
-use crate::runtime::RuntimePaths;
+use crate::runtime::PreparedRuntimePaths;
 use crate::speech::SpeechRequest;
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
@@ -575,7 +575,7 @@ fn voice_model_present(models: &[(&'static str, Outcome)]) -> bool {
 /// The daemon setup just installed, once it answers. `None` is ordinary:
 /// the steps that need one skip themselves rather than fail the run.
 fn live_daemon() -> Option<DaemonSession> {
-    let paths = RuntimePaths::for_current_user().prepare().ok()?;
+    let paths = PreparedRuntimePaths::for_current_user().ok()?;
     DaemonSession::connect_at(&paths).ok()
 }
 

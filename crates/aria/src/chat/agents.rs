@@ -6,7 +6,8 @@
 //! Skills are the one thing it may take from that checkout, and a skill is
 //! only text the agent reads with the same tools it already has.
 
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -18,6 +19,19 @@ use super::{Agent, AgentError, Session, SessionSpec, Step, TurnSink};
 
 pub(crate) const CLAUDE_BINARY: &str = "claude";
 pub(crate) const CODEX_BINARY: &str = "codex";
+
+// What a CLI needs to find its config, sign in, and reach its API. Anything
+// else in the daemon's environment, such as an unrelated token, stays out.
+// Claude finds its Keychain login through `USER`.
+const SHARED_VARIABLES: &[&str] = &["PATH", "HOME", "USER", "TMPDIR"];
+const CLAUDE_PREFIXES: &[&str] = &["ANTHROPIC_", "CLAUDE_", "CLOUD_ML_", "AWS_", "GOOGLE_"];
+const CODEX_PREFIXES: &[&str] = &["OPENAI_", "CODEX_"];
+const NESTING_VARIABLES: &[&str] = &["CLAUDECODE", "CLAUDE_CODE"];
+
+/// `claude` with only the environment it needs.
+pub(crate) fn claude_command() -> Command {
+    Cli::Claude.command(Path::new(CLAUDE_BINARY))
+}
 
 /// `claude -p --output-format stream-json`, prompt on stdin. One JSON line
 /// per message as the turn runs; the last is the envelope with the reply
@@ -67,6 +81,31 @@ enum Cli {
     Codex,
 }
 
+impl Cli {
+    fn command(self, binary: &Path) -> Command {
+        let mut command = Command::new(binary);
+        command
+            .env_clear()
+            .envs(std::env::vars_os().filter(|(name, _)| self.needs(name)));
+        command
+    }
+
+    fn needs(self, variable: &OsStr) -> bool {
+        let Some(variable) = variable.to_str() else {
+            return false;
+        };
+        let prefixes = match self {
+            // Inherited from a Claude Code session, these make the CLI
+            // refuse to nest.
+            Self::Claude if NESTING_VARIABLES.contains(&variable) => return false,
+            Self::Claude => CLAUDE_PREFIXES,
+            Self::Codex => CODEX_PREFIXES,
+        };
+        SHARED_VARIABLES.contains(&variable)
+            || prefixes.iter().any(|prefix| variable.starts_with(prefix))
+    }
+}
+
 /// A conversation carried by one CLI run per turn; `resume` is all that
 /// connects them.
 struct CliSession {
@@ -89,17 +128,13 @@ impl CliSession {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(&self.binary);
+        let mut command = self.cli.command(&self.binary);
         match self.cli {
             Cli::Claude => {
                 command
                     .args(["-p", "--output-format", "stream-json", "--verbose"])
                     .args(["--restricted", "--tools", "Read,Glob,Grep,Skill"])
-                    .arg("--strict-mcp-config")
-                    // Inherited from a Claude Code session, these make the
-                    // CLI refuse to nest.
-                    .env_remove("CLAUDECODE")
-                    .env_remove("CLAUDE_CODE");
+                    .arg("--strict-mcp-config");
                 if let Some(model) = &self.model {
                     command.args(["--model", model]);
                 }
@@ -394,6 +429,29 @@ mod tests {
                 resume,
             },
         )
+    }
+
+    #[test]
+    fn each_cli_gets_only_what_it_needs_from_the_environment() {
+        for name in ["PATH", "HOME", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"] {
+            assert!(Cli::Claude.needs(OsStr::new(name)), "{name}");
+        }
+        for name in ["PATH", "HOME", "OPENAI_API_KEY", "CODEX_HOME"] {
+            assert!(Cli::Codex.needs(OsStr::new(name)), "{name}");
+        }
+        for name in [
+            "GITHUB_TOKEN",
+            "SSH_AUTH_SOCK",
+            "DYLD_INSERT_LIBRARIES",
+            "OPENAI_API_KEY",
+            "CLAUDECODE",
+            "CLAUDE_CODE",
+        ] {
+            assert!(!Cli::Claude.needs(OsStr::new(name)), "{name}");
+        }
+        for name in ["GITHUB_TOKEN", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY"] {
+            assert!(!Cli::Codex.needs(OsStr::new(name)), "{name}");
+        }
     }
 
     #[test]

@@ -32,7 +32,7 @@ watch_events() {
 # A daemon still loading its model refuses the subscription, and one being
 # replaced takes its socket away for a moment. Both are worth waiting out; a
 # socket gone this long is a daemon that has left.
-SOCKET="${ARIA_RUNTIME_DIR:-/tmp/aria-$(id -u)}/daemon.sock"
+SOCKET="${ARIA_RUNTIME_DIR:-$HOME/.aria/daemon}/daemon.sock"
 GRACE=20
 
 missing=0
