@@ -27,14 +27,18 @@ pub struct SileroVad {
 }
 
 impl SileroVad {
+    /// Infers one silent frame, so a broken model fails here, not per window.
     pub fn load() -> Result<Self, VoiceActivityError> {
         let session =
             Session::bundled().map_err(|source| VoiceActivityError::LoadModel(Box::new(source)))?;
-        Ok(Self {
+        let mut vad = Self {
             session,
             stream: StreamState::new(SampleRate::Rate16k),
             frame: [0.0; FRAME_SAMPLES],
-        })
+        };
+        vad.scores(&[0.0; FRAME_SAMPLES])?;
+        vad.stream.reset();
+        Ok(vad)
     }
 
     /// Where the voice is inside a window, as sample ranges — the answer a

@@ -9,9 +9,20 @@ use tokio_stream::{Stream, StreamExt};
 /// still holds if its permissions are ever wrong.
 pub(super) fn same_user(listener: UnixListener) -> impl Stream<Item = io::Result<UnixStream>> {
     let uid = rustix::process::getuid().as_raw();
+    // EMFILE repeats on every poll until a descriptor frees up.
+    let mut failing = false;
     UnixListenerStream::new(listener).filter(move |accepted| match accepted {
-        Err(_) => true,
-        Ok(stream) => runs_as(stream, uid),
+        Err(error) => {
+            if !failing {
+                tracing::warn!(%error, "failed to accept a local connection");
+            }
+            failing = true;
+            true
+        }
+        Ok(stream) => {
+            failing = false;
+            runs_as(stream, uid)
+        }
     })
 }
 

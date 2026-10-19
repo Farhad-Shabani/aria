@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use rustix::fs::{Mode, OFlags};
 
 use crate::dictation::DictationStage;
+use crate::primitives::error_chain;
 use crate::primitives::private_fs::{self, PrivateFileError};
 
 /// Every other value is a stage's own label.
@@ -28,7 +29,7 @@ impl StatusFile {
     fn publish(&self, status: &str) {
         if let Err(error) = write_in_place(&self.path, status) {
             tracing::warn!(
-                ?error,
+                error = %error_chain(&error),
                 path = %self.path.display(),
                 "failed to publish the dictation status"
             );

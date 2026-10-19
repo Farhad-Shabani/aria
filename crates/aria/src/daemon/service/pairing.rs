@@ -51,6 +51,7 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
         tokio::task::spawn_blocking(move || phones.admit(phone))
             .await
             .map_err(|_panicked| {
+                tracing::error!(method = METHOD, "the pairing job panicked");
                 super::failed(
                     METHOD,
                     RpcFailure::new(RpcErrorCode::Internal, "pinning the phone failed"),
@@ -62,7 +63,14 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                     PairingError::Document(_)
                     | PairingError::Random(_)
                     | PairingError::Certificate(_)
-                    | PairingError::Missing => RpcErrorCode::Internal,
+                    | PairingError::Missing => {
+                        tracing::error!(
+                            method = METHOD,
+                            error = %error_chain(&error),
+                            "failed to pin the phone"
+                        );
+                        RpcErrorCode::Internal
+                    }
                 };
                 super::failed(METHOD, RpcFailure::new(code, error_chain(&error)))
             })?;

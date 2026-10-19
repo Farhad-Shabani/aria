@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "StatusPoller")
 
 /// Publishes daemon state for the menu bar. Polls every few seconds;
 /// `working` bridges the gap while a start/stop command is in flight so
@@ -35,6 +38,9 @@ final class StatusPoller: ObservableObject {
         guard state != .working else { return }
         let running = await client.isRunning()
         guard state != .working else { return }
+        if running && state == .stopped {
+            lastError = nil
+        }
         state = running ? .running : .stopped
     }
 
@@ -44,6 +50,7 @@ final class StatusPoller: ObservableObject {
         do {
             try await client.retireLegacyService()
         } catch {
+            log.error("Retiring the legacy service failed: \(error.localizedDescription, privacy: .private)")
             lastError = error.localizedDescription
             return
         }
@@ -67,6 +74,9 @@ final class StatusPoller: ObservableObject {
                 state = .stopped
             }
         } catch {
+            log.error(
+                "Daemon \(shouldStart ? "start" : "stop", privacy: .public) failed: \(error.localizedDescription, privacy: .private)"
+            )
             lastError = error.localizedDescription
             let running = await client.isRunning()
             state = running ? .running : .stopped
@@ -96,6 +106,7 @@ final class StatusPoller: ObservableObject {
             do {
                 try await client.stop()
             } catch {
+                log.error("Daemon stop before restart failed: \(error.localizedDescription, privacy: .private)")
                 lastError = error.localizedDescription
             }
         }
@@ -109,6 +120,7 @@ final class StatusPoller: ObservableObject {
             lastError = nil
             state = await awaitRunning() ? .running : .stopped
         } catch {
+            log.error("Daemon start after restart failed: \(error.localizedDescription, privacy: .private)")
             lastError = error.localizedDescription
             state = await client.isRunning() ? .running : .stopped
         }
@@ -130,6 +142,8 @@ final class StatusPoller: ObservableObject {
             if await client.isRunning() { return true }
             try? await Task.sleep(for: probeInterval)
         }
+        log.error("Daemon launched but its socket never accepted")
+        lastError = "Aria started but didn't respond."
         return false
     }
 }

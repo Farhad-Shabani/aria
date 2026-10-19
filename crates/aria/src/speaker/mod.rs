@@ -4,6 +4,8 @@
 
 mod voices;
 
+use std::time::Instant;
+
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
 use aria_kit::voice_activity::SileroVad;
@@ -12,6 +14,7 @@ use aria_segmentation::pyannote::{self, Pyannote};
 use aria_speaker::wespeaker::{self, WeSpeaker};
 
 use crate::config::SpeakerConfig;
+use crate::primitives::error_chain;
 
 pub use aria_kit::speaker::{
     Diarizer, Enrolled, Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace,
@@ -39,10 +42,21 @@ pub(crate) fn diarizer(config: &SpeakerConfig) -> Option<Diarizer<WeSpeaker>> {
         tracing::info!(%error, "no speaker model; the transcript stays unlabeled");
         return None;
     }
+    let started = Instant::now();
     match WeSpeaker::load_from(model) {
-        Ok(embedder) => Some(Diarizer::new(embedder, enrolled(config))),
+        Ok(embedder) => {
+            tracing::info!(
+                engine = wespeaker::NAME,
+                load_ms = started.elapsed().as_millis(),
+                "speaker model loaded"
+            );
+            Some(Diarizer::new(embedder, enrolled(config)))
+        }
         Err(error) => {
-            tracing::warn!(%error, "speaker model unusable; the transcript stays unlabeled");
+            tracing::warn!(
+                error = %error_chain(&error),
+                "speaker model unusable; the transcript stays unlabeled"
+            );
             None
         }
     }
@@ -52,9 +66,12 @@ pub(crate) fn diarizer(config: &SpeakerConfig) -> Option<Diarizer<WeSpeaker>> {
 /// passes ungated rather than the session failing.
 pub fn speech_gate() -> Option<SileroVad> {
     SileroVad::load()
-        .inspect_err(
-            |error| tracing::warn!(%error, "no voice-activity model; audio is not speech-gated"),
-        )
+        .inspect_err(|error| {
+            tracing::warn!(
+                error = %error_chain(error),
+                "no voice-activity model; audio is not speech-gated"
+            );
+        })
         .ok()
 }
 
@@ -79,12 +96,18 @@ pub fn usable_profiles(stored: Result<StoredProfiles, ProfileError>) -> Vec<Prof
     let stored = match stored {
         Ok(stored) => stored,
         Err(error) => {
-            tracing::warn!(%error, "the speakers directory is unreadable; nobody is recognized");
+            tracing::warn!(
+                error = %error_chain(&error),
+                "the speakers directory is unreadable; nobody is recognized"
+            );
             return Vec::new();
         }
     };
     for error in &stored.unreadable {
-        tracing::warn!(%error, "skipping an unreadable speaker profile");
+        tracing::warn!(
+            error = %error_chain(error),
+            "skipping an unreadable speaker profile"
+        );
     }
     stored.profiles
 }
@@ -104,10 +127,21 @@ pub fn voice_track(
         tracing::info!(%error, "no segmentation model; speakers stay as the live pass guessed");
         return None;
     }
+    let started = Instant::now();
     match Pyannote::load_from(settings) {
-        Ok(segmenter) => Some(PyannoteVoices::new(segmenter, diarizer, grouping)),
+        Ok(segmenter) => {
+            tracing::info!(
+                engine = pyannote::NAME,
+                load_ms = started.elapsed().as_millis(),
+                "segmentation model loaded"
+            );
+            Some(PyannoteVoices::new(segmenter, diarizer, grouping))
+        }
         Err(error) => {
-            tracing::warn!(%error, "segmentation model unusable; speakers stay as guessed");
+            tracing::warn!(
+                error = %error_chain(&error),
+                "segmentation model unusable; speakers stay as guessed"
+            );
             None
         }
     }

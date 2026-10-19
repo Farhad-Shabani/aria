@@ -43,6 +43,13 @@ impl ProfileStore {
         let mut stored = StoredProfiles::default();
         for entry in entries {
             let path = entry.map_err(ProfileError::List)?.path();
+            // Hidden files such as `.DS_Store` are the system's.
+            if path
+                .file_name()
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."))
+            {
+                continue;
+            }
             if path.extension().is_none_or(|extension| extension != "json") {
                 // The path stays out of the log: its stem is a person's name.
                 tracing::warn!(

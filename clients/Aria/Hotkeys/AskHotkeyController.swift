@@ -2,6 +2,9 @@ import Combine
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "AskHotkeyController")
 
 /// Runs an ask from one chord: press to record, again to send, again to
 /// cancel.
@@ -230,7 +233,7 @@ private enum AskRpc {
                 try await body(client)
             }
         } catch {
-            NSLog("AskHotkeyController: could not \(what) — \(error)")
+            log.error("Could not \(what, privacy: .public): \(String(describing: error), privacy: .private)")
             return nil
         }
     }

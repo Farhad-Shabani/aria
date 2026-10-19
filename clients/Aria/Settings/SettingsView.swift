@@ -1,5 +1,8 @@
 import ServiceManagement
 import SwiftUI
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SettingsView")
 
 struct SettingsView: View {
     @ObservedObject var preferences: DaemonPreferences
@@ -75,7 +78,7 @@ struct GeneralSettings: View {
                     try SMAppService.mainApp.unregister()
                 }
             } catch {
-                NSLog("Launch at Login toggle failed: \(error)")
+                log.error("Launch at Login toggle failed: \(String(describing: error), privacy: .private)")
                 launchAtLogin = SMAppService.mainApp.status == .enabled
             }
         }

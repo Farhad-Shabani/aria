@@ -21,6 +21,7 @@ type Result<T> = std::result::Result<T, DaemonLogError>;
 struct DaemonLog {
     file: File,
     length: u64,
+    modified: SystemTime,
 }
 
 impl DaemonLog {
@@ -32,14 +33,24 @@ impl DaemonLog {
                 path: path.clone(),
                 source,
             })?;
-        let mut length = metadata.len();
-        if length > MAX_LOG_FILE_BYTES {
-            file.set_len(0)
-                .map_err(|source| DaemonLogError::Truncate { path, source })?;
-            length = 0;
-        }
+        let modified = metadata
+            .modified()
+            .map_err(|source| DaemonLogError::Inspect { path, source })?;
 
-        Ok(Self { file, length })
+        Ok(Self {
+            file,
+            length: metadata.len(),
+            modified,
+        })
+    }
+
+    /// Opening may have just created an empty file, so it never counts.
+    fn last_written(&self) -> SystemTime {
+        if self.length == 0 {
+            SystemTime::UNIX_EPOCH
+        } else {
+            self.modified
+        }
     }
 }
 
@@ -53,12 +64,19 @@ impl DaemonLogWriter {
         let path = path.as_ref();
         let primary = DaemonLog::open(path)?;
         let secondary = DaemonLog::open(rotated_path(path))?;
+        // A CLI that hosts a daemon writes beside the service. Resuming the
+        // newer file keeps its lines where `read_log_tail` looks.
+        let (active, written) = if secondary.last_written() > primary.last_written() {
+            (1, secondary.length)
+        } else {
+            (0, primary.length)
+        };
 
         Ok(Self {
             state: Mutex::new(LogState {
                 files: [primary.file, secondary.file],
-                active: 0,
-                written: primary.length,
+                active,
+                written,
             }),
         })
     }
@@ -181,8 +199,8 @@ impl<'writer> MakeWriter<'writer> for DaemonLogWriter {
 struct LogState {
     files: [File; 2],
     active: usize,
-    /// Bytes in the active file. This writer is the only one appending to it,
-    /// so counting beats a `metadata()` call on every tracing event.
+    /// Counts only this process's lines, so a rotation can empty a file
+    /// another process still writes.
     written: u64,
 }
 
@@ -291,13 +309,6 @@ pub enum DaemonLogError {
         source: PrivateFileError,
     },
 
-    #[error("failed to truncate oversized daemon log at {}", path.display())]
-    Truncate {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
     #[error("failed to inspect daemon log {}", path.display())]
     Inspect {
         path: PathBuf,
@@ -388,6 +399,54 @@ mod tests {
             .rotate_if_full()
             .expect("the fresh log should be inspected");
         assert_eq!(state.active, 1, "a log with room does not rotate");
+    }
+
+    #[test]
+    fn a_writer_resumes_the_file_written_last() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("daemon.log");
+        let rotated = rotated_path(&path);
+        write_private(&path, b"older\n");
+        write_private(&rotated, b"newer\n");
+        let earlier = SystemTime::now() - std::time::Duration::from_secs(60);
+        File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(earlier))
+            .expect("the older log's time should be set");
+
+        write_line(&path, b"resumed\n");
+
+        assert_eq!(
+            fs::read(&path).expect("the older log should read"),
+            b"older\n"
+        );
+        assert_eq!(
+            fs::read(&rotated).expect("the newer log should read"),
+            b"newer\nresumed\n"
+        );
+    }
+
+    #[test]
+    fn a_writer_ignores_an_empty_rotated_file() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("daemon.log");
+        write_private(&path, b"existing\n");
+
+        write_line(&path, b"appended\n");
+
+        assert_eq!(
+            fs::read(&path).expect("the log should read"),
+            b"existing\nappended\n"
+        );
+    }
+
+    fn write_line(path: &Path, line: &[u8]) {
+        let writer = DaemonLogWriter::open(path).expect("the log writer should open");
+        writer
+            .make_writer()
+            .write_all(line)
+            .expect("the line should be written");
     }
 
     fn write_private(path: &Path, contents: &[u8]) {

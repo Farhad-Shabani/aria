@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tonic::{Request, Status};
 
+use crate::primitives::error_chain;
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
@@ -67,7 +68,9 @@ impl Phones {
             .ok_or(PairingError::Missing)?;
         stored.phones.push(fingerprint);
         write(&document, &stored)?;
-        self.paired().push(fingerprint);
+        let mut paired = self.paired();
+        paired.push(fingerprint);
+        tracing::info!(paired_phones = paired.len(), "paired a phone");
         Ok(())
     }
 
@@ -101,7 +104,7 @@ pub(in crate::daemon) fn load_or_create(
             // The material still works; the stored name is only a label.
             if let Err(error) = write(&document, &stored) {
                 tracing::warn!(
-                    ?error,
+                    error = %error_chain(&error),
                     "kept the pairing, but could not record the new hostname"
                 );
             }
@@ -110,6 +113,7 @@ pub(in crate::daemon) fn load_or_create(
         None => {
             let (fresh, fingerprint) = generate(instance)?;
             write(&document, &fresh)?;
+            tracing::info!("minted this Mac's pairing material");
             (fresh, fingerprint)
         }
     };
@@ -141,7 +145,7 @@ fn read_usable(
         Ok(None) => return Ok(None),
         Err(DocumentError::Parse(error)) => {
             tracing::warn!(
-                ?error,
+                error = %error_chain(&error),
                 "the pairing file is damaged; minting new pairing material"
             );
             return Ok(None);
@@ -155,7 +159,7 @@ fn read_usable(
         }
         Err(error) => {
             tracing::warn!(
-                ?error,
+                error = %error_chain(&error),
                 "the stored pairing certificate is not PEM; minting new pairing material"
             );
             Ok(None)
@@ -168,7 +172,7 @@ fn write(document: &PrivateDocument, stored: &StoredPairing) -> Result<(), Pairi
     // The rename already landed, so the material is on disk either way.
     if let Err(error) = committed.confirm_durability() {
         tracing::warn!(
-            ?error,
+            error = %error_chain(&error),
             "the pairing file is written, but its durability is unconfirmed"
         );
     }
@@ -215,11 +219,14 @@ pub(in crate::daemon) fn require_paired(
 ) -> impl FnMut(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync + 'static {
     move |request| match presented(&request) {
         Some(fingerprint) if phones.contains(&fingerprint) => Ok(request),
-        _ => Err(RpcFailure::new(
-            RpcErrorCode::Unauthenticated,
-            "pair this device with the Mac first",
-        )
-        .into()),
+        _ => {
+            tracing::debug!("refused a request from a phone that is not paired");
+            Err(RpcFailure::new(
+                RpcErrorCode::Unauthenticated,
+                "pair this device with the Mac first",
+            )
+            .into())
+        }
     }
 }
 

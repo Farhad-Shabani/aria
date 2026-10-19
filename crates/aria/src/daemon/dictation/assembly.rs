@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::Layered;
@@ -185,15 +186,29 @@ impl ModelLoading {
     {
         match self {
             Self::Eager => {
-                let engine = E::load_from(config, &CancelToken::never())
+                let engine = load_engine::<E>(config, &CancelToken::never())
                     .map_err(DictationInitializationError::Transcription)?;
                 Ok(ModelLoad::loaded(engine))
             }
             Self::OnFirstUse => Ok(ModelLoad::deferred(move |cancel| {
-                E::load_from(config.clone(), cancel)
+                load_engine::<E>(config.clone(), cancel)
             })),
         }
     }
+}
+
+fn load_engine<E: Engine>(
+    config: E::Config,
+    cancel: &CancelToken,
+) -> Result<E, TranscriptionError> {
+    let started = Instant::now();
+    let engine = E::load_from(config, cancel)?;
+    tracing::info!(
+        engine = E::NAME,
+        load_ms = started.elapsed().as_millis(),
+        "transcription model loaded"
+    );
+    Ok(engine)
 }
 
 /// Type-erased so capture can open between selecting the engine and building

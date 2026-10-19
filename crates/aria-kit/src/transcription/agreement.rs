@@ -249,7 +249,8 @@ impl AgreementState {
         let decoded = available - self.buffer_start;
 
         let buffer = recording.span(self.buffer_start..available);
-        let hypothesis = decode(buffer)?;
+        let (hypothesis, decode_ms) = timed(|| decode(buffer));
+        let hypothesis = hypothesis?;
         check_cancelled(cancel)?;
         let loudness = Loudness::of(buffer);
         let heard = self.hear(&hypothesis, &loudness);
@@ -268,6 +269,7 @@ impl AgreementState {
         let segment = self.one_at_a_time(confirmed, tail);
         log_step(
             decoded,
+            decode_ms,
             behind,
             heard_count,
             skipped,
@@ -794,8 +796,21 @@ fn spoken(word: &str) -> String {
         .collect()
 }
 
+/// No time on wasm, where `Instant::now` panics.
+fn timed<T>(work: impl FnOnce() -> T) -> (T, Option<u128>) {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let started = std::time::Instant::now();
+        let value = work();
+        (value, Some(started.elapsed().as_millis()))
+    }
+    #[cfg(target_family = "wasm")]
+    (work(), None)
+}
+
 fn log_step(
     decoded: u64,
+    decode_ms: Option<u128>,
     behind: u64,
     heard: usize,
     skipped: Option<u64>,
@@ -805,6 +820,7 @@ fn log_step(
     let millis = |samples: u64| canonical_duration(samples).as_millis();
     tracing::debug!(
         buffer_ms = millis(decoded),
+        decode_ms,
         behind_ms = millis(behind),
         heard,
         skipped_ms = skipped.map(millis),

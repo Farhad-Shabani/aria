@@ -227,7 +227,10 @@ impl Drop for SpawnedRuntime {
             self.stopper.stop();
         }
         if let Err(error) = self.join_inner() {
-            tracing::error!(?error, "spawned daemon failed during cleanup");
+            tracing::error!(
+                error = %crate::primitives::error_chain(&error),
+                "spawned daemon failed during cleanup"
+            );
         }
     }
 }

@@ -33,12 +33,20 @@ pub(crate) enum Anchoring {
 
 impl Anchoring {
     /// Anchors to the field found by the caret read for the first segment.
-    pub(super) fn start(&mut self, focus: Option<Focus>) {
-        if matches!(self, Self::Pending) {
-            *self = focus.map_or(Self::Unavailable, |focus| {
-                Self::Anchored(Anchor::new(focus))
-            });
+    pub(super) fn start(&mut self, focus: Result<Focus, &'static str>) {
+        if !matches!(self, Self::Pending) {
+            return;
         }
+        *self = match focus {
+            Ok(focus) => Self::Anchored(Anchor::new(focus)),
+            Err(reason) => {
+                tracing::info!(
+                    reason,
+                    "focused field unreadable; streaming checks only the frontmost app"
+                );
+                Self::Unavailable
+            }
+        };
     }
 
     /// Refuses when typing would land away from the text typed last.
@@ -113,13 +121,22 @@ impl Anchor {
         let Some(ending) = &self.ending else {
             return Ok(());
         };
-        let deadline = Instant::now() + CATCH_UP_BUDGET;
+        let started = Instant::now();
+        let deadline = started + CATCH_UP_BUDGET;
         let settled = match self.tracking {
             Tracking::Untested(_) | Tracking::Caret => {
                 wait_for_caret(deadline, || self.observe(ending, deadline))
             }
             Tracking::Field => self.observe_field(deadline),
         };
+        // Past one poll, the app was still applying the last segment.
+        let waited = started.elapsed();
+        if waited >= POLL_INTERVAL {
+            tracing::debug!(
+                waited_ms = waited.as_millis(),
+                "waited for the last segment to land"
+            );
+        }
         self.settle(settled)
     }
 
@@ -134,7 +151,7 @@ impl Anchor {
                 }
             }
             Settled::Short(caret) if self.tracking == Tracking::Untested(caret) => {
-                tracing::debug!("caret stays put as text lands; only the field is checked");
+                tracing::info!("caret stays put as text lands; only the field is checked");
                 self.tracking = Tracking::Field;
             }
             Settled::Short(_) => return Err(target_changed("caret short of the typed text")),
@@ -301,8 +318,8 @@ fn wait_for_caret(
     }
 }
 
-fn target_changed(reason: &'static str) -> DeliveryError {
-    tracing::debug!(reason, "insertion point changed; typing stops");
+pub(super) fn target_changed(reason: &'static str) -> DeliveryError {
+    tracing::info!(reason, "insertion point changed; typing stops");
     DeliveryError::TargetChanged
 }
 

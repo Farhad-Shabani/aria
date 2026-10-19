@@ -248,6 +248,7 @@ fn collect_transcript(
 ) -> Result<Hypothesis, TranscriptionError> {
     let mut text = String::new();
     let mut words = Vec::new();
+    let mut silent_segments = 0_usize;
     for segment in state.as_iter() {
         let spoken = segment.to_str_lossy().map_err(inference_failed)?;
         let spoken = spoken.trim();
@@ -272,6 +273,7 @@ fn collect_transcript(
             tokens.push((token.to_str_lossy().map_err(inference_failed)?, timing));
         }
         if is_silence(segment.no_speech_probability(), &log_probabilities) {
+            silent_segments += 1;
             continue;
         }
         if !text.is_empty() {
@@ -281,6 +283,9 @@ fn collect_transcript(
         words.extend(word_timings(
             tokens.iter().map(|(text, timing)| (text.as_ref(), *timing)),
         ));
+    }
+    if silent_segments > 0 {
+        tracing::debug!(silent_segments, "dropped segments that read as silence");
     }
     Ok(Hypothesis::with_words(text, words))
 }

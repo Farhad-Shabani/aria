@@ -168,7 +168,14 @@ impl TextDelivery for MacOsTextDelivery {
             MacOsDeliveryTarget::Application { process, anchoring } => {
                 let mut anchoring = anchoring.borrow_mut();
                 anchoring.before_typing()?;
-                let outcome = insert(*process, text, &should_cancel, observe())?;
+                let outcome = insert(*process, text, &should_cancel, observe()).map_err(
+                    |error| match error {
+                        DeliveryError::TargetChanged => {
+                            anchor::target_changed("another app is frontmost")
+                        }
+                        error => error,
+                    },
+                )?;
                 anchoring.after_typing(text);
                 Ok(outcome)
             }

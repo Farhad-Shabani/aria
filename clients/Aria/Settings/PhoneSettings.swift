@@ -2,6 +2,9 @@ import CoreImage.CIFilterBuiltins
 import GRPCCore
 import GRPCNIOTransportHTTP2
 import SwiftUI
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "PhoneSettings")
 
 /// Pairs an iPhone: shows the one-time code the phone scans, or why there
 /// is none.
@@ -87,14 +90,23 @@ struct PhoneSettings: View {
         do {
             issued = try await Self.issueInvite()
         } catch {
-            if status != .restarting { status = Self.status(for: error) }
+            let failure = Self.status(for: error)
+            guard status != .restarting else { return Self.reissueInterval }
+            // Polled every couple of seconds, so only a new failure is logged.
+            if case .failed = failure, failure != status {
+                log.error("Fetching a pairing code failed: \(String(describing: error), privacy: .private)")
+            }
+            status = failure
             return Self.reissueInterval
         }
         // A poll in flight when a restart began must not bring the code back.
         if status == .restarting { return Self.reissueInterval }
         if case .live(let shown, let expiresAt) = status {
             if shown == issued.invite { return Self.nextPoll(expiresAt: expiresAt) }
-            if Self.wasRedeemed(expiresAt: expiresAt, replacedAt: .now) { phonePairedAt = .now }
+            if Self.wasRedeemed(expiresAt: expiresAt, replacedAt: .now) {
+                log.notice("A phone redeemed the pairing code")
+                phonePairedAt = .now
+            }
         }
         status = .live(issued.invite, expiresAt: issued.expiresAt)
         return Self.nextPoll(expiresAt: issued.expiresAt)
@@ -295,6 +307,9 @@ struct PhoneSettings: View {
         do {
             try await Task.detached { try DaemonClient.setPhonePairing(on) }.value
         } catch {
+            log.error(
+                "Turning phone pairing \(on ? "on" : "off", privacy: .public) failed: \(error.localizedDescription, privacy: .private)"
+            )
             actionError = "Phone pairing could not be turned \(on ? "on" : "off"): \(error.localizedDescription)"
             status = .loading
             _ = await load()
@@ -305,6 +320,7 @@ struct PhoneSettings: View {
         // The daemon answers the same way when pairing is on but its port
         // or pairing file is unusable.
         if on, status == .relayOff {
+            log.error("Phone pairing is on but the relay did not start")
             actionError = "Phone pairing is on but couldn't start. Run aria doctor in Terminal to see why."
         }
     }
@@ -319,6 +335,7 @@ struct PhoneSettings: View {
             try await poller.restart(whileStopped: { try PairingFile.remove() })
             actionError = nil
         } catch {
+            log.error("Revoking phones failed: \(error.localizedDescription, privacy: .private)")
             actionError = "Phones could not be revoked: \(error.localizedDescription)"
         }
         status = .loading
@@ -332,8 +349,10 @@ struct PhoneSettings: View {
         do {
             try await poller.restart()
         } catch StatusPoller.RestartFailure.busy {
+            log.notice("Restart deferred: Aria is busy")
             actionError = "Aria is busy. The change applies when it next starts."
         } catch {
+            log.error("Restart failed: \(error.localizedDescription, privacy: .private)")
             actionError = error.localizedDescription
         }
         status = .loading

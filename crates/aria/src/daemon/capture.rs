@@ -1,7 +1,7 @@
 //! The capture source the daemon's configuration selects.
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::audio::{
     AudioCapture, CaptureError, Microphone, PreparedMicrophone, RecordingMode, RecordingReader,
@@ -67,11 +67,16 @@ impl PreparedCapture {
                         threshold,
                     } => Some(WakeDetector::load(backend, classifier, threshold)?),
                 };
+                let started = Instant::now();
                 let microphone = Microphone::builder()
                     .spool_dir(spool_dir)
                     .maximum_duration(recording_timeout)
                     .load()
                     .map_err(DictationInitializationError::Capture)?;
+                tracing::info!(
+                    load_ms = started.elapsed().as_millis(),
+                    "silero speech detector loaded"
+                );
                 Ok(Self::Microphone {
                     microphone: Box::new(microphone),
                     wake,

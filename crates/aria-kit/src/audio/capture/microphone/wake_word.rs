@@ -4,6 +4,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TrySendErr
 use std::time::Duration;
 
 use crate::audio::canonical_samples;
+use crate::primitives::error_chain;
 use crate::voice_activity::{SPEECH_THRESHOLD, VoiceActivityDetector, VoiceActivityError};
 use crate::wake_word::{WakeWordDetector, WakeWordMatch};
 
@@ -156,7 +157,10 @@ impl<W: WakeWordDetector> WakeMonitor<W> {
         match self.events.try_send(event) {
             Ok(()) | Err(TrySendError::Full(WakeWordEvent::Detected)) => {}
             Err(TrySendError::Full(WakeWordEvent::Failed(failure))) => {
-                tracing::warn!(error = %failure, "wake-word monitoring failed; the event queue was full");
+                tracing::warn!(
+                    error = %error_chain(&failure),
+                    "wake-word monitoring failed; the event queue was full"
+                );
             }
             Err(TrySendError::Disconnected(_)) => {
                 tracing::info!("wake-word monitor stopped; event receiver closed");

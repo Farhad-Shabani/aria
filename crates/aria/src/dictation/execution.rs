@@ -7,6 +7,7 @@ use aria_kit::cancel::{CancelToken, Deadline};
 
 use crate::audio::{CaptureError, RecordingReader};
 use crate::microphone::{Admitted, Claim, Gate};
+use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{Language, Transcript, TranscriptionError};
 
@@ -468,6 +469,10 @@ where
     ) -> Result<DictationOutcome, DictationError> {
         match self.admit(&settings, cancellation)? {
             Admission::Execute(control, _claim) => {
+                // Capture and the level meter log from their own threads,
+                // outside this span.
+                let _span =
+                    tracing::info_span!("dictation", recording = %control.recording_id()).entered();
                 let _execution = ExecutionGuard(&control);
                 let started = Instant::now();
                 let result = self.executor.execute(settings, &control, events);
@@ -495,7 +500,14 @@ where
             .admit_dictation(settings.stop_mode, Arc::clone(&control))
         {
             Admitted::Claimed(claim) => {
-                tracing::info!(status = "admitted", "dictation execution admitted");
+                tracing::info!(
+                    status = "admitted",
+                    recording = %control.recording_id(),
+                    stop_mode = ?settings.stop_mode,
+                    delivery_mode = ?settings.delivery_mode,
+                    output_mode = ?settings.output_mode,
+                    "dictation execution admitted"
+                );
                 Ok(Admission::Execute(control, claim))
             }
             Admitted::StopAccepted => {
@@ -556,7 +568,7 @@ fn log_execution_result(result: &Result<DictationResult, DictationError>, starte
         Err(error) => tracing::warn!(
             status = error.status(),
             elapsed_ms,
-            %error,
+            error = %error_chain(error),
             "dictation execution finished"
         ),
     }

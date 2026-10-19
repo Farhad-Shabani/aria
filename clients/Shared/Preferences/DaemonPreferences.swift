@@ -1,5 +1,8 @@
 import Foundation
 import GRPCCore
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonPreferences")
 
 /// Synchronizes daemon preferences through one revision and pending patch.
 /// The transport decides which daemon and over what; this class does not.
@@ -50,7 +53,7 @@ final class DaemonPreferences: ObservableObject {
                 await push()
             }
         } catch {
-            NSLog("DaemonPreferences: sync failed — \(error)")
+            log.error("Sync failed: \(String(describing: error), privacy: .private)")
             lastError = error
         }
     }
@@ -131,7 +134,7 @@ final class DaemonPreferences: ObservableObject {
                         return
                     }
                 } catch {
-                    NSLog("DaemonPreferences: update failed — \(error)")
+                    log.error("Update failed: \(String(describing: error), privacy: .private)")
                     lastError = error
                     if Self.refusesPatch(error) {
                         // The daemon will never take this patch; keeping it

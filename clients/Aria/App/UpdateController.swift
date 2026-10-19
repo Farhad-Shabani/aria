@@ -1,6 +1,9 @@
 import AppKit
 import Combine
 import Sparkle
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "UpdateController")
 
 @MainActor
 final class UpdateController: ObservableObject {
@@ -9,6 +12,7 @@ final class UpdateController: ObservableObject {
     @Published private(set) var checksAutomatically = false
     @Published private(set) var installsAutomatically = false
 
+    private let updaterDelegate = AbortLoggingDelegate()
     private let driverDelegate = ForegroundDriverDelegate()
     private let controller: SPUStandardUpdaterController
 
@@ -21,7 +25,7 @@ final class UpdateController: ObservableObject {
         #endif
         controller = SPUStandardUpdaterController(
             startingUpdater: starting,
-            updaterDelegate: nil,
+            updaterDelegate: updaterDelegate,
             userDriverDelegate: driverDelegate
         )
         controller.updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck)
@@ -55,5 +59,17 @@ private final class ForegroundDriverDelegate: NSObject, SPUStandardUserDriverDel
         MainActor.assumeIsolated {
             if handleShowingUpdate { NSApplication.shared.activate() }
         }
+    }
+}
+
+private final class AbortLoggingDelegate: NSObject, SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
+        let error = error as NSError
+        // Sparkle reports a check that found nothing as an abort too.
+        let foundNothing = error.domain == SUSparkleErrorDomain && error.code == Int(SUError.noUpdateError.rawValue)
+        guard !foundNothing else { return }
+        log.error(
+            "Update aborted: code \(error.code, privacy: .public), \(error.localizedDescription, privacy: .private)"
+        )
     }
 }

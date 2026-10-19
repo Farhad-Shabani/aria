@@ -84,6 +84,7 @@ impl Handshake {
                         Ok(connection) => connection,
                         Err(error) => return Some(Err(error)),
                     };
+                    let peer = connection.peer().map(tracing::field::display);
                     match tokio::time::timeout(timeout, acceptor.accept(connection)).await {
                         Ok(Ok(stream)) => {
                             let paired = stream
@@ -92,14 +93,17 @@ impl Handshake {
                                 .peer_certificates()
                                 .and_then(<[_]>::first)
                                 .is_some_and(|leaf| phones.contains(&fingerprint(leaf)));
+                            if !paired {
+                                tracing::debug!(peer, "admitted an unpaired phone to pair");
+                            }
                             Some(Ok(Leased::new(stream, (!paired).then_some(lease))))
                         }
                         Ok(Err(error)) => {
-                            tracing::debug!(%error, "a LAN handshake failed");
+                            tracing::debug!(%error, peer, "a LAN handshake failed");
                             None
                         }
                         Err(_elapsed) => {
-                            tracing::debug!("a LAN handshake timed out");
+                            tracing::debug!(peer, "a LAN handshake timed out");
                             None
                         }
                     }

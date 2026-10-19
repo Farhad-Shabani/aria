@@ -187,7 +187,10 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
             let frames = match self.segmenter.segment(&audio) {
                 Ok(frames) => frames,
                 Err(error) => {
-                    tracing::warn!(%error, "speech segmentation failed");
+                    tracing::warn!(
+                        error = %crate::primitives::error_chain(&error),
+                        "speech segmentation failed"
+                    );
                     continue;
                 }
             };
@@ -200,7 +203,10 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
                     match self.diarizer.embed(&heard) {
                         Ok(values) => values.map(|values| Voiceprint { local, values }),
                         Err(error) => {
-                            tracing::warn!(%error, "speaker embedding failed");
+                            tracing::warn!(
+                                error = %crate::primitives::error_chain(&error),
+                                "speaker embedding failed"
+                            );
                             None
                         }
                     }

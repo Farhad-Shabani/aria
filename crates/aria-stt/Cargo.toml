@@ -25,7 +25,7 @@ parakeet   = [ "dep:parakeet-rs" ]
 # found through an rpath such as `@executable_path`.
 parakeet-gpu   = [ "parakeet", "parakeet-rs/webgpu" ]
 parakeet-mlx   = [ "dep:serde", "dep:serde_json", "dep:tracing" ]
-whisper        = [ "dep:whisper-rs" ]
+whisper        = [ "dep:tracing", "dep:whisper-rs" ]
 whisper-candle = [ "dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
 
 [dependencies]

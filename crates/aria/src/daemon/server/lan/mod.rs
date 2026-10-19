@@ -17,6 +17,7 @@ use tonic_health::server::{HealthReporter, HealthService};
 use crate::daemon::relay::{Advert, LanPreferences, Pairing, PairingCodes, Phones, require_paired};
 use crate::daemon::service::{InviteRpc, PairingRpc, PreferencesRpc, RelayRpc};
 use crate::ipc::wire;
+use crate::primitives::error_chain;
 use connections::Admitted;
 
 /// LAN connections open at once: a few phones, plus dead ones the keepalive
@@ -102,7 +103,7 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
         Ok(handshake) => handshake,
         Err(error) => {
             tracing::error!(
-                ?error,
+                error = %error_chain(&error),
                 "the pairing certificate is unusable; the relay is off"
             );
             return Opened::default();
@@ -216,7 +217,9 @@ async fn bind(
         }
     };
     let advert = Advert::register(port, fingerprint)
-        .inspect_err(|error| tracing::error!(%error, "the relay is not discoverable"))
+        .inspect_err(|error| {
+            tracing::error!(error = %error_chain(error), "the relay is not discoverable");
+        })
         .ok();
     tracing::info!(port, "relay listening on the LAN");
     Opened {
@@ -246,7 +249,9 @@ pub(super) async fn serve(bound: Option<Bound>, stop: CancellationToken) {
     );
     match until_grace_after(serving, stop.cancelled_owned(), LAN_DRAIN_GRACE).await {
         Some(Ok(())) => {}
-        Some(Err(error)) => tracing::error!(%error, "the relay listener failed"),
+        Some(Err(error)) => {
+            tracing::error!(error = %error_chain(&error), "the relay listener failed");
+        }
         None => tracing::warn!("LAN connections outlived the drain; they close with the daemon"),
     }
 }

@@ -3,7 +3,7 @@
 //! dictation.
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
@@ -38,22 +38,29 @@ impl WakeDetector {
         classifier: PathBuf,
         threshold: f32,
     ) -> Result<Self, DictationInitializationError> {
-        match backend {
+        let started = Instant::now();
+        let detector = match backend {
             WakeBackend::OpenWakeWord => {
                 let config = OpenWakeWordConfig::new(classifier, threshold)
                     .map_err(DictationInitializationError::WakeConfiguration)?;
                 OpenWakeWord::load_from(&config)
                     .map(|detector| Self::OpenWakeWord(Box::new(detector)))
-                    .map_err(DictationInitializationError::WakeModel)
+                    .map_err(DictationInitializationError::WakeModel)?
             }
             WakeBackend::LiveKit => {
                 let config = LiveKitConfig::new(classifier, threshold)
                     .map_err(DictationInitializationError::WakeConfiguration)?;
                 LiveKitWakeWord::load_from(&config)
                     .map(|detector| Self::LiveKit(Box::new(detector)))
-                    .map_err(DictationInitializationError::WakeModel)
+                    .map_err(DictationInitializationError::WakeModel)?
             }
-        }
+        };
+        tracing::info!(
+            engine = backend.name(),
+            load_ms = started.elapsed().as_millis(),
+            "wake-word model loaded"
+        );
+        Ok(detector)
     }
 
     pub(super) fn open_microphone(

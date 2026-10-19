@@ -17,6 +17,7 @@ use tonic_health::pb::health_server::HealthServer;
 use tonic_health::server::{HealthReporter, HealthService};
 
 use crate::ipc::wire;
+use crate::primitives::error_chain;
 use crate::primitives::local_socket::ExclusiveListener;
 
 pub(in crate::daemon) use activity::ActivityGuard;
@@ -435,7 +436,10 @@ async fn stop_requested(
 /// than serving on without any way to be stopped.
 async fn signal_triggered(shutdown: &mut ShutdownSignal) {
     if let Err(error) = shutdown.triggered().await {
-        tracing::error!(?error, "the shutdown signal watcher failed; stopping");
+        tracing::error!(
+            error = %error_chain(&error),
+            "the shutdown signal watcher failed; stopping"
+        );
     }
 }
 

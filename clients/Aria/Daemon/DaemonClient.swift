@@ -1,5 +1,8 @@
 import Foundation
 import ServiceManagement
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonClient")
 
 enum DaemonState: Equatable {
     case running
@@ -157,8 +160,10 @@ struct DaemonClient: DaemonControlling {
         )
         switch method {
         case .kickstart:
+            log.notice("Starting the daemon: kickstart")
             try Self.kickstartAgent()
         case .register:
+            log.notice("Starting the daemon: register")
             do {
                 try Self.agent.register()
             } catch {
@@ -169,6 +174,7 @@ struct DaemonClient: DaemonControlling {
             await Self.awaitAgentLoaded()
             try Self.kickstartAgent()
         case .spawn(let bin):
+            log.notice("Starting the daemon: spawn")
             guard FileManager.default.isExecutableFile(atPath: bin.path) else {
                 throw DaemonClientError.ariaBinaryMissing(bin.path)
             }
@@ -253,8 +259,13 @@ struct DaemonClient: DaemonControlling {
         // The agent's daemon reads the login shell's PATH before it takes
         // its lock; launchd reaches it then too. A job with no process
         // fails here and falls to the lock, which reports why.
-        if daemonBinaryOverride() == nil, (try? run(launchctl, ["kill", "SIGTERM", agentTarget])) != nil {
-            return
+        if daemonBinaryOverride() == nil {
+            do {
+                try run(launchctl, ["kill", "SIGTERM", agentTarget])
+                return
+            } catch {
+                log.notice("launchctl kill failed, trying the lock: \(error.localizedDescription, privacy: .private)")
+            }
         }
         let lock = RuntimeFiles.daemonLockURL
         let pid = try Self.heldLockPid(lock)

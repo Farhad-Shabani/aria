@@ -56,6 +56,10 @@ impl PairingCodes {
             code: code.clone(),
             expires_at: now + CODE_LIFETIME,
         });
+        tracing::info!(
+            expires_in_ms = CODE_LIFETIME.as_millis(),
+            "opened a pairing window"
+        );
         Ok((code, CODE_LIFETIME))
     }
 

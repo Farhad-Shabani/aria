@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use super::{Diarizer, Embedder};
 use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
+use crate::primitives::error_chain;
 use crate::transcription::{
     Layer, Operation, Transcriber, TranscriptSegment, TranscriptUpdate, TranscriptionError,
 };
@@ -124,7 +125,10 @@ impl<E: Embedder> SegmentLabeler<E> {
         self.diarizer.as_ref()?;
         let regions = match self.vad.as_mut() {
             Some(vad) => vad.speech_regions(samples).unwrap_or_else(|error| {
-                tracing::warn!(%error, "voice-activity inference failed; audio passes ungated");
+                tracing::warn!(
+                    error = %error_chain(&error),
+                    "voice-activity inference failed; audio passes ungated"
+                );
                 std::iter::once(0..samples.len()).collect()
             }),
             None => std::iter::once(0..samples.len()).collect(),
@@ -175,7 +179,10 @@ impl<E: Embedder> SegmentLabeler<E> {
         let mut gap = silence_before as usize;
         let speech = self.vad.as_mut().map(|vad| {
             vad.speech(window).unwrap_or_else(|error| {
-                tracing::warn!(%error, "voice-activity inference failed; audio passes ungated");
+                tracing::warn!(
+                    error = %error_chain(&error),
+                    "voice-activity inference failed; audio passes ungated"
+                );
                 Speech {
                     regions: std::iter::once(0..window.len()).collect(),
                     samples: window.to_vec(),
@@ -259,7 +266,7 @@ impl<E: Embedder> SegmentLabeler<E> {
 /// broken embedding must not end the session.
 fn embed_or_skip<E: Embedder>(diarizer: &mut Diarizer<E>, window: &[f32]) -> Option<Vec<f32>> {
     diarizer.embed(window).unwrap_or_else(|error| {
-        tracing::warn!(%error, "speaker embedding failed");
+        tracing::warn!(error = %error_chain(&error), "speaker embedding failed");
         None
     })
 }

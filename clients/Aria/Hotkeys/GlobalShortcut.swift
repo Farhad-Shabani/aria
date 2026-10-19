@@ -1,4 +1,7 @@
 import Carbon.HIToolbox
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "GlobalShortcut")
 
 /// One globally registered chord.
 ///
@@ -30,7 +33,7 @@ final class GlobalShortcut {
             &reference
         )
         guard status == noErr, let reference else {
-            NSLog("GlobalShortcut: registration refused — OSStatus \(status)")
+            log.error("Registration refused: OSStatus \(status, privacy: .public)")
             return false
         }
         hotKey = reference
