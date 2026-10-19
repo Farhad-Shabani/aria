@@ -24,10 +24,12 @@ Without Homebrew:
    window. **Express Setup** uses the defaults; **Customize…** lets you choose
    engines and models.
 
-Setup ends by installing the `aria` command for the terminal. Aria asks for
-an administrator password once, to link the command into `/usr/local/bin`.
-Cancel that dialog to skip it; **Set Up Aria…** in the menu offers it again.
-Without administrator rights, add this line to `~/.zshrc` instead:
+When setup finishes, Aria asks for your password to add the `aria` command to
+the terminal. Skip it if you only use the menu bar app. **Set Up Aria…** in
+the menu asks again later.
+
+If you can't enter an administrator password, add this line to `~/.zshrc`
+instead:
 
 ```sh
 export PATH="/Applications/Aria.app/Contents/Helpers:$PATH"
@@ -106,8 +108,8 @@ its menu to check now, or set automatic checks and installs in
 because Aria updates itself and a plain `brew upgrade` skips it.
 
 To remove Aria from a Mac, quit it and move it to the Trash, or run
-`brew uninstall --cask aria`. The `aria` link in `/usr/local/bin` stays;
-remove it with `sudo rm /usr/local/bin/aria`.
+`brew uninstall --cask aria`. The `aria` command stays behind. Remove it with
+`sudo rm /usr/local/bin/aria`.
 
 On Linux, rerun the install command to update. It keeps your setup answers
 and downloads nothing new; run `aria setup` to change them. To remove Aria:

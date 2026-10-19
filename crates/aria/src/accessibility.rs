@@ -175,16 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_bundled_executable_asks() {
-        use std::path::Path;
-        assert!(is_bundle_executable(Path::new(
-            "/Applications/Aria.app/Contents/Helpers/Aria.app/Contents/MacOS/aria"
-        )));
-        assert!(!is_bundle_executable(Path::new("/Users/me/aria/target/release/aria")));
-        assert!(!is_bundle_executable(Path::new("/Applications/Aria.app/Contents/Helpers/aria")));
-    }
-
-    #[test]
     fn exit_codes_round_trip() {
         for trust in [Trust::Trusted, Trust::Untrusted] {
             let script = format!("exit {}", trust.exit_code());

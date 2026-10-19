@@ -20,14 +20,12 @@ enum CommandLineToolError: LocalizedError {
 enum CommandLineTool {
     static let link = URL(fileURLWithPath: "/usr/local/bin/aria")
     private static let bundledCommand = "Contents/Helpers/aria"
-    /// AppleScript's error number for a cancelled dialog.
     private static let userCancelled = -128
 
     static var target: URL { Bundle.main.bundleURL.appending(path: bundledCommand) }
 
     static var isInstalled: Bool { linkDestination() == target.path }
 
-    /// A link with Aria's bundle layout: this copy, or one that moved.
     private static var linksIntoAria: Bool { linkDestination()?.hasSuffix(".app/" + bundledCommand) ?? false }
 
     /// A build folder or the translocated copy macOS runs from a DMG goes
@@ -56,9 +54,7 @@ enum CommandLineTool {
         try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)
     }
 
-    /// /usr/local/bin belongs to root, so macOS asks for an administrator's
-    /// password. The script runs in this process, so the dialog names Aria
-    /// rather than osascript.
+    /// Runs in this process, so the password dialog names Aria, not osascript.
     @MainActor
     private static func runAsAdministrator(_ command: String, prompt: String) throws -> Bool {
         let source =

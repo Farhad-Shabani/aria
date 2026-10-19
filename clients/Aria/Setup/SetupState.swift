@@ -23,8 +23,8 @@ final class SetupState: ObservableObject {
         /// starts Aria at login. Returns what to tell the user when it
         /// could not.
         var launchAtLogin: () -> String?
-        /// Links the `aria` command, behind an administrator's password.
-        /// Returns what to tell the user when it did not land.
+        /// Asks for an administrator's password. Returns what to tell the
+        /// user when the command did not land.
         var installCommandLineTool: () -> String?
         var waitForGrant: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
     }
