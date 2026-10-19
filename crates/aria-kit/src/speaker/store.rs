@@ -44,8 +44,7 @@ impl ProfileStore {
         for entry in entries {
             let path = entry.map_err(ProfileError::List)?.path();
             if path.extension().is_none_or(|extension| extension != "json") {
-                // A profile this build cannot read is a person it will not
-                // recognize. The path stays out: the stem is their name.
+                // The path stays out of the log: its stem is a person's name.
                 tracing::warn!(
                     "a file in the speakers directory is not a profile this build reads"
                 );
@@ -133,13 +132,12 @@ impl ProfileStore {
     }
 }
 
-/// What a read of the speakers directory found.
 #[derive(Debug, Default)]
 pub struct StoredProfiles {
     /// Sorted by name.
     pub profiles: Vec<Profile>,
-    /// Each one is a person no session will recognize until it is fixed or
-    /// enrolled again. The path is withheld: its stem is the person's name.
+    /// Each one is a person no session recognizes until the file is fixed or
+    /// they enroll again. The path is withheld: its stem is their name.
     pub unreadable: Vec<ProfileError>,
 }
 

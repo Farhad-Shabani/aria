@@ -1,5 +1,5 @@
 //! WAV files. Recordings read only the canonical 16 kHz mono 16-bit format;
-//! clips read any PCM WAV and write mono 16-bit at their own rate.
+//! clips keep the file's own rate on read and write.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -53,8 +53,8 @@ impl RecordingReader {
     }
 }
 
-/// Reads a PCM WAV of any rate and channel count, 8- to 32-bit integer or
-/// 32-bit float, as mono audio at the file's rate. Channels are averaged.
+/// Reads a PCM WAV, 8- to 32-bit integer or 32-bit float, at any rate a
+/// [`Clip`] accepts, as mono audio at the file's rate. Channels are averaged.
 /// Unlike [`RecordingReader::from_wav_file`], it sets no length limit.
 pub fn read_wav(path: impl AsRef<Path>) -> Result<Clip> {
     let path = path.as_ref();
@@ -83,8 +83,6 @@ pub fn read_wav(path: impl AsRef<Path>) -> Result<Clip> {
     })
 }
 
-/// Every sample interleaved: integer PCM scaled to -1.0..1.0, 32-bit float
-/// as stored, unclamped.
 fn decode(reader: WavFileReader, path: &Path) -> Result<Vec<f32>> {
     let spec = reader.spec();
     let decoded: std::result::Result<Vec<f32>, hound::Error> =
@@ -269,12 +267,9 @@ mod tests {
         assert_eq!(clip.samples(), [0.25, -0.25]);
     }
 
-    /// The header's rate sizes the resampler's buffers, so an absurd one is
-    /// refused at read time, before anything resamples it.
     #[test]
     fn a_wav_declaring_an_absurd_rate_is_refused() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        // Prime, so nothing divides out of the resampler's FFT size.
         let rate = 1_000_000_007;
         let spec = hound::WavSpec {
             channels: 1,

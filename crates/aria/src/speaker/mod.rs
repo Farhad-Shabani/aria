@@ -35,7 +35,6 @@ pub(crate) fn diarizer(config: &SpeakerConfig) -> Option<Diarizer<WeSpeaker>> {
     let model = wespeaker::Config {
         model: config.model.clone(),
     };
-    // Never enrolling is ordinary, so an absent model is not a warning.
     if let Err(error) = WeSpeaker::check_from(&model) {
         tracing::info!(%error, "no speaker model; the transcript stays unlabeled");
         return None;

@@ -146,8 +146,6 @@ pub fn label_recording<Stt: StreamingEngine>(
     })
 }
 
-/// The speaker model every labeling strategy embeds with, enrolled with
-/// nobody.
 fn diarizer(speaker: SpeakerConfig) -> Result<Diarizer<WeSpeaker>, BenchError> {
     let embedder = WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)?;
     Ok(Diarizer::new(embedder, Vec::new()))

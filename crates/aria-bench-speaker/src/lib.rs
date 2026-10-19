@@ -130,9 +130,6 @@ pub enum VerifyError {
     #[error("the recording could not be read")]
     Wav(#[from] WavError),
 
-    /// Refused rather than resampled: capture only ever hands the model
-    /// canonical audio, so measuring anything else would measure a resampler
-    /// nobody runs.
     #[error("the recording {} is not at 16 kHz", path.display())]
     NotCanonical { path: PathBuf },
 

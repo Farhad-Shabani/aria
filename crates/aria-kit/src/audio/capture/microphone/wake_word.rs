@@ -296,7 +296,6 @@ mod tests {
         }
     }
 
-    /// Fires on one frame, as a wake classifier does once the word has ended.
     struct DetectsOnFrame {
         frame: usize,
         calls: usize,
@@ -330,7 +329,6 @@ mod tests {
         }
     }
 
-    /// A monitor whose detector fires on `frame`, and the events it publishes.
     fn monitor(frame: usize) -> (WakeMonitor<DetectsOnFrame>, Receiver<WakeWordEvent>) {
         let (events, detections) = sync_channel(1);
         let monitor = WakeMonitor::new(DetectsOnFrame { frame, calls: 0 }, events, FRAME);

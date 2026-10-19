@@ -1,6 +1,6 @@
 //! Audio capture: the sources, the recordings they write, and the canonical
 //! 16 kHz mono format shared by everything that reads them. A [`Clip`] is
-//! finished audio at any rate.
+//! finished audio at its own rate.
 //!
 //! [`RecordingReader`] builds on every target. Everything that opens a
 //! microphone, a model, or a file is native.

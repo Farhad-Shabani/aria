@@ -1,5 +1,3 @@
-//! A finished piece of mono audio that knows its own sample rate.
-
 use std::time::Duration;
 
 use super::{CANONICAL_SAMPLE_RATE, duration_at};
@@ -9,8 +7,7 @@ use super::{ResampleError, Resampler};
 /// The lowest rate any speech codec or capture device produces.
 const MIN_SAMPLE_RATE: u32 = 8_000;
 /// The highest rate studio hardware produces. The resampler sizes its
-/// buffers by the rate, so an unbounded rate from a file header is a
-/// memory bomb.
+/// buffers by the rate, so a rate taken from a file header needs a ceiling.
 const MAX_SAMPLE_RATE: u32 = 384_000;
 
 /// Mono samples and the rate they were taken at.
@@ -59,7 +56,6 @@ impl Clip {
         self.sample_rate == CANONICAL_SAMPLE_RATE
     }
 
-    /// The same audio at the canonical 16 kHz.
     #[cfg(not(target_family = "wasm"))]
     pub fn into_canonical(self) -> Result<Self, ResampleError> {
         if self.is_canonical() {

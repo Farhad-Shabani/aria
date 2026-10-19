@@ -577,7 +577,6 @@ mod tests {
         }
     }
 
-    /// A model that fails on every window.
     struct Broken;
 
     impl Embedder for Broken {
