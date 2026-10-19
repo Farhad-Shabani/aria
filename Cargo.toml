@@ -1,5 +1,5 @@
 [workspace.package]
-version    = "0.3.0"
+version    = "0.4.0"
 edition    = "2024"
 repository = "https://github.com/Farhad-Shabani/aria"
 readme     = "README.md"
@@ -37,14 +37,14 @@ debug = "line-tables-only"
 # stays in that member's manifest.
 [workspace.dependencies]
 # crates.io requires a version beside each internal path.
-aria-harness      = { path = "crates/aria-harness", version = "0.3.0" }
-aria-kit          = { path = "crates/aria-kit", version = "0.3.0" }
-aria-primitives   = { path = "crates/aria-primitives", version = "0.3.0" }
-aria-segmentation = { path = "crates/aria-segmentation", version = "0.3.0" }
-aria-speaker      = { path = "crates/aria-speaker", version = "0.3.0" }
-aria-stt          = { path = "crates/aria-stt", version = "0.3.0" }
-aria-tts          = { path = "crates/aria-tts", version = "0.3.0" }
-aria-wake         = { path = "crates/aria-wake", version = "0.3.0" }
+aria-harness      = { path = "crates/aria-harness", version = "0.4.0" }
+aria-kit          = { path = "crates/aria-kit", version = "0.4.0" }
+aria-primitives   = { path = "crates/aria-primitives", version = "0.4.0" }
+aria-segmentation = { path = "crates/aria-segmentation", version = "0.4.0" }
+aria-speaker      = { path = "crates/aria-speaker", version = "0.4.0" }
+aria-stt          = { path = "crates/aria-stt", version = "0.4.0" }
+aria-tts          = { path = "crates/aria-tts", version = "0.4.0" }
+aria-wake         = { path = "crates/aria-wake", version = "0.4.0" }
 hound             = "3.5"
 rubato            = "4"
 anyhow            = "1"
