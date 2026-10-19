@@ -349,12 +349,9 @@ fn hear(
                 Some(advance),
             )
         }
-        Replay::Realtime => (
-            wav_replay(utterance, spool_dir, ReplayPace::Realtime).map_err(ReplayError::Capture),
-            None,
-        ),
+        Replay::Realtime => (wav_replay(utterance, spool_dir, ReplayPace::Realtime), None),
         Replay::Immediate => (
-            wav_replay(utterance, spool_dir, ReplayPace::Immediate).map_err(ReplayError::Capture),
+            wav_replay(utterance, spool_dir, ReplayPace::Immediate),
             None,
         ),
     };
@@ -411,9 +408,9 @@ fn wav_replay(
     utterance: &Utterance,
     spool_dir: &Path,
     pace: ReplayPace,
-) -> Result<RecordingReader, CaptureError> {
-    WavReplayCapture::new(spool_dir, MAXIMUM_UTTERANCE, &utterance.audio, pace)
-        .and_then(|replay| replay.start(RecordingMode::UntilStopped, StopSignal::never()))
+) -> Result<RecordingReader, ReplayError> {
+    let replay = WavReplayCapture::new(spool_dir, MAXIMUM_UTTERANCE, &utterance.audio, pace)?;
+    Ok(replay.start(RecordingMode::UntilStopped, StopSignal::never())?)
 }
 
 /// A recording that releases one stride of audio per finished decode: the

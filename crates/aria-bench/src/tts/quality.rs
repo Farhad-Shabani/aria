@@ -125,10 +125,7 @@ pub(super) fn hear_back(
         return Heard::failed(reference_words, error);
     }
 
-    let speech = Clip::new(engine.sample_rate(), synthesized.samples)
-        .map_err(RecordingFailure::from)
-        .and_then(|speech| judged_recording(recordings, speech));
-    let recording = match speech {
+    let recording = match judged_recording(recordings, engine.sample_rate(), synthesized.samples) {
         Ok(recording) => recording,
         Err(failure) => {
             let detail = error_chain(&failure);
@@ -160,8 +157,12 @@ pub(super) fn hear_back(
 
 /// Canonical audio for the judge, spooled as 16-bit PCM the way capture
 /// spools it. The spool deletes itself when the judge drops it.
-fn judged_recording(recordings: &Path, speech: Clip) -> Result<RecordingReader, RecordingFailure> {
-    let canonical = speech.into_canonical()?;
+fn judged_recording(
+    recordings: &Path,
+    sample_rate: u32,
+    speech: Vec<f32>,
+) -> Result<RecordingReader, RecordingFailure> {
+    let canonical = Clip::new(sample_rate, speech)?.into_canonical()?;
     Ok(RecordingReader::from_samples_in(
         recordings,
         canonical.samples(),
