@@ -15,7 +15,10 @@ pub fn chunks(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
     for sentence in sentences(text) {
-        if !current.is_empty() && current.len() + sentence.len() > MAX_CHUNK_CHARS {
+        // One for the space that joins them.
+        if !current.is_empty()
+            && current.chars().count() + 1 + sentence.chars().count() > MAX_CHUNK_CHARS
+        {
             chunks.push(std::mem::take(&mut current));
         }
         if !current.is_empty() {
@@ -24,8 +27,8 @@ pub fn chunks(text: &str) -> Vec<String> {
         current.push_str(sentence);
         // One overlong sentence still has to split somewhere; mid-word beats
         // truncation.
-        while current.len() > MAX_CHUNK_CHARS {
-            let split = split_point(&current);
+        while let Some((cap, _)) = current.char_indices().nth(MAX_CHUNK_CHARS) {
+            let split = split_point(&current, cap);
             let rest = current.split_off(split);
             chunks.push(std::mem::replace(
                 &mut current,
@@ -45,13 +48,9 @@ fn sentences(text: &str) -> impl Iterator<Item = &str> {
         .filter(|sentence| !sentence.is_empty())
 }
 
-/// The last space before the cap, or the cap itself on one unbroken run —
-/// nudged to a character boundary either way.
-fn split_point(text: &str) -> usize {
-    let cap = (0..=MAX_CHUNK_CHARS)
-        .rev()
-        .find(|&index| text.is_char_boundary(index))
-        .unwrap_or(0);
+/// The last space before the byte index `cap`, or `cap` itself on one
+/// unbroken run.
+fn split_point(text: &str, cap: usize) -> usize {
     match text[..cap].rfind(' ') {
         Some(space) if space > 0 => space,
         _no_space => cap,
@@ -92,7 +91,31 @@ mod tests {
     fn multibyte_text_splits_on_character_boundaries() {
         let long = "wörd ".repeat(120);
         for chunk in chunks(&long) {
-            assert!(chunk.len() <= MAX_CHUNK_CHARS + 2);
+            assert!(chunk.chars().count() <= MAX_CHUNK_CHARS);
         }
+    }
+
+    #[test]
+    fn the_cap_counts_characters_not_bytes() {
+        for character in ["é", "語"] {
+            let full = character.repeat(MAX_CHUNK_CHARS);
+            assert_eq!(chunks(&full), vec![full.clone()]);
+            let over = format!("{full}{character}");
+            assert_eq!(chunks(&over), vec![full, character.to_owned()]);
+        }
+
+        let long = format!("{}.", "word ".repeat(40).trim_end());
+        let short = format!("yyyy{}.", "ab cd ".repeat(16).trim_end());
+        let pair = format!("{long} {short}");
+        assert_eq!(
+            long.chars().count() + short.chars().count(),
+            MAX_CHUNK_CHARS
+        );
+        assert_eq!(chunks(&pair), vec![long, short], "the joining space counts");
+
+        let offset = format!("a{}", "語".repeat(MAX_CHUNK_CHARS));
+        let split = chunks(&offset);
+        assert_eq!(split[0].chars().count(), MAX_CHUNK_CHARS);
+        assert_eq!(split[1], "語");
     }
 }
