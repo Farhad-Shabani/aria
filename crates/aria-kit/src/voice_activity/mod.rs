@@ -1,16 +1,23 @@
 //! Voice-activity inference over canonical audio frames: which stretches
 //! carry a human voice rather than music, noise, or silence.
 
+mod endpointer;
 #[cfg(feature = "silero")]
 mod silero;
 
+pub use endpointer::{Boundary, Endpointer};
 #[cfg(feature = "silero")]
 pub use silero::{SileroVad, Speech};
 
 pub const SPEECH_THRESHOLD: f32 = 0.5;
 
+/// Frames to keep before a [`Boundary::Start`], so an utterance does not open
+/// mid-syllable. `StopOnSilence` keeps this many.
+pub const LEAD_IN_FRAMES: usize = 4;
+
 pub trait VoiceActivityDetector {
     /// The exact number of canonical samples `probability` accepts per call.
+    /// At least one.
     const FRAME_SAMPLES: usize;
 
     /// Clears state carried across recordings; stateless detectors keep the no-op.
