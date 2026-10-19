@@ -2336,53 +2336,31 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
-    struct LogWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for LogWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// Only this thread's logs. Capture threads log outside it.
-    struct CapturedLogs {
-        written: Arc<Mutex<Vec<u8>>>,
-        _subscriber: tracing::subscriber::DefaultGuard,
-        /// With one dispatch, the first thread to reach a callsite caches
-        /// its interest for all. A second keeps tracing asking each one.
-        _second: tracing::Dispatch,
-    }
-
-    impl CapturedLogs {
-        fn at(level: tracing::Level) -> Self {
-            let written = Arc::new(Mutex::new(Vec::new()));
-            let writer = LogWriter(Arc::clone(&written));
-            let subscriber = tracing_subscriber::fmt()
-                .without_time()
-                .with_ansi(false)
-                .with_max_level(level)
-                .with_writer(move || writer.clone())
-                .finish();
-            Self {
-                written,
-                _subscriber: tracing::subscriber::set_default(subscriber),
-                _second: tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()),
-            }
-        }
-
-        fn text(&self) -> String {
-            String::from_utf8(self.written.lock().unwrap().clone()).unwrap()
-        }
-    }
-
     #[test]
     fn cleanup_failure_retains_deterministic_text_and_reports_only_its_category() {
-        let logs = CapturedLogs::at(tracing::Level::WARN);
+        #[derive(Clone)]
+        struct LogWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let diagnostics = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogWriter(Arc::clone(&diagnostics));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        // With one dispatch, the first thread to reach a callsite caches its
+        // interest for all. A second keeps tracing asking each one.
+        let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
         let (_directory, capture) = capture();
         let log = Arc::new(Mutex::new(Vec::new()));
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
@@ -2419,7 +2397,7 @@ mod tests {
         let log = log.lock().unwrap();
         assert!(log.contains(&format!("completed:{}", result.text)));
         assert!(log.contains(&format!("deliver:{}", result.text)));
-        let diagnostics = logs.text();
+        let diagnostics = String::from_utf8(diagnostics.lock().unwrap().clone()).unwrap();
         assert_eq!(diagnostics.lines().count(), 1);
         assert!(diagnostics.contains("category=\"timeout\""));
         assert!(!diagnostics.contains("Alice"));
