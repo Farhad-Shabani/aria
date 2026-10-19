@@ -1390,29 +1390,10 @@ fn history_entry_json(entry: &aria::history::HistoryEntry) -> serde_json::Value 
         "id": entry.id,
         "created_at_ms": entry.created_at_ms,
         "application": entry.application.as_ref().map(|application| &application.name),
-        "status": history_status_key(entry.status),
-        "audio": history_audio_key(entry.audio),
+        "status": entry.status.as_str(),
+        "audio": entry.audio.as_str(),
         "text": entry.text,
     })
-}
-
-fn history_status_key(status: aria::history::HistoryStatus) -> &'static str {
-    use aria::history::HistoryStatus;
-    match status {
-        HistoryStatus::Success => "success",
-        HistoryStatus::TranscriptionFailed => "transcription_failed",
-        HistoryStatus::DeliveryFailed => "delivery_failed",
-        HistoryStatus::Recovered => "recovered",
-    }
-}
-
-fn history_audio_key(audio: aria::history::AudioAvailability) -> &'static str {
-    use aria::history::AudioAvailability;
-    match audio {
-        AudioAvailability::Available { .. } => "available",
-        AudioAvailability::Expired => "expired",
-        AudioAvailability::Unavailable => "unavailable",
-    }
 }
 
 fn history_audio_label(audio: aria::history::AudioAvailability) -> &'static str {
