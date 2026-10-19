@@ -8,6 +8,7 @@ use crate::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use crate::memory::Lexicon;
 use crate::microphone::Gate;
 use crate::preferences::{PreferenceStore, PreferenceStoreError};
+use crate::primitives::error_chain;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use crate::runtime::PreparedRuntimePaths;
 
@@ -177,7 +178,7 @@ pub(super) fn build(
         let pairing = super::relay::load_pairing(&path, &instance)
             .inspect_err(|error| {
                 tracing::error!(
-                    ?error,
+                    error = %error_chain(error),
                     path = %path.display(),
                     "relay is off: pairing material is unusable"
                 );

@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "AppDelegate")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -41,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try DaemonClient.signalStop()
         } catch {
-            NSLog("AppDelegate: daemon not stopped on quit — \(error)")
+            log.error("Daemon not stopped on quit: \(String(describing: error), privacy: .private)")
         }
     }
 
@@ -102,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 defaults.set(true, forKey: Self.setupOfferedKey)
                 self?.setup.request()
             } catch {
-                NSLog("AppDelegate: setup inspection failed — \(error)")
+                log.error("Setup inspection failed: \(String(describing: error), privacy: .private)")
             }
         }
     }

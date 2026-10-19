@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 import Synchronization
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupClient")
 
 enum SetupClientError: LocalizedError, Equatable {
     case cancelled
@@ -160,7 +163,7 @@ extension SetupState.Effects {
                 do {
                     try DaemonClient.signalStop()
                 } catch {
-                    NSLog("SetupState: daemon not stopped before apply — \(error)")
+                    log.error("Daemon not stopped before apply: \(String(describing: error), privacy: .private)")
                     return
                 }
                 await SetupClient.awaitDaemonExit()
@@ -171,7 +174,7 @@ extension SetupState.Effects {
                     // agent-load wait inside `start`.
                     try await Task { try await DaemonClient().start() }.value
                 } catch {
-                    NSLog("SetupState: daemon not restarted after apply — \(error)")
+                    log.error("Daemon not restarted after apply: \(String(describing: error), privacy: .private)")
                 }
             },
             hotkeyArmed: { await HealthClient.serving(HealthClient.hotkeyService) },

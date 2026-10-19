@@ -592,7 +592,16 @@ fn live_daemon(
             return Ok(None);
         }
     };
-    Ok(DaemonSession::connect_at(&paths).ok())
+    match DaemonSession::connect_at(&paths) {
+        Ok(session) => Ok(Some(session)),
+        Err(error) => {
+            prompts.note(&format!(
+                "Skipping the voice steps: {}",
+                error_chain(&error)
+            ))?;
+            Ok(None)
+        }
+    }
 }
 
 /// Asks for a voice and records it through the daemon that was just
@@ -603,8 +612,15 @@ fn enroll_voice(
     session: &DaemonSession,
 ) -> Result<Enrolled, SetupError> {
     // A rerun must not nag someone who already has a voice stored.
-    if !matches!(session.list_speakers().as_deref(), Ok([])) {
-        return Ok(Enrolled::NotOffered);
+    match session.list_speakers().as_deref() {
+        Ok([]) => {}
+        Ok(_) => return Ok(Enrolled::NotOffered),
+        Err(error) => {
+            return Ok(Enrolled::Failed(format!(
+                "could not list the enrolled voices: {}",
+                error_chain(error)
+            )));
+        }
     }
 
     prompts.heading("Your voice")?;
@@ -661,8 +677,8 @@ fn try_it_out(
     };
     prompts.note(&format!("heard: {heard}"))?;
 
-    let spoke = SpeechText::new(SPOKEN_REPLY)
-        .ok()
+    let reply = SpeechText::new(SPOKEN_REPLY)
+        .map_err(|error| error_chain(&error))
         .and_then(|text| {
             session
                 .speak(SpeechRequest {
@@ -670,9 +686,15 @@ fn try_it_out(
                     voice: None,
                     rate: None,
                 })
-                .ok()
-        })
-        .is_some();
+                .map_err(|error| error_chain(&error))
+        });
+    let spoke = match reply {
+        Ok(_) => true,
+        Err(reason) => {
+            prompts.note(&format!("The voice did not play: {reason}"))?;
+            false
+        }
+    };
     Ok(TryOut::Done { heard, spoke })
 }
 

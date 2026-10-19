@@ -4,6 +4,7 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 use crate::preferences::{PreferencePatch, PreferenceStoreError};
+use crate::primitives::error_chain;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::operation::CallError;
@@ -90,7 +91,7 @@ fn failure(operation: &'static str, error: PreferencesCallError) -> RpcFailure {
 pub(super) fn store_error(operation: &'static str, error: PreferenceStoreError) -> RpcFailure {
     let durability_unconfirmed =
         matches!(error, PreferenceStoreError::DurabilityUnconfirmed { .. });
-    tracing::error!(operation, error = ?error, "preference store operation failed");
+    tracing::error!(operation, error = %error_chain(&error), "preference store operation failed");
     if durability_unconfirmed {
         RpcFailure::new(
             RpcErrorCode::DurabilityUnconfirmed,

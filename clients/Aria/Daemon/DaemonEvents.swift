@@ -1,6 +1,9 @@
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonEvents")
 
 /// Subscribes to the daemon's event stream over its Unix socket.
 ///
@@ -54,6 +57,8 @@ final class DaemonEvents {
     private static let retryDelay = Duration.seconds(2)
 
     private var task: Task<Void, Never>?
+    /// Every retry while the daemon is down fails the same way.
+    private var lastFailure: String?
 
     func start() {
         guard task == nil else { return }
@@ -99,6 +104,7 @@ final class DaemonEvents {
             try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
                 let events = Aria_Daemon_V1_EventsService.Client(wrapping: client)
                 try await events.subscribe(request: ClientRequest(message: .init())) { response in
+                    await MainActor.run { self.lastFailure = nil }
                     for try await event in response.messages {
                         switch event.payload {
                         case .dictation(let dictation):
@@ -125,7 +131,11 @@ final class DaemonEvents {
                 }
             }
         } catch {
-            NSLog("DaemonEvents: subscription ended — \(error)")
+            let failure = String(describing: error)
+            if failure != lastFailure {
+                log.notice("Subscription ended: \(failure, privacy: .private)")
+            }
+            lastFailure = failure
         }
     }
 }

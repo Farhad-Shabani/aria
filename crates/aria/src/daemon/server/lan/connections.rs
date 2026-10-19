@@ -1,4 +1,5 @@
 use std::io;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -17,18 +18,33 @@ pub(super) fn admitted(
     limit: usize,
 ) -> impl Stream<Item = io::Result<Admitted>> {
     let open = Arc::new(Semaphore::new(limit));
+    // EMFILE repeats on every poll until a descriptor frees up.
+    let mut failing = false;
     TcpListenerStream::new(listener).filter_map(move |accepted| match accepted {
-        Err(error) => Some(Err(error)),
-        Ok(stream) => match Arc::clone(&open).try_acquire_owned() {
-            Ok(slot) => Some(Ok(Admitted {
-                stream,
-                _slot: slot,
-            })),
-            Err(_full) => {
-                tracing::warn!(limit, "closing a LAN connection past the limit");
-                None
+        Err(error) => {
+            if !failing {
+                tracing::warn!(%error, "failed to accept a LAN connection");
             }
-        },
+            failing = true;
+            Some(Err(error))
+        }
+        Ok(stream) => {
+            failing = false;
+            match Arc::clone(&open).try_acquire_owned() {
+                Ok(slot) => Some(Ok(Admitted {
+                    stream,
+                    _slot: slot,
+                })),
+                Err(_full) => {
+                    tracing::warn!(
+                        limit,
+                        peer = stream.peer_addr().ok().map(tracing::field::display),
+                        "closing a LAN connection past the limit"
+                    );
+                    None
+                }
+            }
+        }
     })
 }
 
@@ -36,6 +52,12 @@ pub(super) fn admitted(
 pub(super) struct Admitted {
     stream: TcpStream,
     _slot: OwnedSemaphorePermit,
+}
+
+impl Admitted {
+    pub(super) fn peer(&self) -> Option<SocketAddr> {
+        self.stream.peer_addr().ok()
+    }
 }
 
 impl Connected for Admitted {

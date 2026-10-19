@@ -26,9 +26,8 @@ pub(super) struct Focus {
 }
 
 /// The caret of `process`'s focused field, with unknown surroundings when the
-/// field hides them, is secure, or answers too slowly. Also hands back the
-/// field, when the read reached it.
-pub(super) fn read(process: u32) -> (Caret, Option<Focus>) {
+/// field hides them, is secure, or answers too slowly.
+pub(super) fn read(process: u32) -> (Caret, Result<Focus, &'static str>) {
     let deadline = Instant::now() + READ_BUDGET;
     let focus = read_focus(process, deadline);
     let caret = focus
@@ -39,7 +38,7 @@ pub(super) fn read(process: u32) -> (Caret, Option<Focus>) {
             tracing::debug!(reason, "caret context unknown");
             Caret::default()
         });
-    (caret, focus.ok())
+    (caret, focus)
 }
 
 pub(super) fn read_focus(process: u32, deadline: Instant) -> Result<Focus, &'static str> {

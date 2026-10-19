@@ -207,7 +207,10 @@ impl Drop for ChildProcess {
         if (self.child.is_some() || self.owns_process_group)
             && let Err(error) = self.terminate_inner()
         {
-            tracing::error!(?error, "failed to clean up child process before drop");
+            tracing::error!(
+                error = %crate::error_chain(&error),
+                "failed to clean up child process before drop"
+            );
         }
     }
 }

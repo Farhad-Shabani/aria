@@ -26,10 +26,10 @@ use cli::{INTERRUPTED, Interrupt};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
-// The phonemizer logs each word it cannot read. Every dependency's log lines
-// land in the daemon log, so the ones that see personal content are silenced.
+// Silences dependencies that log personal text, and rustls, which any LAN host
+// can make warn.
 const DEFAULT_LOG_FILTER: &str =
-    "info,ort=warn,whisper_rs=warn,misaki_rs=off,espeak_rs=off,language_tokenizer=off";
+    "info,ort=warn,whisper_rs=warn,rustls=error,misaki_rs=off,language_tokenizer=off";
 
 #[derive(Parser)]
 #[command(name = "aria", version, about = "Aria local voice assistant")]
@@ -1539,8 +1539,6 @@ struct AskArgs {
 fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     let paths = PreparedRuntimePaths::for_current_user()
         .context("failed to prepare daemon runtime paths")?;
-    init_daemon_logging(paths.log_path())?;
-
     let session = Arc::new(DaemonSession::connect_at(&paths)?);
     if let Some(ticket) = args.cancel {
         if session.cancel(ticket)? {
@@ -1837,18 +1835,19 @@ fn listen_stop(session: &DaemonSession) -> anyhow::Result<()> {
 
 fn init_daemon_logging(log_path: &Path) -> anyhow::Result<()> {
     let log = open_log_writer(log_path.to_path_buf()).context("failed to open the daemon log")?;
+    let overrides = std::env::var("RUST_LOG").ok();
     let file_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .compact()
         .with_ansi(false)
         .with_writer(log)
-        .with_filter(log_filter());
-    let terminal_layer = std::env::var_os("RUST_LOG").is_some().then(|| {
+        .with_filter(log_filter(overrides.as_deref()));
+    let terminal_layer = overrides.is_some().then(|| {
         tracing_subscriber::fmt::layer()
             .with_target(true)
             .compact()
             .with_writer(std::io::stderr)
-            .with_filter(log_filter())
+            .with_filter(log_filter(overrides.as_deref()))
     });
     let subscriber = tracing_subscriber::registry()
         .with(file_layer)
@@ -1862,16 +1861,26 @@ fn init_daemon_logging(log_path: &Path) -> anyhow::Result<()> {
         .init()
         .map_err(|error| anyhow::anyhow!("failed to initialize daemon logging: {error}"))?;
     aria_stt::whisper::install_logging_hooks();
+    // The filter reports a bad directive only on stderr, not in the daemon log.
+    if let Some(error) = overrides
+        .as_deref()
+        .and_then(|overrides| EnvFilter::builder().parse(overrides).err())
+    {
+        tracing::warn!(
+            error = %error_chain(&error),
+            "RUST_LOG has a directive that does not parse; it is skipped"
+        );
+    }
     Ok(())
 }
 
 /// The daemon's log filter, for the file and the terminal alike. `RUST_LOG`
 /// has to reach the file: the daemon runs detached, so its terminal goes
 /// nowhere and a filter the file ignores is a switch that does nothing.
-fn log_filter() -> EnvFilter {
-    match std::env::var("RUST_LOG") {
-        Ok(overrides) => EnvFilter::new(format!("{DEFAULT_LOG_FILTER},{overrides}")),
-        Err(_) => EnvFilter::new(DEFAULT_LOG_FILTER),
+fn log_filter(overrides: Option<&str>) -> EnvFilter {
+    match overrides {
+        Some(overrides) => EnvFilter::new(format!("{DEFAULT_LOG_FILTER},{overrides}")),
+        None => EnvFilter::new(DEFAULT_LOG_FILTER),
     }
 }
 

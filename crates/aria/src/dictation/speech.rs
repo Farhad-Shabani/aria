@@ -7,6 +7,7 @@ use aria_kit::audio::{canonical_duration, pcm16_from_f32};
 use aria_kit::voice_activity::{SPEECH_THRESHOLD, VoiceActivityDetector, VoiceActivityError};
 
 use crate::audio::{CaptureError, RecordingReader};
+use crate::primitives::error_chain;
 
 /// Speech a recording must hold before its words are trusted. Silent and
 /// noise-only recordings measure 0 ms; a lone short word, 290 ms or more.
@@ -87,6 +88,20 @@ impl<'a, V: VoiceActivityDetector> Scan<'a, V> {
         self.hear(RecordingReader::fill, u64::MAX);
     }
 
+    /// Scores the rest of the recording and says whether it held speech.
+    pub(super) fn held_speech(mut self) -> bool {
+        self.hear_rest();
+        let Some((tally, _)) = &self.listening else {
+            return true;
+        };
+        tracing::info!(
+            speech_ms = tally.speech().as_millis(),
+            min_speech_ms = MIN_SPEECH.as_millis(),
+            "too little speech in the recording; its words are dropped"
+        );
+        false
+    }
+
     fn hear(
         &mut self,
         fill: impl FnOnce(&mut RecordingReader) -> Result<(), CaptureError>,
@@ -100,9 +115,9 @@ impl<'a, V: VoiceActivityDetector> Scan<'a, V> {
         let heard = match filled {
             Ok(()) => match tally.feed(fork.span(fork.held_from()..end)) {
                 Ok(()) => tally.speech() >= MIN_SPEECH,
-                Err(error) => unjudged(error),
+                Err(error) => unjudged(&error),
             },
-            Err(error) => unjudged(error),
+            Err(error) => unjudged(&error),
         };
         fork.release_before(end);
         if heard {
@@ -113,8 +128,11 @@ impl<'a, V: VoiceActivityDetector> Scan<'a, V> {
 
 /// A recording that cannot be judged counts as speech: losing words is
 /// worse than letting a guess through.
-fn unjudged(error: impl std::fmt::Display) -> bool {
-    tracing::warn!(%error, "the recording could not be judged for speech; its words pass");
+fn unjudged(error: &dyn std::error::Error) -> bool {
+    tracing::warn!(
+        error = %error_chain(error),
+        "the recording could not be judged for speech; its words pass"
+    );
     true
 }
 

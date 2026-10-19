@@ -9,6 +9,7 @@ use aria_kit::voice_activity::{SileroVad, VoiceActivityDetector};
 
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
 use crate::delivery::{DeliveryOutcome, Placement};
+use crate::primitives::error_chain;
 use crate::speaker::{SegmentLabeler, SegmentReader, Verdict};
 use crate::transcription::{
     Language, Mode, Operation, Transcriber, Transcript, Transcription, TranscriptionError,
@@ -196,7 +197,7 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
-        if !self.holds_speech(recording) {
+        if !Scan::new(self.tally().as_mut(), recording).held_speech() {
             return Err(DictationError::NoSpeech);
         }
         let mut reader = self.reader();
@@ -216,13 +217,6 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
             .transcribe_with(heard, language, cancel)
             .and_then(|transcript| self.finalize(transcript, corrector, cancel))
             .map_err(DictationError::from)
-    }
-
-    fn holds_speech(&self, recording: &mut RecordingReader) -> bool {
-        let mut tally = self.tally();
-        let mut scan = Scan::new(tally.as_mut(), recording);
-        scan.hear_rest();
-        scan.heard()
     }
 }
 
@@ -403,7 +397,7 @@ where
             && !settings.own_voice_only;
         // Words finalized before the press held speech are the decoder
         // guessing at silence. The operation's transcript still carries them.
-        let mut guessed = false;
+        let mut guessed = 0_usize;
         let mut trusted = Vec::new();
         loop {
             let update = if previews {
@@ -416,7 +410,7 @@ where
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
             scan.hear_through(recording.held_to());
             match update {
-                Some(HeardUpdate::Finalized(_)) if !scan.heard() => guessed = true,
+                Some(HeardUpdate::Finalized(_)) if !scan.heard() => guessed += 1,
                 Some(HeardUpdate::Provisional(_)) if !scan.heard() => {}
                 Some(HeardUpdate::Finalized(heard)) => {
                     trusted.push(heard.segment.as_str().to_owned());
@@ -429,14 +423,17 @@ where
                 None => break,
             }
         }
-        scan.hear_rest();
-        if !scan.heard() {
+        if !scan.held_speech() {
             return Err(started(TranscriptionError::NoSpeech));
         }
         let transcript = operation
             .finish(recording)
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
-        let transcript = if guessed {
+        let transcript = if guessed > 0 {
+            tracing::debug!(
+                segments = guessed,
+                "segments decoded before speech was heard dropped"
+            );
             Transcript::new(trusted.join(" ")).map_err(started)?
         } else {
             transcript
@@ -557,17 +554,17 @@ impl<'a> Published<'a> {
             span: heard.span,
         });
         if let Err(error) = published {
-            let error = self.delivery_error(error);
-            if !self.streaming {
-                return Err(error);
-            }
-            let error = match error {
+            let error = match map_sink_error(error, self.control) {
                 // Text already landed, so typing stopped partway.
-                DictationError::DeliveryTargetChanged if !first => {
+                DictationError::DeliveryTargetChanged if self.streaming && !first => {
                     DictationError::DeliveryInterrupted
                 }
                 error => error,
             };
+            let error = log_delivery_error(self.started_at.elapsed(), error);
+            if !self.streaming {
+                return Err(error);
+            }
             // Stop listening, then drain without typing, so history keeps
             // everything said up to here.
             self.control.request_recording_stop();
@@ -619,11 +616,20 @@ impl<'a> Published<'a> {
         let completed = self.completion.publish(Some(&transcript), sinks);
         if let Some(error) = self.failure.take() {
             if let Err(error) = completed {
-                tracing::warn!(error = %error.into(), "completion not published after a failed segment");
+                let error: DictationError = error.into();
+                tracing::warn!(
+                    error = %error_chain(&error),
+                    "completion not published after a failed segment"
+                );
             }
             return Err(error);
         }
-        completed.map_err(|error| self.delivery_error(error))?;
+        completed.map_err(|error| {
+            log_delivery_error(
+                self.started_at.elapsed(),
+                map_sink_error(error, self.control),
+            )
+        })?;
         tracing::info!(
             stage = "delivery",
             status = "completed",
@@ -650,13 +656,6 @@ impl<'a> Published<'a> {
                 },
             });
         }
-    }
-
-    fn delivery_error(&self, error: impl Into<DictationError>) -> DictationError {
-        log_delivery_error(
-            self.started_at.elapsed(),
-            map_sink_error(error, self.control),
-        )
     }
 }
 
@@ -2337,28 +2336,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cleanup_failure_retains_deterministic_text_and_reports_only_its_category() {
-        #[derive(Clone)]
-        struct LogWriter(Arc<Mutex<Vec<u8>>>);
-        impl std::io::Write for LogWriter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
+    #[derive(Clone)]
+    struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Only this thread's logs. Capture threads log outside it.
+    struct CapturedLogs {
+        written: Arc<Mutex<Vec<u8>>>,
+        _subscriber: tracing::subscriber::DefaultGuard,
+        /// With one dispatch, the first thread to reach a callsite caches
+        /// its interest for all. A second keeps tracing asking each one.
+        _second: tracing::Dispatch,
+    }
+
+    impl CapturedLogs {
+        fn at(level: tracing::Level) -> Self {
+            let written = Arc::new(Mutex::new(Vec::new()));
+            let writer = LogWriter(Arc::clone(&written));
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_max_level(level)
+                .with_writer(move || writer.clone())
+                .finish();
+            Self {
+                written,
+                _subscriber: tracing::subscriber::set_default(subscriber),
+                _second: tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()),
             }
         }
-        let diagnostics = Arc::new(Mutex::new(Vec::new()));
-        let writer = LogWriter(Arc::clone(&diagnostics));
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(move || writer.clone())
-            .finish();
-        let _subscriber = tracing::subscriber::set_default(subscriber);
+
+        fn text(&self) -> String {
+            String::from_utf8(self.written.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    #[test]
+    fn cleanup_failure_retains_deterministic_text_and_reports_only_its_category() {
+        let logs = CapturedLogs::at(tracing::Level::WARN);
         let (_directory, capture) = capture();
         let log = Arc::new(Mutex::new(Vec::new()));
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
@@ -2395,7 +2419,7 @@ mod tests {
         let log = log.lock().unwrap();
         assert!(log.contains(&format!("completed:{}", result.text)));
         assert!(log.contains(&format!("deliver:{}", result.text)));
-        let diagnostics = String::from_utf8(diagnostics.lock().unwrap().clone()).unwrap();
+        let diagnostics = logs.text();
         assert_eq!(diagnostics.lines().count(), 1);
         assert!(diagnostics.contains("category=\"timeout\""));
         assert!(!diagnostics.contains("Alice"));

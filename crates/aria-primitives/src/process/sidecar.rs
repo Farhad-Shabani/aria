@@ -118,7 +118,11 @@ impl Sidecar {
     fn stop(&mut self) {
         self.stopped = true;
         if let Err(error) = self.process.terminate_in_place() {
-            tracing::error!(?error, sidecar = self.name, "failed to stop the sidecar");
+            tracing::error!(
+                error = %crate::error_chain(&error),
+                sidecar = self.name,
+                "failed to stop the sidecar"
+            );
         }
     }
 }
@@ -241,7 +245,7 @@ fn spawn_helper(name: String, body: impl FnOnce() + Send + 'static) {
         .spawn(body)
         .map(|_detached| ())
         .unwrap_or_else(|error| {
-            tracing::error!(?error, thread = name, "failed to start a sidecar thread");
+            tracing::error!(%error, thread = name, "failed to start a sidecar thread");
         });
 }
 

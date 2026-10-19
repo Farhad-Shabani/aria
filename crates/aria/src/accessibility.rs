@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use cidre::ax;
 
+use crate::primitives::error_chain;
 use crate::primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
 
 /// A hidden subcommand that exits with [`Trust::exit_code`].
@@ -36,20 +37,28 @@ impl Trust {
     }
 
     pub fn check_now() -> Self {
-        let mut command = match std::env::current_exe() {
-            Ok(exe) => Command::new(exe),
-            Err(error) => return fall_back_to_last_answer(&CheckError::Spawn(error)),
-        };
-        command.arg(CHECK_SUBCOMMAND);
-        let trust = match run_check(&mut command, CHECK_TIMEOUT) {
-            Ok(trust) => trust,
-            Err(error) => return fall_back_to_last_answer(&error),
-        };
-        *LAST_ANSWER.lock().expect("lock") = Some(Answer {
+        let started = Instant::now();
+        let checked = check_in_fresh_process();
+        tracing::debug!(
+            check_ms = started.elapsed().as_millis(),
+            "Accessibility grant checked"
+        );
+        let mut last = LAST_ANSWER.lock().expect("lock");
+        let previous = *last;
+        let trust = checked.unwrap_or_else(|error| fall_back_to_last_answer(&error, previous));
+        // Stamped on failure too, so `reuse_or_check` waits before retrying.
+        let answer = Answer {
             trust,
             checked_at: Instant::now(),
-        });
-        trust
+        };
+        if previous.map(|previous| previous.trust) != Some(answer.trust) {
+            tracing::info!(
+                trusted = answer.trust.is_trusted(),
+                "Accessibility trust changed"
+            );
+        }
+        *last = Some(answer);
+        answer.trust
     }
 
     pub fn reuse_or_check() -> Self {
@@ -98,11 +107,20 @@ enum CheckError {
     Exit(ExitStatus),
 }
 
+fn check_in_fresh_process() -> Result<Trust, CheckError> {
+    let exe = std::env::current_exe().map_err(CheckError::Spawn)?;
+    let mut command = Command::new(exe);
+    command.arg(CHECK_SUBCOMMAND);
+    run_check(&mut command, CHECK_TIMEOUT)
+}
+
 /// A binary mid-upgrade must not read as a revoked grant.
-fn fall_back_to_last_answer(error: &CheckError) -> Trust {
-    tracing::warn!(error = %crate::primitives::error_chain(error), "could not re-check the Accessibility grant");
-    let last = *LAST_ANSWER.lock().expect("lock");
-    last.map_or_else(Trust::in_process, |answer| answer.trust)
+fn fall_back_to_last_answer(error: &CheckError, previous: Option<Answer>) -> Trust {
+    tracing::warn!(
+        error = %error_chain(error),
+        "could not re-check the Accessibility grant"
+    );
+    previous.map_or_else(Trust::in_process, |previous| previous.trust)
 }
 
 fn run_check(command: &mut Command, timeout: Duration) -> Result<Trust, CheckError> {

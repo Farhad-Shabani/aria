@@ -32,6 +32,7 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
         .init();
+    aria_stt::whisper::install_logging_hooks();
     match Cli::parse() {
         Cli::Stt(cli) => stt::run(&cli),
         Cli::CompareStt(cli) => stt::compare(&cli),
