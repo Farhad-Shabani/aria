@@ -80,8 +80,8 @@ pub struct Whisper {
     /// The first special token id. Segment text leaves special tokens out,
     /// so the word timings must too.
     eot: WhisperTokenId,
-    /// An English-only `.en` model decodes as English whatever language the
-    /// request names, so that request is refused instead of ignored.
+    /// A `.en` model decodes English whatever the request names, so other
+    /// languages are refused rather than ignored.
     multilingual: bool,
 }
 

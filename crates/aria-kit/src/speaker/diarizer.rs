@@ -170,7 +170,6 @@ fn enrolled_name<'a>(enrolled: &'a [Profile], embedding: &[f32]) -> Option<&'a S
     enrolled_match(enrolled, embedding).map(|at| &enrolled[at].name)
 }
 
-/// Where in `enrolled` the profile this embedding claims sits.
 fn enrolled_match(enrolled: &[Profile], embedding: &[f32]) -> Option<usize> {
     closest(
         enrolled

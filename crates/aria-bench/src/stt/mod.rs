@@ -427,7 +427,7 @@ fn stepped_replay(
     gate: mpsc::Receiver<()>,
 ) -> Result<RecordingReader, ReplayError> {
     let clip = read_wav(audio)?;
-    // The WAV replay's length limit, applied before resampling pays for it.
+    // The WAV replay's limit, checked before resampling an oversized file.
     if clip.duration() > MAXIMUM_UTTERANCE {
         return Err(WavError::TooLong {
             path: audio.to_path_buf(),

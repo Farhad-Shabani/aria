@@ -97,8 +97,7 @@ impl Engine for ParakeetMlx {
 }
 
 impl Transcriber for ParakeetMlx {
-    /// Accepts any language: the engine takes no language input, so a
-    /// requested language goes unused.
+    /// Accepts any language: the engine takes no language input.
     fn validate_language(
         &self,
         _language: &Language,

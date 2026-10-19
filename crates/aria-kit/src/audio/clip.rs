@@ -4,10 +4,9 @@ use super::{CANONICAL_SAMPLE_RATE, duration_at};
 #[cfg(not(target_family = "wasm"))]
 use super::{ResampleError, Resampler};
 
-/// The lowest rate any speech codec or capture device produces.
+// Telephone audio up to studio hardware. The resampler sizes its buffers by
+// the rate, so a rate read from a file header needs bounds.
 const MIN_SAMPLE_RATE: u32 = 8_000;
-/// The highest rate studio hardware produces. The resampler sizes its
-/// buffers by the rate, so a rate taken from a file header needs a ceiling.
 const MAX_SAMPLE_RATE: u32 = 384_000;
 
 /// Mono samples and the rate they were taken at.
@@ -28,7 +27,7 @@ impl Clip {
         })
     }
 
-    /// Samples already at the canonical 16 kHz.
+    /// Labels samples as 16 kHz. It does not resample them.
     pub fn canonical(samples: Vec<f32>) -> Self {
         Self {
             sample_rate: CANONICAL_SAMPLE_RATE,

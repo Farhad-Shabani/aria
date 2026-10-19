@@ -73,8 +73,7 @@ pub struct Config {
 
 pub struct Kokoro {
     /// The session mutates as it runs and misaki tags parts of speech
-    /// statefully, so they are shared one chunk at a time. A session's own
-    /// loop keeps its chunks in order.
+    /// statefully, so they are shared one chunk at a time.
     synth: Mutex<Synth>,
     voices: VoiceStyles,
 }
