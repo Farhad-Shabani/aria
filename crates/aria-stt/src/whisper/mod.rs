@@ -41,8 +41,8 @@ use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
-    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, validate_model_file,
-    word_timings,
+    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
+    validate_model_file, word_timings,
 };
 
 /// Names this engine under `transcription.backend` and in its own errors.
@@ -53,9 +53,12 @@ const BACKEND: &str = NAME;
 const DECODE_THREADS_FALLBACK: std::ffi::c_int = 4;
 /// whisper.cpp reports token times in centiseconds.
 const TOKEN_TIME_UNITS_PER_SECOND: f32 = 100.0;
-/// Above this no-speech probability, a segment is noise the model put words
-/// to. Whisper's own default.
+/// Whisper's own silence rule: a segment is noise the model put words to only
+/// when the no-speech probability is high and the words are also unlikely.
+/// whisper.cpp copies the window's no-speech probability onto every segment
+/// it decodes there, so the probability alone drops clear speech.
 const NO_SPEECH_THRESHOLD: f32 = 0.6;
+const LOG_PROBABILITY_THRESHOLD: f32 = -1.0;
 /// One loudness frame: 512 samples, about 32 ms.
 const LOUDNESS_FRAME_SAMPLES: usize = 512;
 /// Silence cutoff near -43 dBFS, used to reduce hallucinations on quiet audio.
@@ -65,6 +68,10 @@ const SILENCE_FLOOR: f32 = 5e-5;
 /// keeps the buffer inside Whisper's thirty-second window.
 pub const CADENCE: Cadence = Cadence::from_millis(1000, 20000);
 
+/// On macOS, drop every `Whisper` before the process exits. ggml's Metal
+/// teardown aborts the process when a model is still loaded, so an engine in
+/// a `static` or on a thread still running at exit turns a clean exit into
+/// SIGABRT.
 pub struct Whisper {
     /// One resident decoding state: per-request states fail to encode on
     /// Metal after the first is freed, and re-init Metal buffers each run.
@@ -73,6 +80,9 @@ pub struct Whisper {
     /// The first special token id. Segment text leaves special tokens out,
     /// so the word timings must too.
     eot: WhisperTokenId,
+    /// A `.en` model decodes English whatever the request names, so other
+    /// languages are refused rather than ignored.
+    multilingual: bool,
 }
 
 #[derive(Clone)]
@@ -118,6 +128,7 @@ impl Engine for Whisper {
         Ok(Self {
             state: Mutex::new(state),
             eot: context.token_eot(),
+            multilingual: context.is_multilingual(),
         })
     }
 }
@@ -129,10 +140,10 @@ impl StreamingEngine for Whisper {
 impl Transcriber for Whisper {
     fn validate_language(
         &self,
-        _language: &Language,
+        language: &Language,
         _cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        Ok(())
+        supported_language(self.multilingual, language)
     }
 
     fn transcribe_with(
@@ -161,6 +172,13 @@ fn load_failed(model: &Path, source: whisper_rs::WhisperError) -> TranscriptionE
         model: model.display().to_string(),
         source: BackendError::engine(source),
     }
+}
+
+fn supported_language(multilingual: bool, language: &Language) -> Result<(), TranscriptionError> {
+    if multilingual {
+        return Ok(());
+    }
+    english_only(BACKEND, language)
 }
 
 fn inference_failed(source: whisper_rs::WhisperError) -> TranscriptionError {
@@ -231,19 +249,13 @@ fn collect_transcript(
     let mut text = String::new();
     let mut words = Vec::new();
     for segment in state.as_iter() {
-        if segment.no_speech_probability() > NO_SPEECH_THRESHOLD {
-            continue;
-        }
         let spoken = segment.to_str_lossy().map_err(inference_failed)?;
         let spoken = spoken.trim();
         if spoken.is_empty() {
             continue;
         }
-        if !text.is_empty() {
-            text.push(' ');
-        }
-        text.push_str(spoken);
         let mut tokens = Vec::new();
+        let mut log_probabilities = Vec::new();
         for index in 0..segment.n_tokens() {
             let Some(token) = segment.get_token(index) else {
                 continue;
@@ -256,13 +268,28 @@ fn collect_transcript(
                 start: timed.t0 as f32 / TOKEN_TIME_UNITS_PER_SECOND,
                 end: timed.t1 as f32 / TOKEN_TIME_UNITS_PER_SECOND,
             };
+            log_probabilities.push(timed.plog);
             tokens.push((token.to_str_lossy().map_err(inference_failed)?, timing));
         }
+        if is_silence(segment.no_speech_probability(), &log_probabilities) {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(spoken);
         words.extend(word_timings(
             tokens.iter().map(|(text, timing)| (text.as_ref(), *timing)),
         ));
     }
     Ok(Hypothesis::with_words(text, words))
+}
+
+fn is_silence(no_speech_probability: f32, log_probabilities: &[f32]) -> bool {
+    let unlikely_words = log_probabilities.is_empty()
+        || (log_probabilities.iter().sum::<f32>() / log_probabilities.len() as f32)
+            < LOG_PROBABILITY_THRESHOLD;
+    no_speech_probability > NO_SPEECH_THRESHOLD && unlikely_words
 }
 
 /// Runs `inference` while a watcher mirrors `cancel` into the flag
@@ -292,6 +319,8 @@ fn run_with_cancellation<T: Send>(
 
 #[cfg(test)]
 mod load_engine_tests {
+    use aria_kit::transcription::LanguageCode;
+
     use super::*;
 
     #[test]
@@ -302,6 +331,35 @@ mod load_engine_tests {
             "room noise stays under the floor"
         );
         assert!(audible(&[0.03; 16_000]), "a quiet word rises above it");
+    }
+
+    #[test]
+    fn a_segment_is_silence_only_when_its_words_are_also_unlikely() {
+        let confident = [-0.1, -0.3, -0.2];
+        let doubtful = [-1.5, -2.0, -1.2];
+
+        assert!(
+            !is_silence(0.72, &confident),
+            "a window-wide no-speech score must not drop clear speech"
+        );
+        assert!(is_silence(0.72, &doubtful));
+        assert!(!is_silence(0.2, &doubtful));
+        assert!(is_silence(0.72, &[]));
+    }
+
+    #[test]
+    fn an_english_only_model_refuses_other_languages_and_a_multilingual_one_takes_any() {
+        let french = Language::Specific(LanguageCode::new("fr").expect("fr is a valid code"));
+        let english = Language::Specific(LanguageCode::english());
+
+        assert!(supported_language(true, &french).is_ok());
+        assert!(supported_language(false, &english).is_ok());
+        assert!(supported_language(false, &Language::Automatic).is_ok());
+        assert!(matches!(
+            supported_language(false, &french),
+            Err(TranscriptionError::UnsupportedLanguage { backend, language })
+                if backend == BACKEND && language == "fr"
+        ));
     }
 
     fn name_of<E: Engine>() -> &'static str {

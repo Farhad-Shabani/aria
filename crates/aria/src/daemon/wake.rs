@@ -18,6 +18,7 @@ use crate::dictation::{
     DeliveryMode, DictationError, DictationOutcome, DictationRequest, StopMode,
 };
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
+use crate::primitives::error_chain;
 
 use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;
@@ -117,10 +118,11 @@ impl WakeTrigger {
         while !shutdown.is_cancelled() {
             match self.monitor.wait_timeout(MONITOR_POLL_INTERVAL) {
                 Ok(Some(WakeWordEvent::Detected)) => self.activate(),
-                Ok(Some(WakeWordEvent::Failed)) => {
+                Ok(Some(WakeWordEvent::Failed(failure))) => {
                     tracing::error!(
                         trigger = "wake_word",
-                        "wake-word monitoring stopped after detector failure"
+                        error = %error_chain(&failure),
+                        "wake-word monitoring stopped"
                     );
                     return WakeExit::Failed;
                 }

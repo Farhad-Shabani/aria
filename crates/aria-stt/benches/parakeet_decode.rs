@@ -35,7 +35,9 @@ fn main() -> anyhow::Result<()> {
     };
 
     let samples = read_wav(&inputs.wav)
-        .with_context(|| format!("failed to read {}", inputs.wav.display()))?;
+        .with_context(|| format!("failed to read {}", inputs.wav.display()))?
+        .into_canonical()?
+        .into_samples();
     let available = samples.len() / CANONICAL_SAMPLE_RATE as usize;
     println!("model {}", inputs.model.display());
     println!("audio {} ({available}s)", inputs.wav.display());

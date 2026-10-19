@@ -26,8 +26,8 @@ use tempfile::TempDir;
 use aria::primitives::error_chain;
 use aria::transcription::{Language, LanguageCode, TranscriptionError};
 use aria_kit::audio::{
-    AudioCapture, CaptureError, Recording, RecordingMode, RecordingReader, ReplayPace, StopSignal,
-    WavError, WavReplayCapture, canonical_samples, read_wav,
+    AudioCapture, CaptureError, Recording, RecordingMode, RecordingReader, ReplayPace,
+    ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
 };
 
 pub use backends::{BackendRequest, SelectionError, Skipped};
@@ -408,9 +408,9 @@ fn wav_replay(
     utterance: &Utterance,
     spool_dir: &Path,
     pace: ReplayPace,
-) -> Result<RecordingReader, CaptureError> {
-    WavReplayCapture::new(spool_dir, MAXIMUM_UTTERANCE, &utterance.audio, pace)
-        .and_then(|replay| replay.start(RecordingMode::UntilStopped, StopSignal::never()))
+) -> Result<RecordingReader, ReplayError> {
+    let replay = WavReplayCapture::new(spool_dir, MAXIMUM_UTTERANCE, &utterance.audio, pace)?;
+    Ok(replay.start(RecordingMode::UntilStopped, StopSignal::never())?)
 }
 
 /// A recording that releases one stride of audio per finished decode: the
@@ -425,16 +425,17 @@ fn stepped_replay(
     audio: &Path,
     stride: usize,
     gate: mpsc::Receiver<()>,
-) -> Result<RecordingReader, CaptureError> {
-    let samples = read_wav(audio)?;
-    // The WAV replay's length limit, applied here too.
-    if samples.len() as u64 > canonical_samples(MAXIMUM_UTTERANCE) {
+) -> Result<RecordingReader, ReplayError> {
+    let clip = read_wav(audio)?;
+    // The WAV replay's limit, checked before resampling an oversized file.
+    if clip.duration() > MAXIMUM_UTTERANCE {
         return Err(WavError::TooLong {
             path: audio.to_path_buf(),
             maximum_duration: MAXIMUM_UTTERANCE,
         }
         .into());
     }
+    let samples = clip.into_canonical()?.into_samples();
 
     let (recording, mut push) = Recording::open();
     std::thread::spawn(move || {
@@ -533,6 +534,16 @@ fn reference_words(corpus: &Corpus) -> usize {
         .iter()
         .map(|utterance| normalize::words(&utterance.reference).len())
         .sum()
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ReplayError {
+    #[error(transparent)]
+    Capture(#[from] CaptureError),
+    #[error(transparent)]
+    Wav(#[from] WavError),
+    #[error(transparent)]
+    Resample(#[from] ResampleError),
 }
 
 #[derive(Debug, thiserror::Error)]

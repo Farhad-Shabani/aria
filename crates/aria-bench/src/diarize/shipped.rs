@@ -12,7 +12,7 @@ use std::path::Path;
 
 use aria::speaker::{Grouping, VoiceTrack, Voices, voice_track};
 use aria_kit::audio::RecordingReader;
-use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
+use aria_speaker::wespeaker::Config as SpeakerConfig;
 
 use crate::diarize::journal::Journal;
 use crate::diarize::{BenchError, Embedded, Labeled, SAMPLE_RATE, Turn};
@@ -106,9 +106,7 @@ fn observe(run: Run<'_>) -> Result<VoiceTrack, BenchError> {
     let samples = crate::diarize::sibling::read(run.wav)?;
 
     let model = run.speaker.model.clone();
-    let Some(diarizer) = aria::speaker::open::<WeSpeaker>(run.speaker, Vec::new()) else {
-        return Err(BenchError::NoSpeakerModel);
-    };
+    let diarizer = crate::diarize::diarizer(run.speaker)?;
     let Some(mut voices) = voice_track(run.segmentation, diarizer, run.grouping) else {
         return Err(BenchError::NoSpeakerModel);
     };

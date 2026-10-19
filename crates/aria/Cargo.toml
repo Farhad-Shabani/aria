@@ -74,6 +74,7 @@ arboard = { version = "3.6", default-features = false, features = [ "wayland-dat
 aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+aria-stt              = { workspace = true, features = [ "parakeet-gpu" ] }
 aria-tts              = { workspace = true, features = [ "qwen-accelerate" ] }
 cidre                 = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
 rtrb                  = "0.4"

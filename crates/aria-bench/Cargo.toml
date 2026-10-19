@@ -35,7 +35,7 @@ regex                 = "1"
 unicode-normalization = "0.1"
 unicode-properties    = { version = "0.1", features = [ "general-category" ] }
 
-# Match the app's Qwen acceleration on macOS.
+# Match the app's acceleration on macOS.
 [target.'cfg(target_os = "macos")'.dependencies]
 aria-tts = { workspace = true, features = [ "qwen-accelerate" ] }
 

@@ -9,17 +9,21 @@ readme.workspace     = true
 keywords             = [ "speech-to-text", "stt", "asr", "whisper", "parakeet" ]
 
 [package.metadata.docs.rs]
-features = [ "microphone", "moonshine", "nemotron", "parakeet", "parakeet-mlx", "whisper", "whisper-candle" ]
+features = [ "microphone", "moonshine", "nemotron", "parakeet", "parakeet-gpu", "parakeet-mlx", "whisper", "whisper-candle" ]
 
 [lints]
 workspace = true
 
 [features]
-default        = [  ]
-microphone     = [ "aria-kit/microphone" ]
-moonshine      = [ "dep:ort", "dep:serde", "dep:serde_json", "dep:tracing" ]
-nemotron       = [ "dep:parakeet-rs" ]
-parakeet       = [ "dep:parakeet-rs" ]
+default    = [  ]
+microphone = [ "aria-kit/microphone" ]
+moonshine  = [ "dep:ort", "dep:serde", "dep:serde_json", "dep:tracing" ]
+nemotron   = [ "dep:parakeet-rs" ]
+parakeet   = [ "dep:parakeet-rs" ]
+# macOS only. ONNX Runtime's WebGPU provider links libwebgpu_dawn.dylib, which
+# a binary then loads at launch: it must ship beside the executable and be
+# found through an rpath such as `@executable_path`.
+parakeet-gpu   = [ "parakeet", "parakeet-rs/webgpu" ]
 parakeet-mlx   = [ "dep:serde", "dep:serde_json", "dep:tracing" ]
 whisper        = [ "dep:whisper-rs" ]
 whisper-candle = [ "dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
@@ -42,8 +46,7 @@ tracing     = { workspace = true, optional = true }
 whisper-rs  = { version = "0.16", features = [ "tracing_backend" ], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-parakeet-rs = { version = "0.3.7", features = [ "webgpu" ], optional = true }
-whisper-rs  = { version = "0.16", features = [ "metal", "tracing_backend" ], optional = true }
+whisper-rs = { version = "0.16", features = [ "metal", "tracing_backend" ], optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 anyhow       = { workspace = true }

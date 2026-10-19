@@ -30,11 +30,15 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Duration;
 
+use aria::speaker::Diarizer;
 use aria::transcription::{StreamingEngine, Transcription, TranscriptionError};
-use aria_kit::audio::{CANONICAL_SAMPLE_RATE, CaptureError, ReplayPace, ResampleError, WavError};
-use aria_kit::speaker::SpeakerError;
+use aria_kit::audio::{
+    CANONICAL_SAMPLE_RATE, CaptureError, ClipError, ReplayPace, ResampleError, WavError,
+};
+use aria_kit::speaker::{Engine as _, SpeakerError};
 use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
-use aria_speaker::wespeaker::Config as SpeakerConfig;
+use aria_kit::voice_activity::VoiceActivityError;
+use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 
 /// Longer than any scenario's realtime replay.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
@@ -142,15 +146,16 @@ pub fn label_recording<Stt: StreamingEngine>(
     })
 }
 
+fn diarizer(speaker: SpeakerConfig) -> Result<Diarizer<WeSpeaker>, BenchError> {
+    let embedder = WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)?;
+    Ok(Diarizer::new(embedder, Vec::new()))
+}
+
 /// The recording's speech, as the voice detector hears it rather than as the
 /// transcriber chopped it.
 fn speech_regions(wav: &Path) -> Result<Vec<Range<u64>>, BenchError> {
     let samples = sibling::read(wav)?;
-    let Some(mut vad) = aria::speaker::speech_gate() else {
-        return Ok(Vec::new());
-    };
-    Ok(vad
-        .speech_regions(&samples)
+    Ok(sibling::speech(&samples)?
         .into_iter()
         .map(|region| region.start as u64..region.end as u64)
         .collect())
@@ -365,6 +370,13 @@ pub enum BenchError {
         source: aria_kit::synthesis::SynthesisError,
     },
 
+    #[error("the {scenario} scenario's synthesizer reported an unusable sample rate")]
+    SampleRate {
+        scenario: &'static str,
+        #[source]
+        source: ClipError,
+    },
+
     #[error("failed to resample synthesized speech to 16 kHz")]
     Resample(#[from] ResampleError),
 
@@ -379,6 +391,9 @@ pub enum BenchError {
     // rather than the graceful degradation a listen session would take.
     #[error("the speaker model did not load, so the run would measure nothing")]
     SpeakerModel(#[source] SpeakerError),
+
+    #[error("the speech gate failed, so the run would measure nothing")]
+    SpeechGate(#[source] VoiceActivityError),
 
     // Same failure, reached where no engine error was produced to carry.
     #[error("no speaker model is installed, so the run would measure nothing")]

@@ -73,7 +73,7 @@ pub struct Config {
 
 pub struct Kokoro {
     /// The session mutates as it runs and misaki tags parts of speech
-    /// statefully, so synthesis is one utterance at a time by construction.
+    /// statefully, so they are shared one chunk at a time.
     synth: Mutex<Synth>,
     voices: VoiceStyles,
 }
@@ -155,16 +155,20 @@ impl Synthesizer for Kokoro {
             return Err(unsupported());
         }
 
-        let mut synth = self
-            .synth
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for piece in chunks(text.as_str()) {
             if cancel.is_cancelled() {
                 out.fail(SynthesisError::Cancelled);
                 return Err(SynthesisError::Cancelled);
             }
-            let samples = match synth.synthesize(&piece, voice_name, rate, &self.voices) {
+            // Held for one chunk's inference only: the write below blocks
+            // until a slow listener catches up, and other utterances wait on
+            // this lock.
+            let synthesized = self
+                .synth
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .synthesize(&piece, voice_name, rate, &self.voices);
+            let samples = match synthesized {
                 Ok(samples) => samples,
                 Err(error) => {
                     // The listener learns the cause rather than a bare

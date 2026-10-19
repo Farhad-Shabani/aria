@@ -1,12 +1,13 @@
-//! The one WAV format this crate reads and writes: 16 kHz mono 16-bit PCM.
+//! WAV files. Recordings read only the canonical 16 kHz mono 16-bit format;
+//! clips keep the file's own rate on read and write.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::recording::RecordedAudio;
 use super::{
-    CANONICAL_SAMPLE_RATE, CHANNELS, CaptureError, MAX_RECORDING_DURATION, RecordingReader,
-    canonical_samples, f32_from_pcm16, pcm16_from_f32,
+    CANONICAL_SAMPLE_RATE, CHANNELS, CaptureError, Clip, ClipError, MAX_RECORDING_DURATION,
+    RecordingReader, canonical_samples, pcm16_from_f32,
 };
 
 const BITS_PER_SAMPLE: u16 = 16;
@@ -16,9 +17,13 @@ type Result<T> = std::result::Result<T, WavError>;
 pub(super) type WavFileReader = hound::WavReader<std::io::BufReader<std::fs::File>>;
 
 pub(super) fn wav_spec() -> hound::WavSpec {
+    mono_spec(CANONICAL_SAMPLE_RATE)
+}
+
+fn mono_spec(sample_rate: u32) -> hound::WavSpec {
     hound::WavSpec {
         channels: CHANNELS,
-        sample_rate: CANONICAL_SAMPLE_RATE,
+        sample_rate,
         bits_per_sample: BITS_PER_SAMPLE,
         sample_format: hound::SampleFormat::Int,
     }
@@ -48,23 +53,71 @@ impl RecordingReader {
     }
 }
 
-/// Reads every sample of a canonical WAV. Unlike
-/// [`RecordingReader::from_wav_file`], it sets no length limit.
-pub fn read_wav(path: impl AsRef<Path>) -> Result<Vec<f32>> {
+/// Reads a PCM WAV, 8- to 32-bit integer or 32-bit float, at any rate a
+/// [`Clip`] accepts, as mono audio at the file's rate. Channels are averaged.
+/// Unlike [`RecordingReader::from_wav_file`], it sets no length limit.
+pub fn read_wav(path: impl AsRef<Path>) -> Result<Clip> {
     let path = path.as_ref();
-    let samples = collect_samples(open_canonical_wav(path)?, path)?;
-    Ok(samples.into_iter().map(f32_from_pcm16).collect())
+    let reader = hound::WavReader::open(path).map_err(|source| WavError::Open {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })?;
+    let spec = reader.spec();
+    let interleaved = decode(reader, path)?;
+    if interleaved.is_empty() {
+        return Err(WavError::Empty {
+            path: path.to_path_buf(),
+        });
+    }
+    let channels = usize::from(spec.channels);
+    let mono = match channels {
+        1 => interleaved,
+        _ => interleaved
+            .chunks_exact(channels)
+            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+            .collect(),
+    };
+    Clip::new(spec.sample_rate, mono).map_err(|source| WavError::SampleRate {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
-/// Writes `samples` to `path` as a canonical WAV, replacing any file there.
-pub fn write_wav(path: impl AsRef<Path>, samples: &[f32]) -> Result<()> {
+fn decode(reader: WavFileReader, path: &Path) -> Result<Vec<f32>> {
+    let spec = reader.spec();
+    let decoded: std::result::Result<Vec<f32>, hound::Error> =
+        match (spec.sample_format, spec.bits_per_sample) {
+            (hound::SampleFormat::Float, 32) => reader.into_samples::<f32>().collect(),
+            (hound::SampleFormat::Int, bits @ 8..=32) => {
+                let full_scale = 2_f32.powi(i32::from(bits) - 1);
+                reader
+                    .into_samples::<i32>()
+                    .map(|sample| sample.map(|value| value as f32 / full_scale))
+                    .collect()
+            }
+            _ => {
+                return Err(WavError::UnsupportedEncoding {
+                    path: path.to_path_buf(),
+                });
+            }
+        };
+    decoded.map_err(|source| WavError::Read {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })
+}
+
+/// Writes `clip` to `path` as mono 16-bit PCM at its own rate, replacing any
+/// file there.
+pub fn write_wav(path: impl AsRef<Path>, clip: &Clip) -> Result<()> {
     let path = path.as_ref();
     let failed = |source: hound::Error| WavError::Write {
         path: path.to_path_buf(),
         source: Box::new(source),
     };
-    let mut writer = hound::WavWriter::create(path, wav_spec()).map_err(failed)?;
-    for &sample in samples {
+    let mut writer =
+        hound::WavWriter::create(path, mono_spec(clip.sample_rate())).map_err(failed)?;
+    for &sample in clip.samples() {
         writer
             .write_sample(pcm16_from_f32(sample))
             .map_err(failed)?;
@@ -136,6 +189,16 @@ pub enum WavError {
     #[error("WAV file must be 16 kHz mono 16-bit PCM: {}", path.display())]
     UnsupportedFormat { path: PathBuf },
 
+    #[error("WAV file is not integer PCM up to 32 bits or 32-bit float: {}", path.display())]
+    UnsupportedEncoding { path: PathBuf },
+
+    #[error("WAV file {}: {source}", path.display())]
+    SampleRate {
+        path: PathBuf,
+        #[source]
+        source: ClipError,
+    },
+
     #[error("failed to read WAV file {}", path.display())]
     Read {
         path: PathBuf,
@@ -174,11 +237,57 @@ mod tests {
     fn a_written_wav_reads_back() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let path = directory.path().join("written.wav");
-        let samples = [0.0, 0.5, -0.5, 0.25];
+        let clip = Clip::new(24_000, vec![0.0, 0.5, -0.5, 0.25]).expect("the rate is usable");
 
-        write_wav(&path, &samples).expect("the WAV is writable");
+        write_wav(&path, &clip).expect("the WAV is writable");
 
-        assert_eq!(read_wav(&path).expect("the WAV is readable"), samples);
+        assert_eq!(read_wav(&path).expect("the WAV is readable"), clip);
+    }
+
+    #[test]
+    fn a_stereo_24_bit_wav_reads_as_mono_at_its_own_rate() {
+        let directory = tempfile::tempdir().expect("tempdir must be creatable");
+        let path = directory.path().join("stereo.wav");
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 44_100,
+            bits_per_sample: 24,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).expect("the WAV is writable");
+        let half_scale = 1 << 22;
+        for sample in [half_scale, 0, -half_scale, 0] {
+            writer.write_sample(sample).expect("the sample is writable");
+        }
+        writer.finalize().expect("the WAV finalizes");
+
+        let clip = read_wav(&path).expect("the WAV is readable");
+
+        assert_eq!(clip.sample_rate(), 44_100);
+        assert_eq!(clip.samples(), [0.25, -0.25]);
+    }
+
+    #[test]
+    fn a_wav_declaring_an_absurd_rate_is_refused() {
+        let directory = tempfile::tempdir().expect("tempdir must be creatable");
+        let rate = 1_000_000_007;
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let fixture = write_fixture(directory.path(), spec, 1);
+
+        let outcome = read_wav(&fixture);
+
+        assert!(matches!(
+            outcome,
+            Err(WavError::SampleRate {
+                source: ClipError::SampleRate(declared),
+                ..
+            }) if declared == rate
+        ));
     }
 
     #[test]

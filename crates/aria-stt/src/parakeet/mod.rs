@@ -25,7 +25,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
 use parakeet_rs::ExecutionProvider;
 use parakeet_rs::{ExecutionConfig, ParakeetTDT, TimedToken, TimestampMode, Transcriber as _};
 
@@ -34,14 +34,15 @@ use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
-    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
-    validate_model_directory, word_timings,
+    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, validate_model_directory,
+    word_timings,
 };
 
 /// Names this engine under `transcription.backend` and in its own errors.
 pub const NAME: &str = "parakeet";
 
-/// Where inference runs. Gpu means WebGPU (Metal); off macOS a load refuses it.
+/// Where inference runs. Gpu means WebGPU (Metal), which needs macOS and the
+/// `parakeet-gpu` feature; without them a load refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Device {
     Cpu,
@@ -117,12 +118,13 @@ impl StreamingEngine for Parakeet {
 }
 
 impl Transcriber for Parakeet {
+    /// Accepts any language: the engine takes no language input.
     fn validate_language(
         &self,
-        language: &Language,
+        _language: &Language,
         _cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        english_only(BACKEND, language)
+        Ok(())
     }
 
     fn transcribe_with(
@@ -151,15 +153,14 @@ impl Transcriber for Parakeet {
 }
 
 // Use available CPU parallelism instead of the bindings' four-thread default.
-// GPU inference uses WebGPU on macOS and is rejected elsewhere.
 fn execution(device: Device) -> Result<ExecutionConfig, TranscriptionError> {
     let threads = std::thread::available_parallelism().map_or(4, usize::from);
     let config = ExecutionConfig::new().with_intra_threads(threads);
     match device {
         Device::Cpu => Ok(config),
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
         Device::Gpu => Ok(config.with_execution_provider(ExecutionProvider::WebGPU)),
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(all(target_os = "macos", feature = "parakeet-gpu")))]
         Device::Gpu => Err(TranscriptionError::UnsupportedDevice { backend: BACKEND }),
     }
 }

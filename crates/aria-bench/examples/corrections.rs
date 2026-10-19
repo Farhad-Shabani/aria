@@ -293,7 +293,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             audio
                 .get(&trace.utterance)
                 .ok_or("trace id missing from corpus")?,
-        )?;
+        )?
+        .into_canonical()?
+        .into_samples();
         let mut cache = HashMap::new();
         for chunks in [2, 3] {
             eprintln!(

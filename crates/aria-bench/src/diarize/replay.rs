@@ -37,8 +37,6 @@ pub(crate) type Labeler = SegmentReader<WeSpeaker>;
 /// A fresh per-scenario labeler; the speaker model is mandatory here — an
 /// unlabeled bench measures nothing.
 pub(crate) fn labeler(speaker: &Config, speakers_dir: &Path) -> Result<Labeler, BenchError> {
-    // Loaded here rather than through `speaker::open` so a model that will
-    // not load fails the run instead of quietly measuring nothing.
     let embedder = WeSpeaker::load_from(Config {
         model: speaker.model.clone(),
     })
@@ -47,7 +45,10 @@ pub(crate) fn labeler(speaker: &Config, speakers_dir: &Path) -> Result<Labeler, 
         speaker::speech_gate(),
         Some(Diarizer::new(
             embedder,
-            ProfileStore::open(speakers_dir).read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM),
+            speaker::usable_profiles(
+                ProfileStore::open(speakers_dir)
+                    .read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM),
+            ),
         )),
     )))
 }

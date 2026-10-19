@@ -116,11 +116,16 @@ impl LiveStream {
             if samples.is_empty() {
                 return Ok(());
             }
-            if observe(samples) == IdleObservation::Detected {
-                pre_press.clear();
-                continue;
-            }
-            pre_press.extend(samples.iter().copied());
+            let kept = match observe(samples) {
+                IdleObservation::Continue => &samples[..],
+                // The wake word stays out of the recording; the command that
+                // follows it in the same chunk does not.
+                IdleObservation::Detected { command_start } => {
+                    pre_press.clear();
+                    &samples[command_start..]
+                }
+            };
+            pre_press.extend(kept.iter().copied());
             if pre_press.len() > capacity {
                 pre_press.drain(..pre_press.len() - capacity);
             }

@@ -8,7 +8,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
 use aria_kit::transcription::{
     AudioInputKind, Engine, Hypothesis, Language, Transcriber, TranscriptionAudio,
-    TranscriptionError, check_cancelled, english_only,
+    TranscriptionError, check_cancelled,
 };
 
 use super::protocol::{BACKEND, Phase, start, still_serving, transcribe};
@@ -97,12 +97,13 @@ impl Engine for ParakeetMlx {
 }
 
 impl Transcriber for ParakeetMlx {
+    /// Accepts any language: the engine takes no language input.
     fn validate_language(
         &self,
-        language: &Language,
+        _language: &Language,
         _cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        english_only(BACKEND, language)
+        Ok(())
     }
 
     fn transcribe_with(
@@ -185,7 +186,8 @@ mod tests {
     fn an_empty_slot_respawns_and_a_bad_interpreter_makes_that_a_load_error() {
         let path =
             std::env::temp_dir().join(format!("parakeet-mlx-respawn-{}.wav", std::process::id()));
-        aria_kit::audio::write_wav(&path, &[0.0]).expect("the fixture should write");
+        aria_kit::audio::write_wav(&path, &aria_kit::audio::Clip::canonical(vec![0.0]))
+            .expect("the fixture should write");
         let mut recording = aria_kit::audio::RecordingReader::from_wav_file(&path)
             .expect("the fixture should load");
 

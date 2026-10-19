@@ -5,7 +5,7 @@
 mod silero;
 
 #[cfg(feature = "silero")]
-pub use silero::{SileroVad, Speech, speech_gate};
+pub use silero::{SileroVad, Speech};
 
 pub const SPEECH_THRESHOLD: f32 = 0.5;
 

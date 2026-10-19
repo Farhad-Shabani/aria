@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::diarize::{BenchError, ScriptError};
-use aria_kit::audio::{Resampler, canonical_samples, write_wav};
+use aria_kit::audio::{Clip, ClipError, canonical_samples, write_wav};
 use aria_kit::cancel::CancelToken;
 use aria_kit::synthesis::{SpeakingRate, SpeechText, SynthesisError, Synthesizer, Voice, stream};
 
@@ -181,12 +181,13 @@ impl Scenario {
         let mut conversation: Vec<f32> = gap.clone();
         for turn in &self.turns {
             let spoken = render(tts, turn).map_err(|error| error.at(scenario))?;
-            conversation.extend(Resampler::convert(tts.sample_rate(), &spoken)?);
+            conversation.extend(spoken.into_canonical()?.into_samples());
             conversation.extend_from_slice(&gap);
         }
 
         let path = directory.join(format!("{}.wav", self.name));
-        write_wav(&path, &conversation).map_err(|source| BenchError::Wav { scenario, source })?;
+        write_wav(&path, &Clip::canonical(conversation))
+            .map_err(|source| BenchError::Wav { scenario, source })?;
         Ok(path)
     }
 }
@@ -199,6 +200,7 @@ fn turn(speaker: &'static str, text: &'static str) -> Turn {
 enum RenderError {
     Script(ScriptError),
     Synthesis(SynthesisError),
+    SampleRate(ClipError),
 }
 
 impl RenderError {
@@ -206,11 +208,12 @@ impl RenderError {
         match self {
             Self::Script(source) => BenchError::Script { scenario, source },
             Self::Synthesis(source) => BenchError::Synthesis { scenario, source },
+            Self::SampleRate(source) => BenchError::SampleRate { scenario, source },
         }
     }
 }
 
-fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Vec<f32>, RenderError> {
+fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Clip, RenderError> {
     let script = |error: ScriptError| RenderError::Script(error);
     let text = SpeechText::new(turn.text).map_err(|error| script(error.into()))?;
     let voice = Voice::new(turn.speaker).map_err(|error| script(error.into()))?;
@@ -235,6 +238,6 @@ fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Vec<f32>, RenderError>
             .expect("synthesis does not panic")
             .and(ended)
             .map_err(RenderError::Synthesis)?;
-        Ok(samples)
+        Clip::new(tts.sample_rate(), samples).map_err(RenderError::SampleRate)
     })
 }

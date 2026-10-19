@@ -5,10 +5,13 @@ use std::thread::{self, JoinHandle};
 
 #[cfg(feature = "playback")]
 use super::{PlaybackError, SpeakerOutput};
+use crate::audio::Clip;
 use crate::backend::BackendError;
 use crate::cancel::CancelToken;
 
 use super::{Engine, SpeakingRate, SpeechStream, SpeechText, SynthesisError, Voice, stream};
+
+const CLIP_READ_SAMPLES: usize = 4_096;
 
 /// A loaded synthesis engine ready to start utterances.
 pub struct Synthesis<T> {
@@ -120,6 +123,24 @@ impl Session {
             return Err(error);
         }
         result
+    }
+
+    /// Reads the rest of the utterance as one clip at the engine's rate.
+    pub fn into_clip(mut self) -> Result<Clip, SynthesisError> {
+        let sample_rate = self.sample_rate();
+        let mut samples = Vec::new();
+        let mut block = [0.0; CLIP_READ_SAMPLES];
+        loop {
+            let read = self.read(&mut block)?;
+            if read == 0 {
+                break;
+            }
+            samples.extend_from_slice(&block[..read]);
+        }
+        Clip::new(sample_rate, samples).map_err(|source| SynthesisError::Inference {
+            backend: self.backend,
+            source: BackendError::engine(source),
+        })
     }
 
     /// Plays this utterance and reports when its first source sample reaches
@@ -279,6 +300,17 @@ mod tests {
         }
 
         assert_eq!(heard, [0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn a_session_reads_to_one_clip_at_the_engine_rate() {
+        let synthesis = Synthesis::new(Fake::with(Behavior::Samples));
+        let session = synthesis.start(&text()).expect("the session starts");
+
+        let clip = session.into_clip().expect("synthesis succeeds");
+
+        assert_eq!(clip.sample_rate(), 24_000);
+        assert_eq!(clip.samples(), [0.1, 0.2, 0.3]);
     }
 
     #[test]

@@ -90,6 +90,19 @@ means successful completion; an error means generation failed. Consume only
 `buffer[..count]`. To avoid storing the whole utterance, send each block to
 your player or file writer.
 
+To save the utterance instead, read it as one clip and write it at its own
+rate. `write_wav` comes from `aria-kit`; add it with `cargo add aria-kit`.
+
+```rust,no_run
+# use aria_tts::{kokoro::Kokoro, prelude::*};
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+# let speech = Synthesis::new(Kokoro::load("/m.onnx", "/v.bin")?);
+let clip = speech.start(&SpeechText::new("Hello from Aria.")?)?.into_clip()?;
+aria_kit::audio::write_wav("hello.wav", &clip)?;
+# Ok(())
+# }
+```
+
 Dropping the session requests cancellation and waits for its thread to stop.
 The engine may take time to stop, so keep that cleanup off the UI thread.
 

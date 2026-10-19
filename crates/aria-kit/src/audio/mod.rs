@@ -1,9 +1,11 @@
 //! Audio capture: the sources, the recordings they write, and the canonical
-//! 16 kHz mono format shared by everything that reads them.
+//! 16 kHz mono format shared by everything that reads them. A [`Clip`] is
+//! finished audio at its own rate.
 //!
 //! [`RecordingReader`] builds on every target. Everything that opens a
 //! microphone, a model, or a file is native.
 
+mod clip;
 mod recording;
 mod stop;
 
@@ -20,6 +22,7 @@ mod wav;
 
 use std::time::Duration;
 
+pub use clip::{Clip, ClipError};
 pub use recording::{CaptureError, RecordedAudio, Recording, RecordingReader, RecordingWriter};
 #[cfg(not(target_family = "wasm"))]
 pub use resample::{ResampleError, Resampler};
@@ -33,7 +36,7 @@ pub use capture::{
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 pub use capture::{
     Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl, WakeWordEvent,
-    WakeWordMonitor, WakeWordSuspension, check_default_input_device,
+    WakeWordFailure, WakeWordMonitor, WakeWordSuspension, check_default_input_device,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use spool::{SpoolError, remove_all_spools};
@@ -77,12 +80,16 @@ pub const fn canonical_samples(duration: Duration) -> u64 {
 
 /// How long `samples` canonical samples last.
 pub fn canonical_duration(samples: u64) -> Duration {
-    let rate = u64::from(CANONICAL_SAMPLE_RATE);
-    Duration::from_secs(samples / rate)
-        + Duration::from_nanos(samples % rate * 1_000_000_000 / rate)
+    duration_at(samples, CANONICAL_SAMPLE_RATE)
 }
 
 pub(crate) const fn samples_at(duration: Duration, sample_rate: u32) -> u128 {
     let rate = sample_rate as u128;
     duration.as_secs() as u128 * rate + duration.subsec_nanos() as u128 * rate / 1_000_000_000
+}
+
+pub(crate) fn duration_at(samples: u64, sample_rate: u32) -> Duration {
+    let rate = u64::from(sample_rate);
+    Duration::from_secs(samples / rate)
+        + Duration::from_nanos(samples % rate * 1_000_000_000 / rate)
 }
