@@ -88,7 +88,8 @@ for that end before completing transcription; it does not stop capture itself.
 
 `StopOnSilence` records one utterance. To print every utterance from one long
 recording, record `UntilStopped` and cut it yourself with an `Endpointer`.
-Add `aria-kit` for the endpointer types with `cargo add aria-kit`, then
+Add `aria-kit` for the endpointer types with
+`cargo add aria-kit --features silero`, then
 replace `src/main.rs` with:
 
 ```rust,no_run
@@ -102,7 +103,7 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let transcription = Transcription::streaming(engine);
+    let transcription = Transcription::complete_samples(engine);
     let mut microphone = Microphone::builder()
         .maximum_duration(Duration::from_secs(60 * 60))
         .open()?;
@@ -145,8 +146,7 @@ Positions count from the endpointer's first push, which here is the start of
 the recording. Each utterance opens `LEAD_IN_FRAMES` frames before its
 `Start`, the same lead-in `StopOnSilence` keeps. An utterance still open when
 capture ends gets no `End`: transcribe `opened..held_to()` yourself if you
-need it. Streaming transcription decodes a long utterance in 20-second
-windows. Sound that never pauses, such as music, keeps one utterance open and
+need it. Each utterance is already cut, so it decodes in one pass. Sound that never pauses, such as music, keeps one utterance open and
 growing; cut it at a fixed length if your input can do that.
 
 The loop runs until the maximum duration, which ends capture with an error.
