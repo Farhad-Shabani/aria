@@ -11,9 +11,9 @@ Aria needs two permissions:
 - **Microphone** to hear you. Allow access when macOS asks. If you previously
   denied it, switch on **Aria** in
   **System Settings → Privacy & Security → Microphone**.
-- **Accessibility** to read the hotkey and type into other apps. In
-  **System Settings → Privacy & Security → Accessibility**, switch on **Aria**.
-  If it isn't listed, click **+** and choose
+- **Accessibility** to read the hotkey and type into other apps. When macOS
+  asks, choose **Open System Settings** and switch on **Aria**. If it isn't
+  listed, click **+** and choose
   `/Applications/Aria.app/Contents/Helpers/Aria.app`. Use **⌘⇧G** in the
   file picker to enter that path.
 

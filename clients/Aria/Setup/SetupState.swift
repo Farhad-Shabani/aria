@@ -19,6 +19,13 @@ final class SetupState: ObservableObject {
         var enroll: (String) async throws -> Aria_Daemon_V1_EnrollSpeakerResponse
         var transcribe: () async throws -> String
         var speak: (String) async throws -> Void
+        /// The daemon only runs while the app does, so a finished setup
+        /// starts Aria at login. Returns what to tell the user when it
+        /// could not.
+        var launchAtLogin: () -> String?
+        /// Links the `aria` command, behind an administrator's password.
+        /// Returns what to tell the user when it did not land.
+        var installCommandLineTool: () -> String?
         var waitForGrant: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
     }
 
@@ -208,6 +215,8 @@ final class SetupState: ObservableObject {
         case .voice:
             step = .tryOut
         case .tryOut:
+            let problems = [effects.launchAtLogin(), effects.installCommandLineTool()].compactMap { $0 }
+            notice = problems.isEmpty ? nil : problems.joined(separator: " ")
             step = .done
         default:
             break

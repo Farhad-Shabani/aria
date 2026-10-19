@@ -159,7 +159,7 @@ struct InstallingPage: View {
 struct GrantPage: View {
     var body: some View {
         PageNote(symbol: "lock.shield") {
-            Text("In System Settings, open Privacy & Security → Accessibility and switch on Aria.")
+            Text("macOS asks to let Aria use Accessibility. Choose Open System Settings and switch on Aria.")
             Text("This page moves on by itself once the hotkey arms.")
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -220,6 +220,7 @@ struct DonePage: View {
                         summary.grant == .armed ? "Hotkey: armed" : "Hotkey: arms once the Accessibility grant is given"
                     )
                 }
+                if let notice = state.notice { Text(notice).foregroundStyle(.red) }
             }
         }
     }

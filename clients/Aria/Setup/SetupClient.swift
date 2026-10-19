@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 import Synchronization
 import os
 
@@ -185,7 +186,23 @@ extension SetupState.Effects {
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },
             transcribe: { try await TryOutClient.transcribe() },
-            speak: { text in try await TryOutClient.speak(text) }
+            speak: { text in try await TryOutClient.speak(text) },
+            launchAtLogin: {
+                do {
+                    try SMAppService.mainApp.register()
+                    return nil
+                } catch {
+                    return "Launch at login was not enabled: \(error.localizedDescription)"
+                }
+            },
+            installCommandLineTool: {
+                do {
+                    if try CommandLineTool.install() { return nil }
+                    return "The aria command was not installed; run Set Up Aria… again to add it."
+                } catch {
+                    return "The aria command was not installed: \(error.localizedDescription)"
+                }
+            }
         )
     }
 }

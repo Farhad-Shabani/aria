@@ -69,6 +69,18 @@ impl Trust {
         }
     }
 
+    /// Shows macOS's Accessibility dialog, which also lists this executable
+    /// under Accessibility, so the user never has to add it.
+    ///
+    /// Only the bundled helper asks. macOS charges the dialog to the
+    /// responsible process, so a daemon run from a terminal would ask for,
+    /// and grant, the terminal.
+    pub fn request() {
+        if runs_from_bundle() {
+            ax::is_process_trusted_with_prompt(true);
+        }
+    }
+
     pub fn is_trusted(self) -> bool {
         self == Self::Trusted
     }
@@ -87,6 +99,20 @@ impl Trust {
             _ => Err(CheckError::Exit(status)),
         }
     }
+}
+
+fn runs_from_bundle() -> bool {
+    std::env::current_exe().is_ok_and(|exe| is_bundle_executable(&exe))
+}
+
+fn is_bundle_executable(exe: &std::path::Path) -> bool {
+    let mut ancestors = exe.ancestors().skip(1);
+    let macos = ancestors.next().and_then(|dir| dir.file_name());
+    let contents = ancestors.next().and_then(|dir| dir.file_name());
+    let bundle = ancestors.next().and_then(|dir| dir.extension());
+    macos.is_some_and(|name| name == "MacOS")
+        && contents.is_some_and(|name| name == "Contents")
+        && bundle.is_some_and(|ext| ext == "app")
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +172,16 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.arg("-c").arg(script);
         command
+    }
+
+    #[test]
+    fn only_a_bundled_executable_asks() {
+        use std::path::Path;
+        assert!(is_bundle_executable(Path::new(
+            "/Applications/Aria.app/Contents/Helpers/Aria.app/Contents/MacOS/aria"
+        )));
+        assert!(!is_bundle_executable(Path::new("/Users/me/aria/target/release/aria")));
+        assert!(!is_bundle_executable(Path::new("/Applications/Aria.app/Contents/Helpers/aria")));
     }
 
     #[test]

@@ -82,11 +82,16 @@ impl MacOsHotkeyListener {
             tap: RefCell::new(None),
             presses: RefCell::new(Vec::new()),
         };
+        let mut grant_requested = false;
         loop {
             if should_stop() {
                 return ListenerExit::Shutdown;
             }
             let Some(tap) = arm(&state) else {
+                if !grant_requested {
+                    Trust::request();
+                    grant_requested = true;
+                }
                 events(ListenerEvent::AwaitingPermission);
                 if wait(PERMISSION_RETRY, &should_stop) {
                     return ListenerExit::Shutdown;
