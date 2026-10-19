@@ -24,8 +24,12 @@ Without Homebrew:
    window. **Express Setup** uses the defaults; **Customize…** lets you choose
    engines and models.
 
-To use the `aria` command in a terminal too, add this line to `~/.zshrc`, then
-open a new terminal:
+When setup finishes, Aria asks for your password to add the `aria` command to
+the terminal. Skip it if you only use the menu bar app. **Set Up Aria…** in
+the menu asks again later.
+
+If you can't enter an administrator password, add this line to `~/.zshrc`
+instead:
 
 ```sh
 export PATH="/Applications/Aria.app/Contents/Helpers:$PATH"
@@ -100,10 +104,15 @@ model again if you choose its engine later.
 
 On a Mac, Aria offers new releases itself. Choose **Check for Updates…** from
 its menu to check now, or set automatic checks and installs in
-**Settings → About**. To remove Aria, quit it and move it to the Trash. With Homebrew, run `brew upgrade --cask aria` or
-`brew uninstall --cask aria`.
+**Settings → About**. With Homebrew, run `brew upgrade --cask --greedy aria`,
+because Aria updates itself and a plain `brew upgrade` skips it.
 
-On Linux, rerun the install command to update. To remove Aria:
+To remove Aria from a Mac, quit it and move it to the Trash, or run
+`brew uninstall --cask aria`. The `aria` command stays behind. Remove it with
+`sudo rm /usr/local/bin/aria`.
+
+On Linux, rerun the install command to update. It keeps your setup answers
+and downloads nothing new; run `aria setup` to change them. To remove Aria:
 
 ```sh
 curl -fsSL https://github.com/Farhad-Shabani/aria/releases/latest/download/install.sh | bash -s -- --uninstall

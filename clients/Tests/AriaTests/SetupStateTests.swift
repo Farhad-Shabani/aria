@@ -18,6 +18,9 @@ final class SetupStateTests: XCTestCase {
         var enrolledNames = [String]()
         var heard = "hello there"
         var spoken = [String]()
+        var launchAtLogin = 0
+        var installedCommandLineTool = 0
+        var commandLineToolProblem: String?
         var summary = SetupStateTests.summary(grant: .armed)
 
         var effects: SetupState.Effects {
@@ -42,6 +45,14 @@ final class SetupStateTests: XCTestCase {
                 },
                 transcribe: { self.heard },
                 speak: { self.spoken.append($0) },
+                launchAtLogin: {
+                    self.launchAtLogin += 1
+                    return nil
+                },
+                installCommandLineTool: {
+                    self.installedCommandLineTool += 1
+                    return self.commandLineToolProblem
+                },
                 waitForGrant: { await Task.yield() }
             )
         }
@@ -219,6 +230,7 @@ final class SetupStateTests: XCTestCase {
 
     func test_freshMac_walksEveryStepToDone() async {
         let harness = Harness()
+        harness.commandLineToolProblem = "The aria command was not installed."
         let state = await walkToApplying(harness)
 
         XCTAssertEqual(state.selections.stt, "whisper")
@@ -242,8 +254,12 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.heard != nil }
         XCTAssertEqual(state.heard, "hello there")
         XCTAssertEqual(harness.spoken, [SetupState.spokenReply])
+        XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
         state.next()
         XCTAssertEqual(state.step, .done)
+        XCTAssertEqual(harness.launchAtLogin, 1)
+        XCTAssertEqual(harness.installedCommandLineTool, 1)
+        XCTAssertEqual(state.notice, "The aria command was not installed.", "the Done page says what did not land")
     }
 
     func test_applyEvents_driveTheStepAndTheProgress() async {

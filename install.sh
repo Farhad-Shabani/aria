@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs Aria on Linux from ARIA_DIST, the release folder this script sits
 # in, or else the latest GitHub release, then hands off to `aria setup`.
-# macOS installs from the DMG instead. Re-running upgrades in place.
+# macOS installs from the DMG instead. Re-running upgrades in place, keeps the
+# setup answers, and downloads nothing.
 # `--uninstall` reverses it and leaves ~/.aria, models included, alone.
 # Every other argument goes to setup.
 set -euo pipefail
@@ -39,8 +40,9 @@ stop_daemon() {
 }
 
 if [ "${1:-}" = --uninstall ]; then
-    if command -v aria >/dev/null && ! aria service uninstall; then
-        echo "warning: the daemon is still registered; run \`aria service uninstall\`" >&2
+    if [ -e "$bin_dir/aria" ] || [ -L "$bin_dir/aria" ]; then
+        "$bin_dir/aria" service uninstall \
+            || echo "warning: the daemon is still registered; run \`aria service uninstall\`" >&2
     fi
     stop_daemon
     rm -rf "$lib_dir"
@@ -90,6 +92,10 @@ if [ -n "$resolved" ] && [ "$resolved" != "$bin_dir/aria" ]; then
     echo "note: PATH resolves aria to $resolved; put $bin_dir first"
 fi
 
+if [ -f "$HOME/.aria/config.yaml" ]; then
+    case " $* " in *" --yes "*) ;; *) set -- --yes "$@" ;; esac
+    case " $* " in *" --skip-models "*) ;; *) set -- --skip-models "$@" ;; esac
+fi
 # Piped into bash, stdin is the script, so setup's prompts read the terminal.
 if [ ! -t 0 ] && (: </dev/tty) 2>/dev/null; then
     "$bin_dir/aria" setup "$@" </dev/tty
