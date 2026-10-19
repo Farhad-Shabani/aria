@@ -1,0 +1,11 @@
+name: client commands say plainly that no daemon is running
+expect:
+  client:
+    - run: [history, list]
+      exit: failure
+      stderr_contains:
+        - "no Aria daemon is running"
+    - run: [wake, status]
+      exit: failure
+      stdout_contains:
+        - "stopped: daemon is not running"
