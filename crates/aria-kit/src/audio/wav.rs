@@ -38,7 +38,21 @@ impl RecordingReader {
     /// memory: about 8 bytes per sample, near 460 MB per hour of audio.
     pub fn from_wav_file(path: impl AsRef<Path>) -> std::result::Result<Self, CaptureError> {
         let path = path.as_ref();
-        let reader = open_canonical_wav(path)?;
+        let file = std::fs::File::open(path).map_err(|source| WavError::Open {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })?;
+        Self::from_open_wav(file, path)
+    }
+
+    /// [`RecordingReader::from_wav_file`] over a `file` already open at
+    /// `path`, so checks made on that descriptor cover what is read.
+    pub fn from_open_wav(
+        file: std::fs::File,
+        path: impl AsRef<Path>,
+    ) -> std::result::Result<Self, CaptureError> {
+        let path = path.as_ref();
+        let reader = canonical_wav(file, path)?;
         check_declared_length(&reader, path, MAX_RECORDING_DURATION)?;
         let samples = collect_samples(reader, path)?;
 
@@ -128,10 +142,19 @@ pub fn write_wav(path: impl AsRef<Path>, clip: &Clip) -> Result<()> {
 
 /// Opens the WAV and rejects anything but the canonical 16 kHz mono format.
 pub(super) fn open_canonical_wav(path: &Path) -> Result<WavFileReader> {
-    let reader = hound::WavReader::open(path).map_err(|source| WavError::Open {
+    let file = std::fs::File::open(path).map_err(|source| WavError::Open {
         path: path.to_path_buf(),
         source: Box::new(source),
     })?;
+    canonical_wav(file, path)
+}
+
+fn canonical_wav(file: std::fs::File, path: &Path) -> Result<WavFileReader> {
+    let reader =
+        hound::WavReader::new(std::io::BufReader::new(file)).map_err(|source| WavError::Open {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })?;
     if reader.spec() != wav_spec() {
         return Err(WavError::UnsupportedFormat {
             path: path.to_path_buf(),
@@ -306,6 +329,21 @@ mod tests {
             .expect("the recording already ended");
         assert_eq!(audio.path(), Some(fixture.as_path()));
         assert_eq!(audio.duration(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn an_open_wav_reads_its_descriptor_not_the_path() {
+        let directory = tempfile::tempdir().expect("tempdir must be creatable");
+        let fixture = canonical_fixture(directory.path());
+        let opened = std::fs::File::open(&fixture).expect("the fixture opens");
+        std::fs::remove_file(&fixture).expect("the path is removable");
+        fixture_of(directory.path(), 10);
+
+        let mut recording =
+            RecordingReader::from_open_wav(opened, &fixture).expect("the descriptor still reads");
+
+        recording.fill().expect("the recording already ended");
+        assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
     }
 
     #[test]

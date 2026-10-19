@@ -388,9 +388,9 @@ mod tests {
             found[0].audio,
             AudioAvailability::Available { .. }
         ));
-        let lease = saved.storage().unwrap().begin_retry(found[0].id).unwrap();
-        assert_ne!(lease.audio_path, original);
-        assert!(RecordingReader::from_wav_file(&lease.audio_path).is_ok());
+        let mut lease = saved.storage().unwrap().begin_retry(found[0].id).unwrap();
+        let audio = lease.recording.finished_audio().unwrap();
+        assert_ne!(audio.path(), Some(original.as_path()));
     }
 
     #[test]
