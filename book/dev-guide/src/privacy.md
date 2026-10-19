@@ -9,7 +9,8 @@ what to save or send.
 Microphone capture writes each recording to a private WAV in `aria-<uid>/`
 under the system temporary folder (`$TMPDIR`, or `/tmp`). The folder is `0700`
 and the file `0600`. It holds everything the microphone heard, including
-background voices and about one second from before `record()`.
+background voices and about one second from before `record()`. It grows up
+to the microphone's maximum duration, about 115 MB per hour.
 
 Dropping the recording deletes the file. If your process crashes or is
 killed, the file stays until you or the system remove it. Deletion is not

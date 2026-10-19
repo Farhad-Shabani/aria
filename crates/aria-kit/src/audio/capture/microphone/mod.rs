@@ -70,7 +70,9 @@ impl MicrophoneBuilder {
         self
     }
 
-    /// The most a single recording may hold.
+    /// The most a single recording may hold, up to about 37 hours. The spool
+    /// grows with it, about 115 MB per hour, and each reader holds what it
+    /// has not released, about 230 MB per hour.
     pub fn maximum_duration(mut self, maximum_duration: Duration) -> Self {
         self.maximum_duration = maximum_duration;
         self
@@ -161,7 +163,7 @@ mod tests {
     #[test]
     fn a_maximum_duration_over_the_limit_is_refused_before_opening() {
         let outcome = Microphone::builder()
-            .maximum_duration(Duration::from_secs(16 * 60))
+            .maximum_duration(crate::audio::MAX_RECORDING_DURATION + Duration::from_secs(1))
             .open();
 
         assert!(matches!(

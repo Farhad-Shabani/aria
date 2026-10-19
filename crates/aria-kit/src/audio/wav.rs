@@ -34,7 +34,8 @@ impl RecordingReader {
     ///
     /// The file is validated for format, not trust — trust policy is for
     /// artifacts a daemon loads on a user's behalf, and this file is the
-    /// caller's own. The file is borrowed, never deleted.
+    /// caller's own. The file is borrowed, never deleted, and read whole into
+    /// memory: about 8 bytes per sample, near 460 MB per hour of audio.
     pub fn from_wav_file(path: impl AsRef<Path>) -> std::result::Result<Self, CaptureError> {
         let path = path.as_ref();
         let reader = open_canonical_wav(path)?;
@@ -326,11 +327,14 @@ mod tests {
     fn a_file_over_the_recording_limit_is_refused() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let path = directory.path().join("huge.wav");
-        let over_limit_samples: u32 = 15 * 60 * 16_000 + 1;
+        let over_limit_samples =
+            u32::try_from(crate::audio::MAX_RECORDING_SAMPLES + 1).expect("fits a header");
         let data_bytes = over_limit_samples * 2;
         let mut header = Vec::new();
         header.extend_from_slice(b"RIFF");
-        header.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        // The true RIFF size, 36 plus the data bytes, overflows a `u32` here,
+        // so the largest one stands in.
+        header.extend_from_slice(&u32::MAX.to_le_bytes());
         header.extend_from_slice(b"WAVEfmt ");
         header.extend_from_slice(&16_u32.to_le_bytes());
         header.extend_from_slice(&1_u16.to_le_bytes()); // PCM

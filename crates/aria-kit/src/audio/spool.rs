@@ -231,6 +231,37 @@ mod tests {
     }
 
     #[test]
+    fn a_spool_past_its_limit_is_refused_and_leaves_no_file() {
+        let directory = tempfile::tempdir().expect("tempdir must be creatable");
+        let (_recording, writer) = super::super::recording::ends();
+        let mut spool = WavSpool::create(directory.path(), Duration::from_secs(1), &writer)
+            .expect("the spool is creatable");
+
+        let error = spool
+            .write_samples(&vec![0; CANONICAL_SAMPLE_RATE as usize + 1])
+            .expect_err("an oversized recording is refused");
+        drop(spool);
+
+        assert!(matches!(error, SpoolError::LimitExceeded { .. }));
+        let leftovers = std::fs::read_dir(directory.path()).expect("the directory lists");
+        assert_eq!(leftovers.count(), 0);
+    }
+
+    #[test]
+    fn a_duration_past_the_wav_format_is_refused() {
+        let past_the_format = MAX_RECORDING_DURATION + Duration::from_secs(1);
+
+        assert!(matches!(
+            maximum_samples(past_the_format),
+            Err(SpoolError::InvalidDuration { .. })
+        ));
+        assert_eq!(
+            maximum_samples(MAX_RECORDING_DURATION).expect("the bound itself is allowed"),
+            crate::audio::MAX_RECORDING_SAMPLES
+        );
+    }
+
+    #[test]
     fn cleanup_removes_only_recording_artifacts() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         plant(directory.path(), "aria-recording-999999-abc.wav");
