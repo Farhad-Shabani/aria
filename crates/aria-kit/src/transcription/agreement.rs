@@ -586,8 +586,8 @@ impl Agreement {
         let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
         for count in (least..=carried.len().min(words.len())).rev() {
             for at in (0..=carried.len() - count).rev() {
-                if let Some(end) = self.opening_run(&carried[at..at + count], words) {
-                    let rest = carried.len() - at - count;
+                let rest = carried.len() - at - count;
+                if let Some(end) = self.opening_run(&carried[at..at + count], rest, words) {
                     return (end + rest <= words.len()).then_some(end + rest);
                 }
             }
@@ -599,16 +599,21 @@ impl Agreement {
     /// it. Speech repeats itself, so a run is trusted only where a cut
     /// leaves what is heard again: at the very opening, after at most a
     /// fragment or a junk word, and starting before the delivered end —
-    /// where new speech cannot be — when it is timed. A run as long as the
-    /// carried words is trusted anywhere, as a decode of the whole buffer
-    /// holds them all. A single word must also be the last delivered word,
-    /// or end before the delivered end.
-    fn opening_run(&self, run: &[Word], words: &[Word]) -> Option<usize> {
+    /// where new speech cannot be — when it is timed. A timed single word
+    /// must also be the last delivered word, or end before the delivered
+    /// end.
+    ///
+    /// Once this buffer has delivered words, a full carried run may sit
+    /// anywhere in its decode. Any run then counts only when new audio
+    /// follows it and the `rest` of the carried words: an earlier copy of
+    /// the phrase is followed by delivered audio. A fresh buffer repeats
+    /// only a fragment at its opening.
+    fn opening_run(&self, run: &[Word], rest: usize, words: &[Word]) -> Option<usize> {
         let count = run.len();
-        let reach = if count < CARRIED_WORDS {
-            count + REPEAT_REACH
-        } else {
+        let reach = if count >= CARRIED_WORDS && self.emitted > 0 {
             words.len()
+        } else {
+            count + REPEAT_REACH
         };
         let before_delivered_end = |word: &Word, edge: fn(&std::ops::Range<u64>) -> u64| match (
             &word.span,
@@ -627,10 +632,11 @@ impl Agreement {
             let first = &words[end - count];
             let last = &words[end - 1];
             lcp(run, &words[end - count..]) == count
-                && (count >= CARRIED_WORDS || before_delivered_end(first, |span| span.start))
+                && before_delivered_end(first, |span| span.start)
                 && (count > 1
                     || last_delivered(last)
                     || before_delivered_end(last, |span| span.end))
+                && (self.emitted == 0 || self.opens_new_audio(words, end + rest))
         })
     }
 
@@ -1358,6 +1364,33 @@ mod tests {
         }
 
         #[test]
+        fn a_phrase_said_again_in_a_fresh_buffer_is_new_speech() {
+            let mut agreement = Agreement::default();
+            agreement.agree(timed(&["a", "b", "c", "d"]), None);
+            agreement.agree(timed(&["a", "b", "c", "d"]), None);
+            let mut agreement = agreement.next_buffer();
+
+            // The fresh buffer starts after "d" and hears the phrase again.
+            let later = timed(&["a", "b", "c", "d", "e", "f", "g", "a", "b", "c", "d", "h"]);
+            let later = later[4..].to_vec();
+            agreement.agree(later.clone(), None);
+            let (confirmed, _) = agreement.agree(later, None);
+
+            assert_eq!(text_of(confirmed).as_deref(), Some("e f g a b c d h"));
+        }
+
+        #[test]
+        fn an_untimed_phrase_repeated_in_the_tail_is_kept() {
+            let run = drive(
+                20_000,
+                vec![loud_batch(); 3],
+                &["a b c d", "a b c d", "a b c d a b c d"],
+            );
+
+            assert_eq!(run.transcript(), "a b c d a b c d");
+        }
+
+        #[test]
         fn agreement_delivers_a_confirmed_prefix_once() {
             let mut agreement = Agreement::default();
             let (first, settled) = agreement.agree(heard(&["one", "two"]), None);
@@ -1917,7 +1950,8 @@ mod tests {
         /// of 500–800 ms of silence — long enough for the 13-frame quiet
         /// rule, so quiet trims and cap cuts both occur — and a ~10% chance
         /// of being said again after a beat, so a repeated word is an
-        /// ordinary word.
+        /// ordinary word. With `phrases`, the last `CARRIED_WORDS` words are
+        /// also said again with a ~5% chance, so a repeated phrase is too.
         struct Speech {
             batches: Vec<Vec<i16>>,
             /// The name of every word said, in order.
@@ -1925,7 +1959,7 @@ mod tests {
         }
 
         impl Speech {
-            fn random(rng: &mut Rng) -> Self {
+            fn random(rng: &mut Rng, phrases: bool) -> Self {
                 let distinct = 40 + rng.below(40) as usize;
                 let mut batches = Vec::new();
                 let mut names = Vec::new();
@@ -1936,6 +1970,18 @@ mod tests {
                         batches.push(quiet_batch());
                         batches.push(word_batch(name));
                         names.push(name);
+                    }
+                    if phrases && names.len() >= CARRIED_WORDS && rng.chance(5) {
+                        let phrase = names[names.len() - CARRIED_WORDS..].to_vec();
+                        for (index, &said) in phrase.iter().enumerate() {
+                            // Without the pause, a word said twice reads as
+                            // one long word.
+                            if index > 0 && phrase[index - 1] == said {
+                                batches.push(quiet_batch());
+                            }
+                            batches.push(word_batch(said));
+                        }
+                        names.extend(phrase);
                     }
                     if rng.chance(10) {
                         for _ in 0..5 + rng.below(4) {
@@ -2189,6 +2235,14 @@ mod tests {
             }
         }
 
+        #[derive(Clone, Copy, Debug)]
+        enum Arrival {
+            /// Each decode releases the next batch, as live capture does.
+            Live,
+            /// All audio is there from the start, as with a file.
+            Finished,
+        }
+
         struct Sim {
             run: Run,
             injected: Vec<Corruption>,
@@ -2196,21 +2250,31 @@ mod tests {
         }
 
         /// One seeded run to completion. Windows respect the cap, and
-        /// retention holds after every step.
-        fn simulate(seed: u64, noise: &Noise) -> Sim {
+        /// retention holds after every step. Untimed runs get no repeated
+        /// phrases: without timings, two copies of a phrase look the same.
+        fn simulate(seed: u64, noise: &Noise, arrival: Arrival) -> Sim {
             let mut rng = Rng::new(seed);
-            let speech = Speech::random(&mut rng);
+            let speech = Speech::random(&mut rng, noise.timed);
             let truth = speech.names.clone();
             let max_buffer_ms = [1_500, 3_000, 20_000][rng.below(3) as usize];
             let max_window = max_buffer_ms * CANONICAL_SAMPLE_RATE as usize / 1000 + 2 * STRIDE;
-            let (_directory, mut recording, pace) = paced(speech.batches);
+            let (_directory, mut recording, pace) = match arrival {
+                Arrival::Live => {
+                    let (directory, recording, pace) = paced(speech.batches);
+                    (directory, recording, Some(pace))
+                }
+                Arrival::Finished => {
+                    let (directory, recording) = recorded(&speech.batches.concat());
+                    (directory, recording, None)
+                }
+            };
             let mut injected = Vec::new();
             let mut last_retained = 0;
 
             let run = run(
                 AgreementState::new(cadence(max_buffer_ms)),
                 &mut recording,
-                Some(&pace),
+                pace.as_ref(),
                 |window| {
                     assert!(
                         window.len() <= max_window,
@@ -2257,33 +2321,37 @@ mod tests {
 
         #[test]
         fn a_noiseless_simulated_decoder_delivers_the_truth_exactly() {
-            for seed in 0..25 {
-                let sim = simulate(seed, &NOISELESS);
-                let truth: Vec<String> = sim.truth.iter().copied().map(word_name).collect();
-                assert_eq!(
-                    sim.run.transcript(),
-                    truth.join(" "),
-                    "seed {seed}: the transcript strayed from the truth"
-                );
-                assert_eq!(
-                    sim.run.segments.join(" "),
-                    sim.run.transcript(),
-                    "seed {seed}: delivery and the final transcript disagree"
-                );
+            for arrival in [Arrival::Live, Arrival::Finished] {
+                for seed in 0..25 {
+                    let sim = simulate(seed, &NOISELESS, arrival);
+                    let truth: Vec<String> = sim.truth.iter().copied().map(word_name).collect();
+                    assert_eq!(
+                        sim.run.transcript(),
+                        truth.join(" "),
+                        "seed {seed}, {arrival:?}: the transcript strayed from the truth"
+                    );
+                    assert_eq!(
+                        sim.run.segments.join(" "),
+                        sim.run.transcript(),
+                        "seed {seed}, {arrival:?}: delivery and the final transcript disagree"
+                    );
+                }
             }
         }
 
+        // Live only. A finished recording decodes each window once, so one
+        // empty decode loses that window.
         #[test]
         fn noisy_decodes_keep_every_agreement_invariant_across_seeds() {
             for seed in 0..200 {
-                invariants_hold(seed, &simulate(seed, &NOISY));
+                invariants_hold(seed, &simulate(seed, &NOISY, Arrival::Live));
             }
         }
 
         #[test]
         fn an_untimed_decoder_keeps_the_invariants_too() {
             for seed in 0..100 {
-                invariants_hold(seed, &simulate(seed, &NOISY_UNTIMED));
+                invariants_hold(seed, &simulate(seed, &NOISY_UNTIMED, Arrival::Live));
             }
         }
 
