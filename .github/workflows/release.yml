@@ -203,3 +203,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+
+  homebrew:
+    name: Bump the Homebrew cask
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Start the tap's autobump
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+        run: gh workflow run autobump.yml --repo Farhad-Shabani/homebrew-tap
