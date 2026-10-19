@@ -204,7 +204,11 @@ enum SpeakerCommand {
 #[derive(Subcommand)]
 enum ModelsCommand {
     /// Show each model, its size, and what uses it
-    List,
+    List {
+        /// Print one JSON array instead of text
+        #[arg(long)]
+        json: bool,
+    },
     /// Delete a downloaded model that is not in use
     #[command(visible_alias = "rm")]
     Remove { name: String },
@@ -270,7 +274,11 @@ enum PhoneCommand {
 #[derive(Subcommand)]
 enum HistoryCommand {
     /// List saved dictations and recording availability
-    List,
+    List {
+        /// Print one JSON array instead of text
+        #[arg(long)]
+        json: bool,
+    },
     /// Delete all saved dictations and retained recordings
     #[command(
         long_about = "Delete all saved dictations and retained recordings. This cannot be undone. History and audio-retention settings stay as they are, and a dictation in progress is not stopped."
@@ -331,6 +339,9 @@ enum MemoryCommand {
         /// Delete one learned substitution by id
         #[arg(long)]
         forget_pair: Option<i64>,
+        /// Print terms and pairs as one JSON object instead
+        #[arg(long, conflicts_with = "forget_pair")]
+        json: bool,
     },
 }
 
@@ -814,8 +825,14 @@ fn pid_suffix(pid: Option<u32>) -> String {
 
 fn run_models(command: ModelsCommand) -> anyhow::Result<()> {
     match command {
-        ModelsCommand::List => {
-            for model in aria::setup::models::list()? {
+        ModelsCommand::List { json } => {
+            let models = aria::setup::models::list()?;
+            if json {
+                let models: Vec<_> = models.iter().map(model_json).collect();
+                println!("{}", serde_json::Value::Array(models));
+                return Ok(());
+            }
+            for model in models {
                 let used_by = model
                     .used_by
                     .map(|section| format!("in use: {section}"))
@@ -835,6 +852,21 @@ fn run_models(command: ModelsCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn model_json(model: &aria::setup::models::Model) -> serde_json::Value {
+    use aria::setup::models::OnDisk;
+    let on_disk = match model.on_disk {
+        OnDisk::Complete => "complete",
+        OnDisk::Partial => "partial",
+        OnDisk::Absent => "absent",
+    };
+    serde_json::json!({
+        "name": model.name,
+        "bytes": model.bytes,
+        "on_disk": on_disk,
+        "used_by": model.used_by,
+    })
 }
 
 fn run_doctor() -> anyhow::Result<()> {
@@ -1009,7 +1041,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
             }
             aria::memory::write_profile(&store, &dir)?;
         }
-        MemoryCommand::Lexicon { forget_pair } => {
+        MemoryCommand::Lexicon { forget_pair, json } => {
             if let Some(id) = forget_pair {
                 anyhow::ensure!(store.forget_pair(id)?, "No pair with id {id}");
                 println!("Pair forgotten");
@@ -1017,6 +1049,10 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
             }
             let path = dir.join(aria::memory::LEXICON_FILE);
             let terms = aria::memory::load_terms(&path);
+            if json {
+                println!("{}", lexicon_json(&terms, &store.list_pairs()?));
+                return Ok(());
+            }
             if terms.is_empty() {
                 println!("No lexicon terms ({} missing or empty)", path.display());
             } else {
@@ -1039,6 +1075,21 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
         MemoryCommand::Consolidate => run_memory_consolidate()?,
     }
     Ok(())
+}
+
+fn lexicon_json(terms: &[String], pairs: &[aria::memory::DerivedPair]) -> serde_json::Value {
+    let pairs: Vec<_> = pairs
+        .iter()
+        .map(|pair| {
+            serde_json::json!({
+                "id": pair.id,
+                "misheard": pair.misheard,
+                "correct": pair.correct,
+                "source": pair.source,
+            })
+        })
+        .collect();
+    serde_json::json!({ "terms": terms, "pairs": pairs })
 }
 
 /// One line from the terminal, trimmed and lowercased.
@@ -1203,7 +1254,8 @@ fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
             let result = session.clear_history().map_err(history_clear_error)?;
             println!("{}", history_clear_message(result)?);
         }
-        HistoryCommand::List => {
+        HistoryCommand::List { json } => {
+            let mut json_entries = Vec::new();
             let mut before_id = None;
             loop {
                 let page = session.list_history(HistoryQuery {
@@ -1214,17 +1266,21 @@ fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
                 if let Some(warning) = page.warning {
                     eprintln!("warning: {warning}");
                 }
-                if before_id.is_none() && page.entries.is_empty() {
+                if !json && before_id.is_none() && page.entries.is_empty() {
                     println!("no dictation history");
                 }
                 for entry in page.entries {
-                    println!(
-                        "{}\t{:?}\taudio={}\t{}",
-                        entry.id,
-                        entry.status,
-                        history_audio_label(entry.audio),
-                        entry.text.replace(['\n', '\r', '\t'], " ")
-                    );
+                    if json {
+                        json_entries.push(history_entry_json(&entry));
+                    } else {
+                        println!(
+                            "{}\t{:?}\taudio={}\t{}",
+                            entry.id,
+                            entry.status,
+                            history_audio_label(entry.audio),
+                            entry.text.replace(['\n', '\r', '\t'], " ")
+                        );
+                    }
                     if let Some(warning) = entry.warning {
                         eprintln!("warning: {}: {warning}", entry.id);
                     }
@@ -1237,6 +1293,9 @@ fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
                     "history pagination did not advance"
                 );
                 before_id = Some(next);
+            }
+            if json {
+                println!("{}", serde_json::Value::Array(json_entries));
             }
         }
         HistoryCommand::Retry {
@@ -1324,6 +1383,17 @@ fn history_clear_error(error: aria::daemon::ClientError) -> anyhow::Error {
         _ => return error.into(),
     };
     anyhow::Error::new(error).context(context)
+}
+
+fn history_entry_json(entry: &aria::history::HistoryEntry) -> serde_json::Value {
+    serde_json::json!({
+        "id": entry.id,
+        "created_at_ms": entry.created_at_ms,
+        "application": entry.application.as_ref().map(|application| &application.name),
+        "status": entry.status.as_str(),
+        "audio": entry.audio.as_str(),
+        "text": entry.text,
+    })
 }
 
 fn history_audio_label(audio: aria::history::AudioAvailability) -> &'static str {
@@ -1889,7 +1959,7 @@ mod tests {
                 .unwrap()
                 .command,
             Command::History {
-                command: HistoryCommand::List
+                command: HistoryCommand::List { json: false }
             }
         ));
         assert!(matches!(

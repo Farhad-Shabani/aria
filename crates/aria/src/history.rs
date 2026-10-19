@@ -43,11 +43,32 @@ pub enum HistoryStatus {
     Recovered,
 }
 
+impl HistoryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::TranscriptionFailed => "transcription_failed",
+            Self::DeliveryFailed => "delivery_failed",
+            Self::Recovered => "recovered",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioAvailability {
     Unavailable,
     Available { expires_at_ms: u64 },
     Expired,
+}
+
+impl AudioAvailability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Available { .. } => "available",
+            Self::Expired => "expired",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
