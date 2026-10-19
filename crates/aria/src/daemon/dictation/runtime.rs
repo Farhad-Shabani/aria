@@ -323,7 +323,7 @@ impl DictationRuntime {
             .microphone
             .admit_history_retry()
             .ok_or(HistoryError::Busy)?;
-        let lease = store.begin_retry(id)?;
+        let mut lease = store.begin_retry(id)?;
         let mut engine = options.engine.as_deref().unwrap_or(&lease.entry.engine);
         let attempt = (|| {
             let settings = self
@@ -331,15 +331,13 @@ impl DictationRuntime {
                 .map_err(|_| HistoryError::Unavailable)?;
             let settings = retry_settings(&lease.entry, settings, options.language)?;
             check_retry(&cancel, deadline)?;
-            let mut recording = RecordingReader::from_wav_file(&lease.audio_path)
-                .map_err(|_| HistoryError::AudioUnavailable)?;
             let request = cancel.clone();
             let operation =
                 CancelToken::from_fn(move || request.is_cancelled() || deadline.expired());
             let outcome = if engine == self.engine
                 && matches!(self.coordinator, CoordinatorState::Ready(_))
             {
-                self.transcribe(&mut recording, &settings, &operation)
+                self.transcribe(&mut lease.recording, &settings, &operation)
             } else {
                 let setup = self.retry.get().map_err(|_| HistoryError::Transcription)?;
                 if engine == DEFERRED_ENGINE {
@@ -355,7 +353,7 @@ impl DictationRuntime {
                     &setup.speaker,
                     &setup.vocabulary,
                     &setup.home,
-                    &mut recording,
+                    &mut lease.recording,
                     &settings,
                     &operation,
                 )

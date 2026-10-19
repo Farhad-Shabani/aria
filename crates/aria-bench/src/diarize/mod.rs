@@ -42,7 +42,7 @@ use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 
 /// Longer than any scenario's realtime replay.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
-/// What `WavReplayCapture` will accept; a longer recording must be cut first.
+/// The longest recording a diarization run replays; cut longer ones first.
 const RECORDING_LIMIT: Duration = Duration::from_secs(900);
 pub(crate) const SAMPLE_RATE: f64 = CANONICAL_SAMPLE_RATE as f64;
 

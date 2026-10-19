@@ -45,6 +45,8 @@ pub struct WavReplayCapture {
 }
 
 impl WavReplayCapture {
+    /// `spool_dir` should be a directory only your user can read: the
+    /// spool holds the replayed audio.
     pub fn new(
         spool_dir: impl Into<PathBuf>,
         maximum_duration: Duration,
@@ -63,8 +65,8 @@ impl WavReplayCapture {
 
 impl AudioCapture for WavReplayCapture {
     /// Replays the WAV into a new recording. A `Realtime` replay ends early
-    /// when `stop` fires. `mode` is ignored: a fixed file has no silence to
-    /// stop on.
+    /// when `stop` fires. `mode` is ignored: replay runs no voice-activity
+    /// detection.
     fn start(
         &self,
         _mode: RecordingMode,

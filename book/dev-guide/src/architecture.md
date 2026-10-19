@@ -12,7 +12,8 @@ provides microphone capture, audio playback, and shared speech types.
 The engine crates re-export their common types in `prelude`. That is why
 transcription imports `Transcription`, `RecordingReader`, and `Microphone` from
 `aria_stt`, and synthesis imports `Synthesis` and `CancelToken` from `aria_tts`. Add
-`aria-kit` directly for playback or for writing a clip to WAV.
+`aria-kit` directly for playback, for writing a clip to WAV, or for cutting a
+recording into utterances.
 
 ## Transcription
 

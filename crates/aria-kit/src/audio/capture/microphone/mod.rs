@@ -14,7 +14,7 @@ use crate::audio::recording;
 use crate::audio::spool;
 use crate::audio::{CaptureError, RecordingReader, StopSignal, Stopper};
 use crate::primitives::private_fs;
-use crate::voice_activity::SileroVad;
+use crate::voice_activity::{SileroVad, VoiceActivityDetector};
 use crate::wake_word::WakeWordDetector;
 
 use super::{AudioCapture, MicrophoneError, RecordingMode};
@@ -64,13 +64,17 @@ pub struct MicrophoneBuilder {
 }
 
 impl MicrophoneBuilder {
-    /// Where the bounded temporary WAV lives while recording.
+    /// Where the bounded temporary WAV lives while recording. It holds
+    /// everything the microphone hears, so use a directory only your user
+    /// can read. Without one, loading creates a private per-user directory.
     pub fn spool_dir(mut self, directory: impl Into<PathBuf>) -> Self {
         self.spool_dir = Some(directory.into());
         self
     }
 
-    /// The most a single recording may hold.
+    /// The most a single recording may hold, up to about 37 hours. The spool
+    /// grows with it, about 115 MB per hour, and each reader holds what it
+    /// has not released, about 230 MB per hour.
     pub fn maximum_duration(mut self, maximum_duration: Duration) -> Self {
         self.maximum_duration = maximum_duration;
         self
@@ -81,8 +85,24 @@ impl MicrophoneBuilder {
     }
 
     pub fn load(self) -> Result<PreparedMicrophone> {
-        // Refused before any directory or model work, so a bad maximum never
-        // hands out a microphone.
+        self.prepare(|| {
+            SileroVad::load().map_err(|error| MicrophoneError::VoiceActivity(error).into())
+        })
+    }
+
+    /// Uses `vad` instead of the bundled Silero model, for both endpointing
+    /// and the wake-word gate. A panic while it scores fails the recording
+    /// in progress, or drops the held stream when idle; a panic in its
+    /// `reset` ends the microphone.
+    pub fn load_with<V>(self, vad: V) -> Result<PreparedMicrophone<V>>
+    where
+        V: VoiceActivityDetector + Send + 'static,
+    {
+        self.prepare(|| Ok(vad))
+    }
+
+    /// Cheap checks first, so a model loads only once they pass.
+    fn prepare<V>(self, vad: impl FnOnce() -> Result<V>) -> Result<PreparedMicrophone<V>> {
         spool::maximum_samples(self.maximum_duration)?;
         let spool_dir = match self.spool_dir {
             // A caller-chosen directory is theirs: no ownership or mode
@@ -90,24 +110,23 @@ impl MicrophoneBuilder {
             Some(directory) => directory,
             None => private_spool_dir()?,
         };
-        let vad = SileroVad::load().map_err(MicrophoneError::VoiceActivity)?;
         Ok(PreparedMicrophone {
             spool_dir,
             maximum_duration: self.maximum_duration,
-            vad,
+            vad: vad()?,
         })
     }
 }
 
 /// A microphone whose fallible setup is done. Opening it starts the worker
 /// thread, which opens the input device.
-pub struct PreparedMicrophone {
+pub struct PreparedMicrophone<V = SileroVad> {
     spool_dir: PathBuf,
     maximum_duration: Duration,
-    vad: SileroVad,
+    vad: V,
 }
 
-impl PreparedMicrophone {
+impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
     pub fn open(self) -> Result<Microphone> {
         let commands = worker::spawn(self.spool_dir, self.maximum_duration, self.vad)?;
         Ok(Microphone { commands })
@@ -161,7 +180,7 @@ mod tests {
     #[test]
     fn a_maximum_duration_over_the_limit_is_refused_before_opening() {
         let outcome = Microphone::builder()
-            .maximum_duration(Duration::from_secs(16 * 60))
+            .maximum_duration(crate::audio::MAX_RECORDING_DURATION + Duration::from_secs(1))
             .open();
 
         assert!(matches!(

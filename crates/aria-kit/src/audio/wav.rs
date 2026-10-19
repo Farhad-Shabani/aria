@@ -34,10 +34,25 @@ impl RecordingReader {
     ///
     /// The file is validated for format, not trust — trust policy is for
     /// artifacts a daemon loads on a user's behalf, and this file is the
-    /// caller's own. The file is borrowed, never deleted.
+    /// caller's own. The file is borrowed, never deleted, and read whole into
+    /// memory: about 8 bytes per sample, near 460 MB per hour of audio.
     pub fn from_wav_file(path: impl AsRef<Path>) -> std::result::Result<Self, CaptureError> {
         let path = path.as_ref();
-        let reader = open_canonical_wav(path)?;
+        let file = std::fs::File::open(path).map_err(|source| WavError::Open {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })?;
+        Self::from_open_wav(file, path)
+    }
+
+    /// [`RecordingReader::from_wav_file`] over a `file` already open at
+    /// `path`, so checks made on that descriptor cover what is read.
+    pub fn from_open_wav(
+        file: std::fs::File,
+        path: impl AsRef<Path>,
+    ) -> std::result::Result<Self, CaptureError> {
+        let path = path.as_ref();
+        let reader = canonical_wav(file, path)?;
         check_declared_length(&reader, path, MAX_RECORDING_DURATION)?;
         let samples = collect_samples(reader, path)?;
 
@@ -127,10 +142,19 @@ pub fn write_wav(path: impl AsRef<Path>, clip: &Clip) -> Result<()> {
 
 /// Opens the WAV and rejects anything but the canonical 16 kHz mono format.
 pub(super) fn open_canonical_wav(path: &Path) -> Result<WavFileReader> {
-    let reader = hound::WavReader::open(path).map_err(|source| WavError::Open {
+    let file = std::fs::File::open(path).map_err(|source| WavError::Open {
         path: path.to_path_buf(),
         source: Box::new(source),
     })?;
+    canonical_wav(file, path)
+}
+
+fn canonical_wav(file: std::fs::File, path: &Path) -> Result<WavFileReader> {
+    let reader =
+        hound::WavReader::new(std::io::BufReader::new(file)).map_err(|source| WavError::Open {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })?;
     if reader.spec() != wav_spec() {
         return Err(WavError::UnsupportedFormat {
             path: path.to_path_buf(),
@@ -308,6 +332,21 @@ mod tests {
     }
 
     #[test]
+    fn an_open_wav_reads_its_descriptor_not_the_path() {
+        let directory = tempfile::tempdir().expect("tempdir must be creatable");
+        let fixture = canonical_fixture(directory.path());
+        let opened = std::fs::File::open(&fixture).expect("the fixture opens");
+        std::fs::remove_file(&fixture).expect("the path is removable");
+        fixture_of(directory.path(), 10);
+
+        let mut recording =
+            RecordingReader::from_open_wav(opened, &fixture).expect("the descriptor still reads");
+
+        recording.fill().expect("the recording already ended");
+        assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
+    }
+
+    #[test]
     fn an_empty_file_is_refused() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let fixture = fixture_of(directory.path(), 0);
@@ -326,11 +365,14 @@ mod tests {
     fn a_file_over_the_recording_limit_is_refused() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let path = directory.path().join("huge.wav");
-        let over_limit_samples: u32 = 15 * 60 * 16_000 + 1;
+        let over_limit_samples =
+            u32::try_from(crate::audio::MAX_RECORDING_SAMPLES + 1).expect("fits a header");
         let data_bytes = over_limit_samples * 2;
         let mut header = Vec::new();
         header.extend_from_slice(b"RIFF");
-        header.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        // The true RIFF size, 36 plus the data bytes, overflows a `u32` here,
+        // so the largest one stands in.
+        header.extend_from_slice(&u32::MAX.to_le_bytes());
         header.extend_from_slice(b"WAVEfmt ");
         header.extend_from_slice(&16_u32.to_le_bytes());
         header.extend_from_slice(&1_u16.to_le_bytes()); // PCM

@@ -84,6 +84,74 @@ intermediate text appears.
 Here, silence ends the recording. Calling `stop()` on `Session::over` waits
 for that end before completing transcription; it does not stop capture itself.
 
+## Continuous dictation
+
+`StopOnSilence` records one utterance. To print every utterance from one long
+recording, record `UntilStopped` and cut it yourself with an `Endpointer`.
+Add `aria-kit` for the endpointer types with
+`cargo add aria-kit --features silero`, then
+replace `src/main.rs` with:
+
+```rust,no_run
+use std::time::Duration;
+
+use aria_kit::audio::{SilenceDuration, pcm16_from_f32};
+use aria_kit::voice_activity::{
+    Boundary, Endpointer, LEAD_IN_FRAMES, SileroVad, VoiceActivityDetector,
+};
+use aria_stt::{prelude::*, whisper::Whisper};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
+    let transcription = Transcription::complete_samples(engine);
+    let mut microphone = Microphone::builder()
+        .maximum_duration(Duration::from_secs(60 * 60))
+        .open()?;
+    let (mut recording, _stopper) = microphone.record(RecordingMode::UntilStopped)?;
+    let mut endpointer = Endpointer::new(SileroVad::load()?, SilenceDuration::default());
+    let frame = SileroVad::FRAME_SAMPLES as u64;
+    let lead_in = LEAD_IN_FRAMES as u64 * frame;
+    let (mut heard, mut opened) = (0, None);
+
+    while recording.fill_through(heard + 1)? {
+        let batch: Vec<i16> = recording
+            .span(heard..recording.held_to())
+            .iter()
+            .copied()
+            .map(pcm16_from_f32)
+            .collect();
+        heard = recording.held_to();
+        for boundary in endpointer.push(&batch)? {
+            match boundary {
+                Boundary::Start(at) => opened = Some(at.saturating_sub(lead_in)),
+                Boundary::End(at) => {
+                    let from = opened.take().expect("an utterance ends after it starts");
+                    let mut utterance = RecordingReader::from_samples(recording.span(from..at));
+                    match transcription.transcribe(&mut utterance, &Language::Automatic) {
+                        Ok(text) => println!("{}", text.as_str()),
+                        Err(TranscriptionError::NoSpeech) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+        }
+        // Keep the open utterance, and enough audio for one that starts next.
+        recording.release_before(opened.unwrap_or(heard.saturating_sub(lead_in + frame)));
+    }
+    Ok(())
+}
+```
+
+Positions count from the endpointer's first push, which here is the start of
+the recording. Each utterance opens `LEAD_IN_FRAMES` frames before its
+`Start`, the same lead-in `StopOnSilence` keeps. An utterance still open when
+capture ends gets no `End`: transcribe `opened..held_to()` yourself if you
+need it. Each utterance is already cut, so it decodes in one pass. Sound that never pauses, such as music, keeps one utterance open and
+growing; cut it at a fixed length if your input can do that.
+
+The loop runs until the maximum duration, which ends capture with an error.
+Call `stop()` on the `Stopper` to end it sooner.
+
 ## Recording lifetime
 
 `Microphone::open` keeps capture open while the microphone object lives.

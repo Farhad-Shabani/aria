@@ -523,7 +523,7 @@ impl Layer for Expand {
 }
 
 #[test]
-fn text_bounds_cover_input_layer_output_and_accumulated_segments() {
+fn text_bounds_cover_each_segment_before_and_after_a_layer() {
     for (input_bytes, output_bytes) in [
         (MAX_TEXT_BYTES, MAX_TEXT_BYTES),
         (MAX_TEXT_BYTES + 1, 1),
@@ -543,7 +543,10 @@ fn text_bounds_cover_input_layer_output_and_accumulated_segments() {
             ));
         }
     }
+}
 
+#[test]
+fn a_session_accumulates_past_the_segment_bound() {
     let (mut recording, mut capture) = Recording::open();
     let transcription = Transcription::agreement(
         Cadence::from_millis(100, 20_000),
@@ -556,9 +559,9 @@ fn text_bounds_cover_input_layer_output_and_accumulated_segments() {
     capture.push(&[0.5; 1600]);
     capture.finish();
     recording.fill().unwrap();
-    assert!(matches!(
-        operation.next_finalized(&mut recording),
-        Err(TranscriptionError::Processing(Error::TooLarge))
-    ));
-    assert!(operation.completed().is_none());
+    while operation.next_finalized(&mut recording).unwrap().is_some() {}
+    assert_eq!(
+        operation.completed().unwrap().as_str().len(),
+        MAX_TEXT_BYTES + 1
+    );
 }

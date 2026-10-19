@@ -47,9 +47,14 @@ pub use wav::{WavError, read_wav, write_wav};
 
 pub const CANONICAL_SAMPLE_RATE: u32 = 16_000;
 
-/// The longest audio a spool writes or `from_wav_file` reads.
+/// The longest audio a spool writes or `from_wav_file` reads. hound sums a
+/// 16-bit mono WAV's RIFF size as data bytes plus 36 in a `u32`, so one more
+/// sample wraps it. That is about 37 hours.
 #[cfg(not(target_family = "wasm"))]
-pub(crate) const MAX_RECORDING_DURATION: Duration = Duration::from_secs(15 * 60);
+pub(crate) const MAX_RECORDING_SAMPLES: u64 = (u32::MAX as u64 - 36) / 2;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) const MAX_RECORDING_DURATION: Duration =
+    Duration::from_nanos(MAX_RECORDING_SAMPLES * (1_000_000_000 / CANONICAL_SAMPLE_RATE as u64));
 pub const CHANNELS: u16 = 1;
 
 /// What a 16-bit sample divides by to land in -1.0..1.0.

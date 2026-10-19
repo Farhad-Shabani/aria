@@ -19,8 +19,9 @@ curl -fL -o ggml-base.en.bin \
 Use the model's absolute path below.
 
 The input must be a nonempty WAV containing **16 kHz, mono, signed 16-bit PCM**
-(uncompressed audio), with at most 15 minutes of audio. MP3, stereo WAV, and
-other sample rates are not converted automatically. To convert a recording
+(uncompressed audio). The whole file is read into memory, about 460 MB per
+hour of audio, up to about 37 hours. MP3, stereo WAV, and other sample rates are not converted
+automatically. To convert a recording
 with `ffmpeg`:
 
 ```sh

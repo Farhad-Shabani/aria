@@ -142,9 +142,7 @@ impl Output {
             if segment.text.is_empty() {
                 return Ok(());
             }
-            let separator = usize::from(!self.text.is_empty());
-            check_size(self.text.len() + separator + segment.text.len())?;
-            if separator != 0 {
+            if !self.text.is_empty() {
                 self.text.push(' ');
             }
             self.text.push_str(&segment.text);

@@ -924,25 +924,8 @@ mod tests {
 
     #[test]
     fn a_recording_as_long_as_allowed_still_gets_a_spool() {
-        let samples = 15 * 60 * crate::audio::CANONICAL_SAMPLE_RATE as usize;
+        let samples = crate::audio::MAX_RECORDING_SAMPLES as usize;
         assert!(super::super::spool::maximum_samples(spool_room(samples)).is_ok());
-    }
-
-    #[test]
-    fn a_recording_longer_than_allowed_is_refused_and_leaves_no_file() {
-        let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        let samples = 15 * 60 * crate::audio::CANONICAL_SAMPLE_RATE as usize + 1;
-
-        let error = RecordingReader::from_pcm16_in(directory.path(), &vec![0; samples])
-            .err()
-            .expect("an oversized recording is refused");
-
-        assert!(matches!(
-            error,
-            CaptureError::Spool(SpoolError::LimitExceeded { .. })
-        ));
-        let leftovers = std::fs::read_dir(directory.path()).expect("the directory lists");
-        assert_eq!(leftovers.count(), 0);
     }
 
     #[test]

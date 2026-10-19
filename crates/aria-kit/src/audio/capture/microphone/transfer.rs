@@ -7,15 +7,13 @@ use std::time::{Duration, Instant};
 use crate::audio::capture::{RecordingMode, SilenceDuration};
 use crate::audio::spool::WavSpool;
 use crate::audio::{CaptureError, RecordedAudio, StopSignal, canonical_samples};
-use crate::voice_activity::{SPEECH_THRESHOLD, VoiceActivityDetector};
+use crate::voice_activity::{Boundary, Endpointer, LEAD_IN_FRAMES, VoiceActivityDetector};
 
 use super::stream::{DRAIN_BUFFER_SAMPLES, LiveStream};
 use super::{MicrophoneError, Result};
 
 const EMPTY_BUFFER_WAIT: Duration = Duration::from_millis(10);
 const NO_SPEECH_TIMEOUT: Duration = Duration::from_secs(10);
-const PRE_SPEECH_FRAMES: usize = 4;
-const SPEECH_END_THRESHOLD: f32 = 0.35;
 
 pub(super) fn capture<V: VoiceActivityDetector>(
     live: &mut LiveStream,
@@ -121,106 +119,80 @@ impl<V: VoiceActivityDetector> CaptureRecording<V> {
 
 pub(super) struct SilenceRecording<V> {
     spool: WavSpool,
-    vad: V,
-    trailing_silence_samples: u64,
-    frame: Vec<i16>,
-    pre_speech: VecDeque<i16>,
+    endpointer: Endpointer<V>,
+    /// Audio heard before speech opened, enough to cover the lead-in of an
+    /// onset frame that began in an earlier push.
+    lead_in: VecDeque<i16>,
+    pushed_samples: u64,
     speech_started: bool,
-    samples_observed: u64,
-    silence_started_at: Option<u64>,
 }
 
 impl<V: VoiceActivityDetector> SilenceRecording<V> {
-    fn new(spool: WavSpool, mut vad: V, trailing_silence: SilenceDuration) -> Self {
-        vad.reset();
+    const LEAD_IN_CAPACITY: usize = (LEAD_IN_FRAMES + 1) * V::FRAME_SAMPLES;
+
+    fn new(spool: WavSpool, vad: V, trailing_silence: SilenceDuration) -> Self {
         Self {
             spool,
-            vad,
-            trailing_silence_samples: canonical_samples(trailing_silence.get()),
-            frame: Vec::with_capacity(V::FRAME_SAMPLES),
-            pre_speech: VecDeque::with_capacity((PRE_SPEECH_FRAMES + 1) * V::FRAME_SAMPLES),
+            endpointer: Endpointer::new(vad, trailing_silence),
+            lead_in: VecDeque::with_capacity(Self::LEAD_IN_CAPACITY),
+            pushed_samples: 0,
             speech_started: false,
-            samples_observed: 0,
-            silence_started_at: None,
         }
     }
 
-    fn push(&mut self, mut samples: &[i16]) -> Result<CaptureProgress> {
-        while !samples.is_empty() {
-            let available = V::FRAME_SAMPLES - self.frame.len();
-            let copied = available.min(samples.len());
-            self.frame.extend_from_slice(&samples[..copied]);
-            samples = &samples[copied..];
+    fn push(&mut self, samples: &[i16]) -> Result<CaptureProgress> {
+        let pushed_from = self.pushed_samples;
+        let boundaries = self
+            .endpointer
+            .push(samples)
+            .map_err(MicrophoneError::VoiceActivity)?;
+        self.pushed_samples += samples.len() as u64;
+        let end = boundaries.iter().find_map(|boundary| match boundary {
+            Boundary::End(at) => Some(*at),
+            Boundary::Start(_) => None,
+        });
+        let kept_to = end.unwrap_or(self.pushed_samples);
 
-            if self.frame.len() == V::FRAME_SAMPLES {
-                let progress = self.process_frame()?;
-                self.frame.clear();
-                if progress == CaptureProgress::Complete {
-                    return Ok(CaptureProgress::Complete);
-                }
+        if self.speech_started {
+            self.spool
+                .write_samples(&samples[..(kept_to - pushed_from) as usize])?;
+        } else if let Some(Boundary::Start(at)) = boundaries.first() {
+            self.open_speech(*at, samples, kept_to)?;
+        } else {
+            self.keep_lead_in(samples);
+            if self.pushed_samples >= canonical_samples(NO_SPEECH_TIMEOUT) {
+                return Err(CaptureError::NoSpeech(NO_SPEECH_TIMEOUT));
             }
         }
-        Ok(CaptureProgress::Continue)
-    }
 
-    fn process_frame(&mut self) -> Result<CaptureProgress> {
-        self.samples_observed = self
-            .samples_observed
-            .saturating_add(V::FRAME_SAMPLES as u64);
-        let probability = self
-            .vad
-            .probability(&self.frame)
-            .map_err(MicrophoneError::VoiceActivity)?;
-
-        if !self.speech_started {
-            return self.wait_for_speech(probability);
-        }
-
-        self.spool.write_samples(&self.frame)?;
-        if probability >= SPEECH_THRESHOLD {
-            self.silence_started_at = None;
-        } else if probability <= SPEECH_END_THRESHOLD && self.silence_started_at.is_none() {
-            self.silence_started_at = Some(
-                self.samples_observed
-                    .saturating_sub(V::FRAME_SAMPLES as u64),
-            );
-        }
-        let silence_samples = self
-            .silence_started_at
-            .map_or(0, |started| self.samples_observed.saturating_sub(started));
-        if silence_samples >= self.trailing_silence_samples {
-            Ok(CaptureProgress::Complete)
+        Ok(if end.is_some() {
+            CaptureProgress::Complete
         } else {
-            Ok(CaptureProgress::Continue)
-        }
+            CaptureProgress::Continue
+        })
     }
 
-    fn wait_for_speech(&mut self, probability: f32) -> Result<CaptureProgress> {
-        if probability >= SPEECH_THRESHOLD {
-            self.speech_started = true;
-            self.spool
-                .write_samples(self.pre_speech.make_contiguous())?;
-            self.pre_speech.clear();
-            self.spool.write_samples(&self.frame)?;
-            return Ok(CaptureProgress::Continue);
-        }
-        let capacity = PRE_SPEECH_FRAMES * V::FRAME_SAMPLES;
-        self.pre_speech.extend(self.frame.iter().copied());
-        if self.pre_speech.len() > capacity {
-            self.pre_speech.drain(..self.pre_speech.len() - capacity);
-        }
-        if self.samples_observed >= canonical_samples(NO_SPEECH_TIMEOUT) {
-            return Err(CaptureError::NoSpeech(NO_SPEECH_TIMEOUT));
-        }
-        Ok(CaptureProgress::Continue)
+    fn open_speech(&mut self, start: u64, samples: &[i16], kept_to: u64) -> Result<()> {
+        self.speech_started = true;
+        self.lead_in.extend(samples);
+        let heard_from = self.pushed_samples - self.lead_in.len() as u64;
+        let from = start.saturating_sub((LEAD_IN_FRAMES * V::FRAME_SAMPLES) as u64);
+        let heard = self.lead_in.make_contiguous();
+        self.spool
+            .write_samples(&heard[(from - heard_from) as usize..(kept_to - heard_from) as usize])?;
+        self.lead_in.clear();
+        Ok(())
     }
 
-    fn finish(mut self) -> Result<RecordedAudio> {
+    fn keep_lead_in(&mut self, samples: &[i16]) {
+        self.lead_in.extend(samples);
+        let surplus = self.lead_in.len().saturating_sub(Self::LEAD_IN_CAPACITY);
+        self.lead_in.drain(..surplus);
+    }
+
+    fn finish(self) -> Result<RecordedAudio> {
         if !self.speech_started {
             return Err(CaptureError::NoSpeech(NO_SPEECH_TIMEOUT));
-        }
-        if !self.frame.is_empty() {
-            self.spool.write_samples(&self.frame)?;
         }
         self.spool.finish().map_err(Into::into)
     }
@@ -328,8 +300,44 @@ mod tests {
             .expect("the trailing silence is written");
         let audio = recording.finish().expect("the recording heard speech");
 
-        let pre_speech = canonical_duration((PRE_SPEECH_FRAMES * Loudness::FRAME_SAMPLES) as u64);
+        let pre_speech = canonical_duration((LEAD_IN_FRAMES * Loudness::FRAME_SAMPLES) as u64);
         assert_eq!(audio.duration(), pre_speech + Duration::from_millis(1_500));
+    }
+
+    #[test]
+    fn audio_after_the_trailing_silence_in_the_same_push_is_dropped() {
+        let (_directory, _writer, mut recording) = listening(Duration::from_millis(500));
+        let mut batch = speech(Duration::from_secs(1));
+        batch.extend(silence(Duration::from_secs(1)));
+        batch.extend(speech(Duration::from_secs(1)));
+
+        let progress = recording.push(&batch);
+        let audio = recording.finish().expect("the recording heard speech");
+
+        assert!(matches!(progress, Ok(CaptureProgress::Complete)));
+        assert_eq!(audio.duration(), Duration::from_millis(1_500));
+    }
+
+    #[test]
+    fn an_onset_frame_split_across_pushes_keeps_its_whole_lead_in() {
+        let (_directory, _writer, mut recording) = listening(Duration::from_millis(500));
+        let frame = Loudness::FRAME_SAMPLES;
+        // Ends 150 samples into a frame, so the onset frame starts in this push.
+        let silence_before = 5 * frame + 150;
+
+        recording
+            .push(&vec![0; silence_before])
+            .expect("silence is buffered");
+        recording
+            .push(&speech(Duration::from_secs(1)))
+            .expect("speech is written");
+        let audio = recording.finish().expect("the recording heard speech");
+
+        let lead_in = LEAD_IN_FRAMES * frame + 150;
+        assert_eq!(
+            audio.duration(),
+            canonical_duration(lead_in as u64) + Duration::from_secs(1)
+        );
     }
 
     #[test]

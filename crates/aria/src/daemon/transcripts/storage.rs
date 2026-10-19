@@ -53,7 +53,8 @@ struct State {
 
 pub(in crate::daemon) struct RetryLease {
     pub(in crate::daemon) entry: HistoryEntry,
-    pub(in crate::daemon) audio_path: PathBuf,
+    /// Read from the descriptor whose size was checked.
+    pub(in crate::daemon) recording: RecordingReader,
     store: Arc<Store>,
 }
 
@@ -311,22 +312,21 @@ impl Store {
             return Err(HistoryError::AudioUnavailable);
         }
         let audio_path = self.audio_path(id);
-        let validated = (|| -> Result<(), HistoryError> {
+        let validated = (|| -> Result<RecordingReader, HistoryError> {
             let file = open_private(&self.audio_directory, &audio_name(id), false)?;
             check_size(&file, MAX_AUDIO_BYTES)?;
-            RecordingReader::from_wav_file(&audio_path)
-                .map_err(|_| HistoryError::AudioUnavailable)?;
-            Ok(())
+            RecordingReader::from_open_wav(file, &audio_path)
+                .map_err(|_| HistoryError::AudioUnavailable)
         })();
-        if validated.is_err() {
+        let Ok(recording) = validated else {
             self.invalidate_audio(&mut state, id)?;
             return Err(HistoryError::AudioUnavailable);
-        }
+        };
         state.pinned.insert(id);
         entry.retrying = true;
         Ok(RetryLease {
             entry,
-            audio_path,
+            recording,
             store: Arc::clone(self),
         })
     }
@@ -1169,7 +1169,7 @@ mod tests {
         let lease = store.begin_retry(saved.id).unwrap();
         assert_eq!(store.clear(), Err(HistoryError::Busy));
         assert_eq!(store.get(other.id).unwrap().text, "other");
-        assert!(lease.audio_path.exists());
+        assert!(store.audio_path(lease.entry.id).exists());
         drop(lease);
         store
             .lock()
@@ -1258,7 +1258,7 @@ mod tests {
             )
             .unwrap();
         let lease = store.begin_retry(failed.id).unwrap();
-        let audio_path = lease.audio_path.clone();
+        let audio_path = store.audio_path(lease.entry.id);
         assert!(matches!(Store::open(&history), Err(HistoryError::Busy)));
         assert!(audio_path.exists());
         drop(store);
@@ -1305,7 +1305,7 @@ mod tests {
         assert_eq!(recovered.status, HistoryStatus::Recovered);
         assert!(recovered.error.is_none());
         assert_eq!(recovered.audio, AudioAvailability::Unavailable);
-        assert!(!lease.audio_path.exists());
+        assert!(!store.audio_path(lease.entry.id).exists());
         drop(lease);
         assert!(!store.get(failed.id).unwrap().retrying);
         assert!(matches!(
@@ -1371,12 +1371,12 @@ mod tests {
             )
             .unwrap();
         store.maintenance().unwrap();
-        assert!(lease.audio_path.exists());
+        assert!(store.audio_path(lease.entry.id).exists());
         assert_eq!(
             store.get(failed.id).unwrap().audio,
             AudioAvailability::Expired
         );
-        let path = lease.audio_path.clone();
+        let path = store.audio_path(lease.entry.id);
         drop(lease);
         assert!(!path.exists());
         assert_eq!(store.get(failed.id).unwrap().text, "partial");
@@ -1460,7 +1460,7 @@ mod tests {
             )
             .unwrap();
         let lease = store.begin_retry(failed.id).unwrap();
-        let path = lease.audio_path.clone();
+        let path = store.audio_path(lease.entry.id);
         let audio_directory = path.parent().unwrap().to_path_buf();
         fs::set_permissions(&audio_directory, fs::Permissions::from_mode(0o500)).unwrap();
         let recovered = store
