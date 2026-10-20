@@ -40,23 +40,6 @@ rust-lint package="aria":
 rust-test package="aria" *args:
     cargo test --locked -p {{ package }} {{ args }}
 
-test_model_url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin"
-test_model_sha256 := "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
-
-# Fetch the Whisper model the serving acceptance cases run, and print its path
-test-model directory=(cache_directory() / "aria-test-models"):
-    #!/usr/bin/env bash
-    set -euo pipefail
-    model="{{ directory }}/ggml-tiny.en.bin"
-    if [ ! -f "$model" ]; then
-        mkdir -p "{{ directory }}"
-        curl -sSfL --retry 3 -o "$model.part" "{{ test_model_url }}"
-        mv "$model.part" "$model"
-    fi
-    echo "{{ test_model_sha256 }}  $model" | shasum -a 256 -c >&2
-    chmod 644 "$model"
-    echo "$model"
-
 # Run the acceptance cases, serving ones included
 rust-acceptance *args:
     #!/usr/bin/env bash
@@ -298,6 +281,23 @@ corpus utterances="100":
 corpus-long recordings="12":
     crates/aria-bench/scripts/corpus-long.sh {{ justfile_directory() }}/build/corpus-long \
         {{ recordings }} {{ justfile_directory() }}/build/corpus/librispeech
+
+test_model_url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin"
+test_model_sha256 := "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
+
+# Fetch the Whisper model the serving acceptance cases run, and print its path
+test-model directory=(cache_directory() / "aria-test-models"):
+    #!/usr/bin/env bash
+    set -euo pipefail
+    model="{{ directory }}/ggml-tiny.en.bin"
+    if [ ! -f "$model" ]; then
+        mkdir -p "{{ directory }}"
+        curl -sSfL --retry 3 -o "$model.part" "{{ test_model_url }}"
+        mv "$model.part" "$model"
+    fi
+    echo "{{ test_model_sha256 }}  $model" | shasum -a 256 -c >&2
+    chmod 644 "$model"
+    echo "$model"
 
 # The environment's ARIA_TEST_*_MODEL variables select the backends.
 # Measure word error rate against `just corpus`
