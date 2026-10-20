@@ -108,6 +108,9 @@ pub enum ClientError {
     #[error("the daemon is not ready to serve")]
     NotServing,
 
+    #[error("the running daemon does not provide this service")]
+    NotProvided,
+
     #[error("daemon request timed out after {}s", .0.as_secs())]
     Timeout(Duration),
 
@@ -124,7 +127,10 @@ impl ClientError {
                 status.code(),
                 tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled
             ),
-            Self::Runtime(_) | Self::Rpc { .. } | Self::MalformedResponse(_) => false,
+            Self::Runtime(_)
+            | Self::Rpc { .. }
+            | Self::NotProvided
+            | Self::MalformedResponse(_) => false,
         }
     }
 }
@@ -212,9 +218,9 @@ impl DaemonClient {
     pub(crate) fn check_service_ready(&mut self, service: &str) -> Result<(), ClientError> {
         match self.service_status(service)? {
             ServingStatus::Serving => Ok(()),
-            ServingStatus::Unknown | ServingStatus::NotServing | ServingStatus::ServiceUnknown => {
-                Err(ClientError::NotServing)
-            }
+            ServingStatus::Unknown | ServingStatus::NotServing => Err(ClientError::NotServing),
+            // The daemon never registered the service, so waiting will not help.
+            ServingStatus::ServiceUnknown => Err(ClientError::NotProvided),
         }
     }
 
@@ -225,10 +231,16 @@ impl DaemonClient {
         };
         let response = self
             .runtime
-            .block_on(with_deadline(READINESS_TIMEOUT, health.check(request)))?
-            .map_err(status_error)?;
+            .block_on(with_deadline(READINESS_TIMEOUT, health.check(request)))?;
 
-        Ok(response.into_inner().status())
+        match response {
+            Ok(response) => Ok(response.into_inner().status()),
+            // The health service answers NOT_FOUND for a name nobody registered.
+            Err(status) if status.code() == tonic::Code::NotFound => {
+                Ok(ServingStatus::ServiceUnknown)
+            }
+            Err(status) => Err(status_error(status)),
+        }
     }
 
     /// Runs one press to its end. Each stage passes through `observe`

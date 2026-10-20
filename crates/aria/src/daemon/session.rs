@@ -718,9 +718,45 @@ fn probe_error(paths: &PreparedRuntimePaths, error: ProbeError) -> StartupError 
 mod tests {
     use crate::chat::Step;
     use crate::config::ChatAgent;
+    use crate::daemon::Daemon;
+    use crate::runtime::RuntimePaths;
     use crate::speech::SpeechStage;
 
     use super::*;
+
+    #[test]
+    fn a_daemon_without_a_wake_word_reports_it_disabled() {
+        let directory = tempfile::TempDir::new().expect("the test directory should be created");
+        // On demand, so it serves without a model and never monitors a wake word.
+        let daemon = Daemon::builder()
+            .runtime_dir(directory.path())
+            .lifetime(DaemonLifetime::OnDemand)
+            .open()
+            .expect("the daemon should configure")
+            .spawn()
+            .expect("the daemon should spawn");
+        let paths = RuntimePaths::in_directory(directory.path().to_path_buf())
+            .prepare()
+            .expect("the runtime directory should be usable");
+
+        let status = DaemonSession::wake_word_status_at(&paths);
+
+        assert!(
+            matches!(status, Ok(WakeWordStatus::Disabled)),
+            "a daemon with no wake word should say so, got {status:?}"
+        );
+        let readiness = DaemonClient::connect(paths.socket_path())
+            .expect("the daemon accepts")
+            .check_service_ready(WAKE_WORD_HEALTH_SERVICE);
+        assert!(
+            matches!(readiness, Err(ClientError::NotProvided)),
+            "waiting will not bring the wake word up, got {readiness:?}"
+        );
+        daemon.stopper().stop();
+        daemon
+            .join()
+            .expect("the stopped daemon should exit cleanly");
+    }
 
     fn chat(ticket: u64, kind: ChatStageKind) -> Result<DaemonEvent, ClientError> {
         Ok(DaemonEvent::Chat(ChatStage {

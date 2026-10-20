@@ -1,5 +1,6 @@
 //! Test environment with a temporary home and runtime directory. Aria environment
-//! variables are cleared, and unattended mode suppresses sound and banners.
+//! variables are cleared, unattended mode suppresses sound and banners, and the
+//! global hotkey stays off so no case taps the developer's keyboard.
 
 use std::path::Path;
 use std::process::Command;
@@ -17,6 +18,8 @@ const ARIA_ENV_PREFIX: &str = "ARIA_";
 const LOG_FILTER_ENV: &str = "RUST_LOG";
 const UNATTENDED_ENV: &str = "ARIA_UNATTENDED";
 const UNATTENDED: &str = "1";
+const HOTKEY_ENABLED_ENV: &str = "ARIA_HOTKEY_ENABLED";
+const DISABLED: &str = "false";
 
 pub struct Sandbox {
     home: TempDir,
@@ -83,6 +86,7 @@ impl Sandbox {
             .env(HOME_ENV, self.home.path())
             .env(RUNTIME_DIR_ENV, self.home.path().join(RUNTIME_SUBDIRECTORY))
             .env(UNATTENDED_ENV, UNATTENDED)
+            .env(HOTKEY_ENABLED_ENV, DISABLED)
             .env_remove(LOG_FILTER_ENV);
     }
 }

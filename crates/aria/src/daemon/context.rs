@@ -28,7 +28,8 @@ impl<'runtime> Context<'runtime> {
         // A unit-test daemon must never expire or delete the user's history.
         #[cfg(test)]
         let config_environment = Environment::in_home(paths.spool_dir().to_path_buf());
-        let attended = attended(config_environment.unattended());
+        // Nor may it play cues or show banners on the developer's machine.
+        let attended = !cfg!(test) && attended(config_environment.unattended());
         Ok(Self {
             paths,
             preferences_path: PreferenceStore::default_path(config_environment.home()),
