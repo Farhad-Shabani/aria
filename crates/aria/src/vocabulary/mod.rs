@@ -12,12 +12,6 @@ pub use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules, 
 use std::ops::Range;
 use std::path::PathBuf;
 
-impl crate::dictation::Corrector for Vocabulary {
-    fn correct(&self, text: &str) -> Option<String> {
-        Self::correct(self, text)
-    }
-}
-
 pub(crate) const MAX_TERMS: usize = 100_000;
 pub(crate) const MAX_CANDIDATES: usize = 128;
 pub(crate) const MAX_TEXT_BYTES: usize = 64 * 1024;

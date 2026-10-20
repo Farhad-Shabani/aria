@@ -4,7 +4,9 @@ use std::time::{Duration, Instant};
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Embedder, Heard, HeardUpdate};
 use aria_kit::transcription::check_cancelled;
-use aria_kit::transcription::layer::{self, Layer, Layered};
+use aria_kit::transcription::layer::{
+    self, Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats,
+};
 use aria_kit::voice_activity::{SileroVad, VoiceActivityDetector};
 
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
@@ -12,15 +14,16 @@ use crate::delivery::{DeliveryOutcome, Placement};
 use crate::primitives::error_chain;
 use crate::speaker::{SegmentLabeler, SegmentReader, Verdict};
 use crate::transcription::{
-    Language, Mode, Operation, Transcriber, Transcript, Transcription, TranscriptionError,
+    Language, Mode, Transcriber, Transcript, Transcription, TranscriptionError,
 };
+use crate::vocabulary::Vocabulary;
 
 use super::Meter;
 use super::speech::{Scan, Tally};
 use super::{
-    CaptionSnapshot, Corrector, DeliveryMode, DictationError, DictationEventEmitter,
-    DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, StopMode,
-    TranscriptSink, Utterance,
+    CaptionSnapshot, DeliveryMode, DictationError, DictationEventEmitter, DictationResult,
+    DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, StopMode, TranscriptSink,
+    Utterance,
 };
 
 /// Records a press, hears it, and publishes each segment to its sinks.
@@ -128,21 +131,16 @@ impl<C, T, M: Mode, E, V, S, L: Layer> DictationPipeline<C, T, M, E, V, S, L> {
     fn finalize(
         &self,
         transcript: Transcript,
-        corrector: Option<&dyn Corrector>,
+        vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<Transcript, TranscriptionError> {
-        check_cancelled(cancel)?;
-        let transcript = if self.backtrack {
-            match super::Backtrack.correct(transcript.as_str()) {
-                Some(text) => Transcript::new(text)?,
-                None => transcript,
-            }
-        } else {
-            transcript
-        };
-        check_cancelled(cancel)?;
-        let transcript = corrected(transcript, corrector, self.cleanup)?;
-        check_cancelled(cancel)?;
+        let mut text = transcript.into_text();
+        if self.backtrack {
+            Backtrack.apply(&mut text, cancel)?;
+        }
+        apply_corrections(&mut text, self.cleanup, vocabulary, cancel)?;
+        // Cleanup can leave nothing, and then this fails as `NoSpeech`.
+        let transcript = Transcript::new(text)?;
         if !self.layers.enabled() {
             return Ok(transcript);
         }
@@ -191,7 +189,7 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        corrector: Option<&dyn Corrector>,
+        vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<Transcript, DictationError> {
         if cancel.is_cancelled() {
@@ -215,7 +213,7 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
         let heard = gated.as_mut().unwrap_or(recording);
         self.transcription
             .transcribe_with(heard, language, cancel)
-            .and_then(|transcript| self.finalize(transcript, corrector, cancel))
+            .and_then(|transcript| self.finalize(transcript, vocabulary, cancel))
             .map_err(DictationError::from)
     }
 }
@@ -235,7 +233,7 @@ where
         settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-        corrector: Option<&dyn Corrector>,
+        vocabulary: Option<&Vocabulary>,
     ) -> Result<DictationResult, DictationError> {
         let captions =
             settings.delivery_mode == DeliveryMode::Complete && !settings.transcript_only;
@@ -243,7 +241,7 @@ where
             events.emit(CaptionSnapshot::empty(control.recording_id(), false));
         }
         let mut sinks = self.sinks();
-        let result = self.execute_stages(settings, control, events, &mut *sinks, corrector);
+        let result = self.execute_stages(settings, control, events, &mut *sinks, vocabulary);
         sinks.dictation_finished();
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), true));
@@ -268,7 +266,7 @@ where
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         sinks: &mut S,
-        corrector: Option<&dyn Corrector>,
+        vocabulary: Option<&Vocabulary>,
     ) -> Result<DictationResult, DictationError> {
         check_execution(control)?;
 
@@ -296,7 +294,14 @@ where
             // otherwise keep running until its own timeout, and the meter above
             // would wait on it before anything could stop it.
             let heard = self
-                .hear(&settings, &mut recording, control, events, sinks, corrector)
+                .hear(
+                    &settings,
+                    &mut recording,
+                    control,
+                    events,
+                    sinks,
+                    vocabulary,
+                )
                 .map_err(|error| stop_recording(control, error));
             drop(meter);
             log_capture_stage(&recording, stage_started);
@@ -368,10 +373,14 @@ where
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         sinks: &mut S,
-        corrector: Option<&dyn Corrector>,
+        vocabulary: Option<&Vocabulary>,
     ) -> Result<(Transcript, Completion), DictationError> {
         let started_at = Instant::now();
         let started = |error| log_transcription_error(error, control, started_at);
+        let cancel = {
+            let control = Arc::clone(control);
+            CancelToken::from_fn(move || control.should_stop())
+        };
         let mut reader = self.reader();
         reader.rewind();
         reader
@@ -379,7 +388,10 @@ where
             .set_only_own_voice(settings.own_voice_only);
         let mut tally = self.tally();
         let mut scan = Scan::new(tally.as_mut(), recording);
-        let mut operation = self.open(settings, control).map_err(started)?;
+        let mut operation = self
+            .transcription
+            .start_with(&settings.recognition_language, &cancel)
+            .map_err(started)?;
         // Complete delivery filters audio before decoding. Streaming instead
         // checks the predicted voice for each finalized segment.
         let mut gated = match settings.delivery_mode {
@@ -414,8 +426,11 @@ where
                 Some(HeardUpdate::Provisional(_)) if !scan.heard() => {}
                 Some(HeardUpdate::Finalized(heard)) => {
                     trusted.push(heard.segment.as_str().to_owned());
-                    let text = corrected_text(heard.segment.as_str(), corrector, self.cleanup);
-                    published.segment(heard, text.as_deref(), sinks)?;
+                    let mut text = heard.segment.as_str().to_owned();
+                    apply_corrections(&mut text, self.cleanup, vocabulary, &cancel).map_err(
+                        |error| published.failure.take().unwrap_or_else(|| started(error)),
+                    )?;
+                    published.segment(heard, &text, sinks)?;
                 }
                 // A preview is the decoder's guess; only a finalized segment
                 // is worth correcting.
@@ -439,50 +454,32 @@ where
             transcript
         };
         let transcript = match settings.delivery_mode {
-            DeliveryMode::Complete => {
-                let control = Arc::clone(control);
-                let cancel = CancelToken::from_fn(move || control.should_stop());
-                self.finalize(transcript, corrector, &cancel)
-                    .map_err(started)?
-            }
+            DeliveryMode::Complete => self
+                .finalize(transcript, vocabulary, &cancel)
+                .map_err(started)?,
             DeliveryMode::Streaming => transcript,
         };
         published.finish(transcript, sinks)
     }
-
-    fn open<'a>(
-        &'a self,
-        settings: &'a DictationSettings,
-        control: &Arc<ExecutionControl>,
-    ) -> Result<Operation<'a, T>, TranscriptionError> {
-        let control = Arc::clone(control);
-        let cancel = CancelToken::from_fn(move || control.should_stop());
-        self.transcription
-            .start_with(&settings.recognition_language, &cancel)
-    }
 }
 
-fn corrected_text(text: &str, corrector: Option<&dyn Corrector>, cleanup: bool) -> Option<String> {
-    let cleaned = if cleanup {
-        super::Fillers.correct(text)
-    } else {
-        None
-    };
-    corrector
-        .and_then(|corrector| corrector.correct(cleaned.as_deref().unwrap_or(text)))
-        .or(cleaned)
-}
-
-/// [`TranscriptionError::NoSpeech`] when nothing was worth keeping.
-fn corrected(
-    transcript: Transcript,
-    corrector: Option<&dyn Corrector>,
+/// Calls each layer directly rather than through `Layered`, whose 64 KiB
+/// bound would stop deterministic cleanup on a long transcript.
+fn apply_corrections(
+    text: &mut String,
     cleanup: bool,
-) -> Result<Transcript, TranscriptionError> {
-    match corrected_text(transcript.as_str(), corrector, cleanup) {
-        Some(text) => Transcript::new(text),
-        None => Ok(transcript),
+    vocabulary: Option<&Vocabulary>,
+    cancel: &CancelToken,
+) -> Result<(), TranscriptionError> {
+    check_cancelled(cancel)?;
+    if cleanup {
+        RemoveHesitations.apply(text, cancel)?;
+        RemoveRepeats.apply(text, cancel)?;
     }
+    if let Some(corrected) = vocabulary.and_then(|vocabulary| vocabulary.correct(text)) {
+        *text = corrected;
+    }
+    check_cancelled(cancel)
 }
 
 /// What one dictation has put out so far, with the events and logs each
@@ -522,7 +519,7 @@ impl<'a> Published<'a> {
     fn segment<S>(
         &mut self,
         heard: Heard,
-        corrected: Option<&str>,
+        corrected: &str,
         sinks: &mut S,
     ) -> Result<(), DictationError>
     where
@@ -532,9 +529,8 @@ impl<'a> Published<'a> {
         if let Some(caption) = &mut self.caption {
             caption.provisional = Arc::from("");
         }
-        let text = corrected.unwrap_or(heard.segment.as_str());
         // A streamed segment of only fillers is nothing to type.
-        if text.is_empty() {
+        if corrected.is_empty() {
             return Ok(());
         }
         let Some((speaker, embedding)) = voice(heard.verdict) else {
@@ -542,12 +538,12 @@ impl<'a> Published<'a> {
             return Ok(());
         };
         let first = self.kept.is_empty();
-        self.kept.push(text.to_owned());
+        self.kept.push(corrected.to_owned());
         if self.failure.is_some() {
             return Ok(());
         }
         let published = sinks.segment(Utterance {
-            text,
+            text: corrected,
             speaker: speaker.as_deref(),
             embedding: embedding.as_deref(),
             at: heard.at,
@@ -582,15 +578,15 @@ impl<'a> Published<'a> {
         }
         if let Some(caption) = &mut self.caption {
             let joined = if caption.committed.is_empty() {
-                text.to_owned()
+                corrected.to_owned()
             } else {
-                format!("{} {text}", caption.committed)
+                format!("{} {corrected}", caption.committed)
             };
             caption.committed = caption_suffix(&joined);
             self.events.emit(caption.clone());
         }
         self.events
-            .emit(DictationStage::SegmentTranscribed(Arc::from(text)));
+            .emit(DictationStage::SegmentTranscribed(Arc::from(corrected)));
         if self.streaming {
             self.events.emit(DictationStage::SegmentDelivered);
             self.events
@@ -1397,7 +1393,7 @@ mod tests {
             .unwrap()
             .unwrap();
         published.provisional("uncommitted guess", &sinks);
-        published.segment(heard, None, &mut sinks).unwrap();
+        published.segment(heard, "turn left", &mut sinks).unwrap();
         assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
         let transcript = operation.finish(&mut recording).unwrap();
         let (transcript, mut completion) = published.finish(transcript, &mut sinks).unwrap();
@@ -1797,14 +1793,13 @@ mod tests {
                             delivered: Arc::clone(&delivered),
                         },
                     );
-                    let matching: &dyn Corrector = &matcher;
-                    let corrector = enabled.then_some(matching);
+                    let vocabulary = enabled.then_some(&matcher);
                     let result = pipeline
                         .execute(
                             settings(DeliveryMode::Streaming, OutputMode::Insert),
                             &ExecutionControl::for_test(StopMode::Manual),
                             &DictationEventEmitter::unsubscribed(),
-                            corrector,
+                            vocabulary,
                         )
                         .unwrap();
                     let total_us = started.elapsed().as_micros() as u64;
@@ -1871,7 +1866,7 @@ mod tests {
                 unlabeled(),
                 log.history(),
             );
-            let cases: [(Option<&dyn Corrector>, &str); 4] = [
+            let cases: [(Option<&Vocabulary>, &str); 4] = [
                 (Some(&hyphen), "aria-stt"),
                 (Some(&underscore), "aria_stt"),
                 (None, "aria s t t"),
@@ -2298,7 +2293,9 @@ mod tests {
                 if stranger {
                     heard.verdict = Verdict::Stranger;
                 }
-                published.segment(heard, corrected, &mut sinks).unwrap();
+                published
+                    .segment(heard, corrected.unwrap_or(text), &mut sinks)
+                    .unwrap();
             }
             assert_eq!(capture.should_stop(), fail);
             let result = published.finish(whole, &mut sinks);
@@ -2328,10 +2325,39 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_transcript_of_only_fillers_is_no_speech() {
-        let transcript = Transcript::new("um").unwrap();
+    fn cleaning_drops_hesitations_and_repeats_only_when_on() {
+        for (enabled, expected) in [(false, "send the the um report"), (true, "send the report")] {
+            let pipeline = DictationPipeline::new(
+                (),
+                Transcription::complete_samples(Answering("")),
+                unlabeled(),
+                UnreachableSink,
+            )
+            .cleaning(enabled);
 
-        let result = corrected(transcript, None, true);
+            let transcript = pipeline
+                .finalize(
+                    Transcript::new("send the the um report").unwrap(),
+                    None,
+                    &CancelToken::never(),
+                )
+                .unwrap();
+
+            assert_eq!(transcript.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn a_whole_transcript_of_only_fillers_is_no_speech() {
+        let pipeline = DictationPipeline::new(
+            (),
+            Transcription::complete_samples(Answering("")),
+            unlabeled(),
+            UnreachableSink,
+        )
+        .cleaning(true);
+
+        let result = pipeline.finalize(Transcript::new("um").unwrap(), None, &CancelToken::never());
 
         assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
@@ -2361,7 +2387,7 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let heard = heard(directory.path(), "turn left");
-        published.segment(heard, None, &mut sinks).unwrap();
+        published.segment(heard, "turn left", &mut sinks).unwrap();
         published.provisional("", &sinks);
         drop(published);
         drop(events);
@@ -2395,7 +2421,7 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let heard = heard(directory.path(), "one");
-        published.segment(heard, None, &mut sinks).unwrap();
+        published.segment(heard, "one", &mut sinks).unwrap();
         // The recording drains after the failure, so previews keep arriving.
         published.provisional("one two", &sinks);
         drop(published);
@@ -2485,7 +2511,7 @@ mod tests {
             sinks.dictation_started(&settings, &control).unwrap();
             for text in ["one", "two"] {
                 let heard = heard(directory.path(), text);
-                published.segment(heard, None, &mut sinks).unwrap();
+                published.segment(heard, text, &mut sinks).unwrap();
             }
 
             let result = published.finish(Transcript::new("one two").unwrap(), &mut sinks);
@@ -2510,7 +2536,9 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         for (text, corrected) in [("um", Some("")), ("run", None)] {
             let heard = heard(directory.path(), text);
-            published.segment(heard, corrected, &mut sinks).unwrap();
+            published
+                .segment(heard, corrected.unwrap_or(text), &mut sinks)
+                .unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
 

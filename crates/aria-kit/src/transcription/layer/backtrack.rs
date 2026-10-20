@@ -1,70 +1,87 @@
 use std::ops::Range;
 
-use super::Corrector;
+use crate::cancel::CancelToken;
 
-pub(crate) struct Backtrack;
+use super::{Layer, TranscriptionError};
 
-impl Corrector for Backtrack {
-    fn correct(&self, text: &str) -> Option<String> {
-        let mut tokens = tokens(text);
-        for index in 0..tokens.len() {
-            let width = cue_width(&tokens[index..]);
-            if width == 0 {
+const ONE_WORD_CUE: &str = "actually";
+const TWO_WORD_CUES: &[(&str, &str)] = &[("scratch", "that"), ("i", "mean"), ("no", "wait")];
+const PREPOSITIONS: &[&str] = &["to", "at", "on", "in", "for", "from", "with"];
+
+/// Applies a spoken self-correction in English: "meet at 3, actually 4"
+/// becomes "meet at 4". Only a lone integer, or the word after a repeated
+/// preposition, is replaced. Quoted or bracketed text is left alone.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Backtrack;
+
+impl Layer for Backtrack {
+    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), TranscriptionError> {
+        if let Some(corrected) = correct(text) {
+            *text = corrected;
+        }
+        Ok(())
+    }
+}
+
+fn correct(text: &str) -> Option<String> {
+    let mut tokens = tokens(text);
+    for index in 0..tokens.len() {
+        let width = cue_width(&tokens[index..]);
+        if width == 0 {
+            continue;
+        }
+        let mut before = index;
+        while before > 0 && separator(tokens[before - 1].text) {
+            before -= 1;
+        }
+        let mut after = index + width;
+        while after < tokens.len()
+            && separator(tokens[after].text)
+            && !tokens.get(after + 1).is_some_and(|next| {
+                (tokens[after].text == "-"
+                    || tokens[after].start + tokens[after].text.len() == next.start)
+                    && next.text.starts_with(|c: char| c.is_ascii_digit())
+            })
+        {
+            after += 1;
+        }
+        for token in &mut tokens[before..index] {
+            token.cue_separator = true;
+        }
+        for token in &mut tokens[index + width..after] {
+            token.cue_separator = true;
+        }
+    }
+
+    let mut protected = Vec::new();
+    let mut unmatched_quote = false;
+    let mut blocked = false;
+    let mut clause_start = 0;
+    let mut copied = 0;
+    let mut output = String::new();
+    for index in 0..=tokens.len() {
+        if let Some(token) = tokens.get(index) {
+            unmatched_quote |= matches!(token.text, "”" | "’")
+                && protected
+                    .last()
+                    .is_none_or(|closing| *closing != token.text);
+            blocked |= protection(token.text, &mut protected);
+            if !boundary(token.text) || token.cue_separator {
                 continue;
             }
-            let mut before = index;
-            while before > 0 && separator(tokens[before - 1].text) {
-                before -= 1;
-            }
-            let mut after = index + width;
-            while after < tokens.len()
-                && separator(tokens[after].text)
-                && !tokens.get(after + 1).is_some_and(|next| {
-                    (tokens[after].text == "-"
-                        || tokens[after].start + tokens[after].text.len() == next.start)
-                        && next.text.starts_with(|c: char| c.is_ascii_digit())
-                })
-            {
-                after += 1;
-            }
-            for token in &mut tokens[before..index] {
-                token.cue_separator = true;
-            }
-            for token in &mut tokens[index + width..after] {
-                token.cue_separator = true;
-            }
         }
-
-        let mut protected = Vec::new();
-        let mut unmatched_quote = false;
-        let mut blocked = false;
-        let mut clause_start = 0;
-        let mut copied = 0;
-        let mut output = String::new();
-        for index in 0..=tokens.len() {
-            if let Some(token) = tokens.get(index) {
-                unmatched_quote |= matches!(token.text, "”" | "’")
-                    && protected
-                        .last()
-                        .is_none_or(|closing| *closing != token.text);
-                blocked |= protection(token.text, &mut protected);
-                if !boundary(token.text) || token.cue_separator {
-                    continue;
-                }
-            }
-            if !blocked && let Some(removed) = correction(&tokens[clause_start..index]) {
-                output.push_str(&text[copied..removed.start]);
-                copied = removed.end;
-            }
-            clause_start = index + 1;
-            blocked = unmatched_quote || !protected.is_empty();
+        if !blocked && let Some(removed) = correction(&tokens[clause_start..index]) {
+            output.push_str(&text[copied..removed.start]);
+            copied = removed.end;
         }
-        if copied == 0 {
-            return None;
-        }
-        output.push_str(&text[copied..]);
-        Some(output)
+        clause_start = index + 1;
+        blocked = unmatched_quote || !protected.is_empty();
     }
+    if copied == 0 {
+        return None;
+    }
+    output.push_str(&text[copied..]);
+    Some(output)
 }
 
 struct Token<'a> {
@@ -148,13 +165,13 @@ fn cue_width(tokens: &[Token<'_>]) -> usize {
     let Some(first) = tokens.first() else {
         return 0;
     };
-    if first.text.eq_ignore_ascii_case("actually") {
+    if first.text.eq_ignore_ascii_case(ONE_WORD_CUE) {
         return 1;
     }
     let Some(second) = tokens.get(1) else {
         return 0;
     };
-    for (begin, end) in [("scratch", "that"), ("i", "mean"), ("no", "wait")] {
+    for (begin, end) in TWO_WORD_CUES {
         if first.text.eq_ignore_ascii_case(begin) && second.text.eq_ignore_ascii_case(end) {
             return 2;
         }
@@ -236,7 +253,7 @@ fn correction(tokens: &[Token<'_>]) -> Option<Range<usize>> {
         }
         [preposition, new] => {
             let anchor = before.iter().rev().nth(1)?;
-            if !["to", "at", "on", "in", "for", "from", "with"]
+            if !PREPOSITIONS
                 .iter()
                 .any(|word| anchor.text.eq_ignore_ascii_case(word))
                 || !anchor.text.eq_ignore_ascii_case(preposition.text)
@@ -272,20 +289,13 @@ mod tests {
                     "Send it TO Sára.",
                 ),
             ] {
-                assert_eq!(
-                    Backtrack.correct(&heard).as_deref(),
-                    Some(expected),
-                    "{heard}"
-                );
-                assert_eq!(Backtrack.correct(expected), None, "{expected}");
+                assert_eq!(correct(&heard).as_deref(), Some(expected), "{heard}");
+                assert_eq!(correct(expected), None, "{expected}");
             }
         }
         for preposition in ["to", "at", "on", "in", "for", "from", "with"] {
             let heard = format!("send it {preposition} Ali, actually {preposition} Sara");
-            assert_eq!(
-                Backtrack.correct(&heard),
-                Some(format!("send it {preposition} Sara"))
-            );
+            assert_eq!(correct(&heard), Some(format!("send it {preposition} Sara")));
         }
     }
 
@@ -316,7 +326,7 @@ mod tests {
             ("to علی، actually to سارا", "to علی، actually to سارا"),
             ("meet at 0003, actually 0004", "meet at 0004"),
         ] {
-            let corrected = Backtrack.correct(heard);
+            let corrected = correct(heard);
             assert_eq!(corrected.as_deref().unwrap_or(heard), expected, "{heard}");
         }
     }
@@ -406,7 +416,7 @@ mod tests {
             "”quoted. Meet at 3 actually 4.",
             "’quoted. Meet at 3 actually 4.",
         ] {
-            assert_eq!(Backtrack.correct(heard), None, "{heard}");
+            assert_eq!(correct(heard), None, "{heard}");
         }
     }
 
@@ -420,15 +430,12 @@ mod tests {
             "(quoted [text]. text)",
         ] {
             let heard = format!("{quoted}. Meet at 3 actually 4.");
-            assert_eq!(
-                Backtrack.correct(&heard),
-                Some(format!("{quoted}. Meet at 4."))
-            );
+            assert_eq!(correct(&heard), Some(format!("{quoted}. Meet at 4.")));
             let heard = format!("{quoted} meet at 3 actually 4.");
-            assert_eq!(Backtrack.correct(&heard), None);
+            assert_eq!(correct(&heard), None);
         }
         assert_eq!(
-            Backtrack.correct("I'm at 3, actually 4."),
+            correct("I'm at 3, actually 4."),
             Some("I'm at 4.".to_owned())
         );
     }
@@ -437,6 +444,6 @@ mod tests {
     fn many_clauses_preserve_rejected_text() {
         let heard = "I mean it. Meet at 3 actually 4. At 3 actually 4 no wait 5. ".repeat(4096);
         let expected = "I mean it. Meet at 4. At 3 actually 4 no wait 5. ".repeat(4096);
-        assert_eq!(Backtrack.correct(&heard), Some(expected));
+        assert_eq!(correct(&heard), Some(expected));
     }
 }

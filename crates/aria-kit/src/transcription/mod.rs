@@ -6,7 +6,7 @@ mod native;
 mod session;
 mod spacing;
 
-pub use layer::{Layer, Layered, RemoveHesitations, Vocabulary};
+pub use layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats, Vocabulary};
 pub use spacing::Caret;
 
 use std::path::PathBuf;
@@ -27,8 +27,8 @@ pub mod prelude {
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub use super::session::HeardSession;
     pub use super::{
-        Caret, Language, Layer, RemoveHesitations, Session, Streaming, Transcript,
-        TranscriptSegment, Transcription, TranscriptionError, Vocabulary, Whole,
+        Backtrack, Caret, Language, Layer, RemoveHesitations, RemoveRepeats, Session, Streaming,
+        Transcript, TranscriptSegment, Transcription, TranscriptionError, Vocabulary, Whole,
     };
     pub use crate::audio::RecordingReader;
     #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
