@@ -149,142 +149,15 @@ fn streaming_output_mode(mode: OutputMode) -> Option<OutputMode> {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use crate::audio::SilenceDuration;
-    use crate::delivery::Rect;
+mod tests {
     use crate::dictation::StopMode;
-    use crate::transcription::Language;
+    use crate::dictation::testing::{CallLog, PlacedDelivery, RecordingDelivery, settings};
 
     use super::*;
 
-    pub(crate) struct RecordingDelivery {
-        pub(crate) log: Arc<Mutex<Vec<String>>>,
-        pub(crate) fail: bool,
-    }
-
-    impl TextDelivery for RecordingDelivery {
-        type Prepared = OutputMode;
-
-        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
-        const OUTLIVES_PROCESS: bool = true;
-
-        fn prepare(
-            &self,
-            mode: OutputMode,
-            _should_cancel: impl Fn() -> bool,
-        ) -> Result<Self::Prepared, DeliveryError> {
-            self.log.lock().unwrap().push(format!("prepare:{mode:?}"));
-            Ok(mode)
-        }
-
-        fn finish(
-            &self,
-            prepared: &Self::Prepared,
-            should_cancel: impl Fn() -> bool,
-        ) -> Result<(), DeliveryError> {
-            if *prepared == OutputMode::InsertAndSubmit {
-                if should_cancel() {
-                    return Err(DeliveryError::Cancelled);
-                }
-                self.log.lock().unwrap().push("submit".to_owned());
-                if self.fail {
-                    return Err(DeliveryError::TargetUnavailable);
-                }
-            }
-            Ok(())
-        }
-
-        fn deliver(
-            &self,
-            _prepared: &Self::Prepared,
-            text: &str,
-            _should_cancel: impl Fn() -> bool,
-        ) -> Result<DeliveryOutcome, DeliveryError> {
-            self.log.lock().unwrap().push(format!("deliver:{text}"));
-            if self.fail {
-                Err(DeliveryError::TargetUnavailable)
-            } else {
-                Ok(DeliveryOutcome::Inserted)
-            }
-        }
-    }
-
-    /// Types everything and reports one fixed caret.
-    pub(crate) struct PlacedDelivery;
-
-    pub(crate) const PLACED: Rect = Rect {
-        x: 100.0,
-        y: 200.0,
-        width: 1.0,
-        height: 16.0,
-    };
-
-    impl TextDelivery for PlacedDelivery {
-        type Prepared = ();
-        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
-        const OUTLIVES_PROCESS: bool = true;
-
-        fn prepare(
-            &self,
-            _mode: OutputMode,
-            _should_cancel: impl Fn() -> bool,
-        ) -> Result<(), DeliveryError> {
-            Ok(())
-        }
-
-        fn finish(
-            &self,
-            _prepared: &(),
-            _should_cancel: impl Fn() -> bool,
-        ) -> Result<(), DeliveryError> {
-            Ok(())
-        }
-
-        fn deliver(
-            &self,
-            _prepared: &(),
-            _text: &str,
-            _should_cancel: impl Fn() -> bool,
-        ) -> Result<DeliveryOutcome, DeliveryError> {
-            Ok(DeliveryOutcome::Inserted)
-        }
-
-        fn placement(&self, _prepared: &()) -> Option<Placement> {
-            Some(Placement {
-                caret: PLACED,
-                field: None,
-                font: None,
-            })
-        }
-    }
-
-    pub(crate) fn settings(
-        delivery_mode: DeliveryMode,
-        output_mode: OutputMode,
-    ) -> DictationSettings {
-        DictationSettings {
-            dictation_history: true,
-            history_audio_retention: false,
-            mute_output: false,
-            recognition_language: Language::Automatic,
-            output_mode,
-            delivery_mode,
-            stop_mode: StopMode::Manual,
-            silence_duration: SilenceDuration::default(),
-            own_voice_only: false,
-            project: None,
-            transcript_only: false,
-        }
-    }
-
-    fn cursor() -> (Arc<Mutex<Vec<String>>>, Cursor<RecordingDelivery>) {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let cursor = Cursor::new(RecordingDelivery {
-            log: Arc::clone(&log),
-            fail: false,
-        });
+    fn cursor() -> (CallLog, Cursor<RecordingDelivery>) {
+        let log = CallLog::default();
+        let cursor = log.cursor();
         (log, cursor)
     }
 
@@ -298,7 +171,7 @@ pub(super) mod tests {
                 .unwrap();
             cursor.segment(Utterance::anonymous("hello")).unwrap();
             cursor.segment(Utterance::anonymous("there")).unwrap();
-            assert!(!log.lock().unwrap().iter().any(|entry| entry == "submit"));
+            assert!(!log.entries().iter().any(|entry| entry == "submit"));
             cursor
                 .completed(Utterance::anonymous("hello there"))
                 .unwrap();
@@ -316,7 +189,7 @@ pub(super) mod tests {
                     "submit",
                 ],
             };
-            assert_eq!(*log.lock().unwrap(), expected);
+            assert_eq!(log.entries(), expected);
         }
     }
 
@@ -337,7 +210,7 @@ pub(super) mod tests {
             .completed(Utterance::anonymous("hello there"))
             .unwrap();
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             ["prepare:InsertAndSubmit", "deliver:hello", "deliver: there"]
         );
     }
@@ -357,7 +230,7 @@ pub(super) mod tests {
         assert!(cursor.completed(Utterance::anonymous("hello")).is_err());
         cursor.completed(Utterance::anonymous("hello")).unwrap();
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             ["prepare:InsertAndSubmit", "deliver:hello", "submit"]
         );
     }
@@ -457,7 +330,7 @@ pub(super) mod tests {
         assert_eq!(cursor.delivered(), None);
         cursor.dictation_finished();
 
-        assert!(log.lock().unwrap().is_empty());
+        assert!(log.entries().is_empty());
     }
 
     #[test]
@@ -478,7 +351,7 @@ pub(super) mod tests {
             .unwrap();
 
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             ["prepare:Insert", "deliver:hello", "deliver: there"]
         );
     }
@@ -501,7 +374,7 @@ pub(super) mod tests {
 
         assert_eq!(cursor.delivered(), Some(DeliveryOutcome::Inserted));
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             ["prepare:InsertOrCopy", "deliver:hello there"]
         );
     }
@@ -517,7 +390,7 @@ pub(super) mod tests {
         );
 
         assert!(matches!(started, Err(DeliveryError::InsertionUnsupported)));
-        assert!(log.lock().unwrap().is_empty());
+        assert!(log.entries().is_empty());
     }
 
     #[test]
@@ -533,7 +406,7 @@ pub(super) mod tests {
         cursor.segment(Utterance::anonymous("two")).unwrap();
 
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             [
                 "prepare:Insert",
                 "deliver:one",
@@ -586,10 +459,10 @@ pub(super) mod tests {
     }
 
     fn streamed_into(before: &str, after: &str, segments: &[&str]) -> Vec<String> {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let mut cursor = Cursor::new(FieldWithText {
             delivery: RecordingDelivery {
-                log: Arc::clone(&log),
+                log: log.clone(),
                 fail: false,
             },
             caret: Caret::between(before, after),
@@ -604,8 +477,7 @@ pub(super) mod tests {
         for segment in segments {
             cursor.segment(Utterance::anonymous(segment)).unwrap();
         }
-        let log = log.lock().unwrap();
-        log[1..].to_vec()
+        log.entries()[1..].to_vec()
     }
 
     #[test]

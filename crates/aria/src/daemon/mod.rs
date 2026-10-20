@@ -27,6 +27,8 @@ mod speaker;
 mod speech;
 mod subscriptions;
 mod tasks;
+#[cfg(test)]
+mod testing;
 mod transcripts;
 mod vocabulary;
 mod wake;

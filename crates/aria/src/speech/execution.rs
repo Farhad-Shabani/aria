@@ -255,9 +255,22 @@ impl<E: SpeechExecutor> Drop for ExecutionGuard<'_, E> {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
+
+    /// Long past anything these coordinators take, so only a hang reaches it.
+    const WAIT_LIMIT: Duration = Duration::from_secs(10);
+
+    /// Polls `condition` until it holds, and fails rather than hangs when it
+    /// never does.
+    fn wait_until(what: &str, condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + WAIT_LIMIT;
+        while !condition() {
+            assert!(Instant::now() < deadline, "timed out waiting until {what}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
 
     fn settings(text: &str) -> SpeechSettings {
         SpeechSettings {
@@ -285,9 +298,9 @@ mod tests {
                 coordinator.execute(text, cancellation, &SpeechEventEmitter::unsubscribed())
             })
         };
-        while coordinator.executor.executions.load(Ordering::SeqCst) == started {
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        wait_until("the utterance speaks", || {
+            coordinator.executor.executions.load(Ordering::SeqCst) != started
+        });
         utterance
     }
 
@@ -474,12 +487,10 @@ mod tests {
         let stopper = {
             let coordinator = Arc::clone(&coordinator);
             std::thread::spawn(move || {
-                while coordinator.executor.executions.load(Ordering::SeqCst) < 3 {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                while coordinator.stop() {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
+                wait_until("both replacements speak", || {
+                    coordinator.executor.executions.load(Ordering::SeqCst) >= 3
+                });
+                wait_until("nothing is left speaking", || !coordinator.stop());
             })
         };
         for replacement in replacements {

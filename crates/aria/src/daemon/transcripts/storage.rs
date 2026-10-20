@@ -967,6 +967,30 @@ mod tests {
         }
     }
 
+    fn save(
+        store: &Store,
+        text: &str,
+        status: HistoryStatus,
+        audio: Option<&Path>,
+    ) -> HistoryEntry {
+        store.insert(entry(text, status), audio).unwrap()
+    }
+
+    /// Edits the database behind the store's back, as damage or an older
+    /// daemon would.
+    fn tamper(store: &Store, sql: &str, params: impl rusqlite::Params) {
+        store
+            .lock()
+            .unwrap()
+            .connection
+            .execute(sql, params)
+            .unwrap();
+    }
+
+    fn listed(store: &Store) -> Vec<HistoryEntry> {
+        store.list(&query("", None, 100)).unwrap().entries
+    }
+
     #[test]
     fn typed_errors_and_existing_plain_errors_survive_reopening() {
         let directory = tempfile::tempdir().unwrap();
@@ -987,19 +1011,12 @@ mod tests {
             saved.push((id, failure));
         }
         for text in ["transcription_failed", "dictation history retry timed out"] {
-            let id = store
-                .insert(entry("keep transcript", HistoryStatus::Success), None)
-                .unwrap()
-                .id;
-            store
-                .lock()
-                .unwrap()
-                .connection
-                .execute(
-                    "UPDATE entries SET error=?1 WHERE id=?2",
-                    params![text, sql_integer(id).unwrap()],
-                )
-                .unwrap();
+            let id = save(&store, "keep transcript", HistoryStatus::Success, None).id;
+            tamper(
+                &store,
+                "UPDATE entries SET error=?1 WHERE id=?2",
+                params![text, sql_integer(id).unwrap()],
+            );
             saved.push((id, RpcFailure::new(RpcErrorCode::Internal, text)));
         }
         drop(store);
@@ -1015,21 +1032,13 @@ mod tests {
     fn maintenance_removes_a_damaged_row_and_keeps_the_rest() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
-        let kept = store
-            .insert(entry("kept", HistoryStatus::Success), None)
-            .unwrap();
-        let damaged = store
-            .insert(entry("damaged", HistoryStatus::Success), None)
-            .unwrap();
-        store
-            .lock()
-            .unwrap()
-            .connection
-            .execute(
-                "UPDATE entries SET error='{broken' WHERE id=?1",
-                params![sql_integer(damaged.id).unwrap()],
-            )
-            .unwrap();
+        let kept = save(&store, "kept", HistoryStatus::Success, None);
+        let damaged = save(&store, "damaged", HistoryStatus::Success, None);
+        tamper(
+            &store,
+            "UPDATE entries SET error='{broken' WHERE id=?1",
+            params![sql_integer(damaged.id).unwrap()],
+        );
 
         let page = store.list(&query("", None, 10)).unwrap();
 
@@ -1087,9 +1096,7 @@ mod tests {
         assert_eq!(found.engine, "test");
         assert!(store.delete(first.id).unwrap());
         assert!(!store.delete(first.id).unwrap());
-        let second = store
-            .insert(entry("next", HistoryStatus::Success), None)
-            .unwrap();
+        let second = save(&store, "next", HistoryStatus::Success, None);
         assert!(second.id > first.id);
         assert_eq!(
             fs::metadata(directory.path()).unwrap().mode() & 0o777,
@@ -1135,22 +1142,14 @@ mod tests {
                 cleanup_pending: false,
             }
         );
-        assert!(
-            store
-                .list(&query("", None, 100))
-                .unwrap()
-                .entries
-                .is_empty()
-        );
+        assert!(listed(&store).is_empty());
         assert_eq!(fs::read_dir(history.join("audio")).unwrap().count(), 0);
         assert!(source.exists());
         assert!(matches!(Store::open(&history), Err(HistoryError::Busy)));
         assert_eq!(store.clear().unwrap().deleted_entries, 0);
         drop(store);
         let store = Store::open(&history).unwrap();
-        let later = store
-            .insert(entry("later", HistoryStatus::Success), None)
-            .unwrap();
+        let later = save(&store, "later", HistoryStatus::Success, None);
         assert!(later.id > last_id);
         assert_eq!(store.get(later.id).unwrap().text, "later");
     }
@@ -1160,12 +1159,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let saved = store
-            .insert(entry("retry", HistoryStatus::Success), Some(&source))
-            .unwrap();
-        let other = store
-            .insert(entry("other", HistoryStatus::Success), None)
-            .unwrap();
+        let saved = save(&store, "retry", HistoryStatus::Success, Some(&source));
+        let other = save(&store, "other", HistoryStatus::Success, None);
         let lease = store.begin_retry(saved.id).unwrap();
         assert_eq!(store.clear(), Err(HistoryError::Busy));
         assert_eq!(store.get(other.id).unwrap().text, "other");
@@ -1184,7 +1179,7 @@ mod tests {
             .connection
             .pragma_update(None, "query_only", false)
             .unwrap();
-        assert_eq!(store.list(&query("", None, 100)).unwrap().entries.len(), 2);
+        assert_eq!(listed(&store).len(), 2);
         assert!(store.audio_path(saved.id).exists());
         assert_eq!(store.clear().unwrap().deleted_entries, 2);
     }
@@ -1195,9 +1190,7 @@ mod tests {
         let source = audio(directory.path());
         let history = directory.path().join("history");
         let store = Store::open(&history).unwrap();
-        let saved = store
-            .insert(entry("private", HistoryStatus::Success), Some(&source))
-            .unwrap();
+        let saved = save(&store, "private", HistoryStatus::Success, Some(&source));
         let audio_directory = history.join("audio");
         fs::set_permissions(&audio_directory, fs::Permissions::from_mode(0o500)).unwrap();
         assert_eq!(
@@ -1221,9 +1214,7 @@ mod tests {
     fn history_clear_reports_sweep_failure_after_deleting_text() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(&directory.path().join("history")).unwrap();
-        store
-            .insert(entry("private", HistoryStatus::Success), None)
-            .unwrap();
+        save(&store, "private", HistoryStatus::Success, None);
         let audio_directory = store.directory.join("audio");
         let moved = store.directory.join("moved-audio");
         fs::rename(&audio_directory, &moved).unwrap();
@@ -1236,13 +1227,7 @@ mod tests {
         );
         fs::rename(&moved, &audio_directory).unwrap();
         store.maintenance().unwrap();
-        assert!(
-            store
-                .list(&query("", None, 100))
-                .unwrap()
-                .entries
-                .is_empty()
-        );
+        assert!(listed(&store).is_empty());
     }
 
     #[test]
@@ -1251,12 +1236,12 @@ mod tests {
         let source = audio(directory.path());
         let history = directory.path().join("history");
         let store = Store::open(&history).unwrap();
-        let failed = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         let lease = store.begin_retry(failed.id).unwrap();
         let audio_path = store.audio_path(lease.entry.id);
         assert!(matches!(Store::open(&history), Err(HistoryError::Busy)));
@@ -1275,12 +1260,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let failed = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         assert!(source.exists());
         assert!(matches!(failed.audio, AudioAvailability::Available { .. }));
         let lease = store.begin_retry(failed.id).unwrap();
@@ -1321,9 +1306,7 @@ mod tests {
         let source = audio(directory.path());
         let history = directory.path().join("history");
         let store = Store::open(&history).unwrap();
-        let original = store
-            .insert(entry("first", HistoryStatus::Success), Some(&source))
-            .unwrap();
+        let original = save(&store, "first", HistoryStatus::Success, Some(&source));
         for (text, engine, language) in [("second", "whisper", "fr"), ("third", "moonshine", "en")]
         {
             let lease = store.begin_retry(original.id).unwrap();
@@ -1357,19 +1340,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let failed = store
-            .insert(entry("partial", HistoryStatus::Success), Some(&source))
-            .unwrap();
+        let failed = save(&store, "partial", HistoryStatus::Success, Some(&source));
         let lease = store.begin_retry(failed.id).unwrap();
-        store
-            .lock()
-            .unwrap()
-            .connection
-            .execute(
-                "UPDATE entries SET expires=1 WHERE id=?1",
-                [sql_integer(failed.id).unwrap()],
-            )
-            .unwrap();
+        tamper(
+            &store,
+            "UPDATE entries SET expires=1 WHERE id=?1",
+            [sql_integer(failed.id).unwrap()],
+        );
         store.maintenance().unwrap();
         assert!(store.audio_path(lease.entry.id).exists());
         assert_eq!(
@@ -1392,15 +1369,13 @@ mod tests {
         let source = audio(directory.path());
         let history = directory.path().join("history");
         let store = Store::open(&history).unwrap();
-        let failed = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
-        let later = store
-            .insert(entry("later text", HistoryStatus::Success), None)
-            .unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
+        let later = save(&store, "later text", HistoryStatus::Success, None);
         let path = store.audio_path(failed.id);
         let audio_directory = path.parent().unwrap().to_path_buf();
         // Denying the directory write access is the one way to fail an unlink the
@@ -1421,12 +1396,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let failed = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         let path = store.audio_path(failed.id);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         assert!(store.delete(failed.id).unwrap());
@@ -1438,9 +1413,7 @@ mod tests {
     fn an_interrupted_deletion_finishes_on_the_next_sweep() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let pending = store
-            .insert(entry("pending", HistoryStatus::Success), None)
-            .unwrap();
+        let pending = save(&store, "pending", HistoryStatus::Success, None);
         {
             let mut state = store.lock().unwrap();
             store.mark_delete(&mut state, pending.id).unwrap();
@@ -1453,12 +1426,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let failed = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         let lease = store.begin_retry(failed.id).unwrap();
         let path = store.audio_path(lease.entry.id);
         let audio_directory = path.parent().unwrap().to_path_buf();
@@ -1492,12 +1465,12 @@ mod tests {
             .unwrap();
         large.set_len(MAX_AUDIO_BYTES + 1).unwrap();
         for path in [missing, corrupt, oversized] {
-            let saved = store
-                .insert(
-                    entry("partial", HistoryStatus::TranscriptionFailed),
-                    Some(&path),
-                )
-                .unwrap();
+            let saved = save(
+                &store,
+                "partial",
+                HistoryStatus::TranscriptionFailed,
+                Some(&path),
+            );
             assert_eq!(saved.audio, AudioAvailability::Unavailable);
             assert!(saved.warning.is_some());
             assert!(matches!(
@@ -1506,12 +1479,12 @@ mod tests {
             ));
         }
         let source = audio(directory.path());
-        let failed = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         fs::rename(
             store.audio_path(failed.id),
             directory.path().join("removed.wav"),
@@ -1528,12 +1501,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let store = Store::open(&directory.path().join("history")).unwrap();
-        let corrupt = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let corrupt = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         fs::write(store.audio_path(corrupt.id), "corrupted after retention").unwrap();
         assert!(matches!(
             store.begin_retry(corrupt.id),
@@ -1545,12 +1518,12 @@ mod tests {
         );
         assert!(!store.audio_path(corrupt.id).exists());
 
-        let insecure = store
-            .insert(
-                entry("partial", HistoryStatus::TranscriptionFailed),
-                Some(&source),
-            )
-            .unwrap();
+        let insecure = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
         let path = store.audio_path(insecure.id);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(
@@ -1572,15 +1545,9 @@ mod tests {
     fn search_is_unicode_literal_and_cursor_order_survives_deletion() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
-        let first = store
-            .insert(entry("CAFÉ [x]", HistoryStatus::Success), None)
-            .unwrap();
-        let middle = store
-            .insert(entry("unrelated", HistoryStatus::Success), None)
-            .unwrap();
-        let last = store
-            .insert(entry("café [x]", HistoryStatus::Success), None)
-            .unwrap();
+        let first = save(&store, "CAFÉ [x]", HistoryStatus::Success, None);
+        let middle = save(&store, "unrelated", HistoryStatus::Success, None);
+        let last = save(&store, "café [x]", HistoryStatus::Success, None);
         let page = store.list(&query("café [x]", None, 1)).unwrap();
         assert_eq!(page.entries[0].id, last.id);
         assert_eq!(page.next_before_id, Some(last.id));
@@ -1627,18 +1594,12 @@ mod tests {
             store.insert(invalid, None),
             Err(HistoryError::InvalidRequest)
         ));
-        let saved = store
-            .insert(entry("text", HistoryStatus::Success), None)
-            .unwrap();
-        store
-            .lock()
-            .unwrap()
-            .connection
-            .execute(
-                "UPDATE entries SET duration=-1 WHERE id=?1",
-                [sql_integer(saved.id).unwrap()],
-            )
-            .unwrap();
+        let saved = save(&store, "text", HistoryStatus::Success, None);
+        tamper(
+            &store,
+            "UPDATE entries SET duration=-1 WHERE id=?1",
+            [sql_integer(saved.id).unwrap()],
+        );
         assert!(matches!(store.get(saved.id), Err(HistoryError::Missing)));
     }
 
@@ -1646,9 +1607,7 @@ mod tests {
     fn entry_total_text_and_age_limits_preserve_newer_content() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
-        let first = store
-            .insert(entry("keep until full", HistoryStatus::Success), None)
-            .unwrap();
+        let first = save(&store, "keep until full", HistoryStatus::Success, None);
         assert!(matches!(
             store.insert(
                 entry(&"x".repeat(MAX_ENTRY_BYTES + 1), HistoryStatus::Success),
@@ -1658,12 +1617,12 @@ mod tests {
         ));
         assert!(store.get(first.id).is_ok());
         for _ in 0..(MAX_TEXT_BYTES / MAX_ENTRY_BYTES) {
-            store
-                .insert(
-                    entry(&"x".repeat(MAX_ENTRY_BYTES), HistoryStatus::Success),
-                    None,
-                )
-                .unwrap();
+            save(
+                &store,
+                &"x".repeat(MAX_ENTRY_BYTES),
+                HistoryStatus::Success,
+                None,
+            );
         }
         assert!(matches!(store.get(first.id), Err(HistoryError::Missing)));
         let state = store.lock().unwrap();
@@ -1681,22 +1640,14 @@ mod tests {
             .execute("UPDATE entries SET created=1", [])
             .unwrap();
         drop(state);
-        assert!(
-            store
-                .list(&query("", None, 100))
-                .unwrap()
-                .entries
-                .is_empty()
-        );
+        assert!(listed(&store).is_empty());
     }
 
     #[test]
     fn entry_count_includes_empty_failed_transcripts() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
-        let first = store
-            .insert(entry("", HistoryStatus::TranscriptionFailed), None)
-            .unwrap();
+        let first = save(&store, "", HistoryStatus::TranscriptionFailed, None);
         // Seed terminal records directly to avoid a thousand fsyncs in this unit test.
         let state = store.lock().unwrap();
         let transaction = state.connection.unchecked_transaction().unwrap();
@@ -1705,9 +1656,7 @@ mod tests {
         }
         transaction.commit().unwrap();
         drop(state);
-        store
-            .insert(entry("", HistoryStatus::TranscriptionFailed), None)
-            .unwrap();
+        save(&store, "", HistoryStatus::TranscriptionFailed, None);
         assert!(matches!(store.get(first.id), Err(HistoryError::Missing)));
         assert_eq!(all(&store.lock().unwrap()).unwrap().0.len(), MAX_ENTRIES);
     }
@@ -1719,12 +1668,7 @@ mod tests {
         let store = Store::open(&directory.path().join("history")).unwrap();
         let mut ids = Vec::new();
         for _ in 0..4 {
-            ids.push(
-                store
-                    .insert(entry("partial", HistoryStatus::Success), Some(&source))
-                    .unwrap()
-                    .id,
-            );
+            ids.push(save(&store, "partial", HistoryStatus::Success, Some(&source)).id);
         }
         let lease = store.begin_retry(ids[0]).unwrap();
         for id in &ids {
@@ -1830,12 +1774,6 @@ mod tests {
             ),
             Err(HistoryError::TooLarge)
         ));
-        assert!(
-            store
-                .list(&query("", None, 100))
-                .unwrap()
-                .entries
-                .is_empty()
-        );
+        assert!(listed(&store).is_empty());
     }
 }

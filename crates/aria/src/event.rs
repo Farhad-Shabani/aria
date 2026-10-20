@@ -72,6 +72,7 @@ impl<T: Send + 'static> EventEmitter<T> {
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
+    use std::time::Duration;
 
     #[test]
     fn a_wedged_subscriber_never_holds_up_an_emit() {
@@ -79,10 +80,18 @@ mod tests {
         let emitter = EventEmitter::subscribed_by("aria-test-events", move |_stage: ()| {
             let _ = wait.recv();
         });
-        for _event in 0..EVENT_BUFFER * 2 {
-            emitter.emit(());
-        }
-        drop(emitter);
+        // On its own thread, so an emit that blocks fails the test instead
+        // of hanging it.
+        let (emitted, finished) = channel();
+        std::thread::spawn(move || {
+            for _event in 0..EVENT_BUFFER * 2 {
+                emitter.emit(());
+            }
+            let _ = emitted.send(());
+        });
+
+        let outcome = finished.recv_timeout(Duration::from_secs(5));
         drop(release);
+        assert!(outcome.is_ok(), "an emit waited on a wedged subscriber");
     }
 }
