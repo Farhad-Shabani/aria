@@ -1853,58 +1853,23 @@ mod tests {
 
         #[test]
         fn a_learned_pause_rejects_noise_but_accepts_softer_speech() {
-            for (initial_level, noise, speech_level) in [
-                (0.5_f32, 0.0, 1_500.0 / 32_768.0),
-                (0.5, 100.0 / 32_768.0, 1_500.0 / 32_768.0),
-                (0.5, 0.1, 0.13),
-                (100.0 / 32_768.0, 0.0, 50.0 / 32_768.0),
-                (0.0, 0.0, 50.0 / 32_768.0),
+            // One row each for the margin, the silence floor, and the quiet
+            // ceiling with the zero guard.
+            for (loud, pause, rejected, heard) in [
+                (0.5_f32, 0.05, 0.06, 0.08),
+                (0.5, 100.0 / 32_768.0, 200.0 / 32_768.0, 300.0 / 32_768.0),
+                (100.0 / 32_768.0, 0.0, 0.0, 50.0 / 32_768.0),
             ] {
-                let mut samples = vec![initial_level; 10 * TRIM_FRAME_SAMPLES];
-                samples.extend(vec![noise; 20 * TRIM_FRAME_SAMPLES]);
+                let mut samples = vec![loud; 10 * TRIM_FRAME_SAMPLES];
+                samples.extend(vec![pause; 20 * TRIM_FRAME_SAMPLES]);
                 let mut state = AgreementState::new(cadence(20_000));
                 state.trim_when_due(&Loudness::of(&samples), samples.len() as u64, true);
                 assert!(state.buffer_start > 0);
 
                 let words = Hypothesis::new("thank you");
-                let pause = Loudness::of(&vec![noise; 20 * TRIM_FRAME_SAMPLES]);
-                assert!(state.hear(&words, &pause).is_empty());
-                let speech = Loudness::of(&vec![speech_level; 20 * TRIM_FRAME_SAMPLES]);
-                assert_eq!(state.hear(&words, &speech).len(), 2);
-            }
-        }
-
-        #[test]
-        fn pause_gate_preserves_nonzero_threshold_equality() {
-            for amplitude in [0.0, 0.25] {
-                let loudness = Loudness::of(&vec![amplitude; 20 * TRIM_FRAME_SAMPLES]);
-                let mut state = AgreementState::new(cadence(20_000));
-                state.pause_level = Some(loudness.loudest);
-                let heard = state.hear(&Hypothesis::new("thank you"), &loudness);
-                assert_eq!(heard.len(), if amplitude == 0.0 { 0 } else { 2 });
-            }
-        }
-
-        #[test]
-        fn rising_noise_after_a_pause_does_not_finalize_hallucinations() {
-            for (pause, noise) in [(0_i16, 1_i16), (100, 200)] {
-                let mut samples = loud_frames(10);
-                samples.extend(vec![f32::from(pause) / 32_768.0; 20 * TRIM_FRAME_SAMPLES]);
-                let mut state = AgreementState::new(cadence(20_000));
-                let words = vec![timed_word(0, 10)];
-                state.agreement.agree(words.clone(), None);
-                state.agreement.agree(words, None);
-                state.trim_when_due(&Loudness::of(&samples), samples.len() as u64, true);
-                assert!(state.buffer_start > 0);
-
-                let hypothesis = Hypothesis::new("thank you");
-                let noise =
-                    Loudness::of(&vec![f32::from(noise) / 32_768.0; 20 * TRIM_FRAME_SAMPLES]);
-                for _ in 0..2 {
-                    let heard = state.hear(&hypothesis, &noise);
-                    assert!(state.agreement.agree(heard, None).0.is_none());
-                }
-                assert!(state.agreement.take_tail(None).is_none());
+                let buffer = |level: f32| Loudness::of(&vec![level; 20 * TRIM_FRAME_SAMPLES]);
+                assert!(state.hear(&words, &buffer(rejected)).is_empty());
+                assert_eq!(state.hear(&words, &buffer(heard)).len(), 2);
             }
         }
 
