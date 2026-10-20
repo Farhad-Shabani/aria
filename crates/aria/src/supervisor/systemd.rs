@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{fs, io};
 
-use super::{Job, SupervisorError, UnitSpec, run};
+use super::{Job, SupervisorError, UnitSpec, run_command};
 
 const UNIT: &str = "aria-daemon.service";
 pub(super) const UNIT_FILE: &str = UNIT;
@@ -55,7 +55,7 @@ pub(super) fn job() -> Result<Job, SupervisorError> {
     }
     let mut command = Command::new(SYSTEMCTL);
     command.args(["--user", "show", "--property", "MainPID", "--value", UNIT]);
-    Ok(parse_main_pid(&run(command)?))
+    Ok(parse_main_pid(&run_command(command)?))
 }
 
 /// Only `aria service install` writes this unit, so no other owner exists.
@@ -104,7 +104,7 @@ fn parse_main_pid(value: &str) -> Job {
 fn systemctl(args: &[&str]) -> Result<(), SupervisorError> {
     let mut command = Command::new(SYSTEMCTL);
     command.arg("--user").args(args);
-    run(command).map(drop)
+    run_command(command).map(drop)
 }
 
 /// Inside a double-quoted unit value systemd C-unescapes backslashes and

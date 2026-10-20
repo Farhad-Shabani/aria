@@ -259,6 +259,9 @@ pub(crate) enum AgentError {
     #[error("failed to start the agent")]
     Spawn(#[source] std::io::Error),
 
+    #[error("failed to write the prompt to the agent")]
+    Input(#[source] std::io::Error),
+
     #[error("failed to read the agent's output")]
     Io(#[source] std::io::Error),
 
@@ -272,7 +275,7 @@ pub(crate) enum AgentError {
     Malformed(String),
 
     #[error("the agent wrote more than {0} bytes")]
-    OutputTooLarge(u64),
+    OutputTooLarge(usize),
 
     #[error("the agent exceeded its deadline of {0:?}")]
     Timeout(Duration),
