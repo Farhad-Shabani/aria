@@ -40,8 +40,8 @@ use whisper_rs::{
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
-    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, SILENCE_FLOOR, Stream, StreamingEngine,
+    TimedWord, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
     validate_model_file, word_timings,
 };
 
@@ -61,8 +61,6 @@ const NO_SPEECH_THRESHOLD: f32 = 0.6;
 const LOG_PROBABILITY_THRESHOLD: f32 = -1.0;
 /// One loudness frame: 512 samples, about 32 ms.
 const LOUDNESS_FRAME_SAMPLES: usize = 512;
-/// Silence cutoff near -43 dBFS, used to reduce hallucinations on quiet audio.
-const SILENCE_FLOOR: f32 = 5e-5;
 
 /// The one-second stride allows time for decoding. The twenty-second cap
 /// keeps the buffer inside Whisper's thirty-second window.

@@ -7,8 +7,8 @@ use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::cancel::CancelToken;
 
 use super::{
-    ChunkStep, Hypothesis, Transcript, TranscriptSegment, TranscriptUpdate, TranscriptionError,
-    check_cancelled,
+    ChunkStep, Hypothesis, SILENCE_FLOOR, Transcript, TranscriptSegment, TranscriptUpdate,
+    TranscriptionError, check_cancelled,
 };
 
 /// How much new audio each decode waits for, and how far the buffer may grow
@@ -52,6 +52,9 @@ const TRIM_SILENCE_FRAMES: usize = 13;
 /// frame. In a noisy room nothing falls under it and every trim becomes a
 /// cap-forced cut.
 const TRIM_QUIET_FRACTION: f32 = 0.05;
+/// Power a later buffer must reach over the pause's loudest frame to count
+/// as speech. 3 dB covers room-noise drift.
+const PAUSE_NOISE_MARGIN: f32 = 2.0;
 /// Heard words a decode may lose and still count as a revision rather than
 /// a dropped window.
 const TOLERATED_LOSS: usize = 2;
@@ -91,8 +94,8 @@ pub struct AgreementState {
     buffer_start: u64,
     /// Stream position the last decode reached.
     decoded_end: u64,
-    /// The loudness the last pause cut called quiet. A later buffer that
-    /// never rises above it still holds only the pause.
+    /// The loudness that separates speech from the last pause. A later buffer
+    /// under it holds only the pause and its decode is ignored.
     pause_level: Option<f32>,
     /// What this buffer's decodes have agreed on so far. Resets on a trim,
     /// so nothing has to align across two buffers.
@@ -288,7 +291,7 @@ impl AgreementState {
     fn hear(&self, hypothesis: &Hypothesis, loudness: &Loudness) -> Vec<Word> {
         if self
             .pause_level
-            .is_some_and(|level| loudness.loudest < level)
+            .is_some_and(|level| loudness.loudest < level || loudness.loudest == 0.0)
         {
             tracing::debug!("buffer holds only the pause; decode ignored");
             return Vec::new();
@@ -334,7 +337,16 @@ impl AgreementState {
             // holds back until it hears the end of it. Only a pause the
             // buffer ends in tells the two apart, so anything else waits.
             if let Some(pause) = loudness.pause_cut() {
-                self.pause_level = Some(loudness.quiet);
+                // The ceiling preserves speech below the absolute silence floor.
+                self.pause_level = Some(
+                    (loudness.squares[pause / TRIM_FRAME_SAMPLES..]
+                        .iter()
+                        .copied()
+                        .fold(0.0_f32, f32::max)
+                        * PAUSE_NOISE_MARGIN)
+                        .max(SILENCE_FLOOR)
+                        .min(loudness.quiet),
+                );
                 return self.trim(self.buffer_start + pause as u64, None);
             }
         }
@@ -1629,9 +1641,11 @@ mod tests {
             // The third decode drops "c", which the second had already
             // delivered. Following it down would leave the fifth decode
             // offering "c" again.
+            let mut batches = vec![quiet_batch(); 5];
+            batches.push(loud_batch());
             let run = drive(
                 20_000,
-                vec![quiet_batch(); 6],
+                batches,
                 &["a b c", "a b c x", "a b", "a b c d", "a b c d", "e f"],
             );
 
@@ -1816,6 +1830,81 @@ mod tests {
             Word {
                 text: "word".to_owned(),
                 span: Some(start..start + (frames * TRIM_FRAME_SAMPLES) as u64),
+            }
+        }
+
+        #[test]
+        fn softer_speech_after_a_pause_is_preserved() {
+            let mut batches = vec![loud_batch(); 3];
+            batches.extend(vec![quiet_batch(); 6]);
+            batches.extend(vec![vec![1_500; STRIDE]; 6]);
+            let run = drive(
+                20_000,
+                batches,
+                &[
+                    "a", "a b", "a b c", "a b c", "a b c", "a b c", "a b c", "a b c", "a b c", "d",
+                    "d e", "d e f", "d e f", "d e f", "d e f",
+                ],
+            );
+
+            assert_eq!(run.transcript(), "a b c d e f");
+            assert_eq!(run.segments.join(" "), run.transcript());
+        }
+
+        #[test]
+        fn a_learned_pause_rejects_noise_but_accepts_softer_speech() {
+            for (initial_level, noise, speech_level) in [
+                (0.5_f32, 0.0, 1_500.0 / 32_768.0),
+                (0.5, 100.0 / 32_768.0, 1_500.0 / 32_768.0),
+                (0.5, 0.1, 0.13),
+                (100.0 / 32_768.0, 0.0, 50.0 / 32_768.0),
+                (0.0, 0.0, 50.0 / 32_768.0),
+            ] {
+                let mut samples = vec![initial_level; 10 * TRIM_FRAME_SAMPLES];
+                samples.extend(vec![noise; 20 * TRIM_FRAME_SAMPLES]);
+                let mut state = AgreementState::new(cadence(20_000));
+                state.trim_when_due(&Loudness::of(&samples), samples.len() as u64, true);
+                assert!(state.buffer_start > 0);
+
+                let words = Hypothesis::new("thank you");
+                let pause = Loudness::of(&vec![noise; 20 * TRIM_FRAME_SAMPLES]);
+                assert!(state.hear(&words, &pause).is_empty());
+                let speech = Loudness::of(&vec![speech_level; 20 * TRIM_FRAME_SAMPLES]);
+                assert_eq!(state.hear(&words, &speech).len(), 2);
+            }
+        }
+
+        #[test]
+        fn pause_gate_preserves_nonzero_threshold_equality() {
+            for amplitude in [0.0, 0.25] {
+                let loudness = Loudness::of(&vec![amplitude; 20 * TRIM_FRAME_SAMPLES]);
+                let mut state = AgreementState::new(cadence(20_000));
+                state.pause_level = Some(loudness.loudest);
+                let heard = state.hear(&Hypothesis::new("thank you"), &loudness);
+                assert_eq!(heard.len(), if amplitude == 0.0 { 0 } else { 2 });
+            }
+        }
+
+        #[test]
+        fn rising_noise_after_a_pause_does_not_finalize_hallucinations() {
+            for (pause, noise) in [(0_i16, 1_i16), (100, 200)] {
+                let mut samples = loud_frames(10);
+                samples.extend(vec![f32::from(pause) / 32_768.0; 20 * TRIM_FRAME_SAMPLES]);
+                let mut state = AgreementState::new(cadence(20_000));
+                let words = vec![timed_word(0, 10)];
+                state.agreement.agree(words.clone(), None);
+                state.agreement.agree(words, None);
+                state.trim_when_due(&Loudness::of(&samples), samples.len() as u64, true);
+                assert!(state.buffer_start > 0);
+
+                let hypothesis = Hypothesis::new("thank you");
+                let noise =
+                    Loudness::of(&vec![f32::from(noise) / 32_768.0; 20 * TRIM_FRAME_SAMPLES]);
+                for _ in 0..2 {
+                    let heard = state.hear(&hypothesis, &noise);
+                    assert!(state.agreement.agree(heard, None).0.is_none());
+                }
+                assert!(state.agreement.take_tail(None).is_none());
             }
         }
 
