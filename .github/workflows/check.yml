@@ -88,17 +88,8 @@ jobs:
           path: ~/.cache/aria-test-models
           key: whisper-tiny-en-921e4cf8
       - name: Fetch the test transcription model
-        env:
-          MODEL_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin
-          MODEL_SHA256: 921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f
         run: |
-          model="$HOME/.cache/aria-test-models/ggml-tiny.en.bin"
-          if [ ! -f "$model" ]; then
-            mkdir -p "$(dirname "$model")"
-            curl -sSfL --retry 3 -o "$model" "$MODEL_URL"
-          fi
-          echo "$MODEL_SHA256  $model" | shasum -a 256 -c
-          chmod 644 "$model"
+          model="$(just test-model ~/.cache/aria-test-models)"
           echo "ARIA_TEST_WHISPER_MODEL=$model" >> "$GITHUB_ENV"
       - name: Lint and test Rust
         run: just rust-lint-all rust-test-all

@@ -4,8 +4,8 @@ Each `*.yaml` file here is one test of the `aria` binary. The test is named
 after the file:
 
 ```sh
-cargo test -p aria --test acceptance                       # every case
-cargo test -p aria --test acceptance -- history-fresh      # cases whose name matches
+just rust-acceptance                    # every case, with the model CI uses
+just rust-acceptance -- history-fresh   # cases whose name matches
 ```
 
 A case runs in a sandbox: a fresh temporary home holding the case's config,
@@ -54,12 +54,8 @@ directory, since the daemon refuses an input file other users can write.
 
 Any other `${NAME}` is read from the environment variable `ARIA_TEST_NAME`,
 for inputs that differ per machine, such as a model file. When it is unset,
-the case is ignored, and the reason shows beside its name:
-
-```sh
-ARIA_TEST_WHISPER_MODEL=~/.aria/models/whisper/ggml-base.en.bin \
-  cargo test -p aria --test acceptance
-```
+the case is ignored, and the reason shows beside its name.
+`just rust-acceptance` sets `ARIA_TEST_WHISPER_MODEL` from `just test-model`.
 
 ## When a case fails
 
