@@ -774,41 +774,6 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_preferences_update_answers_a_conflict() {
-        let (_directory, daemon) = on_demand_daemon();
-        let runtime = test_runtime();
-
-        runtime.block_on(async {
-            let mut preferences = wire::preferences_service_client::PreferencesServiceClient::new(
-                connect(&daemon).await,
-            );
-            let snapshot = preferences
-                .get(wire::GetPreferencesRequest {})
-                .await
-                .expect("preferences should be readable")
-                .into_inner();
-
-            let stale = wire::UpdatePreferencesRequest {
-                expected_revision: snapshot.revision + 1,
-                patch: Some(wire::PreferencePatch::default()),
-            };
-            let update = preferences
-                .update(stale)
-                .await
-                .expect("the stale update should answer, not fail")
-                .into_inner();
-
-            assert!(
-                matches!(
-                    update.result,
-                    Some(wire::update_preferences_response::Result::Conflict(_))
-                ),
-                "a stale revision should answer a conflict"
-            );
-        });
-    }
-
-    #[test]
     fn a_stop_ends_open_event_streams_within_the_grace() {
         let (_directory, daemon) = on_demand_daemon();
         let stopper = daemon.stopper();

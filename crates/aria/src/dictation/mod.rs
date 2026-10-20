@@ -18,6 +18,8 @@ mod output;
 mod pipeline;
 mod speech;
 pub(crate) mod subscribers;
+#[cfg(test)]
+pub(crate) mod testing;
 mod transcripts;
 
 pub use crate::delivery::{DeliveryOutcome, OutputMode};

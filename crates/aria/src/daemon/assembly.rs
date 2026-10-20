@@ -84,6 +84,33 @@ pub(super) fn build(
     lifetime: DaemonLifetime,
     wake_word: WakeWordOverride,
 ) -> Result<Server, DaemonError> {
+    compose(paths, lifetime, wake_word, |_| {})
+}
+
+#[cfg(test)]
+pub(super) fn build_scripted(
+    paths: &PreparedRuntimePaths,
+    executor: Box<dyn crate::dictation::DictationExecutor>,
+) -> Result<Server, DaemonError> {
+    compose(
+        paths,
+        DaemonLifetime::OnDemand,
+        WakeWordOverride::Inherit,
+        |workers| {
+            Arc::get_mut(&mut workers.dictation)
+                .expect("nothing shares the dictation runtime before the server")
+                .execute_with(executor);
+        },
+    )
+}
+
+/// `adjust` sees the workers before anything shares them.
+fn compose(
+    paths: &PreparedRuntimePaths,
+    lifetime: DaemonLifetime,
+    wake_word: WakeWordOverride,
+    adjust: impl FnOnce(&mut Workers),
+) -> Result<Server, DaemonError> {
     let socket = ExclusiveListener::bind(paths.socket_path(), paths.lock_path())
         .map_err(DaemonError::Bind)?;
     let context = Context::detect(paths, lifetime).map_err(DaemonError::Context)?;
@@ -117,15 +144,7 @@ pub(super) fn build(
         vocabulary.prepare(initial.preferences.vocabulary_directory);
     }
     let (memory_wake, memory_woken) = memory::wake_channel();
-    let Workers {
-        dictation,
-        speech,
-        chat,
-        speaker: speaker_runtime,
-        monitor,
-        hotkey,
-        relay_delivery,
-    } = build_workers(
+    let mut workers = build_workers(
         &context,
         &subscriptions,
         &preference_store,
@@ -135,6 +154,16 @@ pub(super) fn build(
         memory_wake,
         Arc::clone(&vocabulary),
     )?;
+    adjust(&mut workers);
+    let Workers {
+        dictation,
+        speech,
+        chat,
+        speaker: speaker_runtime,
+        monitor,
+        hotkey,
+        relay_delivery,
+    } = workers;
     // A daemon that lives on catches up on what the last one left and keeps
     // up with the owner's asks; one serving a single press has no time for
     // an LLM call.

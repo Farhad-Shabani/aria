@@ -583,53 +583,16 @@ enum Admission {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+    use std::sync::mpsc::{Receiver, sync_channel};
     use std::thread;
 
     use crate::audio::SilenceDuration;
     use crate::delivery::OutputMode;
     use crate::dictation::DeliveryMode;
+    use crate::dictation::testing::{Edge, HEARD, RecordsUntilStopped, recording_started};
     use crate::transcription::LanguageCode;
 
     use super::*;
-
-    /// Records until asked to stop, then hands back what it "heard". Stands
-    /// in for the real pipeline, which stops the same way.
-    struct RecordingExecutor {
-        started: SyncSender<RecordingId>,
-    }
-
-    impl DictationExecutor for RecordingExecutor {
-        fn execute(
-            &self,
-            _settings: DictationSettings,
-            control: &Arc<ExecutionControl>,
-            events: &DictationEventEmitter,
-        ) -> Result<DictationResult, DictationError> {
-            let recording = control.start_recording(events)?;
-            self.started
-                .send(control.recording_id())
-                .expect("the test waits for the start");
-            while !recording.should_stop() {
-                thread::sleep(Duration::from_millis(5));
-            }
-            Ok(DictationResult {
-                text: "heard".to_owned(),
-                own_voice: false,
-            })
-        }
-
-        fn transcribe(
-            &self,
-            _recording: &mut RecordingReader,
-            _language: &Language,
-            _own_voice_only: bool,
-            _project: Option<&crate::vocabulary::Directory>,
-            _cancel: &CancelToken,
-        ) -> Result<Transcript, DictationError> {
-            Transcript::new("heard").map_err(DictationError::Transcription)
-        }
-    }
 
     fn settings(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
@@ -648,22 +611,18 @@ mod tests {
     }
 
     fn coordinator() -> (
-        Arc<DictationCoordinator<RecordingExecutor>>,
-        Receiver<RecordingId>,
+        Arc<DictationCoordinator<RecordsUntilStopped>>,
+        Receiver<Edge>,
         DictationEventEmitter,
     ) {
-        let (started, recording) = sync_channel(1);
+        let (executor, edges) = RecordsUntilStopped::new();
         let policy = DictationPolicy::new(Duration::from_secs(5)).expect("a valid policy");
         let coordinator = Arc::new(DictationCoordinator::new(
             policy,
-            RecordingExecutor { started },
+            executor,
             crate::microphone::Gate::new(),
         ));
-        (
-            coordinator,
-            recording,
-            DictationEventEmitter::unsubscribed(),
-        )
+        (coordinator, edges, DictationEventEmitter::unsubscribed())
     }
 
     #[test]
@@ -675,7 +634,7 @@ mod tests {
                 coordinator.execute(settings(StopMode::OnSilence), CancelToken::never(), &events)
             })
         };
-        let id = recording.recv().expect("the recording starts");
+        let id = recording_started(&recording);
 
         assert!(coordinator.stop_recording(id));
 
@@ -683,7 +642,7 @@ mod tests {
         assert_eq!(
             outcome,
             DictationOutcome::Completed(DictationResult {
-                text: "heard".to_owned(),
+                text: HEARD.to_owned(),
                 own_voice: false,
             })
         );
@@ -727,7 +686,7 @@ mod tests {
                 coordinator.execute(settings(StopMode::Manual), CancelToken::never(), &events)
             })
         };
-        let id = recording.recv().expect("the recording starts");
+        let id = recording_started(&recording);
 
         assert!(!coordinator.stop_recording(RecordingId(id.0 + 1)));
         assert!(coordinator.stop_recording(id));

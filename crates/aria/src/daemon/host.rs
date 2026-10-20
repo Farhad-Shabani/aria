@@ -243,7 +243,13 @@ pub(super) fn spawn_runtime(
     wake_word: WakeWordOverride,
     shutdown: ShutdownSignal,
 ) -> Result<SpawnedRuntime, DaemonError> {
-    let server = assembly::build(paths, lifetime, wake_word)?;
+    spawn_server(assembly::build(paths, lifetime, wake_word)?, shutdown)
+}
+
+pub(super) fn spawn_server(
+    server: super::server::Server,
+    shutdown: ShutdownSignal,
+) -> Result<SpawnedRuntime, DaemonError> {
     let stopper = DaemonStopper {
         writer: Arc::new(shutdown.stopper_writer().map_err(DaemonError::Shutdown)?),
     };

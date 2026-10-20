@@ -168,6 +168,17 @@ impl DictationRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub(in crate::daemon) fn execute_with(&mut self, executor: RuntimeExecutor) {
+        let policy = crate::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
+            .expect("the longest timeout is a valid policy");
+        self.coordinator = CoordinatorState::Ready(DictationCoordinator::new(
+            policy,
+            executor,
+            Arc::clone(&self.microphone),
+        ));
+    }
+
     /// Startup waits for the model here, so a daemon that cannot transcribe
     /// says so before it accepts a press. The monitor comes back for the
     /// caller to run: a runtime dictates; it does not watch for the wake word.

@@ -137,22 +137,9 @@ fn unjudged(error: &dyn std::error::Error) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    pub(crate) struct Loud;
-
-    impl VoiceActivityDetector for Loud {
-        const FRAME_SAMPLES: usize = 4;
-
-        fn probability(&mut self, frame: &[i16]) -> Result<f32, VoiceActivityError> {
-            Ok(if frame.iter().any(|&sample| sample != 0) {
-                1.0
-            } else {
-                0.0
-            })
-        }
-    }
+    use crate::dictation::testing::Loud;
 
     const LOUD: f32 = 0.5;
 

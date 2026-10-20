@@ -968,7 +968,9 @@ mod tests {
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
     };
     use crate::delivery::{DeliveryError, OutputMode, TextDelivery};
-    use crate::dictation::cursor::tests::{PLACED, PlacedDelivery, RecordingDelivery, settings};
+    use crate::dictation::testing::{
+        CallLog, Loud, PLACED, PlacedDelivery, RecordingDelivery, settings,
+    };
     use crate::dictation::{Cursor, RecordingId};
     use crate::rpc::RpcErrorCode;
     use crate::transcription::{
@@ -977,7 +979,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::dictation::speech::tests::Loud;
 
     struct Answering(&'static str);
 
@@ -1099,26 +1100,6 @@ mod tests {
         }
     }
 
-    struct RecordingSink {
-        log: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl TranscriptSink for RecordingSink {
-        type Error = DictationError;
-
-        fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
-            let text = utterance.text;
-            self.log.lock().unwrap().push(format!("segment:{text}"));
-            Ok(())
-        }
-
-        fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
-            let text = utterance.text;
-            self.log.lock().unwrap().push(format!("completed:{text}"));
-            Ok(())
-        }
-    }
-
     struct UnreachableSink;
 
     impl TranscriptSink for UnreachableSink {
@@ -1206,30 +1187,89 @@ mod tests {
         (events, receive)
     }
 
-    /// Audio that keeps arriving until `Revising` has decoded twice.
-    struct Pushed(Arc<Mutex<Option<RecordingWriter>>>);
+    impl<C, T, M, E, V, S, L> DictationPipeline<C, T, M, E, V, S, L>
+    where
+        C: AudioCapture,
+        T: Transcriber,
+        M: Mode,
+        E: Embedder,
+        V: VoiceActivityDetector,
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+        L: Layer,
+    {
+        /// One manual-stop press that nothing observes or corrects.
+        fn run(&self, settings: DictationSettings) -> Result<DictationResult, DictationError> {
+            self.run_observed(settings, &DictationEventEmitter::unsubscribed())
+        }
 
-    impl AudioCapture for Pushed {
+        fn run_observed(
+            &self,
+            settings: DictationSettings,
+            events: &DictationEventEmitter,
+        ) -> Result<DictationResult, DictationError> {
+            self.execute(
+                settings,
+                &ExecutionControl::for_test(StopMode::Manual),
+                events,
+                None,
+            )
+        }
+    }
+
+    /// What the unlabeled reader hears in a short loud recording when the
+    /// engine answers `text`.
+    fn heard(directory: &std::path::Path, text: &'static str) -> Heard {
+        let transcription = Transcription::complete_samples(Answering(text));
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+        let mut recording = RecordingReader::from_samples_in(directory, &[0.5; 1600]).unwrap();
+        unlabeled()
+            .next(&mut operation, &mut recording)
+            .unwrap()
+            .unwrap()
+    }
+
+    /// Joins every `deliver:` entry into what the focused field ends up holding.
+    fn delivered(log: &[String]) -> String {
+        log.iter()
+            .filter_map(|entry| entry.strip_prefix("deliver:"))
+            .collect()
+    }
+
+    const SPEECH: &[f32] = &[0.5; 8000];
+
+    type Writer = Arc<Mutex<Option<RecordingWriter>>>;
+
+    /// A live recording that starts with `opening`. [`Scripted`] pushes the rest.
+    struct Live {
+        writer: Writer,
+        opening: &'static [f32],
+    }
+
+    impl AudioCapture for Live {
         fn start(
             &self,
             _mode: RecordingMode,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             let (recording, mut push) = Recording::open();
-            push.push(&[0.5; 8000]);
-            *self.0.lock().unwrap() = Some(push);
+            push.push(self.opening);
+            *self.writer.lock().unwrap() = Some(push);
             Ok(recording)
         }
     }
 
-    /// Hears "turn lift", then revises it to "turn left", so the first
-    /// decode is only a preview.
-    struct Revising {
-        capture: Arc<Mutex<Option<RecordingWriter>>>,
+    /// Decode `n` pushes `steps[n].0` into the live recording and answers
+    /// `steps[n].1`. Past the script it ends the recording and answers
+    /// `last`, so how many decodes a press takes is under the test's control.
+    struct Scripted {
+        writer: Writer,
+        steps: &'static [(&'static [f32], &'static str)],
+        last: &'static str,
         calls: std::sync::atomic::AtomicUsize,
     }
 
-    impl Transcriber for Revising {
+    impl Transcriber for Scripted {
         fn validate_language(
             &self,
             _language: &Language,
@@ -1237,47 +1277,61 @@ mod tests {
         ) -> Result<(), TranscriptionError> {
             Ok(())
         }
+
         fn transcribe_with(
             &self,
             _audio: TranscriptionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
-            let first = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
-            let mut capture = self.capture.lock().unwrap();
-            if first {
-                capture.as_mut().unwrap().push(&[0.5; 8000]);
-            } else if let Some(capture) = capture.take() {
-                capture.finish();
-            }
-            Ok(Hypothesis::new(if first {
-                "turn lift"
-            } else {
-                "turn left"
-            }))
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut writer = self.writer.lock().unwrap();
+            let Some(&(audio, text)) = self.steps.get(call) else {
+                if let Some(writer) = writer.take() {
+                    writer.finish();
+                }
+                return Ok(Hypothesis::new(self.last));
+            };
+            writer.as_mut().unwrap().push(audio);
+            Ok(Hypothesis::new(text))
         }
     }
 
+    fn scripted(
+        opening: &'static [f32],
+        steps: &'static [(&'static [f32], &'static str)],
+        last: &'static str,
+    ) -> (Live, Scripted) {
+        let writer = Writer::default();
+        let capture = Live {
+            writer: Arc::clone(&writer),
+            opening,
+        };
+        let engine = Scripted {
+            writer,
+            steps,
+            last,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        (capture, engine)
+    }
+
+    /// Hears "turn lift", then revises it to "turn left", so the first
+    /// decode is only a preview.
     fn revising<S>(
         sinks: S,
     ) -> DictationPipeline<
-        Pushed,
-        Revising,
+        Live,
+        Scripted,
         Streaming,
         aria_speaker::wespeaker::WeSpeaker,
         SileroVad,
         S,
     > {
-        let capture = Arc::new(Mutex::new(None));
+        let (capture, engine) = scripted(SPEECH, &[(SPEECH, "turn lift")], "turn left");
         DictationPipeline::new(
-            Pushed(Arc::clone(&capture)),
-            Transcription::agreement(
-                Cadence::from_millis(500, 20_000),
-                Revising {
-                    capture,
-                    calls: std::sync::atomic::AtomicUsize::new(0),
-                },
-            ),
+            capture,
+            Transcription::agreement(Cadence::from_millis(500, 20_000), engine),
             unlabeled(),
             sinks,
         )
@@ -1285,23 +1339,13 @@ mod tests {
 
     #[test]
     fn incremental_caption_mode_consumes_previews_during_capture() {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let pipeline = revising((
-            RecordingSink {
-                log: Arc::clone(&log),
-            },
-            Cursor::new(RecordingDelivery {
-                log: Arc::clone(&log),
-                fail: false,
-            }),
-        ));
+        let log = CallLog::default();
+        let pipeline = revising((log.history(), log.cursor()));
         let (events, snapshots) = caption_events();
         let result = pipeline
-            .execute(
+            .run_observed(
                 settings(DeliveryMode::Complete, OutputMode::Insert),
-                &ExecutionControl::for_test(StopMode::Manual),
                 &events,
-                None,
             )
             .unwrap();
         drop(events);
@@ -1317,15 +1361,9 @@ mod tests {
                 .any(|snapshot| snapshot.committed.as_ref() == "turn left")
         );
         assert_eq!(result.text, "turn left");
-        assert!(
-            log.lock()
-                .unwrap()
-                .iter()
-                .all(|entry| !entry.contains("lift"))
-        );
+        assert!(log.entries().iter().all(|entry| !entry.contains("lift")));
         assert_eq!(
-            log.lock()
-                .unwrap()
+            log.entries()
                 .iter()
                 .filter(|entry| entry.starts_with("deliver:"))
                 .collect::<Vec<_>>(),
@@ -1339,21 +1377,13 @@ mod tests {
         let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
         let mut published = Published::new(&settings, &control, &events, Instant::now());
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let mut sinks = (
-            RecordingSink {
-                log: Arc::clone(&log),
-            },
-            Cursor::new(RecordingDelivery {
-                log: Arc::clone(&log),
-                fail: false,
-            }),
-        );
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
         published.provisional("turn lift at the light", &sinks);
         published.provisional("turn left", &sinks);
         published.provisional("", &sinks);
-        assert_eq!(*log.lock().unwrap(), ["prepare:Insert"]);
+        assert_eq!(log.entries(), ["prepare:Insert"]);
 
         let directory = tempfile::tempdir().unwrap();
         let mut recording =
@@ -1368,10 +1398,7 @@ mod tests {
             .unwrap();
         published.provisional("uncommitted guess", &sinks);
         published.segment(heard, None, &mut sinks).unwrap();
-        assert_eq!(
-            *log.lock().unwrap(),
-            ["prepare:Insert", "segment:turn left"]
-        );
+        assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
         let transcript = operation.finish(&mut recording).unwrap();
         let (transcript, mut completion) = published.finish(transcript, &mut sinks).unwrap();
         deliver_transcript(
@@ -1383,7 +1410,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             [
                 "prepare:Insert",
                 "segment:turn left",
@@ -1408,9 +1435,7 @@ mod tests {
         let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
         let mut published = Published::new(&settings, &control, &events, Instant::now());
-        let sink = RecordingSink {
-            log: Arc::new(Mutex::new(Vec::new())),
-        };
+        let sink = CallLog::default().history();
         published.provisional(&text, &sink);
         drop(published);
         drop(events);
@@ -1429,16 +1454,14 @@ mod tests {
                 Transcription::complete_samples(Answering(text)),
                 unlabeled(),
                 Cursor::new(RecordingDelivery {
-                    log: Arc::new(Mutex::new(Vec::new())),
+                    log: CallLog::default(),
                     fail,
                 }),
             );
             let (events, snapshots) = caption_events();
-            let result = pipeline.execute(
+            let result = pipeline.run_observed(
                 settings(DeliveryMode::Complete, OutputMode::Insert),
-                &ExecutionControl::for_test(StopMode::Manual),
                 &events,
-                None,
             );
             assert_eq!(result.is_ok(), !text.is_empty() && !fail);
             drop(events);
@@ -1488,16 +1511,12 @@ mod tests {
             capture,
             Transcription::complete_samples(Cancelled),
             unlabeled(),
-            RecordingSink {
-                log: Arc::new(Mutex::new(Vec::new())),
-            },
+            CallLog::default().history(),
         );
         let (events, snapshots) = caption_events();
-        let result = pipeline.execute(
+        let result = pipeline.run_observed(
             settings(DeliveryMode::Complete, OutputMode::Insert),
-            &ExecutionControl::for_test(StopMode::Manual),
             &events,
-            None,
         );
         assert!(matches!(result, Err(DictationError::Cancelled)));
         drop(events);
@@ -1520,16 +1539,12 @@ mod tests {
                 capture,
                 Transcription::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
                 hearing(voice),
-                RecordingSink {
-                    log: Arc::new(Mutex::new(Vec::new())),
-                },
+                CallLog::default().history(),
             );
             let (events, snapshots) = caption_events();
-            let result = pipeline.execute(
+            let result = pipeline.run_observed(
                 own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
-                &ExecutionControl::for_test(StopMode::Manual),
                 &events,
-                None,
             );
             assert_eq!(result.is_ok(), voice == OWN);
             drop(events);
@@ -1560,21 +1575,12 @@ mod tests {
                 capture,
                 Transcription::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
                 unlabeled(),
-                RecordingSink {
-                    log: Arc::new(Mutex::new(Vec::new())),
-                },
+                CallLog::default().history(),
             );
             let (events, snapshots) = caption_events();
             let mut settings = settings(mode, OutputMode::Insert);
             settings.transcript_only = transcript_only;
-            pipeline
-                .execute(
-                    settings,
-                    &ExecutionControl::for_test(StopMode::Manual),
-                    &events,
-                    None,
-                )
-                .unwrap();
+            pipeline.run_observed(settings, &events).unwrap();
             drop(events);
             assert!(snapshots.iter().next().is_none());
         }
@@ -1583,75 +1589,44 @@ mod tests {
     #[test]
     fn whole_transcription_rejects_segmented_delivery_before_capture() {
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("hello")),
             unlabeled(),
-            (
-                UnreachableSink,
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (UnreachableSink, log.cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(settings(DeliveryMode::Streaming, OutputMode::Insert));
 
         assert!(matches!(
             result,
             Err(DictationError::StreamingDeliveryUnavailable)
         ));
-        assert!(log.lock().unwrap().is_empty());
+        assert!(log.entries().is_empty());
     }
 
     #[test]
     fn a_transcript_only_press_hands_the_text_back_and_types_nothing() {
         let (_directory, capture) = capture();
-        let typed = Arc::new(Mutex::new(Vec::new()));
-        let history = Arc::new(Mutex::new(Vec::new()));
+        let typed = CallLog::default();
+        let history = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("hello")),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&history),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&typed),
-                    fail: true,
-                }),
-            ),
+            (history.history(), typed.failing_cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
         let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
         settings.transcript_only = true;
 
         let result = pipeline
-            .execute(
-                settings,
-                &control,
-                &DictationEventEmitter::unsubscribed(),
-                None,
-            )
+            .run(settings)
             .expect("the press completes without typing");
 
         assert_eq!(result.text, "hello");
-        assert!(
-            typed.lock().unwrap().is_empty(),
-            "nothing prepared or typed"
-        );
+        assert!(typed.entries().is_empty(), "nothing prepared or typed");
         assert_eq!(
-            history.lock().unwrap().last().map(String::as_str),
+            history.entries().last().map(String::as_str),
             Some("completed:hello"),
             "history still hears the press"
         );
@@ -1660,68 +1635,39 @@ mod tests {
     #[test]
     fn a_transcript_only_press_cannot_stream() {
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Transcription::complete_samples(Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             unlabeled(),
-            (
-                UnreachableSink,
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (UnreachableSink, log.cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
         let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         settings.transcript_only = true;
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(settings);
 
         assert!(matches!(
             result,
             Err(DictationError::StreamingDeliveryUnavailable)
         ));
-        assert!(log.lock().unwrap().is_empty());
+        assert!(log.entries().is_empty());
     }
 
     #[test]
     fn a_committed_segment_reaches_history_before_the_cursor() {
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (log.history(), log.cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(settings(DeliveryMode::Streaming, OutputMode::Insert));
 
         assert_eq!(result.unwrap().text, "hello");
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             [
                 "prepare:Insert",
                 "segment:hello",
@@ -1760,20 +1706,12 @@ mod tests {
             let (_directory, capture) = capture();
             let memory = tempfile::tempdir().expect("a memory directory");
             std::fs::write(memory.path().join("lexicon.txt"), "db2\n").expect("the word list");
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
                 Transcription::stream(stream, Answering("run d b two")),
                 unlabeled(),
-                (
-                    RecordingSink {
-                        log: Arc::clone(&log),
-                    },
-                    Cursor::new(RecordingDelivery {
-                        log: Arc::clone(&log),
-                        fail: false,
-                    }),
-                ),
+                (log.history(), log.cursor()),
             );
             let matcher = crate::vocabulary::Vocabulary::compile(
                 &[],
@@ -1793,7 +1731,7 @@ mod tests {
             );
 
             assert_eq!(result.unwrap().text, expected_text);
-            assert_eq!(*log.lock().unwrap(), expected_log);
+            assert_eq!(log.entries(), expected_log);
         }
     }
 
@@ -1923,7 +1861,7 @@ mod tests {
         .unwrap();
         for mode in [DeliveryMode::Complete, DeliveryMode::Streaming] {
             let (_directory, capture) = capture();
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
                 Transcription::agreement(
@@ -1931,9 +1869,7 @@ mod tests {
                     Answering("aria s t t"),
                 ),
                 unlabeled(),
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
+                log.history(),
             );
             let cases: [(Option<&dyn Corrector>, &str); 4] = [
                 (Some(&hyphen), "aria-stt"),
@@ -1952,7 +1888,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(result.text, expected);
                 assert_eq!(
-                    log.lock().unwrap().last().unwrap(),
+                    log.entries().last().unwrap(),
                     &format!("completed:{expected}")
                 );
             }
@@ -1976,30 +1912,17 @@ mod tests {
             for mode in [DeliveryMode::Complete, DeliveryMode::Streaming] {
                 for enabled in [false, true] {
                     let (_directory, capture) = judged_capture();
-                    let log = Arc::new(Mutex::new(Vec::new()));
+                    let log = CallLog::default();
                     let pipeline = DictationPipeline::new(
                         capture,
                         Transcription::stream(Stream::Native, Parts(parts)),
                         unlabeled(),
-                        (
-                            RecordingSink {
-                                log: Arc::clone(&log),
-                            },
-                            Cursor::new(RecordingDelivery {
-                                log: Arc::clone(&log),
-                                fail: false,
-                            }),
-                        ),
+                        (log.history(), log.cursor()),
                     )
                     .backtracking(enabled)
                     .with(());
                     let result = pipeline
-                        .execute(
-                            settings(mode, OutputMode::InsertAndSubmit),
-                            &ExecutionControl::for_test(StopMode::Manual),
-                            &DictationEventEmitter::unsubscribed(),
-                            None,
-                        )
+                        .run(settings(mode, OutputMode::InsertAndSubmit))
                         .unwrap();
                     let expected = if enabled && mode == DeliveryMode::Complete {
                         corrected
@@ -2007,7 +1930,7 @@ mod tests {
                         original
                     };
                     assert_eq!(result.text, expected);
-                    let log = log.lock().unwrap();
+                    let log = log.entries();
                     assert!(log.contains(&format!("completed:{expected}")));
                     assert!(
                         log.iter()
@@ -2015,12 +1938,7 @@ mod tests {
                             .count()
                             >= 2
                     );
-                    assert_eq!(
-                        log.iter()
-                            .filter_map(|entry| entry.strip_prefix("deliver:"))
-                            .collect::<String>(),
-                        expected
-                    );
+                    assert_eq!(delivered(&log), expected);
                     assert_eq!(log.iter().filter(|entry| *entry == "submit").count(), 1);
                     assert_eq!(log.last().unwrap(), "submit");
                 }
@@ -2030,99 +1948,36 @@ mod tests {
 
     #[test]
     fn backtracking_waits_for_agreement_segments_to_complete() {
-        struct Pushed(Arc<Mutex<Option<RecordingWriter>>>);
-        impl AudioCapture for Pushed {
-            fn start(
-                &self,
-                _: RecordingMode,
-                _: StopSignal,
-            ) -> Result<RecordingReader, CaptureError> {
-                let (recording, mut push) = Recording::open();
-                push.push(&[0.5; 8000]);
-                *self.0.lock().unwrap() = Some(push);
-                Ok(recording)
-            }
-        }
-        struct Growing {
-            capture: Arc<Mutex<Option<RecordingWriter>>>,
-            calls: std::sync::atomic::AtomicUsize,
-        }
-        impl Transcriber for Growing {
-            fn validate_language(
-                &self,
-                _: &Language,
-                _: &CancelToken,
-            ) -> Result<(), TranscriptionError> {
-                Ok(())
-            }
-            fn transcribe_with(
-                &self,
-                _: TranscriptionAudio<'_>,
-                _: &Language,
-                _: &CancelToken,
-            ) -> Result<Hypothesis, TranscriptionError> {
-                let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let mut capture = self.capture.lock().unwrap();
-                if call < 3 {
-                    capture.as_mut().unwrap().push(&[0.5; 8000]);
-                } else if let Some(capture) = capture.take() {
-                    capture.finish();
-                }
-                Ok(Hypothesis::new(if call < 2 {
-                    "meet at 2"
-                } else {
-                    "meet at 2 actually 3"
-                }))
-            }
-        }
         for mode in [DeliveryMode::Complete, DeliveryMode::Streaming] {
-            let capture = Arc::new(Mutex::new(None));
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let (capture, engine) = scripted(
+                SPEECH,
+                &[
+                    (SPEECH, "meet at 2"),
+                    (SPEECH, "meet at 2"),
+                    (SPEECH, "meet at 2 actually 3"),
+                ],
+                "meet at 2 actually 3",
+            );
+            let log = CallLog::default();
             let pipeline = DictationPipeline::new(
-                Pushed(Arc::clone(&capture)),
-                Transcription::agreement(
-                    Cadence::from_millis(100, 20_000),
-                    Growing {
-                        capture,
-                        calls: std::sync::atomic::AtomicUsize::new(0),
-                    },
-                ),
+                capture,
+                Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 unlabeled(),
-                (
-                    RecordingSink {
-                        log: Arc::clone(&log),
-                    },
-                    Cursor::new(RecordingDelivery {
-                        log: Arc::clone(&log),
-                        fail: false,
-                    }),
-                ),
+                (log.history(), log.cursor()),
             )
             .backtracking(true);
-            let result = pipeline
-                .execute(
-                    settings(mode, OutputMode::Insert),
-                    &ExecutionControl::for_test(StopMode::Manual),
-                    &DictationEventEmitter::unsubscribed(),
-                    None,
-                )
-                .unwrap();
+            let result = pipeline.run(settings(mode, OutputMode::Insert)).unwrap();
             let expected = if mode == DeliveryMode::Complete {
                 "meet at 3"
             } else {
                 "meet at 2 actually 3"
             };
             assert_eq!(result.text, expected);
-            let log = log.lock().unwrap();
+            let log = log.entries();
             assert!(log.contains(&"segment:meet at 2".to_owned()));
             assert!(log.contains(&"segment:actually 3".to_owned()));
             assert!(log.contains(&format!("completed:{expected}")));
-            assert_eq!(
-                log.iter()
-                    .filter_map(|entry| entry.strip_prefix("deliver:"))
-                    .collect::<String>(),
-                expected
-            );
+            assert_eq!(delivered(&log), expected);
         }
     }
 
@@ -2161,7 +2016,7 @@ mod tests {
         for mode in [DeliveryMode::Complete, DeliveryMode::Streaming] {
             for enabled in [false, true] {
                 let (_directory, capture) = judged_capture();
-                let log = Arc::new(Mutex::new(Vec::new()));
+                let log = CallLog::default();
                 let calls = Mutex::new(Vec::new());
                 let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
                     calls.lock().unwrap().push(text.clone());
@@ -2176,27 +2031,12 @@ mod tests {
                     capture,
                     Transcription::stream(Stream::Native, Parts(&["um meet at 2", "actually 3"])),
                     unlabeled(),
-                    (
-                        RecordingSink {
-                            log: Arc::clone(&log),
-                        },
-                        Cursor::new(RecordingDelivery {
-                            log: Arc::clone(&log),
-                            fail: false,
-                        }),
-                    ),
+                    (log.history(), log.cursor()),
                 )
                 .cleaning(true)
                 .with(enabled.then_some(layer))
                 .with(enabled.then_some(punctuation));
-                let result = pipeline
-                    .execute(
-                        settings(mode, OutputMode::Insert),
-                        &ExecutionControl::for_test(StopMode::Manual),
-                        &DictationEventEmitter::unsubscribed(),
-                        None,
-                    )
-                    .unwrap();
+                let result = pipeline.run(settings(mode, OutputMode::Insert)).unwrap();
                 let applied = enabled && mode == DeliveryMode::Complete;
                 let expected = if applied {
                     "Meet at 3."
@@ -2209,7 +2049,7 @@ mod tests {
                 if applied {
                     assert_eq!(calls[0], "meet at 2 actually 3");
                 }
-                let log = log.lock().unwrap();
+                let log = log.entries();
                 assert!(log.contains(&format!("completed:{expected}")));
                 assert_eq!(
                     log.iter()
@@ -2217,12 +2057,7 @@ mod tests {
                         .count(),
                     3
                 );
-                assert_eq!(
-                    log.iter()
-                        .filter_map(|entry| entry.strip_prefix("deliver:"))
-                        .collect::<String>(),
-                    expected
-                );
+                assert_eq!(delivered(&log), expected);
             }
         }
     }
@@ -2265,7 +2100,7 @@ mod tests {
     fn completion_layer_cancellation_and_unrelated_errors_prevent_delivery() {
         for cancelled in [true, false] {
             let (_directory, capture) = capture();
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let layer = FinalLayer(move |text: &mut String, _: &CancelToken| {
                 *text = "never deliver this".to_owned();
                 Err(if cancelled {
@@ -2278,30 +2113,20 @@ mod tests {
                 capture,
                 Transcription::complete_samples(Answering("meet at 2 actually 3")),
                 unlabeled(),
-                (
-                    RecordingSink {
-                        log: Arc::clone(&log),
-                    },
-                    Cursor::new(RecordingDelivery {
-                        log: Arc::clone(&log),
-                        fail: false,
-                    }),
-                ),
+                (log.history(), log.cursor()),
             )
             .backtracking(true)
             .with(layer);
-            let result = pipeline.execute(
-                settings(DeliveryMode::Complete, OutputMode::InsertAndSubmit),
-                &ExecutionControl::for_test(StopMode::Manual),
-                &DictationEventEmitter::unsubscribed(),
-                None,
-            );
+            let result = pipeline.run(settings(
+                DeliveryMode::Complete,
+                OutputMode::InsertAndSubmit,
+            ));
             if cancelled {
                 assert!(matches!(result, Err(DictationError::Cancelled)));
             } else {
                 assert!(matches!(result, Err(DictationError::Transcription(_))));
             }
-            assert!(log.lock().unwrap().iter().all(|entry| {
+            assert!(log.entries().iter().all(|entry| {
                 !entry.starts_with("completed:")
                     && !entry.starts_with("deliver:")
                     && entry != "submit"
@@ -2362,7 +2187,7 @@ mod tests {
         // interest for all. A second keeps tracing asking each one.
         let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
             assert_eq!(text, "meet Alice at 3");
             *text = "untrusted partial response".to_owned();
@@ -2372,29 +2197,16 @@ mod tests {
             capture,
             Transcription::complete_samples(Answering("um meet Alice at 2 actually 3")),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (log.history(), log.cursor()),
         )
         .cleaning(true)
         .backtracking(true)
         .with(layer);
         let result = pipeline
-            .execute(
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &ExecutionControl::for_test(StopMode::Manual),
-                &DictationEventEmitter::unsubscribed(),
-                None,
-            )
+            .run(settings(DeliveryMode::Complete, OutputMode::Insert))
             .unwrap();
         assert_eq!(result.text, "meet Alice at 3");
-        let log = log.lock().unwrap();
+        let log = log.entries();
         assert!(log.contains(&format!("completed:{}", result.text)));
         assert!(log.contains(&format!("deliver:{}", result.text)));
         let diagnostics = String::from_utf8(diagnostics.lock().unwrap().clone()).unwrap();
@@ -2412,7 +2224,7 @@ mod tests {
             ("um open aria dash kit", "open aria-kit"),
         ] {
             let (_directory, capture) = capture();
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
                 Transcription::stream(
@@ -2420,15 +2232,7 @@ mod tests {
                     Answering(heard),
                 ),
                 unlabeled(),
-                (
-                    RecordingSink {
-                        log: Arc::clone(&log),
-                    },
-                    Cursor::new(RecordingDelivery {
-                        log: Arc::clone(&log),
-                        fail: false,
-                    }),
-                ),
+                (log.history(), log.cursor()),
             )
             .cleaning(true);
             let matcher = crate::vocabulary::Vocabulary::compile(
@@ -2465,13 +2269,11 @@ mod tests {
             let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
             settings.own_voice_only = own_voice;
             let mut published = Published::new(&settings, &control, &events, Instant::now());
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let mut sinks = (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
+                log.history(),
                 Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
+                    log: log.clone(),
                     fail,
                 }),
             );
@@ -2492,14 +2294,7 @@ mod tests {
                 if stranger && !own_voice {
                     continue;
                 }
-                let transcription = Transcription::complete_samples(Answering(text));
-                let mut operation = transcription.start(&Language::Automatic).unwrap();
-                let mut recording =
-                    RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-                let mut heard = unlabeled()
-                    .next(&mut operation, &mut recording)
-                    .unwrap()
-                    .unwrap();
+                let mut heard = heard(directory.path(), text);
                 if stranger {
                     heard.verdict = Verdict::Stranger;
                 }
@@ -2512,7 +2307,7 @@ mod tests {
             } else {
                 assert_eq!(result.unwrap().0.as_str(), "d b two run db2");
             }
-            let log = log.lock().unwrap();
+            let log = log.entries();
             assert_eq!(
                 log.iter()
                     .filter(|entry| entry.starts_with("completed:"))
@@ -2527,12 +2322,7 @@ mod tests {
                     1
                 );
             } else {
-                assert_eq!(
-                    log.iter()
-                        .filter_map(|entry| entry.strip_prefix("deliver:"))
-                        .collect::<String>(),
-                    "d b two run db2"
-                );
+                assert_eq!(delivered(&log), "d b two run db2");
             }
         }
     }
@@ -2565,24 +2355,12 @@ mod tests {
         let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let mut published = Published::new(&settings, &control, &events, Instant::now());
-        let mut sinks = (
-            RecordingSink {
-                log: Arc::new(Mutex::new(Vec::new())),
-            },
-            Cursor::new(PlacedDelivery),
-        );
+        let mut sinks = (CallLog::default().history(), Cursor::new(PlacedDelivery));
         sinks.dictation_started(&settings, &control).unwrap();
         published.provisional("turn lift", &sinks);
 
         let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-        let transcription = Transcription::complete_samples(Answering("turn left"));
-        let mut operation = transcription.start(&Language::Automatic).unwrap();
-        let heard = unlabeled()
-            .next(&mut operation, &mut recording)
-            .unwrap()
-            .unwrap();
+        let heard = heard(directory.path(), "turn left");
         published.segment(heard, None, &mut sinks).unwrap();
         published.provisional("", &sinks);
         drop(published);
@@ -2600,15 +2378,13 @@ mod tests {
     }
 
     #[test]
-    fn a_segment_that_fails_to_type_clears_its_ghost() {
+    fn a_segment_that_fails_to_type_clears_its_ghost_for_good() {
         let (events, ghosts) = ghost_events();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let mut published = Published::new(&settings, &control, &events, Instant::now());
         let mut sinks = (
-            RecordingSink {
-                log: Arc::new(Mutex::new(Vec::new())),
-            },
+            CallLog::default().history(),
             Cursor::new(FocusMovesAfter {
                 typed: 0,
                 delivered: std::sync::atomic::AtomicUsize::new(0),
@@ -2618,15 +2394,10 @@ mod tests {
         published.provisional("one", &sinks);
 
         let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-        let transcription = Transcription::complete_samples(Answering("one"));
-        let mut operation = transcription.start(&Language::Automatic).unwrap();
-        let heard = unlabeled()
-            .next(&mut operation, &mut recording)
-            .unwrap()
-            .unwrap();
+        let heard = heard(directory.path(), "one");
         published.segment(heard, None, &mut sinks).unwrap();
+        // The recording drains after the failure, so previews keep arriving.
+        published.provisional("one two", &sinks);
         drop(published);
         drop(events);
 
@@ -2637,20 +2408,11 @@ mod tests {
     #[test]
     fn own_voice_streaming_shows_no_ghost_words() {
         for own_voice in [false, true] {
-            let pipeline = revising(RecordingSink {
-                log: Arc::new(Mutex::new(Vec::new())),
-            });
+            let pipeline = revising(CallLog::default().history());
             let (events, ghosts) = ghost_events();
             let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
             settings.own_voice_only = own_voice;
-            pipeline
-                .execute(
-                    settings,
-                    &ExecutionControl::for_test(StopMode::Manual),
-                    &events,
-                    None,
-                )
-                .unwrap();
+            pipeline.run_observed(settings, &events).unwrap();
             drop(events);
             let ghosts: Vec<_> = ghosts.iter().collect();
             assert_eq!(
@@ -2712,11 +2474,9 @@ mod tests {
             let events = DictationEventEmitter::unsubscribed();
             let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
             let mut published = Published::new(&settings, &control, &events, Instant::now());
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let mut sinks = (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
+                log.history(),
                 Cursor::new(FocusMovesAfter {
                     typed,
                     delivered: std::sync::atomic::AtomicUsize::new(0),
@@ -2724,14 +2484,7 @@ mod tests {
             );
             sinks.dictation_started(&settings, &control).unwrap();
             for text in ["one", "two"] {
-                let transcription = Transcription::complete_samples(Answering(text));
-                let mut operation = transcription.start(&Language::Automatic).unwrap();
-                let mut recording =
-                    RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-                let heard = unlabeled()
-                    .next(&mut operation, &mut recording)
-                    .unwrap()
-                    .unwrap();
+                let heard = heard(directory.path(), text);
                 published.segment(heard, None, &mut sinks).unwrap();
             }
 
@@ -2752,26 +2505,11 @@ mod tests {
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let mut published = Published::new(&settings, &control, &events, Instant::now());
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let mut sinks = (
-            RecordingSink {
-                log: Arc::clone(&log),
-            },
-            Cursor::new(RecordingDelivery {
-                log: Arc::clone(&log),
-                fail: false,
-            }),
-        );
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
         for (text, corrected) in [("um", Some("")), ("run", None)] {
-            let transcription = Transcription::complete_samples(Answering(text));
-            let mut operation = transcription.start(&Language::Automatic).unwrap();
-            let mut recording =
-                RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-            let heard = unlabeled()
-                .next(&mut operation, &mut recording)
-                .unwrap()
-                .unwrap();
+            let heard = heard(directory.path(), text);
             published.segment(heard, corrected, &mut sinks).unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
@@ -2779,46 +2517,26 @@ mod tests {
         let result = published.finish(whole, &mut sinks).unwrap();
 
         assert_eq!(result.0.as_str(), "run");
-        assert_eq!(
-            log.lock()
-                .unwrap()
-                .iter()
-                .filter_map(|entry| entry.strip_prefix("deliver:"))
-                .collect::<String>(),
-            "run"
-        );
+        assert_eq!(delivered(&log.entries()), "run");
     }
 
     #[test]
     fn own_voice_only_types_nothing_said_in_another_voice() {
         let (_directory, capture) = judged_capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             hearing(OTHER),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (log.history(), log.cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(own_voice_only(settings(
+            DeliveryMode::Streaming,
+            OutputMode::Insert,
+        )));
 
         assert!(matches!(result, Err(DictationError::NoSpeech)));
-        assert_eq!(*log.lock().unwrap(), ["prepare:Insert"]);
+        assert_eq!(log.entries(), ["prepare:Insert"]);
     }
 
     /// Runs one press and returns its result and the sink log.
@@ -2828,36 +2546,16 @@ mod tests {
         detector: Option<V>,
         delivery: DeliveryMode,
     ) -> (Result<DictationResult, DictationError>, Vec<String>) {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             transcription,
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (log.history(), log.cursor()),
         )
         .hearing_speech(detector);
-        let result = pipeline.execute(
-            settings(delivery, OutputMode::Insert),
-            &ExecutionControl::for_test(StopMode::Manual),
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
-        let log = log.lock().unwrap().clone();
-        (result, log)
-    }
-
-    fn delivered(log: &[String]) -> String {
-        log.iter()
-            .filter_map(|entry| entry.strip_prefix("deliver:"))
-            .collect()
+        let result = pipeline.run(settings(delivery, OutputMode::Insert));
+        (result, log.entries())
     }
 
     #[test]
@@ -2929,76 +2627,23 @@ mod tests {
         }
     }
 
-    /// Settles on a word during the silence, then hears the speech after it.
-    struct GuessingThenHearing {
-        capture: Arc<Mutex<Option<RecordingWriter>>>,
-        calls: std::sync::atomic::AtomicUsize,
-    }
-
-    impl Transcriber for GuessingThenHearing {
-        fn validate_language(
-            &self,
-            _language: &Language,
-            _cancel: &CancelToken,
-        ) -> Result<(), TranscriptionError> {
-            Ok(())
-        }
-
-        fn transcribe_with(
-            &self,
-            _audio: TranscriptionAudio<'_>,
-            _language: &Language,
-            _cancel: &CancelToken,
-        ) -> Result<Hypothesis, TranscriptionError> {
-            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let mut capture = self.capture.lock().unwrap();
-            match call {
-                0 => capture.as_mut().unwrap().push(&[0.0; 1600]),
-                1 => capture.as_mut().unwrap().push(&[0.5; 8000]),
-                2 => capture.as_mut().unwrap().push(&[0.5; 1600]),
-                _ => {
-                    if let Some(capture) = capture.take() {
-                        capture.finish();
-                    }
-                }
-            }
-            Ok(Hypothesis::new(if call < 2 {
-                "Mm-hmm."
-            } else {
-                "Mm-hmm. hello"
-            }))
-        }
-    }
-
-    /// Opens on silence, then lets `GuessingThenHearing` feed the rest.
-    struct Silent(Arc<Mutex<Option<RecordingWriter>>>);
-
-    impl AudioCapture for Silent {
-        fn start(
-            &self,
-            _mode: RecordingMode,
-            _stop: StopSignal,
-        ) -> Result<RecordingReader, CaptureError> {
-            let (recording, mut push) = Recording::open();
-            push.push(&[0.0; 8000]);
-            *self.0.lock().unwrap() = Some(push);
-            Ok(recording)
-        }
-    }
-
     #[test]
     fn words_guessed_before_the_speech_are_not_delivered() {
         for delivery in [DeliveryMode::Streaming, DeliveryMode::Complete] {
-            let writer = Arc::new(Mutex::new(None));
+            // Settles on a word during the opening silence, then hears the
+            // speech after it.
+            let (capture, engine) = scripted(
+                &[0.0; 8000],
+                &[
+                    (&[0.0; 1600], "Mm-hmm."),
+                    (SPEECH, "Mm-hmm."),
+                    (&[0.5; 1600], "Mm-hmm. hello"),
+                ],
+                "Mm-hmm. hello",
+            );
             let (result, log) = press(
-                Silent(Arc::clone(&writer)),
-                Transcription::agreement(
-                    Cadence::from_millis(100, 20_000),
-                    GuessingThenHearing {
-                        capture: writer,
-                        calls: std::sync::atomic::AtomicUsize::new(0),
-                    },
-                ),
+                capture,
+                Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 Some(Loud),
                 delivery,
             );
@@ -3057,26 +2702,17 @@ mod tests {
             }
         });
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("hello")),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (log.history(), log.cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
 
         pipeline
-            .execute(settings, &control, &events, None)
+            .run_observed(settings, &events)
             .expect("the press succeeds");
         drop(events);
 
@@ -3106,20 +2742,11 @@ mod tests {
             capture,
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             hearing(OTHER),
-            (
-                RecordingSink {
-                    log: Arc::new(Mutex::new(Vec::new())),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::new(Mutex::new(Vec::new())),
-                    fail: false,
-                }),
-            ),
+            (CallLog::default().history(), CallLog::default().cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
         let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
 
-        let result = pipeline.execute(settings, &control, &events, None);
+        let result = pipeline.run_observed(settings, &events);
         drop(events);
 
         assert!(matches!(result, Err(DictationError::NoSpeech)));
@@ -3236,21 +2863,13 @@ mod tests {
             hearing(OWN),
             (
                 PositionSink(Arc::clone(&positions)),
-                Cursor::new(RecordingDelivery {
-                    log: Arc::new(Mutex::new(Vec::new())),
-                    fail: false,
-                }),
+                CallLog::default().cursor(),
             ),
         );
 
         for _ in 0..2 {
             pipeline
-                .execute(
-                    settings(DeliveryMode::Streaming, OutputMode::Insert),
-                    &ExecutionControl::for_test(StopMode::Manual),
-                    &DictationEventEmitter::unsubscribed(),
-                    None,
-                )
+                .run(settings(DeliveryMode::Streaming, OutputMode::Insert))
                 .expect("the enrolled voice is delivered");
         }
         assert_eq!(*positions.lock().unwrap(), [0, 0]);
@@ -3259,34 +2878,21 @@ mod tests {
     #[test]
     fn own_voice_only_types_what_the_enrolled_voice_said() {
         let (_directory, capture) = judged_capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             hearing(OWN),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: false,
-                }),
-            ),
+            (log.history(), log.cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(own_voice_only(settings(
+            DeliveryMode::Streaming,
+            OutputMode::Insert,
+        )));
 
         let text = result.unwrap().text;
         assert_eq!(text, "hello");
-        let log = log.lock().unwrap();
+        let log = log.entries();
         assert_eq!(
             *log,
             [
@@ -3296,47 +2902,28 @@ mod tests {
                 "completed:hello"
             ]
         );
-        // The transcript is exactly what went out.
-        let typed: String = log
-            .iter()
-            .filter_map(|entry| entry.strip_prefix("deliver:"))
-            .collect();
-        assert_eq!(typed, text);
     }
 
     #[test]
     fn own_voice_only_hands_a_whole_decode_only_the_enrolled_voice() {
         for (voice, expected) in [(OWN, Some("hello")), (OTHER, None)] {
             let (_directory, capture) = judged_capture();
-            let log = Arc::new(Mutex::new(Vec::new()));
+            let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
                 Transcription::complete_samples(Echoing),
                 hearing(voice),
-                (
-                    RecordingSink {
-                        log: Arc::clone(&log),
-                    },
-                    Cursor::new(RecordingDelivery {
-                        log: Arc::clone(&log),
-                        fail: false,
-                    }),
-                ),
+                (log.history(), log.cursor()),
             );
-            let control = ExecutionControl::for_test(StopMode::Manual);
-            let settings = own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert));
-
-            let result = pipeline.execute(
-                settings,
-                &control,
-                &DictationEventEmitter::unsubscribed(),
-                None,
-            );
+            let result = pipeline.run(own_voice_only(settings(
+                DeliveryMode::Complete,
+                OutputMode::Insert,
+            )));
 
             match expected {
                 Some(text) => {
                     assert_eq!(result.unwrap().text, text);
-                    assert!(log.lock().unwrap().contains(&"deliver:hello".to_owned()));
+                    assert!(log.entries().contains(&"deliver:hello".to_owned()));
                 }
                 None => {
                     assert!(
@@ -3344,8 +2931,7 @@ mod tests {
                         "{result:?}"
                     );
                     assert!(
-                        !log.lock()
-                            .unwrap()
+                        !log.entries()
                             .iter()
                             .any(|entry| entry.starts_with("deliver:"))
                     );
@@ -3357,34 +2943,18 @@ mod tests {
     #[test]
     fn completed_stream_is_published_even_when_final_segment_delivery_fails() {
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: true,
-                }),
-            ),
+            (log.history(), log.failing_cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(settings(DeliveryMode::Streaming, OutputMode::Insert));
 
         assert!(matches!(result, Err(DictationError::Delivery(_))));
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             [
                 "prepare:Insert",
                 "segment:hello",
@@ -3410,10 +2980,7 @@ mod tests {
             capture,
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             unlabeled(),
-            Cursor::new(RecordingDelivery {
-                log: Arc::new(Mutex::new(Vec::new())),
-                fail: true,
-            }),
+            CallLog::default().failing_cursor(),
         );
         let control = ExecutionControl::for_test(StopMode::Manual);
         let started = std::time::Instant::now();
@@ -3430,74 +2997,20 @@ mod tests {
     }
 
     #[test]
-    fn streaming_hands_the_adapter_plain_insertion() {
-        for (delivery_mode, expected) in [
-            (DeliveryMode::Streaming, "prepare:Insert"),
-            (DeliveryMode::Complete, "prepare:InsertOrCopy"),
-        ] {
-            let (_directory, capture) = capture();
-            let log = Arc::new(Mutex::new(Vec::new()));
-            let pipeline = DictationPipeline::new(
-                capture,
-                Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-                unlabeled(),
-                (
-                    RecordingSink {
-                        log: Arc::clone(&log),
-                    },
-                    Cursor::new(RecordingDelivery {
-                        log: Arc::clone(&log),
-                        fail: false,
-                    }),
-                ),
-            );
-            let control = ExecutionControl::for_test(StopMode::Manual);
-            let settings = settings(delivery_mode, OutputMode::InsertOrCopy);
-
-            pipeline
-                .execute(
-                    settings,
-                    &control,
-                    &DictationEventEmitter::unsubscribed(),
-                    None,
-                )
-                .expect("delivery should succeed");
-
-            assert_eq!(log.lock().unwrap().first().unwrap(), expected);
-        }
-    }
-
-    #[test]
     fn complete_transcript_is_published_before_delivery_can_fail() {
         let (_directory, capture) = capture();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("hello")),
             unlabeled(),
-            (
-                RecordingSink {
-                    log: Arc::clone(&log),
-                },
-                Cursor::new(RecordingDelivery {
-                    log: Arc::clone(&log),
-                    fail: true,
-                }),
-            ),
+            (log.history(), log.failing_cursor()),
         );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
-
-        let result = pipeline.execute(
-            settings,
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
+        let result = pipeline.run(settings(DeliveryMode::Complete, OutputMode::Insert));
 
         assert!(matches!(result, Err(DictationError::Delivery(_))));
         assert_eq!(
-            *log.lock().unwrap(),
+            log.entries(),
             [
                 "prepare:Insert",
                 "segment:hello",

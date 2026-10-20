@@ -104,3 +104,36 @@ pub(super) fn store_error(operation: &'static str, error: PreferenceStoreError) 
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::daemon::testing::HostedDaemon;
+    use crate::preferences::{PreferencePatch, UpdateResult};
+
+    #[test]
+    fn an_update_reaches_every_session_and_a_stale_one_conflicts() {
+        let daemon = HostedDaemon::configured(|_| String::new());
+        let writer = daemon.session();
+        let reader = daemon.session();
+
+        let before = reader.get_preferences().expect("preferences are readable");
+        let patch = PreferencePatch {
+            mute_output: Some(!before.preferences.mute_output),
+            ..Default::default()
+        };
+        let updated = writer
+            .update_preferences(before.revision, patch.clone())
+            .expect("the update is answered");
+        let stale = writer
+            .update_preferences(before.revision, patch)
+            .expect("the stale update is answered, not failed");
+
+        let UpdateResult::Updated(after) = updated else {
+            panic!("the current revision updates");
+        };
+        assert_eq!(reader.get_preferences().expect("readable"), after);
+        assert!(matches!(stale, UpdateResult::Conflict(current) if current == after));
+        drop((writer, reader));
+        daemon.stop();
+    }
+}
