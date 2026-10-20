@@ -6,12 +6,10 @@ use std::time::Duration;
 use crate::audio::SilenceDuration;
 use crate::transcription::Language;
 
-mod backtrack;
 pub(crate) mod cleanup;
 mod cursor;
 mod event;
 mod execution;
-mod fillers;
 mod level;
 #[cfg(target_os = "macos")]
 mod output;
@@ -23,7 +21,6 @@ pub(crate) mod testing;
 mod transcripts;
 
 pub use crate::delivery::{DeliveryOutcome, OutputMode};
-use backtrack::Backtrack;
 pub use cleanup::{CleanupError, LlmCleanup};
 pub(crate) use cursor::Cursor;
 pub use event::DictationStage;
@@ -34,7 +31,6 @@ pub(crate) use execution::{
     DictationCoordinator, DictationError, DictationExecutor, DictationPolicy, DictationPolicyError,
     ExecutionControl,
 };
-use fillers::Fillers;
 use level::Meter;
 pub(crate) use level::MicLevel;
 pub(crate) use pipeline::DictationPipeline;
@@ -109,13 +105,6 @@ pub struct DictationResult {
     pub text: String,
     /// The speaker model matched the recording to an enrolled owner.
     pub own_voice: bool,
-}
-
-/// Fixes words in what the decoder heard, on the transcription path.
-/// `None` when nothing changed; empty when nothing was worth keeping.
-/// Never fails: at worst it changes nothing.
-pub(crate) trait Corrector: Send + Sync {
-    fn correct(&self, text: &str) -> Option<String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

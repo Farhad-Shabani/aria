@@ -4,8 +4,10 @@ use crate::cancel::CancelToken;
 
 use super::{TranscriptUpdate, TranscriptionError, check_cancelled};
 
-mod hesitations;
-pub use hesitations::RemoveHesitations;
+mod backtrack;
+pub use backtrack::Backtrack;
+mod disfluencies;
+pub use disfluencies::{RemoveHesitations, RemoveRepeats};
 pub mod vocabulary;
 pub use vocabulary::Vocabulary;
 

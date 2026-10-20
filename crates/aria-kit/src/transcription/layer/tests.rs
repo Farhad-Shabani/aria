@@ -498,6 +498,55 @@ fn hesitations_preserve_delimiters_around_surviving_words() {
     }
 }
 
+fn applied(layer: impl Layer, input: &str) -> String {
+    let mut text = input.to_owned();
+    layer.apply(&mut text, &CancelToken::never()).unwrap();
+    text
+}
+
+#[test]
+fn hesitations_alone_leave_nothing_and_keep_a_newline() {
+    assert_eq!(applied(RemoveHesitations, "Um."), "");
+    assert_eq!(applied(RemoveHesitations, "uh uh"), "");
+    assert_eq!(applied(RemoveHesitations, ""), "");
+    assert_eq!(
+        applied(RemoveHesitations, "report.\num, by friday"),
+        "report.\nby friday"
+    );
+}
+
+#[test]
+fn repeats_drop_the_second_of_two_identical_words() {
+    for (input, expected) in [
+        ("The the report", "The report"),
+        ("the The report", "the report"),
+        ("so so so", "so"),
+        ("the the, report", "the, report"),
+        ("the (the report)", "the (report)"),
+        ("ok (ok) go", "ok go"),
+        ("", ""),
+    ] {
+        assert_eq!(applied(RemoveRepeats, input), expected, "{input:?}");
+    }
+}
+
+#[test]
+fn the_disfluency_corpus_cleans_as_expected() {
+    let corpus = include_str!("../../../tests/fixtures/disfluencies.txt");
+    for case in corpus.split("\n\n") {
+        let mut lines = case.lines().filter(|line| !line.starts_with('#'));
+        let Some(heard) = lines.next() else {
+            continue;
+        };
+        let expected = lines.next().unwrap_or(heard);
+        assert_eq!(
+            applied(Layered::new(RemoveHesitations, RemoveRepeats), heard),
+            expected,
+            "heard {heard:?}"
+        );
+    }
+}
+
 #[test]
 fn vocabulary_layer_rejects_personal_expansion_before_replacing_text() {
     let rules = vocabulary::PersonalRules::new(

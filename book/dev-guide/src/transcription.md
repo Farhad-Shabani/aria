@@ -111,7 +111,9 @@ let transcription = Transcription::streaming(engine)
 ```
 
 Layers run in `.with(...)` order. `RemoveHesitations` removes a fixed set of
-English fillers. `Vocabulary` can turn “aria dash stt” into `aria-stt` and
+English fillers, `RemoveRepeats` drops a word said twice in a row, and
+`Backtrack` applies English self-corrections such as “at 3, actually 4”.
+`Vocabulary` can turn “aria dash stt” into `aria-stt` and
 “cargo dot toml” into `Cargo.toml`. It corrects text after recognition; it does
 not train or prompt the model, and it is not general fuzzy spelling correction.
 
