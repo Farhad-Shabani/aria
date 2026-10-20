@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use std::{fs, io};
 
-use super::{Job, SupervisorError, UnitSpec, run};
+use super::{Job, SupervisorError, UnitSpec, run_command};
 
 const LABEL: &str = "io.github.farhad-shabani.aria.daemon";
 pub(super) const UNIT_FILE: &str = "io.github.farhad-shabani.aria.daemon.plist";
@@ -73,7 +73,7 @@ pub(super) fn render(spec: &UnitSpec) -> String {
 pub(super) fn load(unit: &Path) -> Result<(), SupervisorError> {
     let mut command = launchctl();
     command.arg("bootstrap").arg(domain()).arg(unit);
-    run(command).map(drop)
+    run_command(command).map(drop)
 }
 
 /// Boots the job out and waits until launchd has forgotten it.
@@ -83,7 +83,7 @@ pub(super) fn unload() -> Result<(), SupervisorError> {
     }
     let mut command = launchctl();
     command.arg("bootout").arg(target());
-    run(command)?;
+    run_command(command)?;
     await_absent(&target())
 }
 
@@ -120,7 +120,7 @@ pub(super) fn app_owns_job(unit: &Path) -> Result<bool, SupervisorError> {
 fn print(target: &str) -> Result<Option<String>, SupervisorError> {
     let mut command = launchctl();
     command.arg("print").arg(target);
-    match run(command) {
+    match run_command(command) {
         Ok(report) => Ok(Some(report)),
         Err(SupervisorError::Command { status, .. }) if status.code() == Some(NOT_FOUND) => {
             Ok(None)
@@ -139,7 +139,7 @@ pub(super) fn remove_legacy_wake_agent(home: &Path) -> Result<Option<PathBuf>, S
     let legacy_target = format!("{}/{LEGACY_LABEL}", domain());
     let mut command = launchctl();
     command.arg("bootout").arg(&legacy_target);
-    match run(command) {
+    match run_command(command) {
         Ok(_) => {}
         Err(SupervisorError::Command { status, .. })
             if status.code() == Some(NO_SUCH_PROCESS) || status.code() == Some(NOT_FOUND) => {}
@@ -159,13 +159,13 @@ pub(super) fn remove_legacy_wake_agent(home: &Path) -> Result<Option<PathBuf>, S
 pub(super) fn start() -> Result<(), SupervisorError> {
     let mut command = launchctl();
     command.arg("kickstart").arg(target());
-    run(command).map(drop)
+    run_command(command).map(drop)
 }
 
 pub(super) fn stop() -> Result<(), SupervisorError> {
     let mut command = launchctl();
     command.args(["kill", "SIGTERM"]).arg(target());
-    run(command).map(drop)
+    run_command(command).map(drop)
 }
 
 /// `launchctl print` lists `pid = N` only while the job has a process.

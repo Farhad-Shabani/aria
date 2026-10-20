@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Command, Output};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 use aria_harness::artifact::{fingerprint, write_json};
-use aria_primitives::process::{ChildProcess, WaitOutcome};
+use aria_primitives::cancel::CancelToken;
+use aria_primitives::process::{self, Bounds, Capture};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::format_description::well_known::Rfc3339;
@@ -283,129 +283,22 @@ fn run_bounded(
     timeout: Duration,
     limit: usize,
 ) -> Result<Output> {
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut process = ChildProcess::spawn(command)?;
-    let mut stdin = process.take_stdin().context("missing subprocess stdin")?;
-    let stdout = process.take_stdout().context("missing subprocess stdout")?;
-    let stderr = process.take_stderr().context("missing subprocess stderr")?;
-    let cancel = AtomicBool::new(false);
-    thread::scope(|scope| {
-        let stdout_reader = scope.spawn(|| read_bounded(stdout, limit, &cancel));
-        let stderr_reader = scope.spawn(|| read_bounded(stderr, limit, &cancel));
-        let writer = scope.spawn(|| {
-            let result = stdin.write_all(input.as_bytes());
-            drop(stdin);
-            match result {
-                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-                Err(error) => {
-                    cancel.store(true, Ordering::Relaxed);
-                    Err(error)
-                }
-                Ok(()) => Ok(()),
-            }
-        });
-        let outcome =
-            process.wait_until(Instant::now() + timeout, || cancel.load(Ordering::Relaxed));
-        let cleanup = process.terminate_in_place();
-        drop(process);
-        let stdout = stdout_reader
-            .join()
-            .map_err(|_| anyhow::anyhow!("stdout reader panicked"))?;
-        let stderr = stderr_reader
-            .join()
-            .map_err(|_| anyhow::anyhow!("stderr reader panicked"))?;
-        let written = writer
-            .join()
-            .map_err(|_| anyhow::anyhow!("stdin writer panicked"))?;
-        cleanup?;
-        if matches!(outcome, Ok(WaitOutcome::TimedOut)) {
-            bail!("subprocess timed out after {timeout:?}");
-        }
-        let stdout = stdout?;
-        let stderr = stderr?;
-        written?;
-        match outcome? {
-            WaitOutcome::Exited(status) => Ok(Output {
-                status,
-                stdout,
-                stderr,
-            }),
-            WaitOutcome::Cancelled => bail!("subprocess cancelled after pipe failure"),
-            WaitOutcome::TimedOut => unreachable!(),
-        }
-    })
-}
-
-fn read_bounded(stream: impl Read, limit: usize, cancel: &AtomicBool) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
-    let read = stream.take(limit as u64 + 1).read_to_end(&mut output);
-    if read.is_err() || output.len() > limit {
-        cancel.store(true, Ordering::Relaxed);
-    }
-    read?;
-    ensure!(output.len() <= limit, "subprocess output limit exceeded");
-    Ok(output)
+    let bounds = Bounds {
+        timeout,
+        stdout: Capture::FailAbove(limit),
+        stderr: Capture::FailAbove(limit),
+    };
+    Ok(process::run(
+        command,
+        input.as_bytes(),
+        bounds,
+        &CancelToken::never(),
+    )?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn shell(script: &str) -> Command {
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", script]);
-        command
-    }
-
-    #[test]
-    fn subprocess_drains_pipes_accepts_closed_stdin_and_kills_descendants() {
-        let output = run_bounded(
-            &mut shell("cat; printf '\\377' >&2"),
-            "hello",
-            Duration::from_secs(5),
-            1024,
-        )
-        .unwrap();
-        assert!(output.status.success());
-        assert_eq!(output.stdout, b"hello");
-        assert_eq!(output.stderr, [255]);
-        let output = run_bounded(
-            &mut shell("exit 0"),
-            &"x".repeat(1_000_000),
-            Duration::from_secs(5),
-            1024,
-        )
-        .unwrap();
-        assert!(output.status.success());
-        let started = Instant::now();
-        let output = run_bounded(
-            &mut shell("sleep 30 & exit 0"),
-            "",
-            Duration::from_secs(5),
-            1024,
-        )
-        .unwrap();
-        assert!(output.status.success());
-        assert!(started.elapsed() < Duration::from_secs(5));
-    }
-
-    #[test]
-    fn subprocess_enforces_both_output_limits_and_deadline() {
-        for (script, timeout, expected) in [
-            ("yes x", Duration::from_secs(5), "output limit"),
-            ("yes x >&2", Duration::from_secs(5), "output limit"),
-            ("sleep 30", Duration::from_millis(100), "timed out"),
-        ] {
-            let started = Instant::now();
-            let error =
-                run_bounded(&mut shell(script), &"x".repeat(1_000_000), timeout, 1024).unwrap_err();
-            assert!(error.to_string().contains(expected), "{error:#}");
-            assert!(started.elapsed() < Duration::from_secs(5));
-        }
-    }
 
     #[test]
     fn rubric_substitutes_once_and_selects_task_or_abstention() {

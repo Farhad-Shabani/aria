@@ -3,17 +3,18 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::Permissions;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{fs, io};
 
 use crate::ipc::{ClientError, ConnectError, Liveness, ProbeError, probe_daemon};
+use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::owner_pid;
-use crate::primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
+use crate::primitives::process::{self, Bounds, Capture, RunError};
 use crate::primitives::user_home::{self, UserHomeError};
 use crate::runtime::{PreparedRuntimePaths, RUNTIME_DIR_ENV, RuntimeError};
 
@@ -288,66 +289,32 @@ fn owner(pid: Option<u32>) -> String {
 }
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_OUTPUT_BYTES: u64 = 16 * 1024;
+const KEPT_OUTPUT_BYTES: usize = 16 * 1024;
 
 /// Runs a supervisor command to completion and returns its stdout. A
 /// non-zero exit carries the command's stderr.
-fn run(mut command: Command) -> Result<String, SupervisorError> {
+fn run_command(mut command: Command) -> Result<String, SupervisorError> {
     let name = describe(&command);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut process =
-        ChildProcess::spawn(&mut command).map_err(|source| SupervisorError::Spawn {
-            command: name.clone(),
-            source,
+    let bounds = Bounds {
+        timeout: COMMAND_TIMEOUT,
+        stdout: Capture::KeepHead(KEPT_OUTPUT_BYTES),
+        stderr: Capture::KeepHead(KEPT_OUTPUT_BYTES),
+    };
+    let output =
+        process::run(&mut command, b"", bounds, &CancelToken::never()).map_err(|source| {
+            SupervisorError::Run {
+                command: name.clone(),
+                source,
+            }
         })?;
-
-    // Both pipes drain on their own threads so the deadline below stays the
-    // only wait; a child that hangs while holding a pipe open is killed at
-    // the deadline, which ends the drains.
-    let stdout = process
-        .take_stdout()
-        .map(|pipe| thread::spawn(|| drain(pipe)));
-    let stderr = process
-        .take_stderr()
-        .map(|pipe| thread::spawn(|| drain(pipe)));
-    let outcome = process
-        .wait_until(Instant::now() + COMMAND_TIMEOUT, || false)
-        .map_err(|source| SupervisorError::Wait {
-            command: name.clone(),
-            source,
-        });
-    drop(process);
-    let stdout = join(stdout);
-    let stderr = join(stderr);
-
-    match outcome? {
-        WaitOutcome::Exited(status) if status.success() => Ok(stdout),
-        WaitOutcome::Exited(status) => Err(SupervisorError::Command {
+    if !output.status.success() {
+        return Err(SupervisorError::Command {
             command: name,
-            status,
-            stderr: stderr.trim().to_owned(),
-        }),
-        WaitOutcome::TimedOut | WaitOutcome::Cancelled => {
-            Err(SupervisorError::Timeout { command: name })
-        }
+            status: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
     }
-}
-
-fn drain(pipe: impl Read) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    // A short read only shortens the diagnostic text.
-    let _ = pipe.take(MAX_OUTPUT_BYTES).read_to_end(&mut bytes);
-    bytes
-}
-
-fn join(reader: Option<thread::JoinHandle<Vec<u8>>>) -> String {
-    let bytes = reader
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default();
-    String::from_utf8_lossy(&bytes).into_owned()
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// The program and its first argument, for error text: `launchctl bootout`.
@@ -410,21 +377,11 @@ pub enum SupervisorError {
     Readiness(#[source] ClientError),
 
     #[error("failed to run {command}")]
-    Spawn {
+    Run {
         command: String,
         #[source]
-        source: std::io::Error,
+        source: RunError,
     },
-
-    #[error("failed to wait for {command}")]
-    Wait {
-        command: String,
-        #[source]
-        source: ChildProcessError,
-    },
-
-    #[error("{command} did not finish within {}s", COMMAND_TIMEOUT.as_secs())]
-    Timeout { command: String },
 
     #[error("{command} exited with {status}{}", stderr_suffix(stderr))]
     Command {
@@ -475,7 +432,7 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "echo out; echo oops >&2; exit 3"]);
 
-        let error = run(command).expect_err("exit 3 should fail");
+        let error = run_command(command).expect_err("exit 3 should fail");
 
         let SupervisorError::Command {
             command,
@@ -495,15 +452,18 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "echo hello"]);
 
-        assert_eq!(run(command).expect("exit 0 should succeed"), "hello\n");
+        assert_eq!(
+            run_command(command).expect("exit 0 should succeed"),
+            "hello\n"
+        );
     }
 
     #[test]
     fn stderr_is_drained_while_waiting() {
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", "yes error >&2 | head -c 200000; exit 1"]);
+        command.args(["-c", "yes error | head -c 200000 >&2; exit 1"]);
 
-        let error = run(command).expect_err("exit 1 should fail");
+        let error = run_command(command).expect_err("exit 1 should fail");
 
         assert!(matches!(error, SupervisorError::Command { .. }), "{error}");
     }

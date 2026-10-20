@@ -1,13 +1,10 @@
 //! One agent run: spawn, feed the prompt on stdin, collect what came back.
 
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, ExitStatus};
+use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::primitives::process::{ChildProcess, WaitOutcome};
+use aria_kit::primitives::process::{self, Bounds, Capture, RunError};
 
 use super::AgentError;
 
@@ -20,7 +17,7 @@ const STDERR_QUOTE_BYTES: usize = 1_000;
 const STDERR_KEEP_BYTES: usize = 64 * 1024;
 
 /// Caps retained stdout; exceeding it requests termination of the child.
-const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
 /// The status is the agent's; whether the output counts as a reply is for
 /// its parser to say.
@@ -53,6 +50,8 @@ impl Output {
     }
 }
 
+/// Hands each stdout line to `on_line` as it lands. Bytes that are not UTF-8
+/// reach `on_line` and the output as replacement characters.
 pub(crate) fn run_cli(
     command: &mut Command,
     stdin_text: &str,
@@ -60,126 +59,83 @@ pub(crate) fn run_cli(
     cancel: &CancelToken,
     timeout: Duration,
 ) -> Result<Output, AgentError> {
-    let deadline = Instant::now() + timeout;
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = ChildProcess::spawn(command).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            AgentError::Missing {
-                binary: command.get_program().into(),
+    let binary = command.get_program().to_owned();
+    let bounds = Bounds {
+        timeout,
+        stdout: Capture::FailAbove(MAX_OUTPUT_BYTES),
+        stderr: Capture::KeepTail(STDERR_KEEP_BYTES),
+    };
+    let mut lines = Lines {
+        pending: Vec::new(),
+        on_line,
+    };
+    let output =
+        process::run_with_listener(command, stdin_text.as_bytes(), bounds, cancel, |bytes| {
+            lines.push(bytes);
+        })
+        .map_err(|error| match error {
+            RunError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                AgentError::Missing {
+                    binary: binary.into(),
+                }
             }
-        } else {
-            AgentError::Spawn(error)
-        }
-    })?;
-    let mut stdin = child.take_stdin().ok_or_else(|| not_piped("stdin"))?;
-    let stdout = child.take_stdout().ok_or_else(|| not_piped("stdout"))?;
-    let stderr = child.take_stderr().ok_or_else(|| not_piped("stderr"))?;
-
-    // Set by the stdout reader once the child has written past the cap; the
-    // wait then stops the child instead of letting it run to its deadline.
-    let overflowed = AtomicBool::new(false);
-    let (waited, stdout, stderr) = thread::scope(|scope| {
-        // The pipes are read while the child runs, so a long reply can never
-        // fill one and stall it.
-        let stdout = scope.spawn(|| read_lines(stdout, on_line, &overflowed));
-        let stderr = scope.spawn(move || read_tail(stderr));
-        let writer = scope.spawn(move || stdin.write_all(stdin_text.as_bytes()));
-        let waited = child.wait_until(deadline, || {
-            cancel.is_cancelled() || overflowed.load(Ordering::Relaxed)
-        });
-        if !matches!(waited, Ok(WaitOutcome::Exited(_))) {
-            // Closing the child's pipes is what lets the readers return.
-            if let Err(error) = child.terminate_in_place() {
-                tracing::warn!(%error, "failed to stop the agent");
-            }
-        }
-        let _ = writer.join();
-        let stdout = stdout.join().unwrap_or_else(|_panic| Ok(String::new()));
-        let stderr = stderr.join().unwrap_or_else(|_panic| Ok(String::new()));
-        (waited, stdout, stderr)
-    });
-
-    let stdout = stdout?;
-    match waited.map_err(AgentError::Wait)? {
-        // The stop above is what ended it, so its status is not the story.
-        _ if overflowed.load(Ordering::Relaxed) => {
-            Err(AgentError::OutputTooLarge(MAX_OUTPUT_BYTES))
-        }
-        WaitOutcome::Exited(status) => Ok(Output {
-            status,
-            stdout,
-            stderr: stderr.map_err(AgentError::Io)?,
-        }),
-        WaitOutcome::TimedOut => Err(AgentError::Timeout(timeout)),
-        WaitOutcome::Cancelled => Err(AgentError::Cancelled),
-    }
+            RunError::Spawn(source) => AgentError::Spawn(source),
+            RunError::Write(source) => AgentError::Input(source),
+            RunError::Read(source) => AgentError::Io(source),
+            RunError::Wait(source) => AgentError::Wait(source),
+            RunError::TimedOut(timeout) => AgentError::Timeout(timeout),
+            RunError::Cancelled => AgentError::Cancelled,
+            RunError::OutputTooLarge { limit, .. } => AgentError::OutputTooLarge(limit),
+        })?;
+    lines.finish();
+    Ok(Output {
+        status: output.status,
+        stdout: text(output.stdout),
+        stderr: text(output.stderr),
+    })
 }
 
-/// Hands each line over as it lands and keeps the whole text, up to
-/// `MAX_OUTPUT_BYTES`. One byte past that flags the overflow and drains the
-/// pipe until the child is stopped, so it never blocks on a full pipe. Bytes
-/// that are not UTF-8 are kept as replacement characters rather than ending
-/// the read early, which would leave the child blocked the same way.
-fn read_lines(
-    pipe: impl Read,
-    mut on_line: impl FnMut(&str),
-    overflowed: &AtomicBool,
-) -> Result<String, AgentError> {
-    let mut reader = BufReader::new(pipe);
-    let mut text = String::new();
-    let mut remaining = MAX_OUTPUT_BYTES + 1;
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let read = reader
-            .by_ref()
-            .take(remaining)
-            .read_until(b'\n', &mut line)
-            .map_err(AgentError::Io)?;
-        if read == 0 {
-            return Ok(text);
-        }
-        remaining -= read as u64;
-        if remaining == 0 {
-            overflowed.store(true, Ordering::Relaxed);
-            io::copy(&mut reader, &mut io::sink()).map_err(AgentError::Io)?;
-            return Err(AgentError::OutputTooLarge(MAX_OUTPUT_BYTES));
-        }
-        let line = String::from_utf8_lossy(&line);
-        on_line(line.trim_end_matches(['\n', '\r']));
-        text.push_str(&line);
-    }
+/// Converts without copying unless the bytes are not UTF-8, since stdout can
+/// run to several megabytes.
+fn text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
 }
 
-/// Keeps the last `STDERR_KEEP_BYTES` of a pipe and drops the rest as it
-/// arrives, so a talkative agent never fails its run over diagnostics.
-fn read_tail(pipe: impl Read) -> io::Result<String> {
-    let mut reader = BufReader::new(pipe);
-    let mut kept = Vec::new();
-    let mut chunk = [0u8; 8 * 1024];
-    loop {
-        let read = reader.read(&mut chunk)?;
-        if read == 0 {
-            return Ok(String::from_utf8_lossy(&kept).into_owned());
-        }
-        kept.extend_from_slice(&chunk[..read]);
-        if kept.len() > STDERR_KEEP_BYTES {
-            kept.drain(..kept.len() - STDERR_KEEP_BYTES);
-        }
-    }
+/// `pending` never outgrows the stdout cap, since `run` forwards no more than
+/// the cap.
+struct Lines<F> {
+    pending: Vec<u8>,
+    on_line: F,
 }
 
-fn not_piped(stream: &str) -> AgentError {
-    AgentError::Spawn(std::io::Error::other(format!(
-        "agent {stream} was not piped"
-    )))
+impl<F: FnMut(&str)> Lines<F> {
+    fn push(&mut self, mut bytes: &[u8]) {
+        while let Some(end) = bytes.iter().position(|&byte| byte == b'\n') {
+            self.pending.extend_from_slice(&bytes[..end]);
+            self.deliver();
+            bytes = &bytes[end + 1..];
+        }
+        self.pending.extend_from_slice(bytes);
+    }
+
+    fn finish(mut self) {
+        if !self.pending.is_empty() {
+            self.deliver();
+        }
+    }
+
+    fn deliver(&mut self) {
+        (self.on_line)(String::from_utf8_lossy(&self.pending).trim_end_matches('\r'));
+        self.pending.clear();
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+    use std::time::Instant;
+
     use super::*;
 
     const PATIENCE: Duration = Duration::from_secs(5);
@@ -191,22 +147,6 @@ mod tests {
             .expect_err("the spawn should fail");
 
         assert!(matches!(error, AgentError::Missing { .. }), "{error:?}");
-    }
-
-    #[test]
-    fn stdin_reaches_the_child_and_stdout_comes_back() {
-        let mut command = Command::new("cat");
-        let output = run_cli(
-            &mut command,
-            "echoed",
-            |_| {},
-            &CancelToken::never(),
-            PATIENCE,
-        )
-        .expect("cat should echo");
-
-        assert!(output.status.success());
-        assert_eq!(output.stdout, "echoed");
     }
 
     #[test]
@@ -243,14 +183,23 @@ mod tests {
     }
 
     #[test]
-    fn output_exactly_at_the_cap_is_kept() {
+    fn a_line_cut_by_the_cap_never_reaches_the_listener() {
         let mut command = Command::new("sh");
-        command.args(["-c", &format!("yes | head -c {MAX_OUTPUT_BYTES}")]);
+        let bytes = MAX_OUTPUT_BYTES + 1;
+        command.args(["-c", &format!("head -c {bytes} /dev/zero")]);
+        let mut lines = 0;
 
-        let output = run_cli(&mut command, "", |_| {}, &CancelToken::never(), PATIENCE)
-            .expect("the output fits");
+        let error = run_cli(
+            &mut command,
+            "",
+            |_| lines += 1,
+            &CancelToken::never(),
+            PATIENCE,
+        )
+        .expect_err("the output is too large");
 
-        assert_eq!(output.stdout.len() as u64, MAX_OUTPUT_BYTES);
+        assert!(matches!(error, AgentError::OutputTooLarge(_)), "{error:?}");
+        assert_eq!(lines, 0);
     }
 
     #[test]
