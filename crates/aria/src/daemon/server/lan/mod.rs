@@ -1,7 +1,6 @@
 mod connections;
 mod tls;
 
-use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,6 +18,8 @@ use crate::daemon::service::{InviteRpc, PairingRpc, PreferencesRpc, RelayRpc};
 use crate::ipc::wire;
 use crate::primitives::error_chain;
 use connections::Admitted;
+
+use super::{CONNECTION_DRAIN_GRACE, until_grace_after};
 
 /// LAN connections open at once: a few phones, plus dead ones the keepalive
 /// has not reaped yet.
@@ -46,10 +47,6 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const PAIRING_LEASE: Duration = Duration::from_secs(15);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
 const RELAY_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long LAN connections may drain once the daemon stops: a second
-/// inside the daemon's own grace.
-const LAN_DRAIN_GRACE: Duration =
-    super::SHUTDOWN_GRACE_PERIOD.saturating_sub(Duration::from_secs(1));
 
 /// The relay and the port it answers on, together because "served" and
 /// "where" are the same decision: carried apart, a mismatch binds a port
@@ -233,7 +230,7 @@ async fn bind(
     }
 }
 
-/// Ends at most `LAN_DRAIN_GRACE` after `stop`.
+/// Ends at most `CONNECTION_DRAIN_GRACE` after `stop`.
 pub(super) async fn serve(bound: Option<Bound>, stop: CancellationToken) {
     let Some(Bound {
         router,
@@ -247,7 +244,7 @@ pub(super) async fn serve(bound: Option<Bound>, stop: CancellationToken) {
         incoming(listener, handshake),
         stop.clone().cancelled_owned(),
     );
-    match until_grace_after(serving, stop.cancelled_owned(), LAN_DRAIN_GRACE).await {
+    match until_grace_after(serving, stop.cancelled_owned(), CONNECTION_DRAIN_GRACE).await {
         Some(Ok(())) => {}
         Some(Err(error)) => {
             tracing::error!(error = %error_chain(&error), "the relay listener failed");
@@ -266,22 +263,6 @@ fn incoming(
         PAIRING_LEASE,
         MAX_LAN_CONNECTIONS,
     )
-}
-
-/// `work`'s output, or `None` once `stopped` resolves and `grace` passes
-/// first.
-async fn until_grace_after<F: Future>(
-    work: F,
-    stopped: impl Future<Output = ()>,
-    grace: Duration,
-) -> Option<F::Output> {
-    tokio::select! {
-        output = work => Some(output),
-        () = async {
-            stopped.await;
-            tokio::time::sleep(grace).await;
-        } => None,
-    }
 }
 
 #[cfg(test)]
@@ -764,23 +745,5 @@ mod tests {
         assert!(lan.bound.is_none(), "a taken port must not serve a relay");
         assert!(lan.advert.is_none());
         assert!(lan.invites.is_none(), "no relay, no codes to issue for it");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn lan_work_that_never_ends_ends_a_grace_after_the_stop() {
-        let stop = tokio_util::sync::CancellationToken::new();
-        let waiting = tokio::spawn(until_grace_after(
-            std::future::pending::<()>(),
-            stop.clone().cancelled_owned(),
-            LAN_DRAIN_GRACE,
-        ));
-
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        assert!(!waiting.is_finished(), "nothing ends it before the stop");
-        let stopped_at = tokio::time::Instant::now();
-        stop.cancel();
-
-        assert_eq!(waiting.await.expect("the wait does not panic"), None);
-        assert_eq!(stopped_at.elapsed(), LAN_DRAIN_GRACE);
     }
 }

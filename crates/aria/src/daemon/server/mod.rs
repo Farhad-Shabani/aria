@@ -13,6 +13,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tokio_util::sync::CancellationToken;
 use tonic_health::pb::health_server::HealthServer;
 use tonic_health::server::{HealthReporter, HealthService};
 
@@ -50,6 +51,10 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// client's own startup deadline rather than a number of its own.
 const STARTUP_IDLE_GRACE: Duration = super::session::STARTUP_TIMEOUT;
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
+/// Shorter than the shutdown grace, so an idle client alone never fails a
+/// shutdown.
+const CONNECTION_DRAIN_GRACE: Duration =
+    SHUTDOWN_GRACE_PERIOD.saturating_sub(Duration::from_secs(1));
 
 /// The daemon's own descriptors plus everything they import, for reflection.
 const FILE_DESCRIPTOR_SET: &[u8] =
@@ -174,10 +179,7 @@ impl Server {
             "daemon ready"
         );
 
-        let unix = router.serve_with_incoming_shutdown(
-            local::same_user(listener),
-            tasks.cancellation().cancelled_owned(),
-        );
+        let unix = serve_local(router, listener, tasks.cancellation());
         // Two listeners, one stop. The LAN one is not allowed to end the
         // daemon: a relay that fell over must not take dictation with it.
         let lan_serving = lan::serve(bound, tasks.cancellation());
@@ -221,6 +223,45 @@ fn adopt_listener(socket: &ExclusiveListener) -> Result<tokio::net::UnixListener
         .set_nonblocking(true)
         .map_err(ServerError::Listener)?;
     tokio::net::UnixListener::from_std(listener).map_err(ServerError::Listener)
+}
+
+enum Drained {
+    Closed,
+    /// The grace ran out. Open connections, and any request on them, drop
+    /// with the runtime.
+    CutOff,
+}
+
+/// Ends at most `CONNECTION_DRAIN_GRACE` after `stop`.
+async fn serve_local(
+    router: ActivityRouter,
+    listener: tokio::net::UnixListener,
+    stop: CancellationToken,
+) -> std::result::Result<Drained, tonic::transport::Error> {
+    let serving = router
+        .serve_with_incoming_shutdown(local::same_user(listener), stop.clone().cancelled_owned());
+    match until_grace_after(serving, stop.cancelled_owned(), CONNECTION_DRAIN_GRACE).await {
+        Some(result) => result.map(|()| Drained::Closed),
+        None => {
+            tracing::warn!("connections outlived the drain; they close with the daemon");
+            Ok(Drained::CutOff)
+        }
+    }
+}
+
+/// `None` when `work` is still running `grace` after `stopped` resolves.
+async fn until_grace_after<F: Future>(
+    work: F,
+    stopped: impl Future<Output = ()>,
+    grace: Duration,
+) -> Option<F::Output> {
+    tokio::select! {
+        output = work => Some(output),
+        () = async {
+            stopped.await;
+            tokio::time::sleep(grace).await;
+        } => None,
+    }
 }
 
 type ActivityRouter = tonic::transport::server::Router<
@@ -335,7 +376,7 @@ async fn build_router(
 }
 
 async fn drain(
-    grpc: impl Future<Output = std::result::Result<(), tonic::transport::Error>>,
+    grpc: impl Future<Output = std::result::Result<Drained, tonic::transport::Error>>,
     reason: StopReason,
     subscriptions: &Subscriptions,
     tasks: &RuntimeTasks,
@@ -383,8 +424,23 @@ async fn drain(
             active_requests
         })
         .await;
-    result.map_err(ServerError::Serve)?;
+    // Any request still counted after a cut-off died with its connection.
+    let cut_off_requests = match result.map_err(ServerError::Serve)? {
+        Drained::CutOff => activity.active_count(),
+        Drained::Closed => 0,
+    };
     match timed_out_active_requests {
+        Some(active_requests) => Err(ServerError::ShutdownTimeout { active_requests }),
+        None if cut_off_requests > 0 => {
+            tracing::error!(
+                active_requests = cut_off_requests,
+                elapsed_ms = shutdown_started.elapsed().as_millis(),
+                "daemon shutdown cut off requests still running"
+            );
+            Err(ServerError::ShutdownTimeout {
+                active_requests: cut_off_requests,
+            })
+        }
         None => {
             tracing::info!(
                 elapsed_ms = shutdown_started.elapsed().as_millis(),
@@ -392,7 +448,6 @@ async fn drain(
             );
             Ok(())
         }
-        Some(active_requests) => Err(ServerError::ShutdownTimeout { active_requests }),
     }
 }
 
@@ -523,6 +578,24 @@ mod tests {
 
         assert_eq!(value, 42);
         assert_eq!(expired, Some("grace expired"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn work_that_never_ends_ends_a_grace_after_the_stop() {
+        let stop = CancellationToken::new();
+        let waiting = tokio::spawn(until_grace_after(
+            std::future::pending::<()>(),
+            stop.clone().cancelled_owned(),
+            CONNECTION_DRAIN_GRACE,
+        ));
+
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert!(!waiting.is_finished(), "nothing ends it before the stop");
+        let stopped_at = tokio::time::Instant::now();
+        stop.cancel();
+
+        assert_eq!(waiting.await.expect("the wait does not panic"), None);
+        assert_eq!(stopped_at.elapsed(), CONNECTION_DRAIN_GRACE);
     }
 
     // OnDemand defers the model, so these daemons run on machines without one.
@@ -767,11 +840,35 @@ mod tests {
             );
         });
 
-        // The daemon's drain waits for the client connection to close, and
-        // nothing polls the client runtime once block_on returns.
+        // Closing the client lets the drain end without waiting out the grace.
         drop(runtime);
         daemon
             .join()
+            .expect("the stopped daemon should exit cleanly");
+    }
+
+    #[test]
+    fn a_stop_returns_while_a_client_stays_connected() {
+        let (_directory, daemon) = on_demand_daemon();
+        let runtime = test_runtime();
+        // A connection that has served a call and is never polled again never
+        // answers the daemon's HTTP/2 GOAWAY.
+        let _idle = runtime.block_on(async {
+            let channel = connect(&daemon).await;
+            HealthClient::new(channel.clone())
+                .check(HealthCheckRequest::default())
+                .await
+                .expect("the daemon should answer a health check");
+            channel
+        });
+
+        daemon.stopper().stop();
+        let (joined, outcome) = std::sync::mpsc::channel();
+        std::thread::spawn(move || joined.send(daemon.join()));
+
+        outcome
+            .recv_timeout(SHUTDOWN_GRACE_PERIOD + Duration::from_secs(1))
+            .expect("the daemon should stop within its grace")
             .expect("the stopped daemon should exit cleanly");
     }
 }

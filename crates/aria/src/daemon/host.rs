@@ -155,8 +155,8 @@ impl RunningDaemon {
     }
 }
 
-/// Stops a spawned daemon, from any thread. Stopping force-closes active
-/// connections, exactly as a termination signal does.
+/// Stops a spawned daemon from any thread, as a termination signal does.
+/// Open connections get a few seconds to drain, then close.
 #[derive(Clone)]
 pub struct DaemonStopper {
     writer: Arc<std::os::unix::net::UnixStream>,
