@@ -82,6 +82,15 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: just@1.58.0
+      # The acceptance cases that start a daemon need a transcription model.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/aria-test-models
+          key: whisper-tiny-en-921e4cf8
+      - name: Fetch the test transcription model
+        run: |
+          model="$(just test-model ~/.cache/aria-test-models)"
+          echo "ARIA_TEST_WHISPER_MODEL=$model" >> "$GITHUB_ENV"
       - name: Lint and test Rust
         run: just rust-lint-all rust-test-all
 

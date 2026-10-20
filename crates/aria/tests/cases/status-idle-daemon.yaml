@@ -1,0 +1,21 @@
+name: an idle daemon reports nothing listening, playing, or in its vocabulary
+config: |
+  transcription:
+    backend: whisper
+    model: ${WHISPER_MODEL}
+  capture:
+    backend: wav-file
+    path: ${FIXTURES}/silence.wav
+expect:
+  daemon:
+    startup: success
+  client:
+    - run: [listen, status]
+      stdout_contains:
+        - "not listening"
+    - run: [vocabulary, status]
+      stdout_contains:
+        - "Disabled: 0 terms"
+    - run: [say, --stop]
+      stdout_contains:
+        - "nothing was playing"

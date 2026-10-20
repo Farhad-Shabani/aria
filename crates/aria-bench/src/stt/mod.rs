@@ -6,7 +6,6 @@
 
 pub mod analysis;
 mod backends;
-pub mod baseline;
 mod conditions;
 mod corpus;
 mod normalize;
@@ -83,13 +82,11 @@ pub struct Report {
     pub summaries: Vec<Summary>,
     /// Backends set aside because their model was not there.
     pub skipped: Vec<Skipped>,
-    passes: u32,
 }
 
 /// How far one backend's transcripts fell from the reference.
 pub struct Summary {
     pub backend: &'static str,
-    conditions: Conditions,
     reference_words: usize,
     pub substitutions: usize,
     pub deletions: usize,
@@ -104,10 +101,9 @@ pub struct Summary {
 }
 
 impl Summary {
-    fn new(descriptor: &Descriptor, conditions: Conditions) -> Self {
+    fn new(descriptor: &Descriptor) -> Self {
         Self {
             backend: descriptor.name,
-            conditions,
             reference_words: 0,
             substitutions: 0,
             deletions: 0,
@@ -247,7 +243,6 @@ pub fn run(request: &Request) -> Result<Report, BenchError> {
         corpus_words: reference_words(&corpus),
         summaries,
         skipped,
-        passes: request.passes,
     })
 }
 
@@ -269,7 +264,7 @@ fn measure(
         source,
     })?;
     let conditions = Conditions::new(loaded.decoding, realtime, provisional);
-    let mut summary = Summary::new(descriptor, conditions);
+    let mut summary = Summary::new(descriptor);
     let total = corpus.utterances.len();
     for pass in 1..=passes {
         for (index, utterance) in corpus.utterances.iter().enumerate() {

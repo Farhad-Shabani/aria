@@ -2,7 +2,7 @@
 name                 = "aria-harness"
 version.workspace    = true
 edition.workspace    = true
-description          = "Black-box acceptance harness that runs a binary against a scenario catalog"
+description          = "Acceptance harness that runs the aria binary against a scenario catalog"
 license              = "Apache-2.0"
 repository.workspace = true
 readme.workspace     = true
@@ -15,6 +15,7 @@ workspace = true
 anyhow          = { workspace = true }
 aria-primitives = { workspace = true }
 clap            = { workspace = true }
+libtest-mimic   = "0.8"
 time            = { version = "0.3", features = [ "formatting", "macros", "parsing" ] }
 rustix          = { workspace = true, features = [ "system" ] }
 serde           = { workspace = true }

@@ -90,6 +90,11 @@ aria-harness = { workspace = true }
 # The relay's timeouts are minutes long; its tests advance the clock instead.
 tokio = { version = "1", features = [ "test-util" ] }
 
+# Each catalog case is its own test, so the catalog brings its own runner.
+[[test]]
+name    = "acceptance"
+harness = false
+
 [[bench]]
 name    = "dictation_latency"
 harness = false

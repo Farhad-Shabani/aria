@@ -1,16 +1,14 @@
-//! Black-box acceptance harness.
+//! Black-box acceptance harness for the Aria daemon and CLI.
 //!
-//! Runs a compiled binary against a scenario catalog. Cases only speak the
-//! product's public contract: config file, CLI, exit status, stdout, stderr.
+//! Runs the `aria` binary against a scenario catalog, one test per case, each
+//! in a sandbox with its own home. Cases only speak the product's public
+//! contract: config file, CLI, exit status, stdout, stderr. The case format is
+//! documented beside the catalog, in `crates/aria/tests/cases/README.md`.
 //!
-//! Infrastructure failures surface as typed errors; a case whose expectations
-//! do not hold panics, which is how the test framework reports a failed case.
-//!
-//! `baseline` and `stats` spawn nothing. Benches use them to record a run
-//! and judge the next one against it.
+//! `artifact` and `stats` spawn nothing. Benches use them to record and
+//! summarize a run.
 
 pub mod artifact;
-pub mod baseline;
 mod catalog;
 mod daemon;
 pub mod inputs;
@@ -21,5 +19,5 @@ pub mod stats;
 
 pub use catalog::CatalogError;
 pub use daemon::{DaemonProcessError, RunningDaemon, ServiceStart, start_service};
-pub use runner::{HarnessError, run_catalog};
+pub use runner::run_catalog;
 pub use sandbox::{Sandbox, SandboxError, yaml_string};

@@ -23,16 +23,6 @@ pub(crate) fn run_to_exit(binary: &Path, sandbox: &Sandbox) -> Result<Output, Da
     spawn(binary, &[DAEMON_SUBCOMMAND], sandbox)?.wait(EXIT_DEADLINE)
 }
 
-/// Runs the daemon until it is ready, then asks it to shut down with SIGTERM.
-/// A daemon that exits before becoming ready falls through with its own exit
-/// status for the expectations to judge.
-pub(crate) fn run_service(binary: &Path, sandbox: &Sandbox) -> Result<Output, DaemonProcessError> {
-    match start_service(binary, sandbox)? {
-        ServiceStart::Running(daemon) => daemon.stop(),
-        ServiceStart::Exited(output) => Ok(output),
-    }
-}
-
 /// Starts the daemon and waits until it can serve. A daemon that exits before
 /// becoming ready surfaces as `Exited` with its output for the caller to judge.
 pub fn start_service(binary: &Path, sandbox: &Sandbox) -> Result<ServiceStart, DaemonProcessError> {
@@ -115,8 +105,10 @@ fn spawn(
 ) -> Result<Spawned, DaemonProcessError> {
     let mut command = Command::new(binary);
     sandbox.apply(&mut command);
+    // A command that would prompt on a terminal reads end of input instead.
     command
         .args(arguments)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut process = ChildProcess::spawn(&mut command).map_err(DaemonProcessError::Spawn)?;
