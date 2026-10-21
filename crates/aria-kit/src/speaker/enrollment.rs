@@ -154,6 +154,7 @@ mod tests {
 
     impl Engine for Replay {
         const NAME: &'static str = "replay";
+        const MODEL: &'static [crate::backend::ModelDownload] = &[];
 
         type Config = ();
 

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::synthesis::{SynthesisError, validate_model_file};
 
 /// Files a talker model directory must carry.
@@ -17,6 +17,56 @@ pub(super) const TOKENIZER_CONFIG: &str = "config.json";
 const CHAT_VOCAB: &str = "vocab.json";
 const CHAT_MERGES: &str = "merges.txt";
 const CHAT_CONFIG: &str = "tokenizer_config.json";
+
+/// The 0.6B CustomVoice talker, which `Config::model_dir` holds.
+pub const MODEL: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: TALKER_WEIGHTS,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/model.safetensors",
+        bytes: 1_811_626_576,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: TALKER_CONFIG,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/config.json",
+        bytes: 4_908,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: CHAT_VOCAB,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/vocab.json",
+        bytes: 2_776_833,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: CHAT_MERGES,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/merges.txt",
+        bytes: 1_671_839,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: CHAT_CONFIG,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/tokenizer_config.json",
+        bytes: 7_344,
+        unpack: Unpack::Plain,
+    },
+];
+
+/// The 12 Hz speech tokenizer, which `Config::speech_tokenizer_dir` holds.
+pub const SPEECH_TOKENIZER: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: TOKENIZER_WEIGHTS,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz/resolve/7dd38ad4e9bad454aae9cd937d0cd577604fe229/model.safetensors",
+        bytes: 682_293_092,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: TOKENIZER_CONFIG,
+        url: "https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz/resolve/7dd38ad4e9bad454aae9cd937d0cd577604fe229/config.json",
+        bytes: 2_336,
+        unpack: Unpack::Plain,
+    },
+];
 
 pub(super) const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_CHAT_CONFIG_BYTES: u64 = 1024 * 1024;

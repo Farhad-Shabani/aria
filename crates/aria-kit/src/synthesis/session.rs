@@ -216,6 +216,7 @@ mod tests {
 
     impl Engine for Fake {
         const NAME: &'static str = "fake";
+        const MODEL: &'static [crate::backend::ModelDownload] = &[];
 
         type Config = Behavior;
 

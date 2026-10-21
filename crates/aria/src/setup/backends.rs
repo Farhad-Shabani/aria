@@ -264,10 +264,15 @@ impl Backend for Chat {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
+    use aria_kit::synthesis::Engine as _;
+
     use super::*;
-    use crate::config::{self, FileConfig};
+    use crate::config::{self, DictationConfig, Environment, FileConfig, TtsBackend, TtsConfig};
+    use crate::primitives::error_chain;
 
     /// Setup must download each model to the path the daemon loads it from.
     #[test]
@@ -296,6 +301,66 @@ mod tests {
                     "{key} downloads nothing into {}",
                     model.path.display()
                 );
+            }
+        }
+    }
+
+    /// A home whose config picks `backend` in `section` and whose models
+    /// directory holds every file setup downloads for it.
+    fn home_with_downloads(section: &str, backend: &str, assets: &[Asset]) -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        let aria = home.path().join(".aria");
+        fs::create_dir_all(&aria).unwrap();
+        fs::write(
+            aria.join("config.yaml"),
+            format!("{section}: {{backend: {backend}}}\n"),
+        )
+        .unwrap();
+        let models_dir = config::models_dir(home.path());
+        for (relative, _) in assets.iter().flat_map(Asset::files) {
+            // Engine checks refuse anything group- or world-writable, which
+            // a loose umask would otherwise leave behind.
+            let file = models_dir.join(relative);
+            let folder = file.parent().unwrap();
+            fs::create_dir_all(folder).unwrap();
+            fs::set_permissions(folder, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::write(&file, b"").unwrap();
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        home
+    }
+
+    #[test]
+    fn a_fresh_download_passes_the_engine_check() {
+        for stt in Stt::ALL.iter().filter(|stt| !stt.assets().is_empty()) {
+            let home = home_with_downloads("transcription", stt.key(), stt.assets());
+            let environment = Environment::in_home(home.path().to_path_buf());
+            let transcription = DictationConfig::load(&environment).unwrap().transcription;
+            if let Err(error) = crate::transcription::check_model(&transcription) {
+                panic!("{}: {}", stt.key(), error_chain(&error));
+            }
+        }
+        for tts in Tts::ALL.iter().filter(|tts| !tts.assets().is_empty()) {
+            let home = home_with_downloads("tts", tts.key(), tts.assets());
+            let environment = Environment::in_home(home.path().to_path_buf());
+            let checked = match TtsConfig::load(&environment).unwrap().backend {
+                TtsBackend::Kokoro { model, voices } => {
+                    aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
+                        model,
+                        voices,
+                    })
+                }
+                TtsBackend::Qwen {
+                    model_dir,
+                    tokenizer_dir,
+                } => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
+                    model_dir,
+                    speech_tokenizer_dir: tokenizer_dir,
+                }),
+                TtsBackend::System => panic!("the system voice downloads nothing"),
+            };
+            if let Err(error) = checked {
+                panic!("{}: {}", tts.key(), error_chain(&error));
             }
         }
     }

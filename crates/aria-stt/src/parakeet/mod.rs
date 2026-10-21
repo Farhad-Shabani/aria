@@ -30,7 +30,7 @@ use parakeet_rs::ExecutionProvider;
 use parakeet_rs::{ExecutionConfig, ParakeetTDT, TimedToken, TimestampMode, Transcriber as _};
 
 use aria_kit::audio::{CANONICAL_SAMPLE_RATE, CHANNELS};
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
@@ -51,6 +51,36 @@ pub enum Device {
 
 const BACKEND: &str = NAME;
 const VOCABULARY_FILE: &str = "vocab.txt";
+
+/// TDT 0.6B v3 at full precision. parakeet-rs finds the encoder and decoder
+/// among several export names, int8 included, so a load requires only the
+/// vocabulary by name.
+pub const MODEL: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: "encoder-model.onnx",
+        url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.onnx",
+        bytes: 41_770_866,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: "encoder-model.onnx.data",
+        url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.onnx.data",
+        bytes: 2_435_420_160,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: "decoder_joint-model.onnx",
+        url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/decoder_joint-model.onnx",
+        bytes: 72_520_893,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: VOCABULARY_FILE,
+        url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/vocab.txt",
+        bytes: 93_939,
+        unpack: Unpack::Plain,
+    },
+];
 
 /// A word commits when two decodes of the growing buffer agree on it.
 /// The twenty-second cap bounds re-decode cost.
@@ -86,6 +116,7 @@ impl Parakeet {
 
 impl Engine for Parakeet {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
     const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = ParakeetConfig;

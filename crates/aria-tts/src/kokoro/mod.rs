@@ -39,7 +39,7 @@ use misaki_rs::{G2P, Language};
 use ort::session::Session as OrtSession;
 use ort::value::Tensor;
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::synthesis::{
     Engine, SpeakingRate, SpeechText, SpeechWriter, SynthesisError, Synthesizer, Voice, chunks,
@@ -50,6 +50,22 @@ use voices::VoiceStyles;
 
 /// Names this engine under `tts.backend` and in its own errors.
 pub const NAME: &str = "kokoro";
+
+/// Kokoro v1.0: the graph, then the voice styles it reads.
+pub const MODEL: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: "kokoro.onnx",
+        url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+        bytes: 325_532_387,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: "voices.bin",
+        url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+        bytes: 28_214_398,
+        unpack: Unpack::Plain,
+    },
+];
 
 /// The rate the model was trained to write.
 const SAMPLE_RATE: u32 = 24_000;
@@ -97,6 +113,7 @@ impl Kokoro {
 
 impl Engine for Kokoro {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
 
     type Config = Config;
 

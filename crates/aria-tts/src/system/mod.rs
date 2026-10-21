@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload};
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
 use aria_kit::synthesis::{
@@ -62,6 +62,7 @@ const CEILING_GRACE: Duration = Duration::from_secs(30);
 
 impl Engine for SystemVoice {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = &[];
 
     /// The platform program is discovered, not configured.
     type Config = ();

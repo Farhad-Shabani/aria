@@ -2,17 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use aria_kit::backend::ModelError;
+use aria_kit::backend::{ModelDownload, ModelError};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Engine, TranscriptionError, check_cancelled, validate_model_directory,
 };
 
-use super::{BACKEND, NAME, WhisperCandle};
-
-const WEIGHTS_FILE: &str = "model.safetensors";
-const TOKENIZER_FILE: &str = "tokenizer.json";
-const CONFIG_FILE: &str = "config.json";
+use super::{BACKEND, CONFIG_FILE, MODEL, NAME, TOKENIZER_FILE, WEIGHTS_FILE, WhisperCandle};
 
 /// Everything a whisper-candle load needs: a directory holding the three
 /// files a Hugging Face Whisper export ships.
@@ -37,6 +33,7 @@ impl WhisperCandle {
 
 impl Engine for WhisperCandle {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
     const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = WhisperCandleConfig;

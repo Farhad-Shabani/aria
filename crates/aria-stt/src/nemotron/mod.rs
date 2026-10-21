@@ -32,7 +32,7 @@ use std::path::PathBuf;
 
 use parakeet_rs::{ExecutionConfig, NemotronHandle, TokenInfo};
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, ChunkStream, Emitted, Engine, Hypothesis, Language, Stream, StreamingEngine,
@@ -44,7 +44,39 @@ use aria_kit::transcription::{
 pub const NAME: &str = "nemotron";
 
 const BACKEND: &str = NAME;
-const MODEL_FILES: [&str; 3] = ["encoder.onnx", "decoder_joint.onnx", "tokenizer.model"];
+const ENCODER_FILE: &str = "encoder.onnx";
+const DECODER_FILE: &str = "decoder_joint.onnx";
+const TOKENIZER_FILE: &str = "tokenizer.model";
+
+/// Streaming English 0.6B. A load does not require `encoder.onnx.data` by
+/// name: ONNX Runtime opens it because this export's encoder graph points
+/// there.
+pub const MODEL: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: ENCODER_FILE,
+        url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/encoder.onnx",
+        bytes: 42_159_995,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: "encoder.onnx.data",
+        url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/encoder.onnx.data",
+        bytes: 2_436_567_040,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: DECODER_FILE,
+        url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/decoder_joint.onnx",
+        bytes: 35_779_240,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: TOKENIZER_FILE,
+        url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/tokenizer.model",
+        bytes: 251_056,
+        unpack: Unpack::Plain,
+    },
+];
 
 /// Audio per encoder step: 560 ms. The export fixes it, and a load refuses
 /// a model that decodes any other width.
@@ -84,12 +116,17 @@ impl Nemotron {
 
 impl Engine for Nemotron {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
     const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = NemotronConfig;
 
     fn check_from(config: &NemotronConfig) -> Result<PathBuf, TranscriptionError> {
-        validate_model_directory(config.model_directory.clone(), BACKEND, &MODEL_FILES)
+        validate_model_directory(
+            config.model_directory.clone(),
+            BACKEND,
+            &[ENCODER_FILE, DECODER_FILE, TOKENIZER_FILE],
+        )
     }
 
     fn load_from(config: NemotronConfig, cancel: &CancelToken) -> Result<Self, TranscriptionError> {

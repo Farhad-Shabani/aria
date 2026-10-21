@@ -354,7 +354,7 @@ fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
             name: asset.name,
             title: asset.title,
             engine,
-            bytes: asset.bytes,
+            bytes: asset.total_bytes(),
             default: asset.default,
             present: assets::present(&models_dir, asset),
             external: external(asset, engine, section),
@@ -877,7 +877,7 @@ mod tests {
         let environment = Environment::in_home(home.path().to_path_buf());
         let extras: Vec<PathBuf> = EXTRAS
             .iter()
-            .flat_map(|asset| asset.files)
+            .flat_map(Asset::files)
             .map(|(relative, _)| config::models_dir(home.path()).join(relative))
             .collect();
 

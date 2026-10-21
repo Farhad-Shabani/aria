@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use crate::backend::{BackendError, ModelError};
+use crate::backend::{BackendError, ModelDownload, ModelError};
 
 /// Speakers active in each frame of one fixed-width chunk of audio.
 ///
@@ -35,6 +35,11 @@ pub trait Segmenter {
 /// this beside [`Segmenter`] is the whole checklist for a new engine.
 pub trait Engine: Segmenter + Sized {
     const NAME: &'static str;
+
+    /// The files to download for this engine, all into one folder. Empty
+    /// when nothing is downloaded for it. An engine that reads a second
+    /// folder lists that folder's files in a const of its own.
+    const MODEL: &'static [ModelDownload];
 
     type Config;
 

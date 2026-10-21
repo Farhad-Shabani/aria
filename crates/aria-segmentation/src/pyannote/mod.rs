@@ -22,7 +22,7 @@
 
 use std::path::PathBuf;
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::segmentation::{
     Activity, ChunkShape, Engine, SegmentationError, Segmenter, validate_model_file,
 };
@@ -30,6 +30,16 @@ use ort::session::Session;
 use ort::value::Tensor;
 
 pub const NAME: &str = "pyannote";
+
+/// Segmentation 3.0 as sherpa-onnx exports it. This engine relies on that
+/// export's input and output names, and only sherpa-onnx's release tarball
+/// ships it.
+pub const MODEL: &[ModelDownload] = &[ModelDownload {
+    file_name: "segmentation-3.0.onnx",
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+    bytes: 6_958_444,
+    unpack: Unpack::TarBz2Member("sherpa-onnx-pyannote-segmentation-3-0/model.onnx"),
+}];
 
 /// The chunk the graph was trained on: ten seconds at 16 kHz.
 const WINDOW_SAMPLES: usize = 160_000;
@@ -59,6 +69,7 @@ pub struct Pyannote {
 
 impl Engine for Pyannote {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
 
     type Config = Config;
 

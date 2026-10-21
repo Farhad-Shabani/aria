@@ -32,6 +32,7 @@ mod vocabulary;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use aria_kit::backend::{ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, Transcriber,
@@ -45,6 +46,28 @@ use recognizer::{MIN_SAMPLES, Recognizer};
 pub const NAME: &str = "moonshine";
 
 const BACKEND: &str = NAME;
+
+/// The base model, its encoder and decoder quantized to 8 bits.
+pub const MODEL: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: recognizer::ENCODER_FILE,
+        url: "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/encoder_model_quantized.onnx",
+        bytes: 20_513_063,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: recognizer::DECODER_FILE,
+        url: "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/decoder_model_merged_quantized.onnx",
+        bytes: 42_498_870,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: vocabulary::TOKENIZER_FILE,
+        url: "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/tokenizer.json",
+        bytes: 3_761_754,
+        unpack: Unpack::Plain,
+    },
+];
 
 /// The 750 ms stride gives the decoder more context before words are committed.
 /// The twenty-second window caps repeated decoding cost and token usage.
@@ -76,6 +99,7 @@ impl Moonshine {
 
 impl Engine for Moonshine {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
     const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = MoonshineConfig;

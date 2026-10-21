@@ -26,36 +26,6 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 const MODEL_FILE_MODE: u32 = 0o644;
 const ARCHIVE_SUFFIX: &str = ".tar.bz2";
 
-pub(super) const WHISPER_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin";
-pub(super) const WHISPER_CANDLE_MODEL_URL: &str = "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/model.safetensors";
-pub(super) const WHISPER_CANDLE_TOKENIZER_URL: &str = "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/tokenizer.json";
-pub(super) const WHISPER_CANDLE_CONFIG_URL: &str = "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/config.json";
-pub(super) const PARAKEET_ENCODER_URL: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.onnx";
-pub(super) const PARAKEET_ENCODER_DATA_URL: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.onnx.data";
-pub(super) const PARAKEET_DECODER_URL: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/decoder_joint-model.onnx";
-pub(super) const PARAKEET_VOCAB_URL: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/vocab.txt";
-pub(super) const MOONSHINE_ENCODER_URL: &str = "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/encoder_model_quantized.onnx";
-pub(super) const MOONSHINE_DECODER_URL: &str = "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/decoder_model_merged_quantized.onnx";
-pub(super) const MOONSHINE_TOKENIZER_URL: &str = "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/tokenizer.json";
-pub(super) const NEMOTRON_ENCODER_URL: &str = "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/encoder.onnx";
-pub(super) const NEMOTRON_ENCODER_DATA_URL: &str = "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/encoder.onnx.data";
-pub(super) const NEMOTRON_DECODER_URL: &str = "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/decoder_joint.onnx";
-pub(super) const NEMOTRON_TOKENIZER_URL: &str = "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/tokenizer.model";
-pub(super) const KOKORO_MODEL_URL: &str = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx";
-pub(super) const KOKORO_VOICES_URL: &str = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin";
-pub(super) const QWEN_MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/model.safetensors";
-pub(super) const QWEN_CONFIG_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/config.json";
-pub(super) const QWEN_VOCAB_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/vocab.json";
-pub(super) const QWEN_MERGES_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/merges.txt";
-pub(super) const QWEN_TOKENIZER_CONFIG_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/resolve/85e237c12c027371202489a0ec509ded67b5e4b5/tokenizer_config.json";
-pub(super) const QWEN_CODEC_MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz/resolve/7dd38ad4e9bad454aae9cd937d0cd577604fe229/model.safetensors";
-pub(super) const QWEN_CODEC_CONFIG_URL: &str = "https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz/resolve/7dd38ad4e9bad454aae9cd937d0cd577604fe229/config.json";
-pub(super) const SPEAKER_URL: &str = "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx";
-/// Only sherpa-onnx's release tarball ships an exported graph.
-pub(super) const SEGMENTATION_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2";
-pub(super) const SEGMENTATION_MEMBER: &str = "sherpa-onnx-pyannote-segmentation-3-0/model.onnx";
-
 /// Downloads `url` to `dest` unless it is already there. `meter` lets curl
 /// draw its bar on the terminal; `received` gets the byte count on disk so
 /// far either way, and an error from it ends the transfer.

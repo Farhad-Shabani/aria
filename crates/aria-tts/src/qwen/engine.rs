@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use candle_core::Tensor;
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload};
 use aria_kit::cancel::CancelToken;
 use aria_kit::synthesis::{
     Engine, SpeakingRate, SpeechText, SpeechWriter, SynthesisError, Synthesizer, Voice, chunks,
@@ -18,7 +18,7 @@ use crate::qwen::code_predictor::CodePredictor;
 use crate::qwen::config::{ModelConfig, ModelType, SpeechTokenizerConfig};
 use crate::qwen::generate::{CustomVoiceGenerator, GenerateError, GenerationParams};
 use crate::qwen::model_files::{
-    Detail, MAX_CONFIG_BYTES, ModelFiles, TALKER_CONFIG, TALKER_WEIGHTS, TOKENIZER_CONFIG,
+    Detail, MAX_CONFIG_BYTES, MODEL, ModelFiles, TALKER_CONFIG, TALKER_WEIGHTS, TOKENIZER_CONFIG,
     TOKENIZER_WEIGHTS, load_failed, read_bounded_text,
 };
 use crate::qwen::talker::Talker;
@@ -71,6 +71,7 @@ impl Qwen {
 
 impl Engine for Qwen {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
 
     type Config = Config;
 
