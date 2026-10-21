@@ -56,24 +56,28 @@ pub const MODEL: &[ModelDownload] = &[
         file_name: ENCODER_FILE,
         url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/encoder.onnx",
         bytes: 42_159_995,
+        sha256: "5c5110ca2e961c3ff5edc2b0ff49f29888b5213287624f7865c60f7384ac02f0",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: "encoder.onnx.data",
         url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/encoder.onnx.data",
         bytes: 2_436_567_040,
+        sha256: "44f65771e1570546f61106b3d0c604a60b398d061476fda8042bb05432601bd4",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: DECODER_FILE,
         url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/decoder_joint.onnx",
         bytes: 35_779_240,
+        sha256: "8bcfde85fa9039a70caeb90204273f837923d63a706c186bd33e2ada25a91700",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: TOKENIZER_FILE,
         url: "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-speech-streaming-en-0.6b/tokenizer.model",
         bytes: 251_056,
+        sha256: "07d4e5a63840a53ab2d4d106d2874768143fb3fbdd47938b3910d2da05bfb0a9",
         unpack: Unpack::Plain,
     },
 ];

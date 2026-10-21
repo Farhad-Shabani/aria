@@ -53,18 +53,21 @@ pub const MODEL: &[ModelDownload] = &[
         file_name: recognizer::ENCODER_FILE,
         url: "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/encoder_model_quantized.onnx",
         bytes: 20_513_063,
+        sha256: "1dd9ab0a7f987113d30affcba5a068d11c8f90fa0223caa3e491ade431ad9751",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: recognizer::DECODER_FILE,
         url: "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/decoder_model_merged_quantized.onnx",
         bytes: 42_498_870,
+        sha256: "cc9f3cd6698a369c6008b41aa60aa3fb3322e7f03c9bdf19d8e6b7200afca4f3",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: vocabulary::TOKENIZER_FILE,
         url: "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/tokenizer.json",
         bytes: 3_761_754,
+        sha256: "7b913404bdd039af4756783218af4440bc07fb7d6d8258d677e34f95b3ec416f",
         unpack: Unpack::Plain,
     },
 ];

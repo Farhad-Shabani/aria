@@ -828,6 +828,15 @@ pub enum SetupError {
     #[error("interrupted; rerun `aria setup` to resume {}", part.display())]
     Interrupted { part: PathBuf },
 
+    #[error(
+        "the download from {url} has SHA-256 {actual}, not {expected}; rerun `aria setup` to fetch it again"
+    )]
+    WrongHash {
+        url: &'static str,
+        expected: &'static str,
+        actual: String,
+    },
+
     #[error("downloaded {} failed the model trust check", path.display())]
     Untrusted {
         path: PathBuf,

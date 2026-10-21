@@ -57,18 +57,21 @@ pub const MODEL: &[ModelDownload] = &[
         file_name: WEIGHTS_FILE,
         url: "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/model.safetensors",
         bytes: 151_060_136,
+        sha256: "db59695928ded6043adaef491a53ef4e12da9611184d77c53baa691a60b958ad",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: TOKENIZER_FILE,
         url: "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/tokenizer.json",
         bytes: 2_405_679,
+        sha256: "5eb60cec1e77aeeb6869a2bb5a8e01a84c3fe5d072d75369343021fe6f5310d0",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: CONFIG_FILE,
         url: "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/config.json",
         bytes: 1_937,
+        sha256: "b5366317df280f79e6cc366f259f379674f81a8721d458acf2e00680ccb10b1d",
         unpack: Unpack::Plain,
     },
 ];

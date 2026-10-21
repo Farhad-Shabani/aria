@@ -38,6 +38,7 @@ pub const MODEL: &[ModelDownload] = &[ModelDownload {
     file_name: "segmentation-3.0.onnx",
     url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
     bytes: 6_958_444,
+    sha256: "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
     unpack: Unpack::TarBz2Member("sherpa-onnx-pyannote-segmentation-3-0/model.onnx"),
 }];
 

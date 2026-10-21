@@ -2,12 +2,15 @@
 
 use std::fs;
 use std::io;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use aria_kit::backend::{ModelDownload, Unpack};
 
 use super::SetupError;
 use super::download;
+
+const MODEL_DIR_MODE: u32 = 0o755;
 
 pub(super) struct Asset {
     pub(super) name: &'static str,
@@ -151,17 +154,23 @@ pub(super) fn obtain(
     for (relative, file) in asset.files() {
         let dest = models.join(relative);
         if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|source| SetupError::Io {
-                action: "create",
-                path: parent.to_path_buf(),
-                source,
-            })?;
+            // Not group-writable, whatever the umask: anyone who can write
+            // the folder can swap a part for a link after its hash check.
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(MODEL_DIR_MODE)
+                .create(parent)
+                .map_err(|source| SetupError::Io {
+                    action: "create",
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
         }
         let mut progress = |bytes| received(finished + bytes);
         match file.unpack {
-            Unpack::Plain => download::fetch(file.url, &dest, meter, &mut progress)?,
+            Unpack::Plain => download::fetch(file, &dest, meter, &mut progress)?,
             Unpack::TarBz2Member(member) => {
-                download::fetch_member(file.url, member, &dest, meter, &mut progress)?;
+                download::fetch_member(file, member, &dest, meter, &mut progress)?;
             }
         }
         finished += fs::metadata(&dest)
@@ -256,6 +265,21 @@ mod tests {
                 );
                 assert!(seen.insert(relative), "{shown} is claimed twice");
             }
+        }
+    }
+
+    #[test]
+    fn every_file_names_a_sha256_in_lowercase_hex() {
+        for (relative, file) in all().into_iter().flat_map(|asset| asset.files()) {
+            assert!(
+                file.sha256.len() == 64
+                    && file
+                        .sha256
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+                "{} has no usable SHA-256",
+                relative.display()
+            );
         }
     }
 
