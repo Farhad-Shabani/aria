@@ -3,8 +3,9 @@ import XCTest
 @testable import Aria
 
 final class SetupProtocolTests: XCTestCase {
-    private static func responses() throws -> (event: Aria_Setup_V1_ApplyResponse, summary: Aria_Setup_V1_ApplyResponse)
-    {
+    /// The child's stdout arrives in arbitrary chunks; frames must come out
+    /// whole and in order regardless of where the chunks cut.
+    func test_frames_surviveBeingSplitAcrossReads() throws {
         var download = Aria_Setup_V1_DownloadProgress()
         download.model = "whisper"
         download.received = 10
@@ -13,13 +14,6 @@ final class SetupProtocolTests: XCTestCase {
         event.event.download = download
         var summary = Aria_Setup_V1_ApplyResponse()
         summary.summary.grant = .armed
-        return (event, summary)
-    }
-
-    /// The child's stdout arrives in arbitrary chunks; frames must come out
-    /// whole and in order regardless of where the chunks cut.
-    func test_frames_surviveBeingSplitAcrossReads() throws {
-        let (event, summary) = try Self.responses()
         let stream = try SetupFrames.encode(event) + SetupFrames.encode(summary)
 
         for cut in 0...stream.count {

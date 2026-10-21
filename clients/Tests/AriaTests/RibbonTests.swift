@@ -63,7 +63,7 @@ final class RibbonTests: XCTestCase {
         // Over a full turn of phase, each current reaches the same peak.
         var upperPeak = 0.0
         var lowerPeak = 0.0
-        let point = RibbonTuning.points / 4
+        let point = RibbonTuning.segmentCount / 4
         for turn in 0..<360 {
             let phase = Double(turn) * .pi / 180
             let currents = RibbonMotion.currents(phase: phase, share: { _ in 1 })

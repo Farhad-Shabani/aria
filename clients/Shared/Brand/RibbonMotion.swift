@@ -21,8 +21,7 @@ enum RibbonTuning {
     static let periods = 1.5
     /// How far the second current runs behind the first, in radians.
     static let phaseGap = 0.9
-    /// Segments per current; more is smoother and costs more.
-    static let points = 28
+    static let segmentCount = 28
     /// Outline stroke, in points. Softens the ribbon's edge.
     static let lineWidth: CGFloat = 1.6
 
@@ -87,7 +86,7 @@ struct RibbonGeometry: Equatable, Sendable {
     var spread: Double
     /// Wave height at full share, in points.
     var maxHeight: Double
-    var points: Int
+    var segmentCount: Int
 
     static let pill = RibbonGeometry(
         left: 0,
@@ -95,7 +94,7 @@ struct RibbonGeometry: Equatable, Sendable {
         middle: RibbonTuning.middle,
         spread: RibbonTuning.spread,
         maxHeight: RibbonTuning.maxHeight,
-        points: RibbonTuning.points
+        segmentCount: RibbonTuning.segmentCount
     )
 }
 
@@ -105,13 +104,13 @@ struct RibbonMotion: Equatable, Sendable {
     private(set) var level = 0.0
     /// The spring's height, as a share of `maxHeight`.
     private(set) var height = 0.0
-    private(set) var velocity = 0.0
+    private var velocity = 0.0
     /// Where the waves are along their travel, in radians.
     private(set) var phase = 0.0
     /// Seconds since the press began, for the breath.
     private(set) var clock = 0.0
     /// The height transcribing starts from.
-    private(set) var handOffHeight = 0.0
+    private var handOffHeight = 0.0
     /// Seconds spent transcribing, or nil while recording.
     private(set) var sweptFor: Double?
 
@@ -185,8 +184,8 @@ struct RibbonMotion: Equatable, Sendable {
         func current(_ index: Int) -> [CGPoint] {
             let side = index == 0 ? -1.0 : 1.0
             let baseline = geometry.middle + side * geometry.spread / 2
-            return (0...geometry.points).map { step in
-                let p = Double(step) / Double(geometry.points)
+            return (0...geometry.segmentCount).map { step in
+                let p = Double(step) / Double(geometry.segmentCount)
                 let wave = sin(2 * .pi * RibbonTuning.periods * p + phase + Double(index) * RibbonTuning.phaseGap)
                 let y = baseline - geometry.maxHeight * share(p) * sin(.pi * p) * wave
                 return CGPoint(x: geometry.left + geometry.width * p, y: y)

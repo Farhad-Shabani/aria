@@ -34,7 +34,6 @@ enum DaemonClientError: LocalizedError {
     }
 }
 
-/// How `start()` brings the daemon up.
 enum StartMethod: Equatable {
     /// `launchctl kickstart` of the app's login agent, which then owns the process.
     case kickstart
@@ -49,20 +48,20 @@ enum StartMethod: Equatable {
 /// the PID recorded in the lock file. Runtime paths and the agent's label
 /// mirror the Rust daemon.
 struct DaemonClient: DaemonControlling {
-    static let serviceLabel = "io.github.farhad-shabani.aria.daemon"
+    private static let serviceLabel = "io.github.farhad-shabani.aria.daemon"
     private static let legacyRetiredKey = "legacyServiceRetired"
     private static let agentLoadProbes = 20
     private static let agentLoadPoll = Duration.milliseconds(100)
 
     /// Bundled in `Contents/Library/LaunchAgents`. Without RunAtLoad it
     /// starts only when the app asks, so quitting Aria keeps it stopped.
-    static var agent: SMAppService { .agent(plistName: "\(serviceLabel).plist") }
+    private static var agent: SMAppService { .agent(plistName: "\(serviceLabel).plist") }
 
     private static var agentTarget: String { "gui/\(getuid())/\(serviceLabel)" }
     private static var launchctl: URL { URL(fileURLWithPath: "/bin/launchctl") }
 
     /// What `aria service install` writes. It claims the agent's label.
-    static var legacyServicePlistURL: URL {
+    private static var legacyServicePlistURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents/\(serviceLabel).plist")
     }
@@ -81,13 +80,12 @@ struct DaemonClient: DaemonControlling {
         }
     }
 
-    /// Parses the lock-file PID; missing or invalid contents return nil.
     static func lockedPid(_ contents: String?) -> pid_t? {
         guard let contents else { return nil }
         return pid_t(contents.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    static func daemonBinaryOverride(defaults: UserDefaults = .standard) -> URL? {
+    private static func daemonBinaryOverride(defaults: UserDefaults = .standard) -> URL? {
         defaults.string(forKey: "ariaDaemonBinary").map {
             URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
         }
@@ -112,7 +110,6 @@ struct DaemonClient: DaemonControlling {
         return [bundled].compactMap { $0 }
     }
 
-    /// The first candidate that can run; none means the build is missing.
     static func ariaBinary() throws -> URL {
         let candidates = daemonBinaryCandidates()
         guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
@@ -202,7 +199,6 @@ struct DaemonClient: DaemonControlling {
         (try? run(launchctl, ["print", agentTarget])) != nil
     }
 
-    /// Runs a command to completion; a non-zero exit throws its stderr.
     private static func run(_ executable: URL, _ arguments: [String]) throws {
         let name = ([executable.lastPathComponent] + arguments.prefix(1)).joined(separator: " ")
         let process = Process()
@@ -247,7 +243,7 @@ struct DaemonClient: DaemonControlling {
         }
     }
 
-    /// Checks that the lock is held and the recorded PID names an `aria` executable.
+    /// The lock-file fallback checks the lock and executable before signaling.
     /// These checks reduce stale-PID risk but do not make signaling atomic.
     func stop() async throws {
         try Self.signalStop()

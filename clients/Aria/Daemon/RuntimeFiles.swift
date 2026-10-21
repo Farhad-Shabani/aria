@@ -7,7 +7,7 @@ enum RuntimeFiles {
     ///
     /// A launchd app inherits no shell environment, so the override only
     /// applies when the app itself was launched with it set.
-    static func daemonRuntimeURL(_ name: String) -> URL {
+    private static func daemonRuntimeURL(_ name: String) -> URL {
         let directory =
             ProcessInfo.processInfo.environment["ARIA_RUNTIME_DIR"]
             ?? NSHomeDirectory() + "/.aria/daemon"

@@ -265,7 +265,7 @@ final class StatusController: ObservableObject {
     /// The caller starts the stream once every overlay has registered.
     func start() {
         UserDefaults.standard.register(defaults: [Self.enabledKey: Self.enabledByDefault])
-        events.onStage { [weak self] event in
+        events.onDictation { [weak self] event in
             guard let self else { return }
             guard let event else {
                 self.show(nil)

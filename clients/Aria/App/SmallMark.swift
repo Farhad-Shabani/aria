@@ -59,7 +59,7 @@ extension RibbonGeometry {
             middle: MarkTuning.center + shift,
             spread: MarkTuning.spread * SmallMark.scale * SmallMark.spreadGain,
             maxHeight: MarkTuning.loudHeight * SmallMark.scale,
-            points: MarkTuning.points
+            segmentCount: MarkTuning.segmentCount
         )
     }()
 }

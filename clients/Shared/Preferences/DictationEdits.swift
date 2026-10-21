@@ -1,7 +1,5 @@
 import Foundation
 
-/// Rules a client applies before a patch leaves the app, shared by the Mac
-/// window and the phone screen.
 enum DictationEdits {
     static let outputModes: [Aria_Daemon_V1_OutputMode] = [.insert, .insertAndSubmit, .insertOrCopy, .copy]
     static let silenceSecondsRange = 0.5...3.0
@@ -11,7 +9,6 @@ enum DictationEdits {
         mode == .copy
     }
 
-    /// An output that locks delivery switches it to complete in the same patch.
     static func setOutput(_ mode: Aria_Daemon_V1_OutputMode, in patch: inout Aria_Daemon_V1_PreferencePatch) {
         patch.outputMode = mode
         if locksDelivery(mode) {
@@ -25,8 +22,6 @@ enum DictationEdits {
         UInt64((seconds * 1000).rounded())
     }
 
-    /// Detection, English, and whatever else the daemon already stores,
-    /// since the API accepts any language tag.
     static func languageChoices(including current: String) -> [String] {
         let standard = ["auto", "en"]
         if standard.contains(current) || current.isEmpty {
@@ -57,7 +52,6 @@ extension Aria_Daemon_V1_OutputMode {
 }
 
 extension Aria_Daemon_V1_PreferencePatch {
-    /// Lays the set fields over a snapshot, as the daemon will.
     func apply(to preferences: inout Aria_Daemon_V1_UserPreferences) {
         if hasRecognitionLanguage { preferences.recognitionLanguage = recognitionLanguage }
         if hasOutputMode { preferences.outputMode = outputMode }

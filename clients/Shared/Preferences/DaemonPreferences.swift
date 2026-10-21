@@ -38,7 +38,6 @@ final class DaemonPreferences: ObservableObject {
         snapshot.map { DictationEdits.locksDelivery($0.outputMode) } ?? false
     }
 
-    /// Fetches daemon values, then pushes any pending local changes.
     func sync() async {
         do {
             let snapshot = try await transport.snapshot()
@@ -109,8 +108,6 @@ final class DaemonPreferences: ObservableObject {
         defer { pushing = false }
         while pending != Aria_Daemon_V1_PreferencePatch() {
             let sent = pending
-            // Two attempts: a conflict adopts the daemon's revision and
-            // retries once.
             for _ in 0..<2 {
                 do {
                     if revision == nil {
@@ -145,8 +142,6 @@ final class DaemonPreferences: ObservableObject {
                             adopt(fresh.preferences)
                         }
                     }
-                    // Otherwise the daemon was unreachable; pending stands
-                    // until the next sync.
                     return
                 }
                 break

@@ -10,7 +10,7 @@ enum DictationHistoryClient {
         .init(list: list, get: get, delete: delete, clear: clear, retry: retry, copy: copy)
     }
 
-    static func list(_ query: String, _ before: UInt64?) async throws -> HistoryPage {
+    private static func list(_ query: String, _ before: UInt64?) async throws -> HistoryPage {
         var request = Aria_Daemon_V1_ListHistoryRequest()
         request.query = query
         request.limit = 50
@@ -28,7 +28,7 @@ enum DictationHistoryClient {
         )
     }
 
-    static func get(_ id: UInt64) async throws -> HistoryItem {
+    private static func get(_ id: UInt64) async throws -> HistoryItem {
         try item(
             await withClient { client in
                 try await client.get(
@@ -40,7 +40,7 @@ enum DictationHistoryClient {
             })
     }
 
-    static func delete(_ id: UInt64) async throws {
+    private static func delete(_ id: UInt64) async throws {
         _ = try await withClient { client in
             try await client.delete(
                 request: ClientRequest(message: Aria_Daemon_V1_DeleteHistoryRequest.with { $0.id = id }),
@@ -51,7 +51,7 @@ enum DictationHistoryClient {
         }
     }
 
-    static func retry(_ id: UInt64) async throws -> HistoryItem {
+    private static func retry(_ id: UInt64) async throws -> HistoryItem {
         try item(
             await withClient { client in
                 try await client.regenerate(
@@ -63,7 +63,7 @@ enum DictationHistoryClient {
             })
     }
 
-    static func clear() async throws -> HistoryClearResult {
+    private static func clear() async throws -> HistoryClearResult {
         do {
             let response = try await withClient { client in
                 try await client.clear(
@@ -87,7 +87,7 @@ enum DictationHistoryClient {
         }
     }
 
-    static func copy(_ text: String) -> Bool {
+    private static func copy(_ text: String) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString("", forType: .init("org.nspasteboard.ConcealedType")) else {
@@ -97,10 +97,17 @@ enum DictationHistoryClient {
     }
 
     static func item(_ wire: Aria_Daemon_V1_HistoryEntry) throws -> HistoryItem {
-        guard [.available, .unavailable, .expired].contains(wire.audio),
-            wire.hasAudioExpiresAtMs == (wire.audio == .available),
+        guard wire.hasAudioExpiresAtMs == (wire.audio == .available),
             !wire.hasError || wire.error.code != .unspecified
         else { throw HistoryFailure.failed }
+        let audio: HistoryItem.Audio
+        switch wire.audio {
+        case .available:
+            audio = .available(until: Date(timeIntervalSince1970: Double(wire.audioExpiresAtMs) / 1_000))
+        case .unavailable: audio = .unavailable
+        case .expired: audio = .expired
+        default: throw HistoryFailure.failed
+        }
         let status: HistoryItem.Status
         switch wire.status {
         case .success: status = .success
@@ -125,10 +132,7 @@ enum DictationHistoryClient {
             duration: wire.hasDurationMs ? Double(wire.durationMs) / 1_000 : nil,
             complete: wire.transcriptionComplete,
             retryable: wire.canRegenerate,
-            audioExpires: wire.hasAudioExpiresAtMs
-                ? Date(timeIntervalSince1970: Double(wire.audioExpiresAtMs) / 1_000) : nil,
-            audioAvailable: wire.audio == .available,
-            audioExpired: wire.audio == .expired,
+            audio: audio,
             retrying: wire.regenerating,
             warning: wire.hasWarning ? wire.warning : nil,
             message: wire.hasError ? transcriptionMessage(wire.error.code) : nil
