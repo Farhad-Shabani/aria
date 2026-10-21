@@ -22,7 +22,7 @@ use crate::dictation::{
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
-    Engine, Language, Mode, StreamingEngine, Transcript, Transcription, TranscriptionError, Whole,
+    Engine, Language, Mode, StreamingEngine, Transcript, Transcription, TranscriptionError,
 };
 use crate::vocabulary::{Directory, Vocabulary};
 
@@ -30,6 +30,7 @@ use super::super::transcripts::{History, TranscriptStore};
 use super::model_load::ModelLoad;
 
 use aria_speaker::wespeaker::WeSpeaker;
+use aria_stt::EngineConfig;
 use aria_stt::moonshine::{Moonshine, MoonshineConfig};
 use aria_stt::nemotron::{Nemotron, NemotronConfig};
 use aria_stt::parakeet::{Parakeet, ParakeetConfig};
@@ -401,33 +402,8 @@ pub(super) fn transcribe_retry(
     let cleanup_llm = config
         .cleanup_layer(home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
-    let transcription = match config.transcription {
-        TranscriptionConfig::Whisper { model } => {
-            retry_model::<Whisper>(WhisperConfig::new(model), cancel)
-        }
-        TranscriptionConfig::WhisperCandle { model_directory } => {
-            retry_model::<WhisperCandle>(WhisperCandleConfig::new(model_directory), cancel)
-        }
-        TranscriptionConfig::Parakeet {
-            model_directory,
-            device,
-        } => retry_model::<Parakeet>(ParakeetConfig::new(model_directory, device), cancel),
-        TranscriptionConfig::Moonshine { model_directory } => {
-            retry_model::<Moonshine>(MoonshineConfig::new(model_directory), cancel)
-        }
-        TranscriptionConfig::Nemotron { model_directory } => {
-            retry_model::<Nemotron>(NemotronConfig::new(model_directory), cancel)
-        }
-        #[cfg(target_os = "macos")]
-        TranscriptionConfig::ParakeetMlx { model, interpreter } => {
-            retry_model::<ParakeetMlx>(ParakeetMlxConfig { model, interpreter }, cancel)
-        }
-        #[cfg(not(target_os = "macos"))]
-        TranscriptionConfig::ParakeetMlx { .. } => Err(TranscriptionError::UnsupportedBackend {
-            backend: crate::config::backend::PARAKEET_MLX,
-        }),
-    }
-    .map_err(DictationError::from)?;
+    let engine = EngineConfig::try_from(config.transcription)?;
+    let transcription = Transcription::complete(engine.input(), engine.load(cancel)?);
     let snapshot = vocabulary.snapshot(settings.project.as_ref());
     let pipeline = DictationPipeline::new((), transcription, speaker::reader(speaker), ())
         .cleaning(config.cleanup)
@@ -442,14 +418,6 @@ pub(super) fn transcribe_retry(
         Some(snapshot.matcher.as_ref()),
         cancel,
     )
-}
-
-fn retry_model<E: Engine>(
-    config: E::Config,
-    cancel: &CancelToken,
-) -> Result<Transcription<Box<dyn crate::transcription::Transcriber>, Whole>, TranscriptionError> {
-    let model: Box<dyn crate::transcription::Transcriber> = Box::new(E::load_from(config, cancel)?);
-    Ok(Transcription::complete(E::INPUT, model))
 }
 
 #[cfg(test)]

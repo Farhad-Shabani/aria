@@ -1,18 +1,17 @@
 //! Runtime engine selection over the speech-to-text contract in `aria-kit`.
 
-use std::path::PathBuf;
-
 use crate::config::TranscriptionConfig;
 
-use aria_stt::moonshine::{Moonshine, MoonshineConfig};
-use aria_stt::nemotron::{Nemotron, NemotronConfig};
-use aria_stt::parakeet::{Parakeet, ParakeetConfig};
+use aria_stt::EngineConfig;
+use aria_stt::moonshine::MoonshineConfig;
+use aria_stt::nemotron::NemotronConfig;
+use aria_stt::parakeet::ParakeetConfig;
 // MLX runs hand-written Metal kernels, so this backend is wired up only on
 // Apple hardware.
 #[cfg(target_os = "macos")]
-use aria_stt::parakeet_mlx::{ParakeetMlx, ParakeetMlxConfig};
-use aria_stt::whisper::{Whisper, WhisperConfig};
-use aria_stt::whisper_candle::{WhisperCandle, WhisperCandleConfig};
+use aria_stt::parakeet_mlx::ParakeetMlxConfig;
+use aria_stt::whisper::WhisperConfig;
+use aria_stt::whisper_candle::WhisperCandleConfig;
 
 pub use aria_kit::backend::ModelError;
 pub use aria_kit::transcription::{
@@ -22,50 +21,54 @@ pub use aria_kit::transcription::{
     TranscriptionError, Whole,
 };
 
-/// Resolves the model a backend would load, without reading it or starting a
-/// child.
-pub fn check_model(config: &TranscriptionConfig) -> Result<String, TranscriptionError> {
-    match config {
-        TranscriptionConfig::Whisper { model } => check::<Whisper>(WhisperConfig::new(model)),
-        TranscriptionConfig::WhisperCandle { model_directory } => {
-            check::<WhisperCandle>(WhisperCandleConfig::new(model_directory))
+impl TryFrom<TranscriptionConfig> for EngineConfig {
+    type Error = TranscriptionError;
+
+    fn try_from(config: TranscriptionConfig) -> Result<Self, TranscriptionError> {
+        match config {
+            TranscriptionConfig::Whisper { model } => Ok(Self::Whisper(WhisperConfig::new(model))),
+            TranscriptionConfig::WhisperCandle { model_directory } => Ok(Self::WhisperCandle(
+                WhisperCandleConfig::new(model_directory),
+            )),
+            TranscriptionConfig::Parakeet {
+                model_directory,
+                device,
+            } => Ok(Self::Parakeet(ParakeetConfig::new(model_directory, device))),
+            TranscriptionConfig::Moonshine { model_directory } => {
+                Ok(Self::Moonshine(MoonshineConfig::new(model_directory)))
+            }
+            TranscriptionConfig::Nemotron { model_directory } => {
+                Ok(Self::Nemotron(NemotronConfig::new(model_directory)))
+            }
+            #[cfg(target_os = "macos")]
+            TranscriptionConfig::ParakeetMlx { model, interpreter } => {
+                Ok(Self::ParakeetMlx(ParakeetMlxConfig { interpreter, model }))
+            }
+            #[cfg(not(target_os = "macos"))]
+            TranscriptionConfig::ParakeetMlx { .. } => {
+                Err(TranscriptionError::UnsupportedBackend {
+                    backend: crate::config::backend::PARAKEET_MLX,
+                })
+            }
         }
-        TranscriptionConfig::Parakeet {
-            model_directory,
-            device,
-        } => check::<Parakeet>(ParakeetConfig::new(model_directory, *device)),
-        TranscriptionConfig::Moonshine { model_directory } => {
-            check::<Moonshine>(MoonshineConfig::new(model_directory))
-        }
-        TranscriptionConfig::Nemotron { model_directory } => {
-            check::<Nemotron>(NemotronConfig::new(model_directory))
-        }
-        #[cfg(target_os = "macos")]
-        TranscriptionConfig::ParakeetMlx { model, interpreter } => {
-            let config = ParakeetMlxConfig {
-                interpreter: interpreter.clone(),
-                model: model.clone(),
-            };
-            ParakeetMlx::check_from(&config).map(|interpreter| {
-                format!(
-                    "{}, model {model} from its own cache",
-                    display_path(interpreter)
-                )
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        TranscriptionConfig::ParakeetMlx { .. } => Err(TranscriptionError::UnsupportedBackend {
-            backend: crate::config::backend::PARAKEET_MLX,
-        }),
     }
 }
 
-fn check<E: Engine>(config: E::Config) -> Result<String, TranscriptionError> {
-    E::check_from(&config).map(display_path)
-}
-
-fn display_path(path: PathBuf) -> String {
-    path.display().to_string()
+/// Resolves the model a backend would load, without reading it or starting a
+/// child.
+pub fn check_model(config: &TranscriptionConfig) -> Result<String, TranscriptionError> {
+    let checked = EngineConfig::try_from(config.clone())?.check()?;
+    let checked = checked.display();
+    Ok(match config {
+        TranscriptionConfig::ParakeetMlx { model, .. } => {
+            format!("{checked}, model {model} from its own cache")
+        }
+        TranscriptionConfig::Whisper { .. }
+        | TranscriptionConfig::WhisperCandle { .. }
+        | TranscriptionConfig::Parakeet { .. }
+        | TranscriptionConfig::Moonshine { .. }
+        | TranscriptionConfig::Nemotron { .. } => checked.to_string(),
+    })
 }
 
 #[cfg(test)]

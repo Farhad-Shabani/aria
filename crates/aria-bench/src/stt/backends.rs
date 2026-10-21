@@ -18,7 +18,7 @@ use aria::transcription::{
 use aria_kit::audio::RecordingReader;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{Transcript, TranscriptUpdate};
-use aria_stt::{moonshine, nemotron, parakeet, parakeet_mlx, whisper, whisper_candle};
+use aria_stt::{EngineConfig, moonshine, nemotron, parakeet, parakeet_mlx, whisper};
 
 use super::Mode;
 use super::conditions::{Conditions, Decoding};
@@ -94,8 +94,10 @@ pub(super) struct Selection {
 impl Selection {
     pub(super) fn load(&self) -> Result<Loaded, TranscriptionError> {
         let timing = Timing::default();
+        let config = EngineConfig::try_from(self.config.clone())?;
+        let input = config.input();
         let engine = Timed {
-            inner: load_transcriber(&self.config, self.cadence)?,
+            inner: load_transcriber(config, self.cadence)?,
             timing: timing.clone(),
         };
         let decoding = self.decoding();
@@ -108,10 +110,7 @@ impl Selection {
                 self.cadence.expect("agreement cadence"),
                 engine,
             )),
-            Decoding::Whole if matches!(self.config, TranscriptionConfig::ParakeetMlx { .. }) => {
-                Composed::Whole(Transcription::complete_wav(engine))
-            }
-            Decoding::Whole => Composed::Whole(Transcription::complete_samples(engine)),
+            Decoding::Whole => Composed::Whole(Transcription::complete(input, engine)),
         };
         Ok(Loaded {
             transcription,
@@ -312,37 +311,18 @@ impl ChunkStream for TimedStream {
 }
 
 fn load_transcriber(
-    config: &TranscriptionConfig,
+    config: EngineConfig,
     cadence: Option<Cadence>,
 ) -> Result<Box<dyn Transcriber>, TranscriptionError> {
-    fn boxed(engine: impl Transcriber) -> Box<dyn Transcriber> {
-        Box::new(engine)
+    // With a cadence the sidecar streams natively. `EngineConfig` has no
+    // option for that, so this loads the engine directly.
+    if let (EngineConfig::ParakeetMlx(config), Some(cadence)) = (&config, cadence) {
+        let engine =
+            parakeet_mlx::ParakeetMlx::load(config.interpreter.clone(), config.model.clone())?
+                .stream_chunks(cadence.stride_samples());
+        return Ok(Box::new(engine));
     }
-
-    match config {
-        TranscriptionConfig::Whisper { model } => whisper::Whisper::load(model.clone()).map(boxed),
-        TranscriptionConfig::WhisperCandle { model_directory } => {
-            whisper_candle::WhisperCandle::load(model_directory.clone()).map(boxed)
-        }
-        TranscriptionConfig::Parakeet {
-            model_directory,
-            device,
-        } => parakeet::Parakeet::load(model_directory.clone(), *device).map(boxed),
-        TranscriptionConfig::Moonshine { model_directory } => {
-            moonshine::Moonshine::load(model_directory.clone()).map(boxed)
-        }
-        TranscriptionConfig::Nemotron { model_directory } => {
-            nemotron::Nemotron::load(model_directory.clone()).map(boxed)
-        }
-        TranscriptionConfig::ParakeetMlx { model, interpreter } => {
-            parakeet_mlx::ParakeetMlx::load(interpreter.clone(), model.clone())
-                .map(|engine| match cadence {
-                    Some(cadence) => engine.stream_chunks(cadence.stride_samples()),
-                    None => engine,
-                })
-                .map(boxed)
-        }
-    }
+    config.load(&CancelToken::never())
 }
 
 pub(super) fn selections(

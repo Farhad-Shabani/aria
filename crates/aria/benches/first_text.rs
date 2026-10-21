@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture};
-use aria::config::TranscriptionConfig;
 use aria::transcription::{Language, LanguageCode, Stream, Streaming, Transcriber, Transcription};
 use aria_harness::{inputs, stats};
+use aria_stt::{CancelToken, EngineConfig};
 
 mod engines;
 
@@ -117,25 +117,7 @@ fn measure(
     observation: &mut engines::Observation,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
-    let transcriber: Box<dyn Transcriber> = match &engine.config {
-        TranscriptionConfig::Whisper { model } => {
-            Box::new(aria_stt::whisper::Whisper::load(model.clone())?)
-        }
-        TranscriptionConfig::Moonshine { model_directory } => Box::new(
-            aria_stt::moonshine::Moonshine::load(model_directory.clone())?,
-        ),
-        TranscriptionConfig::Parakeet {
-            model_directory,
-            device,
-        } => Box::new(aria_stt::parakeet::Parakeet::load(
-            model_directory.clone(),
-            *device,
-        )?),
-        TranscriptionConfig::Nemotron { model_directory } => {
-            Box::new(aria_stt::nemotron::Nemotron::load(model_directory.clone())?)
-        }
-        _ => unreachable!("input discovery filters unsupported modes"),
-    };
+    let transcriber = EngineConfig::try_from(engine.config.clone())?.load(&CancelToken::never())?;
     observation.startup_ms = Some(started.elapsed().as_millis() as u64);
     let transcription = Transcription::stream(stream, transcriber);
     let language = Language::Specific(LanguageCode::english());
