@@ -4,11 +4,13 @@ use std::fmt;
 
 use super::SpeakerName;
 
+const ANONYMOUS_PREFIX: &str = "Speaker ";
+
 /// An enrolled person, or a voice nobody enrolled, numbered in the order it
 /// was first heard.
 ///
-/// The two never compare equal, so an enrolled person named "Speaker 2" is
-/// not mistaken for the second anonymous speaker, though both render alike.
+/// An enrolled name is never spelled like an anonymous one, so the text a
+/// transcript or a client shows names one speaker.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Label {
     Enrolled(SpeakerName),
@@ -19,9 +21,14 @@ impl fmt::Display for Label {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Enrolled(name) => write!(formatter, "{name}"),
-            Self::Anonymous(number) => write!(formatter, "Speaker {number}"),
+            Self::Anonymous(number) => write!(formatter, "{ANONYMOUS_PREFIX}{number}"),
         }
     }
+}
+
+pub(super) fn reads_as_anonymous(name: &str) -> bool {
+    name.strip_prefix(ANONYMOUS_PREFIX)
+        .is_some_and(|number| number.parse::<u32>().is_ok())
 }
 
 /// Hands out anonymous speaker numbers from 1, never reusing one: a number

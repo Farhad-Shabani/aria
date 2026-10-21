@@ -8,6 +8,8 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use super::label::reads_as_anonymous;
+
 /// Long enough for a name, short enough to stay a filename.
 const MAX_NAME_BYTES: usize = 64;
 
@@ -58,6 +60,9 @@ impl SpeakerName {
                 .any(|character| character.is_control() || matches!(character, '/' | '\\' | ':'))
         {
             return Err(SpeakerNameError::Unusable);
+        }
+        if reads_as_anonymous(&name) {
+            return Err(SpeakerNameError::Reserved);
         }
         Ok(Self(name))
     }
@@ -114,4 +119,7 @@ pub enum SpeakerNameError {
 
     #[error("a speaker name cannot start with a dot or hold a path separator")]
     Unusable,
+
+    #[error("a speaker name cannot read like an anonymous speaker, such as \"Speaker 2\"")]
+    Reserved,
 }

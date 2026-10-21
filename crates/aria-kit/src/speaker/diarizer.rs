@@ -353,26 +353,6 @@ mod tests {
     }
 
     #[test]
-    fn an_enrolled_name_that_reads_like_an_anonymous_speaker_holds_no_anonymous_label() {
-        // Nearer the second anonymous speaker, but close enough to the first
-        // that whoever was talking as the first would keep that label.
-        let leaning_b = normalized(vec![0.48, 0.52, 0.0, 0.0]).expect("nonzero");
-        let after = |speaking: &Label| {
-            let mut live = Live::default();
-            live.assign(&A, None);
-            live.assign(&B, None);
-            live.assign(&leaning_b, Some(speaking))
-        };
-
-        assert_eq!(after(&Label::Anonymous(1)), Label::Anonymous(1));
-        assert_eq!(
-            after(&enrolled("Speaker 1")),
-            Label::Anonymous(2),
-            "an enrolled person who happens to be called that is not the first anonymous speaker"
-        );
-    }
-
-    #[test]
     fn assign_prefers_an_enrolled_name_and_leaves_its_profile_alone() {
         let profiles = vec![super::super::enrolled_voice(
             "alex",

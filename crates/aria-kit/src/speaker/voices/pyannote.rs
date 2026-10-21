@@ -668,27 +668,23 @@ mod tests {
     }
 
     #[test]
-    fn an_enrolled_name_that_reads_like_an_anonymous_speaker_opens_its_own_voice() {
+    fn an_enrolled_voice_opens_its_own_voice_beside_an_anonymous_one() {
         let recording = recording_of(2);
         let mut voices = track(
             Vec::from([alone(0), alone(0)]),
             Vec::from([[1.0, 0.0], [0.0, 1.0]]),
         );
-        let named_alike = crate::speaker::enrolled_voice(
-            "Speaker 1",
+        let alex = crate::speaker::enrolled_voice(
+            "alex",
             crate::speaker::Role::Guest,
             Vec::from([0.0, 1.0]),
         );
-        voices.enrolled = Vec::from([named_alike.clone()]);
+        voices.enrolled = Vec::from([alex.clone()]);
 
         hear_all(&mut voices, &recording);
 
         let live: Vec<&Label> = voices.voices.iter().map(|voice| &voice.label).collect();
-        assert_eq!(
-            live,
-            [&Label::Anonymous(1), &Label::Enrolled(named_alike.name)],
-            "the enrolled voice must not be filed under the first anonymous speaker"
-        );
+        assert_eq!(live, [&Label::Anonymous(1), &Label::Enrolled(alex.name)]);
     }
 
     #[test]
