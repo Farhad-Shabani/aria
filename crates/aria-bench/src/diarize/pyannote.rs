@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use aria_kit::backend::BackendError;
-use aria_kit::speaker::SpeakerError;
+use aria_kit::speaker::{Label, SpeakerError};
 use aria_speaker::wespeaker::Config as SpeakerConfig;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -111,7 +111,7 @@ pub fn label_by_segmentation(
         turns.extend(shape(&speech).into_iter().map(|span| Turn {
             start: span.start,
             duration: span.end - span.start,
-            speaker: format!("Speaker {}", number + 1),
+            speaker: Label::Anonymous(number as u32 + 1).to_string(),
         }));
     }
     turns.sort_by(|a, b| a.start.total_cmp(&b.start));

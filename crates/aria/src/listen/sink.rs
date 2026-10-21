@@ -474,51 +474,6 @@ mod tests {
     }
 
     #[test]
-    fn an_enrolled_name_that_reads_like_an_anonymous_speaker_is_a_speaker_change() {
-        let (_directory, mut sink, path) = open_in_tempdir();
-        let named_alike = enrolled("Speaker 1");
-
-        sink.segment(heard(Some(&Label::Anonymous(1)), None, "hello"))
-            .expect("the write succeeds");
-        sink.segment(heard(Some(&named_alike), None, "hi back"))
-            .expect("the write succeeds");
-        drop(sink);
-
-        let written = fs::read_to_string(&path).expect("the transcript file is readable");
-        assert_eq!(
-            written, "[00:00:00] Speaker 1: hello\n\n[00:00:00] Speaker 1: hi back\n",
-            "two people who render alike still get a paragraph each"
-        );
-    }
-
-    #[test]
-    fn finish_keeps_apart_an_enrolled_name_that_reads_like_an_anonymous_speaker() {
-        let (_directory, mut sink, path) = open_in_tempdir();
-
-        sink.segment(heard(
-            Some(&Label::Anonymous(1)),
-            Some(&[1.0, 0.0]),
-            "hello",
-        ))
-        .expect("the write succeeds");
-        sink.segment(heard(
-            Some(&Label::Anonymous(2)),
-            Some(&[0.0, 1.0]),
-            "hi back",
-        ))
-        .expect("the write succeeds");
-        sink.finish(|_| vec![Some(Label::Anonymous(1)), Some(enrolled("Speaker 1"))])
-            .expect("the rewrite succeeds");
-        drop(sink);
-
-        let written = fs::read_to_string(&path).expect("the transcript file is readable");
-        assert_eq!(
-            written,
-            "[00:00:00] Speaker 1: hello\n\n[00:00:00] Speaker 1: hi back\n"
-        );
-    }
-
-    #[test]
     fn a_paragraph_is_stamped_by_the_recording_not_the_wall() {
         // The follower reads these same seconds off the event stream, so a
         // clock of its own here is a clock the two disagree on.

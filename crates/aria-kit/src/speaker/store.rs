@@ -407,6 +407,12 @@ mod tests {
     }
 
     #[test]
+    fn a_name_that_reads_like_an_anonymous_speaker_is_refused() {
+        assert!(SpeakerName::new("Speaker 2").is_err());
+        assert!(SpeakerName::new("Speaker Two").is_ok());
+    }
+
+    #[test]
     fn an_ordinary_name_is_accepted() {
         assert_eq!(
             SpeakerName::new("Alex Morgan")
