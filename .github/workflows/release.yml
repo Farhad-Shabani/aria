@@ -73,7 +73,7 @@ jobs:
           identity=$(scripts/macos/keychain.sh "$RUNNER_TEMP/signing.keychain-db")
           echo "ARIA_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: Sign and package
-        run: scripts/macos/package.sh "$RUNNER_TEMP/Aria.app" "${GITHUB_REF_NAME#v}"
+        run: scripts/macos/package.sh "$RUNNER_TEMP/Aria.app"
       - name: Verify the signature
         run: |
           set -euo pipefail
@@ -87,12 +87,12 @@ jobs:
           APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
           APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
           APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-        run: scripts/macos/notarize.sh "dist/aria-${GITHUB_REF_NAME#v}-macos-arm64.dmg"
+        run: scripts/macos/notarize.sh dist/Aria.dmg
       - id: dmg
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
-          path: dist/aria-*-macos-arm64.dmg
+          path: dist/Aria.dmg
           if-no-files-found: error
 
   appcast:
@@ -123,7 +123,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           scripts/macos/appcast.sh "$RUNNER_TEMP/sparkle/bin/sign_update" \
-            "dist/aria-$version-macos-arm64.dmg" "$version" "$GITHUB_REPOSITORY"
+            dist/Aria.dmg "$version" "$GITHUB_REPOSITORY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: appcast
@@ -157,7 +157,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux
-          path: dist/aria-*-linux-x86_64.tar.gz
+          path: dist/aria-linux-x86_64.tar.gz
           if-no-files-found: error
 
   checksums:
