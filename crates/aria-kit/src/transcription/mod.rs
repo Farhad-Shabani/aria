@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[cfg(not(target_family = "wasm"))]
 use crate::audio::RecordedAudio;
 use crate::audio::{CANONICAL_SAMPLE_RATE, CaptureError, RecordingReader};
-use crate::backend::{BackendError, ModelError};
+use crate::backend::{BackendError, ModelDownload, ModelError};
 use crate::cancel::CancelToken;
 pub use agreement::Cadence;
 pub use session::Session;
@@ -119,6 +119,10 @@ pub enum Stream {
 /// Shared construction contract: an engine name, configuration, validation, and loading.
 pub trait Engine: Transcriber + Sized {
     const NAME: &'static str;
+
+    /// The files to download before a load can succeed. Empty for an engine
+    /// that needs none.
+    const MODEL: &'static [ModelDownload];
 
     /// The one audio representation this engine accepts. Callers read it to
     /// hand over the right input instead of guessing and failing at runtime.

@@ -2,7 +2,9 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use aria_kit::backend::{ModelDownload, Unpack};
 
 use super::SetupError;
 use super::download;
@@ -10,177 +12,81 @@ use super::download;
 pub(super) struct Asset {
     pub(super) name: &'static str,
     pub(super) title: &'static str,
-    /// What the transfer moves: every file, or the archive one is cut from.
-    pub(super) bytes: u64,
     /// Whether it is fetched when nobody answers.
     pub(super) default: bool,
-    /// Destinations relative to the models directory.
-    pub(super) files: &'static [(&'static str, Source)],
+    /// Each engine's `MODEL`, paired with the folder under the models
+    /// directory its files land in.
+    pub(super) folders: &'static [(&'static str, &'static [ModelDownload])],
 }
 
-pub(super) enum Source {
-    Url(&'static str),
-    /// One member of a `.tar.bz2` archive.
-    Member {
-        url: &'static str,
-        member: &'static str,
-    },
+impl Asset {
+    /// Each file, with its destination relative to the models directory.
+    pub(super) fn files(&self) -> impl Iterator<Item = (PathBuf, &'static ModelDownload)> {
+        self.folders.iter().flat_map(|(folder, model)| {
+            model
+                .iter()
+                .map(move |file| (Path::new(folder).join(file.file_name), file))
+        })
+    }
+
+    /// What the transfer moves: every file, or the archive one is cut from.
+    pub(super) fn total_bytes(&self) -> u64 {
+        self.files().map(|(_, file)| file.bytes).sum()
+    }
 }
 
 pub(super) const WHISPER: Asset = Asset {
     name: "whisper",
     title: "Whisper large-v3-turbo",
-    bytes: 874_188_075,
     default: true,
-    files: &[(
-        "whisper/ggml-large-v3-turbo-q8_0.bin",
-        Source::Url(download::WHISPER_URL),
-    )],
+    folders: &[("whisper", aria_stt::whisper::MODEL)],
 };
 
 pub(super) const WHISPER_CANDLE: Asset = Asset {
     name: "whisper-candle",
     title: "Whisper tiny.en (candle)",
-    bytes: 151_060_136 + 2_405_679 + 1_937,
     default: true,
-    files: &[
-        (
-            "whisper-candle/tiny.en/model.safetensors",
-            Source::Url(download::WHISPER_CANDLE_MODEL_URL),
-        ),
-        (
-            "whisper-candle/tiny.en/tokenizer.json",
-            Source::Url(download::WHISPER_CANDLE_TOKENIZER_URL),
-        ),
-        (
-            "whisper-candle/tiny.en/config.json",
-            Source::Url(download::WHISPER_CANDLE_CONFIG_URL),
-        ),
-    ],
+    folders: &[("whisper-candle/tiny.en", aria_stt::whisper_candle::MODEL)],
 };
 
 pub(super) const PARAKEET: Asset = Asset {
     name: "parakeet",
     title: "Parakeet TDT 0.6B",
-    bytes: 41_770_866 + 2_435_420_160 + 72_520_893 + 93_939,
     default: true,
-    files: &[
-        (
-            "parakeet/parakeet-tdt-0.6b-v3/encoder-model.onnx",
-            Source::Url(download::PARAKEET_ENCODER_URL),
-        ),
-        (
-            "parakeet/parakeet-tdt-0.6b-v3/encoder-model.onnx.data",
-            Source::Url(download::PARAKEET_ENCODER_DATA_URL),
-        ),
-        (
-            "parakeet/parakeet-tdt-0.6b-v3/decoder_joint-model.onnx",
-            Source::Url(download::PARAKEET_DECODER_URL),
-        ),
-        (
-            "parakeet/parakeet-tdt-0.6b-v3/vocab.txt",
-            Source::Url(download::PARAKEET_VOCAB_URL),
-        ),
-    ],
+    folders: &[("parakeet/parakeet-tdt-0.6b-v3", aria_stt::parakeet::MODEL)],
 };
 
 pub(super) const MOONSHINE: Asset = Asset {
     name: "moonshine",
     title: "Moonshine base",
-    bytes: 20_513_063 + 42_498_870 + 3_761_754,
     default: true,
-    files: &[
-        (
-            "moonshine/base/encoder_model.onnx",
-            Source::Url(download::MOONSHINE_ENCODER_URL),
-        ),
-        (
-            "moonshine/base/decoder_model_merged.onnx",
-            Source::Url(download::MOONSHINE_DECODER_URL),
-        ),
-        (
-            "moonshine/base/tokenizer.json",
-            Source::Url(download::MOONSHINE_TOKENIZER_URL),
-        ),
-    ],
+    folders: &[("moonshine/base", aria_stt::moonshine::MODEL)],
 };
 
 pub(super) const NEMOTRON: Asset = Asset {
     name: "nemotron",
     title: "Nemotron streaming 0.6B",
-    bytes: 42_159_995 + 2_436_567_040 + 35_779_240 + 251_056,
     default: true,
-    files: &[
-        (
-            "nemotron/nemotron-speech-streaming-en-0.6b/encoder.onnx",
-            Source::Url(download::NEMOTRON_ENCODER_URL),
-        ),
-        (
-            "nemotron/nemotron-speech-streaming-en-0.6b/encoder.onnx.data",
-            Source::Url(download::NEMOTRON_ENCODER_DATA_URL),
-        ),
-        (
-            "nemotron/nemotron-speech-streaming-en-0.6b/decoder_joint.onnx",
-            Source::Url(download::NEMOTRON_DECODER_URL),
-        ),
-        (
-            "nemotron/nemotron-speech-streaming-en-0.6b/tokenizer.model",
-            Source::Url(download::NEMOTRON_TOKENIZER_URL),
-        ),
-    ],
+    folders: &[(
+        "nemotron/nemotron-speech-streaming-en-0.6b",
+        aria_stt::nemotron::MODEL,
+    )],
 };
 
 pub(super) const KOKORO: Asset = Asset {
     name: "kokoro",
     title: "Kokoro TTS",
-    bytes: 325_532_387 + 28_214_398,
     default: true,
-    files: &[
-        (
-            "kokoro/kokoro.onnx",
-            Source::Url(download::KOKORO_MODEL_URL),
-        ),
-        (
-            "kokoro/voices.bin",
-            Source::Url(download::KOKORO_VOICES_URL),
-        ),
-    ],
+    folders: &[("kokoro", aria_tts::kokoro::MODEL)],
 };
 
 pub(super) const QWEN: Asset = Asset {
     name: "qwen",
     title: "Qwen3 TTS",
-    bytes: 1_811_626_576 + 4_908 + 2_776_833 + 1_671_839 + 7_344 + 682_293_092 + 2_336,
     default: true,
-    files: &[
-        (
-            "qwen/qwen3-tts-0.6b-customvoice/model.safetensors",
-            Source::Url(download::QWEN_MODEL_URL),
-        ),
-        (
-            "qwen/qwen3-tts-0.6b-customvoice/config.json",
-            Source::Url(download::QWEN_CONFIG_URL),
-        ),
-        (
-            "qwen/qwen3-tts-0.6b-customvoice/vocab.json",
-            Source::Url(download::QWEN_VOCAB_URL),
-        ),
-        (
-            "qwen/qwen3-tts-0.6b-customvoice/merges.txt",
-            Source::Url(download::QWEN_MERGES_URL),
-        ),
-        (
-            "qwen/qwen3-tts-0.6b-customvoice/tokenizer_config.json",
-            Source::Url(download::QWEN_TOKENIZER_CONFIG_URL),
-        ),
-        (
-            "qwen/qwen3-tts-tokenizer/model.safetensors",
-            Source::Url(download::QWEN_CODEC_MODEL_URL),
-        ),
-        (
-            "qwen/qwen3-tts-tokenizer/config.json",
-            Source::Url(download::QWEN_CODEC_CONFIG_URL),
-        ),
+    folders: &[
+        ("qwen/qwen3-tts-0.6b-customvoice", aria_tts::qwen::MODEL),
+        ("qwen/qwen3-tts-tokenizer", aria_tts::qwen::SPEECH_TOKENIZER),
     ],
 };
 
@@ -194,46 +100,33 @@ pub(super) const EXTRAS: [Asset; 2] = [
     Asset {
         name: SPEAKER,
         title: "Speaker verification",
-        bytes: 26_530_309,
         default: false,
-        files: &[(
-            "wespeaker/en/model.onnx",
-            Source::Url(download::SPEAKER_URL),
-        )],
+        folders: &[("wespeaker/en", aria_speaker::wespeaker::MODEL)],
     },
     Asset {
         name: "segmentation",
         title: "Speaker segmentation",
-        bytes: 6_958_444,
         default: true,
-        files: &[(
-            "pyannote/segmentation-3.0.onnx",
-            Source::Member {
-                url: download::SEGMENTATION_URL,
-                member: download::SEGMENTATION_MEMBER,
-            },
-        )],
+        folders: &[("pyannote", aria_segmentation::pyannote::MODEL)],
     },
 ];
 
 pub(super) fn present(models: &Path, asset: &Asset) -> bool {
     asset
-        .files
-        .iter()
+        .files()
         .all(|(relative, _)| models.join(relative).exists())
 }
 
 /// Whether `path` is one of the asset's files, or a directory holding one.
 pub(super) fn holds(models: &Path, asset: &Asset, path: &Path) -> bool {
     asset
-        .files
-        .iter()
+        .files()
         .any(|(relative, _)| models.join(relative).starts_with(path))
 }
 
 /// Whether any of the asset's files, finished or `.part`, is on disk.
 pub(super) fn partly_present(models: &Path, asset: &Asset) -> bool {
-    asset.files.iter().any(|(relative, _)| {
+    asset.files().any(|(relative, _)| {
         let file = models.join(relative);
         file.exists() || download::partial(&file).exists()
     })
@@ -249,7 +142,7 @@ pub(super) fn obtain(
     received: &mut dyn FnMut(u64) -> Result<(), SetupError>,
 ) -> Result<(), SetupError> {
     let mut finished = 0;
-    for (relative, source) in asset.files {
+    for (relative, file) in asset.files() {
         let dest = models.join(relative);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|source| SetupError::Io {
@@ -259,13 +152,15 @@ pub(super) fn obtain(
             })?;
         }
         let mut progress = |bytes| received(finished + bytes);
-        match source {
-            Source::Url(url) => download::fetch(url, &dest, meter, &mut progress)?,
-            Source::Member { url, member } => {
-                download::fetch_member(url, member, &dest, meter, &mut progress)?;
+        match file.unpack {
+            Unpack::Plain => download::fetch(file.url, &dest, meter, &mut progress)?,
+            Unpack::TarBz2Member(member) => {
+                download::fetch_member(file.url, member, &dest, meter, &mut progress)?;
             }
         }
-        finished += fs::metadata(&dest).map(|file| file.len()).unwrap_or(0);
+        finished += fs::metadata(&dest)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
     }
     Ok(())
 }
@@ -274,7 +169,7 @@ pub(super) fn obtain(
 /// empty, up to the models directory. Returns the bytes freed.
 pub(super) fn remove(models: &Path, asset: &Asset) -> Result<u64, SetupError> {
     let mut freed = 0;
-    for (relative, _) in asset.files {
+    for (relative, _) in asset.files() {
         let file = models.join(relative);
         freed += remove_file(&file)?;
         freed += remove_file(&download::partial(&file))?;
@@ -345,14 +240,15 @@ mod tests {
     fn every_asset_lands_in_its_own_place() {
         let mut seen = HashSet::new();
         for asset in all() {
-            assert!(!asset.files.is_empty(), "{}", asset.name);
-            assert!(asset.bytes > 0, "{}", asset.name);
-            for (relative, _) in asset.files {
-                assert!(seen.insert(*relative), "{relative} is claimed twice");
+            assert!(asset.files().next().is_some(), "{}", asset.name);
+            assert!(asset.total_bytes() > 0, "{}", asset.name);
+            for (relative, _) in asset.files() {
+                let shown = relative.display().to_string();
                 assert!(
-                    !relative.starts_with('/'),
-                    "{relative} must be relative to the models directory"
+                    relative.is_relative(),
+                    "{shown} must be relative to the models directory"
                 );
+                assert!(seen.insert(relative), "{shown} is claimed twice");
             }
         }
     }
@@ -360,7 +256,8 @@ mod tests {
     #[test]
     fn an_asset_is_present_only_with_every_file() {
         let dir = tempfile::tempdir().unwrap();
-        let [(model, _), (voices, _)] = KOKORO.files else {
+        let files: Vec<_> = KOKORO.files().collect();
+        let [(model, _), (voices, _)] = files.as_slice() else {
             panic!("kokoro ships a model and its voices");
         };
         fs::create_dir_all(dir.path().join(model).parent().unwrap()).unwrap();

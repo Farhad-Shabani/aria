@@ -36,6 +36,7 @@ pub mod transformer;
 pub use code_predictor::CodePredictor;
 pub use codec::{CodecError, SpeechCodecDecoder};
 pub use engine::Qwen;
+pub use model_files::{MODEL, SPEECH_TOKENIZER};
 pub use speaker::SpeakerEncoder;
 pub use talker::Talker;
 

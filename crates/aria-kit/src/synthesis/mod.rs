@@ -12,7 +12,7 @@ mod stream;
 
 use std::path::PathBuf;
 
-use crate::backend::{BackendError, ModelError};
+use crate::backend::{BackendError, ModelDownload, ModelError};
 use crate::cancel::CancelToken;
 pub use chunk::chunks;
 #[cfg(all(feature = "playback", not(target_family = "wasm")))]
@@ -80,6 +80,10 @@ pub trait Synthesizer: Send + Sync + 'static {
 /// engine in logs and errors; `Config` carries whatever it needs to load.
 pub trait Engine: Synthesizer + Sized {
     const NAME: &'static str;
+
+    /// The files to download before a load can succeed. Empty for an engine
+    /// that needs none.
+    const MODEL: &'static [ModelDownload];
 
     type Config;
 

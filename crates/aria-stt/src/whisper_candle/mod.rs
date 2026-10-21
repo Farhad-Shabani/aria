@@ -33,7 +33,7 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::whisper::{Config, model::Whisper};
 use tokenizers::Tokenizer;
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     Hypothesis, Language, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled,
@@ -46,6 +46,32 @@ pub use directory::WhisperCandleConfig;
 pub const NAME: &str = "whisper-candle";
 
 const BACKEND: &str = NAME;
+
+const WEIGHTS_FILE: &str = "model.safetensors";
+const TOKENIZER_FILE: &str = "tokenizer.json";
+const CONFIG_FILE: &str = "config.json";
+
+/// tiny.en, as a Hugging Face Whisper export.
+pub const MODEL: &[ModelDownload] = &[
+    ModelDownload {
+        file_name: WEIGHTS_FILE,
+        url: "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/model.safetensors",
+        bytes: 151_060_136,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: TOKENIZER_FILE,
+        url: "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/tokenizer.json",
+        bytes: 2_405_679,
+        unpack: Unpack::Plain,
+    },
+    ModelDownload {
+        file_name: CONFIG_FILE,
+        url: "https://huggingface.co/openai/whisper-tiny.en/resolve/87c7102498dcde7456f24cfd30239ca606ed9063/config.json",
+        bytes: 1_937,
+        unpack: Unpack::Plain,
+    },
+];
 
 /// The mel filter bank Whisper was trained against, as raw little-endian
 /// `f32`.

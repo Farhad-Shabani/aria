@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use aria_kit::backend::ModelDownload;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
 use aria_kit::transcription::{
@@ -65,6 +66,7 @@ pub struct ParakeetMlxConfig {
 
 impl Engine for ParakeetMlx {
     const NAME: &'static str = super::NAME;
+    const MODEL: &'static [ModelDownload] = &[];
     const INPUT: AudioInputKind = AudioInputKind::Wav;
 
     type Config = ParakeetMlxConfig;

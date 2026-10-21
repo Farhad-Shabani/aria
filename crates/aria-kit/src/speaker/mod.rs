@@ -19,7 +19,7 @@ mod store;
 
 use std::path::PathBuf;
 
-use crate::backend::{BackendError, ModelError};
+use crate::backend::{BackendError, ModelDownload, ModelError};
 
 pub use diarizer::{CLUSTER_THRESHOLD, Diarizer, ENROLLED_THRESHOLD, settle};
 #[cfg(not(target_family = "wasm"))]
@@ -58,6 +58,10 @@ pub trait Embedder {
 /// to load.
 pub trait Engine: Embedder + Sized {
     const NAME: &'static str;
+
+    /// The files to download before a load can succeed. Empty for an engine
+    /// that needs none.
+    const MODEL: &'static [ModelDownload];
 
     type Config;
 

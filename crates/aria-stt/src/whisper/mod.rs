@@ -37,7 +37,7 @@ use whisper_rs::{
     WhisperTokenId,
 };
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
     AudioInputKind, Cadence, Engine, Hypothesis, Language, SILENCE_FLOOR, Stream, StreamingEngine,
@@ -47,6 +47,14 @@ use aria_kit::transcription::{
 
 /// Names this engine under `transcription.backend` and in its own errors.
 pub const NAME: &str = "whisper";
+
+/// large-v3-turbo, quantized to 8 bits.
+pub const MODEL: &[ModelDownload] = &[ModelDownload {
+    file_name: "ggml-large-v3-turbo-q8_0.bin",
+    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q8_0.bin",
+    bytes: 874_188_075,
+    unpack: Unpack::Plain,
+}];
 
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const BACKEND: &str = NAME;
@@ -106,6 +114,7 @@ impl Whisper {
 
 impl Engine for Whisper {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
     const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = WhisperConfig;

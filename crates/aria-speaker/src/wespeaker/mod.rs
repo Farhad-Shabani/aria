@@ -20,7 +20,7 @@ mod fbank;
 
 use std::path::{Path, PathBuf};
 
-use aria_kit::backend::BackendError;
+use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::speaker::{Embedder, Engine, SpeakerError, normalized, validate_model_file};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -28,6 +28,14 @@ use ort::value::Tensor;
 use fbank::fbank;
 
 pub const NAME: &str = "wespeaker";
+
+/// ResNet34-LM, trained on VoxCeleb.
+pub const MODEL: &[ModelDownload] = &[ModelDownload {
+    file_name: "model.onnx",
+    url: "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/f0c48c298fd835726c27956a5d617bad7115627e/voxceleb_resnet34_LM.onnx",
+    bytes: 26_530_309,
+    unpack: Unpack::Plain,
+}];
 
 /// The width of every embedding this model produces, and so of every
 /// enrolled profile that can be compared against one.
@@ -60,6 +68,7 @@ impl WeSpeaker {
 
 impl Engine for WeSpeaker {
     const NAME: &'static str = NAME;
+    const MODEL: &'static [ModelDownload] = MODEL;
 
     type Config = Config;
 
