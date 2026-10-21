@@ -60,24 +60,28 @@ pub const MODEL: &[ModelDownload] = &[
         file_name: "encoder-model.onnx",
         url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.onnx",
         bytes: 41_770_866,
+        sha256: "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: "encoder-model.onnx.data",
         url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.onnx.data",
         bytes: 2_435_420_160,
+        sha256: "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: "decoder_joint-model.onnx",
         url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/decoder_joint-model.onnx",
         bytes: 72_520_893,
+        sha256: "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: VOCABULARY_FILE,
         url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/vocab.txt",
         bytes: 93_939,
+        sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
         unpack: Unpack::Plain,
     },
 ];

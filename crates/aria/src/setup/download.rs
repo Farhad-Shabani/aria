@@ -1,19 +1,20 @@
 //! Model downloads for `aria setup`. curl moves the bytes and shows its
 //! progress bar; a `.part` file next to the target lets a rerun resume.
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
 use signal_hook::consts::SIGINT;
 
 use crate::primitives::process::{ChildProcess, WaitOutcome};
-use aria_kit::backend::validate_model_file;
+use aria_kit::backend::{ModelDownload, validate_model_file};
 
 use super::SetupError;
 
@@ -21,16 +22,17 @@ use super::SetupError;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(4 * 60 * 60);
 const PART_SUFFIX: &str = ".part";
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
-/// curl and tar write under the caller's umask, so a umask of 002 would
-/// leave every model group-writable and fail the trust check.
+/// A part is created owner-only, whatever the umask: anyone else who opened
+/// it while it filled could rewrite it after the hash check.
+const PART_MODE: u32 = 0o600;
 const MODEL_FILE_MODE: u32 = 0o644;
 const ARCHIVE_SUFFIX: &str = ".tar.bz2";
 
-/// Downloads `url` to `dest` unless it is already there. `meter` lets curl
+/// Downloads `file` to `dest` unless it is already there. `meter` lets curl
 /// draw its bar on the terminal; `received` gets the byte count on disk so
 /// far either way, and an error from it ends the transfer.
 pub(super) fn fetch(
-    url: &str,
+    file: &ModelDownload,
     dest: &Path,
     meter: bool,
     received: &mut dyn FnMut(u64) -> Result<(), SetupError>,
@@ -40,6 +42,16 @@ pub(super) fn fetch(
     }
     let part = partial(dest);
     discard_untrusted_part(&part)?;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(PART_MODE)
+        .open(&part)
+        .map_err(|source| SetupError::Io {
+            action: "create",
+            path: part.clone(),
+            source,
+        })?;
     let mut command = Command::new("curl");
     command
         .args([
@@ -54,15 +66,15 @@ pub(super) fn fetch(
         .args(["--show-error", "--continue-at", "-"])
         .arg("--output")
         .arg(&part)
-        .arg(url)
+        .arg(file.url)
         .stdin(Stdio::null());
     complete(command, &part, received)?;
-    promote(&part, dest)
+    finish(&part, file, dest)
 }
 
 /// Downloads a bzip2 tarball and extracts one member of it to `dest`.
 pub(super) fn fetch_member(
-    url: &str,
+    file: &ModelDownload,
     member: &str,
     dest: &Path,
     meter: bool,
@@ -72,7 +84,7 @@ pub(super) fn fetch_member(
         return trusted(dest);
     }
     let archive = with_suffix(dest, ARCHIVE_SUFFIX);
-    let extracted = extract(url, member, dest, &archive, meter, received);
+    let extracted = extract(file, member, dest, &archive, meter, received);
     // The archive is scratch either way; a kept one would be resumed as if
     // it were a finished download.
     if let Err(source) = fs::remove_file(&archive)
@@ -88,20 +100,26 @@ pub(super) fn fetch_member(
 }
 
 fn extract(
-    url: &str,
+    file: &ModelDownload,
     member: &str,
     dest: &Path,
     archive: &Path,
     meter: bool,
     received: &mut dyn FnMut(u64) -> Result<(), SetupError>,
 ) -> Result<(), SetupError> {
-    fetch(url, archive, meter, received)?;
+    fetch(file, archive, meter, received)?;
     let part = partial(dest);
-    let output = File::create(&part).map_err(|source| SetupError::Io {
-        action: "create",
-        path: part.clone(),
-        source,
-    })?;
+    let output = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(PART_MODE)
+        .open(&part)
+        .map_err(|source| SetupError::Io {
+            action: "create",
+            path: part.clone(),
+            source,
+        })?;
     let mut command = Command::new("tar");
     command
         .arg("-xjf")
@@ -178,6 +196,28 @@ fn promote(part: &Path, dest: &Path) -> Result<(), SetupError> {
         path: part.to_path_buf(),
         source,
     })
+}
+
+/// Moves a finished `part` into place only once its SHA-256 matches the
+/// source's. A mismatch is deleted, since resuming it can never succeed.
+fn finish(part: &Path, file: &ModelDownload, dest: &Path) -> Result<(), SetupError> {
+    let read_error = |source| SetupError::Io {
+        action: "read",
+        path: part.to_path_buf(),
+        source,
+    };
+    let mut hasher = Sha256::new();
+    io::copy(&mut File::open(part).map_err(read_error)?, &mut hasher).map_err(read_error)?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != file.sha256 {
+        let _ = fs::remove_file(part);
+        return Err(SetupError::WrongHash {
+            url: file.url,
+            expected: file.sha256,
+            actual,
+        });
+    }
+    promote(part, dest)
 }
 
 /// Ctrl-C ends the transfer instead of the program, because the child runs
@@ -271,6 +311,40 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    const WEIGHTS: ModelDownload = ModelDownload {
+        file_name: "model.onnx",
+        url: "https://example.invalid/model.onnx",
+        bytes: 7,
+        sha256: "9a129038d9a00aed0cf6a7ea059ca50a813449061ab87848cf1a13eafdf33b2c",
+        unpack: aria_kit::backend::Unpack::Plain,
+    };
+
+    #[test]
+    fn a_download_matching_its_source_moves_into_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.onnx");
+        let part = partial(&dest);
+        fs::write(&part, b"weights").unwrap();
+
+        finish(&part, &WEIGHTS, &dest).unwrap();
+
+        assert_eq!(fs::read(&dest).unwrap(), b"weights");
+    }
+
+    #[test]
+    fn a_download_with_other_bytes_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.onnx");
+        let part = partial(&dest);
+        fs::write(&part, b"weighty").unwrap();
+
+        let error = finish(&part, &WEIGHTS, &dest).unwrap_err();
+
+        assert!(matches!(error, SetupError::WrongHash { .. }), "{error}");
+        assert!(!part.exists());
+        assert!(!dest.exists());
+    }
 
     #[test]
     fn promote_renames_the_part_into_place() {

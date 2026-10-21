@@ -34,6 +34,7 @@ pub const MODEL: &[ModelDownload] = &[ModelDownload {
     file_name: "model.onnx",
     url: "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/f0c48c298fd835726c27956a5d617bad7115627e/voxceleb_resnet34_LM.onnx",
     bytes: 26_530_309,
+    sha256: "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068",
     unpack: Unpack::Plain,
 }];
 

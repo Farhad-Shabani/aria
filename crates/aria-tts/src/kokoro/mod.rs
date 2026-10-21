@@ -57,12 +57,14 @@ pub const MODEL: &[ModelDownload] = &[
         file_name: "kokoro.onnx",
         url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
         bytes: 325_532_387,
+        sha256: "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
         unpack: Unpack::Plain,
     },
     ModelDownload {
         file_name: "voices.bin",
         url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
         bytes: 28_214_398,
+        sha256: "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
         unpack: Unpack::Plain,
     },
 ];

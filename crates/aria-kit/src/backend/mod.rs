@@ -19,6 +19,8 @@ pub struct ModelDownload {
     pub url: &'static str,
     /// Size of what `url` serves. For an archive member, the whole archive.
     pub bytes: u64,
+    /// SHA-256 of what `url` serves, in lowercase hex.
+    pub sha256: &'static str,
     pub unpack: Unpack,
 }
 
