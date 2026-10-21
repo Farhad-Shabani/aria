@@ -31,7 +31,6 @@ struct PairingInvite: Equatable {
         self.fingerprint = fingerprint
     }
 
-    /// Nil for anything that is not a complete pairing code.
     init?(url: URL) {
         guard url.scheme == Self.scheme, url.host == Self.version,
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems

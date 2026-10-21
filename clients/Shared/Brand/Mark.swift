@@ -20,8 +20,7 @@ enum MarkTuning {
     static let spread = 10.0
     /// How far the ribbon sits below the ring's centre.
     static let shift = 7.0
-    /// Segments per current.
-    static let points = 40
+    static let segmentCount = 40
     /// Wave height as drawn in the logo.
     static let restHeight = 5.0
     /// Wave height at full voice.
@@ -56,12 +55,11 @@ extension RibbonGeometry {
             middle: MarkTuning.center + MarkTuning.shift,
             spread: MarkTuning.spread,
             maxHeight: MarkTuning.loudHeight,
-            points: MarkTuning.points
+            segmentCount: MarkTuning.segmentCount
         )
     }()
 }
 
-/// What the mark is showing.
 enum MarkStage: Equatable, Sendable {
     case rest
     case listening
@@ -69,7 +67,6 @@ enum MarkStage: Equatable, Sendable {
     case done
 }
 
-/// What to draw inside the ring.
 enum MarkFigure {
     /// The two currents as one filled band.
     case ribbon(Path)
@@ -86,7 +83,7 @@ struct MarkMotion: Equatable, Sendable {
     /// Seconds in the current stage.
     private(set) var elapsed = 0.0
     /// Whether this rest follows a delivery, so the check unbends first.
-    private(set) var returning = false
+    private var returning = false
 
     /// Moves `dt` seconds on, in `stage`, hearing the voice at `level`.
     mutating func advance(_ stage: MarkStage, level: Double, dt: Double) {
@@ -134,7 +131,6 @@ struct MarkMotion: Equatable, Sendable {
         }
     }
 
-    /// The logo as drawn.
     static var resting: MarkFigure {
         ribbonFigure(phase: 0) { _ in restShare }
     }
@@ -149,7 +145,7 @@ struct MarkMotion: Equatable, Sendable {
     }
 
     /// The line bent `k` of the way into the check: points and stroke both move.
-    static func bent(_ k: Double) -> MarkFigure {
+    private static func bent(_ k: Double) -> MarkFigure {
         let points = zip(MarkTuning.line, MarkTuning.check).map { from, to in
             CGPoint(x: mix(from.x, to.x, k), y: mix(from.y, to.y, k))
         }
@@ -193,7 +189,7 @@ struct LogoMark: View {
     }
 }
 
-func easeOutCubic(_ x: Double) -> Double {
+private func easeOutCubic(_ x: Double) -> Double {
     let k = clamp(x, 0, 1)
     return 1 - (1 - k) * (1 - k) * (1 - k)
 }
