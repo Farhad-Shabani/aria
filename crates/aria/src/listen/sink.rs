@@ -11,7 +11,7 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 
 use crate::dictation::{TranscriptSink, Utterance};
-use crate::speaker::normalized;
+use crate::speaker::{Label, normalized};
 
 /// A pause this long always starts a new paragraph.
 pub const GAP_BREAK: Duration = Duration::from_secs(3);
@@ -37,7 +37,7 @@ pub(crate) struct TranscriptFile {
     /// segments.
     paragraph_at: u64,
     paragraph_ended: u64,
-    label: Option<String>,
+    label: Option<Label>,
     /// The open paragraph's audio so far.
     paragraph_span: Option<Range<u64>>,
     /// Running sum of the open paragraph's segment embeddings.
@@ -114,7 +114,7 @@ impl TranscriptFile {
     /// on, leaving the preamble bytes untouched.
     pub(crate) fn finish(
         &mut self,
-        relabel: impl FnOnce(&[Option<Vec<f32>>]) -> Vec<Option<String>>,
+        relabel: impl FnOnce(&[Option<Vec<f32>>]) -> Vec<Option<Label>>,
     ) -> io::Result<()> {
         self.flush_paragraph()?;
         if self.history.is_empty() {
@@ -138,7 +138,7 @@ impl TranscriptFile {
     /// neighbour's.
     pub(crate) fn rewrite(
         &mut self,
-        label: impl FnOnce(&[Option<Range<u64>>]) -> Vec<Option<String>>,
+        label: impl FnOnce(&[Option<Range<u64>>]) -> Vec<Option<Label>>,
     ) -> io::Result<()> {
         self.flush_paragraph()?;
         if self.history.is_empty() {
@@ -157,7 +157,7 @@ impl TranscriptFile {
         struct Block {
             at: u64,
             ended: u64,
-            label: Option<String>,
+            label: Option<Label>,
             text: String,
         }
         let mut blocks: Vec<Block> = Vec::new();
@@ -194,7 +194,7 @@ impl TranscriptFile {
                 replacement.write_all(b"\n")?;
             }
             replacement
-                .write_all(render(block.at, block.label.as_deref(), &block.text).as_bytes())?;
+                .write_all(render(block.at, block.label.as_ref(), &block.text).as_bytes())?;
         }
         replacement.flush()?;
         replacement
@@ -214,7 +214,7 @@ impl TranscriptFile {
             self.file.write_all(b"\n")?;
         }
         self.file.write_all(
-            render(self.paragraph_at, self.label.as_deref(), &self.paragraph).as_bytes(),
+            render(self.paragraph_at, self.label.as_ref(), &self.paragraph).as_bytes(),
         )?;
         self.file.flush()?;
         let embedding = (self.count > 0).then(|| {
@@ -255,7 +255,7 @@ impl TranscriptSink for TranscriptFile {
         // speaker timeline is read on.
         let at = canonical_duration(heard_at).as_secs();
         let now = Instant::now();
-        let speaker_changed = !self.paragraph.is_empty() && self.label.as_deref() != label;
+        let speaker_changed = !self.paragraph.is_empty() && self.label.as_ref() != label;
         if speaker_changed || breaks_before(now.duration_since(self.last_segment), &self.paragraph)
         {
             self.flush_paragraph()?;
@@ -263,7 +263,7 @@ impl TranscriptSink for TranscriptFile {
         if self.paragraph.is_empty() {
             self.paragraph_at = at;
             self.paragraph_span = None;
-            self.label = label.map(str::to_owned);
+            self.label = label.cloned();
         } else {
             self.paragraph.push(' ');
         }
@@ -323,7 +323,7 @@ pub fn stamp(at_seconds: u64) -> String {
     )
 }
 
-fn render(at: u64, label: Option<&str>, text: &str) -> String {
+fn render(at: u64, label: Option<&Label>, text: &str) -> String {
     let stamp = stamp(at);
     match label {
         Some(label) => format!("{stamp} {label}: {text}\n"),
@@ -351,7 +351,7 @@ fn ends_sentence(paragraph: &str) -> bool {
 #[cfg(test)]
 mod tests {
     fn heard<'a>(
-        speaker: Option<&'a str>,
+        speaker: Option<&'a Label>,
         embedding: Option<&'a [f32]>,
         text: &'a str,
     ) -> Utterance<'a> {
@@ -365,7 +365,7 @@ mod tests {
     }
 
     /// The same utterance, arriving `at` seconds into the recording.
-    fn heard_at<'a>(at: u64, speaker: Option<&'a str>, text: &'a str) -> Utterance<'a> {
+    fn heard_at<'a>(at: u64, speaker: Option<&'a Label>, text: &'a str) -> Utterance<'a> {
         let start = at * u64::from(CANONICAL_SAMPLE_RATE);
         Utterance {
             at: start,
@@ -378,7 +378,7 @@ mod tests {
     fn spanning<'a>(
         at: u64,
         seconds: u64,
-        speaker: Option<&'a str>,
+        speaker: Option<&'a Label>,
         text: &'a str,
     ) -> Utterance<'a> {
         let rate = u64::from(CANONICAL_SAMPLE_RATE);
@@ -391,6 +391,11 @@ mod tests {
 
     use super::*;
     use crate::audio::CANONICAL_SAMPLE_RATE;
+    use crate::speaker::SpeakerName;
+
+    fn enrolled(name: &str) -> Label {
+        Label::Enrolled(SpeakerName::new(name).expect("a usable name"))
+    }
 
     fn open_in_tempdir() -> (tempfile::TempDir, TranscriptFile, PathBuf) {
         let directory = tempfile::tempdir().expect("test directory is created");
@@ -405,11 +410,21 @@ mod tests {
 
         // The live labeler flapped mid-utterance, which split one turn in
         // two. The rewrite agrees they are one voice.
-        sink.segment(spanning(10, 4, Some("Speaker 1"), "the first half"))
-            .expect("the write succeeds");
-        sink.segment(spanning(14, 2, Some("Speaker 2"), "and the second"))
-            .expect("the write succeeds");
-        sink.rewrite(|_| Vec::from([Some("Speaker 1".to_owned()), Some("Speaker 1".to_owned())]))
+        sink.segment(spanning(
+            10,
+            4,
+            Some(&Label::Anonymous(1)),
+            "the first half",
+        ))
+        .expect("the write succeeds");
+        sink.segment(spanning(
+            14,
+            2,
+            Some(&Label::Anonymous(2)),
+            "and the second",
+        ))
+        .expect("the write succeeds");
+        sink.rewrite(|_| Vec::from([Some(Label::Anonymous(1)), Some(Label::Anonymous(1))]))
             .expect("the rewrite succeeds");
         drop(sink);
 
@@ -445,9 +460,9 @@ mod tests {
     fn a_speaker_change_breaks_the_paragraph_and_labels_both() {
         let (_directory, mut sink, path) = open_in_tempdir();
 
-        sink.segment(heard(Some("Speaker 1"), None, "hello"))
+        sink.segment(heard(Some(&Label::Anonymous(1)), None, "hello"))
             .expect("the write succeeds");
-        sink.segment(heard(Some("Speaker 2"), None, "hi back"))
+        sink.segment(heard(Some(&Label::Anonymous(2)), None, "hi back"))
             .expect("the write succeeds");
         drop(sink);
 
@@ -459,14 +474,59 @@ mod tests {
     }
 
     #[test]
+    fn an_enrolled_name_that_reads_like_an_anonymous_speaker_is_a_speaker_change() {
+        let (_directory, mut sink, path) = open_in_tempdir();
+        let named_alike = enrolled("Speaker 1");
+
+        sink.segment(heard(Some(&Label::Anonymous(1)), None, "hello"))
+            .expect("the write succeeds");
+        sink.segment(heard(Some(&named_alike), None, "hi back"))
+            .expect("the write succeeds");
+        drop(sink);
+
+        let written = fs::read_to_string(&path).expect("the transcript file is readable");
+        assert_eq!(
+            written, "[00:00:00] Speaker 1: hello\n\n[00:00:00] Speaker 1: hi back\n",
+            "two people who render alike still get a paragraph each"
+        );
+    }
+
+    #[test]
+    fn finish_keeps_apart_an_enrolled_name_that_reads_like_an_anonymous_speaker() {
+        let (_directory, mut sink, path) = open_in_tempdir();
+
+        sink.segment(heard(
+            Some(&Label::Anonymous(1)),
+            Some(&[1.0, 0.0]),
+            "hello",
+        ))
+        .expect("the write succeeds");
+        sink.segment(heard(
+            Some(&Label::Anonymous(2)),
+            Some(&[0.0, 1.0]),
+            "hi back",
+        ))
+        .expect("the write succeeds");
+        sink.finish(|_| vec![Some(Label::Anonymous(1)), Some(enrolled("Speaker 1"))])
+            .expect("the rewrite succeeds");
+        drop(sink);
+
+        let written = fs::read_to_string(&path).expect("the transcript file is readable");
+        assert_eq!(
+            written,
+            "[00:00:00] Speaker 1: hello\n\n[00:00:00] Speaker 1: hi back\n"
+        );
+    }
+
+    #[test]
     fn a_paragraph_is_stamped_by_the_recording_not_the_wall() {
         // The follower reads these same seconds off the event stream, so a
         // clock of its own here is a clock the two disagree on.
         let (_directory, mut sink, path) = open_in_tempdir();
 
-        sink.segment(heard_at(0, Some("Speaker 1"), "hello"))
+        sink.segment(heard_at(0, Some(&Label::Anonymous(1)), "hello"))
             .expect("the write succeeds");
-        sink.segment(heard_at(3_671, Some("Speaker 2"), "much later"))
+        sink.segment(heard_at(3_671, Some(&Label::Anonymous(2)), "much later"))
             .expect("the write succeeds");
         drop(sink);
 
@@ -479,7 +539,7 @@ mod tests {
 
     /// An utterance from an engine that times nothing: the decoder still
     /// knows where it had reached, and only that reaches the stamp.
-    fn untimed<'a>(at: u64, speaker: Option<&'a str>, text: &'a str) -> Utterance<'a> {
+    fn untimed<'a>(at: u64, speaker: Option<&'a Label>, text: &'a str) -> Utterance<'a> {
         Utterance {
             at: at * u64::from(CANONICAL_SAMPLE_RATE),
             span: None,
@@ -492,9 +552,9 @@ mod tests {
         // Moonshine is a listen backend that times no words.
         let (_directory, mut sink, path) = open_in_tempdir();
 
-        sink.segment(untimed(0, Some("Speaker 1"), "hello"))
+        sink.segment(untimed(0, Some(&Label::Anonymous(1)), "hello"))
             .expect("the write succeeds");
-        sink.segment(untimed(3_671, Some("Speaker 2"), "much later"))
+        sink.segment(untimed(3_671, Some(&Label::Anonymous(2)), "much later"))
             .expect("the write succeeds");
         drop(sink);
 
@@ -511,10 +571,15 @@ mod tests {
 
         // Two speakers, so they are two paragraphs: the gap rule reads the
         // wall clock, and nothing elapses inside a test.
-        sink.segment(untimed(0, Some("Speaker 1"), "nobody timed this"))
+        sink.segment(untimed(0, Some(&Label::Anonymous(1)), "nobody timed this"))
             .expect("the write succeeds");
-        sink.segment(spanning(30, 2, Some("Speaker 2"), "this one is timed"))
-            .expect("the write succeeds");
+        sink.segment(spanning(
+            30,
+            2,
+            Some(&Label::Anonymous(2)),
+            "this one is timed",
+        ))
+        .expect("the write succeeds");
         sink.rewrite(|spans| {
             assert_eq!(spans.len(), 2);
             assert_eq!(spans[0], None, "an untimed paragraph points at no audio");
@@ -531,9 +596,9 @@ mod tests {
         let rate = u64::from(CANONICAL_SAMPLE_RATE);
 
         // One paragraph: no pause between them, and no speaker change.
-        sink.segment(untimed(10, Some("Speaker 1"), "untimed opening"))
+        sink.segment(untimed(10, Some(&Label::Anonymous(1)), "untimed opening"))
             .expect("the write succeeds");
-        sink.segment(spanning(10, 2, Some("Speaker 1"), "timed rest"))
+        sink.segment(spanning(10, 2, Some(&Label::Anonymous(1)), "timed rest"))
             .expect("the write succeeds");
         sink.rewrite(|spans| {
             assert_eq!(
@@ -550,11 +615,11 @@ mod tests {
     fn a_paragraph_the_labeler_did_not_reach_stays_unnamed() {
         let (_directory, mut sink, path) = open_in_tempdir();
 
-        sink.segment(spanning(0, 2, Some("Speaker 1"), "reached"))
+        sink.segment(spanning(0, 2, Some(&Label::Anonymous(1)), "reached"))
             .expect("the write succeeds");
-        sink.segment(spanning(2, 2, Some("Speaker 2"), "past the track"))
+        sink.segment(spanning(2, 2, Some(&Label::Anonymous(2)), "past the track"))
             .expect("the write succeeds");
-        sink.rewrite(|_| Vec::from([Some("Speaker 1".to_owned())]))
+        sink.rewrite(|_| Vec::from([Some(Label::Anonymous(1))]))
             .expect("the rewrite succeeds");
         drop(sink);
 
@@ -572,11 +637,11 @@ mod tests {
         // keeps writing afterwards, so the handle has to follow the path.
         let (_directory, mut sink, path) = open_in_tempdir();
 
-        sink.segment(heard(Some("Speaker 2"), None, "hello"))
+        sink.segment(heard(Some(&Label::Anonymous(2)), None, "hello"))
             .expect("the write succeeds");
-        sink.rewrite(|_| Vec::from([Some("Speaker 1".to_owned())]))
+        sink.rewrite(|_| Vec::from([Some(Label::Anonymous(1))]))
             .expect("the rewrite succeeds");
-        sink.segment(heard(Some("Speaker 1"), None, "still here"))
+        sink.segment(heard(Some(&Label::Anonymous(1)), None, "still here"))
             .expect("the write succeeds");
         drop(sink);
 
@@ -595,13 +660,21 @@ mod tests {
         let (mut sink, path) =
             TranscriptFile::create_at(path).expect("the transcript file is created");
 
-        sink.segment(heard(Some("Speaker 1"), Some(&[1.0, 0.0]), "hello"))
-            .expect("the write succeeds");
-        sink.segment(heard(Some("Speaker 2"), Some(&[0.0, 1.0]), "hi back"))
-            .expect("the write succeeds");
+        sink.segment(heard(
+            Some(&Label::Anonymous(1)),
+            Some(&[1.0, 0.0]),
+            "hello",
+        ))
+        .expect("the write succeeds");
+        sink.segment(heard(
+            Some(&Label::Anonymous(2)),
+            Some(&[0.0, 1.0]),
+            "hi back",
+        ))
+        .expect("the write succeeds");
         sink.finish(|embeddings| {
             assert_eq!(embeddings.len(), 2);
-            vec![Some("alex".to_owned()), Some("Speaker 1".to_owned())]
+            vec![Some(enrolled("alex")), Some(Label::Anonymous(1))]
         })
         .expect("the rewrite succeeds");
         drop(sink);
@@ -619,11 +692,15 @@ mod tests {
 
         sink.segment(heard(None, None, "Well I"))
             .expect("the write succeeds");
-        sink.segment(heard(Some("Speaker 2"), Some(&[0.0, 1.0]), "disagree."))
-            .expect("the write succeeds");
+        sink.segment(heard(
+            Some(&Label::Anonymous(2)),
+            Some(&[0.0, 1.0]),
+            "disagree.",
+        ))
+        .expect("the write succeeds");
         sink.finish(|embeddings| {
             assert!(embeddings[0].is_none());
-            vec![None, Some("Speaker 2".to_owned())]
+            vec![None, Some(Label::Anonymous(2))]
         })
         .expect("the rewrite succeeds");
         drop(sink);

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
 use crate::delivery::{DeliveryOutcome, Placement};
+use crate::speaker::Label;
 
 /// What the pipeline heard in one stretch of speech.
 ///
@@ -20,7 +21,7 @@ use crate::delivery::{DeliveryOutcome, Placement};
 #[derive(Clone)]
 pub(crate) struct Utterance<'a> {
     pub(crate) text: &'a str,
-    pub(crate) speaker: Option<&'a str>,
+    pub(crate) speaker: Option<&'a Label>,
     pub(crate) embedding: Option<&'a [f32]>,
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,

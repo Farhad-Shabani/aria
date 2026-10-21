@@ -2,8 +2,6 @@
 //! listen share, and the voice track listen runs beside its transcriber. The
 //! policy itself lives in `aria_kit::speaker`.
 
-mod voices;
-
 use std::time::Instant;
 
 use aria_kit::segmentation::Engine as SegmentationEngine;
@@ -17,24 +15,19 @@ use crate::config::SpeakerConfig;
 use crate::primitives::error_chain;
 
 pub use aria_kit::speaker::{
-    Diarizer, Enrolled, Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace,
-    Role, SegmentLabeler, SegmentReader, SpeakerName, SpeakerNameError, StoredProfiles, Verdict,
-    normalized, settle,
-};
-#[cfg(test)]
-pub(crate) use voices::testing;
-pub use voices::{
-    Chunk, Grouping, Merged, PyannoteVoices, Revision, Standing, Voiceprint, Voices,
-    attribute_spans,
+    Chunk, Diarizer, Enrolled, Enrollment, EnrollmentError, Grouping, Label, Merged, Profile,
+    ProfileError, ProfileStore, PyannoteVoices, Replace, Revision, Role, SegmentLabeler,
+    SegmentReader, SpeakerName, SpeakerNameError, Standing, StoredProfiles, Verdict, Voiceprint,
+    Voices, attribute_spans, normalized, settle,
 };
 
 /// The voice track listen runs: the shipped segmentation net over the shipped
 /// embedder.
 pub type VoiceTrack = PyannoteVoices<Pyannote, WeSpeaker>;
 
-/// The diarizer dictation and listen share. `None` when no embedding model
-/// is installed, which is ordinary — it ships with nothing.
-pub(crate) fn diarizer(config: &SpeakerConfig) -> Option<Diarizer<WeSpeaker>> {
+/// The speaker model. `None` when it is not installed, which is ordinary —
+/// it ships with nothing.
+pub(crate) fn embedder(config: &SpeakerConfig) -> Option<WeSpeaker> {
     let model = wespeaker::Config {
         model: config.model.clone(),
     };
@@ -50,7 +43,7 @@ pub(crate) fn diarizer(config: &SpeakerConfig) -> Option<Diarizer<WeSpeaker>> {
                 load_ms = started.elapsed().as_millis(),
                 "speaker model loaded"
             );
-            Some(Diarizer::new(embedder, enrolled(config)))
+            Some(embedder)
         }
         Err(error) => {
             tracing::warn!(
@@ -78,7 +71,8 @@ pub fn speech_gate() -> Option<SileroVad> {
 /// The segment reader dictation and listen run. The speech gate marks
 /// the pauses between speakers; the engines' word timings blur them.
 pub(crate) fn reader(config: &SpeakerConfig) -> SegmentReader<WeSpeaker> {
-    SegmentReader::new(SegmentLabeler::new(speech_gate(), diarizer(config)))
+    let diarizer = embedder(config).map(|embedder| Diarizer::new(embedder, enrolled(config)));
+    SegmentReader::new(SegmentLabeler::new(speech_gate(), diarizer))
 }
 
 /// The profiles the shipped embedder can compare against. One enrollment
@@ -117,7 +111,8 @@ pub fn usable_profiles(stored: Result<StoredProfiles, ProfileError>) -> Vec<Prof
 /// standing.
 pub fn voice_track(
     model: &std::path::Path,
-    diarizer: Diarizer<WeSpeaker>,
+    embedder: WeSpeaker,
+    enrolled: Vec<Profile>,
     grouping: Grouping,
 ) -> Option<VoiceTrack> {
     let settings = pyannote::Config {
@@ -135,7 +130,7 @@ pub fn voice_track(
                 load_ms = started.elapsed().as_millis(),
                 "segmentation model loaded"
             );
-            Some(PyannoteVoices::new(segmenter, diarizer, grouping))
+            Some(PyannoteVoices::new(segmenter, embedder, enrolled, grouping))
         }
         Err(error) => {
             tracing::warn!(

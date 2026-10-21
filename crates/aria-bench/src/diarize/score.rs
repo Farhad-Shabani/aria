@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use aria::speaker::Label;
+
 use crate::stt::words;
 
 use crate::diarize::replay::{Dropped, Labeler, Segment};
@@ -10,7 +12,7 @@ use crate::diarize::{SAMPLE_RATE, ScenarioReport};
 
 pub(crate) struct Labeled {
     pub(crate) text: String,
-    pub(crate) label: Option<String>,
+    pub(crate) label: Option<Label>,
 }
 
 impl Scenario {
@@ -60,7 +62,7 @@ impl Scenario {
     }
 }
 
-type Votes<'a> = HashMap<(&'a str, &'static str), usize>;
+type Votes<'a> = HashMap<(&'a Label, &'static str), usize>;
 
 impl Scenario {
     /// Fraction of scoreable words whose segment label maps to the right
@@ -127,7 +129,7 @@ fn tally<'a>(
             };
             scoreable += 1;
             if let Some(label) = &segment.label {
-                *votes.entry((label.as_str(), speaker)).or_default() += 1;
+                *votes.entry((label, speaker)).or_default() += 1;
             }
         }
     }
@@ -136,8 +138,8 @@ fn tally<'a>(
 
 /// The words a best one-to-one label-to-speaker assignment explains.
 fn matched_words(scenario: &Scenario, votes: &Votes<'_>) -> usize {
-    let labels: Vec<&str> = {
-        let mut labels: Vec<&str> = votes.keys().map(|(label, _)| *label).collect();
+    let labels: Vec<&Label> = {
+        let mut labels: Vec<&Label> = votes.keys().map(|(label, _)| *label).collect();
         labels.sort_unstable();
         labels.dedup();
         labels
@@ -153,8 +155,8 @@ fn matched_words(scenario: &Scenario, votes: &Votes<'_>) -> usize {
 
 /// Exhaustive best one-to-one mapping — label and speaker counts are single
 /// digits, so brute force is exact and instant.
-fn best_assignment(labels: &[&str], speakers: &[&'static str], votes: &Votes<'_>) -> usize {
-    fn recurse(labels: &[&str], free: &mut Vec<&'static str>, votes: &Votes<'_>) -> usize {
+fn best_assignment(labels: &[&Label], speakers: &[&'static str], votes: &Votes<'_>) -> usize {
+    fn recurse(labels: &[&Label], free: &mut Vec<&'static str>, votes: &Votes<'_>) -> usize {
         let Some((label, rest)) = labels.split_first() else {
             return 0;
         };
@@ -194,18 +196,18 @@ mod tests {
         }
     }
 
-    fn labeled(text: &str, label: &str) -> Labeled {
+    fn labeled(text: &str, label: Label) -> Labeled {
         Labeled {
             text: text.to_owned(),
-            label: Some(label.to_owned()),
+            label: Some(label),
         }
     }
 
     #[test]
     fn a_consistent_labeling_scores_perfectly_whatever_the_names() {
         let segments = [
-            labeled("apples grow slowly", "Speaker 2"),
-            labeled("bricks stack neatly", "Speaker 1"),
+            labeled("apples grow slowly", Label::Anonymous(2)),
+            labeled("bricks stack neatly", Label::Anonymous(1)),
         ];
         assert_eq!(scenario().accuracy(&segments), 1.0);
     }
@@ -214,7 +216,7 @@ mod tests {
     fn a_dropped_turn_costs_recall_but_leaves_accuracy_perfect() {
         // Everything the pipeline kept is labeled right, so accuracy cannot
         // see the missing half. Recall is the only column that falls.
-        let segments = [labeled("apples grow slowly", "Speaker 1")];
+        let segments = [labeled("apples grow slowly", Label::Anonymous(1))];
         assert_eq!(scenario().accuracy(&segments), 1.0);
         assert_eq!(scenario().word_recall(&segments), 0.5);
     }
@@ -222,8 +224,8 @@ mod tests {
     #[test]
     fn merging_two_speakers_under_one_label_costs_the_smaller_turn() {
         let segments = [
-            labeled("apples grow slowly", "Speaker 1"),
-            labeled("bricks stack", "Speaker 1"),
+            labeled("apples grow slowly", Label::Anonymous(1)),
+            labeled("bricks stack", Label::Anonymous(1)),
         ];
         assert_eq!(scenario().accuracy(&segments), 0.6);
     }
@@ -231,7 +233,7 @@ mod tests {
     #[test]
     fn unlabeled_words_never_score() {
         let segments = [
-            labeled("apples grow slowly", "Speaker 1"),
+            labeled("apples grow slowly", Label::Anonymous(1)),
             Labeled {
                 text: "bricks stack neatly".to_owned(),
                 label: None,

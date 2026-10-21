@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use super::{Diarizer, Embedder};
+use super::{Diarizer, Embedder, Label};
 use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::primitives::error_chain;
 use crate::transcription::{
@@ -29,7 +29,7 @@ pub const OWN_VOICE_THRESHOLD: f32 = 0.4;
 pub struct SegmentLabeler<E> {
     vad: Option<SileroVad>,
     diarizer: Option<Diarizer<E>>,
-    previous: Option<String>,
+    previous: Option<Label>,
     previous_speech: usize,
     /// Silence the previous window ended in, so a pause split across two
     /// windows still counts as one.
@@ -49,7 +49,7 @@ pub enum Verdict {
     Keep {
         /// The live, tentative speaker. A later pass over the whole session
         /// settles the final one.
-        label: Option<String>,
+        label: Option<Label>,
         embedding: Option<Vec<f32>>,
     },
 }
@@ -221,7 +221,7 @@ impl<E: Embedder> SegmentLabeler<E> {
             .and_then(|diarizer| embed_or_skip(diarizer, voice));
         let label = match (&embedding, self.diarizer.as_mut()) {
             (Some(embedding), Some(diarizer)) => {
-                Some(diarizer.label(embedding, self.previous.as_deref()))
+                Some(diarizer.label(embedding, self.previous.as_ref()))
             }
             // No embedding to judge by. Mid-utterance the voice has not
             // changed, so it carries. After a pause it may have, and a wrong
@@ -254,7 +254,7 @@ impl<E: Embedder> SegmentLabeler<E> {
 
     /// The final labels for the session's paragraphs; all `None` without a
     /// speaker model.
-    pub fn relabel(&self, paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<String>> {
+    pub fn relabel(&self, paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<Label>> {
         match &self.diarizer {
             Some(diarizer) => diarizer.relabel(paragraphs),
             None => vec![None; paragraphs.len()],

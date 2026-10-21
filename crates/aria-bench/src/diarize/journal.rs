@@ -12,7 +12,7 @@
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
-use aria::speaker::{Merged, Standing};
+use aria::speaker::{Label, Merged, Standing};
 use serde::Serialize;
 
 use crate::diarize::{BenchError, SAMPLE_RATE};
@@ -55,7 +55,7 @@ pub(crate) struct Journal {
     out: BufWriter<std::fs::File>,
     /// When each name was first heard, in seconds, so a merge can say how
     /// long the name it retires had been standing.
-    opened: Vec<(String, f64)>,
+    opened: Vec<(Label, f64)>,
 }
 
 impl Journal {
@@ -79,8 +79,8 @@ impl Journal {
     ) -> Result<(), BenchError> {
         let at = at as f64 / SAMPLE_RATE;
         for voice in standing {
-            if !self.opened.iter().any(|(name, _)| name == &voice.name) {
-                self.opened.push((voice.name.clone(), at));
+            if !self.opened.iter().any(|(label, _)| label == &voice.label) {
+                self.opened.push((voice.label.clone(), at));
             }
         }
         let row = Row {
@@ -90,15 +90,15 @@ impl Journal {
             merges: merges
                 .iter()
                 .map(|merged| Merge {
-                    from: merged.from.clone(),
-                    into: merged.into.clone(),
+                    from: merged.from.to_string(),
+                    into: merged.into.to_string(),
                     stood_for: at - self.first_heard(&merged.from).unwrap_or(at),
                 })
                 .collect(),
             standing: standing
                 .iter()
                 .map(|voice| Voice {
-                    name: voice.name.clone(),
+                    name: voice.label.to_string(),
                     voiceprints: voice.voiceprints,
                     eligible: voice.eligible,
                 })
@@ -110,10 +110,10 @@ impl Journal {
     /// When a name was first heard, and `None` for one this journal never
     /// saw stand: a voice opened and merged away inside a single chunk is
     /// gone from the standing list before the chunk is written.
-    fn first_heard(&self, name: &str) -> Option<f64> {
+    fn first_heard(&self, label: &Label) -> Option<f64> {
         self.opened
             .iter()
-            .find(|(opened, _)| opened == name)
+            .find(|(opened, _)| opened == label)
             .map(|(_, at)| *at)
     }
 
@@ -129,11 +129,11 @@ impl Journal {
 mod tests {
     use super::*;
 
-    fn standing(names: &[(&str, usize, bool)]) -> Vec<Standing> {
-        names
+    fn standing(numbers: &[(u32, usize, bool)]) -> Vec<Standing> {
+        numbers
             .iter()
-            .map(|&(name, voiceprints, eligible)| Standing {
-                name: name.to_owned(),
+            .map(|&(number, voiceprints, eligible)| Standing {
+                label: Label::Anonymous(number),
                 voiceprints,
                 eligible,
             })
@@ -154,23 +154,19 @@ mod tests {
 
         let rate = SAMPLE_RATE as u64;
         journal
-            .chunk(0, &[], &standing(&[("Speaker 1", 12, true)]))
+            .chunk(0, &[], &standing(&[(1, 12, true)]))
             .expect("the first chunk");
         journal
-            .chunk(
-                10 * rate,
-                &[],
-                &standing(&[("Speaker 1", 20, true), ("Speaker 2", 3, false)]),
-            )
+            .chunk(10 * rate, &[], &standing(&[(1, 20, true), (2, 3, false)]))
             .expect("the second chunk");
         journal
             .chunk(
                 30 * rate,
                 &[Merged {
-                    from: "Speaker 2".to_owned(),
-                    into: "Speaker 1".to_owned(),
+                    from: Label::Anonymous(2),
+                    into: Label::Anonymous(1),
                 }],
-                &standing(&[("Speaker 1", 25, true)]),
+                &standing(&[(1, 25, true)]),
             )
             .expect("the third chunk");
 
@@ -198,10 +194,10 @@ mod tests {
             .chunk(
                 40 * SAMPLE_RATE as u64,
                 &[Merged {
-                    from: "Speaker 9".to_owned(),
-                    into: "Speaker 1".to_owned(),
+                    from: Label::Anonymous(9),
+                    into: Label::Anonymous(1),
                 }],
-                &standing(&[("Speaker 1", 30, true)]),
+                &standing(&[(1, 30, true)]),
             )
             .expect("the chunk");
 

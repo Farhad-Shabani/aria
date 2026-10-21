@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use aria::speaker::{self, Diarizer, SegmentLabeler, SegmentReader, Verdict};
+use aria::speaker::{self, Diarizer, Label, SegmentLabeler, SegmentReader, Verdict};
 use aria::transcription::{Language, Streaming, Transcriber, Transcription, TranscriptionError};
 use aria_kit::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, WavReplayCapture};
 use aria_kit::speaker::{Engine, ProfileStore};
@@ -16,7 +16,7 @@ use crate::diarize::BenchError;
 pub(crate) struct Segment {
     pub(crate) text: String,
     /// The live, tentative label; `None` without a usable embedding.
-    pub(crate) label: Option<String>,
+    pub(crate) label: Option<Label>,
     pub(crate) embedding: Option<Vec<f32>>,
     /// Where the segment's audio sits, in samples.
     pub(crate) span: std::ops::Range<u64>,

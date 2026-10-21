@@ -158,8 +158,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::audio::{Recording, RecordingWriter};
-    use crate::speaker::testing::{alone, track_of};
-    use crate::speaker::{Diarizer, Grouping};
+    use crate::speaker::Grouping;
 
     use super::*;
 
@@ -169,11 +168,7 @@ mod tests {
         let (recording, mut capture) = Recording::open();
         let audio = recording.fork();
         let chunks = 4;
-        let voices = Arc::new(Mutex::new(track_of(
-            HOP_SAMPLES,
-            vec![alone(0); chunks],
-            vec![[1.0, 0.0]; chunks],
-        )));
+        let voices = Arc::new(Mutex::new(one_voice()));
         let walking = Arc::clone(&voices);
         let (sender, _merges) = channel();
 
@@ -193,16 +188,11 @@ mod tests {
     fn a_track_that_falls_behind_gives_up_on_the_audio_it_skipped() {
         let (recording, mut capture) = Recording::open();
         let audio = recording.fork();
-        // Twice the cap, and a script long enough to hear every hop of it.
         let over_cap = MAX_LAG_SAMPLES as usize * 2;
         let hops = over_cap / HOP_SAMPLES;
         capture.push(&vec![0.1; over_cap]);
         capture.finish();
-        let voices = Arc::new(Mutex::new(track_of(
-            HOP_SAMPLES,
-            vec![alone(0); hops],
-            vec![[1.0, 0.0]; hops],
-        )));
+        let voices = Arc::new(Mutex::new(one_voice()));
         let (sender, _merges) = channel();
 
         walk(&voices, audio, &sender);
@@ -262,6 +252,40 @@ mod tests {
         }
     }
 
+    /// Hears one voice speaking through every chunk.
+    struct Speaking;
+
+    impl Segmenter for Speaking {
+        fn shape(&self) -> ChunkShape {
+            Crawling.shape()
+        }
+
+        fn segment(&mut self, _chunk: &[f32]) -> Result<Vec<Activity>, SegmentationError> {
+            let shape = self.shape();
+            Ok(vec![
+                Activity::SILENT.speaking(0);
+                shape.samples / shape.frame_shift
+            ])
+        }
+    }
+
+    /// Hears one fixed voice in every window.
+    struct Voice;
+
+    impl Embedder for Voice {
+        fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
+            Ok(Some(Vec::from([1.0, 0.0])))
+        }
+
+        fn dimension(&self) -> usize {
+            2
+        }
+    }
+
+    fn one_voice() -> PyannoteVoices<Speaking, Voice> {
+        PyannoteVoices::new(Speaking, Voice, Vec::new(), Grouping::default())
+    }
+
     /// Hears nobody, so the walk's cost is the segmenter's alone.
     struct Deaf;
 
@@ -290,7 +314,8 @@ mod tests {
         });
         let voices = Arc::new(Mutex::new(PyannoteVoices::new(
             Crawling,
-            Diarizer::new(Deaf, Vec::new()),
+            Deaf,
+            Vec::new(),
             Grouping::default(),
         )));
         let (sender, _merges) = channel();
@@ -320,7 +345,8 @@ mod tests {
                 capture: Some(capture),
                 late: MAX_LAG_SAMPLES as usize * 2,
             },
-            Diarizer::new(Deaf, Vec::new()),
+            Deaf,
+            Vec::new(),
             Grouping::default(),
         )));
         let (sender, _merges) = channel();

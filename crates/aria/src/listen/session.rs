@@ -22,7 +22,7 @@ use super::{ListenError, SystemAudioCapture, TranscriptFile};
 use aria_kit::speaker::Embedder;
 
 use crate::dictation::{TranscriptSink, Utterance};
-use crate::speaker::{self, SegmentReader, Verdict};
+use crate::speaker::{self, Label, SegmentReader, Verdict};
 
 use super::track::VoiceThread;
 
@@ -121,10 +121,11 @@ fn run_with<E: StreamingEngine>(
 /// both. A thread that will not start is an environment failure, so it
 /// degrades to the live guess the way a missing model does.
 fn voice_thread(config: &SpeakerConfig, audio: RecordingReader) -> Option<VoiceThread> {
-    let diarizer = speaker::diarizer(config)?;
+    let embedder = speaker::embedder(config)?;
     let track = speaker::voice_track(
         &config.segmentation_model,
-        diarizer,
+        embedder,
+        speaker::enrolled(config),
         speaker::Grouping::default(),
     )?;
     VoiceThread::spawn(track, audio)
@@ -192,7 +193,7 @@ fn transcribe_all<T: Transcriber, E: Embedder>(
     settled.map_err(ListenError::Transcript)
 }
 
-fn attribute_reached(track: &VoiceThread, spans: &[Option<Range<u64>>]) -> Vec<Option<String>> {
+fn attribute_reached(track: &VoiceThread, spans: &[Option<Range<u64>>]) -> Vec<Option<Label>> {
     let voices = track.attribution();
     let reached = reached(spans, voices.retained_from());
     crate::speaker::attribute_spans(&*voices, &spans[..reached])
@@ -211,8 +212,8 @@ fn reached(spans: &[Option<Range<u64>>], reach: u64) -> usize {
 fn emit_merges(events: &ListenEventEmitter, merged: &[crate::speaker::Merged]) {
     for merge in merged {
         events.emit(ListenStage::SpeakerMerged {
-            from: Arc::from(merge.from.as_str()),
-            into: Arc::from(merge.into.as_str()),
+            from: Arc::from(merge.from.to_string()),
+            into: Arc::from(merge.into.to_string()),
         });
     }
 }
@@ -237,12 +238,12 @@ fn transcribe_into<T: Transcriber, E: Embedder>(
         if let Verdict::Keep { label, embedding } = &heard.verdict {
             events.emit(ListenStage::SegmentTranscribed {
                 text: Arc::from(heard.segment.as_str()),
-                label: label.as_deref().map(Arc::from),
+                label: label.as_ref().map(|label| Arc::from(label.to_string())),
                 at_seconds: canonical_duration(heard.at).as_secs(),
             });
             sink.segment(Utterance {
                 text: heard.segment.as_str(),
-                speaker: label.as_deref(),
+                speaker: label.as_ref(),
                 embedding: embedding.as_deref(),
                 at: heard.at,
                 span: heard.span.clone(),
