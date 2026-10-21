@@ -41,6 +41,9 @@ pub mod prelude {
 
 const MAX_LANGUAGE_CODE_BYTES: usize = 64;
 
+/// Silence cutoff near -43 dBFS, used to reduce hallucinations on quiet audio.
+pub const SILENCE_FLOOR: f32 = 5e-5;
+
 /// The contract every speech-to-text engine implements.
 ///
 /// An implementation must:
