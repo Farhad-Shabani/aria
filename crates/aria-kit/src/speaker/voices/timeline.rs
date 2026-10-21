@@ -10,7 +10,7 @@
 
 use std::ops::Range;
 
-use aria_kit::segmentation::Activity;
+use crate::segmentation::Activity;
 
 #[derive(Default)]
 pub(super) struct Timeline {

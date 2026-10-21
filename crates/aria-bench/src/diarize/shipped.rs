@@ -41,7 +41,7 @@ pub fn label_as_shipped(run: Run<'_>) -> Result<Labeled, BenchError> {
         .map(|spoken| Turn {
             start: spoken.span.start as f64 / SAMPLE_RATE,
             duration: (spoken.span.end - spoken.span.start) as f64 / SAMPLE_RATE,
-            speaker: spoken.speaker,
+            speaker: spoken.speaker.to_string(),
         })
         .collect();
     Ok(labeled(turns))
@@ -78,10 +78,10 @@ pub fn label_as_attributed(run: Run<'_>) -> Result<Labeled, BenchError> {
         .iter()
         .zip(&named)
         .filter_map(|(span, speaker)| {
-            speaker.clone().map(|speaker| Turn {
+            speaker.as_ref().map(|speaker| Turn {
                 start: span.start as f64 / SAMPLE_RATE,
                 duration: (span.end - span.start) as f64 / SAMPLE_RATE,
-                speaker,
+                speaker: speaker.to_string(),
             })
         })
         .collect();
@@ -106,8 +106,8 @@ fn observe(run: Run<'_>) -> Result<VoiceTrack, BenchError> {
     let samples = crate::diarize::sibling::read(run.wav)?;
 
     let model = run.speaker.model.clone();
-    let diarizer = crate::diarize::diarizer(run.speaker)?;
-    let Some(mut voices) = voice_track(run.segmentation, diarizer, run.grouping) else {
+    let embedder = crate::diarize::embedder(run.speaker)?;
+    let Some(mut voices) = voice_track(run.segmentation, embedder, Vec::new(), run.grouping) else {
         return Err(BenchError::NoSpeakerModel);
     };
 

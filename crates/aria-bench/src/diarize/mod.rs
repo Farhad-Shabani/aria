@@ -123,7 +123,7 @@ pub fn label_recording<Stt: StreamingEngine>(
             speaker.map(|speaker| Turn {
                 start,
                 duration: (end - start).max(0.0),
-                speaker,
+                speaker: speaker.to_string(),
             })
         })
         .collect();
@@ -147,8 +147,11 @@ pub fn label_recording<Stt: StreamingEngine>(
 }
 
 fn diarizer(speaker: SpeakerConfig) -> Result<Diarizer<WeSpeaker>, BenchError> {
-    let embedder = WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)?;
-    Ok(Diarizer::new(embedder, Vec::new()))
+    Ok(Diarizer::new(embedder(speaker)?, Vec::new()))
+}
+
+fn embedder(speaker: SpeakerConfig) -> Result<WeSpeaker, BenchError> {
+    WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)
 }
 
 /// The recording's speech, as the voice detector hears it rather than as the

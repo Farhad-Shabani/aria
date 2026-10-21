@@ -10,8 +10,8 @@ mod timeline;
 
 use std::ops::Range;
 
-#[cfg(test)]
-pub(crate) use pyannote::testing;
+use super::Label;
+
 pub use pyannote::{Chunk, Grouping, PyannoteVoices, Standing, Voiceprint};
 
 /// A running account of who is speaking in a recording.
@@ -21,7 +21,7 @@ pub use pyannote::{Chunk, Grouping, PyannoteVoices, Standing, Voiceprint};
 pub trait Voices {
     /// Who owns each span. `None` where the track cannot say, such as past
     /// its reach or over audio nobody could embed.
-    fn attribute(&self, spans: &[Range<u64>]) -> Vec<Option<String>>;
+    fn attribute(&self, spans: &[Range<u64>]) -> Vec<Option<Label>>;
 }
 
 /// Asks a track who owned each paragraph, skipping the ones nobody timed.
@@ -30,7 +30,7 @@ pub trait Voices {
 /// span in its place would still get a confident answer, about somebody
 /// else's audio, so it is left `None` for the settling pass to fill from a
 /// neighbour.
-pub fn attribute_spans(voices: &impl Voices, spans: &[Option<Range<u64>>]) -> Vec<Option<String>> {
+pub fn attribute_spans(voices: &impl Voices, spans: &[Option<Range<u64>>]) -> Vec<Option<Label>> {
     let timed: Vec<Range<u64>> = spans.iter().flatten().cloned().collect();
     let mut answers = voices.attribute(&timed).into_iter();
     spans
@@ -43,7 +43,7 @@ pub fn attribute_spans(voices: &impl Voices, spans: &[Option<Range<u64>>]) -> Ve
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spoken {
     pub span: Range<u64>,
-    pub speaker: String,
+    pub speaker: Label,
 }
 
 /// What an observation changed about names already written.
@@ -66,8 +66,8 @@ impl Revision {
 /// A voice that turned out to be one already heard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Merged {
-    pub from: String,
-    pub into: String,
+    pub from: Label,
+    pub into: Label,
 }
 
 #[cfg(test)]
@@ -78,11 +78,11 @@ mod tests {
     struct Positional(std::cell::RefCell<Vec<Range<u64>>>);
 
     impl Voices for Positional {
-        fn attribute(&self, spans: &[Range<u64>]) -> Vec<Option<String>> {
+        fn attribute(&self, spans: &[Range<u64>]) -> Vec<Option<Label>> {
             self.0.borrow_mut().extend_from_slice(spans);
             spans
                 .iter()
-                .map(|span| Some(format!("at {}", span.start)))
+                .map(|span| Some(Label::Anonymous(span.start as u32)))
                 .collect()
         }
     }
@@ -99,7 +99,7 @@ mod tests {
         );
         assert_eq!(
             named,
-            [Some("at 10".to_owned()), None, Some("at 30".to_owned()),],
+            [Some(Label::Anonymous(10)), None, Some(Label::Anonymous(30))],
             "and its answers land back on the paragraphs they were about"
         );
     }
@@ -108,7 +108,7 @@ mod tests {
     fn a_track_that_answers_short_leaves_the_rest_unnamed() {
         struct Silent;
         impl Voices for Silent {
-            fn attribute(&self, _spans: &[Range<u64>]) -> Vec<Option<String>> {
+            fn attribute(&self, _spans: &[Range<u64>]) -> Vec<Option<Label>> {
                 Vec::new()
             }
         }

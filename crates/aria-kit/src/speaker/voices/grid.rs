@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use aria_kit::segmentation::ChunkShape;
+use crate::segmentation::ChunkShape;
 
 use crate::audio::CANONICAL_SAMPLE_RATE;
 

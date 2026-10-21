@@ -12,7 +12,7 @@ use aria_kit::voice_activity::{SileroVad, VoiceActivityDetector};
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
 use crate::delivery::{DeliveryOutcome, Placement};
 use crate::primitives::error_chain;
-use crate::speaker::{SegmentLabeler, SegmentReader, Verdict};
+use crate::speaker::{Label, SegmentLabeler, SegmentReader, Verdict};
 use crate::transcription::{
     Language, Mode, Transcriber, Transcript, Transcription, TranscriptionError,
 };
@@ -544,7 +544,7 @@ impl<'a> Published<'a> {
         }
         let published = sinks.segment(Utterance {
             text: corrected,
-            speaker: speaker.as_deref(),
+            speaker: speaker.as_ref(),
             embedding: embedding.as_deref(),
             at: heard.at,
             span: heard.span,
@@ -669,7 +669,7 @@ fn caption_suffix(text: &str) -> Arc<str> {
 /// Who a segment is attributed to, or `None` for a voice that must not be
 /// published. A dictation is deliberate, so noise and unknown voices pass;
 /// only a stranger under own-voice is kept out.
-fn voice(verdict: Verdict) -> Option<(Option<String>, Option<Vec<f32>>)> {
+fn voice(verdict: Verdict) -> Option<(Option<Label>, Option<Vec<f32>>)> {
     match verdict {
         Verdict::Keep { label, embedding } => Some((label, embedding)),
         Verdict::Drop => Some((None, None)),

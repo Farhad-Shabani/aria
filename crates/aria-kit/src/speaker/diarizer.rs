@@ -2,7 +2,7 @@
 //! session. Any [`Embedder`] supplies the embeddings; the thresholds and the
 //! clustering policy live here.
 
-use super::{Embedder, Profile, Role, SpeakerError, SpeakerName};
+use super::{AnonymousNumbering, Embedder, Label, Profile, Role, SpeakerError, SpeakerName};
 
 /// Minimum similarity for claiming an enrolled name.
 pub const ENROLLED_THRESHOLD: f32 = 0.5;
@@ -17,10 +17,11 @@ pub struct Diarizer<E> {
     embedder: E,
     enrolled: Vec<Profile>,
     clusters: Vec<Cluster>,
+    numbering: AnonymousNumbering,
 }
 
 struct Cluster {
-    name: String,
+    label: Label,
     sum: Vec<f32>,
 }
 
@@ -31,6 +32,7 @@ impl<E: Embedder> Diarizer<E> {
             embedder,
             enrolled,
             clusters: Vec::new(),
+            numbering: AnonymousNumbering::default(),
         }
     }
 
@@ -43,8 +45,14 @@ impl<E: Embedder> Diarizer<E> {
     /// The live, tentative label for an embedding. `speaking` is the label
     /// the previous segment was given, which holds unless this one clearly
     /// belongs elsewhere.
-    pub fn label(&mut self, embedding: &[f32], speaking: Option<&str>) -> String {
-        assign(&self.enrolled, &mut self.clusters, embedding, speaking)
+    pub fn label(&mut self, embedding: &[f32], speaking: Option<&Label>) -> Label {
+        assign(
+            &self.enrolled,
+            &mut self.clusters,
+            &mut self.numbering,
+            embedding,
+            speaking,
+        )
     }
 
     /// Replaces the enrolled profiles, keeping the loaded model. A voice
@@ -60,12 +68,6 @@ impl<E: Embedder> Diarizer<E> {
             .iter()
             .filter(|profile| profile.role == Role::Owner)
             .count()
-    }
-
-    /// The enrolled name this embedding matches. Unlike [`Diarizer::label`],
-    /// it never opens or grows an anonymous cluster.
-    pub fn enrolled_name(&self, embedding: &[f32]) -> Option<String> {
-        enrolled_name(&self.enrolled, embedding).map(SpeakerName::to_string)
     }
 
     /// How close this voice comes to the nearest profile the machine's owner
@@ -86,14 +88,14 @@ impl<E: Embedder> Diarizer<E> {
     /// The final labels for a whole session's paragraphs. `None` embeddings
     /// come back `None` — the caller owns the timing that says which neighbor
     /// they belong to.
-    pub fn relabel(&self, paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<String>> {
+    pub fn relabel(&self, paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<Label>> {
         recluster(&self.enrolled, paragraphs)
     }
 }
 
 /// Fills missing labels from neighboring speakers. Utterance openings prefer
 /// the following label; other gaps prefer the preceding one. All-None input stays unchanged.
-pub fn settle(labels: &mut [Option<String>], opens_utterance: impl Fn(usize) -> bool) {
+pub fn settle<T: Clone>(labels: &mut [Option<T>], opens_utterance: impl Fn(usize) -> bool) {
     for index in (0..labels.len()).rev() {
         if labels[index].is_none() && opens_utterance(index) {
             let next = labels.get(index + 1).cloned().flatten();
@@ -118,18 +120,19 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
 
 /// Enrolled cosine at the gate wins the name — enrolled centroids never
 /// update. Otherwise the nearest running cluster absorbs the embedding, or a
-/// new `Speaker {n}` opens.
+/// new anonymous cluster opens.
 ///
 /// `speaking` identifies the previous anonymous speaker. It keeps the label
 /// while above the cluster threshold and within [`STICKY_MARGIN`] of the best match.
 fn assign(
     enrolled: &[Profile],
     clusters: &mut Vec<Cluster>,
+    numbering: &mut AnonymousNumbering,
     embedding: &[f32],
-    speaking: Option<&str>,
-) -> String {
+    speaking: Option<&Label>,
+) -> Label {
     if let Some(name) = enrolled_name(enrolled, embedding) {
-        return name.to_string();
+        return Label::Enrolled(name.clone());
     }
     let similarities: Vec<f32> = clusters
         .iter()
@@ -138,7 +141,7 @@ fn assign(
     let best = closest(similarities.iter().copied().enumerate());
 
     let held = speaking
-        .and_then(|name| clusters.iter().position(|cluster| cluster.name == name))
+        .and_then(|label| clusters.iter().position(|cluster| &cluster.label == label))
         .filter(|&at| similarities[at] >= CLUSTER_THRESHOLD)
         .filter(|&at| best.is_none_or(|(_, top)| similarities[at] + STICKY_MARGIN >= top));
     let taking = held.or_else(|| {
@@ -147,26 +150,28 @@ fn assign(
     });
 
     if let Some(at) = taking {
-        return absorb(&mut clusters[at], embedding).to_owned();
+        return absorb(&mut clusters[at], embedding).clone();
     }
-    let name = format!("Speaker {}", clusters.len() + 1);
+    let label = numbering.issue();
     clusters.push(Cluster {
-        name: name.clone(),
+        label: label.clone(),
         sum: embedding.to_vec(),
     });
-    name
+    label
 }
 
-/// Adds an embedding to a cluster and answers with its name.
-fn absorb<'a>(cluster: &'a mut Cluster, embedding: &[f32]) -> &'a str {
+fn absorb<'a>(cluster: &'a mut Cluster, embedding: &[f32]) -> &'a Label {
     for (sum, value) in cluster.sum.iter_mut().zip(embedding) {
         *sum += value;
     }
-    &cluster.name
+    &cluster.label
 }
 
 /// The enrolled profile this embedding is close enough to claim.
-fn enrolled_name<'a>(enrolled: &'a [Profile], embedding: &[f32]) -> Option<&'a SpeakerName> {
+pub(super) fn enrolled_name<'a>(
+    enrolled: &'a [Profile],
+    embedding: &[f32],
+) -> Option<&'a SpeakerName> {
     enrolled_match(enrolled, embedding).map(|at| &enrolled[at].name)
 }
 
@@ -198,7 +203,7 @@ fn closest<T>(candidates: impl Iterator<Item = (T, f32)>) -> Option<(T, f32)> {
 /// voices often sit closer than the cluster gate.
 // Each merge rescans every pair, so this is O(n³) in a session's
 // paragraphs. A linkage matrix would help if hours-long sessions drag at stop.
-fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<String>> {
+fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Option<Label>> {
     struct Group {
         sum: Vec<f32>,
         count: usize,
@@ -253,10 +258,10 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
 
     groups.sort_by_key(|group| group.members.iter().min().copied());
     let mut labels = vec![None; paragraphs.len()];
-    let mut numbered = 0;
+    let mut numbering = AnonymousNumbering::default();
     for group in &groups {
-        let anchored = group.profile.map(|at| enrolled[at].name.to_string());
-        let name = anchored.unwrap_or_else(|| {
+        let anchored = group.profile.map(|at| enrolled[at].name.clone());
+        let label = anchored.map(Label::Enrolled).unwrap_or_else(|| {
             closest(enrolled.iter().map(|profile| {
                 (
                     &profile.name,
@@ -264,14 +269,11 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
                 )
             }))
             .filter(|(_, similarity)| *similarity >= ENROLLED_THRESHOLD)
-            .map(|(name, _)| name.to_string())
-            .unwrap_or_else(|| {
-                numbered += 1;
-                format!("Speaker {numbered}")
-            })
+            .map(|(name, _)| Label::Enrolled(name.clone()))
+            .unwrap_or_else(|| numbering.issue())
         });
         for &member in &group.members {
-            labels[member] = Some(name.clone());
+            labels[member] = Some(label.clone());
         }
     }
     labels
@@ -289,12 +291,35 @@ mod tests {
         normalized(vec![0.9, 0.1, 0.0, 0.0]).expect("nonzero")
     }
 
+    /// The live labeling state of one session with nobody enrolled.
+    #[derive(Default)]
+    struct Live {
+        clusters: Vec<Cluster>,
+        numbering: AnonymousNumbering,
+    }
+
+    impl Live {
+        fn assign(&mut self, embedding: &[f32], speaking: Option<&Label>) -> Label {
+            assign(
+                &[],
+                &mut self.clusters,
+                &mut self.numbering,
+                embedding,
+                speaking,
+            )
+        }
+    }
+
+    fn enrolled(name: &str) -> Label {
+        Label::Enrolled(SpeakerName::new(name).expect("a usable name"))
+    }
+
     #[test]
     fn assign_joins_close_voices_and_splits_far_ones() {
-        let mut clusters = Vec::new();
-        assert_eq!(assign(&[], &mut clusters, &A, None), "Speaker 1");
-        assert_eq!(assign(&[], &mut clusters, &near_a(), None), "Speaker 1");
-        assert_eq!(assign(&[], &mut clusters, &B, None), "Speaker 2");
+        let mut live = Live::default();
+        assert_eq!(live.assign(&A, None), Label::Anonymous(1));
+        assert_eq!(live.assign(&near_a(), None), Label::Anonymous(1));
+        assert_eq!(live.assign(&B, None), Label::Anonymous(2));
     }
 
     #[test]
@@ -302,14 +327,14 @@ mod tests {
         // Two voices a hair apart. Without the margin the label would flip
         // between them segment by segment, which is what a reader sees as
         // one person becoming five.
-        let mut clusters = Vec::new();
-        assert_eq!(assign(&[], &mut clusters, &A, None), "Speaker 1");
-        assert_eq!(assign(&[], &mut clusters, &B, None), "Speaker 2");
+        let mut live = Live::default();
+        assert_eq!(live.assign(&A, None), Label::Anonymous(1));
+        assert_eq!(live.assign(&B, None), Label::Anonymous(2));
 
         let between = normalized(vec![0.55, 0.45, 0.0, 0.0]).expect("nonzero");
         assert_eq!(
-            assign(&[], &mut clusters, &between, Some("Speaker 1")),
-            "Speaker 1",
+            live.assign(&between, Some(&Label::Anonymous(1))),
+            Label::Anonymous(1),
             "the voice talking holds it"
         );
     }
@@ -318,26 +343,50 @@ mod tests {
     fn a_voice_that_is_clearly_someone_else_still_takes_the_label() {
         // Stickiness must not weld the label on. A voice that wins outright
         // takes it however long the other has been talking.
-        let mut clusters = Vec::new();
-        assert_eq!(assign(&[], &mut clusters, &A, None), "Speaker 1");
-        assert_eq!(assign(&[], &mut clusters, &B, None), "Speaker 2");
+        let mut live = Live::default();
+        assert_eq!(live.assign(&A, None), Label::Anonymous(1));
+        assert_eq!(live.assign(&B, None), Label::Anonymous(2));
         assert_eq!(
-            assign(&[], &mut clusters, &B, Some("Speaker 1")),
-            "Speaker 2"
+            live.assign(&B, Some(&Label::Anonymous(1))),
+            Label::Anonymous(2)
+        );
+    }
+
+    #[test]
+    fn an_enrolled_name_that_reads_like_an_anonymous_speaker_holds_no_anonymous_label() {
+        // Nearer the second anonymous speaker, but close enough to the first
+        // that whoever was talking as the first would keep that label.
+        let leaning_b = normalized(vec![0.48, 0.52, 0.0, 0.0]).expect("nonzero");
+        let after = |speaking: &Label| {
+            let mut live = Live::default();
+            live.assign(&A, None);
+            live.assign(&B, None);
+            live.assign(&leaning_b, Some(speaking))
+        };
+
+        assert_eq!(after(&Label::Anonymous(1)), Label::Anonymous(1));
+        assert_eq!(
+            after(&enrolled("Speaker 1")),
+            Label::Anonymous(2),
+            "an enrolled person who happens to be called that is not the first anonymous speaker"
         );
     }
 
     #[test]
     fn assign_prefers_an_enrolled_name_and_leaves_its_profile_alone() {
-        let enrolled = vec![super::super::enrolled_voice(
+        let profiles = vec![super::super::enrolled_voice(
             "alex",
             Role::Owner,
             A.to_vec(),
         )];
         let mut clusters = Vec::new();
-        assert_eq!(assign(&enrolled, &mut clusters, &near_a(), None), "alex");
+        let mut numbering = AnonymousNumbering::default();
+        assert_eq!(
+            assign(&profiles, &mut clusters, &mut numbering, &near_a(), None),
+            enrolled("alex")
+        );
         assert!(clusters.is_empty());
-        assert_eq!(enrolled[0].vector, A.to_vec());
+        assert_eq!(profiles[0].vector, A.to_vec());
     }
 
     #[test]
@@ -351,14 +400,13 @@ mod tests {
         ];
         let labels = recluster(&[], &paragraphs);
         let expected = [
-            Some("Speaker 1"),
+            Some(Label::Anonymous(1)),
             None,
-            Some("Speaker 1"),
-            Some("Speaker 2"),
+            Some(Label::Anonymous(1)),
+            Some(Label::Anonymous(2)),
             None,
         ];
-        let actual: Vec<Option<&str>> = labels.iter().map(Option::as_deref).collect();
-        assert_eq!(actual, expected);
+        assert_eq!(labels, expected);
     }
 
     #[test]
@@ -377,7 +425,7 @@ mod tests {
 
     #[test]
     fn settle_leaves_a_session_nobody_named_alone() {
-        let mut labels = vec![None, None];
+        let mut labels: Vec<Option<Label>> = vec![None, None];
         settle(&mut labels, |_| false);
         assert_eq!(labels, [None, None]);
     }
@@ -406,29 +454,27 @@ mod tests {
 
     #[test]
     fn recluster_gives_a_merged_group_its_enrolled_name() {
-        let enrolled = vec![super::super::enrolled_voice(
+        let profiles = vec![super::super::enrolled_voice(
             "alex",
             Role::Owner,
             A.to_vec(),
         )];
         let paragraphs = vec![Some(near_a()), Some(B.to_vec())];
-        let labels = recluster(&enrolled, &paragraphs);
-        assert_eq!(labels[0].as_deref(), Some("alex"));
-        assert_eq!(labels[1].as_deref(), Some("Speaker 1"));
+        let labels = recluster(&profiles, &paragraphs);
+        assert_eq!(labels, [Some(enrolled("alex")), Some(Label::Anonymous(1))]);
     }
 
     #[test]
     fn recluster_keeps_two_enrolled_people_apart_when_their_voices_are_close() {
         let close_to_a = normalized(vec![0.32, 0.95, 0.0, 0.0]).expect("nonzero");
-        let enrolled = vec![
+        let profiles = vec![
             super::super::enrolled_voice("alex", Role::Owner, A.to_vec()),
             super::super::enrolled_voice("blake", Role::Guest, close_to_a.clone()),
         ];
         let paragraphs = vec![Some(A.to_vec()), Some(close_to_a)];
 
-        let labels = recluster(&enrolled, &paragraphs);
+        let labels = recluster(&profiles, &paragraphs);
 
-        assert_eq!(labels[0].as_deref(), Some("alex"));
-        assert_eq!(labels[1].as_deref(), Some("blake"));
+        assert_eq!(labels, [Some(enrolled("alex")), Some(enrolled("blake"))]);
     }
 }

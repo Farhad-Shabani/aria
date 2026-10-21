@@ -4,6 +4,7 @@
 use std::ops::Range;
 use std::path::Path;
 
+use aria::speaker::Label;
 use aria_kit::audio::read_wav;
 use aria_kit::voice_activity::SileroVad;
 use aria_speaker::wespeaker::Config as SpeakerConfig;
@@ -71,10 +72,10 @@ pub fn label_by_voice(
         .flat_map(|(speaker, window)| {
             let spoken = speech_within(&window.speaks_for, &regions);
             spoken.into_iter().filter_map(move |stretch| {
-                speaker.clone().map(|speaker| Turn {
+                speaker.as_ref().map(|speaker| Turn {
                     start: stretch.start as f64 / SAMPLE_RATE,
                     duration: (stretch.end - stretch.start) as f64 / SAMPLE_RATE,
-                    speaker,
+                    speaker: speaker.to_string(),
                 })
             })
         })
@@ -136,10 +137,10 @@ fn cut(samples: usize, windowing: Windowing) -> Vec<Window> {
 
 /// Groups voiceprints until exactly `wanted` groups remain, and names each
 /// group after the order it was first heard.
-fn group_into(voices: &[Option<Vec<f32>>], wanted: usize) -> Vec<Option<String>> {
+fn group_into(voices: &[Option<Vec<f32>>], wanted: usize) -> Vec<Option<Label>> {
     group(voices, Stop::Count(wanted))
         .into_iter()
-        .map(|number| number.map(|number| format!("Speaker {}", number + 1)))
+        .map(|number| number.map(|number| Label::Anonymous(number as u32 + 1)))
         .collect()
 }
 

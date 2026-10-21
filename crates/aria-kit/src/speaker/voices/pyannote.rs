@@ -7,14 +7,14 @@
 
 use std::ops::Range;
 
-use aria_kit::segmentation::{Activity, ChunkShape, Segmenter};
-use aria_kit::speaker::Embedder;
+use crate::segmentation::{Activity, ChunkShape, Segmenter};
+use crate::speaker::diarizer::enrolled_name;
+use crate::speaker::{AnonymousNumbering, Embedder, Label, Profile};
 
 use super::grid::FrameGrid;
 use super::timeline::Timeline;
 use super::{Merged, Revision, Spoken, Voices};
 use crate::audio::RecordingReader;
-use crate::speaker::Diarizer;
 
 /// How far the track advances between chunks. Every frame is then judged by
 /// `chunk / hop` chunks, so halving the hop doubles the cost of the run.
@@ -50,7 +50,7 @@ impl Default for Grouping {
 /// One voice as it stands right now, for a caller watching a session settle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Standing {
-    pub name: String,
+    pub label: Label,
     pub voiceprints: usize,
     /// Whether the cluster has enough voiceprints to assign labels.
     pub eligible: bool,
@@ -58,7 +58,8 @@ pub struct Standing {
 
 pub struct PyannoteVoices<S, E> {
     segmenter: S,
-    diarizer: Diarizer<E>,
+    embedder: E,
+    enrolled: Vec<Profile>,
     grouping: Grouping,
     shape: ChunkShape,
     grid: FrameGrid,
@@ -67,10 +68,7 @@ pub struct PyannoteVoices<S, E> {
     next_chunk: u64,
     /// Who spoke in each frame, as the overlapping chunks voted.
     timeline: Timeline,
-    /// Names handed out so far. A merge drops a voice from the list, so the
-    /// list's length would hand the next voice a name somebody is still
-    /// using — and both lookups here match by name.
-    issued: usize,
+    numbering: AnonymousNumbering,
 }
 
 /// Model outputs for one chunk, reusable across clustering threshold sweeps.
@@ -91,30 +89,34 @@ pub struct Voiceprint {
     pub values: Vec<f32>,
 }
 
-/// One voice heard across the recording: a name and the sum of every
-/// voiceprint placed under it. When it spoke is the timeline's business.
+/// One voice heard across the recording. When it spoke is the timeline's
+/// business.
 struct Voice {
-    name: String,
-    /// Whether the name came from an enrolled profile rather than a number.
-    /// Two of these are two people, however alike they sound.
-    enrolled: bool,
+    label: Label,
     sum: Vec<f32>,
     count: usize,
 }
 
+impl Voice {
+    fn enrolled(&self) -> bool {
+        matches!(self.label, Label::Enrolled(_))
+    }
+}
+
 impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
-    pub fn new(segmenter: S, diarizer: Diarizer<E>, grouping: Grouping) -> Self {
+    pub fn new(segmenter: S, embedder: E, enrolled: Vec<Profile>, grouping: Grouping) -> Self {
         let shape = segmenter.shape();
         Self {
             segmenter,
-            diarizer,
+            embedder,
+            enrolled,
             grouping,
             grid: FrameGrid::from(&shape),
             shape,
             voices: Vec::new(),
             next_chunk: 0,
             timeline: Timeline::default(),
-            issued: 0,
+            numbering: AnonymousNumbering::default(),
         }
     }
 
@@ -200,7 +202,7 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
                 })
                 .filter_map(|local| {
                     let heard = masked(&audio, &frames, local, &self.grid);
-                    match self.diarizer.embed(&heard) {
+                    match self.embedder.embed(&heard) {
                         Ok(values) => values.map(|values| Voiceprint { local, values }),
                         Err(error) => {
                             tracing::warn!(
@@ -223,14 +225,13 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
         let at = self.grid.at(chunk.at);
         self.timeline.judge(at, &chunk.frames);
 
-        // Keep distinct local voices separate during clustering. Names survive
-        // merges that shift indices.
-        let mut concurrent: Vec<String> = Vec::new();
+        // Held by label, not index: the merge below shifts indices.
+        let mut concurrent: Vec<Label> = Vec::new();
         for voiceprint in &chunk.voices {
             let placed = self.place(&voiceprint.values, &concurrent);
             self.timeline
                 .vote(placed, at, &chunk.frames, voiceprint.local);
-            concurrent.push(self.voices[placed].name.clone());
+            concurrent.push(self.voices[placed].label.clone());
         }
         // After the chunk, not inside it: merging between placements would
         // fuse two voices this chunk is about to prove distinct.
@@ -242,18 +243,19 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
     ///
     /// `concurrent` excludes already placed voices from cluster matching.
     /// An enrolled-profile match takes precedence over this exclusion.
-    fn place(&mut self, voiceprint: &[f32], concurrent: &[String]) -> usize {
-        if let Some(name) = self.diarizer.enrolled_name(voiceprint) {
-            return match self.voices.iter().position(|voice| voice.name == name) {
+    fn place(&mut self, voiceprint: &[f32], concurrent: &[Label]) -> usize {
+        if let Some(name) = enrolled_name(&self.enrolled, voiceprint) {
+            let label = Label::Enrolled(name.clone());
+            return match self.voices.iter().position(|voice| voice.label == label) {
                 Some(index) => self.absorb(index, voiceprint),
-                None => self.open(name, true, voiceprint),
+                None => self.open(label, voiceprint),
             };
         }
         let nearest = self
             .voices
             .iter()
             .enumerate()
-            .filter(|(_, voice)| !concurrent.contains(&voice.name))
+            .filter(|(_, voice)| !concurrent.contains(&voice.label))
             .map(|(index, voice)| (index, alike(&voice.sum, voice.count, voiceprint, 1)))
             .reduce(|best, candidate| {
                 if candidate.1 > best.1 {
@@ -267,11 +269,8 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
         {
             return self.absorb(index, voiceprint);
         }
-        // Taken at birth and never given back, so a merged number leaves a
-        // gap rather than renaming a label somebody already read.
-        self.issued += 1;
-        let name = format!("Speaker {}", self.issued);
-        self.open(name, false, voiceprint)
+        let label = self.numbering.issue();
+        self.open(label, voiceprint)
     }
 
     /// Adds a voiceprint to a voice already heard.
@@ -284,11 +283,9 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
         index
     }
 
-    /// Opens a voice under `name`.
-    fn open(&mut self, name: String, enrolled: bool, voiceprint: &[f32]) -> usize {
+    fn open(&mut self, label: Label, voiceprint: &[f32]) -> usize {
         self.voices.push(Voice {
-            name,
-            enrolled,
+            label,
             sum: voiceprint.to_vec(),
             count: 1,
         });
@@ -296,18 +293,18 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
         self.voices.len() - 1
     }
 
-    /// Joins voices that have drifted into one another, keeping the name
+    /// Joins voices that have drifted into one another, keeping the label
     /// that was heard first. Absorbing a voiceprint moves a voice, so this
     /// runs after every chunk — it is over voices, of which a meeting holds
     /// a handful, not over voiceprints.
-    fn merge(&mut self, concurrent: &[String]) -> Revision {
+    fn merge(&mut self, concurrent: &[Label]) -> Revision {
         let mut revision = Revision::default();
         while let Some((keeper, absorbed)) = self.closest_pair(concurrent) {
             self.timeline.absorb(keeper, absorbed);
             let taken = self.voices.remove(absorbed);
             revision.merges.push(Merged {
-                from: taken.name.clone(),
-                into: self.voices[keeper].name.clone(),
+                from: taken.label.clone(),
+                into: self.voices[keeper].label.clone(),
             });
             let voice = &mut self.voices[keeper];
             for (sum, value) in voice.sum.iter_mut().zip(&taken.sum) {
@@ -320,7 +317,7 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
 
     /// The two most alike voices, when they are alike enough to be one and
     /// nothing proves them apart. The earlier-heard of the pair is the keeper.
-    fn closest_pair(&self, concurrent: &[String]) -> Option<(usize, usize)> {
+    fn closest_pair(&self, concurrent: &[Label]) -> Option<(usize, usize)> {
         let mut best: Option<(usize, usize, f32)> = None;
         for a in 0..self.voices.len() {
             for b in a + 1..self.voices.len() {
@@ -344,10 +341,10 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
 
     /// Prevents merges between voices placed in this chunk or carrying
     /// different enrolled names.
-    fn apart(&self, a: usize, b: usize, concurrent: &[String]) -> bool {
+    fn apart(&self, a: usize, b: usize, concurrent: &[Label]) -> bool {
         let (a, b) = (&self.voices[a], &self.voices[b]);
-        let overlapped = concurrent.contains(&a.name) && concurrent.contains(&b.name);
-        overlapped || (a.enrolled && b.enrolled)
+        let overlapped = concurrent.contains(&a.label) && concurrent.contains(&b.label);
+        overlapped || (a.enrolled() && b.enrolled())
     }
 
     /// Every voice the track is holding, in the order they were first heard.
@@ -359,7 +356,7 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
         self.voices
             .iter()
             .map(|voice| Standing {
-                name: voice.name.clone(),
+                label: voice.label.clone(),
                 voiceprints: voice.count,
                 eligible: voice.count >= self.grouping.least_voiceprints,
             })
@@ -410,7 +407,7 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
             .into_iter()
             .map(|(voice, run)| Spoken {
                 span: self.grid.start(run.start)..self.grid.start(run.end),
-                speaker: self.voices[voice].name.clone(),
+                speaker: self.voices[voice].label.clone(),
             })
             .collect();
         spoken.sort_by_key(|turn| turn.span.start);
@@ -419,7 +416,7 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
 }
 
 impl<S: Segmenter, E: Embedder> Voices for PyannoteVoices<S, E> {
-    fn attribute(&self, spans: &[Range<u64>]) -> Vec<Option<String>> {
+    fn attribute(&self, spans: &[Range<u64>]) -> Vec<Option<Label>> {
         let eligible = self.eligible();
         spans
             .iter()
@@ -436,7 +433,7 @@ impl<S: Segmenter, E: Embedder> Voices for PyannoteVoices<S, E> {
                     .enumerate()
                     .filter(|(_, held)| *held > 0)
                     .max_by_key(|(_, held)| *held)
-                    .map(|(voice, _)| self.voices[voice].name.clone())
+                    .map(|(voice, _)| self.voices[voice].label.clone())
             })
             .collect()
     }
@@ -468,18 +465,17 @@ fn alike(a: &[f32], a_count: usize, b: &[f32], b_count: usize) -> f32 {
 }
 
 /// Scripted nets, so a test can say what the graphs would have answered.
-/// Shared with the track's own thread tests, which drive the same walk.
 #[cfg(test)]
-pub(crate) mod testing {
-    use aria_kit::segmentation::SegmentationError;
-    use aria_kit::speaker::SpeakerError;
+mod testing {
+    use crate::segmentation::SegmentationError;
+    use crate::speaker::SpeakerError;
 
     use super::*;
 
     /// A segmenter reading from a script rather than a graph, one chunk per
     /// call. The real one is an ONNX session; what is under test here is
     /// what the track does with its answers.
-    pub(crate) struct ScriptedSegmenter {
+    pub(super) struct ScriptedSegmenter {
         chunks: std::vec::IntoIter<Vec<Activity>>,
         /// Chunk width. Equal to the hop leaves chunks edge to edge; wider
         /// makes them overlap, which is what the real grid does.
@@ -487,7 +483,7 @@ pub(crate) mod testing {
     }
 
     /// Samples per frame in the scripted grid.
-    pub(crate) const SCRIPTED_SHIFT: usize = 320;
+    pub(super) const SCRIPTED_SHIFT: usize = 320;
 
     impl Segmenter for ScriptedSegmenter {
         fn shape(&self) -> ChunkShape {
@@ -506,7 +502,7 @@ pub(crate) mod testing {
 
     /// An embedder that answers with the next scripted voiceprint. Two
     /// identical vectors are one person; orthogonal ones are two.
-    pub(crate) struct ScriptedEmbedder {
+    pub(super) struct ScriptedEmbedder {
         voiceprints: std::vec::IntoIter<[f32; 2]>,
     }
 
@@ -522,7 +518,7 @@ pub(crate) mod testing {
 
     /// A track whose net and embedder both read from a script: one chunk of
     /// frames and one voiceprint per entry, in lockstep.
-    pub(crate) fn track(
+    pub(super) fn track(
         chunks: Vec<Vec<Activity>>,
         voiceprints: Vec<[f32; 2]>,
     ) -> PyannoteVoices<ScriptedSegmenter, ScriptedEmbedder> {
@@ -530,7 +526,7 @@ pub(crate) mod testing {
     }
 
     /// The same, under grouping rules other than the shipped ones.
-    pub(crate) fn track_with(
+    pub(super) fn track_with(
         grouping: Grouping,
         chunks: Vec<Vec<Activity>>,
         voiceprints: Vec<[f32; 2]>,
@@ -541,7 +537,7 @@ pub(crate) mod testing {
     }
 
     /// The same, over chunks `samples` wide.
-    pub(crate) fn track_of(
+    pub(super) fn track_of(
         samples: usize,
         chunks: Vec<Vec<Activity>>,
         voiceprints: Vec<[f32; 2]>,
@@ -551,25 +547,23 @@ pub(crate) mod testing {
                 chunks: chunks.into_iter(),
                 samples,
             },
-            Diarizer::new(
-                ScriptedEmbedder {
-                    voiceprints: voiceprints.into_iter(),
-                },
-                Vec::new(),
-            ),
+            ScriptedEmbedder {
+                voiceprints: voiceprints.into_iter(),
+            },
+            Vec::new(),
             Grouping::default(),
         )
     }
 
     /// What every track here is built with, so a changed default moves the
     /// tests with it rather than leaving them asserting an old number.
-    pub(crate) fn min_voiceprints() -> usize {
+    pub(super) fn min_voiceprints() -> usize {
         Grouping::default().least_voiceprints
     }
 
     /// Walks everything the recording holds, the way the track's own thread
     /// does. The tests are about what grouping decides, not about pacing.
-    pub(crate) fn hear_all<S: Segmenter, E: Embedder>(
+    pub(super) fn hear_all<S: Segmenter, E: Embedder>(
         voices: &mut PyannoteVoices<S, E>,
         recording: &RecordingReader,
     ) -> Revision {
@@ -581,14 +575,14 @@ pub(crate) mod testing {
     }
 
     /// A chunk in which `local` speaks throughout and nobody else does.
-    pub(crate) fn alone(local: usize) -> Vec<Activity> {
+    pub(super) fn alone(local: usize) -> Vec<Activity> {
         vec![Activity::SILENT.speaking(local); MIN_ACTIVE_FRAMES * 2]
     }
 
     /// A finished recording of `chunks` whole chunks. Filled here because
     /// `held_to()` reports what a reader has taken, and in a session the walk's
     /// own `fill_through` pulls it forward.
-    pub(crate) fn recording_of(chunks: usize) -> RecordingReader {
+    pub(super) fn recording_of(chunks: usize) -> RecordingReader {
         let mut recording =
             RecordingReader::from_samples(&vec![0.1; chunks * HOP_SAMPLES as usize]);
         recording.fill().expect("the pushed recording is whole");
@@ -669,8 +663,32 @@ mod tests {
         // label already written, so there is nothing to rewrite.
         assert!(!hear_all(&mut voices, &recording).revised());
         assert_eq!(voices.voices.len(), 2);
-        assert_eq!(voices.voices[0].name, "Speaker 1");
-        assert_eq!(voices.voices[1].name, "Speaker 2");
+        assert_eq!(voices.voices[0].label, Label::Anonymous(1));
+        assert_eq!(voices.voices[1].label, Label::Anonymous(2));
+    }
+
+    #[test]
+    fn an_enrolled_name_that_reads_like_an_anonymous_speaker_opens_its_own_voice() {
+        let recording = recording_of(2);
+        let mut voices = track(
+            Vec::from([alone(0), alone(0)]),
+            Vec::from([[1.0, 0.0], [0.0, 1.0]]),
+        );
+        let named_alike = crate::speaker::enrolled_voice(
+            "Speaker 1",
+            crate::speaker::Role::Guest,
+            Vec::from([0.0, 1.0]),
+        );
+        voices.enrolled = Vec::from([named_alike.clone()]);
+
+        hear_all(&mut voices, &recording);
+
+        let live: Vec<&Label> = voices.voices.iter().map(|voice| &voice.label).collect();
+        assert_eq!(
+            live,
+            [&Label::Anonymous(1), &Label::Enrolled(named_alike.name)],
+            "the enrolled voice must not be filed under the first anonymous speaker"
+        );
     }
 
     #[test]
@@ -684,10 +702,10 @@ mod tests {
         );
         let revision = hear_all(&mut voices, &recording);
         assert!(revision.revised());
-        assert_eq!(revision.merges[0].from, "Speaker 2");
-        assert_eq!(revision.merges[0].into, "Speaker 1");
+        assert_eq!(revision.merges[0].from, Label::Anonymous(2));
+        assert_eq!(revision.merges[0].into, Label::Anonymous(1));
         assert_eq!(voices.voices.len(), 1);
-        assert_eq!(voices.voices[0].name, "Speaker 1");
+        assert_eq!(voices.voices[0].label, Label::Anonymous(1));
     }
 
     #[test]
@@ -708,16 +726,19 @@ mod tests {
             ]),
         );
         let revision = hear_all(&mut voices, &recording);
-        assert_eq!(revision.merges[0].from, "Speaker 2");
+        assert_eq!(revision.merges[0].from, Label::Anonymous(2));
 
-        let live: Vec<&str> = voices
-            .voices
-            .iter()
-            .map(|voice| voice.name.as_str())
-            .collect();
-        // Naming from the list's length would call the newcomer "Speaker 3",
-        // which "Speaker 3" is still answering to.
-        assert_eq!(live, Vec::from(["Speaker 1", "Speaker 3", "Speaker 4"]));
+        let live: Vec<&Label> = voices.voices.iter().map(|voice| &voice.label).collect();
+        // Numbering from the list's length would call the newcomer Speaker 3,
+        // a label still in use.
+        assert_eq!(
+            live,
+            [
+                &Label::Anonymous(1),
+                &Label::Anonymous(3),
+                &Label::Anonymous(4)
+            ]
+        );
     }
 
     #[test]
@@ -735,7 +756,7 @@ mod tests {
         let named = voices.attribute(&Vec::from([0..turn, turn..turn * 2]));
         assert_eq!(
             named,
-            Vec::from([Some("Speaker 1".to_owned()), Some("Speaker 2".to_owned())])
+            Vec::from([Some(Label::Anonymous(1)), Some(Label::Anonymous(2))])
         );
     }
 
@@ -773,7 +794,7 @@ mod tests {
 
         let whole = 0..HOP_SAMPLES * brief as u64;
         let named = voices.attribute(&[whole]);
-        assert_eq!(named, Vec::from([Some("Speaker 1".to_owned())]));
+        assert_eq!(named, Vec::from([Some(Label::Anonymous(1))]));
     }
 
     #[test]

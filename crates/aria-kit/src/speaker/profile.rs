@@ -32,7 +32,7 @@ impl std::fmt::Display for Role {
 
 /// An enrolled person's name, which is also their filename. Holding one is
 /// proof it cannot escape the speakers directory.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpeakerName(String);
 
 impl SpeakerName {
