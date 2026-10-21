@@ -12,18 +12,16 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 @MainActor
 final class DaemonEvents {
     /// One stream, many readers: every overlay watches the same subscription.
-    private var stageHandlers: [(Aria_Daemon_V1_DictationEvent?) -> Void] = []
+    private var dictationHandlers: [(Aria_Daemon_V1_DictationEvent?) -> Void] = []
     private var captionHandlers: [(Aria_Daemon_V1_CaptionSnapshot?) -> Void] = []
     private var ghostHandlers: [(Aria_Daemon_V1_GhostSnapshot?) -> Void] = []
     private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
     private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
     private var levelHandlers: [(Float) -> Void] = []
 
-    /// Called for every dictation event, and with `nil` whenever the stream
-    /// is not carrying events. The whole event, not just its stage: a
-    /// delivered press also says where its text went.
-    func onStage(_ handle: @escaping (Aria_Daemon_V1_DictationEvent?) -> Void) {
-        stageHandlers.append(handle)
+    /// Called with `nil` whenever the stream is not carrying events.
+    func onDictation(_ handle: @escaping (Aria_Daemon_V1_DictationEvent?) -> Void) {
+        dictationHandlers.append(handle)
     }
 
     func onCaption(_ handle: @escaping (Aria_Daemon_V1_CaptionSnapshot?) -> Void) {
@@ -65,7 +63,7 @@ final class DaemonEvents {
         task = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.subscribeOnce()
-                self?.publish(stage: nil)
+                self?.publish(dictation: nil)
                 self?.publish(chat: nil)
                 self?.publish(speaker: nil)
                 self?.publish(caption: nil)
@@ -75,8 +73,8 @@ final class DaemonEvents {
         }
     }
 
-    private func publish(stage: Aria_Daemon_V1_DictationEvent?) {
-        for handler in stageHandlers { handler(stage) }
+    private func publish(dictation: Aria_Daemon_V1_DictationEvent?) {
+        for handler in dictationHandlers { handler(dictation) }
     }
 
     private func publish(chat: Aria_Daemon_V1_ChatEvent?) {
@@ -109,7 +107,7 @@ final class DaemonEvents {
                         switch event.payload {
                         case .dictation(let dictation):
                             await MainActor.run {
-                                self.publish(stage: dictation)
+                                self.publish(dictation: dictation)
                                 if [.delivered, .failed, .cancelled].contains(dictation.stage) {
                                     NotificationCenter.default.post(name: .dictationHistoryChanged, object: nil)
                                 }

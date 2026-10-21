@@ -136,12 +136,9 @@ enum SetupClient {
         var interrupted = false
     }
 
-    /// Covers the daemon's shutdown grace, as the CLI's `service stop` does.
-    static let daemonStopTimeout = Duration.seconds(10)
-
     /// Waits for a signalled daemon to let go of the socket. One that will
     /// not is left for the service install to refuse loudly.
-    static func awaitDaemonExit(probes: Int = 40, every: Duration = .milliseconds(250)) async {
+    static func awaitDaemonSocketClosed(probes: Int = 40, every: Duration = .milliseconds(250)) async {
         let client = DaemonClient()
         for _ in 0..<probes {
             if await !client.isRunning() { return }
@@ -167,7 +164,7 @@ extension SetupState.Effects {
                     log.error("Daemon not stopped before apply: \(String(describing: error), privacy: .private)")
                     return
                 }
-                await SetupClient.awaitDaemonExit()
+                await SetupClient.awaitDaemonSocketClosed()
             },
             startDaemon: {
                 do {

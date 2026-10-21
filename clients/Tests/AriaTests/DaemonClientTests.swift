@@ -3,8 +3,6 @@ import XCTest
 @testable import Aria
 
 final class DaemonClientTests: XCTestCase {
-    // MARK: - lockedPid
-
     func test_lockedPid_parsesPlainPid() {
         XCTAssertEqual(DaemonClient.lockedPid("4258"), 4258)
     }
@@ -18,8 +16,6 @@ final class DaemonClientTests: XCTestCase {
         XCTAssertNil(DaemonClient.lockedPid(""))
         XCTAssertNil(DaemonClient.lockedPid("not a pid"))
     }
-
-    // MARK: - daemonBinaryCandidates
 
     func test_daemonBinaryCandidates_overrideWinsAndExpandsTilde() {
         let defaults = scratchDefaults()
@@ -41,8 +37,6 @@ final class DaemonClientTests: XCTestCase {
         )
     }
 
-    // MARK: - Scratch suite (never touch UserDefaults.standard)
-
     private func scratchDefaults() -> UserDefaults {
         let suite = "AriaTests.\(name)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -50,8 +44,6 @@ final class DaemonClientTests: XCTestCase {
         addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         return defaults
     }
-
-    // MARK: - startMethod
 
     func test_startMethod_followsTheAgent() throws {
         XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: nil), .kickstart)

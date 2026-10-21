@@ -85,9 +85,10 @@ struct DictationHistoryView: View {
             Button("Delete", role: .destructive) { state.delete(entry.id) }
             Button("Cancel", role: .cancel) {}
         } message: { entry in
+            let suffix =
+                if case .available = entry.audio { " along with its saved recording." } else { "." }
             Text(
-                "“\(String(entry.preview.prefix(80)))” will be deleted"
-                    + (entry.audioAvailable ? " along with its saved recording." : ".")
+                "“\(String(entry.preview.prefix(80)))” will be deleted" + suffix
             )
         }
         .confirmationDialog(

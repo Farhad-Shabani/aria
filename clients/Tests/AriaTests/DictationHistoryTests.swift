@@ -458,17 +458,36 @@ final class DictationHistoryTests: XCTestCase {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .local
-        wire.status = .success
+        wire.status = .transcriptionFailed
         wire.audio = .available
         XCTAssertThrowsError(try DictationHistoryClient.item(wire))
         wire.audioExpiresAtMs = 1_000
-        XCTAssertNoThrow(try DictationHistoryClient.item(wire))
-        for audio in [Aria_Daemon_V1_HistoryAudioAvailability.unavailable, .expired] {
+        let expiry = Date(timeIntervalSince1970: 1)
+        let available = try DictationHistoryClient.item(wire)
+        XCTAssertEqual(available.audio, .available(until: expiry))
+        XCTAssertEqual(
+            available.metadata.first { $0.0 == "Audio" }?.1,
+            "Available until \(expiry.formatted(date: .abbreviated, time: .shortened))")
+        var successful = available
+        successful.status = .success
+        XCTAssertFalse(successful.metadata.contains { $0.0 == "Audio" })
+        let cases: [(Aria_Daemon_V1_HistoryAudioAvailability, HistoryItem.Audio, String)] = [
+            (.unavailable, .unavailable, "Unavailable"),
+            (.expired, .expired, "Expired"),
+        ]
+        for (audio, expected, description) in cases {
             wire.audio = audio
             XCTAssertThrowsError(try DictationHistoryClient.item(wire))
             wire.clearAudioExpiresAtMs()
-            XCTAssertNoThrow(try DictationHistoryClient.item(wire))
+            let item = try DictationHistoryClient.item(wire)
+            XCTAssertEqual(item.audio, expected)
+            XCTAssertEqual(item.metadata.first { $0.0 == "Audio" }?.1, description)
             wire.audioExpiresAtMs = 1_000
+        }
+        wire.clearAudioExpiresAtMs()
+        for audio in [Aria_Daemon_V1_HistoryAudioAvailability.unspecified, .UNRECOGNIZED(12345)] {
+            wire.audio = audio
+            XCTAssertThrowsError(try DictationHistoryClient.item(wire))
         }
     }
 

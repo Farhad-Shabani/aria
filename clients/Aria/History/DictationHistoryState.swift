@@ -5,6 +5,12 @@ extension Notification.Name {
 }
 
 struct HistoryItem: Identifiable, Equatable, Sendable {
+    enum Audio: Equatable, Sendable {
+        case available(until: Date)
+        case unavailable
+        case expired
+    }
+
     enum Status: Equatable, Sendable {
         case success, transcriptionFailed, deliveryFailed, recovered, deletionPending
 
@@ -28,9 +34,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     var duration: Double?
     var complete = true
     var retryable = false
-    var audioExpires: Date?
-    var audioAvailable = false
-    var audioExpired = false
+    var audio: Audio = .unavailable
     var retrying = false
     var warning: String?
     var message: String?
@@ -50,13 +54,16 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
                 (complete ? "Words" : "Words (incomplete)", "\(text.split(whereSeparator: \.isWhitespace).count)"))
         }
         if status == .transcriptionFailed {
-            let audio: String
-            if audioAvailable, let audioExpires {
-                audio = "Available until \(audioExpires.formatted(date: .abbreviated, time: .shortened))"
-            } else {
-                audio = audioExpired ? "Expired" : "Unavailable"
+            let description: String
+            switch audio {
+            case .available(let expiry):
+                description = "Available until \(expiry.formatted(date: .abbreviated, time: .shortened))"
+            case .unavailable:
+                description = "Unavailable"
+            case .expired:
+                description = "Expired"
             }
-            rows.append(("Audio", audio))
+            rows.append(("Audio", description))
         }
         return rows
     }

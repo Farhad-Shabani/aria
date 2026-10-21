@@ -30,7 +30,7 @@ final class GhostController {
         }
         // Stages are never dropped, so they clear the ghost even when its
         // empty update is lost.
-        events.onStage { [weak self] event in
+        events.onDictation { [weak self] event in
             guard let self else { return }
             if let event, !Self.clearingStages.contains(event.stage) { return }
             state.clear()
