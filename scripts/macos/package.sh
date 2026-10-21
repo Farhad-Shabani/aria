@@ -20,7 +20,7 @@ trap 'rm -rf "$stage"' EXIT
 ditto "$app" "$stage/Aria.app"
 ln -s /Applications "$stage/Applications"
 mkdir -p "$dist"
-hdiutil create -quiet -ov -volname Aria -srcfolder "$stage" -format UDZO "$dmg"
+hdiutil create -quiet -ov -volname Aria -srcfolder "$stage" -format ULFO "$dmg"
 if [ "$ARIA_SIGN_IDENTITY" != - ]; then
     codesign --force --timestamp --sign "$ARIA_SIGN_IDENTITY" "$dmg"
 fi

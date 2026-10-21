@@ -187,12 +187,13 @@ swift-test: swift-project
 version := `sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1`
 
 # Build Aria.app with the daemon inside, into clients/build/mac
-app: swift-project
-    cargo build --locked --release --bin aria
+app profile="dist": swift-project
+    cargo build --locked --profile {{ profile }} --bin aria
     cd clients && xcodebuild -project Aria.xcodeproj -scheme Aria \
         -configuration Release -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
+        ARCHS=$(uname -m) \
         CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} CURRENT_PROJECT_VERSION={{ version }} -quiet build
-    scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app
+    scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app {{ profile }}
     scripts/macos/check-minos.sh clients/build/mac/Build/Products/Release/Aria.app
 
 swift_resolved := "clients/Aria.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
