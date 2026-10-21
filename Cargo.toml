@@ -22,12 +22,15 @@ members = [
 default-members = [ "crates/aria" ]
 resolver = "3"
 
-# Favor smaller browser downloads over faster linking.
-[profile.browser]
+# Release scripts only. Fat LTO adds minutes to every link.
+[profile.dist]
 inherits      = "release"
 lto           = "fat"
 codegen-units = 1
-strip         = true
+
+[profile.browser]
+inherits = "dist"
+strip    = true
 
 # Keep source locations for backtraces without full debug information.
 [profile.dev]

@@ -14,11 +14,11 @@ if [ "$(uname -sm)" != "Linux x86_64" ]; then
     exit 1
 fi
 
-cargo build --locked --release --bin aria
+cargo build --locked --profile dist --bin aria
 stage="target/linux-stage/aria-$version"
 rm -rf target/linux-stage
 mkdir -p "$stage/bin" "$stage/share/doc/aria"
-cp target/release/aria "$stage/bin/"
+cp target/dist/aria "$stage/bin/"
 cp LICENSE-GPL target/THIRD-PARTY-LICENSES.md "$stage/share/doc/aria/"
 mkdir -p dist
 tar -czf dist/aria-linux-x86_64.tar.gz -C target/linux-stage "aria-$version"
