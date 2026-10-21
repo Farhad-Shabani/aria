@@ -85,8 +85,14 @@ pub(super) const QWEN: Asset = Asset {
     title: "Qwen3 TTS",
     default: true,
     folders: &[
-        ("qwen/qwen3-tts-0.6b-customvoice", aria_tts::qwen::MODEL),
-        ("qwen/qwen3-tts-tokenizer", aria_tts::qwen::SPEECH_TOKENIZER),
+        (
+            "qwen/qwen3-tts-0.6b-customvoice",
+            aria_tts::qwen::model_files::MODEL,
+        ),
+        (
+            "qwen/qwen3-tts-tokenizer",
+            aria_tts::qwen::model_files::SPEECH_TOKENIZER,
+        ),
     ],
 };
 

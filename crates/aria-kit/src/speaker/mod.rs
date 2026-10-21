@@ -59,8 +59,9 @@ pub trait Embedder {
 pub trait Engine: Embedder + Sized {
     const NAME: &'static str;
 
-    /// The files to download before a load can succeed. Empty for an engine
-    /// that needs none.
+    /// The files to download for this engine, all into one folder. Empty
+    /// when nothing is downloaded for it. An engine that reads a second
+    /// folder lists that folder's files in a const of its own.
     const MODEL: &'static [ModelDownload];
 
     type Config;
