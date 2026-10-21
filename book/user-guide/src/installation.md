@@ -2,7 +2,7 @@
 
 Download Aria from the
 [latest release](https://github.com/Farhad-Shabani/aria/releases/latest).
-Releases run on Apple Silicon Macs with macOS 15 or later, and on x86_64 Linux.
+Releases run on Apple silicon Macs with macOS 15 or later, and on x86_64 Linux.
 
 ## Mac
 
@@ -18,7 +18,7 @@ to finish setup, as in step 3 below.
 
 Without Homebrew:
 
-1. Download the `macos-arm64` DMG.
+1. Download [Aria.dmg](https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg).
 2. Open it and drag **Aria** to **Applications**.
 3. Open Aria from Applications. It appears in the menu bar and opens its setup
    window. **Express Setup** uses the defaults; **Customize…** lets you choose

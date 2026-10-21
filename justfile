@@ -260,7 +260,7 @@ notices:
 
 # Package Aria.app into a DMG in dist/, with its licenses
 release-macos: app notices
-    scripts/macos/release.sh {{ version }}
+    scripts/macos/release.sh
 
 # Package the aria binary and its licenses into a tarball in dist/
 release-linux: notices
@@ -269,7 +269,7 @@ release-linux: notices
 # Write dist/SHA256SUMS, the manifest install.sh reads
 release-checksums:
     cp install.sh dist/install.sh
-    cd dist && shasum -a 256 install.sh aria-{{ version }}-macos-arm64.dmg aria-{{ version }}-linux-x86_64.tar.gz > SHA256SUMS
+    cd dist && shasum -a 256 install.sh Aria.dmg aria-linux-x86_64.tar.gz > SHA256SUMS
 
 # Evaluation and benchmarks
 

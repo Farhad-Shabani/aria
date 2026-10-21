@@ -2,14 +2,13 @@
 #
 # Signs Aria.app and packs it into a DMG in the repository's dist/.
 #
-# Usage: package.sh <Aria.app> <version>
+# Usage: package.sh <Aria.app>
 set -euo pipefail
 
-app="${1:?usage: package.sh <Aria.app> <version>}"
-version="${2:?usage: package.sh <Aria.app> <version>}"
+app="${1:?usage: package.sh <Aria.app>}"
 scripts="$(dirname "${BASH_SOURCE[0]}")"
 dist="$(cd "$scripts/../.." && pwd)/dist"
-dmg="$dist/aria-$version-macos-arm64.dmg"
+dmg="$dist/Aria.dmg"
 # Ad hoc unless asked, so no personal identity ships in a release.
 export ARIA_SIGN_IDENTITY="${ARIA_SIGN_IDENTITY:--}"
 

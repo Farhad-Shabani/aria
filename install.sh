@@ -9,7 +9,7 @@ set -euo pipefail
 
 releases="https://github.com/Farhad-Shabani/aria/releases"
 if [ "$(uname -sm)" != "Linux x86_64" ]; then
-    echo "install.sh supports Linux x86_64; on macOS, open the DMG from $releases" >&2
+    echo "install.sh supports Linux x86_64; on macOS, install Aria.dmg from $releases" >&2
     exit 1
 fi
 
