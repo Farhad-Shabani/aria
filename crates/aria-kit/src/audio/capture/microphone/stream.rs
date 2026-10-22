@@ -102,7 +102,7 @@ impl LiveStream {
     }
 
     /// Moves pending samples into the bounded pre-press buffer, keeping its
-    /// newest `capacity` samples, so the ring cannot overrun while idle.
+    /// newest `capacity` samples.
     pub(super) fn drain_into(
         &mut self,
         pre_press: &mut VecDeque<i16>,

@@ -20,6 +20,7 @@ use crate::audio::capture::RecordingMode;
 use crate::audio::recording::RecordingWriter;
 use crate::audio::spool::WavSpool;
 use crate::audio::{CaptureError, RecordedAudio, ResampleError, StopSignal};
+use crate::primitives::thread::raise_scheduling_class;
 use crate::voice_activity::VoiceActivityDetector;
 use crate::wake_word::WakeWordDetector;
 
@@ -102,7 +103,10 @@ where
     };
     thread::Builder::new()
         .name("aria-microphone".to_owned())
-        .spawn(move || worker.serve(requests, readiness))
+        .spawn(move || {
+            raise_scheduling_class();
+            worker.serve(requests, readiness);
+        })
         .map_err(MicrophoneError::SpawnWorker)
         .map_err(CaptureError::from)?;
     Ok(commands)

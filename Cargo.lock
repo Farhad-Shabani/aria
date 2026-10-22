@@ -296,6 +296,7 @@ dependencies = [
 name = "aria-primitives"
 version = "0.4.0"
 dependencies = [
+ "libc",
  "rustix",
  "serde",
  "serde_json",

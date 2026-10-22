@@ -136,7 +136,7 @@ pub enum MicrophoneError {
     #[error("the microphone callback supplied an incomplete audio frame")]
     IncompleteFrame,
 
-    #[error("recording storage could not keep up with the microphone")]
+    #[error("the microphone worker fell behind and lost audio")]
     Overrun,
 
     #[error("failed to convert microphone audio")]

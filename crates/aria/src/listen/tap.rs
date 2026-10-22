@@ -2,6 +2,7 @@ use std::thread::{self, JoinHandle};
 
 use super::ListenError;
 use crate::audio::{Recording, RecordingReader, RecordingWriter, Stopper};
+use crate::primitives::thread::raise_scheduling_class;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -24,7 +25,10 @@ impl SystemAudioCapture {
         let worker_stop = stop.clone();
         let worker = thread::Builder::new()
             .name("aria-system-audio".into())
-            .spawn(move || run(capture, worker_stop))
+            .spawn(move || {
+                raise_scheduling_class();
+                run(capture, worker_stop)
+            })
             .map_err(ListenError::Spawn)?;
         let tap = Self {
             stop,
