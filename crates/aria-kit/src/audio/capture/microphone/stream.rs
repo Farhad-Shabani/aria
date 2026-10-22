@@ -17,7 +17,8 @@ use super::resampling::SampleRateConverter;
 use super::worker::IdleObservation;
 use super::{MicrophoneError, Result};
 
-const SAMPLE_RING_DURATION: Duration = Duration::from_millis(500);
+/// Rides out a page-in stall on the draining thread.
+const SAMPLE_RING_DURATION: Duration = Duration::from_secs(5);
 const MAX_INPUT_SAMPLE_RATE: u32 = 384_000;
 pub(super) const DRAIN_BUFFER_SAMPLES: usize = 1_024;
 const STREAM_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(2);

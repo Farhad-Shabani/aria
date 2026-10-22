@@ -29,7 +29,7 @@ use super::transfer::{CaptureRecording, capture};
 use super::wake_word::{WakeMonitor, WakeWordEvent};
 use super::{MicrophoneError, Result};
 
-/// The sample ring holds 500ms; draining every 100ms keeps it far from full.
+/// The sample ring holds 5 s; draining every 100ms keeps it far from full.
 const IDLE_DRAIN_INTERVAL: Duration = Duration::from_millis(100);
 const STREAM_REOPEN_INTERVAL: Duration = Duration::from_secs(1);
 /// One second of canonical 16 kHz audio kept from before the press.
