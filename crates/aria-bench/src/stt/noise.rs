@@ -78,22 +78,17 @@ fn create_error(path: &Path) -> impl FnOnce(std::io::Error) -> NoiseError + '_ {
 }
 
 fn load_noises(directory: &Path) -> Result<Vec<Noise>, NoiseError> {
-    let entries = fs::read_dir(directory).map_err(|source| NoiseError::ListNoise {
-        path: directory.to_path_buf(),
-        source,
-    })?;
-    let mut paths = Vec::new();
-    for entry in entries {
-        let path = entry
-            .map_err(|source| NoiseError::ListNoise {
-                path: directory.to_path_buf(),
-                source,
-            })?
-            .path();
-        if path.extension().is_some_and(|extension| extension == "wav") {
-            paths.push(path);
-        }
-    }
+    let mut paths: Vec<PathBuf> = fs::read_dir(directory)
+        .and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect()
+        })
+        .map_err(|source| NoiseError::ListNoise {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+    paths.retain(|path| path.extension().is_some_and(|extension| extension == "wav"));
     paths.sort();
     if paths.is_empty() {
         return Err(NoiseError::NoNoise {
@@ -104,7 +99,7 @@ fn load_noises(directory: &Path) -> Result<Vec<Noise>, NoiseError> {
         .into_iter()
         .map(|path| {
             let samples = read_wav(&path)?.into_canonical()?.into_samples();
-            if samples.is_empty() || power(&samples) == 0.0 {
+            if power(&samples) == 0.0 {
                 return Err(NoiseError::SilentNoise { path });
             }
             Ok(Noise { path, samples })
