@@ -87,6 +87,7 @@ objc2-foundation      = { version = "0.3.2", default-features = false, features 
 [dev-dependencies]
 aria-kit     = { workspace = true, features = [ "test-support" ] }
 aria-harness = { workspace = true }
+toml_edit    = { version = "=0.25.13", default-features = false, features = [ "parse" ] }
 # The relay's timeouts are minutes long; its tests advance the clock instead.
 tokio = { version = "1", features = [ "test-util" ] }
 

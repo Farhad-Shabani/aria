@@ -1100,6 +1100,104 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn manifest_collection_replaces_cached_sources_through_the_existing_worker() {
+        use crate::vocabulary::project::ProjectCollector;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let catalog_dir = temporary.path().join("catalog");
+        let old = discover::scan_cached(
+            selected.as_path(),
+            &CancelToken::never(),
+            &[],
+            &mut LocalExtractor,
+        )
+        .unwrap();
+        Catalog::open(&catalog_dir, CancelToken::never())
+            .unwrap()
+            .refresh_cancellable(
+                &old,
+                &pipeline_key(LocalExtractor.cache_key()).unwrap(),
+                &CancelToken::never(),
+            )
+            .unwrap();
+        let manifest = selected.as_path().join("package.json");
+        std::fs::write(&manifest, "invalid").unwrap();
+        let (runtime, worker) = Runtime::new(catalog_dir.clone(), None, true, ProjectCollector);
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(worker.run(shutdown.clone()));
+        assert!(runtime.refresh(selected.clone()).await.is_err());
+        assert_eq!(runtime.status(Some(&selected)).runtime_revision, 0);
+        std::fs::write(&manifest, r#"{"workspaces":["packages/*"]}"#).unwrap();
+        for member in ["one", "two"] {
+            let path = selected.as_path().join("packages").join(member);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("package.json"), r#"{"name":"aria-kit"}"#).unwrap();
+        }
+        runtime.refresh(selected.clone()).await.unwrap();
+        assert_eq!(
+            runtime
+                .snapshot(Some(&selected))
+                .matcher
+                .correct("ARIA dash kit")
+                .as_deref(),
+            Some("aria-kit")
+        );
+        std::fs::remove_file(selected.as_path().join("packages/one/package.json")).unwrap();
+        runtime.refresh(selected.clone()).await.unwrap();
+        assert_eq!(
+            runtime
+                .snapshot(Some(&selected))
+                .matcher
+                .correct("ARIA dash kit")
+                .as_deref(),
+            Some("aria-kit")
+        );
+        std::fs::remove_dir_all(selected.as_path().join("packages/two")).unwrap();
+        runtime.refresh(selected.clone()).await.unwrap();
+        assert_eq!(
+            runtime
+                .snapshot(Some(&selected))
+                .matcher
+                .correct("ARIA dash kit"),
+            None
+        );
+        let cached = Catalog::open(&catalog_dir, CancelToken::never())
+            .unwrap()
+            .load(
+                &selected.as_path().canonicalize().unwrap(),
+                &ProjectCollector.pipeline_key().unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(
+            !cached
+                .sources
+                .iter()
+                .any(|source| source.relative_path.starts_with("packages"))
+        );
+        for (member, name) in [("one", "aria-kit"), ("three", "aria_kit")] {
+            let path = selected.as_path().join("packages").join(member);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(
+                path.join("package.json"),
+                serde_json::json!({"name":name}).to_string(),
+            )
+            .unwrap();
+        }
+        runtime.refresh(selected.clone()).await.unwrap();
+        assert_eq!(
+            runtime
+                .snapshot(Some(&selected))
+                .matcher
+                .correct("ARIA dash kit"),
+            None
+        );
+        shutdown.cancel();
+        task.await.unwrap();
+    }
+
     #[test]
     fn cold_admission_coalesces_and_bounds_work_without_filesystem_access() {
         let root = tempfile::tempdir().unwrap();
