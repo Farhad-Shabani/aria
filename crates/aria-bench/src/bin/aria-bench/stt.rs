@@ -1,12 +1,11 @@
 //! Measures every configured transcription backend over one corpus.
 //!
 //! ```text
-//! just corpus 100
+//! aria-bench corpus build/corpus
 //! aria-bench stt --corpus build/corpus/manifest.tsv \
 //!     --model parakeet=~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 //! ```
 
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -337,24 +336,6 @@ pub(crate) fn reference(cli: &ReferenceCli) -> anyhow::Result<()> {
             cli.destination.display()
         );
     }
-    Ok(())
-}
-
-#[derive(Parser)]
-pub(crate) struct CorpusCli {
-    output: PathBuf,
-    #[arg(long, default_value = "100")]
-    utterances: NonZeroUsize,
-}
-
-pub(crate) fn corpus(cli: &CorpusCli) -> anyhow::Result<()> {
-    let built = aria_bench::stt::librispeech::build(&cli.output, cli.utterances)?;
-    println!(
-        "{} utterances, {} reference words -> {}",
-        built.utterances,
-        built.words,
-        built.manifest.display()
-    );
     Ok(())
 }
 

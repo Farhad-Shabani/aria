@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::normalize;
+
 /// One line per utterance: an absolute path to a canonical 16 kHz mono 16-bit
 /// WAV, a tab, and the reference text.
 pub(super) struct Corpus {
@@ -30,6 +32,42 @@ impl Corpus {
         }
         Ok(Self { utterances })
     }
+}
+
+pub struct Built {
+    pub utterances: usize,
+    /// Counted with the scorer's own word split, so a report's header and
+    /// its rates share a denominator.
+    pub words: usize,
+    pub manifest: PathBuf,
+}
+
+pub(super) fn write_manifest<'a>(
+    path: &Path,
+    utterances: impl IntoIterator<Item = (&'a Path, &'a str)>,
+) -> Result<Built, CorpusError> {
+    let mut lines = String::new();
+    let mut built = Built {
+        utterances: 0,
+        words: 0,
+        manifest: path.to_path_buf(),
+    };
+    for (audio, reference) in utterances {
+        if !audio.is_absolute() {
+            return Err(CorpusError::RelativeAudio {
+                path: path.to_path_buf(),
+                line: built.utterances + 1,
+            });
+        }
+        lines.push_str(&format!("{}\t{reference}\n", audio.display()));
+        built.utterances += 1;
+        built.words += normalize::words(reference).len();
+    }
+    fs::write(path, lines).map_err(|source| CorpusError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(built)
 }
 
 pub(super) struct Utterance {
@@ -77,6 +115,13 @@ impl Utterance {
 pub enum CorpusError {
     #[error("failed to read the corpus manifest {}", path.display())]
     Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("failed to write the corpus manifest {}", path.display())]
+    Write {
         path: PathBuf,
         #[source]
         source: std::io::Error,
@@ -152,6 +197,28 @@ mod tests {
 
         assert!(matches!(
             loaded,
+            Err(CorpusError::RelativeAudio { line: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn a_written_manifest_loads_back_and_counts_scored_words() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("manifest.tsv");
+
+        let built = write_manifest(
+            &path,
+            [
+                (Path::new("/corpus/one.wav"), "THE SOCKET CLOSES"),
+                (Path::new("/corpus/two.wav"), "it is open, again"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!((built.utterances, built.words), (2, 7));
+        assert_eq!(Corpus::load(&path).unwrap().utterances.len(), 2);
+        assert!(matches!(
+            write_manifest(&path, [(Path::new("corpus/one.wav"), "X")]),
             Err(CorpusError::RelativeAudio { line: 1, .. })
         ));
     }

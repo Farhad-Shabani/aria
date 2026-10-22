@@ -284,6 +284,18 @@ corpus-long recordings="12":
     crates/aria-bench/scripts/corpus-long.sh {{ justfile_directory() }}/build/corpus-long \
         {{ recordings }} {{ justfile_directory() }}/build/corpus/librispeech
 
+# Room noise recordings (DEMAND) for `just corpus-noisy`
+noise:
+    cargo run --locked --release -p aria-bench -- noise {{ justfile_directory() }}/build/noise
+
+# Copy of a corpus under room noise at a signal-to-noise ratio in dB
+corpus-noisy snr="10" source=(justfile_directory() + "/build/corpus-long/manifest.tsv"):
+    cargo run --locked --release -p aria-bench -- noisy \
+        --corpus "{{ absolute_path(source) }}" \
+        --noise {{ justfile_directory() }}/build/noise \
+        --snr {{ snr }} \
+        --output {{ justfile_directory() }}/build/corpus-noisy-{{ snr }}db
+
 test_model_url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin"
 test_model_sha256 := "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
 
