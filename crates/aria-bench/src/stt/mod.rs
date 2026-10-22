@@ -8,7 +8,10 @@ pub mod analysis;
 mod backends;
 mod conditions;
 mod corpus;
+pub mod demand;
+mod fetch;
 pub mod librispeech;
+pub mod noise;
 mod normalize;
 mod record;
 mod score;
@@ -31,7 +34,7 @@ use aria_kit::audio::{
 };
 
 pub use backends::{BackendRequest, SelectionError, Skipped};
-pub use corpus::CorpusError;
+pub use corpus::{Built, CorpusError};
 pub use normalize::words;
 pub use record::RecordError;
 pub use score::{Alignment, reference_matches, word_errors};

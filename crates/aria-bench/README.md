@@ -23,6 +23,16 @@ lists each recording, what was said, and a hash of its audio. The first
 build downloads 346 MB and needs ffmpeg. Audio that doesn't match its hash
 fails the build, so every machine tests the same audio.
 
+## Room noise
+
+`just noise` fetches six rooms from DEMAND, real recordings under
+CC BY-SA 3.0, into `build/noise`. Each one is pinned by hash in
+[`corpus/demand-noise.tsv`](corpus/demand-noise.tsv). The first fetch
+downloads about 600 MB and needs unzip.
+
+`just corpus-noisy 10` mixes them into the long corpus at 10 dB
+signal-to-noise, so a streaming run can be measured under noise.
+
 ## Word error rate
 
 Word error rate is the share of words an engine gets wrong.
