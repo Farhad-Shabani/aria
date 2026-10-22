@@ -85,7 +85,7 @@ ARIA_BENCH_RUNS=30 \
 ARIA_BENCH_WARMUPS=2 \
 ARIA_BENCH_RESULTS=/absolute/path/candidate \
 ARIA_BENCH_BASELINE=/absolute/path/baseline/dictation-latency.json \
-ARIA_BENCH_MAX_REGRESSION_MS=5 \
+ARIA_BENCH_MAX_REGRESSION=0.05 \
 ARIA_BENCH_REQUIRE_SAME_TEXT=1 \
 cargo bench --locked --bench dictation_latency
 ```
@@ -95,7 +95,7 @@ Preparation enables the feature and waits for a nonempty ready snapshot before
 measurement. `ARIA_BENCH_PERSONAL_TERMS` optionally supplies the same lexicon file
 to both isolated daemons. Preserve model/audio/personal identities and alternate
 baseline/candidate ordering across process pairs. Thirty repetitions are an initial
-collection budget, not evidence that a 5 ms margin is statistically resolved.
+collection budget, not evidence that a 5% margin is statistically resolved.
 
 The same-text gate suits ordinary-speech negatives where project context should
 change nothing. Positive correction cases need their frozen intended-output references

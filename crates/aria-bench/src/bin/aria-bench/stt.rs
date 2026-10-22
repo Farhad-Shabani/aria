@@ -6,6 +6,7 @@
 //!     --model parakeet=~/.aria/models/parakeet/parakeet-tdt-0.6b-v3
 //! ```
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -317,6 +318,46 @@ pub(crate) fn compare(cli: &CompareCli) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Parser)]
+#[command(about = "Check an STT run and save it as the committed reference, naming no host")]
+pub(crate) struct ReferenceCli {
+    results: PathBuf,
+    destination: PathBuf,
+}
+
+pub(crate) fn reference(cli: &ReferenceCli) -> anyhow::Result<()> {
+    aria_bench::stt::analysis::save_reference(&cli.results, &cli.destination)?;
+    for measurement in Artifact::load(&cli.destination)?.measurements() {
+        println!(
+            "{} WER {:.2}%; {} utterances × {} passes -> {}",
+            measurement.backend,
+            measurement.wer * 100.0,
+            measurement.utterances,
+            measurement.passes,
+            cli.destination.display()
+        );
+    }
+    Ok(())
+}
+
+#[derive(Parser)]
+pub(crate) struct CorpusCli {
+    output: PathBuf,
+    #[arg(long, default_value = "100")]
+    utterances: NonZeroUsize,
+}
+
+pub(crate) fn corpus(cli: &CorpusCli) -> anyhow::Result<()> {
+    let built = aria_bench::stt::librispeech::build(&cli.output, cli.utterances)?;
+    println!(
+        "{} utterances, {} reference words -> {}",
+        built.utterances,
+        built.words,
+        built.manifest.display()
+    );
+    Ok(())
+}
+
 fn compare_paths(results: &Path, baseline: &Path, margin: f64) -> anyhow::Result<()> {
     let comparisons = Artifact::load(results)?.compare(&Artifact::load(baseline)?, margin)?;
     for comparison in &comparisons {
@@ -330,6 +371,16 @@ fn compare_paths(results: &Path, baseline: &Path, margin: f64) -> anyhow::Result
                 .map(|(lower, upper)| (lower * 100.0, upper * 100.0)),
             comparison.decision.label()
         );
+        for change in &comparison.changes {
+            println!("  {} changed", change.utterance);
+            println!("    reference:   {}", change.reference);
+            for (pass, hypothesis) in &change.baseline {
+                println!("    baseline {pass}:  {hypothesis}");
+            }
+            for (pass, hypothesis) in &change.candidate {
+                println!("    candidate {pass}: {hypothesis}");
+            }
+        }
     }
     anyhow::ensure!(
         comparisons

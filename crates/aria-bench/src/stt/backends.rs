@@ -430,13 +430,19 @@ impl Selection {
         realtime: bool,
         provisional: bool,
     ) -> Result<super::analysis::Engine, aria_harness::artifact::ArtifactError> {
-        let sidecar = matches!(self.config, TranscriptionConfig::ParakeetMlx { .. });
-        let model = std::path::Path::new(&self.descriptor.model);
-        let model_sha256 = if sidecar {
-            None
-        } else {
-            Some(aria_harness::artifact::fingerprint(model)?)
+        let model = match &self.config {
+            TranscriptionConfig::Whisper { model } => Some(model),
+            TranscriptionConfig::WhisperCandle { model_directory }
+            | TranscriptionConfig::Parakeet {
+                model_directory, ..
+            }
+            | TranscriptionConfig::Moonshine { model_directory }
+            | TranscriptionConfig::Nemotron { model_directory } => Some(model_directory),
+            TranscriptionConfig::ParakeetMlx { .. } => None,
         };
+        let model_sha256 = model
+            .map(|model| aria_harness::artifact::fingerprint(model))
+            .transpose()?;
         Ok(super::analysis::Engine {
             name: self.descriptor.name.to_owned(),
             model_sha256,
@@ -452,8 +458,8 @@ impl Selection {
             BackendRequest::Whisper { model } => Self {
                 descriptor: Descriptor {
                     name: backend::WHISPER,
-                    model: model.display().to_string(),
-                    device: None,
+                    model: model_label(model),
+                    device: Some(whisper::gpu_backend().unwrap_or("cpu")),
                     model_bytes: model_bytes(model),
                 },
                 config: TranscriptionConfig::Whisper {
@@ -464,7 +470,7 @@ impl Selection {
             BackendRequest::WhisperCandle { model } => Self {
                 descriptor: Descriptor {
                     name: backend::WHISPER_CANDLE,
-                    model: model.display().to_string(),
+                    model: model_label(model),
                     device: None,
                     model_bytes: model_bytes(model),
                 },
@@ -481,7 +487,7 @@ impl Selection {
                 Self {
                     descriptor: Descriptor {
                         name: backend::PARAKEET,
-                        model: model.display().to_string(),
+                        model: model_label(model),
                         device: Some(device_name(device)),
                         model_bytes: model_bytes(model),
                     },
@@ -495,7 +501,7 @@ impl Selection {
             BackendRequest::Moonshine { model } => Self {
                 descriptor: Descriptor {
                     name: backend::MOONSHINE,
-                    model: model.display().to_string(),
+                    model: model_label(model),
                     device: None,
                     model_bytes: model_bytes(model),
                 },
@@ -507,7 +513,7 @@ impl Selection {
             BackendRequest::Nemotron { model } => Self {
                 descriptor: Descriptor {
                     name: backend::NEMOTRON,
-                    model: model.display().to_string(),
+                    model: model_label(model),
                     device: None,
                     model_bytes: model_bytes(model),
                 },
@@ -540,6 +546,15 @@ fn device_name(device: TranscriptionDevice) -> &'static str {
         TranscriptionDevice::Cpu => "cpu",
         TranscriptionDevice::Gpu => "gpu",
     }
+}
+
+/// A full path names the machine, and `model_sha256` already identifies the
+/// weights.
+fn model_label(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Total size of a model on disk, whether it is one file or a directory of

@@ -276,7 +276,8 @@ release-checksums:
 
 # Speech corpus for `just accuracy`, into a gitignored directory
 corpus utterances="100":
-    crates/aria-bench/scripts/corpus.sh {{ justfile_directory() }}/build/corpus {{ utterances }}
+    cargo run --locked --release -p aria-bench -- corpus \
+        {{ justfile_directory() }}/build/corpus --utterances {{ utterances }}
 
 # Long-form corpus (90-115 s recordings) for streaming/agreement runs
 corpus-long recordings="12":
@@ -286,7 +287,7 @@ corpus-long recordings="12":
 test_model_url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin"
 test_model_sha256 := "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
 
-# Fetch the Whisper model the serving acceptance cases run, and print its path
+# Fetch the Whisper model the acceptance cases and accuracy check run, and print its path
 test-model directory=(cache_directory() / "aria-test-models"):
     #!/usr/bin/env bash
     set -euo pipefail
@@ -305,6 +306,37 @@ test-model directory=(cache_directory() / "aria-test-models"):
 accuracy *flags:
     cargo run --locked --release -p aria-bench -- stt \
         --corpus {{ justfile_directory() }}/build/corpus/manifest.tsv \
+        {{ flags }}
+
+stt_reference := "crates/aria-bench/baselines/stt-whisper-tiny-en.jsonl"
+
+# Fail when word error rate regresses against the committed reference
+accuracy-check models=(cache_directory() / "aria-test-models"):
+    just _accuracy-run build/accuracy-check "{{ models }}" --baseline {{ stt_reference }} \
+        || { echo "if the change is intended, rebaseline from CI's accuracy-check artifact: just accuracy-rebaseline <results.jsonl>" >&2; exit 1; }
+
+# Replace the committed reference with CI's accuracy-check results, or a fresh local run
+accuracy-rebaseline results="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    results="{{ results }}"
+    if [ -z "$results" ]; then
+        just _accuracy-run build/accuracy-rebaseline
+        results=build/accuracy-rebaseline/results.jsonl
+    fi
+    cargo run --locked --release -p aria-bench -- reference-stt "$results" {{ stt_reference }}
+
+_accuracy-run directory models=(cache_directory() / "aria-test-models") *flags:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just corpus
+    model="$(just test-model "{{ models }}")"
+    rm -rf "{{ directory }}"
+    mkdir -p "{{ directory }}"
+    cargo run --locked --release -p aria-bench -- stt \
+        --corpus {{ justfile_directory() }}/build/corpus/manifest.tsv \
+        --model whisper="$model" \
+        --results "{{ directory }}/results.jsonl" \
         {{ flags }}
 
 # Streaming quality without wall-clock replay; defaults to shipping cadences
@@ -353,11 +385,11 @@ bench-latency:
 bench-first-text:
     cargo bench --locked --bench first_text
 
-# Recompare saved latency samples without daemon startup or model inference
+# Recompare saved latency samples without inference; margin 0.1 allows a 10% slower median
 bench-latency-compare baseline current margin="0":
     ARIA_BENCH_BASELINE="{{ absolute_path(baseline) }}" \
         ARIA_BENCH_COMPARE="{{ absolute_path(current) }}" \
-        ARIA_BENCH_MAX_REGRESSION_MS="{{ margin }}" cargo bench --locked --bench dictation_latency
+        ARIA_BENCH_MAX_REGRESSION="{{ margin }}" cargo bench --locked --bench dictation_latency
 
 models_dir := home_directory() + "/.aria/models"
 

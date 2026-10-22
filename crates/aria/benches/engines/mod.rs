@@ -128,7 +128,8 @@ pub(crate) struct Options {
     pub(crate) runs: u32,
     pub(crate) warmups: u32,
     baseline: Option<Run>,
-    margin_ms: f64,
+    /// The allowed increase, as a fraction of the baseline median.
+    margin: f64,
 }
 
 impl Options {
@@ -146,13 +147,17 @@ impl Options {
             runs.checked_add(warmups).is_some(),
             "run and warmup counts overflow"
         );
-        let margin_ms = std::env::var("ARIA_BENCH_MAX_REGRESSION_MS")
+        ensure!(
+            std::env::var_os("ARIA_BENCH_MAX_REGRESSION_MS").is_none(),
+            "ARIA_BENCH_MAX_REGRESSION_MS is unsupported; set ARIA_BENCH_MAX_REGRESSION to a fraction of the baseline median"
+        );
+        let margin = std::env::var("ARIA_BENCH_MAX_REGRESSION")
             .unwrap_or_else(|_| "0".into())
             .parse::<f64>()
-            .context("ARIA_BENCH_MAX_REGRESSION_MS must be nonnegative")?;
+            .context("ARIA_BENCH_MAX_REGRESSION must be a nonnegative fraction")?;
         ensure!(
-            margin_ms.is_finite() && margin_ms >= 0.0,
-            "ARIA_BENCH_MAX_REGRESSION_MS must be finite and nonnegative"
+            margin.is_finite() && margin >= 0.0,
+            "ARIA_BENCH_MAX_REGRESSION must be finite and nonnegative"
         );
         let baseline_path = inputs::path_input("ARIA_BENCH_BASELINE")?;
         ensure!(
@@ -173,7 +178,7 @@ impl Options {
             runs,
             warmups,
             baseline,
-            margin_ms,
+            margin,
         })
     }
 
@@ -241,7 +246,7 @@ impl Options {
         let Some(recorded) = &self.baseline else {
             return Ok(());
         };
-        compare(current, recorded, metric, self.margin_ms)
+        compare(current, recorded, metric, self.margin)
     }
 }
 
@@ -657,10 +662,14 @@ fn compare(current: &Run, recorded: &Run, metric: &str, margin: f64) -> anyhow::
             .samples_ms
             .get(metric)
             .context("candidate metric missing")?;
+        let baseline_median = stats::summarize(baseline_samples)
+            .context("baseline metric has no samples")?
+            .median;
+        let margin_ms = margin * baseline_median as f64;
         let interval = stats::difference_interval(baseline_samples, candidate_samples);
-        let decision = stats::Decision::of(interval, margin);
+        let decision = stats::Decision::of(interval, margin_ms);
         println!(
-            "{} {metric}: {} (candidate minus baseline median, 95% interval {interval:?} ms; allowed increase {margin} ms)",
+            "{} {metric}: {} (candidate minus baseline median, 95% interval {interval:?} ms; allowed increase {margin_ms:.1} ms)",
             entry.backend,
             decision.label()
         );
@@ -724,7 +733,7 @@ mod tests {
             kind: "first-text".into(),
             provenance: Provenance {
                 run_id: "test".into(),
-                host: "host".into(),
+                host: Some("host".into()),
                 os: "os".into(),
                 arch: "arch".into(),
                 executable_sha256: "test-binary".into(),
@@ -787,13 +796,13 @@ mod tests {
             run
         }
         let baseline = delivery(&[100; 30]);
-        assert!(compare(&delivery(&[100; 30]), &baseline, "capture->delivered", 5.0).is_ok());
-        assert!(compare(&delivery(&[150; 30]), &baseline, "capture->delivered", 5.0).is_err());
+        assert!(compare(&delivery(&[100; 30]), &baseline, "capture->delivered", 0.05).is_ok());
+        assert!(compare(&delivery(&[150; 30]), &baseline, "capture->delivered", 0.05).is_err());
         for text in ["open aria", "open aria now now"] {
             let mut candidate = delivery(&[100; 30]);
             candidate.entries[0].delivery_traces[1] =
                 serde_json::json!({"text": text, "clipboard_text": text});
-            assert!(compare(&candidate, &baseline, "capture->delivered", 5.0).is_err());
+            assert!(compare(&candidate, &baseline, "capture->delivered", 0.05).is_err());
         }
     }
 
@@ -833,9 +842,9 @@ mod tests {
     #[test]
     fn streaming_comparison_requires_first_segments_and_target_readback() {
         let baseline = streaming();
-        assert!(compare(&streaming(), &baseline, "capture->first-segment", 5.0).is_ok());
-        assert!(compare(&streaming(), &baseline, "capture->delivered", 5.0).is_ok());
-        assert!(compare(&streaming(), &baseline, "release->delivered", 5.0).is_err());
+        assert!(compare(&streaming(), &baseline, "capture->first-segment", 0.05).is_ok());
+        assert!(compare(&streaming(), &baseline, "capture->delivered", 0.05).is_ok());
+        assert!(compare(&streaming(), &baseline, "release->delivered", 0.05).is_err());
         for field in [
             "capture_to_first_segment_ms",
             "target_appended_text",
@@ -843,7 +852,7 @@ mod tests {
         ] {
             let mut candidate = streaming();
             candidate.entries[0].delivery_traces[1][field] = serde_json::Value::Null;
-            assert!(compare(&candidate, &baseline, "capture->first-segment", 5.0).is_err());
+            assert!(compare(&candidate, &baseline, "capture->first-segment", 0.05).is_err());
         }
         for (field, value) in [
             ("target_appended_text", serde_json::json!("open arianow")),
@@ -899,8 +908,8 @@ mod tests {
             run
         }
         let baseline = observed();
-        assert!(compare(&observed(), &baseline, "request->first-receipt", 5.0).is_ok());
-        assert!(compare(&observed(), &baseline, "request->final-receipt", 5.0).is_ok());
+        assert!(compare(&observed(), &baseline, "request->first-receipt", 0.05).is_ok());
+        assert!(compare(&observed(), &baseline, "request->final-receipt", 0.05).is_ok());
         let mut delayed = observed();
         let entry = &mut delayed.entries[0];
         entry
@@ -914,8 +923,8 @@ mod tests {
             row["target"]["receipts"][1]["elapsed_us"] = serde_json::json!(300_000);
             row["target"]["receipts"][1]["gap_us"] = serde_json::json!(200_000);
         }
-        assert!(compare(&delayed, &baseline, "request->first-receipt", 5.0).is_ok());
-        assert!(compare(&delayed, &baseline, "request->final-receipt", 5.0).is_err());
+        assert!(compare(&delayed, &baseline, "request->first-receipt", 0.05).is_ok());
+        assert!(compare(&delayed, &baseline, "request->final-receipt", 0.05).is_err());
         for (path, value) in [
             ("/trial", serde_json::json!(0)),
             ("/trial", serde_json::json!(40)),
@@ -984,7 +993,7 @@ mod tests {
             runs: 3,
             warmups: 1,
             baseline: Some(run(&[100; 10])),
-            margin_ms: 0.0,
+            margin: 0.0,
         };
         let mut candidate = run(&[]);
         assert!(options.preflight(&candidate).is_ok());
@@ -1000,7 +1009,8 @@ mod tests {
         let baseline = run(&[100; 10]);
         assert!(compare(&run(&[90; 3]), &baseline, "first-finalized", 0.0).is_ok());
         assert!(compare(&run(&[110; 3]), &baseline, "first-finalized", 0.0).is_err());
-        assert!(compare(&run(&[110; 3]), &baseline, "first-finalized", 10.0).is_ok());
+        assert!(compare(&run(&[105; 3]), &baseline, "first-finalized", 0.1).is_ok());
+        assert!(compare(&run(&[120; 3]), &baseline, "first-finalized", 0.1).is_err());
         assert!(compare(&run(&[90]), &baseline, "first-finalized", 0.0).is_err());
     }
 

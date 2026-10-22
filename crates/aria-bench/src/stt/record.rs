@@ -18,7 +18,7 @@ use super::{Conditions, Heard, normalize, score};
 
 /// Bumped when a field changes meaning, so old rows are never read as new
 /// ones.
-pub(super) const SCHEMA_VERSION: u32 = 7;
+pub(super) const SCHEMA_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct Segment {
@@ -41,7 +41,8 @@ pub(super) struct Preview {
 pub(super) struct Descriptor {
     /// The backend name as configuration and logs spell it.
     pub(super) name: &'static str,
-    /// A model path, or the repository id the sidecar resolves from its cache.
+    /// A model's file or directory name, or the repository id the sidecar
+    /// resolves from its cache.
     pub(super) model: String,
     pub(super) device: Option<&'static str>,
     /// Total size of the model on disk. Weights that differ in size are
