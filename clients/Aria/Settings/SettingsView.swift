@@ -31,7 +31,7 @@ struct SettingsView: View {
     }
 }
 
-struct GeneralSettings: View {
+private struct GeneralSettings: View {
     @ObservedObject var preferences: DaemonPreferences
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage(StatusController.enabledKey)
@@ -85,7 +85,7 @@ struct GeneralSettings: View {
     }
 }
 
-struct ShortcutsSettings: View {
+private struct ShortcutsSettings: View {
     @ObservedObject var preferences: DaemonPreferences
 
     var body: some View {
@@ -114,7 +114,7 @@ struct ShortcutsSettings: View {
     }
 }
 
-struct AboutSettings: View {
+private struct AboutSettings: View {
     @ObservedObject var updates: UpdateController
     private let info = Bundle.main.infoDictionary ?? [:]
     private static let legal = "https://github.com/Farhad-Shabani/aria/blob/main/legal/"

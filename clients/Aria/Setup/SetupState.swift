@@ -9,8 +9,8 @@ final class SetupState: ObservableObject {
         var apply:
             (Aria_Setup_V1_ApplyRequest, @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void) async throws
                 -> Aria_Setup_V1_Summary
-        /// Stops a daemon nobody supervises, so the service can take its
-        /// socket. Gives up after a bounded wait.
+        /// Requests a stop before the service takes the socket; waits only
+        /// for a bounded time.
         var stopDaemon: () async -> Void
         var startDaemon: () async -> Void
         var hotkeyArmed: () async -> Bool
@@ -19,9 +19,7 @@ final class SetupState: ObservableObject {
         var enroll: (String) async throws -> Aria_Daemon_V1_EnrollSpeakerResponse
         var transcribe: () async throws -> String
         var speak: (String) async throws -> Void
-        /// The daemon only runs while the app does, so a finished setup
-        /// starts Aria at login. Returns what to tell the user when it
-        /// could not.
+        /// Returns what to tell the user when launch at login could not be enabled.
         var launchAtLogin: () -> String?
         /// Asks for an administrator's password. Returns what to tell the
         /// user when the command did not land.
@@ -105,7 +103,9 @@ final class SetupState: ObservableObject {
     }
 
     /// Why the choices cannot be applied: an engine this Mac cannot run.
-    static func blocked(_ selections: Aria_Setup_V1_Selections, in inspection: Aria_Setup_V1_Inspection) -> String? {
+    private static func blocked(_ selections: Aria_Setup_V1_Selections, in inspection: Aria_Setup_V1_Inspection)
+        -> String?
+    {
         let chosen = [
             (selections.stt, inspection.stt), (selections.tts, inspection.tts), (selections.chat, inspection.chat),
         ]
@@ -148,7 +148,6 @@ final class SetupState: ObservableObject {
         return unique.isEmpty ? "Everything is in place." : "Missing: \(unique.joined(separator: ", "))."
     }
 
-    /// The models the toggles keep, counted and sized.
     var downloadSummary: String {
         let plan = Self.plan(inspection, selections)
         if plan.isEmpty { return "Nothing to download" }
@@ -188,7 +187,6 @@ final class SetupState: ObservableObject {
         }
     }
 
-    /// The window went away; nothing polls for it while it is closed.
     func stop() {
         grantTask?.cancel()
     }
@@ -318,18 +316,18 @@ final class SetupState: ObservableObject {
         applyTask = Task {
             // The service refuses a socket some other daemon owns, and the
             // app spawns one itself while no service exists.
-            let stopped = inspection.service.job == .absent
-            if stopped { await effects.stopDaemon() }
+            let shouldStopDaemon = inspection.service.job == .absent
+            if shouldStopDaemon { await effects.stopDaemon() }
             do {
                 let summary = try await effects.apply(request) { event in
                     Task { @MainActor [weak self] in self?.absorb(event) }
                 }
                 await finishApply(summary)
             } catch SetupClientError.cancelled {
-                if stopped { await effects.startDaemon() }
+                if shouldStopDaemon { await effects.startDaemon() }
                 step = origin
             } catch {
-                if stopped { await effects.startDaemon() }
+                if shouldStopDaemon { await effects.startDaemon() }
                 step = .failed(error.localizedDescription)
             }
         }

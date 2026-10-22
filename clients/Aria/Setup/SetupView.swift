@@ -123,7 +123,7 @@ struct SetupView: View {
 
 extension View {
     /// The one button a page answers Return with.
-    func primaryAction() -> some View {
+    fileprivate func primaryAction() -> some View {
         buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
     }
 }

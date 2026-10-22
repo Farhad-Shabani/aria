@@ -7,7 +7,7 @@ struct GhostState {
     static let expiry: TimeInterval = 5
     private(set) var text = ""
     private(set) var placement: Aria_Daemon_V1_Placement?
-    private(set) var enabled = false
+    private var enabled = false
     private var updatedAt: TimeInterval?
 
     var isVisible: Bool { !text.isEmpty && placement != nil }

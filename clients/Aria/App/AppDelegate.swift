@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let updates = UpdateController()
 
     static let enabledKey = "captionsEnabled"
-    static let setupOfferedKey = "setupOffered"
+    private static let setupOfferedKey = "setupOffered"
     // Matches the daemon's delivery_mode default: streaming, captions off.
     static let enabledByDefault = false
 
@@ -33,13 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
-    /// The chord follows the daemon's stored preference.
     func trackAskHotkey(_ preferences: DaemonPreferences) {
         askHotkey.track(preferences)
     }
 
-    /// The app closed means no daemon runs: whichever daemon holds the lock,
-    /// the service's or a spawned one, gets the same SIGTERM as the toggle.
     func applicationWillTerminate(_ notification: Notification) {
         do {
             try DaemonClient.signalStop()
