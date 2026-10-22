@@ -45,6 +45,9 @@ final class DictationEditsTests: XCTestCase {
         patch.dictationHistory = false
         patch.historyAudioRetention = true
         patch.muteOutput = true
+        var combined = Aria_Daemon_V1_PreferencePatch()
+        patch.apply(to: &combined)
+        XCTAssertEqual(combined, patch)
         var overlaid = Aria_Daemon_V1_UserPreferences()
         patch.apply(to: &overlaid)
         var merged = Aria_Daemon_V1_UserPreferences()

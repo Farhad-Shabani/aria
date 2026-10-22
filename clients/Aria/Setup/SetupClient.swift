@@ -9,11 +9,13 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 enum SetupClientError: LocalizedError, Equatable {
     case cancelled
     case failed(String)
+    case invalidOutput(SetupFrames.FrameError)
 
     var errorDescription: String? {
         switch self {
         case .cancelled: return "Setup was cancelled."
         case .failed(let message): return message
+        case .invalidOutput(let error): return error.localizedDescription
         }
     }
 }
@@ -37,8 +39,13 @@ enum SetupClient {
             let output = stdout.fileHandleForReading.readDataToEndOfFile()
             let errors = stderr.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw SetupClientError.failed(failure(status: process.terminationStatus, stderr: errors))
+            }
             var reader = SetupFrames.Reader()
-            guard process.terminationStatus == 0, let frame = reader.push(output).first else {
+            let frames = try reader.push(output)
+            try reader.finish()
+            guard let frame = frames.first else {
                 throw SetupClientError.failed(failure(status: process.terminationStatus, stderr: errors))
             }
             return try Aria_Setup_V1_Inspection(serializedBytes: frame)
@@ -89,11 +96,19 @@ enum SetupClient {
 
             var reader = SetupFrames.Reader()
             var summary: Aria_Setup_V1_Summary?
+            var frameError: SetupFrames.FrameError?
             let output = stdout.fileHandleForReading
             while summary == nil {
                 let chunk = output.availableData
-                if chunk.isEmpty { break }
-                for bytes in reader.push(chunk) {
+                if chunk.isEmpty {
+                    do throws(SetupFrames.FrameError) {
+                        try reader.finish()
+                    } catch {
+                        frameError = error
+                    }
+                    break
+                }
+                for bytes in try reader.push(chunk) {
                     switch try Aria_Setup_V1_ApplyResponse(serializedBytes: bytes).body {
                     case .event(let event): onEvent(event)
                     case .summary(let done): summary = done
@@ -103,7 +118,7 @@ enum SetupClient {
             }
             let errors = stderr.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            return Run(summary: summary, status: process.terminationStatus, stderr: errors)
+            return Run(summary: summary, status: process.terminationStatus, stderr: errors, frameError: frameError)
         }
         let finished = try await withTaskCancellationHandler {
             try await run.value
@@ -120,14 +135,15 @@ enum SetupClient {
         var summary: Aria_Setup_V1_Summary?
         var status: Int32
         var stderr: Data
+        var frameError: SetupFrames.FrameError? = nil
     }
 
     /// A summary means the run finished, whatever the exit; short of one, an
-    /// interrupt the app asked for is a cancellation and anything else is
-    /// the child's own account of what went wrong.
+    /// interrupt the app asked for is a cancellation, even with partial output.
     static func outcome(_ run: Run, cancelled: Bool) -> Result<Aria_Setup_V1_Summary, SetupClientError> {
         if let summary = run.summary { return .success(summary) }
         if cancelled { return .failure(.cancelled) }
+        if run.status == 0, let error = run.frameError { return .failure(.invalidOutput(error)) }
         return .failure(.failed(failure(status: run.status, stderr: run.stderr)))
     }
 

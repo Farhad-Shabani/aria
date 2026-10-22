@@ -3,6 +3,57 @@ import XCTest
 @testable import Aria
 
 final class SetupProtocolTests: XCTestCase {
+    func test_frames_rejectMalformedLengths() throws {
+        for lastByte: UInt8 in [2, 0x80, 0xff] {
+            var reader = SetupFrames.Reader()
+            let prefix = Data(repeating: 0x80, count: 9)
+            XCTAssertTrue(try reader.push(prefix).isEmpty)
+            XCTAssertThrowsError(try reader.push(Data([lastByte]))) { error in
+                XCTAssertEqual(error as? SetupFrames.FrameError, .malformedLength)
+            }
+        }
+    }
+
+    func test_frames_rejectOversizedLengths() throws {
+        let lengths: [[UInt8]] = [
+            [0x80, 0x80, 0x80, 0x80, 0x08],
+            Array(repeating: 0xff, count: 8) + [0x7f],
+            Array(repeating: 0xff, count: 9) + [0x01],
+        ]
+        for length in lengths {
+            var reader = SetupFrames.Reader()
+            XCTAssertThrowsError(try reader.push(Data(length))) { error in
+                XCTAssertEqual(error as? SetupFrames.FrameError, .messageTooLarge)
+            }
+        }
+    }
+
+    func test_frames_acceptTheMaximumLengthWithoutAllocatingItsPayload() throws {
+        var reader = SetupFrames.Reader()
+        XCTAssertTrue(try reader.push(Data([0xff, 0xff, 0xff, 0xff, 0x07])).isEmpty)
+        XCTAssertThrowsError(try reader.finish()) { error in
+            XCTAssertEqual(error as? SetupFrames.FrameError, .truncated)
+        }
+    }
+
+    func test_frames_finishRejectsPartialPrefixesAndPayloads() throws {
+        for bytes in [Data([0x80]), Data([2, 0x01]), Data([0, 2, 0x01])] {
+            var reader = SetupFrames.Reader()
+            _ = try reader.push(bytes)
+            XCTAssertThrowsError(try reader.finish()) { error in
+                XCTAssertEqual(error as? SetupFrames.FrameError, .truncated)
+            }
+        }
+    }
+
+    func test_frames_acceptEmptyAndNoncanonicalFrames() throws {
+        var reader = SetupFrames.Reader()
+        XCTAssertNoThrow(try reader.finish())
+        let frames = try reader.push(Data([0, 0x80, 0, 1, 0x42]))
+        XCTAssertEqual(frames, [Data(), Data(), Data([0x42])])
+        XCTAssertNoThrow(try reader.finish())
+    }
+
     /// The child's stdout arrives in arbitrary chunks; frames must come out
     /// whole and in order regardless of where the chunks cut.
     func test_frames_surviveBeingSplitAcrossReads() throws {
@@ -18,8 +69,9 @@ final class SetupProtocolTests: XCTestCase {
 
         for cut in 0...stream.count {
             var reader = SetupFrames.Reader()
-            var frames = reader.push(stream.prefix(cut))
-            frames += reader.push(stream.suffix(from: cut))
+            var frames = try reader.push(stream.prefix(cut))
+            frames += try reader.push(stream.suffix(from: cut))
+            try reader.finish()
 
             XCTAssertEqual(frames.count, 2, "cut at \(cut)")
             XCTAssertEqual(try Aria_Setup_V1_ApplyResponse(serializedBytes: frames[0]), event)
@@ -33,7 +85,7 @@ final class SetupProtocolTests: XCTestCase {
         let frame = try SetupFrames.encode(request)
 
         var reader = SetupFrames.Reader()
-        let frames = reader.push(frame)
+        let frames = try reader.push(frame)
 
         XCTAssertEqual(frames.count, 1)
         XCTAssertEqual(try Aria_Setup_V1_ApplyRequest(serializedBytes: frames[0]), request)
@@ -52,6 +104,18 @@ final class SetupProtocolTests: XCTestCase {
 
         let silent = SetupClient.Run(summary: nil, status: 9, stderr: Data())
         XCTAssertEqual(SetupClient.outcome(silent, cancelled: false).failure, .failed("aria setup exited with 9"))
+    }
+
+    func test_outcome_reportsTruncationWithoutHidingCancellationOrChildFailure() {
+        var run = SetupClient.Run(summary: nil, status: 0, stderr: Data(), frameError: .truncated)
+        XCTAssertEqual(SetupClient.outcome(run, cancelled: false).failure, .invalidOutput(.truncated))
+        XCTAssertEqual(SetupClient.outcome(run, cancelled: true).failure, .cancelled)
+        run.status = 1
+        run.stderr = Data("download failed".utf8)
+        XCTAssertEqual(SetupClient.outcome(run, cancelled: false).failure, .failed("download failed"))
+        let summary = Aria_Setup_V1_Summary()
+        run.summary = summary
+        XCTAssertEqual(try SetupClient.outcome(run, cancelled: true).get(), summary)
     }
 }
 
