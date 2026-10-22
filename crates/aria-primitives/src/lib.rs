@@ -16,6 +16,8 @@ pub mod private_fs;
 #[cfg(not(any(target_os = "ios", target_family = "wasm")))]
 pub mod process;
 pub mod slot;
+#[cfg(not(target_family = "wasm"))]
+pub mod thread;
 pub mod user_home;
 #[cfg(not(target_family = "wasm"))]
 pub mod wakeup;
