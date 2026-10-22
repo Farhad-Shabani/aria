@@ -11,6 +11,18 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 /// while the daemon is unavailable; the phone passes none.
 @MainActor
 final class DaemonPreferences: ObservableObject {
+    enum UpdateError: LocalizedError {
+        case conflict
+        case invalidResponse
+
+        var errorDescription: String? {
+            switch self {
+            case .conflict: "Preferences kept changing. Pending edits will retry on the next sync."
+            case .invalidResponse: "The daemon returned no preference update result."
+            }
+        }
+    }
+
     @Published private(set) var captionsEnabled: Bool
     /// Nil until the daemon answers.
     @Published private(set) var snapshot: Aria_Daemon_V1_UserPreferences?
@@ -39,8 +51,10 @@ final class DaemonPreferences: ObservableObject {
     }
 
     func sync() async {
+        guard !pushing else { return }
         do {
             let snapshot = try await transport.snapshot()
+            guard !pushing else { return }
             // A snapshot fetched before a push landed is older than what
             // we already know; adopting it would revert the push.
             guard snapshot.revision >= revision ?? 0 else { return }
@@ -100,51 +114,63 @@ final class DaemonPreferences: ObservableObject {
         }
     }
 
-    /// Serializes pushes and adopts the accepted snapshot, including fields
-    /// the daemon did not apply.
+    private func restore(_ sent: Aria_Daemon_V1_PreferencePatch) {
+        var combined = sent
+        pending.apply(to: &combined)
+        pending = combined
+    }
+
     private func push() async {
         guard !pushing else { return }
         pushing = true
         defer { pushing = false }
+        var conflicts = 0
         while pending != Aria_Daemon_V1_PreferencePatch() {
             let sent = pending
-            for _ in 0..<2 {
-                do {
-                    if revision == nil {
-                        revision = try await transport.snapshot().revision
-                    }
-                    var request = Aria_Daemon_V1_UpdatePreferencesRequest()
-                    request.expectedRevision = revision ?? 0
-                    request.patch = sent
-                    switch try await transport.update(request).result {
-                    case .snapshot(let accepted):
-                        revision = accepted.revision
-                        lastError = nil
-                        if pending == sent {
-                            pending = Aria_Daemon_V1_PreferencePatch()
-                        }
-                        adopt(accepted.preferences)
-                    case .conflict(let conflict):
-                        revision = conflict.current.revision
-                        continue
-                    case nil:
+            pending = Aria_Daemon_V1_PreferencePatch()
+            do {
+                try Task.checkCancellation()
+                if revision == nil {
+                    revision = try await transport.snapshot().revision
+                }
+                try Task.checkCancellation()
+                var request = Aria_Daemon_V1_UpdatePreferencesRequest()
+                request.expectedRevision = revision ?? 0
+                request.patch = sent
+                switch try await transport.update(request).result {
+                case .snapshot(let accepted):
+                    revision = accepted.revision
+                    lastError = nil
+                    adopt(accepted.preferences)
+                case .conflict(let conflict):
+                    revision = conflict.current.revision
+                    restore(sent)
+                    adopt(conflict.current.preferences)
+                    conflicts += 1
+                    if conflicts == 2 {
+                        log.error("Preference update stopped after repeated revision conflicts")
+                        lastError = UpdateError.conflict
                         return
                     }
-                } catch {
-                    log.error("Update failed: \(String(describing: error), privacy: .private)")
-                    lastError = error
-                    if Self.refusesPatch(error) {
-                        // The daemon will never take this patch; keeping it
-                        // would poison every later edit. Show its truth again.
-                        pending = Aria_Daemon_V1_PreferencePatch()
-                        if let fresh = try? await transport.snapshot() {
-                            revision = fresh.revision
-                            adopt(fresh.preferences)
-                        }
-                    }
-                    return
+                case nil:
+                    throw UpdateError.invalidResponse
                 }
-                break
+            } catch {
+                log.error("Update failed: \(String(describing: error), privacy: .private)")
+                lastError = error
+                if Self.refusesPatch(error) {
+                    // Drop only the refused request; edits made during it still need a push.
+                    do {
+                        let fresh = try await transport.snapshot()
+                        revision = fresh.revision
+                        adopt(fresh.preferences)
+                    } catch {
+                        log.error("Preference recovery failed: \(String(describing: error), privacy: .private)")
+                    }
+                } else {
+                    restore(sent)
+                }
+                return
             }
         }
     }

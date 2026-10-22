@@ -52,6 +52,21 @@ extension Aria_Daemon_V1_OutputMode {
 }
 
 extension Aria_Daemon_V1_PreferencePatch {
+    func apply(to patch: inout Aria_Daemon_V1_PreferencePatch) {
+        if hasRecognitionLanguage { patch.recognitionLanguage = recognitionLanguage }
+        if hasOutputMode { patch.outputMode = outputMode }
+        if hasDeliveryMode { patch.deliveryMode = deliveryMode }
+        if hasSilenceDurationMs { patch.silenceDurationMs = silenceDurationMs }
+        if hasOwnVoiceOnly { patch.ownVoiceOnly = ownVoiceOnly }
+        if hasDictationHotkey { patch.dictationHotkey = dictationHotkey }
+        if hasAskHotkey { patch.askHotkey = askHotkey }
+        if hasProjectVocabulary { patch.projectVocabulary = projectVocabulary }
+        if hasVocabularyDirectory { patch.vocabularyDirectory = vocabularyDirectory }
+        if hasDictationHistory { patch.dictationHistory = dictationHistory }
+        if hasHistoryAudioRetention { patch.historyAudioRetention = historyAudioRetention }
+        if hasMuteOutput { patch.muteOutput = muteOutput }
+    }
+
     func apply(to preferences: inout Aria_Daemon_V1_UserPreferences) {
         if hasRecognitionLanguage { preferences.recognitionLanguage = recognitionLanguage }
         if hasOutputMode { preferences.outputMode = outputMode }
