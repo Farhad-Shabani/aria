@@ -13,9 +13,8 @@ use crate::memory::Lexicon;
 use crate::vocabulary::{Directory, MatchError, PersonalRules, State, Status, Term, Vocabulary};
 use crate::vocabulary::{
     catalog::{self, Catalog},
-    discover,
-    extract::Extractor,
-    pipeline_key, select,
+    collection::{self, Collector},
+    discover, select,
 };
 
 use super::tasks::Supervised;
@@ -55,12 +54,12 @@ impl From<catalog::Error> for Error {
     }
 }
 
-impl<E: std::error::Error + 'static> From<discover::Error<E>> for Error {
-    fn from(error: discover::Error<E>) -> Self {
+impl<E: std::error::Error + 'static> From<collection::Error<E>> for Error {
+    fn from(error: collection::Error<E>) -> Self {
         match error {
-            discover::Error::TooLarge => Self::TooLarge,
-            discover::Error::Cancelled => Self::Busy,
-            discover::Error::Extractor(_) => {
+            collection::Error::TooLarge => Self::TooLarge,
+            collection::Error::Cancelled => Self::Busy,
+            collection::Error::Extractor(_) => {
                 tracing::warn!(stage = "extraction", "vocabulary preparation failed");
                 Self::Unavailable
             }
@@ -150,8 +149,8 @@ enum Command {
     },
 }
 
-pub(super) struct Worker<E: Extractor> {
-    extractor: E,
+pub(super) struct Worker<C: Collector> {
+    collector: C,
     pipeline_key: Option<String>,
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
@@ -161,12 +160,12 @@ pub(super) struct Worker<E: Extractor> {
 }
 
 impl Runtime {
-    pub(super) fn new<E: Extractor>(
+    pub(super) fn new<C: Collector>(
         directory: PathBuf,
         lexicon: Option<Lexicon>,
         persistent: bool,
-        extractor: E,
-    ) -> (Arc<Self>, Worker<E>) {
+        collector: C,
+    ) -> (Arc<Self>, Worker<C>) {
         let (requests, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         let empty = Arc::new(Vocabulary::default());
         let runtime = Arc::new(Self {
@@ -187,8 +186,8 @@ impl Runtime {
             persistent,
         });
         let worker = Worker {
-            pipeline_key: pipeline_key(extractor.cache_key()),
-            extractor,
+            pipeline_key: collector.pipeline_key(),
+            collector,
             runtime: Arc::clone(&runtime),
             requests: receiver,
             directory,
@@ -444,7 +443,7 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
-impl<E: Extractor> Supervised for Worker<E> {
+impl<C: Collector> Supervised for Worker<C> {
     async fn run(self, shutdown: CancellationToken) {
         let runtime = Arc::clone(&self.runtime);
         let mut job = tokio::task::spawn_blocking(move || self.work());
@@ -459,7 +458,7 @@ impl<E: Extractor> Supervised for Worker<E> {
     }
 }
 
-impl<E: Extractor> Worker<E> {
+impl<C: Collector> Worker<C> {
     pub(super) fn initialize_personal(&mut self) -> Result<(), Error> {
         self.refresh_personal()
     }
@@ -781,8 +780,8 @@ impl<E: Extractor> Worker<E> {
     ) -> Result<Status, Error> {
         self.interrupted(cancel)?;
         let key = self.pipeline_key.clone().ok_or(Error::Unavailable)?;
-        if pipeline_key(self.extractor.cache_key()).as_ref() != Some(&key) {
-            tracing::warn!("vocabulary extractor changed its cache identity");
+        if self.collector.pipeline_key().as_ref() != Some(&key) {
+            tracing::warn!("vocabulary collector changed its cache identity");
             return Err(Error::Unavailable);
         }
         let root = discover::resolve(directory.as_path()).map_err(|_| Error::Unavailable)?;
@@ -800,8 +799,7 @@ impl<E: Extractor> Worker<E> {
         }
         self.reserve(DISCOVERY_RESERVE, Some(directory))?;
         let previous = cached.map(|cached| cached.sources).unwrap_or_default();
-        let discovery =
-            discover::scan_cached(directory.as_path(), token, &previous, &mut self.extractor)?;
+        let discovery = self.collector.collect(directory, &previous, token)?;
         if discovery.root != root {
             tracing::warn!("vocabulary selection changed during discovery");
             return Err(Error::Unavailable);
@@ -975,7 +973,9 @@ impl<E: Extractor> Worker<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocabulary::extract::{self, LocalExtractor, TextInput};
+    use crate::vocabulary::discover::LocalCollector;
+    use crate::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
+    use crate::vocabulary::{Candidate, Coverage, Discovery, Source, SourceKind, pipeline_key};
     use std::ops::Range;
 
     fn directory(path: &Path) -> Directory {
@@ -989,11 +989,126 @@ mod tests {
         directory(&path)
     }
 
+    struct StaticCollector {
+        root: PathBuf,
+        previous_counts: Vec<usize>,
+    }
+
+    impl Collector for StaticCollector {
+        type Error = std::convert::Infallible;
+
+        fn pipeline_key(&self) -> Option<String> {
+            Some("test-collector-1".into())
+        }
+
+        fn collect(
+            &mut self,
+            selected: &Directory,
+            previous: &[Source],
+            _cancel: &CancelToken,
+        ) -> Result<Discovery, collection::Error<Self::Error>> {
+            self.previous_counts.push(previous.len());
+            Ok(Discovery {
+                selected: selected.as_path().to_path_buf(),
+                root: self.root.clone(),
+                sources: vec![Source {
+                    relative_path: "terms.txt".into(),
+                    kind: SourceKind::Text,
+                    fingerprint: [1; 32],
+                    input_bytes: 8,
+                    candidates: vec![Candidate {
+                        canonical: "aria-kit".into(),
+                        span: 0..8,
+                    }],
+                }],
+                coverage: Coverage {
+                    entries: 1,
+                    bytes: 8,
+                    ..Coverage::default()
+                },
+            })
+        }
+    }
+
+    #[test]
+    fn injected_collection_reuses_evidence_and_publishes_corrections() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let root = selected.as_path().canonicalize().unwrap();
+        let collector = StaticCollector {
+            root,
+            previous_counts: Vec::new(),
+        };
+        let (runtime, mut worker) =
+            Runtime::new(temporary.path().join("catalog"), None, true, collector);
+        let mut catalog = None;
+        for _ in 0..2 {
+            runtime.prepare(Some(selected.clone()));
+            let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+                panic!("refresh expected")
+            };
+            let result =
+                worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
+            worker.finished(Some(&selected), &cancel, &result);
+            assert_eq!(result.unwrap().state, State::Ready);
+        }
+        assert_eq!(worker.collector.previous_counts, [0, 1]);
+
+        let snapshot = runtime.snapshot(Some(&selected));
+        assert_eq!(
+            snapshot.matcher.correct("Use ARIA dash kit.").as_deref(),
+            Some("Use aria-kit.")
+        );
+    }
+
+    #[test]
+    fn injected_collection_cannot_publish_evidence_from_another_root() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let collector = StaticCollector {
+            root: temporary.path().join("other-project"),
+            previous_counts: Vec::new(),
+        };
+        let (runtime, mut worker) =
+            Runtime::new(temporary.path().join("catalog"), None, true, collector);
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+        let mut catalog = None;
+        let result =
+            worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
+        worker.finished(Some(&selected), &cancel, &result);
+        assert!(matches!(result, Err(Error::Unavailable)));
+        assert_eq!(runtime.status(Some(&selected)).runtime_revision, 0);
+        assert_eq!(
+            runtime
+                .snapshot(Some(&selected))
+                .matcher
+                .correct("aria dash kit"),
+            None
+        );
+        assert!(
+            catalog
+                .unwrap()
+                .load(
+                    &selected.as_path().canonicalize().unwrap(),
+                    &worker.pipeline_key.unwrap(),
+                )
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn cold_admission_coalesces_and_bounds_work_without_filesystem_access() {
         let root = tempfile::tempdir().unwrap();
-        let (runtime, _worker) =
-            Runtime::new(root.path().join("catalog"), None, true, LocalExtractor);
+        let (runtime, _worker) = Runtime::new(
+            root.path().join("catalog"),
+            None,
+            true,
+            LocalCollector::new(LocalExtractor),
+        );
         for index in 0..100 {
             let selected = directory(&root.path().join(format!("missing-{index}")));
             let snapshot = runtime.snapshot(Some(&selected));
@@ -1016,7 +1131,7 @@ mod tests {
             root.path().join("catalog"),
             Some(Lexicon::new(root.path())),
             true,
-            LocalExtractor,
+            LocalCollector::new(LocalExtractor),
         );
         worker.initialize_personal().unwrap();
         let admitted = runtime.snapshot(None);
@@ -1036,8 +1151,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let a = project(root.path(), "aria-stt");
         let b = project(root.path(), "other-stt");
-        let (runtime, worker) =
-            Runtime::new(root.path().join("catalog"), None, true, LocalExtractor);
+        let (runtime, worker) = Runtime::new(
+            root.path().join("catalog"),
+            None,
+            true,
+            LocalCollector::new(LocalExtractor),
+        );
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
         assert_eq!(
@@ -1075,7 +1194,12 @@ mod tests {
         let parent = project(root.path(), "parent");
         let child = project(parent.as_path(), "aria-kit");
         let catalog_dir = root.path().join("catalog");
-        let (runtime, worker) = Runtime::new(catalog_dir.clone(), None, true, LocalExtractor);
+        let (runtime, worker) = Runtime::new(
+            catalog_dir.clone(),
+            None,
+            true,
+            LocalCollector::new(LocalExtractor),
+        );
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
         runtime.refresh(parent.clone()).await.unwrap();
@@ -1158,10 +1282,10 @@ mod tests {
             root.path().join("catalog"),
             None,
             true,
-            BlockingExtractor {
+            LocalCollector::new(BlockingExtractor {
                 entered: entered_tx,
                 exited: exited_tx,
-            },
+            }),
         );
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
@@ -1187,7 +1311,12 @@ mod tests {
     #[test]
     fn expired_deadline_cancels_backend_work() {
         let root = tempfile::tempdir().unwrap();
-        let (_, worker) = Runtime::new(root.path().join("catalog"), None, true, LocalExtractor);
+        let (_, worker) = Runtime::new(
+            root.path().join("catalog"),
+            None,
+            true,
+            LocalCollector::new(LocalExtractor),
+        );
         let token = worker.control(
             Arc::new(AtomicBool::new(false)),
             Deadline::after(Duration::ZERO),
@@ -1215,7 +1344,8 @@ mod tests {
         catalog
             .refresh_cancellable(&discovery, &key, &CancelToken::never())
             .unwrap();
-        let (_, worker) = Runtime::new(catalog_dir, None, true, LocalExtractor);
+        let (_, worker) =
+            Runtime::new(catalog_dir, None, true, LocalCollector::new(LocalExtractor));
         let mut catalog = Some(catalog);
         worker
             .remove(
@@ -1238,8 +1368,12 @@ mod tests {
     fn obsolete_generation_cannot_publish_and_resource_failure_keeps_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let selected = directory(&root.path().join("project"));
-        let (runtime, worker) =
-            Runtime::new(root.path().join("catalog"), None, true, LocalExtractor);
+        let (runtime, worker) = Runtime::new(
+            root.path().join("catalog"),
+            None,
+            true,
+            LocalCollector::new(LocalExtractor),
+        );
         runtime.prepare(Some(selected.clone()));
         let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
             panic!("refresh expected")

@@ -10,10 +10,11 @@ use aria_kit::cancel::CancelToken;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 use sha2::{Digest, Sha256};
 
+use super::collection::{Collector, Error};
 use super::extract::{Extractor, TextInput};
 use super::{
     Candidate, Coverage, Discovery, MAX_CANDIDATES, MAX_SOURCE_BYTES, MAX_TERMS, MAX_TEXT_BYTES,
-    Source, SourceKind, source_bytes,
+    Source, SourceKind, pipeline_key, source_bytes,
 };
 
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
@@ -21,22 +22,31 @@ const MAX_ENTRIES: usize = 20_000;
 const MAX_DEPTH: usize = 16;
 const WORK_BYTES: usize = 4096;
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum Error<E> {
-    #[error("vocabulary discovery requires an absolute directory")]
-    InvalidDirectory,
-    #[error("vocabulary discovery exceeded a resource limit")]
-    TooLarge,
-    #[error("vocabulary discovery was cancelled")]
-    Cancelled,
-    #[error("project files changed during vocabulary discovery")]
-    Unstable,
-    #[error("vocabulary extractor returned invalid output")]
-    InvalidOutput,
-    #[error("vocabulary extraction failed")]
-    Extractor(#[source] E),
-    #[error("vocabulary filesystem operation failed")]
-    Io(#[from] io::Error),
+pub(crate) struct LocalCollector<E> {
+    extractor: E,
+}
+
+impl<E: Extractor> LocalCollector<E> {
+    pub(crate) fn new(extractor: E) -> Self {
+        Self { extractor }
+    }
+}
+
+impl<E: Extractor> Collector for LocalCollector<E> {
+    type Error = E::Error;
+
+    fn pipeline_key(&self) -> Option<String> {
+        pipeline_key(self.extractor.cache_key())
+    }
+
+    fn collect(
+        &mut self,
+        selected: &super::Directory,
+        previous: &[Source],
+        cancel: &CancelToken,
+    ) -> Result<Discovery, Error<Self::Error>> {
+        scan_cached(selected.as_path(), cancel, previous, &mut self.extractor)
+    }
 }
 
 pub(crate) fn resolve(selected: &Path) -> io::Result<PathBuf> {

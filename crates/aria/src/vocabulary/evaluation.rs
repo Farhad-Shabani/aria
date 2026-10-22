@@ -10,6 +10,7 @@ use aria_kit::cancel::CancelToken;
 use serde_json::{Value, json};
 
 use super::catalog::Catalog;
+use super::collection;
 use super::extract::{Extractor, LocalExtractor};
 use super::{PersonalRules, Vocabulary, discover, pipeline_key, select};
 
@@ -165,15 +166,15 @@ fn failure(stage: &str, category: &str) -> Value {
     json!({ "status": "failed", "stage": stage, "category": category })
 }
 
-fn scan_category(error: &discover::Error<super::extract::Error>) -> &'static str {
+fn scan_category(error: &collection::Error<super::extract::Error>) -> &'static str {
     match error {
-        discover::Error::TooLarge => "too_large",
-        discover::Error::Cancelled => "cancelled",
-        discover::Error::InvalidDirectory => "invalid_directory",
-        discover::Error::Unstable => "unstable",
-        discover::Error::InvalidOutput => "invalid_output",
-        discover::Error::Extractor(_) => "extractor_error",
-        discover::Error::Io(_) => "io_error",
+        collection::Error::TooLarge => "too_large",
+        collection::Error::Cancelled => "cancelled",
+        collection::Error::InvalidDirectory => "invalid_directory",
+        collection::Error::Unstable => "unstable",
+        collection::Error::InvalidOutput => "invalid_output",
+        collection::Error::Extractor(_) => "extractor_error",
+        collection::Error::Io(_) => "io_error",
     }
 }
 
