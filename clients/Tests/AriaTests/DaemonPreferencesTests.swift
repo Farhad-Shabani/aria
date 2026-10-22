@@ -59,17 +59,6 @@ final class DaemonPreferencesTests: XCTestCase {
         return response
     }
 
-    func test_sync_adoptsTheDaemonSnapshot() async {
-        let transport = FakeTransport()
-        transport.snapshots = [snapshot(revision: 3, mute: true)]
-        let preferences = DaemonPreferences(transport: transport)
-
-        await preferences.sync()
-
-        XCTAssertEqual(preferences.snapshot?.muteOutput, true)
-        XCTAssertNil(preferences.lastError)
-    }
-
     func test_sync_usesHistoryBooleanWithoutPresenceFallback() async {
         let transport = FakeTransport()
         transport.snapshots = [snapshot(revision: 3)]
@@ -81,12 +70,16 @@ final class DaemonPreferencesTests: XCTestCase {
         XCTAssertFalse(preferences.historyEnabled)
     }
 
-    func test_set_showsTheEditAtOnceAndPushesTheKnownRevision() async {
+    func test_set_pushesTheKnownRevisionAndKeepsTheEditVisibleDuringSync() async {
         let transport = FakeTransport()
-        transport.snapshots = [snapshot(revision: 3)]
+        transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]
         transport.updates = [accepted(snapshot(revision: 4, mute: true))]
         let preferences = DaemonPreferences(transport: transport)
         await preferences.sync()
+        transport.duringUpdate = {
+            await preferences.sync()
+            XCTAssertEqual(preferences.snapshot?.muteOutput, true)
+        }
 
         await preferences.set { $0.muteOutput = true }
 
@@ -94,6 +87,7 @@ final class DaemonPreferencesTests: XCTestCase {
         XCTAssertEqual(transport.sentUpdates[0].expectedRevision, 3)
         XCTAssertEqual(transport.sentUpdates[0].patch.muteOutput, true)
         XCTAssertEqual(preferences.snapshot?.muteOutput, true)
+        XCTAssertNil(preferences.lastError)
     }
 
     func test_conflict_adoptsTheDaemonRevisionAndRetriesOnce() async {
@@ -113,12 +107,15 @@ final class DaemonPreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.snapshot?.muteOutput, true)
     }
 
-    func test_sync_ignoresASnapshotOlderThanTheOneAlreadyKnown() async {
+    func test_sync_adoptsTheSnapshotAndIgnoresOlderRevisions() async {
         let transport = FakeTransport()
         transport.snapshots = [snapshot(revision: 5, mute: true), snapshot(revision: 4, mute: false)]
         let preferences = DaemonPreferences(transport: transport)
 
         await preferences.sync()
+        XCTAssertEqual(preferences.snapshot?.muteOutput, true)
+        XCTAssertNil(preferences.lastError)
+
         await preferences.sync()
 
         XCTAssertEqual(preferences.snapshot?.muteOutput, true)
@@ -293,23 +290,6 @@ final class DaemonPreferencesTests: XCTestCase {
         XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4, 5])
         XCTAssertEqual(preferences.lastError as? DaemonPreferences.UpdateError, .conflict)
         XCTAssertEqual(preferences.snapshot?.recognitionLanguage, "auto")
-    }
-
-    func test_sync_doesNotReplaceTheEditBeingPushed() async {
-        let transport = FakeTransport()
-        transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]
-        transport.updates = [accepted(snapshot(revision: 4, mute: true))]
-        let preferences = DaemonPreferences(transport: transport)
-        await preferences.sync()
-        transport.duringUpdate = {
-            await preferences.sync()
-            XCTAssertEqual(preferences.snapshot?.muteOutput, true)
-        }
-
-        await preferences.set { $0.muteOutput = true }
-
-        XCTAssertEqual(preferences.snapshot?.muteOutput, true)
-        XCTAssertNil(preferences.lastError)
     }
 
 }
