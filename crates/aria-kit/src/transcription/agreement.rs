@@ -64,9 +64,14 @@ const PLACEMENT_SHIFT: usize = 2;
 /// Frames a word's timing reaches either side of itself. Timings are coarse,
 /// and a word's edges blur into its neighbours.
 const HEARD_MARGIN_FRAMES: usize = 3;
-/// Loud frames in a row that no word covers before the buffer counts as
+/// Speech frames in a row that no word covers before the buffer counts as
 /// skipped speech: about half a second, longer than a cough or a breath.
 const UNHEARD_SPEECH_FRAMES: usize = 16;
+/// A buffer's quietest tenth of frames is its room noise. The single
+/// quietest frame could be a dropout.
+const NOISE_FRAME_DIVISOR: usize = 10;
+/// The margin over room noise a speech frame needs: 6 dB.
+const SPEECH_OVER_NOISE: f32 = 4.0;
 /// How far before the last delivered word's end a cap cut lands, so the
 /// next buffer hears that word whole rather than a fragment of it: 240 ms,
 /// past a timing's error and most of a short word.
@@ -358,24 +363,29 @@ impl AgreementState {
 
     /// The buffer must go whether or not the speaker paused. The unconfirmed
     /// tail goes out, and the cut lands a little before the last delivered
-    /// word ends — or where skipped speech begins — so nothing unheard is
-    /// thrown away, and the next buffer recognises the word it hears again.
-    /// Without timings the cut lands at the end: an earlier one would
-    /// re-decode words that were just typed.
+    /// word or the skipped speech, whichever comes first. A later cut would
+    /// lose short words the model missed in between. Without timings the cut
+    /// lands at the end: an earlier one would re-decode words just typed.
+    /// Skipped speech too near the opening to cut before is ignored, or the
+    /// words heard after it would be lost.
     fn cap_cut(&mut self, loudness: &Loudness, available: u64) -> Option<TranscriptSegment> {
-        let skipped = self.skipped_speech(loudness, &self.agreement.candidate);
+        let skipped = self
+            .skipped_speech(loudness, &self.agreement.candidate)
+            .filter(|&at| at.saturating_sub(CUT_OVERLAP_SAMPLES) > self.buffer_start);
         let tail = self.agreement.take_tail(skipped);
         let tail = self.commit(tail);
-        let cut = skipped
-            .or(self.agreement.delivered_through)
+        let cut = [self.agreement.delivered_through, skipped]
+            .into_iter()
+            .flatten()
             .map(|through| through.saturating_sub(CUT_OVERLAP_SAMPLES))
             .filter(|&through| through > self.buffer_start)
+            .min()
             .map_or(available, |through| through.min(available));
         self.trim(cut, tail)
     }
 
     /// Where speech the model skipped begins, past what was delivered: the
-    /// first loud stretch no word of `heard` covers. Nothing this close to
+    /// first stretch of speech no word of `heard` covers. Nothing this close to
     /// the buffer's opening counts, or a buffer the model keeps skipping
     /// the start of would never move on.
     fn skipped_speech(&self, loudness: &Loudness, heard: &[Word]) -> Option<u64> {
@@ -877,12 +887,25 @@ fn ends_at(words: &[Word], before: Option<u64>) -> Option<u64> {
         .map(|span| span.end.max(before.unwrap_or(0)))
 }
 
-/// A buffer's loudness, frame by frame: the mean square of each frame, the
-/// loudest of them, and the level at or under which a frame counts as quiet.
+fn room_noise(squares: &[f32]) -> f32 {
+    if squares.is_empty() {
+        return 0.0;
+    }
+    let mut powers = squares.to_vec();
+    let rank = powers.len() / NOISE_FRAME_DIVISOR;
+    let (_, noise, _) = powers.select_nth_unstable_by(rank, f32::total_cmp);
+    *noise
+}
+
+/// A buffer's loudness, frame by frame, and the levels that split it into
+/// quiet and speech.
 struct Loudness {
     squares: Vec<f32>,
     loudest: f32,
     quiet: f32,
+    /// A soft sentence after one loud word is quiet beside that word, yet
+    /// still speech.
+    speech: f32,
 }
 
 impl Loudness {
@@ -895,15 +918,25 @@ impl Loudness {
             })
             .collect();
         let loudest = squares.iter().copied().fold(0.0_f32, f32::max);
+        let quiet = loudest * TRIM_QUIET_FRACTION;
+        // Capped at `quiet`, so every loud frame is also speech.
+        let speech = (room_noise(&squares) * SPEECH_OVER_NOISE)
+            .max(SILENCE_FLOOR)
+            .min(quiet);
         Self {
             squares,
             loudest,
-            quiet: loudest * TRIM_QUIET_FRACTION,
+            quiet,
+            speech,
         }
     }
 
     fn is_loud(&self, frame: usize) -> bool {
         self.squares[frame] > self.quiet
+    }
+
+    fn is_speech(&self, frame: usize) -> bool {
+        self.squares[frame] > self.speech
     }
 
     /// Where the buffer's tail opens onto a real pause, as a sample offset
@@ -928,8 +961,13 @@ impl Loudness {
     }
 
     /// Where speech no heard word accounts for begins, at or after `from`:
-    /// the first of enough loud frames in a row outside every word's
+    /// the first of enough speech frames in a row outside every word's
     /// timing. Untimed words vouch for the whole buffer.
+    ///
+    /// Before the last heard word, only loud frames count. The model skipped
+    /// past softer sound there to reach that word, so it is background. Past
+    /// the last heard word, soft sound may be words the model has not caught
+    /// yet.
     fn unheard_speech(&self, buffer_start: u64, words: &[Word], from: u64) -> Option<u64> {
         let frame =
             |position: u64| position.saturating_sub(buffer_start) as usize / TRIM_FRAME_SAMPLES;
@@ -940,13 +978,18 @@ impl Loudness {
             let last = (frame(span.end) + HEARD_MARGIN_FRAMES).min(heard.len());
             heard[first.min(last)..last].fill(true);
         }
+        let past_last_word = heard
+            .iter()
+            .rposition(|&heard| heard)
+            .map_or(0, |last| last + 1);
         let mut run = 0;
         for (index, &heard) in heard.iter().enumerate().skip(frame(from)) {
-            run = if self.is_loud(index) && !heard {
-                run + 1
+            let speech = if index < past_last_word {
+                self.is_loud(index)
             } else {
-                0
+                self.is_speech(index)
             };
+            run = if speech && !heard { run + 1 } else { 0 };
             if run > UNHEARD_SPEECH_FRAMES {
                 let first = index + 1 - run;
                 return Some(buffer_start + (first * TRIM_FRAME_SAMPLES) as u64);
@@ -1822,7 +1865,60 @@ mod tests {
         use super::*;
 
         fn loud_frames(count: usize) -> Vec<f32> {
-            vec![0.5; count * TRIM_FRAME_SAMPLES]
+            frames_at(0.5, count)
+        }
+
+        fn frames_at(level: f32, count: usize) -> Vec<f32> {
+            vec![level; count * TRIM_FRAME_SAMPLES]
+        }
+
+        /// A word's text, level, and start and end in seconds.
+        type Spoken = (&'static str, i16, f32, f32);
+
+        fn sample_at(seconds: f32) -> usize {
+            (seconds * CANONICAL_SAMPLE_RATE as f32) as usize
+        }
+
+        fn seconds_at(sample: usize) -> f32 {
+            sample as f32 / CANONICAL_SAMPLE_RATE as f32
+        }
+
+        /// `seconds` of silence with each word at its level.
+        fn spoken_audio(spoken: &[Spoken], seconds: f32) -> Vec<i16> {
+            let mut audio = vec![0_i16; sample_at(seconds)];
+            for &(_, level, start, end) in spoken {
+                audio[sample_at(start)..sample_at(end)].fill(level);
+            }
+            audio
+        }
+
+        fn strides(audio: &[i16]) -> Vec<Vec<i16>> {
+            audio.chunks(STRIDE).map(<[i16]>::to_vec).collect()
+        }
+
+        /// The words whose audio lies whole inside `window`, timed from its
+        /// opening.
+        fn whole_words(spoken: &[Spoken], window: &[f32]) -> (Vec<&'static str>, Vec<TimedWord>) {
+            let mut words = Vec::new();
+            let mut timings = Vec::new();
+            for &(text, level, start, end) in spoken {
+                let level = f32::from(level) / crate::audio::PCM_SCALE;
+                let Some(opens) = window.iter().position(|&sample| sample == level) else {
+                    continue;
+                };
+                let length = window[opens..]
+                    .iter()
+                    .take_while(|&&sample| sample == level)
+                    .count();
+                if length == sample_at(end) - sample_at(start) && opens + length < window.len() {
+                    words.push(text);
+                    timings.push(TimedWord {
+                        start: seconds_at(opens),
+                        end: seconds_at(opens + length),
+                    });
+                }
+            }
+            (words, timings)
         }
 
         fn timed_word(first_frame: usize, frames: usize) -> Word {
@@ -1874,7 +1970,7 @@ mod tests {
         }
 
         #[test]
-        fn skipped_speech_is_a_run_of_loud_frames_no_word_covers() {
+        fn skipped_speech_is_a_run_of_speech_frames_no_word_covers() {
             // Ten words of ten frames, eight frames apart: the margins leave
             // two uncovered frames in every gap, never a run long enough to
             // count as skipped speech.
@@ -1893,6 +1989,148 @@ mod tests {
                 Loudness::of(&loud_frames(210)).unheard_speech(0, &skipped, 0),
                 Some(gap_opens as u64)
             );
+        }
+
+        #[test]
+        fn steady_room_noise_is_not_skipped_speech() {
+            let mut buffer = frames_at(0.02, 20);
+            buffer.extend(loud_frames(2));
+            buffer.extend(frames_at(0.02, 30));
+            let loudness = Loudness::of(&buffer);
+            assert!(
+                loudness.squares[0] > SILENCE_FLOOR,
+                "the room noise sits over the silence floor"
+            );
+
+            assert_eq!(loudness.unheard_speech(0, &[timed_word(20, 2)], 0), None);
+        }
+
+        #[test]
+        fn soft_speech_the_model_hears_late_survives_the_pause() {
+            // Each soft stride opens on a syllable that breaks the quiet run,
+            // as real speech does, so only the silence after reads as a
+            // pause. The decode hears the soft speech only once the window
+            // grows past where that pause would cut.
+            let mut soft_stride = vec![400_i16; STRIDE];
+            soft_stride[..TRIM_FRAME_SAMPLES].fill(4_000);
+            let mut batches = vec![quiet_batch(); 5];
+            batches.push(loud_batch());
+            batches.extend(vec![soft_stride; 8]);
+            batches.extend(vec![quiet_batch(); 20]);
+            let (_directory, mut recording, pace) = paced(batches);
+            let loud = f32::from(loud_batch()[0]) / crate::audio::PCM_SCALE;
+            // The silence after the soft speech is long enough to cut by
+            // stride 19.
+            let hears_soft_speech_from = 22 * STRIDE;
+            let one = TimedWord {
+                start: 0.5,
+                end: 0.6,
+            };
+            let two = TimedWord {
+                start: 0.6,
+                end: 1.4,
+            };
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    if !window.contains(&loud) {
+                        Hypothesis::new("")
+                    } else if window.len() < hears_soft_speech_from {
+                        Hypothesis::with_words("one", vec![one])
+                    } else {
+                        Hypothesis::with_words("one two", vec![one, two])
+                    }
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn a_word_heard_after_soft_background_goes_out_at_once() {
+            // Background 16 dB under "a" sits between the words. "b" must
+            // not wait for the cap.
+            const SPOKEN: [Spoken; 2] = [("a", 8_000, 0.0, 0.4), ("b", 7_000, 2.0, 2.4)];
+            let mut audio = spoken_audio(&SPOKEN, 8.0);
+            audio[sample_at(0.6)..sample_at(1.6)].fill(1_200);
+            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let mut b_delivered_at = None;
+            run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, timings) = whole_words(&SPOKEN, window);
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |state| {
+                    if state.transcript.len() == 2 && b_delivered_at.is_none() {
+                        b_delivered_at = Some(state.decoded_end);
+                    }
+                },
+            );
+
+            let b_delivered_at = b_delivered_at.expect("\"b\" is delivered");
+            assert!(
+                b_delivered_at <= sample_at(3.0) as u64,
+                "\"b\" waited until {b_delivered_at}"
+            );
+        }
+
+        #[test]
+        fn a_cap_cut_keeps_a_missed_word_before_skipped_speech() {
+            // The first buffer hears only "a": "b" is too short to count as
+            // skipped speech, "c" long enough. A cut at "c" would throw "b"
+            // away.
+            const SPOKEN: [Spoken; 3] = [
+                ("a", 8_000, 0.0, 0.4),
+                ("b", 6_000, 0.5, 0.8),
+                ("c", 7_000, 0.9, 1.6),
+            ];
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(2_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                    if words.first() == Some(&"a") {
+                        words.truncate(1);
+                        timings.truncate(1);
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "a b c");
+        }
+
+        #[test]
+        fn a_cap_cut_keeps_words_heard_after_skipped_speech_at_its_opening() {
+            // A later buffer opens just before the chatter, too near to cut
+            // before it. "b", heard after the chatter, must still go out at
+            // the cap.
+            const SPOKEN: [Spoken; 2] = [("a", 8_000, 0.0, 0.4), ("b", 7_000, 2.0, 2.4)];
+            let mut audio = spoken_audio(&SPOKEN, 8.0);
+            audio[sample_at(0.6)..sample_at(1.6)].fill(3_000);
+            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(4_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, timings) = whole_words(&SPOKEN, window);
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "a b");
         }
 
         #[test]
