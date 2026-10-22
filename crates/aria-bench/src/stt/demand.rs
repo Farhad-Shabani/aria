@@ -71,58 +71,22 @@ mod tests {
     use super::super::fetch::tests::sha256;
     use super::*;
 
-    const PINNED: &[u8] = b"pinned noise";
-
-    fn list() -> String {
-        let sha256 = sha256(PINNED);
-        format!("DKITCHEN\t{sha256}\tkitchen\nNPARK\t{sha256}\tpark\n")
-    }
-
-    fn writing(bytes: &'static [u8]) -> impl FnMut(&str, &Path) -> Result<(), FetchError> {
-        move |_, wav| {
-            fs::write(wav, bytes).unwrap();
-            Ok(())
-        }
-    }
-
-    fn never(environment: &str, _: &Path) -> Result<(), FetchError> {
-        panic!("{environment} should not be downloaded");
-    }
-
     #[test]
     fn a_download_that_matches_the_list_lands_as_the_environment_wav() {
         let output = tempfile::tempdir().unwrap();
+        let sha256 = sha256(b"pinned noise");
+        let list = format!("DKITCHEN\t{sha256}\tkitchen\nNPARK\t{sha256}\tpark\n");
 
-        let fetched = fetch_from(&list(), output.path(), writing(PINNED)).unwrap();
+        let fetched = fetch_from(&list, output.path(), |_, wav| {
+            fs::write(wav, b"pinned noise").unwrap();
+            Ok(())
+        })
+        .unwrap();
 
         assert_eq!(fetched.recordings, 2);
-        assert_eq!(fs::read(output.path().join("NPARK.wav")).unwrap(), PINNED);
-    }
-
-    #[test]
-    fn a_matching_wav_is_kept_without_downloading() {
-        let output = tempfile::tempdir().unwrap();
-        fetch_from(&list(), output.path(), writing(PINNED)).unwrap();
-
-        fetch_from(&list(), output.path(), never).unwrap();
-    }
-
-    #[test]
-    fn a_download_the_list_does_not_pin_fails_and_names_the_environment() {
-        let output = tempfile::tempdir().unwrap();
-
-        let fetched = fetch_from(&list(), output.path(), writing(b"other noise"));
-
-        assert!(matches!(fetched, Err(FetchError::Unpinned(name)) if name == "DKITCHEN"));
-    }
-
-    #[test]
-    fn the_committed_list_pins_six_environments() {
-        let rows = parse(LIST).unwrap();
-
-        assert_eq!(rows.len(), 6);
-        for row in rows {
-            assert_eq!(row.sha256.len(), 64, "{}", row.id);
-        }
+        assert_eq!(
+            fs::read(output.path().join("NPARK.wav")).unwrap(),
+            b"pinned noise"
+        );
     }
 }

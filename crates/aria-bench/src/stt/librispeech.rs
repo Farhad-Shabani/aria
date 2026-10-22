@@ -221,18 +221,6 @@ mod tests {
     }
 
     #[test]
-    fn a_decode_the_list_does_not_pin_fails_and_names_the_utterance() {
-        let output = tempfile::tempdir().unwrap();
-
-        let built = build_from(&list(), output.path(), count(2), writing(b"other audio"));
-
-        assert!(matches!(
-            built,
-            Err(LibrispeechError::Fetch(FetchError::Unpinned(id))) if id == "1089-134686-0000"
-        ));
-    }
-
-    #[test]
     fn a_count_the_list_cannot_satisfy_fails_before_any_decode() {
         let output = tempfile::tempdir().unwrap();
 

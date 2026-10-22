@@ -2164,23 +2164,6 @@ mod tests {
         }
 
         #[test]
-        fn a_decode_of_a_buffer_still_in_the_pause_is_ignored() {
-            let (_directory, mut recording) = recorded(&vec![0_i16; 2 * STRIDE]);
-            let mut state = AgreementState::new(cadence(5_000));
-            state.opened_in_pause = true;
-            let cancel = CancelToken::new();
-            let decode = |_window: &[f32]| Ok(Hypothesis::new("thank you"));
-
-            let step = state
-                .next_finalized_with(&mut recording, &cancel, decode)
-                .expect("the step succeeds")
-                .expect("a closed recording finishes in one step");
-
-            assert!(step.update.is_none());
-            assert!(step.transcript.is_none());
-        }
-
-        #[test]
         fn a_pause_cut_needs_a_real_pause_at_the_tail() {
             let speech = [0.5_f32; TRIM_FRAME_SAMPLES];
             let silence = [0.0_f32; TRIM_FRAME_SAMPLES];

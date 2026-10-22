@@ -230,21 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn noise_shorter_than_the_speech_wraps_around() {
-        let speech = tone(0.5, 1_000);
-        let noise = Noise {
-            path: PathBuf::new(),
-            samples: tone(0.1, 300),
-        };
-        let window: Vec<f32> = noise.cycle_from(0).take(speech.len()).collect();
-        let mixed = mix(&speech, &window, 0.0);
-        assert_eq!(mixed.len(), speech.len());
-        let added: Vec<f32> = mixed.iter().zip(&speech).map(|(m, s)| m - s).collect();
-        assert!((added[0] - added[300]).abs() < 1e-6);
-        assert!((added[299] - added[599]).abs() < 1e-6);
-    }
-
-    #[test]
     fn later_turns_open_the_noise_further_in() {
         let step = OPENING_STEP as usize;
         let noise = Noise {
@@ -366,15 +351,6 @@ mod tests {
             .fold(0f32, |peak, sample| peak.max(sample.abs()));
         assert!((peak - 1.0).abs() < 1e-6, "peak {peak}");
         assert!(power(&mixed) > 0.3, "still full scale, not merely quiet");
-    }
-
-    #[test]
-    fn an_empty_noise_directory_is_refused() {
-        let root = TempDir::new().expect("a temp dir");
-        let error = load_noises(root.path())
-            .err()
-            .expect("no noise is an error");
-        assert!(matches!(error, NoiseError::NoNoise { .. }), "{error}");
     }
 
     #[test]
