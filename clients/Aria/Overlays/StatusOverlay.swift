@@ -1,8 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// What the pill shows. Every press passes through these in order, and the
-/// ones that end a press say so before they go.
 enum PillState: Equatable {
     case recording(since: Date)
     case transcribing
@@ -85,8 +83,6 @@ enum PillState: Equatable {
         }
     }
 
-    /// An agent at work breathes; everything else holds still. A live
-    /// microphone draws the ribbon instead.
     var motion: Motion {
         switch self {
         case .asking, .delivering: return .breathe
@@ -175,10 +171,10 @@ enum Motion: Equatable {
 
 /// One ask the daemon has not answered yet.
 struct Ask: Equatable {
-    var agent: Aria_Daemon_V1_ChatAgent
+    let agent: Aria_Daemon_V1_ChatAgent
     var step: Aria_Daemon_V1_ChatStep
     var skill: String
-    var since: Date
+    let since: Date
 
     var stepLabel: String {
         step == .skill ? "skill: \(skill)" : step.label
@@ -212,7 +208,6 @@ struct AsksInFlight: Equatable {
 }
 
 extension Aria_Daemon_V1_ChatStep {
-    /// The verb the pill shows; `skill` is completed by the skill's name.
     var label: String {
         switch self {
         case .thinking: return "thinking"
@@ -248,7 +243,7 @@ final class StatusController: ObservableObject {
 
     private let events: DaemonEvents
     private let panel = FloatingPanel(width: pillWidth, bottomMargin: pillBottomMargin)
-    private var dictation: PillState?
+    private var foregroundState: PillState?
     private var asks = AsksInFlight()
     private var shown: PillState?
     /// The microphone, as of the last level the daemon sent. The ribbon
@@ -283,7 +278,7 @@ final class StatusController: ObservableObject {
             self.render()
         }
         events.onLevel { [weak self] level in
-            self?.meter(level)
+            self?.level.value = level
         }
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -298,24 +293,20 @@ final class StatusController: ObservableObject {
     private func show(_ state: PillState?) {
         expiry?.cancel()
         expiry = nil
-        dictation = state
+        foregroundState = state
         render()
         guard let life = state?.life else { return }
         expiry = Task { [weak self] in
             try? await Task.sleep(for: life)
             guard !Task.isCancelled else { return }
-            self?.dictation = nil
+            self?.foregroundState = nil
             self?.render()
         }
     }
 
-    private func meter(_ level: Float) {
-        self.level.value = level
-    }
-
     private func render() {
         // A press is the person's turn; it outranks whatever an agent is doing.
-        let live = dictation ?? PillState(asks: asks)
+        let live = foregroundState ?? PillState(asks: asks)
         if self.live != live { self.live = live }
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         let wanted = enabled ? live : nil
@@ -344,7 +335,7 @@ private let markHeight = RibbonTuning.height
 private let pillBottomMargin: CGFloat = 34
 
 /// A mark and, where there is something to read, a word for it.
-struct StatusPillView: View {
+private struct StatusPillView: View {
     let state: PillState
     let level: LiveLevel
 

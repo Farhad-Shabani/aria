@@ -9,9 +9,7 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 /// Pairs an iPhone: shows the one-time code the phone scans, or why there
 /// is none.
 struct PhoneSettings: View {
-    /// Picks up a code a phone used. Expiry is polled for exactly, so the
-    /// next code appears the moment this one lapses.
-    nonisolated private static let reissueInterval: Duration = .seconds(2)
+    nonisolated private static let pollInterval: Duration = .seconds(2)
 
     private static let pairedNoticeLifetime: TimeInterval = 10
 
@@ -77,30 +75,29 @@ struct PhoneSettings: View {
         .task {
             while !Task.isCancelled {
                 // A restart in progress would read as the daemon being off.
-                let next = status == .restarting ? Self.reissueInterval : await load()
+                let next = status == .restarting ? Self.pollInterval : await load()
                 try? await Task.sleep(for: next)
             }
         }
     }
 
-    /// Returns the wait before the next fetch. The invite is replaced only
-    /// when the code changes, so the QR is not redrawn every tick.
+    /// The invite is replaced only when the code changes.
     private func load() async -> Duration {
         let issued: (invite: PairingInvite, expiresAt: Date)
         do {
             issued = try await Self.issueInvite()
         } catch {
             let failure = Self.status(for: error)
-            guard status != .restarting else { return Self.reissueInterval }
+            guard status != .restarting else { return Self.pollInterval }
             // Polled every couple of seconds, so only a new failure is logged.
             if case .failed = failure, failure != status {
                 log.error("Fetching a pairing code failed: \(String(describing: error), privacy: .private)")
             }
             status = failure
-            return Self.reissueInterval
+            return Self.pollInterval
         }
         // A poll in flight when a restart began must not bring the code back.
-        if status == .restarting { return Self.reissueInterval }
+        if status == .restarting { return Self.pollInterval }
         if case .live(let shown, let expiresAt) = status {
             if shown == issued.invite { return Self.nextPoll(expiresAt: expiresAt) }
             if Self.wasRedeemed(expiresAt: expiresAt, replacedAt: .now) {
@@ -124,7 +121,7 @@ struct PhoneSettings: View {
 
     nonisolated static func nextPoll(expiresAt: Date, now: Date = .now) -> Duration {
         let untilExpiry = Duration.seconds(expiresAt.timeIntervalSince(now))
-        return max(minimumPoll, min(reissueInterval, untilExpiry))
+        return max(minimumPoll, min(pollInterval, untilExpiry))
     }
 
     nonisolated static func wasRedeemed(expiresAt: Date, replacedAt now: Date) -> Bool {
@@ -378,8 +375,6 @@ struct PhoneSettings: View {
     }
 }
 
-/// The QR image. Equatable so SwiftUI leaves it alone while the code is
-/// the same and only the countdown beside it ticks.
 private struct CodeImage: View, Equatable {
     /// The white tile's side, quiet zone included.
     static let side: CGFloat = 160

@@ -11,7 +11,7 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 /// `NSApplication` run loop, which is why the app registers the chord and
 /// the daemon cannot.
 ///
-/// Carbon has no conflict detection. Two apps on one chord both fire.
+/// Registration is nonexclusive, so another app may receive the same chord.
 @MainActor
 final class GlobalShortcut {
     private var hotKey: EventHotKeyRef?

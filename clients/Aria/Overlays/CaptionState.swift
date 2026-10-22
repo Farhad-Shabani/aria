@@ -1,10 +1,10 @@
 import Foundation
 
 struct CaptionState {
-    static let expiry: TimeInterval = 5
+    private static let expiry: TimeInterval = 5
     private(set) var committed = ""
     private(set) var provisional = ""
-    private(set) var enabled = false
+    private var enabled = false
     private var recording: UInt64?
     private var ended = false
     private var updatedAt: TimeInterval?

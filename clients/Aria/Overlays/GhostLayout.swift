@@ -6,13 +6,13 @@ import CoreGraphics
 struct GhostLayout: Equatable {
     /// The width of a ghost whose field reports no frame.
     static let floatingWidth: CGFloat = 480
-    static let maxLines: CGFloat = 6
+    private static let maxLines: CGFloat = 6
 
-    var frame: CGRect
-    var firstLineIndent: CGFloat
-    var lineHeight: CGFloat
+    let frame: CGRect
+    let firstLineIndent: CGFloat
+    let lineHeight: CGFloat
     /// Lifts each line so its glyphs centre on the caret like the app's own.
-    var baselineOffset: CGFloat
+    let baselineOffset: CGFloat
 
     init(caret: CGRect, field: CGRect?, primaryScreenHeight: CGFloat, ascender: CGFloat, descender: CGFloat) {
         lineHeight = caret.height

@@ -68,7 +68,7 @@ final class GhostController {
 /// A click-through window over the other app. It never takes focus, so
 /// typing keeps going to the field below.
 @MainActor
-final class GhostPanel {
+private final class GhostPanel {
     /// How strongly the ghost shows against the app's own text.
     private static let ink = 0.4
     /// Font size as a fraction of caret height, for apps that report no font.

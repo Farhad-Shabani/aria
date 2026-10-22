@@ -14,17 +14,15 @@ enum CommandLineToolError: LocalizedError {
     }
 }
 
-/// The `aria` command, linked into /usr/local/bin, which every shell has on
-/// PATH. The link points into the bundle, so it follows the app through
-/// updates.
+/// The command links into the bundle so it follows the app through updates.
 enum CommandLineTool {
-    static let link = URL(fileURLWithPath: "/usr/local/bin/aria")
+    private static let link = URL(fileURLWithPath: "/usr/local/bin/aria")
     private static let bundledCommand = "Contents/Helpers/aria"
     private static let userCancelled = -128
 
-    static var target: URL { Bundle.main.bundleURL.appending(path: bundledCommand) }
+    private static var target: URL { Bundle.main.bundleURL.appending(path: bundledCommand) }
 
-    static var isInstalled: Bool { linkDestination() == target.path }
+    private static var isInstalled: Bool { linkDestination() == target.path }
 
     private static var linksIntoAria: Bool { linkDestination()?.hasSuffix(".app/" + bundledCommand) ?? false }
 

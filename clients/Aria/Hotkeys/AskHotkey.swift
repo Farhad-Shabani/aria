@@ -30,7 +30,7 @@ struct AskHotkey: Equatable {
 
     /// Command alone is where an app keeps its own menu keys — ⌘Q, ⌘W, ⌘S.
     /// A registered chord is consulted before them, everywhere.
-    var isCommandOnly: Bool {
+    private var isCommandOnly: Bool {
         command && !(control || option || shift)
     }
 
@@ -73,7 +73,6 @@ extension AskHotkey {
         )
     }
 
-    /// What one keypress during capture means.
     enum Capture: Equatable {
         case cancelled
         case refused(String)
