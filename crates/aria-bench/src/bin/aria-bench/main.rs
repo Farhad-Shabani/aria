@@ -19,6 +19,10 @@ enum Cli {
     Stt(stt::Cli),
     /// Analyze recorded STT results without loading a model.
     CompareStt(stt::CompareCli),
+    /// Check an STT run and save it as the committed reference.
+    ReferenceStt(stt::ReferenceCli),
+    /// Build the LibriSpeech corpus the accuracy recipes measure.
+    Corpus(stt::CorpusCli),
     /// Latency and round-trip word error rate per TTS backend.
     Tts(tts::Cli),
     /// Speaker-label accuracy on synthesized conversations.
@@ -36,6 +40,8 @@ fn main() -> anyhow::Result<()> {
     match Cli::parse() {
         Cli::Stt(cli) => stt::run(&cli),
         Cli::CompareStt(cli) => stt::compare(&cli),
+        Cli::ReferenceStt(cli) => stt::reference(&cli),
+        Cli::Corpus(cli) => stt::corpus(&cli),
         Cli::Tts(cli) => tts::run(&cli),
         Cli::Diarize(cli) => diarize::run(&cli),
     }

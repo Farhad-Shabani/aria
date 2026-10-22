@@ -8,6 +8,7 @@ pub mod analysis;
 mod backends;
 mod conditions;
 mod corpus;
+pub mod librispeech;
 mod normalize;
 mod record;
 mod score;

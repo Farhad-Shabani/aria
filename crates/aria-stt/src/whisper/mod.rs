@@ -70,6 +70,8 @@ const NO_SPEECH_THRESHOLD: f32 = 0.6;
 const LOG_PROBABILITY_THRESHOLD: f32 = -1.0;
 /// One loudness frame: 512 samples, about 32 ms.
 const LOUDNESS_FRAME_SAMPLES: usize = 512;
+/// Metal is the one GPU backend Cargo links, on macOS only.
+const GPU_BACKEND: &str = "Metal";
 
 /// The one-second stride allows time for decoding. The twenty-second cap
 /// keeps the buffer inside Whisper's thirty-second window.
@@ -127,7 +129,9 @@ impl Engine for Whisper {
     fn load_from(config: WhisperConfig, cancel: &CancelToken) -> Result<Self, TranscriptionError> {
         check_cancelled(cancel)?;
         let model = Self::check_from(&config)?;
-        let context = WhisperContext::new_with_params(&model, WhisperContextParameters::default())
+        let mut parameters = WhisperContextParameters::default();
+        parameters.use_gpu(gpu_backend().is_some());
+        let context = WhisperContext::new_with_params(&model, parameters)
             .map_err(|source| load_failed(&model, source))?;
         let state = context
             .create_state()
@@ -172,6 +176,16 @@ impl Transcriber for Whisper {
         run_inference(&mut state, language, samples, cancel)?;
         collect_transcript(&state, self.eot)
     }
+}
+
+/// The GPU backend linked into whisper.cpp, if any. whisper-rs reports no
+/// runtime backend, so a GPU that fails to initialize and falls back to the
+/// CPU still reads as present.
+pub fn gpu_backend() -> Option<&'static str> {
+    let linked = whisper_rs::print_system_info();
+    linked
+        .contains(&format!("{GPU_BACKEND} : "))
+        .then_some(GPU_BACKEND)
 }
 
 fn load_failed(model: &Path, source: whisper_rs::WhisperError) -> TranscriptionError {
@@ -335,6 +349,12 @@ mod load_engine_tests {
     use aria_kit::transcription::LanguageCode;
 
     use super::*;
+
+    #[test]
+    fn the_linked_gpu_backend_follows_the_cargo_target() {
+        let expected = cfg!(target_os = "macos").then_some("Metal");
+        assert_eq!(gpu_backend(), expected);
+    }
 
     #[test]
     fn silence_is_not_audible_and_a_quiet_word_is() {

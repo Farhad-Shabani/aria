@@ -4,7 +4,7 @@
 # test-clean utterances concatenated per chapter into 90-115 s recordings, one
 # chapter per speaker, decoded to the canonical 16 kHz mono 16-bit WAV. Long
 # recordings are what make agreement trims fire; the single-utterance corpus
-# from corpus.sh rarely spans a buffer cap.
+# from `just corpus` rarely spans a buffer cap.
 #
 # Every recording stays under aria-bench's 120 s utterance ceiling.
 #

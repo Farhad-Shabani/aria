@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Provenance {
     pub run_id: String,
-    pub host: String,
+    /// Absent on a run kept as a shared reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub os: String,
     pub arch: String,
     pub debug_assertions: bool,
@@ -24,7 +26,7 @@ impl Provenance {
         let system = rustix::system::uname();
         Ok(Self {
             run_id: format!("{}-{}", now.as_nanos(), std::process::id()),
-            host: system.nodename().to_string_lossy().into_owned(),
+            host: Some(system.nodename().to_string_lossy().into_owned()),
             os: format!(
                 "{} {}",
                 system.sysname().to_string_lossy(),

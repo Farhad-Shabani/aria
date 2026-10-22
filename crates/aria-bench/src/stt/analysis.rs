@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use aria_harness::artifact::{ArtifactError, Provenance, fingerprint, fingerprint_value};
@@ -58,6 +59,8 @@ struct Row {
     pass: u32,
     backend: RowBackend,
     utterance: String,
+    normalized_reference: String,
+    normalized_hypothesis: String,
     reference_words: usize,
     substitutions: usize,
     deletions: usize,
@@ -96,6 +99,9 @@ struct Counts {
     words: usize,
     errors: usize,
     failures: usize,
+    reference: String,
+    /// Keyed by pass.
+    hypotheses: BTreeMap<u32, String>,
 }
 
 pub struct Artifact {
@@ -128,6 +134,16 @@ pub struct Comparison {
     pub candidate_wer: f64,
     pub difference_interval: Option<(f64, f64)>,
     pub decision: Decision,
+    pub changes: Vec<Change>,
+}
+
+/// An utterance whose set of distinct hypotheses differs between the runs.
+/// Each side lists every pass.
+pub struct Change {
+    pub utterance: String,
+    pub reference: String,
+    pub baseline: Vec<(u32, String)>,
+    pub candidate: Vec<(u32, String)>,
 }
 
 impl Artifact {
@@ -216,6 +232,8 @@ impl Artifact {
             count.words += row.reference_words;
             count.errors += row.substitutions + row.deletions + row.insertions;
             count.failures += usize::from(row.error.is_some());
+            count.reference = row.normalized_reference;
+            count.hypotheses.insert(row.pass, row.normalized_hypothesis);
         }
         if seen.len() != manifest.rows {
             return Err(AnalysisError::Invalid(
@@ -264,17 +282,33 @@ impl Artifact {
     }
 
     pub(super) fn validate_candidate(&self, candidate: &Manifest) -> Result<(), AnalysisError> {
-        if candidate.corpus_sha256 != self.manifest.corpus_sha256
-            || candidate.cases != self.manifest.cases
-            || candidate.scorer_sha256 != self.manifest.scorer_sha256
-            || candidate.engines != self.manifest.engines
-            || candidate.language != self.manifest.language
-            || candidate.provisional != self.manifest.provisional
-            || candidate.provenance.debug_assertions != self.manifest.provenance.debug_assertions
-        {
-            return Err(AnalysisError::Invalid(
-                "incomparable corpus, scorer, engine, language, mode, cadence, pace, captions, or build profile".to_owned(),
-            ));
+        let baseline = &self.manifest;
+        let differences: Vec<_> = [
+            (
+                "corpus",
+                candidate.corpus_sha256 != baseline.corpus_sha256
+                    || candidate.cases != baseline.cases,
+            ),
+            ("scorer", candidate.scorer_sha256 != baseline.scorer_sha256),
+            (
+                "engine model, device, mode, cadence, or pace",
+                candidate.engines != baseline.engines,
+            ),
+            ("language", candidate.language != baseline.language),
+            ("captions", candidate.provisional != baseline.provisional),
+            (
+                "build profile",
+                candidate.provenance.debug_assertions != baseline.provenance.debug_assertions,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(name, differs)| differs.then_some(name))
+        .collect();
+        if !differences.is_empty() {
+            return Err(AnalysisError::Invalid(format!(
+                "incomparable runs: the {} differ",
+                differences.join(", ")
+            )));
         }
         if candidate
             .engines
@@ -327,6 +361,16 @@ impl Artifact {
             } else {
                 bootstrap(&rows, difference)
             };
+            let changes = cases
+                .iter()
+                .filter(|(id, candidate)| heard(candidate) != heard(&reference[*id]))
+                .map(|(id, candidate)| Change {
+                    utterance: id.clone(),
+                    reference: candidate.reference.clone(),
+                    baseline: passes(&reference[id]),
+                    candidate: passes(candidate),
+                })
+                .collect();
             let candidate_rows: Vec<_> = rows
                 .iter()
                 .map(|&(words, errors, _, _)| (words, errors))
@@ -341,10 +385,69 @@ impl Artifact {
                 candidate_wer: rate(&candidate_rows),
                 difference_interval: interval,
                 decision: Decision::of(interval, margin),
+                changes,
             });
         }
         Ok(comparisons)
     }
+}
+
+/// A rejected run leaves the old reference in place. The two files are
+/// replaced one at a time, so a crash between them leaves a pair the next
+/// load refuses.
+pub fn save_reference(results: &Path, destination: &Path) -> Result<(), AnalysisError> {
+    let artifact = Artifact::load(results)?;
+    artifact.validate_candidate(&artifact.manifest)?;
+    let failed = artifact
+        .clusters
+        .values()
+        .flat_map(BTreeMap::values)
+        .filter(|counts| counts.failures > 0)
+        .count();
+    if failed > 0 {
+        return Err(AnalysisError::Invalid(format!(
+            "{failed} utterances failed; every comparison against them would be inconclusive"
+        )));
+    }
+    let mut manifest = artifact.manifest;
+    manifest.provenance.host = None;
+    let directory = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(directory)?;
+    let mut pending_rows = tempfile::NamedTempFile::new_in(directory)?;
+    std::io::copy(&mut fs::File::open(results)?, &mut pending_rows)?;
+    pending_rows.as_file().sync_all()?;
+    if fingerprint(pending_rows.path())? != manifest.results_sha256 {
+        return Err(AnalysisError::Invalid(
+            "the results changed while being saved".to_owned(),
+        ));
+    }
+    let mut encoded = serde_json::to_vec_pretty(&manifest)?;
+    encoded.push(b'\n');
+    let mut pending_manifest = tempfile::NamedTempFile::new_in(directory)?;
+    pending_manifest.write_all(&encoded)?;
+    pending_manifest.as_file().sync_all()?;
+    pending_rows
+        .persist(destination)
+        .map_err(|error| error.error)?;
+    pending_manifest
+        .persist(manifest_path(destination))
+        .map_err(|error| error.error)?;
+    Ok(())
+}
+
+fn heard(counts: &Counts) -> BTreeSet<&str> {
+    counts.hypotheses.values().map(String::as_str).collect()
+}
+
+fn passes(counts: &Counts) -> Vec<(u32, String)> {
+    counts
+        .hypotheses
+        .iter()
+        .map(|(pass, hypothesis)| (*pass, hypothesis.clone()))
+        .collect()
 }
 
 fn rate(rows: &[(usize, usize)]) -> f64 {
@@ -398,6 +501,8 @@ mod tests {
                         "pass": pass,
                         "backend": { "name": "test" },
                         "utterance": index.to_string(),
+                        "normalized_reference": "the reference",
+                        "normalized_hypothesis": format!("heard with {errors} errors"),
                         "reference_words": 10,
                         "substitutions": errors,
                         "deletions": 0,
@@ -439,6 +544,22 @@ mod tests {
         path
     }
 
+    /// Refingerprints the manifest, so the edited rows still load.
+    fn rewrite_rows(path: &Path, edit: impl FnOnce(&mut [serde_json::Value])) {
+        let mut rows: Vec<serde_json::Value> = fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        edit(&mut rows);
+        let text: Vec<_> = rows.iter().map(|row| row.to_string()).collect();
+        fs::write(path, text.join("\n") + "\n").unwrap();
+        let mut manifest: Manifest =
+            serde_json::from_slice(&fs::read(manifest_path(path)).unwrap()).unwrap();
+        manifest.results_sha256 = fingerprint(path).unwrap();
+        fs::write(manifest_path(path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+
     #[test]
     fn repeats_keep_the_utterance_cluster_and_compare_with_a_smaller_budget() {
         let directory = tempfile::tempdir().unwrap();
@@ -461,12 +582,90 @@ mod tests {
         let comparison = candidate.compare(&baseline, 0.0).unwrap();
         assert_eq!(comparison[0].decision, Decision::Accepted);
         assert_eq!(comparison[0].difference_interval, Some((0.0, 0.0)));
+        assert!(comparison[0].changes.is_empty());
         let regression =
-            Artifact::load(&artifact(directory.path(), "regression", 1, &[3, 6, 4, 5])).unwrap();
+            Artifact::load(&artifact(directory.path(), "regression", 1, &[1, 6, 4, 5])).unwrap();
+        let comparison = regression.compare(&baseline, 0.0).unwrap();
+        assert_eq!(comparison[0].decision, Decision::Regressed);
+        let changed: Vec<_> = comparison[0]
+            .changes
+            .iter()
+            .map(|change| {
+                (
+                    change.utterance.as_str(),
+                    change.baseline[0].1.as_str(),
+                    change.candidate[0].1.as_str(),
+                )
+            })
+            .collect();
         assert_eq!(
-            regression.compare(&baseline, 0.0).unwrap()[0].decision,
-            Decision::Regressed
+            changed,
+            [
+                ("1", "heard with 4 errors", "heard with 6 errors"),
+                ("2", "heard with 2 errors", "heard with 4 errors"),
+                ("3", "heard with 3 errors", "heard with 5 errors"),
+            ]
         );
+    }
+
+    #[test]
+    fn a_hypothesis_that_changed_on_a_later_pass_is_listed_with_its_pass() {
+        let directory = tempfile::tempdir().unwrap();
+        let baseline = Artifact::load(&artifact(directory.path(), "baseline", 2, &[1, 2])).unwrap();
+        let path = artifact(directory.path(), "candidate", 2, &[1, 2]);
+        rewrite_rows(&path, |rows| {
+            let second_pass = rows
+                .iter_mut()
+                .find(|row| row["pass"] == 2 && row["utterance"] == "0")
+                .unwrap();
+            second_pass["normalized_hypothesis"] = "heard nothing".into();
+            second_pass["substitutions"] = 9.into();
+        });
+        let candidate = Artifact::load(&path).unwrap();
+
+        let comparison = candidate.compare(&baseline, 0.0).unwrap();
+
+        assert_eq!(comparison[0].changes.len(), 1);
+        let change = &comparison[0].changes[0];
+        assert_eq!(change.utterance, "0");
+        assert_eq!(
+            change.baseline,
+            [
+                (1, "heard with 1 errors".to_owned()),
+                (2, "heard with 1 errors".to_owned())
+            ]
+        );
+        assert_eq!(
+            change.candidate,
+            [
+                (1, "heard with 1 errors".to_owned()),
+                (2, "heard nothing".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reference_names_no_host_and_refuses_failed_utterances() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = artifact(directory.path(), "run", 1, &[1, 2]);
+        let destination = directory.path().join("baselines").join("reference.jsonl");
+
+        save_reference(&path, &destination).unwrap();
+
+        let saved: Manifest =
+            serde_json::from_slice(&fs::read(manifest_path(&destination)).unwrap()).unwrap();
+        assert_eq!(saved.provenance.host, None);
+        assert_eq!(fs::read(&path).unwrap(), fs::read(&destination).unwrap());
+        assert!(Artifact::load(&destination).is_ok());
+
+        let failing = artifact(directory.path(), "failing", 1, &[1, 2]);
+        rewrite_rows(&failing, |rows| {
+            rows[0]["error"] = "the engine gave up".into();
+        });
+
+        assert!(save_reference(&failing, &destination).is_err());
+        assert_eq!(fs::read(&path).unwrap(), fs::read(&destination).unwrap());
+        assert!(Artifact::load(&destination).is_ok());
     }
 
     #[test]
@@ -572,6 +771,15 @@ mod tests {
         let mut candidate = Artifact::load(&path).unwrap();
         candidate.manifest.provenance.debug_assertions =
             !candidate.manifest.provenance.debug_assertions;
+        assert!(candidate.compare(&baseline, 0.0).is_err());
+        let mut candidate = Artifact::load(&path).unwrap();
+        candidate.manifest.engines[0].device = Some("cpu".to_owned());
+        assert!(candidate.compare(&baseline, 0.0).is_err());
+        let mut candidate = Artifact::load(&path).unwrap();
+        candidate
+            .manifest
+            .cases
+            .insert("0".to_owned(), "other audio".to_owned());
         assert!(candidate.compare(&baseline, 0.0).is_err());
         let mut candidate = Artifact::load(&path).unwrap();
         candidate.manifest.engines[0].model_sha256 = None;
