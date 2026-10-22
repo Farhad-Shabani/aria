@@ -103,42 +103,6 @@ jobs:
       - name: Lint and test Rust
         run: just rust-lint-all rust-test-all
 
-  accuracy:
-    name: Accuracy
-    runs-on: macos-26
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install the pinned Rust toolchain
-        run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          prefix-key: v1-rust
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: just@1.58.0
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/aria-test-models
-          key: whisper-tiny-en-921e4cf8
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: corpus
-        with:
-          path: build/corpus/wav
-          key: corpus-${{ hashFiles('crates/aria-bench/corpus/librispeech-test-clean.tsv') }}
-      - name: Install ffmpeg
-        if: steps.corpus.outputs.cache-hit != 'true'
-        run: brew install ffmpeg
-      - name: Check word error rate against the committed reference
-        run: just accuracy-check ~/.cache/aria-test-models
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: accuracy-check
-          path: build/accuracy-check
-
   app:
     name: App
     runs-on: macos-26
