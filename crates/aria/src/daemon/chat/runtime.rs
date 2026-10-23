@@ -16,8 +16,11 @@ use crate::chat::{
     Projects, ResolveError, SessionSpec, SessionStore, Step, Ticket, TurnSink,
 };
 use crate::config::{ChatAgent, ChatConfig, Environment, MemoryConfig, SpeakerConfig};
-use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
+use crate::delivery::{
+    DeliveryError, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
+};
 use crate::memory::{DB_FILE, Store, load_profile_block};
+use crate::preferences::PreferenceStore;
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 use crate::speaker::{ProfileStore, Role};
@@ -35,6 +38,8 @@ pub(in crate::daemon) struct ChatRuntime {
     config_environment: Environment,
     sessions: SessionStore,
     agents: AgentFactory,
+    /// Read per ask, so a reply never types into an app with Aria off.
+    preferences: Arc<PreferenceStore>,
     /// Nudges the memory backlog after a turn worth remembering. `None`
     /// in a daemon that runs no backlog.
     memory_wake: Option<mpsc::Sender<()>>,
@@ -46,6 +51,7 @@ impl ChatRuntime {
     pub(in crate::daemon) fn new(
         context: &Context<'_>,
         subscriptions: Arc<Subscriptions>,
+        preferences: Arc<PreferenceStore>,
         memory_wake: Option<mpsc::Sender<()>>,
     ) -> Self {
         Self::with_agents(
@@ -53,6 +59,7 @@ impl ChatRuntime {
             context.preferences_path.with_file_name(SESSION_FILE),
             event_emitter(context, subscriptions),
             Box::new(build_agent),
+            preferences,
             memory_wake,
         )
     }
@@ -62,6 +69,7 @@ impl ChatRuntime {
         session_path: PathBuf,
         emitter: ChatEventEmitter,
         agents: AgentFactory,
+        preferences: Arc<PreferenceStore>,
         memory_wake: Option<mpsc::Sender<()>>,
     ) -> Self {
         Self {
@@ -69,6 +77,7 @@ impl ChatRuntime {
             config_environment,
             sessions: SessionStore::open(session_path),
             agents,
+            preferences,
             memory_wake,
         }
     }
@@ -149,10 +158,24 @@ impl ChatRuntime {
         }
         // The target is bound before the agent runs, so a refusal costs
         // nothing and a window switch during the run is caught at delivery.
-        let delivery = request
-            .output_mode
-            .map(|mode| Delivery::prepare(mode, config.delivery_timeout, cancel))
-            .transpose()?;
+        let (delivery, refused) = match request.output_mode {
+            None => (None, None),
+            Some(mode) => {
+                match Delivery::prepare(
+                    mode,
+                    self.target_policy()?,
+                    config.delivery_timeout,
+                    cancel,
+                ) {
+                    Ok(delivery) => (Some(delivery), None),
+                    // The reply still reaches the caller, just not typed there.
+                    Err(ChatError::Delivery(DeliveryError::ApplicationExcluded)) => {
+                        (None, Some(RpcErrorCode::ApplicationExcluded))
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        };
 
         let memory = self.memory();
         let prompt = match memory
@@ -169,11 +192,25 @@ impl ChatRuntime {
             self.remember(memory, &request);
         }
 
-        let delivery_error = delivery.and_then(|delivery| delivery.deliver(&text, cancel));
+        let delivery_error =
+            refused.or_else(|| delivery.and_then(|delivery| delivery.deliver(&text, cancel)));
         Ok(ChatStageKind::Replied(ChatReply {
             text,
             delivery_error,
         }))
+    }
+
+    fn target_policy(&self) -> Result<TargetPolicy, ChatError> {
+        let overrides = self
+            .preferences
+            .snapshot()
+            .map_err(ChatError::Preferences)?
+            .preferences
+            .application_overrides;
+        Ok(TargetPolicy {
+            overridden_for: None,
+            excluded: overrides.excluded_ids(),
+        })
     }
 
     /// One turn on the request's conversation: continues or restarts it,
@@ -325,6 +362,7 @@ fn build_agent(agent: ChatAgent) -> Box<dyn Agent> {
 
 /// A reply's delivery, bound to its target before the agent runs.
 struct Delivery {
+    policy: TargetPolicy,
     platform: PlatformTextDelivery,
     target: <PlatformTextDelivery as TextDelivery>::Prepared,
 }
@@ -332,14 +370,17 @@ struct Delivery {
 impl Delivery {
     fn prepare(
         mode: OutputMode,
+        policy: TargetPolicy,
         timeout: Duration,
         cancel: &CancelToken,
     ) -> Result<Self, ChatError> {
+        policy.confirm_front().map_err(ChatError::Delivery)?;
         let platform = PlatformTextDelivery::new(timeout).map_err(ChatError::Delivery)?;
         Ok(Self {
             target: platform
                 .prepare(mode, || cancel.is_cancelled())
                 .map_err(ChatError::Delivery)?,
+            policy,
             platform,
         })
     }
@@ -349,8 +390,12 @@ impl Delivery {
     fn deliver(self, text: &str, cancel: &CancelToken) -> Option<RpcErrorCode> {
         let text = self.platform.caret(&self.target).insert(text);
         match self
-            .platform
-            .deliver(&self.target, &text, || cancel.is_cancelled())
+            .policy
+            .confirm_front()
+            .and_then(|()| {
+                self.platform
+                    .deliver(&self.target, &text, || cancel.is_cancelled())
+            })
             .and_then(|outcome| {
                 if outcome == crate::delivery::DeliveryOutcome::Inserted {
                     self.platform
@@ -463,6 +508,10 @@ pub(super) mod tests {
                 let _ = events.send(stage);
             }),
             agents,
+            Arc::new(
+                PreferenceStore::open(directory.join("preferences.json"))
+                    .expect("test preferences"),
+            ),
             Some(wake),
         );
         (runtime, received, woken)

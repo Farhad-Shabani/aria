@@ -112,6 +112,43 @@ pub(crate) fn frontmost_application() -> Option<crate::history::Application> {
     None
 }
 
+/// Which apps text may reach: never one with Aria switched off, and only
+/// the app whose overrides chose the settings, when one did.
+///
+/// Check it before `prepare`, which reads the focused field, and again
+/// before each write. A pinned target must still be in front to receive
+/// text, so a front app that passes here is the one written to.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct TargetPolicy {
+    pub(crate) overridden_for: Option<String>,
+    pub(crate) excluded: Vec<String>,
+}
+
+impl TargetPolicy {
+    pub(crate) fn excludes(&self, application: Option<&crate::history::Application>) -> bool {
+        application
+            .and_then(|application| application.bundle_id.as_deref())
+            .is_some_and(|id| self.excluded.iter().any(|excluded| excluded == id))
+    }
+
+    pub(crate) fn confirm_front(&self) -> Result<(), DeliveryError> {
+        self.confirm(frontmost_application().as_ref())
+    }
+
+    fn confirm(&self, front: Option<&crate::history::Application>) -> Result<(), DeliveryError> {
+        if self.excludes(front) {
+            return Err(DeliveryError::ApplicationExcluded);
+        }
+        let Some(expected) = self.overridden_for.as_deref() else {
+            return Ok(());
+        };
+        match front.and_then(|application| application.bundle_id.as_deref()) {
+            Some(front) if front == expected => Ok(()),
+            _ => Err(DeliveryError::TargetChanged),
+        }
+    }
+}
+
 const MAX_TEXT_BYTES: usize = 64 * 1024;
 const MAX_DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -161,6 +198,9 @@ pub enum DeliveryError {
     #[error("the application, field, or caret position selected for insertion changed")]
     TargetChanged,
 
+    #[error("Aria is switched off in the app in front")]
+    ApplicationExcluded,
+
     #[error("insertion is not available on {}", std::env::consts::OS)]
     InsertionUnsupported,
 
@@ -187,4 +227,59 @@ pub enum DeliveryError {
          password field or Terminal's Secure Keyboard Entry; turn it off or use copy mode"
     )]
     SecureInput,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn front(bundle_id: &str) -> Option<crate::history::Application> {
+        Some(crate::history::Application {
+            name: "App".into(),
+            bundle_id: Some(bundle_id.into()),
+        })
+    }
+
+    fn overridden_for(id: &str) -> TargetPolicy {
+        TargetPolicy {
+            overridden_for: Some(id.into()),
+            ..TargetPolicy::default()
+        }
+    }
+
+    #[test]
+    fn only_settings_chosen_for_another_app_refuse_delivery() {
+        let anywhere = TargetPolicy::default();
+        assert!(anywhere.confirm(None).is_ok());
+        assert!(anywhere.confirm(front("com.b").as_ref()).is_ok());
+        assert!(
+            overridden_for("com.a")
+                .confirm(front("com.a").as_ref())
+                .is_ok()
+        );
+        assert!(matches!(
+            overridden_for("com.a").confirm(front("com.b").as_ref()),
+            Err(DeliveryError::TargetChanged)
+        ));
+        assert!(matches!(
+            overridden_for("com.a").confirm(None),
+            Err(DeliveryError::TargetChanged)
+        ));
+    }
+
+    #[test]
+    fn an_app_with_aria_off_receives_nothing() {
+        let policy = TargetPolicy {
+            excluded: vec!["com.secret".into()],
+            ..overridden_for("com.secret")
+        };
+
+        assert!(matches!(
+            policy.confirm(front("com.secret").as_ref()),
+            Err(DeliveryError::ApplicationExcluded)
+        ));
+        assert!(policy.excludes(front("com.secret").as_ref()));
+        assert!(!policy.excludes(front("com.other").as_ref()));
+        assert!(!policy.excludes(None));
+    }
 }

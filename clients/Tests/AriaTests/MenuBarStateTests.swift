@@ -33,5 +33,6 @@ final class MenuBarStateTests: XCTestCase {
         XCTAssertEqual(state(), .ready)
         XCTAssertEqual(state(pill: .cancelled), .ready)
         XCTAssertEqual(state(pill: .interrupted), .ready)
+        XCTAssertEqual(state(pill: .excluded("Slack")), .ready)
     }
 }

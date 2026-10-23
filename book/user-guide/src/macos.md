@@ -48,6 +48,16 @@ screen**.
 If output is set to copy, paste the transcript after recording; copying always
 uses the completed text. Output choices are under **Settings → Dictation**.
 
+## Per-app settings
+
+**Settings → Apps** gives an app its own output and delivery. Click **+**, pick
+the app, then choose its settings. Aria uses them when that app is in front as
+dictation starts. Switching apps mid-recording changes nothing. Other apps use
+**Settings → Dictation**. Flags such as `aria dictate --mode copy` still win.
+
+Switch on **Turn Off Aria** on an app's page, and Aria starts no dictation or
+Ask and types or copies nothing while that app is in front, even from the phone.
+
 ## Dictate from iPhone and Apple Watch
 
 Switch on **Phone pairing** under **Settings → Phone**. Aria restarts and shows

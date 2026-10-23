@@ -12,9 +12,7 @@ use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::delivery::{
-    DeliveryError, DeliveryOutcome, OutputMode, PlatformTextDelivery, TextDelivery,
-};
+use crate::delivery::{DeliveryError, DeliveryOutcome, PlatformTextDelivery, TextDelivery};
 use crate::dictation::{
     DictationError, DictationSettings, DictationStage, TranscriptSink, Utterance,
 };
@@ -88,8 +86,15 @@ impl wire::relay_service_server::RelayService for RelayRpc {
 
         let settings = self
             .dictation
-            .history_settings()
+            .relay_settings()
             .map_err(|error| super::failed(METHOD, failure(RpcErrorCode::Internal, &error)))?;
+        if settings.application_excluded() {
+            let excluded = DictationError::ApplicationExcluded;
+            return Err(super::failed(
+                METHOD,
+                failure((&excluded).into(), &excluded),
+            ));
+        }
         let mut history = self.dictation.history();
         history.start(&settings, HistorySource::Relay);
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
@@ -259,8 +264,7 @@ fn hear(
 
     // Honor the same output preference as local dictation.
     dictation.announce(DictationStage::Delivering);
-    let delivered =
-        deliver(&*delivery, settings.output_mode, &text, cancel).map_err(DictationError::from);
+    let delivered = deliver(&*delivery, &settings, &text, cancel).map_err(DictationError::from);
     history.recording_finished(&mut recording, delivered.as_ref().map(|_| ()));
     let delivered = delivered.map_err(|error| failure(RpcErrorCode::from(&error), &error))?;
     Ok(Some((text, delivered)))
@@ -270,12 +274,14 @@ fn hear(
 /// presses Return once it lands.
 fn deliver<D: TextDelivery>(
     delivery: &D,
-    mode: OutputMode,
+    settings: &DictationSettings,
     text: &str,
     cancel: &CancelToken,
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let should_cancel = || cancel.is_cancelled();
-    let prepared = delivery.prepare(mode, should_cancel)?;
+    settings.target.confirm_front()?;
+    let prepared = delivery.prepare(settings.output_mode, should_cancel)?;
+    settings.target.confirm_front()?;
     let text = delivery.caret(&prepared).insert(text);
     let outcome = delivery.deliver(&prepared, &text, should_cancel)?;
     if outcome == DeliveryOutcome::Inserted {
@@ -305,7 +311,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::delivery::Caret;
+    use crate::delivery::{Caret, OutputMode};
 
     /// Inserts everything at `caret` and writes down each step it was
     /// asked for.
@@ -361,7 +367,7 @@ mod tests {
 
         let outcome = deliver(
             &steps,
-            OutputMode::InsertAndSubmit,
+            &settings(OutputMode::InsertAndSubmit),
             "ship it",
             &CancelToken::never(),
         )
@@ -378,8 +384,36 @@ mod tests {
             ..Steps::default()
         };
 
-        deliver(&steps, OutputMode::Insert, "Ship it", &CancelToken::never()).expect("delivers");
+        deliver(
+            &steps,
+            &settings(OutputMode::Insert),
+            "Ship it",
+            &CancelToken::never(),
+        )
+        .expect("delivers");
 
         assert_eq!(*steps.log.lock().unwrap(), ["deliver: Ship it"]);
+    }
+
+    #[test]
+    fn settings_chosen_for_another_app_are_not_delivered() {
+        let steps = Steps::default();
+        let settings = DictationSettings {
+            target: crate::delivery::TargetPolicy {
+                overridden_for: Some("com.example.not-in-front".into()),
+                excluded: Vec::new(),
+            },
+            ..settings(OutputMode::InsertAndSubmit)
+        };
+
+        let error = deliver(&steps, &settings, "ship it", &CancelToken::never())
+            .expect_err("another app is in front");
+
+        assert!(matches!(error, DeliveryError::TargetChanged));
+        assert!(steps.log.lock().unwrap().is_empty());
+    }
+
+    fn settings(output_mode: OutputMode) -> DictationSettings {
+        crate::dictation::testing::settings(crate::dictation::DeliveryMode::Complete, output_mode)
     }
 }

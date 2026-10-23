@@ -23,7 +23,7 @@ pub struct HistoryEntry {
     pub warning: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Application {
     pub name: String,
     pub bundle_id: Option<String>,

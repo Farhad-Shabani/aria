@@ -492,6 +492,7 @@ mod tests {
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
         let settings = crate::preferences::UserPreferences::default().resolve_dictation(
             crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+            None,
         );
         let result = transcribe_retry(
             config,

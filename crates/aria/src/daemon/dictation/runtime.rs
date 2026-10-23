@@ -284,15 +284,30 @@ impl DictationRuntime {
         })
     }
 
+    /// A retry re-transcribes a stored recording, so no app is in front.
     pub(in crate::daemon) fn history_settings(
         &self,
+    ) -> Result<DictationSettings, DictationRuntimeError> {
+        self.settings_for(None)
+    }
+
+    /// A phone's dictation lands in whatever app is in front on this Mac.
+    pub(in crate::daemon) fn relay_settings(
+        &self,
+    ) -> Result<DictationSettings, DictationRuntimeError> {
+        self.settings_for(crate::delivery::frontmost_application())
+    }
+
+    fn settings_for(
+        &self,
+        application: Option<crate::history::Application>,
     ) -> Result<DictationSettings, DictationRuntimeError> {
         self.preferences
             .snapshot()
             .map(|snapshot| {
                 snapshot
                     .preferences
-                    .resolve_dictation(DictationRequest::new(StopMode::OnSilence))
+                    .resolve_dictation(DictationRequest::new(StopMode::OnSilence), application)
             })
             .map_err(DictationRuntimeError::Preferences)
     }
@@ -409,7 +424,6 @@ impl DictationRuntime {
             .snapshot()
             .map_err(DictationRuntimeError::Preferences)?;
         let events = self.operation_emitter(snapshot.preferences.mute_output, events);
-        let settings = snapshot.preferences.resolve_dictation(request);
         let coordinator = match self.coordinator() {
             Ok(coordinator) => coordinator,
             Err(_) if cancellation.is_cancelled() => {
@@ -420,6 +434,11 @@ impl DictationRuntime {
                 return Err(error.into());
             }
         };
+        // Read once the coordinator is built, which may load a model, so the
+        // app judged is the one in front as recording starts.
+        let settings = snapshot
+            .preferences
+            .resolve_dictation(request, crate::delivery::frontmost_application());
 
         coordinator
             .execute(settings, cancellation, &events)
@@ -960,7 +979,7 @@ mod history_tests {
             &original,
             current
                 .clone()
-                .resolve_dictation(DictationRequest::new(StopMode::OnSilence)),
+                .resolve_dictation(DictationRequest::new(StopMode::OnSilence), None),
             None,
         )
         .unwrap();
@@ -973,7 +992,7 @@ mod history_tests {
         assert!(matches!(
             retry_settings(
                 &original,
-                current.resolve_dictation(DictationRequest::new(StopMode::OnSilence)),
+                current.resolve_dictation(DictationRequest::new(StopMode::OnSilence), None),
                 None,
             ),
             Err(HistoryError::ProjectUnavailable)

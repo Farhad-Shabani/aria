@@ -35,8 +35,9 @@ struct DictationSettings: View {
 
     private func delivery(_ editor: PreferencesEditor) -> some View {
         Picker(selection: editor.binding(\.deliveryMode, \.deliveryMode)) {
-            Text("While speaking").tag(Aria_Daemon_V1_DeliveryMode.streaming)
-            Text("After recording stops").tag(Aria_Daemon_V1_DeliveryMode.complete)
+            ForEach(DictationEdits.deliveryModes, id: \.self) { mode in
+                Text(mode.title).tag(mode)
+            }
         } label: {
             Text("Deliver")
             Text("Same switch as Show Captions in the menu bar.")

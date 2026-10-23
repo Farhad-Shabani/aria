@@ -331,12 +331,17 @@ pub(crate) enum ChatError {
 
     #[error(transparent)]
     Session(#[from] SessionStoreError),
+
+    #[error("failed to read shared preferences")]
+    Preferences(#[source] crate::preferences::PreferenceStoreError),
 }
 
 impl From<&ChatError> for RpcErrorCode {
     fn from(error: &ChatError) -> Self {
         match error {
-            ChatError::Config(_) | ChatError::Session(_) => Self::Internal,
+            ChatError::Config(_) | ChatError::Session(_) | ChatError::Preferences(_) => {
+                Self::Internal
+            }
             ChatError::Agent(AgentError::Missing { .. }) => Self::AgentUnavailable,
             ChatError::Agent(AgentError::NoWorkdir(_)) => Self::InvalidRequest,
             ChatError::Agent(AgentError::Timeout(_)) => Self::AgentTimeout,
@@ -345,6 +350,7 @@ impl From<&ChatError> for RpcErrorCode {
             ChatError::Agent(_) => Self::AgentFailed,
             ChatError::Delivery(DeliveryError::Timeout(_)) => Self::DeliveryTimeout,
             ChatError::Delivery(DeliveryError::TargetChanged) => Self::DeliveryTargetChanged,
+            ChatError::Delivery(DeliveryError::ApplicationExcluded) => Self::ApplicationExcluded,
             ChatError::Delivery(_) => Self::DeliveryFailed,
         }
     }

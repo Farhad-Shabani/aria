@@ -22,6 +22,22 @@ struct PreferencesEditor {
         Binding(get: { value }, set: { self.set($0, edit: edit) })
     }
 
+    /// For a field the daemon replaces whole, such as a list. Each change
+    /// starts from the latest snapshot rather than the one this view drew,
+    /// so two quick edits don't undo each other.
+    func editLatest<Value>(
+        _ field: KeyPath<Aria_Daemon_V1_UserPreferences, Value> & Sendable,
+        _ patch: WritableKeyPath<Aria_Daemon_V1_PreferencePatch, Value> & Sendable,
+        _ change: @escaping @MainActor (inout Value) -> Void
+    ) {
+        let preferences = preferences
+        Task {
+            guard var value = preferences.snapshot?[keyPath: field] else { return }
+            change(&value)
+            await preferences.set { $0[keyPath: patch] = value }
+        }
+    }
+
     func set<Value>(_ patch: WritableKeyPath<Aria_Daemon_V1_PreferencePatch, Value>, to value: Value) {
         set(value) { value, edit in edit[keyPath: patch] = value }
     }

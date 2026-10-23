@@ -85,9 +85,10 @@ fn choose_caret(
         }
         _ => at_caret?,
     };
-    field
-        .is_none_or(|field| inside(chosen, field))
-        .then_some(chosen)
+    let Some(field) = field else {
+        return Some(chosen);
+    };
+    inside(chosen, field).then(|| below_top(chosen, field))
 }
 
 fn plausible(rect: &Rect) -> bool {
@@ -113,6 +114,15 @@ fn next_line(at_caret: Rect, line_break: Rect) -> Rect {
 /// A caret on a later line than the previous character follows a line break.
 fn below(at_caret: Rect, edge: Rect) -> bool {
     at_caret.y >= edge.y + edge.height / 2.0
+}
+
+/// AppKit text views, TextEdit among them, report a caret with no character
+/// before it one line above where it blinks. No caret sits above its field.
+fn below_top(caret: Rect, field: Rect) -> Rect {
+    Rect {
+        y: caret.y.max(field.y),
+        ..caret
+    }
 }
 
 fn inside(rect: Rect, field: Rect) -> bool {
@@ -336,6 +346,17 @@ mod tests {
         assert_eq!(
             choose_caret(Some(giant), Some(Previous::Character(empty)), None),
             None
+        );
+    }
+
+    #[test]
+    fn a_caret_above_its_field_drops_to_the_first_line() {
+        // TextEdit's own numbers for an empty document.
+        let field = rect(181.0, 133.0, 656.0, 384.0);
+        let reported = rect(191.0, 120.0, 0.0, 13.0);
+        assert_eq!(
+            choose_caret(Some(reported), None, Some(field)),
+            Some(rect(191.0, 133.0, 0.0, 13.0))
         );
     }
 

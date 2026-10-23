@@ -3,7 +3,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use tokio::sync::watch;
 
-use super::{AskHotkey, Language, PreferenceStoreError, UserPreferences, file};
+use super::{
+    ApplicationOverrides, AskHotkey, Language, PreferenceStoreError, UserPreferences, file,
+};
 use crate::audio::SilenceDuration;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
@@ -31,6 +33,8 @@ pub struct PreferencePatch {
     pub ask_hotkey: Option<AskHotkey>,
     pub project_vocabulary: Option<bool>,
     pub vocabulary_directory: Option<Option<crate::vocabulary::Directory>>,
+    /// Replaces every entry.
+    pub application_overrides: Option<ApplicationOverrides>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +120,8 @@ impl PreferenceStore {
 
 impl PreferencePatch {
     fn apply_to(self, current: &UserPreferences) -> UserPreferences {
+        let output_mode = self.output_mode.unwrap_or(current.output_mode);
+        let delivery_mode = self.delivery_mode.unwrap_or(current.delivery_mode);
         UserPreferences {
             dictation_history: self.dictation_history.unwrap_or(current.dictation_history),
             history_audio_retention: self
@@ -125,8 +131,8 @@ impl PreferencePatch {
             recognition_language: self
                 .recognition_language
                 .unwrap_or_else(|| current.recognition_language.clone()),
-            output_mode: self.output_mode.unwrap_or(current.output_mode),
-            delivery_mode: self.delivery_mode.unwrap_or(current.delivery_mode),
+            output_mode,
+            delivery_mode,
             silence_duration: self.silence_duration.unwrap_or(current.silence_duration),
             own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),
             dictation_hotkey: self.dictation_hotkey.unwrap_or(current.dictation_hotkey),
@@ -137,6 +143,10 @@ impl PreferencePatch {
             vocabulary_directory: self
                 .vocabulary_directory
                 .unwrap_or_else(|| current.vocabulary_directory.clone()),
+            application_overrides: self
+                .application_overrides
+                .unwrap_or_else(|| current.application_overrides.clone())
+                .without_inert(output_mode, delivery_mode),
         }
     }
 }
@@ -152,9 +162,10 @@ mod tests {
         let store = PreferenceStore::open(&path).unwrap();
         let original = store.snapshot().unwrap().preferences;
         assert!(!original.history_audio_retention);
-        let settings = original.resolve_dictation(crate::dictation::DictationRequest::new(
-            crate::dictation::StopMode::OnSilence,
-        ));
+        let settings = original.resolve_dictation(
+            crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+            None,
+        );
         assert!(!settings.history_audio_retention);
 
         for (revision, enabled) in [(0, true), (1, false)] {
@@ -175,9 +186,12 @@ mod tests {
             assert_eq!(preferences.history_audio_retention, enabled);
             assert_eq!(
                 preferences
-                    .resolve_dictation(crate::dictation::DictationRequest::new(
-                        crate::dictation::StopMode::OnSilence
-                    ))
+                    .resolve_dictation(
+                        crate::dictation::DictationRequest::new(
+                            crate::dictation::StopMode::OnSilence
+                        ),
+                        None
+                    )
                     .history_audio_retention,
                 enabled
             );
@@ -203,12 +217,10 @@ mod tests {
         let store = PreferenceStore::open(&path).unwrap();
         let snapshot = store.snapshot().unwrap();
         assert!(snapshot.preferences.mute_output);
-        let recording =
-            snapshot
-                .preferences
-                .resolve_dictation(crate::dictation::DictationRequest::new(
-                    crate::dictation::StopMode::OnSilence,
-                ));
+        let recording = snapshot.preferences.resolve_dictation(
+            crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+            None,
+        );
 
         store.update(1, PreferencePatch::default()).unwrap();
         assert!(store.snapshot().unwrap().preferences.mute_output);
@@ -229,9 +241,10 @@ mod tests {
         assert!(recording.mute_output);
         assert!(
             !preferences
-                .resolve_dictation(crate::dictation::DictationRequest::new(
-                    crate::dictation::StopMode::OnSilence
-                ))
+                .resolve_dictation(
+                    crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+                    None
+                )
                 .mute_output
         );
     }
@@ -257,9 +270,10 @@ mod tests {
             .preferences;
         assert!(
             !preferences
-                .resolve_dictation(crate::dictation::DictationRequest::new(
-                    crate::dictation::StopMode::OnSilence
-                ))
+                .resolve_dictation(
+                    crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+                    None
+                )
                 .dictation_history
         );
     }
@@ -294,10 +308,13 @@ mod tests {
             (Context::Directory(explicit.clone()), Some(explicit.clone())),
             (Context::Disabled, None),
         ] {
-            let settings = preferences.clone().resolve_dictation(DictationRequest {
-                project: context,
-                ..DictationRequest::new(StopMode::OnSilence)
-            });
+            let settings = preferences.clone().resolve_dictation(
+                DictationRequest {
+                    project: context,
+                    ..DictationRequest::new(StopMode::OnSilence)
+                },
+                None,
+            );
             assert_eq!(settings.project, expected);
         }
         let disabled = PreferencePatch {
@@ -308,10 +325,13 @@ mod tests {
         assert_eq!(disabled.vocabulary_directory, Some(selected));
         assert_eq!(
             disabled
-                .resolve_dictation(DictationRequest {
-                    project: Context::Directory(explicit),
-                    ..DictationRequest::new(StopMode::OnSilence)
-                })
+                .resolve_dictation(
+                    DictationRequest {
+                        project: Context::Directory(explicit),
+                        ..DictationRequest::new(StopMode::OnSilence)
+                    },
+                    None
+                )
                 .project,
             None
         );
@@ -321,6 +341,49 @@ mod tests {
         }
         .apply_to(&preferences);
         assert!(cleared.vocabulary_directory.is_none());
+    }
+
+    #[test]
+    fn an_app_value_matching_the_shared_one_is_dropped() {
+        use super::super::{ApplicationId, ApplicationOverride, DictationOverrides};
+
+        let slack = ApplicationId::new("com.tinyspeck.slackmacgap").expect("valid");
+        let apps = ApplicationOverrides::new([(
+            slack,
+            ApplicationOverride {
+                excluded: false,
+                overrides: DictationOverrides {
+                    output_mode: Some(OutputMode::Copy),
+                    delivery_mode: Some(DeliveryMode::Complete),
+                },
+            },
+        )])
+        .expect("valid");
+        let current = UserPreferences {
+            output_mode: OutputMode::Insert,
+            delivery_mode: DeliveryMode::Streaming,
+            application_overrides: apps,
+            ..UserPreferences::default()
+        };
+
+        let updated = PreferencePatch {
+            output_mode: Some(OutputMode::Copy),
+            ..Default::default()
+        }
+        .apply_to(&current);
+
+        assert_eq!(
+            updated
+                .application_overrides
+                .get("com.tinyspeck.slackmacgap"),
+            Some(ApplicationOverride {
+                excluded: false,
+                overrides: DictationOverrides {
+                    output_mode: None,
+                    delivery_mode: Some(DeliveryMode::Complete),
+                },
+            })
+        );
     }
 
     #[test]

@@ -98,6 +98,16 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState.interrupted.life, .seconds(2))
     }
 
+    func test_anAppWithAriaOffSaysSoByName() {
+        var event = Aria_Daemon_V1_DictationEvent()
+        event.stage = .failed
+        event.errorCode = .applicationExcluded
+
+        XCTAssertEqual(PillState(event, frontApp: "1Password")?.label, "off in 1Password")
+        XCTAssertEqual(PillState(event, frontApp: nil)?.label, "off in this app")
+        XCTAssertEqual(PillState.excluded(nil).life, .seconds(2))
+    }
+
     func test_aSegmentDoesNotChangeThePill() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .segmentTranscribed

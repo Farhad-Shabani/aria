@@ -2,9 +2,10 @@ import Foundation
 
 enum DictationEdits {
     static let outputModes: [Aria_Daemon_V1_OutputMode] = [.insert, .insertAndSubmit, .insertOrCopy, .copy]
+    static let deliveryModes: [Aria_Daemon_V1_DeliveryMode] = [.streaming, .complete]
     static let silenceSecondsRange = 0.5...3.0
 
-    /// Copy cannot stream: the daemon refuses to start such a dictation.
+    /// Copy cannot stream, so the daemon delivers it after recording stops.
     static func locksDelivery(_ mode: Aria_Daemon_V1_OutputMode) -> Bool {
         mode == .copy
     }
@@ -51,6 +52,16 @@ extension Aria_Daemon_V1_OutputMode {
     }
 }
 
+extension Aria_Daemon_V1_DeliveryMode {
+    var title: String {
+        switch self {
+        case .streaming: return "While speaking"
+        case .complete: return "After recording stops"
+        case .unspecified, .UNRECOGNIZED: return "Unknown"
+        }
+    }
+}
+
 extension Aria_Daemon_V1_PreferencePatch {
     func apply(to patch: inout Aria_Daemon_V1_PreferencePatch) {
         if hasRecognitionLanguage { patch.recognitionLanguage = recognitionLanguage }
@@ -65,6 +76,7 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasDictationHistory { patch.dictationHistory = dictationHistory }
         if hasHistoryAudioRetention { patch.historyAudioRetention = historyAudioRetention }
         if hasMuteOutput { patch.muteOutput = muteOutput }
+        if hasApplicationOverrides { patch.applicationOverrides = applicationOverrides }
     }
 
     func apply(to preferences: inout Aria_Daemon_V1_UserPreferences) {
@@ -87,5 +99,6 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasDictationHistory { preferences.dictationHistory = dictationHistory }
         if hasHistoryAudioRetention { preferences.historyAudioRetention = historyAudioRetention }
         if hasMuteOutput { preferences.muteOutput = muteOutput }
+        if hasApplicationOverrides { preferences.applicationOverrides = applicationOverrides }
     }
 }
