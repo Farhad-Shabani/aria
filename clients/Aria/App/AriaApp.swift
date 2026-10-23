@@ -16,12 +16,7 @@ struct AriaApp: App {
         MenuBarExtra {
             VStack(spacing: 8) {
                 HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Aria").font(.headline)
-                        Text(poller.state.statusLine)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                    DaemonStatusLabel(state: poller.state)
                     Spacer(minLength: 16)
                     Toggle(
                         "Aria",

@@ -19,11 +19,7 @@ struct PreferencesForm<Content: View>: View {
                 Button("Try Again") { Task { await preferences.sync() } }
             }
         } else {
-            ContentUnavailableView(
-                "Waiting for Aria",
-                systemImage: "hourglass",
-                description: Text("These settings load once Aria is running.")
-            )
+            DaemonWaitingView()
         }
     }
 }

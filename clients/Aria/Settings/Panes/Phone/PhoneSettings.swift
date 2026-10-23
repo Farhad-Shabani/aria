@@ -13,6 +13,17 @@ struct PhoneSettings: View {
     }
 
     var body: some View {
+        Group {
+            if pairing.status == .daemonOff {
+                DaemonWaitingView()
+            } else {
+                form
+            }
+        }
+        .task { await pairing.run() }
+    }
+
+    private var form: some View {
         Form {
             Section {
                 Toggle(
@@ -37,20 +48,14 @@ struct PhoneSettings: View {
             }
         }
         .formStyle(.grouped)
-        .task { await pairing.run() }
     }
 
     @ViewBuilder
     private var problems: some View {
         switch pairing.status {
-        case .daemonOff:
-            Text("Aria isn't running.")
-            if let error = poller.lastError {
-                Text(error)
-            }
         case .failed(let message):
             Text(message).foregroundStyle(.red)
-        case .loading, .restarting, .relayOff, .live:
+        case .loading, .restarting, .relayOff, .daemonOff, .live:
             EmptyView()
         }
         if let error = pairing.actionError {

@@ -8,7 +8,6 @@ enum SettingsMetrics {
     static let iconSide: CGFloat = 20
     static let appIconSide: CGFloat = 32
     static let aboutIconSide: CGFloat = 64
-    static let statusDotSide: CGFloat = 7
 
     /// A tile's corner radius as a share of its side, matching System Settings.
     static let cornerRatio: CGFloat = 0.225
