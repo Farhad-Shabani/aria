@@ -38,7 +38,7 @@ Aria's dictation history does not delete agent conversations.
 
 The Mac app checks GitHub for a new release about once a day. The check sends
 the request GitHub sees from any download, such as your IP address and the app
-version. Turn it off in **Settings → About** with
+version. Turn it off in **Settings → General** with
 **Automatically check for updates**.
 
 ## Files and folders

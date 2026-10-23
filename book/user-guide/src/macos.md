@@ -50,7 +50,7 @@ uses the completed text. Output choices are under **Settings → Dictation**.
 
 ## Dictate from iPhone and Apple Watch
 
-Switch on **Phone Pairing** under **Settings → Phone**. Aria restarts and shows
+Switch on **Phone pairing** under **Settings → Phone**. Aria restarts and shows
 a code for Aria for iPhone to scan. Switching it off keeps paired phones for
 next time.
 

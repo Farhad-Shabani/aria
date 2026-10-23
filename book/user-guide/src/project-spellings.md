@@ -12,7 +12,7 @@ Choose a folder you are comfortable letting Aria read. Names and their source
 locations stay in a private local cache.
 
 Complete [setup](./installation.md#setup) and keep the background service running.
-In the Mac app, enable **Settings → Dictation → Show Advanced Options → Use project vocabulary**
+In the Mac app, enable **Settings → Recognition → Use project vocabulary**
 and choose the folder. Or open a terminal in that folder:
 
 ```sh

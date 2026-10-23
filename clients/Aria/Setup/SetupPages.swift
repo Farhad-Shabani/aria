@@ -5,10 +5,7 @@ struct WelcomePage: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .frame(width: 96, height: 96)
-                .accessibilityHidden(true)
+            AppIcon(side: 96)
             VStack(alignment: .leading, spacing: 10) {
                 Label("Pick speech and chat engines", systemImage: "waveform")
                 Label("Download the models they need", systemImage: "arrow.down.circle")
@@ -62,13 +59,13 @@ struct EnginesPage: View {
             LabeledContent("Wake word:") {
                 Toggle("Listen for the wake word", isOn: $state.selections.wake)
             }
-            .settingsGroup()
+            .setupGroup()
             if state.inspection.macos {
                 LabeledContent("Hotkey:") {
                     VStack(alignment: .leading, spacing: 4) {
                         Toggle("Start dictation with a hotkey", isOn: $state.selections.hotkey)
                         Text("Needs the Accessibility grant; the next pages walk you through it.")
-                            .settingsFootnote()
+                            .setupFootnote()
                     }
                 }
             }
@@ -123,12 +120,12 @@ struct ModelsPage: View {
                 VStack(alignment: .leading, spacing: 2) {
                     row(model)
                     if model.onDisk == .partial && !model.external {
-                        Text("Partly downloaded. Resumes where it stopped.").settingsFootnote()
+                        Text("Partly downloaded. Resumes where it stopped.").setupFootnote()
                     }
                 }
             }
             Text(state.downloadTotal).fontWeight(.medium).padding(.top, 4)
-            ForEach(state.selfFetchingNotes, id: \.self) { Text($0).settingsFootnote() }
+            ForEach(state.selfFetchingNotes, id: \.self) { Text($0).setupFootnote() }
         }
     }
 

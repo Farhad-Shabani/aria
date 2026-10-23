@@ -7,7 +7,7 @@ transcripts are separate.
 ## Saving
 
 Saving is on by default. In the Mac app, turn it off under
-**Settings → General → Save dictation history**. This stops future saves and
+**Settings → Privacy → Save dictation history**. This stops future saves and
 leaves existing entries until you delete them or they expire. The CLI has no
 control for this preference.
 
@@ -50,7 +50,7 @@ previous text in place.
 ## Keep successful recordings
 
 To make future successful dictations available for retry, enable
-**Settings → Dictation → Show Advanced Options → Keep recordings for retry**,
+**Settings → Privacy → Keep recordings for retry**,
 or run:
 
 ```sh

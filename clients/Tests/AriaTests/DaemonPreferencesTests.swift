@@ -5,38 +5,6 @@ import XCTest
 
 @MainActor
 final class DaemonPreferencesTests: XCTestCase {
-    /// Answers from scripted queues; records every update it was asked for.
-    final class FakeTransport: PreferencesTransport {
-        var snapshots: [Aria_Daemon_V1_PreferenceSnapshot] = []
-        var updates: [Aria_Daemon_V1_UpdatePreferencesResponse] = []
-        var updateError: (any Error)?
-        var duringUpdate: (() async -> Void)?
-        var duringSnapshot: (() async -> Void)?
-        private(set) var sentUpdates: [Aria_Daemon_V1_UpdatePreferencesRequest] = []
-
-        func snapshot() async throws -> Aria_Daemon_V1_PreferenceSnapshot {
-            let action = duringSnapshot
-            duringSnapshot = nil
-            await action?()
-            guard !snapshots.isEmpty else { throw Unreachable() }
-            return snapshots.removeFirst()
-        }
-
-        func update(
-            _ request: Aria_Daemon_V1_UpdatePreferencesRequest
-        ) async throws -> Aria_Daemon_V1_UpdatePreferencesResponse {
-            sentUpdates.append(request)
-            let action = duringUpdate
-            duringUpdate = nil
-            await action?()
-            if let updateError { throw updateError }
-            guard !updates.isEmpty else { throw Unreachable() }
-            return updates.removeFirst()
-        }
-    }
-
-    struct Unreachable: Error {}
-
     private func snapshot(
         revision: UInt64, mute: Bool = false, language: String = "en"
     ) -> Aria_Daemon_V1_PreferenceSnapshot {
@@ -60,7 +28,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_sync_usesHistoryBooleanWithoutPresenceFallback() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3)]
         let preferences = DaemonPreferences(transport: transport)
         XCTAssertTrue(preferences.historyEnabled)
@@ -71,7 +39,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_set_pushesTheKnownRevisionAndKeepsTheEditVisibleDuringSync() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]
         transport.updates = [accepted(snapshot(revision: 4, mute: true))]
         let preferences = DaemonPreferences(transport: transport)
@@ -91,7 +59,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_conflict_adoptsTheDaemonRevisionAndRetriesOnce() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3)]
         transport.updates = [
             conflict(snapshot(revision: 7, language: "auto")),
@@ -108,7 +76,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_sync_adoptsTheSnapshotAndIgnoresOlderRevisions() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 5, mute: true), snapshot(revision: 4, mute: false)]
         let preferences = DaemonPreferences(transport: transport)
 
@@ -122,7 +90,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_repeatedConflicts_stopAndKeepEditsForTheNextSync() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 8, language: "auto")]
         transport.updates = [
             conflict(snapshot(revision: 7)),
@@ -146,7 +114,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_conflict_retriesTheLatestEdit() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3)]
         transport.updates = [conflict(snapshot(revision: 4)), accepted(snapshot(revision: 5))]
         let preferences = DaemonPreferences(transport: transport)
@@ -161,7 +129,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_acceptedFields_areNotReplayedWithLaterEdits() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3)]
         transport.updates = [
             accepted(snapshot(revision: 4, mute: true)),
@@ -179,7 +147,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_refusal_preservesEditsDuringTheRequestAndRecovery() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3), snapshot(revision: 3)]
         transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
         let preferences = DaemonPreferences(transport: transport)
@@ -205,12 +173,12 @@ final class DaemonPreferencesTests: XCTestCase {
 
     func test_failedRequest_restoresOlderFieldsUnderNewerValues() async {
         for missingResult in [false, true] {
-            let transport = FakeTransport()
+            let transport = FakePreferencesTransport()
             transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]
             if missingResult {
                 transport.updates = [Aria_Daemon_V1_UpdatePreferencesResponse()]
             } else {
-                transport.updateError = Unreachable()
+                transport.updateError = FakePreferencesTransport.Unreachable()
             }
             let preferences = DaemonPreferences(transport: transport)
             await preferences.sync()
@@ -232,7 +200,7 @@ final class DaemonPreferencesTests: XCTestCase {
             if missingResult {
                 XCTAssertEqual(preferences.lastError as? DaemonPreferences.UpdateError, .invalidResponse)
             } else {
-                XCTAssertTrue(preferences.lastError is Unreachable)
+                XCTAssertTrue(preferences.lastError is FakePreferencesTransport.Unreachable)
             }
             XCTAssertEqual(preferences.snapshot?.muteOutput, true, "the edit stays visible")
             XCTAssertEqual(preferences.snapshot?.askHotkey.enabled, false)
@@ -253,7 +221,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_cancellation_stopsRetriesAndKeepsTheEdit() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 4)]
         transport.updates = [conflict(snapshot(revision: 4)), accepted(snapshot(revision: 5, mute: true))]
         let preferences = DaemonPreferences(transport: transport)
@@ -271,7 +239,7 @@ final class DaemonPreferencesTests: XCTestCase {
     }
 
     func test_conflictBudget_doesNotRestartAfterAnAcceptedBatch() async {
-        let transport = FakeTransport()
+        let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3)]
         transport.updates = [
             conflict(snapshot(revision: 4)),
