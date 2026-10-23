@@ -92,14 +92,53 @@ final class SetupState: ObservableObject {
     init(effects: Effects) { self.effects = effects }
 
     /// The models the chosen engines want, plus the ones every install
-    /// wants, that are not on disk yet.
-    static func plan(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
+    /// wants, whether on disk or not.
+    static func wanted(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
         -> [Aria_Setup_V1_Model]
     {
         inspection.models.filter { model in
-            !model.present && !model.external
-                && (model.engine.isEmpty || model.engine == selections.stt || model.engine == selections.tts)
+            model.engine.isEmpty || model.engine == selections.stt || model.engine == selections.tts
         }
+    }
+
+    /// The wanted models that setup still has to fetch.
+    static func plan(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
+        -> [Aria_Setup_V1_Model]
+    {
+        wanted(inspection, selections).filter { $0.onDisk != .complete && !$0.external }
+    }
+
+    static func expressPlan(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
+        -> [Aria_Setup_V1_Model]
+    {
+        plan(inspection, selections).filter(\.default)
+    }
+
+    static func total(_ models: [Aria_Setup_V1_Model]) -> String {
+        models.isEmpty ? "No downloads needed." : "Total download: \(downloadSize(of: models))"
+    }
+
+    /// Says "up to" when a download resumes: only the transfer knows how
+    /// much is left.
+    static func downloadSize(of models: [Aria_Setup_V1_Model]) -> String {
+        let size = size(models.reduce(0) { $0 + $1.bytes })
+        return models.contains { $0.onDisk == .partial } ? "up to \(size)" : size
+    }
+
+    /// What picking `engine` downloads, for comparing engines before one
+    /// is chosen.
+    static func download(of engine: Aria_Setup_V1_Engine, in inspection: Aria_Setup_V1_Inspection) -> EngineDownload {
+        switch engine.model {
+        case .downloads: break
+        case .fetchedOnFirstUse: return .status("Fetched on first use")
+        case .builtIn: return .status("Built in")
+        case .unspecified, .UNRECOGNIZED: return .status("Size unknown")
+        }
+        let models = inspection.models.filter { $0.engine == engine.key }
+        if models.contains(where: \.external) { return .status("Custom model") }
+        let missing = models.filter { $0.onDisk != .complete }
+        if missing.isEmpty { return .status("Downloaded") }
+        return .size(downloadSize(of: missing))
     }
 
     /// Why the choices cannot be applied: an engine this Mac cannot run.
@@ -148,14 +187,20 @@ final class SetupState: ObservableObject {
         return unique.isEmpty ? "Everything is in place." : "Missing: \(unique.joined(separator: ", "))."
     }
 
-    var downloadSummary: String {
+    var downloadTotal: String {
         let plan = Self.plan(inspection, selections)
-        if plan.isEmpty { return "Nothing to download" }
         let chosen = plan.filter { downloads.contains($0.name) }
-        if chosen.isEmpty { return "Nothing selected" }
-        let bytes = chosen.reduce(0) { $0 + $1.bytes }
-        let noun = chosen.count == 1 ? "download" : "downloads"
-        return "\(chosen.count) \(noun), \(Self.size(bytes))"
+        return chosen.isEmpty && !plan.isEmpty ? "Nothing selected." : Self.total(chosen)
+    }
+
+    /// One note per chosen engine that downloads its own model, which
+    /// setup cannot size.
+    var selfFetchingNotes: [String] {
+        let chosen = [(selections.stt, inspection.stt), (selections.tts, inspection.tts)]
+        return chosen.compactMap { key, engines in
+            engines.first { $0.key == key && $0.model == .fetchedOnFirstUse }
+                .map { "\($0.label) downloads its model on first use." }
+        }
     }
 
     var installRows: [InstallRow] {
@@ -230,7 +275,7 @@ final class SetupState: ObservableObject {
     }
 
     private var defaultDownloads: Set<String> {
-        Set(Self.plan(inspection, selections).filter(\.default).map(\.name))
+        Set(Self.expressPlan(inspection, selections).map(\.name))
     }
 
     func cancel() {
@@ -375,6 +420,28 @@ final class SetupState: ObservableObject {
         } catch {
             notice = error.localizedDescription
             step = .tryOut
+        }
+    }
+}
+
+/// A size to compare engines by, or why an engine has none.
+enum EngineDownload: Equatable {
+    case size(String)
+    case status(String)
+
+    /// Short enough for a menu row.
+    var brief: String {
+        switch self {
+        case .size(let text), .status(let text): text
+        }
+    }
+
+    /// Under the picker, which already shows the brief form: only a bare
+    /// size needs its label spelled out.
+    var note: String? {
+        switch self {
+        case .size(let text): "Download size: \(text)"
+        case .status: nil
         }
     }
 }

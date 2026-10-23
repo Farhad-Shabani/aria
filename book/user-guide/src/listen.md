@@ -4,14 +4,16 @@ Listen saves a transcript of audio playing on your Mac, such as a meeting or
 video. It captures system output, not microphone dictation, and writes to a
 file rather than typing into an app.
 
-This task needs a separate model and permission. First check
+Listen needs System Audio Recording permission. It uses your speech-to-text
+engine, so the default setup needs no extra model. First check
 [Mac dictation](./macos.md) or [terminal dictation](./transcription.md), depending
 on how you installed Aria.
 
 ## Model
 
-The default Whisper model cannot run Listen. Use the Moonshine Base model
-below for English audio. Setup does not download this model for you.
+Listen runs on Parakeet, the default, and on Moonshine and Nemotron. With any
+other engine, add the Moonshine Base model below for English audio. Setup
+does not download it for you.
 
 1. Download the model's three files:
 

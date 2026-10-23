@@ -40,6 +40,17 @@ message Engine {
   string note = 4;
   // Exactly one per family: the configured one, else the first that runs.
   bool default = 5;
+  ModelSource model = 6;
+}
+
+// Where an engine's model comes from.
+enum ModelSource {
+  MODEL_SOURCE_UNSPECIFIED = 0;
+  // Setup downloads it; `Inspection.models` lists its files.
+  MODEL_SOURCE_DOWNLOADS = 1;
+  // The engine fetches it itself, so setup cannot tell its size.
+  MODEL_SOURCE_FETCHED_ON_FIRST_USE = 2;
+  MODEL_SOURCE_BUILT_IN = 3;
 }
 
 enum Availability {
@@ -60,10 +71,19 @@ message Model {
   uint64 bytes = 4;
   // Whether it is fetched when nobody answers.
   bool default = 5;
-  bool present = 6;
+  OnDisk on_disk = 6;
   // Config points its engine at files elsewhere, so setup has nothing to
   // fetch.
   bool external = 7;
+}
+
+enum OnDisk {
+  ON_DISK_UNSPECIFIED = 0;
+  ON_DISK_COMPLETE = 1;
+  // Some of its files, or their unfinished parts; a download resumes
+  // from them.
+  ON_DISK_PARTIAL = 2;
+  ON_DISK_ABSENT = 3;
 }
 
 // One thing a run still has to put in place.

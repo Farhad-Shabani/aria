@@ -253,17 +253,13 @@ mod tests {
     fn the_default_engine_keeps_its_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        fs::write(&path, "transcription: {model: ~/w.bin}\n").unwrap();
-        let whisper = Selections {
-            stt: "whisper".to_owned(),
-            ..selections()
-        };
+        fs::write(&path, "transcription: {model: ~/tdt}\n").unwrap();
 
-        whisper.prepare(&path).unwrap().commit().unwrap();
+        selections().prepare(&path).unwrap().commit().unwrap();
 
         assert_eq!(
             read(&path).unwrap().transcription.model.as_deref(),
-            Some("~/w.bin")
+            Some("~/tdt")
         );
     }
 

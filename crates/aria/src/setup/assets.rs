@@ -12,7 +12,8 @@ use super::download;
 
 const MODEL_DIR_MODE: u32 = 0o755;
 
-pub(super) struct Asset {
+#[derive(Debug, PartialEq, Eq)]
+pub struct Asset {
     pub(super) name: &'static str,
     pub(super) title: &'static str,
     /// Whether it is fetched when nobody answers.

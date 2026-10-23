@@ -6,7 +6,8 @@ use std::path::Path;
 use crate::config::{self, FileConfig, LoadedModel};
 use crate::primitives::user_home;
 
-use super::{SetupError, assets, config_file, config_path, model_states};
+use super::assets::{self, Asset};
+use super::{SetupError, config_file, config_path, model_states};
 
 /// One model setup can download.
 pub struct Model {
@@ -26,6 +27,16 @@ pub enum OnDisk {
 }
 
 impl OnDisk {
+    pub(super) fn of(models: &Path, asset: &Asset) -> Self {
+        if assets::present(models, asset) {
+            Self::Complete
+        } else if assets::partly_present(models, asset) {
+            Self::Partial
+        } else {
+            Self::Absent
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "installed",
@@ -56,13 +67,7 @@ fn listed(home: &Path, file: &FileConfig) -> Vec<Model> {
         .map(|model| Model {
             name: model.name,
             bytes: model.bytes,
-            on_disk: if model.present {
-                OnDisk::Complete
-            } else if assets::partly_present(&models_dir, model.asset) {
-                OnDisk::Partial
-            } else {
-                OnDisk::Absent
-            },
+            on_disk: model.on_disk,
             used_by: user(&loaded, &models_dir, model.asset),
         })
         .collect()
@@ -140,7 +145,7 @@ mod tests {
     fn an_empty_config_uses_the_default_models() {
         let file = config("{}");
 
-        assert_eq!(used_by(&file, "whisper"), Some("transcription"));
+        assert_eq!(used_by(&file, "parakeet"), Some("transcription"));
         assert_eq!(used_by(&file, "kokoro"), None);
         assert_eq!(used_by(&file, "speaker"), Some("speaker"));
         assert_eq!(used_by(&file, "segmentation"), Some("speaker"));
@@ -238,13 +243,13 @@ mod tests {
     #[test]
     fn remove_refuses_what_it_cannot_take() {
         let (home, models) = home();
-        let whisper = models.join("whisper/ggml-large-v3-turbo-q8_0.bin");
-        touch(&whisper);
+        let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
+        touch(&parakeet);
         let file = config("{}");
         let refused = |name| removed(home.path(), &file, name).unwrap_err();
 
         assert!(matches!(
-            refused("whisper"),
+            refused("parakeet"),
             SetupError::ModelInUse {
                 section: "transcription",
                 ..
@@ -262,6 +267,6 @@ mod tests {
             SetupError::ModelNotInstalled { .. }
         ));
         assert!(matches!(refused("gpt"), SetupError::UnknownModel { .. }));
-        assert!(whisper.exists());
+        assert!(parakeet.exists());
     }
 }

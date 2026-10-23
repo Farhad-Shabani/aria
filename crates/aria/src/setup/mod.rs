@@ -42,6 +42,7 @@ use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
 pub use backends::{Availability, Choice};
 use backends::{Backend, Chat, Host, Stt, Tts, choices};
 pub use config_file::{ConfigWrite, Existing, Selections};
+use models::OnDisk;
 use prompt::Prompts;
 
 /// Where setup installs the wake-word models, inside the models directory.
@@ -99,7 +100,7 @@ pub struct ModelState {
     pub bytes: u64,
     /// Whether it is fetched when nobody answers.
     pub default: bool,
-    pub present: bool,
+    pub on_disk: OnDisk,
     /// Config points its engine at files elsewhere, so setup has nothing to
     /// fetch.
     pub external: bool,
@@ -270,7 +271,7 @@ impl Inspection {
     /// wants, that are not on disk yet.
     pub fn downloads_for<'a>(&'a self, selections: &'a Selections) -> Vec<&'a ModelState> {
         self.wanted(selections)
-            .filter(|model| !model.present)
+            .filter(|model| model.on_disk != OnDisk::Complete)
             .collect()
     }
 
@@ -310,7 +311,9 @@ impl Inspection {
             self.models
                 .iter()
                 .filter(|model| {
-                    !model.present && !model.external && model.engine.is_some_and(configured_engine)
+                    model.on_disk != OnDisk::Complete
+                        && !model.external
+                        && model.engine.is_some_and(configured_engine)
                 })
                 .map(|model| Missing::Model(model.name)),
         );
@@ -342,6 +345,7 @@ fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
     ) -> impl Iterator<Item = (&'static Asset, Option<&'static str>, &'static str)> {
         B::ALL.iter().flat_map(move |backend| {
             backend
+                .model()
                 .assets()
                 .iter()
                 .map(move |asset| (asset, Some(backend.key()), section))
@@ -356,7 +360,7 @@ fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
             engine,
             bytes: asset.total_bytes(),
             default: asset.default,
-            present: assets::present(&models_dir, asset),
+            on_disk: OnDisk::of(&models_dir, asset),
             external: external(asset, engine, section),
             asset,
         })
@@ -502,7 +506,12 @@ pub fn run(
     let mut downloads = Vec::new();
     if !options.skip_models {
         for model in inspection.downloads_for(&selections) {
-            let question = format!("Download {} ({})?", model.title, size(model.bytes));
+            // Only the transfer knows how much a resumed download has left.
+            let bytes = match model.on_disk {
+                OnDisk::Partial => format!("up to {}", size(model.bytes)),
+                OnDisk::Complete | OnDisk::Absent => size(model.bytes),
+            };
+            let question = format!("Download {} ({bytes})?", model.title);
             if prompts.confirm(&question, model.default)? {
                 downloads.push(model.name.to_owned());
             }
@@ -1091,7 +1100,7 @@ mod tests {
     fn yes_takes_the_default_choice_when_nothing_is_configured() {
         let defaults = Selections::defaults(&inspection(Existing::default()));
 
-        assert_eq!(defaults.stt, "whisper");
+        assert_eq!(defaults.stt, "parakeet");
         assert_eq!(defaults.tts, "system");
         assert!(!defaults.wake);
         assert!(defaults.hotkey);
@@ -1111,7 +1120,7 @@ mod tests {
 
         assert_eq!(
             names(&selections),
-            ["whisper", SPEAKER_ASSET, "segmentation"]
+            ["parakeet", SPEAKER_ASSET, "segmentation"]
         );
 
         selections.stt = "future-stt".to_owned();
@@ -1248,7 +1257,7 @@ mod tests {
     fn nothing_is_missing_once_everything_is_in_place() {
         let mut inspection = inspection(configured());
         for model in &mut inspection.models {
-            model.present = true;
+            model.on_disk = OnDisk::Complete;
         }
         inspection.wakeword_installed = true;
         inspection.service.job = Job::Idle;
