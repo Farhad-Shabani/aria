@@ -6,10 +6,6 @@ pub(crate) mod discover;
 #[cfg(test)]
 mod evaluation;
 pub(crate) mod extract;
-#[cfg(test)]
-mod manifests;
-#[cfg(test)]
-pub(crate) mod project;
 pub(crate) mod select;
 
 pub use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules, Term, Vocabulary};

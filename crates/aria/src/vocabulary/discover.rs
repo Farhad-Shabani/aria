@@ -390,7 +390,7 @@ pub(super) fn open_directory(path: &Path) -> Result<File, io::Error> {
     Ok(directory)
 }
 
-pub(super) fn open_beneath(root: &File, path: &Path) -> Result<File, io::Error> {
+fn open_beneath(root: &File, path: &Path) -> Result<File, io::Error> {
     let mut current = root.try_clone()?;
     let mut components = path.components().peekable();
     while let Some(component) = components.next() {
@@ -429,7 +429,7 @@ fn join_relative(scope: &Path, name: &OsStr) -> PathBuf {
 }
 
 #[derive(PartialEq, Eq)]
-pub(super) struct Stamp {
+struct Stamp {
     device: u64,
     inode: u64,
     size: u64,
@@ -437,7 +437,7 @@ pub(super) struct Stamp {
     changed: (i64, i64),
 }
 
-pub(super) fn stamp(metadata: &Metadata) -> Stamp {
+fn stamp(metadata: &Metadata) -> Stamp {
     Stamp {
         device: metadata.dev(),
         inode: metadata.ino(),

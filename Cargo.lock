@@ -206,7 +206,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-stream",
  "tokio-util",
- "toml_edit",
  "tonic",
  "tonic-health",
  "tonic-prost",
