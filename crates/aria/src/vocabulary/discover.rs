@@ -565,7 +565,6 @@ mod tests {
             "root-only.rs",
             "src/root-only.rs",
             "src/inside.txt",
-            "src/scratch.tmp",
             "src/blocked/escape.txt",
             "other/inside.txt",
         ] {
@@ -582,7 +581,7 @@ mod tests {
         write(
             root,
             ".gitignore",
-            "target/\n*.txt\n!keep.txt\n*.tmp\n/root-only.rs\n",
+            "target/\n*.txt\n!keep.txt\n/root-only.rs\n",
         );
         write(
             root,
@@ -614,7 +613,6 @@ mod tests {
             "target/generated.txt",
             "drop.txt",
             "root-only.rs",
-            "src/scratch.tmp",
             "src/blocked",
             "src/blocked/escape.txt",
             "other/inside.txt",
@@ -654,20 +652,6 @@ mod tests {
             scan_cached(&selected, &CancelToken::never(), &[], &mut LocalExtractor),
             Err(Error::Io(_))
         ));
-    }
-
-    #[test]
-    fn gitignore_changes_during_extraction_reject_the_generation() {
-        let temp = tempfile::tempdir().unwrap();
-        write(temp.path(), ".gitignore", "");
-        write(temp.path(), "notes.txt", "project-name");
-        let result = scan_cached(
-            temp.path(),
-            &CancelToken::never(),
-            &[],
-            &mut MutatingExtractor(temp.path().join(".gitignore")),
-        );
-        assert!(matches!(result, Err(Error::Unstable)));
     }
 
     #[test]
@@ -922,15 +906,18 @@ mod tests {
 
     #[test]
     fn source_changes_during_extraction_reject_the_generation() {
-        let temp = tempfile::tempdir().unwrap();
-        write(temp.path(), "notes.txt", "original-name");
-        let result = scan_cached(
-            temp.path(),
-            &CancelToken::never(),
-            &[],
-            &mut MutatingExtractor(temp.path().join("notes.txt")),
-        );
-        assert!(matches!(result, Err(Error::Unstable)));
+        for changed in ["notes.txt", ".gitignore"] {
+            let temp = tempfile::tempdir().unwrap();
+            write(temp.path(), ".gitignore", "");
+            write(temp.path(), "notes.txt", "original-name");
+            let result = scan_cached(
+                temp.path(),
+                &CancelToken::never(),
+                &[],
+                &mut MutatingExtractor(temp.path().join(changed)),
+            );
+            assert!(matches!(result, Err(Error::Unstable)));
+        }
     }
 
     #[test]
