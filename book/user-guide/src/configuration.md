@@ -6,15 +6,17 @@ App preference changes apply immediately; file changes require a restart.
 
 ## Mac app
 
-Open **Settings…** from Aria's menu:
+Open **Settings…** from Aria's menu. The sidebar lists these pages:
 
-- **General** controls launch at login, the status pill, and dictation-history
-  saving.
+- **General** controls launch at login, the status pill, the inline preview,
+  and update checks.
+- **Dictation** sets output, delivery, muting while recording, and the
+  silence that ends dictation.
+- **Recognition** sets the language, voice filtering, and project vocabulary.
 - **Shortcuts** chooses right Option or Fn for the dictation hotkey, and sets
   the Ask shortcut.
-- **Dictation** selects language and output, and can mute your speakers while
-  recording. **Show Advanced Options** contains delivery, voice filtering,
-  project vocabulary, silence duration, and retained audio.
+- **Privacy** controls dictation history and retained audio.
+- **Phone** pairs Aria for iPhone.
 
 The language picker offers English, the default, and automatic detection.
 These choices still depend on the selected model's supported languages.

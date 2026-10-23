@@ -1,15 +1,5 @@
 import SwiftUI
 
-extension DaemonState {
-    var statusLine: String {
-        switch self {
-        case .running: return "Running"
-        case .stopped: return "Stopped"
-        case .working: return "Working…"
-        }
-    }
-}
-
 @main
 struct AriaApp: App {
     @Environment(\.openWindow) private var openWindow
@@ -70,14 +60,12 @@ struct AriaApp: App {
                 Divider()
                 VStack(spacing: 2) {
                     Button {
-                        openWindow(id: "dictation-history")
+                        openWindow(id: WindowID.dictationHistory)
                         NSApplication.shared.activate()
                     } label: {
                         Text("Dictation History…")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    // Not a SettingsLink: that shows the window without
-                    // activating the app, so an open window stays buried.
                     Button {
                         appDelegate.settings.request()
                     } label: {
@@ -112,12 +100,23 @@ struct AriaApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Settings {
+        // A Window, not a Settings scene: only a Window takes the unified
+        // toolbar that puts Back and Forward beside the sidebar.
+        Window("Aria Settings", id: WindowID.settings) {
             SettingsView(preferences: preferences, poller: poller, updates: appDelegate.updates)
         }
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         .windowResizability(.contentSize)
+        .windowToolbarStyle(.unified)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { appDelegate.settings.request() }
+                    .keyboardShortcut(",")
+            }
+        }
 
-        Window("Dictation History", id: "dictation-history") {
+        Window("Dictation History", id: WindowID.dictationHistory) {
             DictationHistoryView()
         }
         .defaultLaunchBehavior(.suppressed)
@@ -125,7 +124,7 @@ struct AriaApp: App {
         .defaultSize(width: 800, height: 520)
         .windowResizability(.contentMinSize)
 
-        Window("Aria Setup", id: "setup") {
+        Window("Aria Setup", id: WindowID.setup) {
             SetupView(state: appDelegate.setupState)
         }
         .defaultLaunchBehavior(.suppressed)
@@ -135,7 +134,6 @@ struct AriaApp: App {
 }
 
 private struct MenuBarLabel: View {
-    @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var poller: StatusPoller
     @ObservedObject var status: StatusController
@@ -147,14 +145,13 @@ private struct MenuBarLabel: View {
         Image(nsImage: MenuBarMark.image(state))
             .accessibilityLabel(state.accessibilityLabel)
             .onAppear {
-                let openSettings = openSettings
+                let openWindow = openWindow
                 controller.settings.register {
-                    openSettings()
+                    openWindow(id: WindowID.settings)
                     NSApplication.shared.activate()
                 }
-                let openWindow = openWindow
                 controller.setup.register {
-                    openWindow(id: "setup")
+                    openWindow(id: WindowID.setup)
                     NSApplication.shared.activate()
                 }
                 poller.startPolling()

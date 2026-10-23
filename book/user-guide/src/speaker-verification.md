@@ -35,7 +35,7 @@ It shows each profile's name and role.
 ## Use your profile
 
 Enrollment does not turn filtering on. In the Mac app, enable
-**Settings → Dictation → Show Advanced Options → Only type my own voice**.
+**Settings → Recognition → Only type my own voice**.
 It is off by default, and the CLI has no control for this preference.
 
 Filtering needs the speaker model and an owner profile. Without the model,

@@ -107,7 +107,7 @@ model again if you choose its engine later.
 
 On a Mac, Aria offers new releases itself. Choose **Check for Updates…** from
 its menu to check now, or set automatic checks and installs in
-**Settings → About**. With Homebrew, run `brew upgrade --cask --greedy aria`,
+**Settings → General**. With Homebrew, run `brew upgrade --cask --greedy aria`,
 because Aria updates itself and a plain `brew upgrade` skips it.
 
 To remove Aria from a Mac, quit it and move it to the Trash, or run
