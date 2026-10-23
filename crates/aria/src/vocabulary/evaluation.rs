@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::catalog::Catalog;
 use super::collection;
 use super::extract::{Extractor, LocalExtractor};
-use super::{PersonalRules, Vocabulary, discover, pipeline_key, select};
+use super::{PersonalRules, Vocabulary, cache_key, discover, select};
 
 const FILES: &[(&str, &str)] = &[
     ("java/Main.java", "class LedgerClient {} // ledger-api\n"),
@@ -88,8 +88,8 @@ fn measure(
     fixed_cases: bool,
 ) -> Result<Value, Value> {
     let cancel = CancelToken::never();
-    let key = pipeline_key(LocalExtractor.cache_key())
-        .ok_or_else(|| failure("identity", "invalid_key"))?;
+    let key =
+        cache_key(LocalExtractor.cache_key()).ok_or_else(|| failure("identity", "invalid_key"))?;
     let mut catalog = Catalog::open(directory, cancel.clone())
         .map_err(|error| failure("catalog_open", catalog_category(&error)))?;
     let mut samples = Vec::new();
@@ -250,7 +250,7 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
     for (input, target) in UNSUPPORTED {
         assert_ne!(corrected(&matcher, input), *target);
     }
-    let key = pipeline_key(LocalExtractor.cache_key()).unwrap();
+    let key = cache_key(LocalExtractor.cache_key()).unwrap();
     let mut catalog = Catalog::open(&temporary.path().join("catalog"), cancel.clone()).unwrap();
     catalog
         .refresh_cancellable(&discovery, &key, &cancel)
@@ -306,7 +306,7 @@ fn vocabulary_collection_benchmark() {
     let report = json!({
         "diagnostic_only": true,
         "fixture_version": 1,
-        "pipeline_key": pipeline_key(LocalExtractor.cache_key()).unwrap(),
+        "pipeline_key": cache_key(LocalExtractor.cache_key()).unwrap(),
         "corpus": "six fixed Java, Swift, Rust, Python, web, and non-code fixtures; not held out",
         "limitations": "raw fixed-case counts, not population accuracy; cold means no extraction cache, not an OS cold filesystem; no real dictation latency or deployment acceptance claim",
         "fixed_fixtures": fixed,

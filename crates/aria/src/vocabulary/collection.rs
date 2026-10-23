@@ -7,7 +7,7 @@ use super::{Directory, Discovery, Source};
 pub(crate) trait Collector: Send + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn pipeline_key(&self) -> Option<String>;
+    fn cache_key(&self) -> Option<String>;
 
     // Partial evidence must not replace a complete cached generation.
     fn collect(
