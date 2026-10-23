@@ -201,6 +201,8 @@ pub(crate) fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> 
         own_voice_only: false,
         project: None,
         transcript_only: false,
+        application: None,
+        target: crate::delivery::TargetPolicy::default(),
     }
 }
 

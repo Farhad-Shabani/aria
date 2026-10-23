@@ -126,6 +126,9 @@ pub(crate) enum DictationError {
     #[error("typing stopped partway because focus or the caret moved")]
     DeliveryInterrupted,
 
+    #[error("Aria is switched off in the app in front")]
+    ApplicationExcluded,
+
     #[error("audio capture failed: {0}")]
     Capture(#[source] crate::audio::CaptureError),
 
@@ -146,6 +149,7 @@ impl From<crate::delivery::DeliveryError> for DictationError {
             DeliveryError::Timeout(timeout) => Self::DeliveryTimeout(timeout),
             DeliveryError::Cancelled => Self::Cancelled,
             DeliveryError::TargetChanged => Self::DeliveryTargetChanged,
+            DeliveryError::ApplicationExcluded => Self::ApplicationExcluded,
             error => Self::Delivery(error),
         }
     }
@@ -186,6 +190,7 @@ impl From<&DictationError> for RpcErrorCode {
             DictationError::DeliveryTimeout(_) => Self::DeliveryTimeout,
             DictationError::DeliveryTargetChanged => Self::DeliveryTargetChanged,
             DictationError::DeliveryInterrupted => Self::DeliveryInterrupted,
+            DictationError::ApplicationExcluded => Self::ApplicationExcluded,
             DictationError::Capture(_) => Self::CaptureFailed,
             DictationError::NoSpeech => Self::NoSpeech,
             DictationError::Transcription(_) => Self::TranscriptionFailed,
@@ -467,7 +472,12 @@ where
         cancellation: CancelToken,
         events: &DictationEventEmitter,
     ) -> Result<DictationOutcome, DictationError> {
-        match self.admit(&settings, cancellation)? {
+        let admission = self.admit(&settings, cancellation).inspect_err(|error| {
+            if matches!(error, DictationError::ApplicationExcluded) {
+                events.emit(DictationStage::Failed(error.into()));
+            }
+        })?;
+        match admission {
             Admission::Execute(control, _claim) => {
                 // Capture and the level meter log from their own threads,
                 // outside this span.
@@ -499,6 +509,16 @@ where
             .microphone
             .admit_dictation(settings.stop_mode, Arc::clone(&control))
         {
+            // A tap that ends a running recording arrives as `StopAccepted`,
+            // so an excluded app can still stop one started elsewhere.
+            Admitted::Claimed(_claim) if settings.application_excluded() => {
+                tracing::info!(
+                    status = "rejected",
+                    reason = "application_excluded",
+                    "dictation request rejected"
+                );
+                Err(DictationError::ApplicationExcluded)
+            }
             Admitted::Claimed(claim) => {
                 tracing::info!(
                     status = "admitted",
@@ -607,6 +627,8 @@ mod tests {
             own_voice_only: false,
             transcript_only: true,
             project: None,
+            application: None,
+            target: crate::delivery::TargetPolicy::default(),
         }
     }
 
@@ -690,6 +712,73 @@ mod tests {
 
         assert!(!coordinator.stop_recording(RecordingId(id.0 + 1)));
         assert!(coordinator.stop_recording(id));
+        running.join().expect("the run ends").expect("it succeeds");
+    }
+
+    fn excluded(stop_mode: StopMode) -> DictationSettings {
+        DictationSettings {
+            application: Some(crate::history::Application {
+                name: "1Password".into(),
+                bundle_id: Some("com.1password.1password".into()),
+            }),
+            target: crate::delivery::TargetPolicy {
+                overridden_for: None,
+                excluded: vec!["com.1password.1password".into()],
+            },
+            ..settings(stop_mode)
+        }
+    }
+
+    #[test]
+    fn an_app_with_aria_off_records_nothing_and_says_so() {
+        let (coordinator, recording, _events) = coordinator();
+        let (events, stages) = announcing();
+
+        let refused =
+            coordinator.execute(excluded(StopMode::Manual), CancelToken::never(), &events);
+
+        assert!(matches!(refused, Err(DictationError::ApplicationExcluded)));
+        assert_eq!(
+            stages.recv().expect("the refusal is announced"),
+            DictationStage::Failed(RpcErrorCode::ApplicationExcluded)
+        );
+        assert!(recording.try_recv().is_err(), "nothing was recorded");
+        let running = {
+            let coordinator = Arc::clone(&coordinator);
+            thread::spawn(move || {
+                coordinator.execute(
+                    settings(StopMode::Manual),
+                    CancelToken::never(),
+                    &DictationEventEmitter::unsubscribed(),
+                )
+            })
+        };
+        let id = recording_started(&recording);
+        assert!(
+            coordinator.stop_recording(id),
+            "the microphone was released"
+        );
+        running.join().expect("the run ends").expect("it succeeds");
+    }
+
+    #[test]
+    fn a_tap_in_an_app_with_aria_off_still_stops_a_running_recording() {
+        let (coordinator, recording, events) = coordinator();
+        let running = {
+            let coordinator = Arc::clone(&coordinator);
+            thread::spawn(move || {
+                coordinator.execute(settings(StopMode::Manual), CancelToken::never(), &events)
+            })
+        };
+        recording_started(&recording);
+
+        let stop = coordinator.execute(
+            excluded(StopMode::Manual),
+            CancelToken::never(),
+            &DictationEventEmitter::unsubscribed(),
+        );
+
+        assert!(matches!(stop, Ok(DictationOutcome::StopAccepted)));
         running.join().expect("the run ends").expect("it succeeds");
     }
 

@@ -2,9 +2,9 @@ import SwiftUI
 
 struct SettingsIcon: View {
     let pane: SettingsPane
+    var side = SettingsMetrics.iconSide
 
     var body: some View {
-        let side = SettingsMetrics.iconSide
         Image(systemName: pane.symbol)
             .font(.system(size: side * SettingsMetrics.glyphRatio, weight: .semibold))
             .foregroundStyle(.white)

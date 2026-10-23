@@ -46,6 +46,8 @@ enum ErrorCode {
   // Streaming typed part of the text, then stopped because focus or the caret
   // moved.
   ERROR_CODE_DELIVERY_INTERRUPTED = 109;
+  // The app in front has Aria switched off, so nothing was recorded or typed.
+  ERROR_CODE_APPLICATION_EXCLUDED = 110;
   ERROR_CODE_SYNTHESIS_FAILED = 200;
   ERROR_CODE_PLAYBACK_FAILED = 201;
   ERROR_CODE_SPEECH_TIMEOUT = 202;

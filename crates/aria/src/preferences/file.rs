@@ -4,7 +4,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AskHotkey, AskHotkeyError, Modifiers, PreferenceSnapshot, PreferenceStoreError, UserPreferences,
+    ApplicationId, ApplicationOverride, ApplicationOverrides, AskHotkey, AskHotkeyError,
+    DictationOverrides, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError,
+    UserPreferences,
 };
 use crate::audio::SilenceDuration;
 use crate::delivery::OutputMode;
@@ -121,6 +123,15 @@ impl StoredDocument {
                         source,
                     }
                 })?,
+                application_overrides: ApplicationOverrides::try_from(
+                    self.preferences.application_overrides,
+                )
+                .map_err(|source| {
+                    PreferenceStoreError::InvalidApplicationOverrides {
+                        path: path.to_path_buf(),
+                        source,
+                    }
+                })?,
             },
         })
     }
@@ -151,6 +162,12 @@ impl From<&PreferenceSnapshot> for StoredDocument {
                     .map(|path| path.as_str().to_owned()),
                 dictation_hotkey: snapshot.preferences.dictation_hotkey.into(),
                 ask_hotkey: snapshot.preferences.ask_hotkey.into(),
+                application_overrides: snapshot
+                    .preferences
+                    .application_overrides
+                    .iter()
+                    .map(StoredApplicationOverride::from)
+                    .collect(),
             },
         }
     }
@@ -181,6 +198,8 @@ struct StoredPreferences {
     project_vocabulary: bool,
     #[serde(default)]
     vocabulary_directory: Option<String>,
+    #[serde(default)]
+    application_overrides: Vec<StoredApplicationOverride>,
 }
 
 fn history_enabled() -> bool {
@@ -244,6 +263,62 @@ impl From<StoredDeliveryMode> for DeliveryMode {
             StoredDeliveryMode::Complete => Self::Complete,
             StoredDeliveryMode::Streaming => Self::Streaming,
         }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredApplicationOverride {
+    application_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_mode: Option<StoredOutputMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery_mode: Option<StoredDeliveryMode>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    excluded: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+impl From<(&ApplicationId, &ApplicationOverride)> for StoredApplicationOverride {
+    fn from((id, entry): (&ApplicationId, &ApplicationOverride)) -> Self {
+        let ApplicationOverride {
+            excluded,
+            overrides:
+                DictationOverrides {
+                    output_mode,
+                    delivery_mode,
+                },
+        } = *entry;
+        Self {
+            application_id: id.as_str().to_owned(),
+            output_mode: output_mode.map(Into::into),
+            delivery_mode: delivery_mode.map(Into::into),
+            excluded,
+        }
+    }
+}
+
+impl TryFrom<Vec<StoredApplicationOverride>> for ApplicationOverrides {
+    type Error = OverrideError;
+
+    fn try_from(stored: Vec<StoredApplicationOverride>) -> Result<Self, Self::Error> {
+        let entries = stored
+            .into_iter()
+            .map(|entry| {
+                let overrides = ApplicationOverride {
+                    excluded: entry.excluded,
+                    overrides: DictationOverrides {
+                        output_mode: entry.output_mode.map(Into::into),
+                        delivery_mode: entry.delivery_mode.map(Into::into),
+                    },
+                };
+                Ok((ApplicationId::new(entry.application_id)?, overrides))
+            })
+            .collect::<Result<Vec<_>, OverrideError>>()?;
+        Self::new(entries)
     }
 }
 
@@ -367,6 +442,7 @@ mod tests {
         assert!(!document.preferences.own_voice_only);
         assert!(!document.preferences.project_vocabulary);
         assert!(document.preferences.vocabulary_directory.is_none());
+        assert!(document.preferences.application_overrides.is_empty());
         assert!(matches!(
             document.preferences.dictation_hotkey,
             StoredHotkeyKey::RightOption
@@ -395,5 +471,65 @@ mod tests {
             AskHotkey::try_from(StoredAskHotkey::from(hotkey)).expect("the hotkey should decode");
 
         assert_eq!(decoded, hotkey);
+    }
+
+    #[test]
+    fn an_app_entry_without_an_exclusion_stays_on_and_writes_none() {
+        let stored: StoredApplicationOverride =
+            serde_json::from_str(r#"{"application_id":"com.app","output_mode":"copy"}"#)
+                .expect("an older entry parses");
+        assert!(!stored.excluded);
+
+        let id = ApplicationId::new("com.app").expect("valid");
+        let encoded = serde_json::to_string(&StoredApplicationOverride::from((
+            &id,
+            &ApplicationOverride::default(),
+        )))
+        .expect("encodes");
+        assert!(!encoded.contains("excluded"));
+    }
+
+    #[test]
+    fn application_overrides_round_trip_and_stay_validated() {
+        let overrides = ApplicationOverrides::new([(
+            ApplicationId::new("com.tinyspeck.slackmacgap").expect("valid"),
+            ApplicationOverride {
+                excluded: true,
+                overrides: DictationOverrides {
+                    output_mode: Some(OutputMode::Copy),
+                    delivery_mode: None,
+                },
+            },
+        )])
+        .expect("valid");
+        let snapshot = PreferenceSnapshot {
+            revision: 3,
+            preferences: UserPreferences {
+                application_overrides: overrides.clone(),
+                ..UserPreferences::default()
+            },
+        };
+        let encoded = serde_json::to_string(&StoredDocument::from(&snapshot)).expect("encodes");
+        assert!(encoded.contains(
+            r#""application_overrides":[{"application_id":"com.tinyspeck.slackmacgap","output_mode":"copy","excluded":true}]"#
+        ));
+
+        let decoded: StoredDocument = serde_json::from_str(&encoded).expect("decodes");
+        let path = Path::new("preferences.json");
+        assert_eq!(
+            decoded
+                .into_snapshot(path)
+                .expect("loads")
+                .preferences
+                .application_overrides,
+            overrides
+        );
+
+        let invalid: StoredDocument =
+            serde_json::from_str(&encoded.replace("slackmacgap", "slack mac")).expect("parses");
+        assert!(matches!(
+            invalid.into_snapshot(path),
+            Err(PreferenceStoreError::InvalidApplicationOverrides { .. })
+        ));
     }
 }

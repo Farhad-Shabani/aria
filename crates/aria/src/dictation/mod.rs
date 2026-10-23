@@ -98,6 +98,16 @@ pub(crate) struct DictationSettings {
     pub(crate) own_voice_only: bool,
     pub(crate) transcript_only: bool,
     pub(crate) project: Option<crate::vocabulary::Directory>,
+    /// The app in front as dictation was admitted.
+    pub(crate) application: Option<crate::history::Application>,
+    pub(crate) target: crate::delivery::TargetPolicy,
+}
+
+impl DictationSettings {
+    /// Whether the app in front at admission has Aria switched off.
+    pub(crate) fn application_excluded(&self) -> bool {
+        self.target.excludes(self.application.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -10,6 +10,8 @@ enum PillState: Equatable {
     case cancelled
     /// Focus moved, so typing stopped. Not a failure.
     case interrupted
+    /// The app in front has Aria switched off, by name when known.
+    case excluded(String?)
     /// A press that failed, in the words the person needs.
     case failed(String)
     /// An ask in flight: `claude · reading`, and since when.
@@ -19,7 +21,11 @@ enum PillState: Equatable {
     /// An ask that did not, by agent. Shown the way a failed press is.
     case noReply(String)
 
-    init?(_ event: Aria_Daemon_V1_DictationEvent?, now: Date = Date()) {
+    init?(
+        _ event: Aria_Daemon_V1_DictationEvent?,
+        now: Date = Date(),
+        frontApp: @autoclosure () -> String? = NSWorkspace.shared.frontmostApplication?.localizedName
+    ) {
         guard let event else { return nil }
         switch event.stage {
         case .recording: self = .recording(since: now)
@@ -29,6 +35,7 @@ enum PillState: Equatable {
         case .cancelled: self = .cancelled
         case .failed where [.deliveryTargetChanged, .deliveryInterrupted].contains(event.errorCode):
             self = .interrupted
+        case .failed where event.errorCode == .applicationExcluded: self = .excluded(frontApp())
         case .failed: self = .failed(event.errorCode.dictationMessage)
         // A segment lands while the speaker is still talking, so it says
         // nothing about the press.
@@ -64,7 +71,7 @@ enum PillState: Equatable {
         case .recording, .transcribing, .delivering, .asking: return nil
         case .delivered, .replied: return .milliseconds(1200)
         case .cancelled: return .milliseconds(800)
-        case .interrupted: return .seconds(2)
+        case .interrupted, .excluded: return .seconds(2)
         // Long enough to read, and the next press clears it anyway.
         case .failed, .noReply: return .seconds(5)
         }
@@ -78,7 +85,7 @@ enum PillState: Equatable {
             return Color(red: 0.90, green: 0.75, blue: 0.48)
         case .delivered, .replied:
             return Color(red: 0.48, green: 0.80, blue: 0.59)
-        case .interrupted:
+        case .interrupted, .excluded:
             return Color(white: 0.72)
         }
     }
@@ -86,7 +93,8 @@ enum PillState: Equatable {
     var motion: Motion {
         switch self {
         case .asking, .delivering: return .breathe
-        case .recording, .transcribing, .delivered, .cancelled, .interrupted, .failed, .replied, .noReply:
+        case .recording, .transcribing, .delivered, .cancelled, .interrupted, .excluded, .failed, .replied,
+            .noReply:
             return .still
         }
     }
@@ -102,6 +110,7 @@ enum PillState: Equatable {
             return outcome == .copied ? "copied · \(count)" : count
         case .cancelled: return "cancelled"
         case .interrupted: return "stopped · focus moved"
+        case .excluded(let app): return "off in \(app ?? "this app")"
         case .failed(let message): return message
         case .asking(let label, _): return label
         case .replied(let agent): return "\(agent) · replied"
@@ -388,6 +397,8 @@ private struct Mark: View {
             Glyph(name: "xmark", tint: state.tint)
         case .interrupted:
             Glyph(name: "hand.raised", tint: state.tint)
+        case .excluded:
+            Glyph(name: "nosign", tint: state.tint)
         case .failed, .noReply, .asking:
             // Keyed on the motion: a new motion is a new dot with its own
             // loop, while a label change under the same motion keeps this one.

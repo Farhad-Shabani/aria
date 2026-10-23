@@ -22,8 +22,9 @@ use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
 use crate::hotkey::HotkeyKey;
 use crate::listen::ListenStage;
 use crate::preferences::{
-    AskHotkey, AskHotkeyError, Modifiers, PreferencePatch, PreferenceSnapshot, UpdateResult,
-    UserPreferences,
+    ApplicationId, ApplicationOverride, ApplicationOverrides, AskHotkey, AskHotkeyError,
+    DictationOverrides, Modifiers, OverrideError, PreferencePatch, PreferenceSnapshot,
+    UpdateResult, UserPreferences,
 };
 use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::speaker::{Role, SpeakerName, SpeakerNameError};
@@ -96,7 +97,8 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::SpeakerModelMissing
         | RpcErrorCode::SpeakerInconsistentSamples
         | RpcErrorCode::ListenUnsupportedOs
-        | RpcErrorCode::AgentUnavailable => tonic::Code::FailedPrecondition,
+        | RpcErrorCode::AgentUnavailable
+        | RpcErrorCode::ApplicationExcluded => tonic::Code::FailedPrecondition,
         RpcErrorCode::SpeakerAlreadyEnrolled => tonic::Code::AlreadyExists,
         RpcErrorCode::HistoryMissing
         | RpcErrorCode::SpeakerNotEnrolled
@@ -1305,6 +1307,10 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
                     .ask_hotkey
                     .ok_or(ProtocolError::MissingBody("ask hotkey"))?
                     .try_into()?,
+                application_overrides: preferences
+                    .application_overrides
+                    .ok_or(ProtocolError::MissingBody("application overrides"))?
+                    .try_into()?,
             },
         })
     }
@@ -1337,6 +1343,10 @@ impl From<PreferencePatch> for wire::PreferencePatch {
             vocabulary_directory: patch
                 .vocabulary_directory
                 .map(|path| path.map_or_else(String::new, |path| path.as_str().to_owned())),
+            application_overrides: patch
+                .application_overrides
+                .as_ref()
+                .map(wire::ApplicationOverrides::from),
         }
     }
 }
@@ -1367,6 +1377,7 @@ impl From<&PreferenceSnapshot> for wire::PreferenceSnapshot {
                 dictation_hotkey: wire::HotkeyKey::from(snapshot.preferences.dictation_hotkey)
                     as i32,
                 ask_hotkey: Some(snapshot.preferences.ask_hotkey.into()),
+                application_overrides: Some((&snapshot.preferences.application_overrides).into()),
             }),
         }
     }
@@ -1434,6 +1445,83 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
                         crate::vocabulary::Directory::new(path.into()).map(Some)
                     }
                 })
+                .transpose()?,
+            application_overrides: patch
+                .application_overrides
+                .map(ApplicationOverrides::try_from)
+                .transpose()?,
+        })
+    }
+}
+
+impl From<&ApplicationOverrides> for wire::ApplicationOverrides {
+    fn from(overrides: &ApplicationOverrides) -> Self {
+        Self {
+            entries: overrides
+                .iter()
+                .map(|(id, entry)| wire::ApplicationOverride {
+                    application_id: id.as_str().to_owned(),
+                    overrides: Some(entry.overrides.into()),
+                    excluded: entry.excluded,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<wire::ApplicationOverrides> for ApplicationOverrides {
+    type Error = ProtocolError;
+
+    fn try_from(overrides: wire::ApplicationOverrides) -> Result<Self, Self::Error> {
+        let entries = overrides
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let overrides = entry
+                    .overrides
+                    .ok_or(ProtocolError::MissingBody("dictation overrides"))?
+                    .try_into()?;
+                let application_override = ApplicationOverride {
+                    excluded: entry.excluded,
+                    overrides,
+                };
+                Ok((
+                    ApplicationId::new(entry.application_id)?,
+                    application_override,
+                ))
+            })
+            .collect::<Result<Vec<_>, ProtocolError>>()?;
+        Ok(Self::new(entries)?)
+    }
+}
+
+impl From<DictationOverrides> for wire::DictationOverrides {
+    fn from(overrides: DictationOverrides) -> Self {
+        let DictationOverrides {
+            output_mode,
+            delivery_mode,
+        } = overrides;
+        Self {
+            output_mode: output_mode.map(|mode| wire::OutputMode::from(mode) as i32),
+            delivery_mode: delivery_mode.map(|mode| wire::DeliveryMode::from(mode) as i32),
+        }
+    }
+}
+
+impl TryFrom<wire::DictationOverrides> for DictationOverrides {
+    type Error = ProtocolError;
+
+    fn try_from(overrides: wire::DictationOverrides) -> Result<Self, Self::Error> {
+        let wire::DictationOverrides {
+            output_mode,
+            delivery_mode,
+        } = overrides;
+        Ok(Self {
+            output_mode: output_mode
+                .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
+                .transpose()?,
+            delivery_mode: delivery_mode
+                .map(|value| decode_enum::<wire::DeliveryMode>(value, "delivery mode"))
                 .transpose()?,
         })
     }
@@ -1619,6 +1707,7 @@ impl From<RpcErrorCode> for i32 {
             RpcErrorCode::DeliveryFailed => wire::ErrorCode::DeliveryFailed,
             RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
             RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
+            RpcErrorCode::ApplicationExcluded => wire::ErrorCode::ApplicationExcluded,
             RpcErrorCode::SynthesisFailed => wire::ErrorCode::SynthesisFailed,
             RpcErrorCode::PlaybackFailed => wire::ErrorCode::PlaybackFailed,
             RpcErrorCode::SpeechTimeout => wire::ErrorCode::SpeechTimeout,
@@ -1669,6 +1758,7 @@ impl TryFrom<i32> for RpcErrorCode {
             Ok(wire::ErrorCode::DeliveryFailed) => Self::DeliveryFailed,
             Ok(wire::ErrorCode::DeliveryTargetChanged) => Self::DeliveryTargetChanged,
             Ok(wire::ErrorCode::DeliveryInterrupted) => Self::DeliveryInterrupted,
+            Ok(wire::ErrorCode::ApplicationExcluded) => Self::ApplicationExcluded,
             Ok(wire::ErrorCode::SynthesisFailed) => Self::SynthesisFailed,
             Ok(wire::ErrorCode::PlaybackFailed) => Self::PlaybackFailed,
             Ok(wire::ErrorCode::SpeechTimeout) => Self::SpeechTimeout,
@@ -1751,6 +1841,9 @@ pub enum ProtocolError {
     #[error(transparent)]
     InvalidAskHotkey(#[from] AskHotkeyError),
 
+    #[error(transparent)]
+    InvalidApplicationOverrides(#[from] OverrideError),
+
     #[error("ask shortcut key code {0} is not a key code")]
     AskHotkeyKeyCode(u32),
 }
@@ -1793,6 +1886,7 @@ mod tests {
             DictationError::DeliveryTimeout(Duration::ZERO),
             DictationError::DeliveryTargetChanged,
             DictationError::DeliveryInterrupted,
+            DictationError::ApplicationExcluded,
             DictationError::NoSpeech,
         ];
 
@@ -2145,6 +2239,56 @@ mod tests {
             let decoded = wire::PreferencePatch::decode(encoded.as_slice()).unwrap();
             assert_eq!(PreferencePatch::try_from(decoded).unwrap(), patch);
         }
+    }
+
+    #[test]
+    fn application_overrides_cross_the_wire_validated() {
+        let overrides = ApplicationOverrides::new([(
+            ApplicationId::new("com.apple.Terminal").unwrap(),
+            ApplicationOverride {
+                excluded: true,
+                overrides: DictationOverrides {
+                    output_mode: Some(OutputMode::InsertAndSubmit),
+                    delivery_mode: None,
+                },
+            },
+        )])
+        .unwrap();
+        let snapshot = PreferenceSnapshot {
+            revision: 2,
+            preferences: UserPreferences {
+                application_overrides: overrides.clone(),
+                ..Default::default()
+            },
+        };
+        let encoded = wire::PreferenceSnapshot::from(&snapshot).encode_to_vec();
+        let decoded = wire::PreferenceSnapshot::decode(encoded.as_slice()).unwrap();
+        assert_eq!(PreferenceSnapshot::try_from(decoded).unwrap(), snapshot);
+
+        for application_overrides in [None, Some(ApplicationOverrides::default()), Some(overrides)]
+        {
+            let patch = PreferencePatch {
+                application_overrides,
+                ..Default::default()
+            };
+            let encoded = wire::PreferencePatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::PreferencePatch::decode(encoded.as_slice()).unwrap();
+            assert_eq!(PreferencePatch::try_from(decoded).unwrap(), patch);
+        }
+
+        let spaced_id = wire::ApplicationOverrides {
+            entries: vec![wire::ApplicationOverride {
+                application_id: "com.apple Notes".into(),
+                overrides: Some(wire::DictationOverrides::default()),
+                excluded: false,
+            }],
+        };
+        assert!(matches!(
+            ApplicationOverrides::try_from(spaced_id),
+            Err(ProtocolError::InvalidApplicationOverrides(
+                OverrideError::IdCharacters
+            ))
+        ));
     }
 
     #[test]

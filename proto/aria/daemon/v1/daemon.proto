@@ -193,41 +193,71 @@ message PreferenceConflict {
   PreferenceSnapshot current = 1;
 }
 
+// Grouped as the Settings window shows them: Dictation, Recognition,
+// Shortcuts, Apps, Privacy.
 message UserPreferences {
-  // A language code such as "en" or "en-us", or "auto" to detect.
-  string recognition_language = 1;
-  OutputMode output_mode = 2;
-  DeliveryMode delivery_mode = 3;
+  OutputMode output_mode = 1;
+  DeliveryMode delivery_mode = 2;
   // Whole milliseconds, 100 to 10000 inclusive.
-  uint64 silence_duration_ms = 4;
-  bool own_voice_only = 5;
-  HotkeyKey dictation_hotkey = 6;
-  AskHotkey ask_hotkey = 7;
-  bool project_vocabulary = 8;
-  optional string vocabulary_directory = 9;
-  bool dictation_history = 10;
-  bool history_audio_retention = 11;
-  bool mute_output = 12;
+  uint64 silence_duration_ms = 3;
+  bool mute_output = 4;
+  // A language code such as "en" or "en-us", or "auto" to detect.
+  string recognition_language = 5;
+  bool own_voice_only = 6;
+  bool project_vocabulary = 7;
+  optional string vocabulary_directory = 8;
+  HotkeyKey dictation_hotkey = 9;
+  AskHotkey ask_hotkey = 10;
+  ApplicationOverrides application_overrides = 11;
+  bool dictation_history = 12;
+  bool history_audio_retention = 13;
 }
 
+// Dictation settings that replace the preferences above. Each absent field
+// inherits them. The daemon drops a value equal to the preference, and the
+// delivery choice of an app set to Copy output, which cannot stream.
+message DictationOverrides {
+  optional OutputMode output_mode = 1;
+  optional DeliveryMode delivery_mode = 2;
+}
+
+// Applies while the app has keyboard focus as dictation starts. A request's
+// own modes still win.
+message ApplicationOverride {
+  // A macOS bundle ID: 1 to 255 bytes of letters, digits, '.', '-' and '_'.
+  string application_id = 1;
+  // Aria starts no recording and delivers nothing while the app is in front.
+  // The overrides stay stored for when it is switched back on.
+  bool excluded = 2;
+  DictationOverrides overrides = 3;
+}
+
+// At most 64 entries, each application ID once.
+message ApplicationOverrides {
+  repeated ApplicationOverride entries = 1;
+}
+
+// Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
+// Numbered as `UserPreferences`.
 message PreferencePatch {
-  // Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
-  // A language code such as "en" or "en-us", or "auto" to detect.
-  optional string recognition_language = 1;
-  optional OutputMode output_mode = 2;
-  optional DeliveryMode delivery_mode = 3;
+  optional OutputMode output_mode = 1;
+  optional DeliveryMode delivery_mode = 2;
   // Whole milliseconds, 100 to 10000 inclusive.
-  optional uint64 silence_duration_ms = 4;
+  optional uint64 silence_duration_ms = 3;
+  optional bool mute_output = 4;
+  // A language code such as "en" or "en-us", or "auto" to detect.
+  optional string recognition_language = 5;
   // Filter for enrolled owner voices when a speaker model and owner exist.
-  optional bool own_voice_only = 5;
-  optional HotkeyKey dictation_hotkey = 6;
-  AskHotkey ask_hotkey = 7;
-  optional bool project_vocabulary = 8;
+  optional bool own_voice_only = 6;
+  optional bool project_vocabulary = 7;
   // Empty clears the selected directory; absent leaves it unchanged.
-  optional string vocabulary_directory = 9;
-  optional bool dictation_history = 10;
-  optional bool history_audio_retention = 11;
-  optional bool mute_output = 12;
+  optional string vocabulary_directory = 8;
+  optional HotkeyKey dictation_hotkey = 9;
+  AskHotkey ask_hotkey = 10;
+  // Replaces every entry.
+  ApplicationOverrides application_overrides = 11;
+  optional bool dictation_history = 12;
+  optional bool history_audio_retention = 13;
 }
 
 enum OutputMode {

@@ -31,4 +31,26 @@ final class PreferencesEditorTests: XCTestCase {
         expected.muteOutput = true
         XCTAssertEqual(transport.sentUpdates.map(\.patch), [expected])
     }
+
+    func test_editLatest_keepsTwoQuickEdits() async throws {
+        let transport = FakePreferencesTransport()
+        var loaded = Aria_Daemon_V1_PreferenceSnapshot()
+        loaded.revision = 1
+        transport.snapshots = [loaded]
+        let preferences = DaemonPreferences(transport: transport)
+        await preferences.sync()
+        let drawn = PreferencesEditor(snapshot: try XCTUnwrap(preferences.snapshot), preferences: preferences)
+
+        for app in ["com.a", "com.b"] {
+            drawn.editLatest(\.applicationOverrides, \.applicationOverrides) {
+                ApplicationOverrideEdits.add(app, to: &$0)
+            }
+        }
+        let deadline = Date().addingTimeInterval(1)
+        while preferences.snapshot?.applicationOverrides.entries.count != 2, Date() < deadline {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(preferences.snapshot?.applicationOverrides.entries.map(\.applicationID), ["com.a", "com.b"])
+    }
 }

@@ -14,6 +14,7 @@ pub(crate) struct Cursor<D: TextDelivery> {
 
 /// Where the dictation under way lands, picked before any text.
 struct Target<P> {
+    policy: crate::delivery::TargetPolicy,
     mode: DeliveryMode,
     control: Arc<ExecutionControl>,
     prepared: P,
@@ -40,6 +41,10 @@ impl<D: TextDelivery> Cursor<D> {
         };
         if target.finished || target.mode != mode {
             return Ok(());
+        }
+        if let Err(error) = target.policy.confirm_front() {
+            target.finished = true;
+            return Err(error);
         }
         let spaced = target
             .caret
@@ -83,8 +88,11 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         } else {
             output
         };
+        settings.target.confirm_front()?;
         let prepared = self.delivery.prepare(output, should_cancel(control))?;
+        settings.target.confirm_front()?;
         self.target = Some(Target {
+            policy: settings.target.clone(),
             mode: settings.delivery_mode,
             control: Arc::clone(control),
             prepared,

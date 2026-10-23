@@ -64,6 +64,7 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         dictation_history,
         history_audio_retention,
         mute_output,
+        application_overrides,
     } = patch;
     let mac_only = [
         ("delivery_mode", delivery_mode.is_some()),
@@ -71,6 +72,7 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         ("dictation_hotkey", dictation_hotkey.is_some()),
         ("ask_hotkey", ask_hotkey.is_some()),
         ("mute_output", mute_output.is_some()),
+        ("application_overrides", application_overrides.is_some()),
     ];
     if let Some((field, _)) = mac_only.iter().find(|(_, set)| *set) {
         return Err(RpcFailure::new(
@@ -156,6 +158,10 @@ mod tests {
             },
             wire::PreferencePatch {
                 mute_output: Some(true),
+                ..Default::default()
+            },
+            wire::PreferencePatch {
+                application_overrides: Some(wire::ApplicationOverrides::default()),
                 ..Default::default()
             },
             wire::PreferencePatch {

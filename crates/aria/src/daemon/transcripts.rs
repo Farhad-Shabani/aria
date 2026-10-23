@@ -136,7 +136,7 @@ impl History {
                     .unwrap_or_default()
                     .as_millis() as u64,
                 source,
-                application: crate::delivery::frontmost_application(),
+                application: settings.application.clone(),
                 duration_ms: None,
                 text: String::new(),
                 complete: false,
@@ -272,7 +272,8 @@ mod tests {
     }
 
     fn settings() -> DictationSettings {
-        UserPreferences::default().resolve_dictation(DictationRequest::new(StopMode::OnSilence))
+        UserPreferences::default()
+            .resolve_dictation(DictationRequest::new(StopMode::OnSilence), None)
     }
 
     fn entries(store: &TranscriptStore) -> Vec<HistoryEntry> {

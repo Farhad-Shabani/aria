@@ -388,6 +388,7 @@ fn eager_workers(
         chat: Arc::new(ChatRuntime::new(
             context,
             Arc::clone(subscriptions),
+            Arc::clone(preferences),
             Some(memory_wake),
         )),
         speaker: Arc::new(SpeakerRuntime::new(
@@ -431,7 +432,12 @@ fn deferred_workers(
         speech: Arc::new(SpeechRuntime::deferred(context, Arc::clone(subscriptions))),
         // An on-demand daemon serves one press; its turns wait for a
         // persistent one to extract them.
-        chat: Arc::new(ChatRuntime::new(context, Arc::clone(subscriptions), None)),
+        chat: Arc::new(ChatRuntime::new(
+            context,
+            Arc::clone(subscriptions),
+            Arc::clone(preferences),
+            None,
+        )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.
         speaker: Arc::new(SpeakerRuntime::new(
