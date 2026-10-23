@@ -293,7 +293,9 @@ mod tests {
     use aria_kit::synthesis::Engine as _;
 
     use super::*;
-    use crate::config::{self, DictationConfig, Environment, FileConfig, TtsBackend, TtsConfig};
+    use crate::config::{
+        self, DictationConfig, Environment, FileConfig, TtsBackend, TtsConfig, TtsModel,
+    };
     use crate::primitives::error_chain;
 
     /// Setup must download each model to the path the daemon loads it from.
@@ -376,16 +378,16 @@ mod tests {
             let home = home_with_downloads("tts", tts.key(), tts.model().assets());
             let environment = Environment::in_home(home.path().to_path_buf());
             let checked = match TtsConfig::load(&environment).unwrap().backend {
-                TtsBackend::Kokoro { model, voices } => {
+                TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
                     aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
                         model,
                         voices,
                     })
                 }
-                TtsBackend::Qwen {
+                TtsBackend::Model(TtsModel::Qwen {
                     model_dir,
                     tokenizer_dir,
-                } => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
+                }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
                     model_dir,
                     speech_tokenizer_dir: tokenizer_dir,
                 }),

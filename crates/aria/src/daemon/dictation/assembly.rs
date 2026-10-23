@@ -22,7 +22,8 @@ use crate::dictation::{
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
-    Engine, Language, Mode, StreamingEngine, Transcript, Transcription, TranscriptionError,
+    Engine, Language, Mode, StreamingEngine, Transcriber, Transcript, Transcription,
+    TranscriptionError,
 };
 use crate::vocabulary::{Directory, Vocabulary};
 
@@ -49,16 +50,9 @@ pub(super) type RuntimeExecutor = Box<dyn DictationExecutor>;
 type Sinks = (History, Cursor<PlatformTextDelivery>);
 type CompletionLayers = Layered<Option<LlmCleanup>, ()>;
 
-struct EngineExecution<E: Engine, M: Mode> {
-    pipeline: DictationPipeline<
-        Arc<CaptureBackend>,
-        ModelLoad<E>,
-        M,
-        WeSpeaker,
-        SileroVad,
-        Sinks,
-        CompletionLayers,
-    >,
+struct EngineExecution<T: Transcriber, M: Mode> {
+    pipeline:
+        DictationPipeline<Arc<CaptureBackend>, T, M, WeSpeaker, SileroVad, Sinks, CompletionLayers>,
     wake: Option<WakeWordControl>,
     /// Read before every press: a voice enrolled since the daemon started
     /// must be recognized without restarting it.
@@ -66,18 +60,18 @@ struct EngineExecution<E: Engine, M: Mode> {
     vocabulary: Arc<VocabularyRuntime>,
 }
 
-impl<E, M> EngineExecution<E, M>
+impl<T, M> EngineExecution<T, M>
 where
-    E: Engine,
+    T: Transcriber,
     M: Mode,
 {
     /// Runs `work` against the current vocabulary and enrolled voices, with
     /// the wake word suspended until it returns.
-    fn prepared<T>(
+    fn prepared<R>(
         &self,
         project: Option<&Directory>,
-        work: impl FnOnce(&Vocabulary) -> Result<T, DictationError>,
-    ) -> Result<T, DictationError> {
+        work: impl FnOnce(&Vocabulary) -> Result<R, DictationError>,
+    ) -> Result<R, DictationError> {
         let snapshot = self.vocabulary.snapshot(project);
         let _wake_suspension = self
             .wake
@@ -91,9 +85,9 @@ where
     }
 }
 
-impl<E, M> DictationExecutor for EngineExecution<E, M>
+impl<T, M> DictationExecutor for EngineExecution<T, M>
 where
-    E: Engine,
+    T: Transcriber,
     M: Mode,
 {
     fn execute(
@@ -263,7 +257,7 @@ where
     let model = loading.load::<E>(config)?;
     let transcription = Transcription::complete(E::INPUT, model);
     Ok(Box::new(move |parts: ExecutionParts| {
-        parts.finish(transcription)
+        parts.finish(E::NAME, transcription)
     }))
 }
 
@@ -278,7 +272,7 @@ where
     let model = loading.load::<E>(config)?;
     let transcription = Transcription::stream(E::STREAM, model);
     Ok(Box::new(move |parts: ExecutionParts| {
-        parts.finish(transcription)
+        parts.finish(E::NAME, transcription)
     }))
 }
 
@@ -298,18 +292,22 @@ struct ExecutionParts {
 impl ExecutionParts {
     /// The one place the concrete pipeline becomes a boxed executor, so the
     /// engine, its mode, and its cadence stay static until here.
-    fn finish<E, M>(self, transcription: Transcription<ModelLoad<E>, M>) -> RuntimeExecutor
+    fn finish<T, M>(
+        self,
+        engine: &'static str,
+        transcription: Transcription<T, M>,
+    ) -> RuntimeExecutor
     where
-        E: Engine,
+        T: Transcriber,
         M: Mode,
     {
-        Box::new(EngineExecution::<E, M> {
+        Box::new(EngineExecution::<T, M> {
             pipeline: DictationPipeline::new(
                 self.capture,
                 transcription,
                 speaker::reader(&self.speaker),
                 (
-                    History::new(self.transcripts, E::NAME),
+                    History::new(self.transcripts, engine),
                     Cursor::new(self.delivery),
                 ),
             )

@@ -1,6 +1,5 @@
 //! The synthesis engine an utterance runs on, chosen by configuration.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
@@ -8,9 +7,9 @@ use aria_tts::kokoro::Kokoro;
 use aria_tts::qwen::Qwen;
 use aria_tts::system::SystemVoice;
 
-use crate::config::{TtsBackend, TtsFallback};
+use crate::config::{TtsBackend, TtsFallback, TtsModel};
 use crate::rpc::RpcErrorCode;
-use crate::synthesis::{PlaybackError, SpeakerOutput, Synthesis, SynthesisError};
+use crate::synthesis::{PlaybackError, Session, SpeakerOutput, Synthesis, SynthesisError};
 
 use super::{
     ExecutionControl, SpeechError, SpeechEventEmitter, SpeechExecutor, SpeechOutcome,
@@ -18,9 +17,41 @@ use super::{
 };
 
 pub(crate) enum SpeechBackend {
+    Model(SpeechModel),
+    System(SystemVoice),
+}
+
+/// Synthesizes PCM without touching an audio device.
+pub(crate) enum SpeechModel {
     Kokoro(Synthesis<Kokoro>),
     Qwen(Synthesis<Qwen>),
-    System(SystemVoice),
+}
+
+impl SpeechModel {
+    fn load(config: TtsModel) -> Result<Self, SynthesisError> {
+        match config {
+            TtsModel::Kokoro { model, voices } => {
+                Kokoro::load(model, voices).map(|engine| Self::Kokoro(Synthesis::new(engine)))
+            }
+            TtsModel::Qwen {
+                model_dir,
+                tokenizer_dir,
+            } => Qwen::load(model_dir, tokenizer_dir)
+                .map(|engine| Self::Qwen(Synthesis::new(engine))),
+        }
+    }
+
+    fn start_with(
+        &self,
+        settings: &SpeechSettings,
+        cancel: &CancelToken,
+    ) -> Result<Session, SynthesisError> {
+        let voice = settings.voice.as_ref();
+        match self {
+            Self::Kokoro(speech) => speech.start_with(&settings.text, voice, settings.rate, cancel),
+            Self::Qwen(speech) => speech.start_with(&settings.text, voice, settings.rate, cancel),
+        }
+    }
 }
 
 impl SpeechBackend {
@@ -32,46 +63,30 @@ impl SpeechBackend {
         backend: TtsBackend,
         fallback: TtsFallback,
     ) -> Result<Self, SpeechBuildError> {
-        match backend {
-            TtsBackend::Kokoro { model, voices } => match Self::build_kokoro(model, voices) {
-                Ok(backend) => Ok(backend),
-                Err(error) if fallback == TtsFallback::System => {
-                    tracing::warn!(
-                        error = %crate::primitives::error_chain(&error),
-                        "kokoro is unavailable; speaking through the system voice"
-                    );
-                    Self::build_system()
-                }
-                Err(error) => Err(error),
-            },
-            TtsBackend::Qwen {
-                model_dir,
-                tokenizer_dir,
-            } => match Self::build_qwen(model_dir, tokenizer_dir) {
-                Ok(backend) => Ok(backend),
-                Err(error) if fallback == TtsFallback::System => {
-                    tracing::warn!(
-                        error = %crate::primitives::error_chain(&error),
-                        "qwen is unavailable; speaking through the system voice"
-                    );
-                    Self::build_system()
-                }
-                Err(error) => Err(error),
-            },
-            TtsBackend::System => Self::build_system(),
+        let model = match backend {
+            TtsBackend::Model(model) => model,
+            TtsBackend::System => return Self::build_system(),
+        };
+        let engine = model.name();
+        match Self::build_model(model) {
+            Ok(backend) => Ok(backend),
+            Err(error) if fallback == TtsFallback::System => {
+                tracing::warn!(
+                    engine,
+                    error = %crate::primitives::error_chain(&error),
+                    "speech model is unavailable; speaking through the system voice"
+                );
+                Self::build_system()
+            }
+            Err(error) => Err(error),
         }
     }
 
-    fn build_kokoro(model: PathBuf, voices: PathBuf) -> Result<Self, SpeechBuildError> {
+    fn build_model(model: TtsModel) -> Result<Self, SpeechBuildError> {
         audible_output()?;
-        let engine = Kokoro::load(&model, &voices).map_err(SpeechBuildError::Synthesis)?;
-        Ok(Self::Kokoro(Synthesis::new(engine)))
-    }
-
-    fn build_qwen(model_dir: PathBuf, tokenizer_dir: PathBuf) -> Result<Self, SpeechBuildError> {
-        audible_output()?;
-        let engine = Qwen::load(&model_dir, &tokenizer_dir).map_err(SpeechBuildError::Synthesis)?;
-        Ok(Self::Qwen(Synthesis::new(engine)))
+        SpeechModel::load(model)
+            .map(Self::Model)
+            .map_err(SpeechBuildError::Synthesis)
     }
 
     fn build_system() -> Result<Self, SpeechBuildError> {
@@ -88,8 +103,7 @@ impl SpeechBackend {
         let stop = Arc::clone(control);
         let cancel = CancelToken::from_fn(move || stop.should_stop());
         let spoken = match self {
-            Self::Kokoro(speech) => speak_utterance(speech, &settings, events, &cancel),
-            Self::Qwen(speech) => speak_utterance(speech, &settings, events, &cancel),
+            Self::Model(model) => speak_utterance(model, &settings, events, &cancel),
             Self::System(voice) => voice.speak_with_started(
                 &settings.text,
                 settings.voice.as_ref(),
@@ -146,19 +160,14 @@ fn audible_output() -> Result<SpeakerOutput, SpeechBuildError> {
     SpeakerOutput::new().map_err(SpeechBuildError::Playback)
 }
 
-fn speak_utterance<S: aria_kit::synthesis::Engine>(
-    speech: &Synthesis<S>,
+fn speak_utterance(
+    model: &SpeechModel,
     settings: &SpeechSettings,
     events: &SpeechEventEmitter,
     cancel: &CancelToken,
 ) -> Result<(), SynthesisError> {
     let output = SpeakerOutput::new().map_err(|source| SynthesisError::Playback { source })?;
-    let session = speech.start_with(
-        &settings.text,
-        settings.voice.as_ref(),
-        settings.rate,
-        cancel,
-    )?;
+    let session = model.start_with(settings, cancel)?;
     events.emit(SpeechStage::Synthesizing);
     session.play_on(&output, || events.emit(SpeechStage::Speaking))
 }

@@ -23,7 +23,7 @@ use super::load::{
 };
 use super::{
     CaptureConfig, ConfigError, DictationTimeouts, HotkeyConfig, ListenTranscription, RelayConfig,
-    TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsFallback, WakeConfig,
+    TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsFallback, TtsModel, WakeConfig,
     WakeWordOverride,
 };
 
@@ -431,10 +431,10 @@ fn tts(file: &FileConfig, environment: &Environment) -> Result<Vec<Row>, ConfigE
         ),
     )];
     match &config.backend {
-        TtsBackend::Kokoro {
+        TtsBackend::Model(TtsModel::Kokoro {
             model: path,
             voices,
-        } => {
+        }) => {
             rows.push(row("tts.model", path.display(), model));
             rows.push(row(
                 "tts.voices",
@@ -446,10 +446,10 @@ fn tts(file: &FileConfig, environment: &Environment) -> Result<Vec<Row>, ConfigE
                 ),
             ));
         }
-        TtsBackend::Qwen {
+        TtsBackend::Model(TtsModel::Qwen {
             model_dir,
             tokenizer_dir,
-        } => {
+        }) => {
             rows.push(row("tts.model", model_dir.display(), model));
             rows.push(row(
                 "tts.tokenizer",

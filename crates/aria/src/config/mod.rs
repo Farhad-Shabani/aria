@@ -125,6 +125,13 @@ impl TtsConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TtsBackend {
+    Model(TtsModel),
+    System,
+}
+
+/// An engine that synthesizes PCM from model files on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TtsModel {
     Kokoro {
         model: PathBuf,
         voices: PathBuf,
@@ -133,15 +140,22 @@ pub(crate) enum TtsBackend {
         model_dir: PathBuf,
         tokenizer_dir: PathBuf,
     },
-    System,
 }
 
 impl TtsBackend {
     pub(crate) fn name(&self) -> &'static str {
         match self {
+            Self::Model(model) => model.name(),
+            Self::System => tts_backend::SYSTEM,
+        }
+    }
+}
+
+impl TtsModel {
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
             Self::Kokoro { .. } => tts_backend::KOKORO,
             Self::Qwen { .. } => tts_backend::QWEN,
-            Self::System => tts_backend::SYSTEM,
         }
     }
 }

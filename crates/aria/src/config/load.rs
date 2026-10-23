@@ -15,8 +15,8 @@ use super::file::{self, FileConfig};
 use super::{
     CaptureConfig, ConfigError, DaemonConfig, DictationConfig, DictationTimeouts, HotkeyConfig,
     ListenConfig, ListenTranscription, MemoryConfig, RelayConfig, SpeakerConfig,
-    TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig, TtsFallback, WakeBackend,
-    WakeConfig, backend, tts_backend, wake_backend,
+    TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig, TtsFallback, TtsModel,
+    WakeBackend, WakeConfig, backend, tts_backend, wake_backend,
 };
 use super::{ChatAgent, ChatConfig, chat_agent};
 
@@ -554,7 +554,7 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
     let backend = match backend.as_str() {
         tts_backend::KOKORO => {
             reject_tts_setting(tokenizer.is_some(), "tts.tokenizer", tts_backend::KOKORO)?;
-            TtsBackend::Kokoro {
+            TtsBackend::Model(TtsModel::Kokoro {
                 model: model_location(model, DEFAULT_KOKORO_MODEL, "tts.model", &environment.home)?,
                 voices: model_location(
                     voices,
@@ -562,11 +562,11 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
                     "tts.voices",
                     &environment.home,
                 )?,
-            }
+            })
         }
         tts_backend::QWEN => {
             reject_tts_setting(voices.is_some(), "tts.voices", tts_backend::QWEN)?;
-            TtsBackend::Qwen {
+            TtsBackend::Model(TtsModel::Qwen {
                 model_dir: model_location(
                     model,
                     DEFAULT_QWEN_MODEL_DIR,
@@ -579,7 +579,7 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
                     "tts.tokenizer",
                     &environment.home,
                 )?,
-            }
+            })
         }
         tts_backend::SYSTEM => {
             reject_tts_setting(model.is_some(), "tts.model", tts_backend::SYSTEM)?;
@@ -694,14 +694,14 @@ pub(crate) fn loaded_models(file: &FileConfig, home: &Path) -> LoadedModels {
         Ok(tts) => {
             let engine = Some(tts.backend.name());
             match tts.backend {
-                TtsBackend::Kokoro { model, voices } => {
+                TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
                     loaded.add("tts", engine, model);
                     loaded.add("tts", engine, voices);
                 }
-                TtsBackend::Qwen {
+                TtsBackend::Model(TtsModel::Qwen {
                     model_dir,
                     tokenizer_dir,
-                } => {
+                }) => {
                     loaded.add("tts", engine, model_dir);
                     loaded.add("tts", engine, tokenizer_dir);
                 }
@@ -1929,10 +1929,10 @@ mod tests {
 
         assert_eq!(
             tts.backend,
-            TtsBackend::Kokoro {
+            TtsBackend::Model(TtsModel::Kokoro {
                 model: PathBuf::from("/home/user/.aria/models/kokoro/kokoro.onnx"),
                 voices: PathBuf::from("/home/user/.aria/models/kokoro/voices.bin"),
-            }
+            })
         );
         assert_eq!(tts.fallback, TtsFallback::System);
     }
@@ -1972,10 +1972,10 @@ mod tests {
 
         assert_eq!(
             tts.backend,
-            TtsBackend::Qwen {
+            TtsBackend::Model(TtsModel::Qwen {
                 model_dir: PathBuf::from("/home/user/.aria/models/qwen/qwen3-tts-0.6b-customvoice"),
                 tokenizer_dir: PathBuf::from("/home/user/.aria/models/qwen/qwen3-tts-tokenizer"),
-            }
+            })
         );
     }
 
