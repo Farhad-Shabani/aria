@@ -8,7 +8,7 @@ struct ShortcutsSettings: View {
             Section("Dictation") {
                 Picker(
                     "Dictation hotkey",
-                    selection: editor.binding(editor.snapshot.storedDictationHotkey ?? .rightOption) { key, edit in
+                    selection: editor.binding(editor.snapshot.storedDictationHotkey ?? .default) { key, edit in
                         edit.dictationHotkey = key.wire
                     }
                 ) {

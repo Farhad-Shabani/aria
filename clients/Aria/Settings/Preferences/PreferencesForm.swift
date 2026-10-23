@@ -9,7 +9,6 @@ struct PreferencesForm<Content: View>: View {
             Form {
                 content(PreferencesEditor(snapshot: snapshot, preferences: preferences))
             }
-            .formStyle(.grouped)
         } else if let failure = preferences.loadFailure {
             ContentUnavailableView {
                 Label("Settings Unavailable", systemImage: "exclamationmark.triangle")

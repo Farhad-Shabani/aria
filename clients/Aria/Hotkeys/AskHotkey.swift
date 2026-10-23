@@ -28,6 +28,10 @@ struct AskHotkey: Equatable {
         control || option || shift || command
     }
 
+    var isActive: Bool {
+        enabled && hasModifier
+    }
+
     /// Command alone is where an app keeps its own menu keys — ⌘Q, ⌘W, ⌘S.
     /// A registered chord is consulted before them, everywhere.
     private var isCommandOnly: Bool {

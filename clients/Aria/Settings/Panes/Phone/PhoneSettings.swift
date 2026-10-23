@@ -47,7 +47,6 @@ struct PhoneSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     @ViewBuilder

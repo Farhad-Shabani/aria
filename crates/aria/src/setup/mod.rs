@@ -167,7 +167,6 @@ pub enum Enrolled {
     Declined,
     Done {
         name: String,
-        consistency: f32,
     },
     /// The room was quiet, the daemon refused, or the samples disagreed.
     /// Setup carries on: a voice is not what makes an install work.
@@ -561,7 +560,7 @@ fn ask_selections(
         },
         hotkey: inspection.macos
             && prompts.confirm(
-                "Start dictation with a hotkey (needs the Accessibility grant)?",
+                "Start dictation with a hotkey (needs Accessibility access)?",
                 existing.hotkey.unwrap_or(true),
             )?,
     })
@@ -658,7 +657,6 @@ fn enroll_voice(
     Ok(match guided::enroll(session, request) {
         Ok(enrolled) => Enrolled::Done {
             name: enrolled.name.to_string(),
-            consistency: enrolled.consistency,
         },
         Err(error) => Enrolled::Failed(error.to_string()),
     })
@@ -672,12 +670,12 @@ fn try_it_out(
     session: &DaemonSession,
 ) -> Result<TryOut, SetupError> {
     prompts.heading("Try it")?;
-    prompts.note("One press, start to finish. Nothing is typed into any window.")?;
+    prompts.note("Nothing is typed into other apps.")?;
     if !prompts.confirm("Record a test press?", true)? {
         return Ok(TryOut::Declined);
     }
 
-    prompts.note("Say something, then stop talking.")?;
+    prompts.note("Say a few words.")?;
     let heard = match session.transcribe(StopMode::OnSilence, |_stage| {}) {
         Ok(Some(heard)) => heard.text,
         // This request only stopped a recording already running, so nothing was heard.

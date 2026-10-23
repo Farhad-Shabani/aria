@@ -801,9 +801,7 @@ fn enrolled_message(enrolled: &Enrolled) -> Option<String> {
         Enrolled::Declined => {
             Some("skipped; enroll later with `aria speaker enroll <name>`".into())
         }
-        Enrolled::Done { name, consistency } => {
-            Some(format!("{name} enrolled (consistency {consistency:.2})"))
-        }
+        Enrolled::Done { name } => Some(format!("saved for {name}")),
         Enrolled::Failed(why) => Some(format!("not enrolled: {why}")),
     }
 }
@@ -813,7 +811,7 @@ fn try_out_message(tried: &TryOut) -> Option<String> {
     match tried {
         TryOut::NotOffered => None,
         TryOut::Declined => Some("skipped; try one with `aria dictate`".into()),
-        TryOut::Done { heard, spoke } if *spoke => Some(format!("heard and answered: {heard:?}")),
+        TryOut::Done { heard, spoke } if *spoke => Some(format!("heard {heard:?}")),
         TryOut::Done { heard, .. } => Some(format!("heard {heard:?}, but the voice did not play")),
         TryOut::Failed(why) => Some(format!("did not work: {why}")),
     }

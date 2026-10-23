@@ -7,8 +7,7 @@ struct SettingsSidebar: View {
     var body: some View {
         List(selection: listSelection) {
             Section {
-                DaemonStatusCard(state: daemon)
-                    .padding(.vertical, 4)
+                SidebarHeader { DaemonStatusLabel(state: daemon) }
             }
             ForEach(SettingsPane.sidebarGroups, id: \.self) { group in
                 Section {

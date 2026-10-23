@@ -142,8 +142,6 @@ final class SetupStateTests: XCTestCase {
         state.next()
         XCTAssertEqual(state.step, .choices)
         state.next()
-        XCTAssertEqual(state.step, .models)
-        state.next()
         await waitUntil { harness.applyContinuation != nil }
         XCTAssertEqual(state.step, .applying)
         return state
@@ -170,7 +168,6 @@ final class SetupStateTests: XCTestCase {
         let state = await welcome(harness)
         XCTAssertTrue(state.forward)
         state.next()
-        state.next()
         XCTAssertTrue(state.forward)
         state.back()
         XCTAssertFalse(state.forward)
@@ -178,26 +175,35 @@ final class SetupStateTests: XCTestCase {
         XCTAssertTrue(state.forward)
     }
 
+    func test_changingEngines_startsTheDownloadPicksOver() async {
+        let harness = Harness()
+        let state = await welcome(harness)
+        state.next()
+        state.downloads = []
+
+        state.selections.tts = "kokoro"
+
+        XCTAssertEqual(state.downloads, ["parakeet", "kokoro", "segmentation"])
+    }
+
     func test_customize_walksBackToTheWelcomePage() async {
         let harness = Harness()
         let state = await welcome(harness)
 
         state.next()
-        state.next()
-        XCTAssertEqual(state.step, .models)
-        state.back()
+        XCTAssertEqual(state.step, .choices)
         state.back()
         XCTAssertEqual(state.step, .welcome)
     }
 
     func test_stagesAndOrder_followTheSteps() {
         let walk: [SetupState.Step] = [
-            .inspecting, .welcome, .choices, .models, .applying, .grant, .voice, .tryOut, .done, .failed("x"),
+            .inspecting, .welcome, .choices, .applying, .grant, .voice, .tryOut, .done, .failed("x"),
         ]
-        XCTAssertEqual(walk.map(\.order), [0, 0, 1, 2, 3, 4, 5, 6, 7, 8], "inspecting and welcome share a page")
+        XCTAssertEqual(walk.map(\.order), [0, 0, 1, 2, 3, 4, 5, 6, 7], "inspecting and welcome share a page")
         XCTAssertEqual(
             walk.map(\.stage),
-            [nil, nil, .choose, .download, .install, .finish, .finish, .finish, .finish, nil]
+            [.welcome, .welcome, .engines, .install, .hotkey, .voice, .tryOut, nil, nil]
         )
         XCTAssertNil(SetupState.Step.failed("x").caption)
         XCTAssertEqual(SetupState.Step.welcome.title, "Welcome to Aria")
@@ -206,7 +212,6 @@ final class SetupStateTests: XCTestCase {
     func test_summaries_readAsSentences() async {
         let harness = Harness()
         let state = await welcome(harness)
-        state.next()
         state.next()
 
         XCTAssertEqual(state.downloadTotal, "Total download: 20 bytes")
@@ -247,15 +252,13 @@ final class SetupStateTests: XCTestCase {
         state.recordVoice()
         await waitUntil { state.step == .tryOut }
         XCTAssertEqual(harness.enrolledNames, ["Ada"])
-        XCTAssertEqual(state.enrolled, "Ada enrolled (consistency 0.90)")
+        XCTAssertEqual(state.enrolled, "Voice saved for Ada.")
 
+        XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
         state.tryPress()
-        await waitUntil { state.heard != nil }
+        await waitUntil { state.step == .done }
         XCTAssertEqual(state.heard, "hello there")
         XCTAssertEqual(harness.spoken, [SetupState.spokenReply])
-        XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
-        state.next()
-        XCTAssertEqual(state.step, .done)
         XCTAssertEqual(harness.launchAtLogin, 1)
         XCTAssertEqual(harness.installedCommandLineTool, 1)
         XCTAssertEqual(state.notice, "The aria command was not installed.", "the Done page says what did not land")
@@ -273,10 +276,10 @@ final class SetupStateTests: XCTestCase {
 
         harness.onEvent?(started)
         harness.onEvent?(download)
-        await waitUntil { state.progress["parakeet"] != nil }
+        await waitUntil { state.downloadProgress["parakeet"] != nil }
 
         XCTAssertEqual(state.applying, .models)
-        XCTAssertEqual(state.progress["parakeet"]?.received, 5)
+        XCTAssertEqual(state.downloadProgress["parakeet"]?.received, 5)
     }
 
     func test_continueAnyway_leavesTheGrantPage() async {
@@ -290,13 +293,13 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.step == .voice }
     }
 
-    func test_cancelDuringApply_returnsToModels() async {
+    func test_cancelDuringApply_returnsToTheChoices() async {
         let harness = Harness()
         let state = await walkToApplying(harness)
 
         state.cancel()
         harness.applyContinuation?.resume(throwing: SetupClientError.cancelled)
-        await waitUntil { state.step == .models }
+        await waitUntil { state.step == .choices }
         XCTAssertEqual(harness.startedDaemon, 1, "a cancelled apply must restart the daemon it stopped")
     }
 
@@ -304,7 +307,6 @@ final class SetupStateTests: XCTestCase {
         let harness = Harness()
         harness.applyError = SetupClientError.failed("curl exited with 22")
         let state = await welcome(harness)
-        state.next()
         state.next()
         state.next()
         await waitUntil { state.step == .failed("curl exited with 22") }
@@ -321,7 +323,6 @@ final class SetupStateTests: XCTestCase {
         let state = await welcome(harness)
         state.next()
         state.next()
-        state.next()
         await waitUntil { state.step == .failed("curl exited with 22") }
         XCTAssertEqual(harness.stoppedDaemon, 0)
         XCTAssertEqual(harness.startedDaemon, 0, "the service supervises its own daemon")
@@ -334,9 +335,11 @@ final class SetupStateTests: XCTestCase {
 
         harness.applyContinuation?.resume(returning: harness.summary)
         await waitUntil { state.step == .grant }
+        XCTAssertFalse(state.hotkeyReady)
 
         harness.armed = true
         await waitUntil { state.step == .voice }
+        XCTAssertTrue(state.hotkeyReady, "Done teaches the hotkey once it arms")
     }
 
     func test_voiceIsSkipped_whenSomeoneIsEnrolledOrTheModelWasSkipped() async {

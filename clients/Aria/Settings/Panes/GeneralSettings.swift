@@ -44,7 +44,6 @@ struct GeneralSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
         .onAppear { loginItem.refresh() }
     }
 }
