@@ -127,6 +127,6 @@ dictations, use the [history controls](./history.md#delete) first.
 ## Build from source
 
 To build Aria yourself, follow
-[Get started](https://github.com/Farhad-Shabani/aria#get-started) in the README.
+[Build from source](https://github.com/Farhad-Shabani/aria#build-from-source) in the README.
 `just app` builds the Mac app into `clients/build/mac/Build/Products/Release/`.
 A source build runs from its checkout, so keep that folder in place.

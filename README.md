@@ -3,6 +3,13 @@
 <p align="center"><b>Talk to your AI agents without sending them your audio.</b></p>
 
 <p align="center">
+  <strong><a href="https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg" title="Download the macOS desktop app">Download</a></strong> |
+  <a href="https://ariacue.pages.dev/">Website</a> |
+  <a href="https://ariacue.pages.dev/user-guide/">Users</a> |
+  <a href="https://ariacue.pages.dev/dev-guide/">Developers</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/Farhad-Shabani/aria/actions/workflows/check.yml"><img src="https://github.com/Farhad-Shabani/aria/actions/workflows/check.yml/badge.svg?branch=main" alt="Checks"></a>
   <a href="https://github.com/Farhad-Shabani/aria/releases/latest"><img src="https://img.shields.io/github/v/release/Farhad-Shabani/aria" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FFarhad-Shabani%2Faria%2Fmain%2Fclients%2Fproject.yml&query=%24.options.deploymentTarget.macOS&label=macOS&suffix=%2B%20%28Apple%20silicon%29&color=blue&logo=apple" alt="Minimum macOS on Apple silicon">
@@ -14,8 +21,10 @@ assistant for macOS and Linux, with all speech processing on your machine. It
 also talks to your AI agents and keeps the conversation going. They get your
 words, never your audio.
 
+The macOS app brings setup, settings, history, and keyboard shortcuts to your menu bar.
+
 ```sh
-aria dictate          # speak; the text lands in the focused app
+aria dictate          # speak; type into a Mac app or copy the text
 aria ask              # speak a question; your agent answers
 aria say "Done for today."
 aria listen start     # transcribe system audio, with speakers
@@ -32,16 +41,23 @@ aria listen start     # transcribe system audio, with speakers
 
 ## Install
 
-Download the Mac app or the Linux binary from the
-[latest release](https://github.com/Farhad-Shabani/aria/releases/latest).
-On a Mac, Homebrew installs the app and the `aria` command:
+Download the [macOS desktop app](https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg).
+Drag Aria to Applications, then open it for guided setup.
+
+Or use Homebrew to install the app and the `aria` command:
 
 ```sh
 brew install --cask farhad-shabani/tap/aria
 ```
 
-The [user guide](https://farhad-shabani.github.io/aria/user-guide/) covers
-installation, setup, and every feature.
+On Linux x86_64, the installer checks the download and starts setup:
+
+```sh
+curl \
+  --fail \
+  --location \
+  https://github.com/Farhad-Shabani/aria/releases/latest/download/install.sh | bash
+```
 
 ## Build from source
 
@@ -62,13 +78,12 @@ A source build runs as `target/release/aria` in the examples above.
 - **Speech synthesis:** Kokoro, Qwen3-TTS, system voice
 - **Wake word:** openWakeWord, livekit-wakeword
 
-## Toolkit
+## Libraries
 
 You can use these Rust crates in your own projects, without the Aria daemon.
-The [developer guide](https://farhad-shabani.github.io/aria/dev-guide/) shows
-how.
 
-- `aria-kit`: audio capture, and the traits every engine implements
+- `aria-kit`: audio capture, streaming transcription, text cleanup, speaker
+  tracking, and shared engine interfaces
 - `aria-stt`: speech-recognition engines
 - `aria-tts`: speech-synthesis engines
 - `aria-wake`: wake-word detection
