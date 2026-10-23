@@ -1,3 +1,5 @@
+{{#title Transcribe system audio on Mac - Aria User Guide}}
+
 # System audio (Mac)
 
 Listen saves a transcript of audio playing on your Mac, such as a meeting or

@@ -1,3 +1,5 @@
+{{#title Set up voice profiles on Mac - Aria User Guide}}
+
 # Voice profiles (Mac)
 
 This chapter is for Mac users. Enabling dictation filtering needs the Mac app,

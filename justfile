@@ -418,6 +418,7 @@ bench-smoke corpus=(justfile_directory() + "/build/corpus/smoke/manifest.tsv") *
 
 # Build both books
 book: book-user book-dev
+    cp book/index.html book/sitemap.xml build/
 
 # Build user guide
 book-user:

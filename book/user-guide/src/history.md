@@ -1,3 +1,5 @@
+{{#title Manage dictation history and recordings - Aria User Guide}}
+
 # Dictation history
 
 Aria saves completed dictations so you can review their text. These controls

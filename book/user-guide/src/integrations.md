@@ -1,3 +1,5 @@
+{{#title Use Aria with Raycast and tmux - Aria User Guide}}
+
 # Raycast and tmux
 
 These optional integrations use scripts from the Aria repository. If you

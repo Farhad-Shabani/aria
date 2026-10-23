@@ -1,3 +1,5 @@
+{{#title Ask Claude Code and Codex by voice - Aria User Guide}}
+
 # Ask a question
 
 Ask sends a typed or spoken question to Claude Code or Codex and prints the

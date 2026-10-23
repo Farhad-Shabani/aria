@@ -1,3 +1,5 @@
+{{#title Troubleshoot Aria setup and dictation - Aria User Guide}}
+
 # Troubleshooting
 
 Start with the symptom you see.

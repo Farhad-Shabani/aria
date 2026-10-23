@@ -1,3 +1,5 @@
+{{#title Set up Aria's Rust speech libraries - Using Aria Libraries}}
+
 # Setup
 
 Start with a small Cargo project: add the dependencies for your task, check

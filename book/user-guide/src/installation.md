@@ -1,3 +1,5 @@
+{{#title Install Aria on macOS and Linux - Aria User Guide}}
+
 # Install Aria
 
 Download Aria from the

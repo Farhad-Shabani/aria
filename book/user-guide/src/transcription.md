@@ -1,3 +1,5 @@
+{{#title Dictate from the terminal on macOS and Linux - Aria User Guide}}
+
 # Terminal dictation
 
 Use `aria dictate` to record one utterance and copy the recognized words.

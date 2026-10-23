@@ -1,3 +1,5 @@
+{{#title Transcribe WAV files with Whisper in Rust - Using Aria Libraries}}
+
 # File transcription
 
 Start by turning a short WAV recording into text with Whisper. Once that

@@ -1,3 +1,5 @@
+{{#title Dictate into Mac apps with a hotkey - Aria User Guide}}
+
 # Mac dictation
 
 Use Aria's hotkey to type speech into an app. Complete

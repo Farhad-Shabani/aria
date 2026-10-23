@@ -1,3 +1,5 @@
+{{#title Transcribe microphone input in Rust - Using Aria Libraries}}
+
 # Microphone transcription
 
 With a Whisper model ready, you can transcribe microphone input using the

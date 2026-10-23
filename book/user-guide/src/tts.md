@@ -1,3 +1,5 @@
+{{#title Read text aloud with aria say - Aria User Guide}}
+
 # Read text aloud
 
 Use `aria say` to play text through your configured voice. Complete

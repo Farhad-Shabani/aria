@@ -1,3 +1,5 @@
+{{#title Configure Aria settings and speech engines - Aria User Guide}}
+
 # Settings
 
 Use the Mac app's Settings window for everyday choices. Use
