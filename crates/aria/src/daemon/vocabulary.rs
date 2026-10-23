@@ -348,6 +348,77 @@ impl Runtime {
         response.await.map_err(|_| Error::Unavailable)?
     }
 
+    fn publish(
+        &self,
+        directory: &Directory,
+        root: &Path,
+        revision: u64,
+        matcher: Arc<Vocabulary>,
+        cancel: &AtomicBool,
+    ) -> Result<(), Error> {
+        self.interrupted(cancel)?;
+        let mut registry = self.registry.lock().map_err(|_| Error::Unavailable)?;
+        self.interrupted(cancel)?;
+        if !registry.removals.is_empty() {
+            return Err(Error::Busy);
+        }
+        if !registry
+            .pending
+            .get(&Some(directory.clone()))
+            .is_some_and(|pending| std::ptr::eq(pending.as_ref(), cancel))
+        {
+            return Err(Error::Unavailable);
+        }
+        let personal_revision = registry.personal_revision;
+        registry.live.retain(|(entry, _)| entry.strong_count() != 0);
+        registry
+            .live
+            .push((Arc::downgrade(&matcher), matcher.estimated_bytes()));
+        let evicted = if registry.entries.len() >= QUEUE_CAPACITY
+            && !registry.entries.contains_key(directory)
+        {
+            let oldest = registry
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone());
+            oldest.and_then(|oldest| registry.entries.remove(&oldest))
+        } else {
+            None
+        };
+        let retired = registry.entries.insert(
+            directory.clone(),
+            Entry {
+                status: Status {
+                    state: State::Ready,
+                    catalog_revision: revision,
+                    runtime_revision: revision,
+                    terms: matcher.term_count(),
+                    error: String::new(),
+                },
+                snapshot: Some(matcher),
+                root: Some(root.to_path_buf()),
+                personal_revision,
+                used: Instant::now(),
+            },
+        );
+        drop(registry);
+        drop(retired);
+        drop(evicted);
+        Ok(())
+    }
+
+    fn interrupted(&self, cancel: &AtomicBool) -> Result<(), Error> {
+        if cancel.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) {
+            Err(Error::Unavailable)
+        } else if self.interrupt.load(Ordering::Acquire) || self.active.load(Ordering::Acquire) != 0
+        {
+            Err(Error::Busy)
+        } else {
+            Ok(())
+        }
+    }
+
     fn enqueue(
         &self,
         registry: &mut Registry,
@@ -662,18 +733,6 @@ impl<C: Collector> Worker<C> {
         }
     }
 
-    fn interrupted(&self, cancel: &AtomicBool) -> Result<(), Error> {
-        if cancel.load(Ordering::Acquire) || self.runtime.stopping.load(Ordering::Acquire) {
-            Err(Error::Unavailable)
-        } else if self.runtime.interrupt.load(Ordering::Acquire)
-            || self.runtime.active.load(Ordering::Acquire) != 0
-        {
-            Err(Error::Busy)
-        } else {
-            Ok(())
-        }
-    }
-
     fn reserve(&self, reservation: usize, protected: Option<&Directory>) -> Result<(), Error> {
         loop {
             let mut registry = self
@@ -778,19 +837,20 @@ impl<C: Collector> Worker<C> {
         token: &CancelToken,
         catalog: &mut Option<Catalog>,
     ) -> Result<Status, Error> {
-        self.interrupted(cancel)?;
+        self.runtime.interrupted(cancel)?;
         let key = self.pipeline_key.clone().ok_or(Error::Unavailable)?;
         if self.collector.pipeline_key().as_ref() != Some(&key) {
             tracing::warn!("vocabulary collector changed its cache identity");
             return Err(Error::Unavailable);
         }
         let root = discover::resolve(directory.as_path()).map_err(|_| Error::Unavailable)?;
-        self.interrupted(cancel)?;
+        self.runtime.interrupted(cancel)?;
         let cached = self.catalog(catalog, token)?.load(&root, &key)?;
         if let Some(cached) = &cached {
             let terms = select::terms(&cached.sources, token)?;
             let matcher = self.compile(&terms, token)?;
-            self.publish(directory, &root, cached.revision, matcher, cancel)?;
+            self.runtime
+                .publish(directory, &root, cached.revision, matcher, cancel)?;
             self.catalog(catalog, token)?
                 .remember_alias(directory.as_path(), &root)?;
         }
@@ -807,7 +867,7 @@ impl<C: Collector> Worker<C> {
         drop(previous);
         let terms = select::terms(&discovery.sources, token)?;
         let matcher = self.compile(&terms, token)?;
-        self.interrupted(cancel)?;
+        self.runtime.interrupted(cancel)?;
         let revision = self
             .catalog(catalog, token)?
             .refresh_cancellable(&discovery, &key, token)?;
@@ -823,7 +883,8 @@ impl<C: Collector> Worker<C> {
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
-        self.publish(directory, &root, revision, matcher, cancel)?;
+        self.runtime
+            .publish(directory, &root, revision, matcher, cancel)?;
         Ok(self.runtime.status(Some(directory)))
     }
 
@@ -840,70 +901,6 @@ impl<C: Collector> Worker<C> {
             return Err(Error::Busy);
         }
         Ok(matcher)
-    }
-
-    fn publish(
-        &self,
-        directory: &Directory,
-        root: &Path,
-        revision: u64,
-        matcher: Arc<Vocabulary>,
-        cancel: &AtomicBool,
-    ) -> Result<(), Error> {
-        self.interrupted(cancel)?;
-        let mut registry = self
-            .runtime
-            .registry
-            .lock()
-            .map_err(|_| Error::Unavailable)?;
-        self.interrupted(cancel)?;
-        if !registry.removals.is_empty() {
-            return Err(Error::Busy);
-        }
-        if !registry
-            .pending
-            .get(&Some(directory.clone()))
-            .is_some_and(|pending| std::ptr::eq(pending.as_ref(), cancel))
-        {
-            return Err(Error::Unavailable);
-        }
-        let personal_revision = registry.personal_revision;
-        registry.live.retain(|(entry, _)| entry.strong_count() != 0);
-        registry
-            .live
-            .push((Arc::downgrade(&matcher), matcher.estimated_bytes()));
-        let evicted = if registry.entries.len() >= QUEUE_CAPACITY
-            && !registry.entries.contains_key(directory)
-        {
-            let oldest = registry
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(key, _)| key.clone());
-            oldest.and_then(|oldest| registry.entries.remove(&oldest))
-        } else {
-            None
-        };
-        let retired = registry.entries.insert(
-            directory.clone(),
-            Entry {
-                status: Status {
-                    state: State::Ready,
-                    catalog_revision: revision,
-                    runtime_revision: revision,
-                    terms: matcher.term_count(),
-                    error: String::new(),
-                },
-                snapshot: Some(matcher),
-                root: Some(root.to_path_buf()),
-                personal_revision,
-                used: Instant::now(),
-            },
-        );
-        drop(registry);
-        drop(retired);
-        drop(evicted);
-        Ok(())
     }
 
     fn finished(
@@ -1388,7 +1385,7 @@ mod tests {
             )
             .unwrap(),
         );
-        worker
+        runtime
             .publish(
                 &selected,
                 selected.as_path(),
@@ -1412,7 +1409,7 @@ mod tests {
         runtime.registry.lock().unwrap().pending.clear();
         worker.await_idle(&AtomicBool::new(false)).unwrap();
         assert!(matches!(
-            worker.publish(&selected, selected.as_path(), 2, matcher, &cancel),
+            runtime.publish(&selected, selected.as_path(), 2, matcher, &cancel),
             Err(Error::Unavailable)
         ));
     }
