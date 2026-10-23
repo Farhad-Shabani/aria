@@ -67,11 +67,14 @@ The Mac app and the Linux installer both start setup. To run it again:
 aria setup
 ```
 
-Choose **Whisper** for a first transcription. Setup downloads the model for
-any engine you choose, except Parakeet (MLX), which needs its own Python.
-For speech output, the system voice needs no model. You can leave optional
-features at their defaults. Choosing a chat agent does not contact it; an
-agent account is needed only for [Ask](./voice-chat.md).
+Keep the default **Parakeet** engine. It types text as you speak. Setup
+downloads the model for the engine you choose and shows its size first.
+Parakeet (MLX) is the exception: it needs its own Python and downloads its
+model on first use.
+
+The system voice needs no model. You can leave optional features at their
+defaults. Choosing a chat agent does not contact it. You need an agent
+account only for [Ask](./voice-chat.md).
 
 Setup saves `~/.aria/config.yaml`, downloads the models you select, and starts
 Aria's background service. It backs up a hand-written configuration as

@@ -8,6 +8,8 @@ use prost::Message;
 
 use crate::supervisor::{DaemonState, Job, Status};
 
+use super::backends::ModelSource;
+use super::models::OnDisk;
 use super::{
     ApplyOptions, Availability, Choice, ConfigWrite, Grant, Inspection, Missing, ModelState,
     Outcome, Selections, SetupError, SetupEvent, Step, Summary, voice_model_present,
@@ -132,6 +134,7 @@ impl From<&Choice> for generated::Engine {
             availability: availability as i32,
             note,
             default: choice.default,
+            model: generated::ModelSource::from(choice.model) as i32,
         }
     }
 }
@@ -144,7 +147,7 @@ impl From<&ModelState> for generated::Model {
             engine: model.engine.unwrap_or_default().to_owned(),
             bytes: model.bytes,
             default: model.default,
-            present: model.present,
+            on_disk: generated::OnDisk::from(model.on_disk) as i32,
             external: model.external,
         }
     }
@@ -186,6 +189,26 @@ impl From<&Status> for generated::ServiceStatus {
             socket: status.socket.display().to_string(),
             daemon: daemon as i32,
             daemon_pid: daemon_pid.unwrap_or(0),
+        }
+    }
+}
+
+impl From<ModelSource> for generated::ModelSource {
+    fn from(model: ModelSource) -> Self {
+        match model {
+            ModelSource::Downloads(_) => Self::Downloads,
+            ModelSource::FetchedOnFirstUse => Self::FetchedOnFirstUse,
+            ModelSource::BuiltIn => Self::BuiltIn,
+        }
+    }
+}
+
+impl From<OnDisk> for generated::OnDisk {
+    fn from(on_disk: OnDisk) -> Self {
+        match on_disk {
+            OnDisk::Complete => Self::Complete,
+            OnDisk::Partial => Self::Partial,
+            OnDisk::Absent => Self::Absent,
         }
     }
 }

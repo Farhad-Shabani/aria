@@ -31,6 +31,7 @@ pub struct Choice {
     /// its model missing: that is a fix to show, not a reason to choose for
     /// the user. Otherwise the first that is ready, else the first listed.
     pub default: bool,
+    pub model: ModelSource,
 }
 
 pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Choice> {
@@ -41,6 +42,7 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
             label: backend.label(),
             availability: backend.availability(host),
             default: false,
+            model: backend.model(),
         })
         .collect();
     let default = choices
@@ -93,6 +95,24 @@ impl Host {
     }
 }
 
+/// Where an engine's model comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelSource {
+    Downloads(&'static [Asset]),
+    /// The engine fetches its model itself, so setup cannot tell its size.
+    FetchedOnFirstUse,
+    BuiltIn,
+}
+
+impl ModelSource {
+    pub(super) fn assets(self) -> &'static [Asset] {
+        match self {
+            Self::Downloads(assets) => assets,
+            Self::FetchedOnFirstUse | Self::BuiltIn => &[],
+        }
+    }
+}
+
 /// One family of interchangeable engines the user picks from.
 pub(super) trait Backend: Copy + Eq + 'static {
     const TITLE: &'static str;
@@ -101,8 +121,7 @@ pub(super) trait Backend: Copy + Eq + 'static {
     fn key(self) -> &'static str;
     fn label(self) -> &'static str;
     fn availability(self, host: &Host) -> Availability;
-    /// What setup downloads for it.
-    fn assets(self) -> &'static [Asset];
+    fn model(self) -> ModelSource;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,9 +137,9 @@ pub(super) enum Stt {
 impl Backend for Stt {
     const TITLE: &'static str = "Speech to text";
     const ALL: &'static [Self] = &[
+        Self::Parakeet,
         Self::Whisper,
         Self::WhisperCandle,
-        Self::Parakeet,
         Self::Moonshine,
         Self::Nemotron,
         Self::ParakeetMlx,
@@ -164,14 +183,15 @@ impl Backend for Stt {
         }
     }
 
-    fn assets(self) -> &'static [Asset] {
+    fn model(self) -> ModelSource {
         match self {
-            Self::Whisper => &[assets::WHISPER],
-            Self::WhisperCandle => &[assets::WHISPER_CANDLE],
-            Self::Parakeet => &[assets::PARAKEET],
-            Self::Moonshine => &[assets::MOONSHINE],
-            Self::Nemotron => &[assets::NEMOTRON],
-            Self::ParakeetMlx => &[],
+            Self::Whisper => ModelSource::Downloads(&[assets::WHISPER]),
+            Self::WhisperCandle => ModelSource::Downloads(&[assets::WHISPER_CANDLE]),
+            Self::Parakeet => ModelSource::Downloads(&[assets::PARAKEET]),
+            Self::Moonshine => ModelSource::Downloads(&[assets::MOONSHINE]),
+            Self::Nemotron => ModelSource::Downloads(&[assets::NEMOTRON]),
+            // The sidecar downloads the model into its own Hugging Face cache.
+            Self::ParakeetMlx => ModelSource::FetchedOnFirstUse,
         }
     }
 }
@@ -210,11 +230,11 @@ impl Backend for Tts {
         }
     }
 
-    fn assets(self) -> &'static [Asset] {
+    fn model(self) -> ModelSource {
         match self {
-            Self::System => &[],
-            Self::Kokoro => &[assets::KOKORO],
-            Self::Qwen => &[assets::QWEN],
+            Self::System => ModelSource::BuiltIn,
+            Self::Kokoro => ModelSource::Downloads(&[assets::KOKORO]),
+            Self::Qwen => ModelSource::Downloads(&[assets::QWEN]),
         }
     }
 }
@@ -257,8 +277,10 @@ impl Backend for Chat {
         }
     }
 
-    fn assets(self) -> &'static [Asset] {
-        &[]
+    fn model(self) -> ModelSource {
+        match self {
+            Self::ClaudeCode | Self::Codex => ModelSource::BuiltIn,
+        }
     }
 }
 
@@ -281,8 +303,12 @@ mod tests {
         let models_dir = config::models_dir(home);
         let engines = Stt::ALL
             .iter()
-            .map(|stt| ("transcription", stt.key(), stt.assets()))
-            .chain(Tts::ALL.iter().map(|tts| ("tts", tts.key(), tts.assets())));
+            .map(|stt| ("transcription", stt.key(), stt.model().assets()))
+            .chain(
+                Tts::ALL
+                    .iter()
+                    .map(|tts| ("tts", tts.key(), tts.model().assets())),
+            );
         for (section, key, assets) in engines {
             let file: FileConfig =
                 serde_saphyr::from_str(&format!("{section}: {{backend: {key}}}")).unwrap();
@@ -332,16 +358,22 @@ mod tests {
 
     #[test]
     fn a_fresh_download_passes_the_engine_check() {
-        for stt in Stt::ALL.iter().filter(|stt| !stt.assets().is_empty()) {
-            let home = home_with_downloads("transcription", stt.key(), stt.assets());
+        for stt in Stt::ALL
+            .iter()
+            .filter(|stt| !stt.model().assets().is_empty())
+        {
+            let home = home_with_downloads("transcription", stt.key(), stt.model().assets());
             let environment = Environment::in_home(home.path().to_path_buf());
             let transcription = DictationConfig::load(&environment).unwrap().transcription;
             if let Err(error) = crate::transcription::check_model(&transcription) {
                 panic!("{}: {}", stt.key(), error_chain(&error));
             }
         }
-        for tts in Tts::ALL.iter().filter(|tts| !tts.assets().is_empty()) {
-            let home = home_with_downloads("tts", tts.key(), tts.assets());
+        for tts in Tts::ALL
+            .iter()
+            .filter(|tts| !tts.model().assets().is_empty())
+        {
+            let home = home_with_downloads("tts", tts.key(), tts.model().assets());
             let environment = Environment::in_home(home.path().to_path_buf());
             let checked = match TtsConfig::load(&environment).unwrap().backend {
                 TtsBackend::Kokoro { model, voices } => {
@@ -363,6 +395,25 @@ mod tests {
                 panic!("{}: {}", tts.key(), error_chain(&error));
             }
         }
+    }
+
+    #[test]
+    fn setup_defaults_to_the_engines_an_unset_config_runs() {
+        let host = Host {
+            macos: true,
+            system_voice: Availability::Ready,
+        };
+        let default = |choices: Vec<Choice>| choices.into_iter().find(|choice| choice.default);
+        let unset = FileConfig::default();
+
+        assert_eq!(
+            default(choices::<Stt>(None, &host)).map(|choice| choice.key),
+            Some(config::transcription_engine(&unset))
+        );
+        assert_eq!(
+            default(choices::<Tts>(None, &host)).map(|choice| choice.key),
+            Some(config::tts_engine(&unset))
+        );
     }
 
     #[test]

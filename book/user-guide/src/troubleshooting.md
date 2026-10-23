@@ -70,10 +70,10 @@ In **System Settings → Privacy & Security → Screen & System Audio Recording*
 check permission for the requesting app or executable. Microphone permission
 does not grant system-audio access.
 
-The default Whisper model cannot run Listen. Check the
-[Moonshine files and configuration](./listen.md#model),
-and use `aria listen status` for a failure reported after starting. Confirm
-that audio is actually playing through your Mac.
+Listen runs only on Parakeet, Moonshine, or Nemotron. With another engine,
+set up the [Moonshine model](./listen.md#model). For a failure after Listen
+starts, run `aria listen status`. Confirm that audio is playing through your
+Mac.
 
 ## Read the error
 

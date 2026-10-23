@@ -25,7 +25,7 @@ pub(super) const DEFAULT_CONFIG_RELATIVE_PATH: &str = ".aria/config.yaml";
 /// below sit inside it.
 const MODELS_DIR: &str = ".aria/models";
 
-const DEFAULT_BACKEND: &str = backend::WHISPER;
+const DEFAULT_BACKEND: &str = backend::PARAKEET;
 const DEFAULT_WHISPER_MODEL: &str = "whisper/ggml-large-v3-turbo-q8_0.bin";
 const DEFAULT_WHISPER_CANDLE_MODEL: &str = "whisper-candle/tiny.en";
 const DEFAULT_PARAKEET_MODEL: &str = "parakeet/parakeet-tdt-0.6b-v3";
@@ -2060,8 +2060,13 @@ mod tests {
             [
                 LoadedModel {
                     section: "transcription",
-                    engine: Some(backend::WHISPER),
-                    path: models.join("whisper/ggml-large-v3-turbo-q8_0.bin"),
+                    engine: Some(backend::PARAKEET),
+                    path: models.join("parakeet/parakeet-tdt-0.6b-v3"),
+                },
+                LoadedModel {
+                    section: "listen",
+                    engine: Some(backend::PARAKEET),
+                    path: models.join("parakeet/parakeet-tdt-0.6b-v3"),
                 },
                 LoadedModel {
                     section: "speaker",
@@ -2074,7 +2079,7 @@ mod tests {
                     path: models.join("pyannote/segmentation-3.0.onnx"),
                 },
             ],
-            "whisper cannot stream, so listen loads nothing"
+            "listen inherits the transcription model"
         );
     }
 
@@ -2114,9 +2119,9 @@ mod tests {
 
     #[test]
     fn listen_refuses_a_backend_that_cannot_stream() {
-        // The default transcription backend is whisper, which listen does
-        // not offer.
-        let error = listen(&FileConfig::default(), &empty_environment())
+        let mut file = FileConfig::default();
+        file.transcription.backend = Some(backend::WHISPER.to_owned());
+        let error = listen(&file, &empty_environment())
             .expect_err("a whole-mode inheritance must be refused");
         assert!(matches!(
             error,

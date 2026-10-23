@@ -22,6 +22,53 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+/// Where an engine's model comes from.
+public nonisolated enum Aria_Setup_V1_ModelSource: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// Setup downloads it; `Inspection.models` lists its files.
+  case downloads // = 1
+
+  /// The engine fetches it itself, so setup cannot tell its size.
+  case fetchedOnFirstUse // = 2
+  case builtIn // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .downloads
+    case 2: self = .fetchedOnFirstUse
+    case 3: self = .builtIn
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .downloads: return 1
+    case .fetchedOnFirstUse: return 2
+    case .builtIn: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Setup_V1_ModelSource] = [
+    .unspecified,
+    .downloads,
+    .fetchedOnFirstUse,
+    .builtIn,
+  ]
+
+}
+
 public nonisolated enum Aria_Setup_V1_Availability: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -64,6 +111,51 @@ public nonisolated enum Aria_Setup_V1_Availability: SwiftProtobuf.Enum, Swift.Ca
     .ready,
     .missing,
     .unsupported,
+  ]
+
+}
+
+public nonisolated enum Aria_Setup_V1_OnDisk: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case complete // = 1
+
+  /// Some of its files, or their unfinished parts; a download resumes
+  /// from them.
+  case partial // = 2
+  case absent // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .complete
+    case 2: self = .partial
+    case 3: self = .absent
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .complete: return 1
+    case .partial: return 2
+    case .absent: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Setup_V1_OnDisk] = [
+    .unspecified,
+    .complete,
+    .partial,
+    .absent,
   ]
 
 }
@@ -422,6 +514,8 @@ public nonisolated struct Aria_Setup_V1_Engine: Sendable {
   /// Exactly one per family: the configured one, else the first that runs.
   public var `default`: Bool = false
 
+  public var model: Aria_Setup_V1_ModelSource = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -445,7 +539,7 @@ public nonisolated struct Aria_Setup_V1_Model: Sendable {
   /// Whether it is fetched when nobody answers.
   public var `default`: Bool = false
 
-  public var present: Bool = false
+  public var onDisk: Aria_Setup_V1_OnDisk = .unspecified
 
   /// Config points its engine at files elsewhere, so setup has nothing to
   /// fetch.
@@ -733,8 +827,16 @@ public nonisolated struct Aria_Setup_V1_ServiceStatus: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "aria.setup.v1"
 
+nonisolated extension Aria_Setup_V1_ModelSource: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_SOURCE_UNSPECIFIED\0\u{1}MODEL_SOURCE_DOWNLOADS\0\u{1}MODEL_SOURCE_FETCHED_ON_FIRST_USE\0\u{1}MODEL_SOURCE_BUILT_IN\0")
+}
+
 nonisolated extension Aria_Setup_V1_Availability: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AVAILABILITY_UNSPECIFIED\0\u{1}AVAILABILITY_READY\0\u{1}AVAILABILITY_MISSING\0\u{1}AVAILABILITY_UNSUPPORTED\0")
+}
+
+nonisolated extension Aria_Setup_V1_OnDisk: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ON_DISK_UNSPECIFIED\0\u{1}ON_DISK_COMPLETE\0\u{1}ON_DISK_PARTIAL\0\u{1}ON_DISK_ABSENT\0")
 }
 
 nonisolated extension Aria_Setup_V1_Step: SwiftProtobuf._ProtoNameProviding {
@@ -903,7 +1005,7 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Engine"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}key\0\u{1}label\0\u{1}availability\0\u{1}note\0\u{1}default\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}key\0\u{1}label\0\u{1}availability\0\u{1}note\0\u{1}default\0\u{1}model\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -916,6 +1018,7 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
       case 3: try { try decoder.decodeSingularEnumField(value: &self.availability) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.note) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.`default`) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.model) }()
       default: break
       }
     }
@@ -937,6 +1040,9 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
     if self.`default` != false {
       try visitor.visitSingularBoolField(value: self.`default`, fieldNumber: 5)
     }
+    if self.model != .unspecified {
+      try visitor.visitSingularEnumField(value: self.model, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -946,6 +1052,7 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.availability != rhs.availability {return false}
     if lhs.note != rhs.note {return false}
     if lhs.`default` != rhs.`default` {return false}
+    if lhs.model != rhs.model {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -953,7 +1060,7 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Model"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}engine\0\u{1}bytes\0\u{1}default\0\u{1}present\0\u{1}external\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}engine\0\u{1}bytes\0\u{1}default\0\u{3}on_disk\0\u{1}external\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -966,7 +1073,7 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
       case 3: try { try decoder.decodeSingularStringField(value: &self.engine) }()
       case 4: try { try decoder.decodeSingularUInt64Field(value: &self.bytes) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.`default`) }()
-      case 6: try { try decoder.decodeSingularBoolField(value: &self.present) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.onDisk) }()
       case 7: try { try decoder.decodeSingularBoolField(value: &self.external) }()
       default: break
       }
@@ -989,8 +1096,8 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
     if self.`default` != false {
       try visitor.visitSingularBoolField(value: self.`default`, fieldNumber: 5)
     }
-    if self.present != false {
-      try visitor.visitSingularBoolField(value: self.present, fieldNumber: 6)
+    if self.onDisk != .unspecified {
+      try visitor.visitSingularEnumField(value: self.onDisk, fieldNumber: 6)
     }
     if self.external != false {
       try visitor.visitSingularBoolField(value: self.external, fieldNumber: 7)
@@ -1004,7 +1111,7 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.engine != rhs.engine {return false}
     if lhs.bytes != rhs.bytes {return false}
     if lhs.`default` != rhs.`default` {return false}
-    if lhs.present != rhs.present {return false}
+    if lhs.onDisk != rhs.onDisk {return false}
     if lhs.external != rhs.external {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

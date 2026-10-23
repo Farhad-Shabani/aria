@@ -19,9 +19,29 @@ struct WelcomePage: View {
                 if let blocked = state.blockedBy {
                     Text(blocked).foregroundStyle(.red)
                 }
+                if state.step == .welcome { expressDownloads.padding(.top, 8) }
             }
         }
         .padding(.top, 8)
+    }
+
+    private var expressDownloads: some View {
+        let plan = SetupState.expressPlan(state.inspection, state.selections)
+        return VStack(alignment: .leading, spacing: 4) {
+            if !plan.isEmpty {
+                Text("Express Setup downloads:").font(.callout).foregroundStyle(.secondary)
+                ForEach(plan, id: \.name) { model in
+                    HStack {
+                        Text(model.title)
+                        Spacer()
+                        Text(SetupState.downloadSize(of: [model])).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            Text(SetupState.total(plan)).fontWeight(.medium)
+            ForEach(state.selfFetchingNotes, id: \.self) { Text($0).font(.callout).foregroundStyle(.secondary) }
+        }
     }
 }
 
@@ -30,9 +50,15 @@ struct EnginesPage: View {
 
     var body: some View {
         Form {
-            LabeledContent("Speech to text:") { picker("Speech to text", state.inspection.stt, $state.selections.stt) }
-            LabeledContent("Text to speech:") { picker("Text to speech", state.inspection.tts, $state.selections.tts) }
-            LabeledContent("Chat agent:") { picker("Chat agent", state.inspection.chat, $state.selections.chat) }
+            LabeledContent("Speech to text:") {
+                picker("Speech to text", state.inspection.stt, $state.selections.stt, sized: true)
+            }
+            LabeledContent("Text to speech:") {
+                picker("Text to speech", state.inspection.tts, $state.selections.tts, sized: true)
+            }
+            LabeledContent("Chat agent:") {
+                picker("Chat agent", state.inspection.chat, $state.selections.chat, sized: false)
+            }
             LabeledContent("Wake word:") {
                 Toggle("Listen for the wake word", isOn: $state.selections.wake)
             }
@@ -50,14 +76,23 @@ struct EnginesPage: View {
         .formStyle(.columns)
     }
 
-    /// The rows carry only labels; the chosen engine's note goes under the
-    /// menu, where a path-long note has room.
-    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Engine], _ key: Binding<String>) -> some View {
+    /// With `sized`, each row shows its download size for comparing. The
+    /// chosen engine's note goes under the menu, where a long path fits.
+    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Engine], _ key: Binding<String>, sized: Bool)
+        -> some View
+    {
         let chosen = engines.first { $0.key == key.wrappedValue }
         return VStack(alignment: .leading, spacing: 4) {
             Picker(title, selection: key) {
                 ForEach(engines, id: \.key) { engine in
-                    Text(engine.label).tag(engine.key)
+                    if sized {
+                        let download = SetupState.download(of: engine, in: state.inspection)
+                        (Text(engine.label) + Text("   \(download.brief)").foregroundStyle(.secondary))
+                            .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
+                            .tag(engine.key)
+                    } else {
+                        Text(engine.label).tag(engine.key)
+                    }
                 }
                 // config.yaml may name an engine setup does not offer; the
                 // picker still needs a row for it.
@@ -66,6 +101,9 @@ struct EnginesPage: View {
                 }
             }
             .labelsHidden()
+            if sized, let chosen, let note = SetupState.download(of: chosen, in: state.inspection).note {
+                Text(note).font(.callout).foregroundStyle(.secondary)
+            }
             if let chosen, !chosen.note.isEmpty {
                 Text(chosen.note)
                     .font(.callout)
@@ -80,23 +118,40 @@ struct ModelsPage: View {
     @ObservedObject var state: SetupState
 
     var body: some View {
-        let plan = SetupState.plan(state.inspection, state.selections)
         VStack(alignment: .leading, spacing: 12) {
-            if plan.isEmpty {
-                ContentUnavailableView(
-                    "Nothing to download", systemImage: "checkmark.circle",
-                    description: Text("Every model the chosen engines need is already on disk.")
-                )
-            } else {
-                ForEach(plan, id: \.name) { model in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Toggle(model.title, isOn: toggle(model.name))
-                        Text(Self.detail(model)).settingsFootnote()
+            ForEach(SetupState.wanted(state.inspection, state.selections), id: \.name) { model in
+                VStack(alignment: .leading, spacing: 2) {
+                    row(model)
+                    if model.onDisk == .partial && !model.external {
+                        Text("Partly downloaded. Resumes where it stopped.").settingsFootnote()
                     }
                 }
-                Text(state.downloadSummary).foregroundStyle(.secondary).padding(.top, 4)
+            }
+            Text(state.downloadTotal).fontWeight(.medium).padding(.top, 4)
+            ForEach(state.selfFetchingNotes, id: \.self) { Text($0).settingsFootnote() }
+        }
+    }
+
+    /// A downloaded or custom model shows a disabled checkbox, so every
+    /// title lines up. Its status sits in the label so VoiceOver reads it
+    /// with the checkbox.
+    private func row(_ model: Aria_Setup_V1_Model) -> some View {
+        let downloaded = model.onDisk == .complete
+        let fixed = downloaded || model.external
+        return Toggle(isOn: fixed ? .constant(downloaded) : toggle(model.name)) {
+            HStack {
+                Text(model.title)
+                Spacer()
+                Text(Self.status(model)).foregroundStyle(.secondary).monospacedDigit()
             }
         }
+        .disabled(fixed)
+    }
+
+    private static func status(_ model: Aria_Setup_V1_Model) -> String {
+        if model.onDisk == .complete { return "Downloaded" }
+        if model.external { return "Custom model" }
+        return SetupState.downloadSize(of: [model])
     }
 
     private func toggle(_ name: String) -> Binding<Bool> {
@@ -106,11 +161,6 @@ struct ModelsPage: View {
                 if on { state.downloads.insert(name) } else { state.downloads.remove(name) }
             }
         )
-    }
-
-    private static func detail(_ model: Aria_Setup_V1_Model) -> String {
-        let size = SetupState.size(model.bytes)
-        return model.engine.isEmpty ? size : "for \(model.engine) · \(size)"
     }
 }
 

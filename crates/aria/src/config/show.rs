@@ -735,8 +735,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         let report = shown(home.path());
 
-        // Listen does not accept the default Whisper backend.
-        assert_eq!(failed(&report), ["listen"]);
+        assert!(failed(&report).is_empty(), "{:?}", failed(&report));
         let rows = rows(&report);
         assert!(rows.len() > 10, "{}", rows.len());
         for row in &rows {
@@ -747,7 +746,7 @@ mod tests {
             };
             assert_eq!(row.source, expected, "{}", row.key);
         }
-        assert_eq!(find(&rows, "transcription.backend").value, "whisper");
+        assert_eq!(find(&rows, "transcription.backend").value, "parakeet");
         assert_eq!(find(&rows, "dictation_timeouts.recording").value, "300s");
         assert_eq!(find(&rows, "wake.enabled").value, "false");
         assert_eq!(find(&rows, "dictation_backtrack").value, "false");
