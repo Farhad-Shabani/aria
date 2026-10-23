@@ -132,7 +132,9 @@ fn compose(
         context.config_environment.home().join(".aria/vocabulary"),
         Lexicon::configured(&context.config_environment),
         matches!(context.lifetime, DaemonLifetime::Persistent),
-        crate::vocabulary::extract::LocalExtractor,
+        crate::vocabulary::discover::LocalCollector::new(
+            crate::vocabulary::extract::LocalExtractor,
+        ),
     );
     if let Err(error) = vocabulary_worker.initialize_personal() {
         tracing::warn!(%error, "personal vocabulary is unavailable at startup");

@@ -443,7 +443,9 @@ mod tests {
             home.path().join("vocabulary"),
             None,
             false,
-            crate::vocabulary::extract::LocalExtractor,
+            crate::vocabulary::discover::LocalCollector::new(
+                crate::vocabulary::extract::LocalExtractor,
+            ),
         );
         let setup = DictationSetup {
             dictation: config,
@@ -484,7 +486,9 @@ mod tests {
             home.path().join("vocabulary"),
             None,
             false,
-            crate::vocabulary::extract::LocalExtractor,
+            crate::vocabulary::discover::LocalCollector::new(
+                crate::vocabulary::extract::LocalExtractor,
+            ),
         );
         let audio = crate::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
