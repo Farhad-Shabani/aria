@@ -33,6 +33,5 @@ struct AboutSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
     }
 }

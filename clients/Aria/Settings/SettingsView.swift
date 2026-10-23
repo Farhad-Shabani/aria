@@ -11,18 +11,13 @@ struct SettingsView: View {
     )
 
     var body: some View {
-        // Always both columns, as System Settings shows them.
-        NavigationSplitView(columnVisibility: .constant(.all)) {
+        SidebarWindow {
             SettingsSidebar(
                 selection: Binding(get: { history.current }, set: { history.open($0) }),
                 daemon: poller.state
             )
-            .frame(minWidth: SettingsMetrics.sidebarWidth)
-            .toolbar(removing: .sidebarToggle)
         } detail: {
             page
-                .toolbar(removing: .title)
-                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                 .toolbar {
                     ToolbarItemGroup(placement: .navigation) {
                         Button("Back", systemImage: "chevron.left") { history.goBack() }
@@ -34,15 +29,10 @@ struct SettingsView: View {
                     }
                 }
         }
-        .frame(width: SettingsMetrics.windowWidth)
-        .frame(minHeight: SettingsMetrics.minimumHeight)
         .onChange(of: history.current) { _, pane in
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
         }
-        .onAppear {
-            NSApplication.shared.activate()
-            Task { await preferences.sync() }
-        }
+        .onAppear { Task { await preferences.sync() } }
     }
 
     @ViewBuilder

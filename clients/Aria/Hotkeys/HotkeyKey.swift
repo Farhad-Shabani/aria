@@ -3,6 +3,9 @@ enum HotkeyKey: CaseIterable {
     case rightOption
     case fn
 
+    /// The key the daemon uses when none is stored.
+    static let `default` = HotkeyKey.rightOption
+
     var title: String {
         switch self {
         case .rightOption: return "Right Option"

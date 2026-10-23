@@ -343,7 +343,7 @@ pub enum SupervisorError {
     #[error("the {name} contains a control character, which no unit file can carry")]
     ControlCharacter { name: &'static str },
 
-    #[error("another daemon owns {}{}; stop it first", socket.display(), owner(*pid))]
+    #[error("another Aria daemon is running{}; quit it and try again", owner(*pid))]
     SocketOwned { socket: PathBuf, pid: Option<u32> },
 
     #[error("failed to {action} {}", path.display())]

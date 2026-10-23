@@ -53,7 +53,7 @@ final class AskHotkeyController {
 
     /// Takes the chord, or gives it back when disabled.
     private func apply(_ hotkey: AskHotkey?) {
-        guard let hotkey, hotkey.enabled, hotkey.hasModifier else {
+        guard let hotkey, hotkey.isActive else {
             shortcut.unregister()
             installed = nil
             return

@@ -31,21 +31,12 @@ final class SetupState: ObservableObject {
         case inspecting
         case welcome
         case choices
-        case models
         case applying
         case grant
         case voice
         case tryOut
         case done
         case failed(String)
-    }
-
-    /// The footer dots. Inspecting, welcome, and failure sit outside them.
-    enum Stage: Int, CaseIterable {
-        case choose
-        case download
-        case install
-        case finish
     }
 
     struct InstallRow: Equatable {
@@ -67,20 +58,31 @@ final class SetupState: ObservableObject {
     ]
 
     @Published private(set) var step: Step = .inspecting {
-        didSet { forward = step.order >= oldValue.order }
+        didSet {
+            forward = step.order >= oldValue.order
+            progress.record(step)
+        }
     }
+    @Published private(set) var progress = SetupProgress()
     /// Whether the last step change moved ahead, so pages slide the right way.
     @Published private(set) var forward = true
     @Published private(set) var inspection = Aria_Setup_V1_Inspection()
-    @Published var selections = Aria_Setup_V1_Selections()
+    /// New engines bring a new model list, so the download picks start over.
+    @Published var selections = Aria_Setup_V1_Selections() {
+        didSet {
+            if step == .choices { downloads = defaultDownloads }
+        }
+    }
     @Published var downloads = Set<String>()
     @Published private(set) var applying: Aria_Setup_V1_Step = .unspecified
-    @Published private(set) var progress: [String: Aria_Setup_V1_DownloadProgress] = [:]
+    @Published private(set) var downloadProgress: [String: Aria_Setup_V1_DownloadProgress] = [:]
     @Published private(set) var summary: Aria_Setup_V1_Summary?
     @Published var voiceName = ""
     @Published private(set) var voicePrompt: String?
     @Published private(set) var enrolled: String?
     @Published private(set) var heard: String?
+    /// Whether the dictation hotkey answers, so Done can teach it.
+    @Published private(set) var hotkeyReady = false
     /// A step's own failure, which setup carries on past.
     @Published private(set) var notice: String?
     @Published private(set) var busy = false
@@ -245,12 +247,10 @@ final class SetupState: ObservableObject {
     func next() {
         switch step {
         case .welcome:
+            downloads = defaultDownloads
             step = .choices
         case .choices:
             guard blockedBy == nil else { return }
-            downloads = defaultDownloads
-            step = .models
-        case .models:
             runApply()
         case .grant:
             grantTask?.cancel()
@@ -258,18 +258,21 @@ final class SetupState: ObservableObject {
         case .voice:
             step = .tryOut
         case .tryOut:
-            let problems = [effects.launchAtLogin(), effects.installCommandLineTool()].compactMap { $0 }
-            notice = problems.isEmpty ? nil : problems.joined(separator: " ")
-            step = .done
+            finish()
         default:
             break
         }
     }
 
+    private func finish() {
+        let problems = [effects.launchAtLogin(), effects.installCommandLineTool()].compactMap { $0 }
+        notice = problems.isEmpty ? nil : problems.joined(separator: " ")
+        step = .done
+    }
+
     func back() {
         switch step {
         case .choices: step = .welcome
-        case .models: step = .choices
         default: break
         }
     }
@@ -300,9 +303,8 @@ final class SetupState: ObservableObject {
         voicePrompt = "Starting…"
         Task {
             do {
-                let response = try await effects.enroll(name)
-                let consistency = response.consistency.formatted(.number.precision(.fractionLength(2)))
-                enrolled = "\(name) enrolled (consistency \(consistency))"
+                _ = try await effects.enroll(name)
+                enrolled = "Voice saved for \(name)."
                 step = .tryOut
             } catch {
                 notice = error.localizedDescription
@@ -331,6 +333,7 @@ final class SetupState: ObservableObject {
             do {
                 heard = try await effects.transcribe()
                 try await effects.speak(Self.spokenReply)
+                finish()
             } catch {
                 notice = error.localizedDescription
             }
@@ -354,7 +357,7 @@ final class SetupState: ObservableObject {
         let origin = step
         step = .applying
         applying = .unspecified
-        progress = [:]
+        downloadProgress = [:]
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = selections
         request.downloads = Self.plan(inspection, selections).map(\.name).filter(downloads.contains)
@@ -381,13 +384,14 @@ final class SetupState: ObservableObject {
     private func absorb(_ event: Aria_Setup_V1_SetupEvent) {
         switch event.event {
         case .started(let step): applying = step
-        case .download(let download): progress[download.model] = download
+        case .download(let download): downloadProgress[download.model] = download
         case nil: break
         }
     }
 
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
+        hotkeyReady = selections.hotkey && summary.grant == .armed
         if selections.hotkey && summary.grant != .armed {
             step = .grant
             watchGrant()
@@ -404,6 +408,7 @@ final class SetupState: ObservableObject {
                 // Skip may have moved on while the check was out.
                 guard !Task.isCancelled else { return }
                 if armed {
+                    hotkeyReady = true
                     if step == .grant { await enterVoice() }
                     return
                 }
@@ -447,37 +452,30 @@ enum EngineDownload: Equatable {
 }
 
 extension SetupState.Step {
-    var stage: SetupState.Stage? {
+    var stage: SetupProgress.Stage? {
         switch self {
-        case .inspecting, .welcome, .failed: nil
-        case .choices: .choose
-        case .models: .download
+        case .inspecting, .welcome: .welcome
+        case .choices: .engines
         case .applying: .install
-        case .grant, .voice, .tryOut, .done: .finish
+        case .grant: .hotkey
+        case .voice: .voice
+        case .tryOut: .tryOut
+        case .done, .failed: nil
         }
     }
 
-    /// Where the step sits in the walk. Inspecting and welcome share a
-    /// page, so they share a slot.
+    /// Where the step sits in the walk, so pages slide the right way.
+    /// Inspecting and welcome share a page, so they share a slot.
     var order: Int {
-        switch self {
-        case .inspecting, .welcome: 0
-        case .choices: 1
-        case .models: 2
-        case .applying: 3
-        case .grant: 4
-        case .voice: 5
-        case .tryOut: 6
-        case .done: 7
-        case .failed: 8
-        }
+        if let stage { return stage.rawValue }
+        let stages = SetupProgress.Stage.allCases.count
+        return self == .done ? stages : stages + 1
     }
 
     var title: String {
         switch self {
         case .inspecting, .welcome: "Welcome to Aria"
         case .choices: "Choose your engines"
-        case .models: "Download models"
         case .applying: "Setting up…"
         case .grant: "Allow the hotkey"
         case .voice: "Your voice"
@@ -491,11 +489,10 @@ extension SetupState.Step {
         switch self {
         case .inspecting, .welcome: "Dictation stays on this Mac. Ask goes through Claude Code or Codex."
         case .choices: "Speech stays on this Mac. You can change these later."
-        case .models: "Downloads land in ~/.aria and resume if interrupted."
         case .applying: "This takes a moment. Downloads can be cancelled."
         case .grant: "The dictation hotkey needs Aria's Accessibility grant."
         case .voice: "Aria can tell who is speaking once it knows your voice."
-        case .tryOut: "One press, start to finish. Nothing is typed into any window."
+        case .tryOut: "Press Record and say a few words. Nothing is typed into other apps."
         case .done: "Aria runs in the background. Find it in the menu bar."
         case .failed: nil
         }

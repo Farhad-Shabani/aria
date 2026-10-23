@@ -100,10 +100,7 @@ struct AriaApp: App {
         Window("Aria Settings", id: WindowID.settings) {
             SettingsView(preferences: preferences, poller: poller, updates: appDelegate.updates)
         }
-        .defaultLaunchBehavior(.suppressed)
-        .restorationBehavior(.disabled)
-        .windowResizability(.contentSize)
-        .windowToolbarStyle(.unified)
+        .sidebarWindowScene()
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { appDelegate.settings.request() }
@@ -120,11 +117,9 @@ struct AriaApp: App {
         .windowResizability(.contentMinSize)
 
         Window("Aria Setup", id: WindowID.setup) {
-            SetupView(state: appDelegate.setupState)
+            SetupView(state: appDelegate.setupState, preferences: preferences)
         }
-        .defaultLaunchBehavior(.suppressed)
-        .restorationBehavior(.disabled)
-        .windowResizability(.contentSize)
+        .sidebarWindowScene()
     }
 }
 

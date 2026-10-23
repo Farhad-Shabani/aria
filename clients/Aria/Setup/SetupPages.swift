@@ -4,40 +4,37 @@ struct WelcomePage: View {
     @ObservedObject var state: SetupState
 
     var body: some View {
-        HStack(alignment: .top, spacing: 24) {
-            AppIcon(side: 96)
-            VStack(alignment: .leading, spacing: 10) {
+        Form {
+            Section {
                 Label("Pick speech and chat engines", systemImage: "waveform")
                 Label("Download the models they need", systemImage: "arrow.down.circle")
                 Label("Run Aria in the background", systemImage: "gearshape")
+            } footer: {
                 if let missing = state.missingSummary {
-                    Text(missing).foregroundStyle(.secondary).padding(.top, 8)
+                    Text(missing)
                 }
                 if let blocked = state.blockedBy {
                     Text(blocked).foregroundStyle(.red)
                 }
-                if state.step == .welcome { expressDownloads.padding(.top, 8) }
             }
+            if state.step == .welcome { expressDownloads }
         }
-        .padding(.top, 8)
     }
 
     private var expressDownloads: some View {
         let plan = SetupState.expressPlan(state.inspection, state.selections)
-        return VStack(alignment: .leading, spacing: 4) {
-            if !plan.isEmpty {
-                Text("Express Setup downloads:").font(.callout).foregroundStyle(.secondary)
-                ForEach(plan, id: \.name) { model in
-                    HStack {
-                        Text(model.title)
-                        Spacer()
-                        Text(SetupState.downloadSize(of: [model])).foregroundStyle(.secondary).monospacedDigit()
-                    }
-                    .accessibilityElement(children: .combine)
+        return Section {
+            ForEach(plan, id: \.name) { model in
+                LabeledContent(model.title) {
+                    Text(SetupState.downloadSize(of: [model])).monospacedDigit()
                 }
             }
-            Text(SetupState.total(plan)).fontWeight(.medium)
-            ForEach(state.selfFetchingNotes, id: \.self) { Text($0).font(.callout).foregroundStyle(.secondary) }
+        } header: {
+            if !plan.isEmpty {
+                Text("Express Setup downloads")
+            }
+        } footer: {
+            DownloadFooter(total: SetupState.total(plan), notes: state.selfFetchingNotes)
         }
     }
 }
@@ -47,99 +44,82 @@ struct EnginesPage: View {
 
     var body: some View {
         Form {
-            LabeledContent("Speech to text:") {
+            Section {
                 picker("Speech to text", state.inspection.stt, $state.selections.stt, sized: true)
-            }
-            LabeledContent("Text to speech:") {
                 picker("Text to speech", state.inspection.tts, $state.selections.tts, sized: true)
-            }
-            LabeledContent("Chat agent:") {
                 picker("Chat agent", state.inspection.chat, $state.selections.chat, sized: false)
             }
-            LabeledContent("Wake word:") {
+            Section {
                 Toggle("Listen for the wake word", isOn: $state.selections.wake)
-            }
-            .setupGroup()
-            if state.inspection.macos {
-                LabeledContent("Hotkey:") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Start dictation with a hotkey", isOn: $state.selections.hotkey)
-                        Text("Needs the Accessibility grant; the next pages walk you through it.")
-                            .setupFootnote()
+                if state.inspection.macos {
+                    Toggle(isOn: $state.selections.hotkey) {
+                        Text("Start dictation with a hotkey")
+                        Text("Needs Accessibility access. Setup asks for it next.")
                     }
                 }
             }
+            DownloadsSection(state: state)
         }
-        .formStyle(.columns)
     }
 
     /// With `sized`, each row shows its download size for comparing. The
-    /// chosen engine's note goes under the menu, where a long path fits.
+    /// chosen engine's note sits under the title, where a long path fits.
     private func picker(_ title: String, _ engines: [Aria_Setup_V1_Engine], _ key: Binding<String>, sized: Bool)
         -> some View
     {
         let chosen = engines.first { $0.key == key.wrappedValue }
-        return VStack(alignment: .leading, spacing: 4) {
-            Picker(title, selection: key) {
-                ForEach(engines, id: \.key) { engine in
-                    if sized {
-                        let download = SetupState.download(of: engine, in: state.inspection)
-                        (Text(engine.label) + Text("   \(download.brief)").foregroundStyle(.secondary))
-                            .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
-                            .tag(engine.key)
-                    } else {
-                        Text(engine.label).tag(engine.key)
-                    }
-                }
-                // config.yaml may name an engine setup does not offer; the
-                // picker still needs a row for it.
-                if chosen == nil {
-                    Text("\(key.wrappedValue) (from config.yaml)").tag(key.wrappedValue)
+        return Picker(selection: key) {
+            ForEach(engines, id: \.key) { engine in
+                if sized {
+                    let download = SetupState.download(of: engine, in: state.inspection)
+                    Text("\(engine.label)   \(Text(download.brief).foregroundStyle(.secondary))")
+                        .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
+                        .tag(engine.key)
+                } else {
+                    Text(engine.label).tag(engine.key)
                 }
             }
-            .labelsHidden()
-            if sized, let chosen, let note = SetupState.download(of: chosen, in: state.inspection).note {
-                Text(note).font(.callout).foregroundStyle(.secondary)
+            // config.yaml may name an engine setup does not offer; the
+            // picker still needs a row for it.
+            if chosen == nil {
+                Text("\(key.wrappedValue) (from config.yaml)").tag(key.wrappedValue)
             }
+        } label: {
+            Text(title)
             if let chosen, !chosen.note.isEmpty {
                 Text(chosen.note)
-                    .font(.callout)
                     .foregroundStyle(chosen.availability == .unsupported ? Color.red : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 }
 
-struct ModelsPage: View {
+/// The models the chosen engines need, each one a switch.
+private struct DownloadsSection: View {
     @ObservedObject var state: SetupState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Section {
             ForEach(SetupState.wanted(state.inspection, state.selections), id: \.name) { model in
-                VStack(alignment: .leading, spacing: 2) {
-                    row(model)
-                    if model.onDisk == .partial && !model.external {
-                        Text("Partly downloaded. Resumes where it stopped.").setupFootnote()
-                    }
-                }
+                row(model)
             }
-            Text(state.downloadTotal).fontWeight(.medium).padding(.top, 4)
-            ForEach(state.selfFetchingNotes, id: \.self) { Text($0).setupFootnote() }
+        } header: {
+            Text("Downloads")
+        } footer: {
+            DownloadFooter(total: state.downloadTotal, notes: state.selfFetchingNotes)
         }
     }
 
-    /// A downloaded or custom model shows a disabled checkbox, so every
-    /// title lines up. Its status sits in the label so VoiceOver reads it
-    /// with the checkbox.
+    /// A downloaded or custom model keeps a disabled switch. Its status sits
+    /// in the label so VoiceOver reads it with the switch.
     private func row(_ model: Aria_Setup_V1_Model) -> some View {
         let downloaded = model.onDisk == .complete
         let fixed = downloaded || model.external
         return Toggle(isOn: fixed ? .constant(downloaded) : toggle(model.name)) {
-            HStack {
-                Text(model.title)
-                Spacer()
-                Text(Self.status(model)).foregroundStyle(.secondary).monospacedDigit()
+            Text(model.title)
+            Text(Self.status(model)).monospacedDigit()
+            if model.onDisk == .partial && !model.external {
+                Text("Partly downloaded. Resumes where it stopped.")
             }
         }
         .disabled(fixed)
@@ -165,15 +145,18 @@ struct InstallingPage: View {
     @ObservedObject var state: SetupState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(state.installRows, id: \.step) { row in
-                HStack(spacing: 8) {
-                    mark(row.progress).frame(width: 16)
-                    Text(row.title).foregroundStyle(row.progress == .pending ? .secondary : .primary)
-                }
-                if row.step == .models {
-                    ForEach(state.progress.keys.sorted(), id: \.self) { model in
-                        if let progress = state.progress[model] { bar(model, progress) }
+        Form {
+            Section {
+                ForEach(state.installRows, id: \.step) { row in
+                    LabeledContent {
+                        mark(row.progress)
+                    } label: {
+                        Text(row.title).foregroundStyle(row.progress == .pending ? .secondary : .primary)
+                    }
+                    if row.step == .models {
+                        ForEach(state.downloadProgress.keys.sorted(), id: \.self) { model in
+                            if let progress = state.downloadProgress[model] { bar(model, progress) }
+                        }
                     }
                 }
             }
@@ -183,11 +166,11 @@ struct InstallingPage: View {
     @ViewBuilder private func mark(_ progress: SetupState.InstallRow.Progress) -> some View {
         switch progress {
         case .pending:
-            Image(systemName: "circle").foregroundStyle(.secondary)
+            StatusMark(status: .upcoming)
         case .running:
             ProgressView().controlSize(.small)
         case .done:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            StatusMark(status: .done)
         }
     }
 
@@ -199,20 +182,21 @@ struct InstallingPage: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
-        .padding(.leading, 24)
     }
 }
 
 struct GrantPage: View {
     var body: some View {
-        PageNote(symbol: "lock.shield") {
-            Text("macOS asks to let Aria use Accessibility. Choose Open System Settings and switch on Aria.")
-            Text("This page moves on by itself once the hotkey arms.")
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Waiting for the grant…").foregroundStyle(.secondary)
+        Form {
+            Section {
+                Text("macOS asks to let Aria use Accessibility. Choose Open System Settings and switch on Aria.")
+                Text("This page moves on by itself once the hotkey arms.")
+                LabeledContent {
+                    ProgressView().controlSize(.small)
+                } label: {
+                    Text("Waiting for the grant…").foregroundStyle(.secondary)
+                }
             }
-            .padding(.top, 8)
         }
     }
 }
@@ -221,63 +205,103 @@ struct VoicePage: View {
     @ObservedObject var state: SetupState
 
     var body: some View {
-        PageNote(symbol: "person.wave.2") {
-            Text("Say a few sentences when asked. macOS may ask for the microphone.")
-            LabeledContent("Name:") {
-                TextField("As transcripts should show it", text: $state.voiceName).frame(width: 240)
+        Form {
+            Section {
+                Text("Say a few sentences when asked. macOS may ask for the microphone.")
+                TextField("Name", text: $state.voiceName, prompt: Text("As transcripts should show it"))
+                if let prompt = state.voicePrompt {
+                    Text(prompt).fontWeight(.medium)
+                }
+            } footer: {
+                NoticeText(notice: state.notice)
             }
-            .padding(.top, 4)
-            if let prompt = state.voicePrompt { Text(prompt).fontWeight(.medium) }
-            if let notice = state.notice { Text(notice).foregroundStyle(.red) }
         }
     }
 }
 
 struct TryOutPage: View {
+    private static let transcriptHeight: CGFloat = 72
+
     @ObservedObject var state: SetupState
 
     var body: some View {
-        PageNote(symbol: "waveform") {
-            Text("Press Record, say something, then stop talking. Aria answers out loud.")
-            if let enrolled = state.enrolled { Text(enrolled).foregroundStyle(.secondary) }
-            if let heard = state.heard {
-                Text("“\(heard)”")
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        Form {
+            Section {
+                transcript
+                    .frame(maxWidth: .infinity, minHeight: Self.transcriptHeight, alignment: .topLeading)
+            } footer: {
+                if let enrolled = state.enrolled {
+                    Text(enrolled)
+                }
+                NoticeText(notice: state.notice)
             }
-            if let notice = state.notice { Text(notice).foregroundStyle(.red) }
+        }
+    }
+
+    @ViewBuilder private var transcript: some View {
+        if let heard = state.heard {
+            Text(heard)
+                .font(.title3)
+                .textSelection(.enabled)
+        } else if state.busy {
+            Label {
+                Text("Listening…")
+            } icon: {
+                ProgressView().controlSize(.small)
+            }
+            .foregroundStyle(.secondary)
+        } else {
+            Text("What you say shows up here.").foregroundStyle(.tertiary)
         }
     }
 }
 
 struct DonePage: View {
     @ObservedObject var state: SetupState
+    let dictationKey: HotkeyKey
+    let askHotkey: AskHotkey?
 
     var body: some View {
-        PageNote(symbol: "checkmark.seal.fill", tint: .green) {
+        Form {
+            if state.selections.hotkey || state.selections.wake || askHotkey != nil {
+                Section("How to use Aria") {
+                    if state.selections.hotkey {
+                        LabeledContent(
+                            "Dictate",
+                            value: state.hotkeyReady
+                                ? "Tap \(dictationKey.title)" : "Works once Accessibility access is given"
+                        )
+                    }
+                    if state.selections.wake {
+                        LabeledContent("Dictate hands-free", value: "Say the wake word")
+                    }
+                    if let askHotkey {
+                        LabeledContent("Ask your agent", value: "Press \(askHotkey.title)")
+                    }
+                }
+            }
             if let summary = state.summary {
-                ForEach(summary.models, id: \.model) { model in
-                    Text("\(model.model): \(Self.outcome(model.outcome))")
+                Section {
+                    ForEach(summary.models, id: \.model) { model in
+                        LabeledContent(model.model, value: Self.outcome(model.outcome))
+                    }
+                    LabeledContent("Background service", value: "Registered")
+                    if let heard = state.heard {
+                        LabeledContent("Heard", value: heard)
+                    }
+                } footer: {
+                    NoticeText(notice: state.notice)
                 }
-                Text("Background service: registered")
-                if state.selections.hotkey {
-                    Text(
-                        summary.grant == .armed ? "Hotkey: armed" : "Hotkey: arms once the Accessibility grant is given"
-                    )
-                }
-                if let notice = state.notice { Text(notice).foregroundStyle(.red) }
             }
         }
     }
 
     private static func outcome(_ outcome: Aria_Setup_V1_Outcome) -> String {
         switch outcome {
-        case .downloaded: "downloaded"
-        case .present: "already there"
-        case .skipped: "skipped"
-        case .unspecified, .UNRECOGNIZED: "unknown"
+        case .downloaded: "Downloaded"
+        case .present: "Already there"
+        case .skipped: "Skipped"
+        case .unspecified, .UNRECOGNIZED: "Unknown"
         }
     }
 }
@@ -294,23 +318,25 @@ struct FailedPage: View {
     }
 }
 
-/// A big symbol beside a short column of text, the shape of every page
-/// that only reports or waits.
-private struct PageNote<Content: View>: View {
-    let symbol: String
-    var tint: Color = .accentColor
-    @ViewBuilder let content: Content
+/// The total to download, over notes on engines that fetch their own models.
+private struct DownloadFooter: View {
+    let total: String
+    let notes: [String]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 20) {
-            Image(systemName: symbol)
-                .font(.system(size: 40))
-                .foregroundStyle(tint)
-                .frame(width: 56)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 8) { content }
-                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(total).fontWeight(.medium)
+            ForEach(notes, id: \.self) { Text($0) }
         }
-        .padding(.top, 8)
+    }
+}
+
+private struct NoticeText: View {
+    let notice: String?
+
+    var body: some View {
+        if let notice {
+            Text(notice).foregroundStyle(.red)
+        }
     }
 }

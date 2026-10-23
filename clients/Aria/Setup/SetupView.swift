@@ -1,65 +1,81 @@
 import SwiftUI
 
 struct SetupView: View {
+    /// Where the grouped form draws its boxes, so the buttons line up with them.
+    private static let boxInset: CGFloat = 20
+    /// Where the form's rows and section headers start, so the title lines up with them.
+    private static let textInset: CGFloat = 30
+    /// Keeps the header and buttons clear of a page that scrolls under them.
+    private static let scrollGap: CGFloat = 12
+
     @ObservedObject var state: SetupState
+    @ObservedObject var preferences: DaemonPreferences
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            // The outgoing and incoming pages overlap here instead of
-            // sharing the column; the id follows the page, not the step.
-            ZStack(alignment: .topLeading) {
-                page
-                    .id(state.step.order)
-                    .transition(transition)
+        SidebarWindow {
+            SetupRail(progress: state.progress)
+        } detail: {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                // The outgoing and incoming pages overlap here instead of
+                // sharing the column; the id follows the page, not the step.
+                ZStack(alignment: .topLeading) {
+                    page
+                        .id(state.step.order)
+                        .transition(transition)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .clipped()
+                footer
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .clipped()
-            footer
         }
-        .padding(20)
-        .frame(width: 520, height: 440)
         .animation(.easeInOut(duration: 0.25), value: state.step)
-        .onAppear {
-            NSApplication.shared.activate()
-            state.start()
-        }
+        .onAppear { state.start() }
         .onDisappear { state.stop() }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(state.step.title).font(.title2.weight(.semibold))
+            Text(state.step.title).font(.title2.bold())
             if let caption = state.step.caption {
-                Text(caption).font(.callout).foregroundStyle(.secondary)
+                Text(caption).foregroundStyle(.secondary)
             }
         }
-        .padding(.bottom, 16)
+        .padding(.horizontal, Self.textInset)
+        .padding(.bottom, Self.scrollGap)
     }
 
     @ViewBuilder private var page: some View {
         switch state.step {
         case .inspecting, .welcome: WelcomePage(state: state)
         case .choices: EnginesPage(state: state)
-        case .models: ModelsPage(state: state)
         case .applying: InstallingPage(state: state)
         case .grant: GrantPage()
         case .voice: VoicePage(state: state)
         case .tryOut: TryOutPage(state: state)
-        case .done: DonePage(state: state)
+        case .done: DonePage(state: state, dictationKey: dictationKey, askHotkey: askHotkey)
         case .failed(let message): FailedPage(message: message)
         }
     }
 
+    /// The daemon's default until it answers.
+    private var dictationKey: HotkeyKey {
+        preferences.snapshot?.storedDictationHotkey ?? .default
+    }
+
+    private var askHotkey: AskHotkey? {
+        preferences.snapshot?.storedAskHotkey.flatMap { $0.isActive ? $0 : nil }
+    }
+
     private var footer: some View {
         HStack {
-            if let stage = state.step.stage { StageDots(current: stage) }
             Spacer()
             buttons
         }
-        .padding(.top, 16)
+        .padding(.top, Self.scrollGap)
+        .padding([.horizontal, .bottom], Self.boxInset)
     }
 
     @ViewBuilder private var buttons: some View {
@@ -76,13 +92,9 @@ struct SetupView: View {
                 .disabled(state.step == .inspecting || state.blockedBy != nil)
         case .choices:
             Button("Back") { state.back() }
-            Button("Continue") { state.next() }
-                .primaryAction()
-                .disabled(state.blockedBy != nil)
-        case .models:
-            Button("Back") { state.back() }
             Button("Set Up") { state.next() }
                 .primaryAction()
+                .disabled(state.blockedBy != nil)
         case .applying:
             // Only a download can be cut short cleanly; the other steps
             // are too quick to catch, and a half-installed service is not
@@ -125,20 +137,5 @@ extension View {
     /// The one button a page answers Return with.
     fileprivate func primaryAction() -> some View {
         buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-    }
-}
-
-private struct StageDots: View {
-    let current: SetupState.Stage
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(SetupState.Stage.allCases, id: \.rawValue) { stage in
-                Circle()
-                    .fill(stage.rawValue <= current.rawValue ? Color.accentColor : Color.secondary.opacity(0.3))
-                    .frame(width: 7, height: 7)
-            }
-        }
-        .accessibilityLabel("Step \(current.rawValue + 1) of \(SetupState.Stage.allCases.count)")
     }
 }
