@@ -151,7 +151,7 @@ enum Command {
 
 pub(super) struct Worker<C: Collector> {
     collector: C,
-    pipeline_key: Option<String>,
+    cache_key: Option<String>,
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
     directory: PathBuf,
@@ -186,7 +186,7 @@ impl Runtime {
             persistent,
         });
         let worker = Worker {
-            pipeline_key: collector.pipeline_key(),
+            cache_key: collector.cache_key(),
             collector,
             runtime: Arc::clone(&runtime),
             requests: receiver,
@@ -838,8 +838,8 @@ impl<C: Collector> Worker<C> {
         catalog: &mut Option<Catalog>,
     ) -> Result<Status, Error> {
         self.runtime.interrupted(cancel)?;
-        let key = self.pipeline_key.clone().ok_or(Error::Unavailable)?;
-        if self.collector.pipeline_key().as_ref() != Some(&key) {
+        let key = self.cache_key.clone().ok_or(Error::Unavailable)?;
+        if self.collector.cache_key().as_ref() != Some(&key) {
             tracing::warn!("vocabulary collector changed its cache identity");
             return Err(Error::Unavailable);
         }
@@ -972,7 +972,7 @@ mod tests {
     use super::*;
     use crate::vocabulary::discover::LocalCollector;
     use crate::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
-    use crate::vocabulary::{Candidate, Coverage, Discovery, Source, SourceKind, pipeline_key};
+    use crate::vocabulary::{Candidate, Coverage, Discovery, Source, SourceKind, cache_key};
     use std::ops::Range;
 
     fn directory(path: &Path) -> Directory {
@@ -994,7 +994,7 @@ mod tests {
     impl Collector for StaticCollector {
         type Error = std::convert::Infallible;
 
-        fn pipeline_key(&self) -> Option<String> {
+        fn cache_key(&self) -> Option<String> {
             Some("test-collector-1".into())
         }
 
@@ -1090,7 +1090,7 @@ mod tests {
                 .unwrap()
                 .load(
                     &selected.as_path().canonicalize().unwrap(),
-                    &worker.pipeline_key.unwrap(),
+                    &worker.cache_key.unwrap(),
                 )
                 .unwrap()
                 .is_none()
@@ -1229,7 +1229,7 @@ mod tests {
         shutdown.cancel();
         task.await.unwrap();
         let catalog = Catalog::open(&catalog_dir, CancelToken::never()).unwrap();
-        let key = pipeline_key(LocalExtractor.cache_key()).unwrap();
+        let key = cache_key(LocalExtractor.cache_key()).unwrap();
         assert!(
             catalog
                 .load(&parent.as_path().canonicalize().unwrap(), &key)
@@ -1335,7 +1335,7 @@ mod tests {
             &mut LocalExtractor,
         )
         .unwrap();
-        let key = pipeline_key(LocalExtractor.cache_key()).unwrap();
+        let key = cache_key(LocalExtractor.cache_key()).unwrap();
         let catalog_dir = temporary.path().join("catalog");
         let mut catalog = Catalog::open(&catalog_dir, CancelToken::never()).unwrap();
         catalog

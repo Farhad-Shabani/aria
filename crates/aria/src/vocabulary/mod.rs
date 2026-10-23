@@ -67,7 +67,7 @@ pub(crate) fn source_bytes(source: &Source) -> usize {
             .sum::<usize>()
 }
 
-pub(crate) fn pipeline_key(extractor_key: &str) -> Option<String> {
+pub(crate) fn cache_key(extractor_key: &str) -> Option<String> {
     if extractor_key.is_empty()
         || extractor_key.len() > 128
         || !extractor_key.bytes().all(|byte| byte.is_ascii_graphic())
@@ -75,6 +75,6 @@ pub(crate) fn pipeline_key(extractor_key: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "scan2:select1:text{MAX_TEXT_BYTES}:candidates{MAX_CANDIDATES}:terms{SELECTED_TERMS}:{extractor_key}"
+        "scan3:select1:text{MAX_TEXT_BYTES}:candidates{MAX_CANDIDATES}:terms{SELECTED_TERMS}:{extractor_key}"
     ))
 }

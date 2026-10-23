@@ -7,6 +7,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use aria_kit::cancel::CancelToken;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 use sha2::{Digest, Sha256};
 
@@ -14,7 +15,7 @@ use super::collection::{Collector, Error};
 use super::extract::{Extractor, TextInput};
 use super::{
     Candidate, Coverage, Discovery, MAX_CANDIDATES, MAX_SOURCE_BYTES, MAX_TERMS, MAX_TEXT_BYTES,
-    Source, SourceKind, pipeline_key, source_bytes,
+    Source, SourceKind, cache_key, source_bytes,
 };
 
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
@@ -35,8 +36,8 @@ impl<E: Extractor> LocalCollector<E> {
 impl<E: Extractor> Collector for LocalCollector<E> {
     type Error = E::Error;
 
-    fn pipeline_key(&self) -> Option<String> {
-        pipeline_key(self.extractor.cache_key())
+    fn cache_key(&self) -> Option<String> {
+        cache_key(self.extractor.cache_key())
     }
 
     fn collect(
@@ -91,7 +92,7 @@ pub(crate) fn scan_cached<E: Extractor>(
     if let Some(name) = root.file_name().and_then(OsStr::to_str) {
         scanner.input(Path::new("."), SourceKind::DirectoryName, name)?;
     }
-    scanner.walk(&directory, Path::new("."), 0)?;
+    scanner.walk(&directory, Path::new("."), 0, &mut Vec::new())?;
     for (path, before) in &scanner.observed {
         check_cancelled(cancel)?;
         let current = open_beneath(&directory, path).map_err(|_| Error::Unstable)?;
@@ -133,12 +134,17 @@ impl<E: Extractor> Scanner<'_, E> {
         directory: &File,
         scope: &Path,
         depth: usize,
+        ignores: &mut Vec<Gitignore>,
     ) -> Result<(), Error<E::Error>> {
         check_cancelled(self.cancel)?;
         if depth > MAX_DEPTH {
             return Err(Error::TooLarge);
         }
         self.observe(scope, &directory.metadata()?)?;
+        let inherited = ignores.len();
+        if let Some(rules) = self.ignore_rules(directory, scope)? {
+            ignores.push(rules);
+        }
         for entry in Dir::read_from(directory).map_err(io::Error::from)? {
             check_cancelled(self.cancel)?;
             let entry = entry.map_err(io::Error::from)?;
@@ -159,13 +165,22 @@ impl<E: Extractor> Scanner<'_, E> {
             check_cancelled(self.cancel)?;
             let kind = FileType::from_raw_mode(metadata.st_mode);
             let path = join_relative(scope, name);
+            if ignores
+                .iter()
+                .rev()
+                .map(|rules| rules.matched(&path, kind == FileType::Directory))
+                .find(|matched| !matched.is_none())
+                .is_some_and(|matched| matched.is_ignore())
+            {
+                continue;
+            }
             match kind {
                 FileType::Directory => {
                     let child = open_child_directory(directory, name)?;
                     if let Some(name) = name.to_str() {
                         self.input(&path, SourceKind::DirectoryName, name)?;
                     }
-                    self.walk(&child, &path, depth + 1)?;
+                    self.walk(&child, &path, depth + 1, ignores)?;
                 }
                 FileType::RegularFile => {
                     if let Some(name) = name.to_str() {
@@ -177,7 +192,62 @@ impl<E: Extractor> Scanner<'_, E> {
                 _ => self.coverage.unsupported += 1,
             }
         }
+        ignores.truncate(inherited);
         check_cancelled(self.cancel)
+    }
+
+    fn ignore_rules(
+        &mut self,
+        directory: &File,
+        scope: &Path,
+    ) -> Result<Option<Gitignore>, Error<E::Error>> {
+        check_cancelled(self.cancel)?;
+        let descriptor = match rustix::fs::openat(
+            directory,
+            ".gitignore",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(error) => return Err(io::Error::from(error).into()),
+        };
+        let mut file = File::from(descriptor);
+        let before = file.metadata()?;
+        if !before.is_file() {
+            return Err(io::Error::other("expected a regular .gitignore file").into());
+        }
+        let path = join_relative(scope, OsStr::new(".gitignore"));
+        self.observe(&path, &before)?;
+        if before.len() > MAX_TEXT_BYTES as u64 {
+            return Err(Error::TooLarge);
+        }
+        let mut contents = Vec::new();
+        let mut buffer = [0; WORK_BYTES];
+        loop {
+            check_cancelled(self.cancel)?;
+            let count = file.read(&mut buffer)?;
+            self.coverage.bytes += count;
+            if contents.len() + count > MAX_TEXT_BYTES || self.coverage.bytes > MAX_TOTAL_BYTES {
+                return Err(Error::TooLarge);
+            }
+            if count == 0 {
+                break;
+            }
+            contents.extend_from_slice(&buffer[..count]);
+        }
+        let text = std::str::from_utf8(&contents).map_err(io::Error::other)?;
+        let mut builder = GitignoreBuilder::new(scope);
+        for line in text.trim_start_matches('\u{feff}').lines() {
+            check_cancelled(self.cancel)?;
+            self.reserve(512 + 2 * line.len())?;
+            builder
+                .add_line(Some(path.clone()), line)
+                .map_err(io::Error::other)?;
+        }
+        let rules = builder.build().map_err(io::Error::other)?;
+        check_cancelled(self.cancel)?;
+        Ok(Some(rules))
     }
 
     fn text(&mut self, directory: &File, name: &OsStr, path: &Path) -> Result<(), Error<E::Error>> {
@@ -480,6 +550,124 @@ mod tests {
             self.inputs.push((input.kind, input.text.to_owned()));
             Ok(Vec::new())
         }
+    }
+
+    #[test]
+    fn gitignore_prunes_subtrees_and_updates_cached_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), ".gitignore", "*\n");
+        let selected = temp.path().join("selected");
+        let root = selected.as_path();
+        for path in [
+            "target/generated.txt",
+            "keep.txt",
+            "drop.txt",
+            "root-only.rs",
+            "src/root-only.rs",
+            "src/inside.txt",
+            "src/scratch.tmp",
+            "src/blocked/escape.txt",
+            "other/inside.txt",
+        ] {
+            write(root, path, "project-name");
+        }
+        let first = scan_cached(root, &CancelToken::never(), &[], &mut LocalExtractor).unwrap();
+        assert!(
+            first
+                .sources
+                .iter()
+                .any(|source| { source.relative_path == Path::new("target/generated.txt") })
+        );
+
+        write(
+            root,
+            ".gitignore",
+            "target/\n*.txt\n!keep.txt\n*.tmp\n/root-only.rs\n",
+        );
+        write(
+            root,
+            "src/.gitignore",
+            "!inside.txt\nblocked/\n!blocked/escape.txt\n",
+        );
+        let mut deep = root.join("target");
+        for _ in 0..=MAX_DEPTH {
+            deep.push("nested");
+        }
+        fs::create_dir_all(deep).unwrap();
+        let refreshed = scan_cached(
+            root,
+            &CancelToken::never(),
+            &first.sources,
+            &mut LocalExtractor,
+        )
+        .unwrap();
+        let paths: HashSet<_> = refreshed
+            .sources
+            .iter()
+            .map(|source| source.relative_path.as_path())
+            .collect();
+        for included in ["keep.txt", "src/inside.txt", "src/root-only.rs"] {
+            assert!(paths.contains(Path::new(included)), "missing {included}");
+        }
+        for excluded in [
+            "target",
+            "target/generated.txt",
+            "drop.txt",
+            "root-only.rs",
+            "src/scratch.tmp",
+            "src/blocked",
+            "src/blocked/escape.txt",
+            "other/inside.txt",
+        ] {
+            assert!(!paths.contains(Path::new(excluded)), "included {excluded}");
+        }
+
+        write(root, "src/.gitignore", "inside.txt\nblocked/\n");
+        let changed = scan_cached(
+            root,
+            &CancelToken::never(),
+            &refreshed.sources,
+            &mut LocalExtractor,
+        )
+        .unwrap();
+        assert!(
+            !changed
+                .sources
+                .iter()
+                .any(|source| { source.relative_path == Path::new("src/inside.txt") })
+        );
+    }
+
+    #[test]
+    fn gitignore_read_failures_do_not_produce_partial_results() {
+        let temp = tempfile::tempdir().unwrap();
+        for contents in [vec![b'a'; MAX_TEXT_BYTES + 1], vec![0xff]] {
+            write(temp.path(), ".gitignore", contents);
+            let result = scan_cached(temp.path(), &CancelToken::never(), &[], &mut LocalExtractor);
+            assert!(matches!(result, Err(Error::TooLarge | Error::Io(_))));
+        }
+        write(temp.path(), ".gitignore", "*.txt\n");
+        let selected = temp.path().join("selected");
+        fs::create_dir(&selected).unwrap();
+        symlink(temp.path().join(".gitignore"), selected.join(".gitignore")).unwrap();
+        assert!(matches!(
+            scan_cached(&selected, &CancelToken::never(), &[], &mut LocalExtractor),
+            Err(Error::Io(_))
+        ));
+    }
+
+    #[test]
+    fn gitignore_changes_during_extraction_reject_the_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), ".gitignore", "");
+        write(temp.path(), "notes.txt", "project-name");
+        let result = scan_cached(
+            temp.path(),
+            &CancelToken::never(),
+            &[],
+            &mut MutatingExtractor(temp.path().join(".gitignore")),
+        );
+        assert!(matches!(result, Err(Error::Unstable)));
     }
 
     #[test]
