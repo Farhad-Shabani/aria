@@ -73,7 +73,7 @@ final class FloatingPanel {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
-        panel.level = .statusBar
+        panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         // Without this a borderless panel can still be made key by the system.
         panel.becomesKeyOnlyIfNeeded = true
