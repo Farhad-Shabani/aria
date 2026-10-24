@@ -23,6 +23,8 @@ mod wav;
 use std::time::Duration;
 
 pub use clip::{Clip, ClipError};
+#[cfg(not(target_family = "wasm"))]
+pub use recording::SpooledRecordingWriter;
 pub use recording::{CaptureError, RecordedAudio, Recording, RecordingReader, RecordingWriter};
 #[cfg(not(target_family = "wasm"))]
 pub use resample::{ResampleError, Resampler};

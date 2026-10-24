@@ -51,6 +51,8 @@ enum ModelSource {
   // The engine fetches it itself, so setup cannot tell its size.
   MODEL_SOURCE_FETCHED_ON_FIRST_USE = 2;
   MODEL_SOURCE_BUILT_IN = 3;
+  // A paired inference server holds the model; nothing lands on this machine.
+  MODEL_SOURCE_REMOTE = 4;
 }
 
 enum Availability {

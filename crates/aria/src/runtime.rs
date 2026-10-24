@@ -36,6 +36,11 @@ impl RuntimePaths {
         Ok(Self::in_directory(directory))
     }
 
+    /// The socket a client connects to without preparing the directory.
+    pub(crate) fn socket_path(&self) -> &Path {
+        &self.socket
+    }
+
     /// Creates and validates the private directory containing runtime state.
     pub fn prepare(self) -> Result<PreparedRuntimePaths> {
         if !self.directory.is_absolute() {

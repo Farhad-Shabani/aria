@@ -45,7 +45,7 @@ jobs:
           tool: just@1.58.0,taplo@0.10.0,cargo-shear@1.14.0,cargo-deny@0.20.2
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: just check
-        run: xvfb-run -a just check
+        run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' just check
 
   features:
     name: Features

@@ -12,7 +12,7 @@ usage statistics with us.
 
 ## What stays on your device
 
-Aria processes speech on your devices and keeps your recordings, transcripts,
+By default, Aria processes speech on your devices and keeps your recordings, transcripts,
 voice profiles, and settings there. You can delete them at any time.
 
 ## What leaves your device
@@ -25,6 +25,11 @@ Data leaves your device in these cases:
   that service. Its own privacy policy applies.
 - **Using Aria across your devices.** When you connect your devices, Aria
   sends data between them over encrypted connections.
+- **Choosing server transcription.** Aria sends audio and recognition settings
+  to the server you paired and configured. Its operator can read the audio and
+  returned text. Streaming sends audio before voice filtering; voice profiles
+  and corrections stay on your device. Aria's server keeps no history, but uses
+  memory and temporary files. Crashes, swap and backups can retain copies.
 
 ## Changes and questions
 

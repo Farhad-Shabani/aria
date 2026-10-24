@@ -419,7 +419,7 @@ where
                     .map(|heard| heard.map(HeardUpdate::Finalized))
             }
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
-            scan.hear_through(recording.held_to());
+            scan.hear_through(operation.read_to());
             match update {
                 Some(HeardUpdate::Finalized(_)) if !scan.heard() => guessed += 1,
                 Some(HeardUpdate::Provisional(_)) if !scan.heard() => {}
@@ -691,9 +691,11 @@ fn log_transcription_error(
         | TranscriptionError::UnsupportedBackend { .. }
         | TranscriptionError::UnsupportedDevice { .. }
         | TranscriptionError::NoNativeStream
+        | TranscriptionError::NoDelegatedOperation
         | TranscriptionError::LoadPanicked
         | TranscriptionError::Cancelled
         | TranscriptionError::NoSpeech
+        | TranscriptionError::InvalidSegment
         | TranscriptionError::Processing(_) => "transcription",
     };
     log_stage_error(

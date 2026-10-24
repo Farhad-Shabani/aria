@@ -17,7 +17,7 @@
 </p>
 
 Aria hears you, writes what you say, and reads text aloud. It's a voice
-assistant for macOS and Linux, with all speech processing on your machine. It
+assistant for macOS and Linux, with speech processing local by default. It
 also talks to your AI agents and keeps the conversation going. They get your
 words, never your audio.
 

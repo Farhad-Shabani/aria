@@ -199,6 +199,7 @@ impl From<ModelSource> for generated::ModelSource {
             ModelSource::Downloads(_) => Self::Downloads,
             ModelSource::FetchedOnFirstUse => Self::FetchedOnFirstUse,
             ModelSource::BuiltIn => Self::BuiltIn,
+            ModelSource::Remote => Self::Remote,
         }
     }
 }

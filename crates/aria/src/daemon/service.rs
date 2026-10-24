@@ -9,6 +9,7 @@ mod chat;
 mod dictation;
 mod events;
 mod history;
+mod inference;
 mod listen;
 mod pairing;
 mod preferences;
@@ -26,6 +27,9 @@ pub(super) use chat::ChatRpc;
 pub(super) use dictation::DictationRpc;
 pub(super) use events::EventsService;
 pub(super) use history::{HistoryRpc, HistoryWorker};
+pub(super) use inference::{
+    InferenceAdminRpc, InferencePairingRpc, InferenceRpc, authenticate as authenticate_inference,
+};
 pub(super) use listen::ListenRpc;
 pub(super) use pairing::{InviteRpc, PairingRpc};
 pub(super) use preferences::PreferencesRpc;

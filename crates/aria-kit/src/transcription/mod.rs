@@ -86,6 +86,20 @@ pub trait Transcriber: Send + Sync + 'static {
         let _ = (language, cancel);
         Ok(None)
     }
+
+    /// Runs a whole operation on the transcriber's side, for one that decodes
+    /// elsewhere. Only [`Transcription::delegated`] calls it; `incremental`
+    /// says whether the mode streams. The default `None` fails that
+    /// transcription with [`TranscriptionError::NoDelegatedOperation`].
+    fn open_operation(
+        &self,
+        language: &Language,
+        incremental: bool,
+        cancel: &CancelToken,
+    ) -> Result<Option<OperationSource>, TranscriptionError> {
+        let _ = (language, incremental, cancel);
+        Ok(None)
+    }
 }
 
 /// One live decode of an engine that streams natively: audio in by the
@@ -168,6 +182,15 @@ impl<T: Transcriber + ?Sized> Transcriber for std::sync::Arc<T> {
     ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
         (**self).open_stream(language, cancel)
     }
+
+    fn open_operation(
+        &self,
+        language: &Language,
+        incremental: bool,
+        cancel: &CancelToken,
+    ) -> Result<Option<OperationSource>, TranscriptionError> {
+        (**self).open_operation(language, incremental, cancel)
+    }
 }
 
 impl<T: Transcriber + ?Sized> Transcriber for Box<T> {
@@ -194,6 +217,15 @@ impl<T: Transcriber + ?Sized> Transcriber for Box<T> {
         cancel: &CancelToken,
     ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
         (**self).open_stream(language, cancel)
+    }
+
+    fn open_operation(
+        &self,
+        language: &Language,
+        incremental: bool,
+        cancel: &CancelToken,
+    ) -> Result<Option<OperationSource>, TranscriptionError> {
+        (**self).open_operation(language, incremental, cancel)
     }
 }
 
@@ -362,9 +394,15 @@ impl std::fmt::Debug for Hypothesis {
 }
 
 pub struct Transcription<T, M: Mode, L = ()> {
-    config: M::Config,
+    plan: Plan<M::Config>,
     transcriber: T,
     layers: L,
+}
+
+#[derive(Clone, Copy)]
+enum Plan<C> {
+    Local(C),
+    Delegated,
 }
 
 pub struct Operation<'a, T, L = ()> {
@@ -372,6 +410,7 @@ pub struct Operation<'a, T, L = ()> {
     language: &'a Language,
     cancel: CancelToken,
     strategy: Strategy,
+    read_to: u64,
     transcript: Option<Transcript>,
     layers: &'a L,
     output: Option<layer::Output>,
@@ -384,14 +423,107 @@ struct ChunkStep {
     transcript: Option<Transcript>,
 }
 
+pub enum OperationStep {
+    Update {
+        update: TranscriptUpdate,
+        retained_from: u64,
+        read_to: u64,
+        completed: Option<Transcript>,
+    },
+    Complete {
+        transcript: Transcript,
+        retained_from: u64,
+        read_to: u64,
+    },
+}
+
+type OperationCallback =
+    dyn FnMut(&mut RecordingReader, bool) -> Result<OperationStep, TranscriptionError> + Send;
+
+pub struct OperationSource {
+    next: Box<OperationCallback>,
+    retained_from: u64,
+    read_to: u64,
+    completed: Option<Transcript>,
+    finished: bool,
+}
+
+impl OperationSource {
+    /// `next(reader, previews)` must fill `reader` through each `read_to`,
+    /// and fully before `Complete`.
+    pub fn new(
+        next: impl FnMut(&mut RecordingReader, bool) -> Result<OperationStep, TranscriptionError>
+        + Send
+        + 'static,
+    ) -> Self {
+        Self {
+            next: Box::new(next),
+            retained_from: 0,
+            read_to: 0,
+            completed: None,
+            finished: false,
+        }
+    }
+
+    fn next(
+        &mut self,
+        recording: &mut RecordingReader,
+        previews: bool,
+        cancel: &CancelToken,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+        while !self.finished {
+            check_cancelled(cancel)?;
+            let step = (self.next)(recording, previews)?;
+            check_cancelled(cancel)?;
+            match step {
+                OperationStep::Update {
+                    update,
+                    retained_from,
+                    read_to,
+                    completed,
+                } => {
+                    self.retained_from = retained_from;
+                    self.read_to = read_to;
+                    if let Some(transcript) = completed {
+                        self.completed = Some(transcript);
+                    }
+                    if previews || matches!(update, TranscriptUpdate::Finalized(_)) {
+                        return Ok(Some(ChunkStep {
+                            update: Some(update),
+                            transcript: self.completed.take(),
+                        }));
+                    }
+                }
+                OperationStep::Complete {
+                    transcript,
+                    retained_from,
+                    read_to,
+                } => {
+                    self.retained_from = retained_from;
+                    self.read_to = read_to;
+                    self.finished = true;
+                    return Ok(Some(ChunkStep {
+                        update: None,
+                        transcript: Some(transcript),
+                    }));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
 /// Public items here stay unnameable outside this module.
 mod sealed {
-    use super::{CancelToken, Language, Transcriber, TranscriptionError, agreement, native};
+    use super::{
+        CancelToken, Language, OperationSource, Transcriber, TranscriptionError, agreement, native,
+    };
 
     pub enum Strategy {
         WholeRecording(WholeRecordingInput),
         Agreement(Box<agreement::AgreementState>),
         Native(Box<native::NativeState>),
+        Delegated(OperationSource),
     }
 
     #[derive(Clone, Copy)]
@@ -477,7 +609,7 @@ impl sealed::Sealed for Streaming {
 impl<T> Transcription<T, Whole> {
     pub fn complete_samples(transcriber: T) -> Self {
         Self {
-            config: WholeRecordingInput::Samples,
+            plan: Plan::Local(WholeRecordingInput::Samples),
             transcriber,
             layers: (),
         }
@@ -486,7 +618,7 @@ impl<T> Transcription<T, Whole> {
     #[cfg(not(target_family = "wasm"))]
     pub fn complete_wav(transcriber: T) -> Self {
         Self {
-            config: WholeRecordingInput::Wav,
+            plan: Plan::Local(WholeRecordingInput::Wav),
             transcriber,
             layers: (),
         }
@@ -515,7 +647,19 @@ impl<T> Transcription<T, Streaming> {
     /// an engine passes that engine's [`StreamingEngine::STREAM`] here.
     pub fn stream(stream: Stream, transcriber: T) -> Self {
         Self {
-            config: stream,
+            plan: Plan::Local(stream),
+            transcriber,
+            layers: (),
+        }
+    }
+}
+
+impl<T, M: Mode> Transcription<T, M> {
+    /// Runs each operation through the transcriber's own
+    /// [`Transcriber::open_operation`].
+    pub fn delegated(transcriber: T) -> Self {
+        Self {
+            plan: Plan::Delegated,
             transcriber,
             layers: (),
         }
@@ -531,7 +675,7 @@ impl<T: StreamingEngine> Transcription<T, Streaming> {
 impl<T, M: Mode, L: Layer> Transcription<T, M, L> {
     pub fn with<N: Layer>(self, layer: N) -> Transcription<T, M, Layered<N, L>> {
         Transcription {
-            config: self.config,
+            plan: self.plan,
             transcriber: self.transcriber,
             layers: Layered::new(self.layers, layer),
         }
@@ -555,12 +699,21 @@ impl<T: Transcriber, M: Mode, L: Layer> Transcription<T, M, L> {
         check_cancelled(cancel)?;
         self.transcriber.validate_language(language, cancel)?;
         check_cancelled(cancel)?;
-        let strategy = M::strategy(self.config, &self.transcriber, language, cancel)?;
+        let strategy = match self.plan {
+            Plan::Local(config) => M::strategy(config, &self.transcriber, language, cancel)?,
+            Plan::Delegated => self
+                .transcriber
+                .open_operation(language, M::INCREMENTAL, cancel)?
+                .map(Strategy::Delegated)
+                .ok_or(TranscriptionError::NoDelegatedOperation)?,
+        };
+        check_cancelled(cancel)?;
         Ok(Operation {
             transcriber: &self.transcriber,
             language,
             cancel: cancel.clone(),
             strategy,
+            read_to: 0,
             transcript: None,
             layers: &self.layers,
             output: self.layers.enabled().then(layer::Output::default),
@@ -617,6 +770,13 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
         self.transcript.as_ref()
     }
 
+    /// How far audio had been read for decoding when the latest update was
+    /// produced. A local strategy reads the caller's recording; a delegated
+    /// one reports where the transcriber read to.
+    pub fn read_to(&self) -> u64 {
+        self.read_to
+    }
+
     /// The earliest stream position this operation may still read. A caller
     /// done with everything behind it can release that audio.
     ///
@@ -635,6 +795,7 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
             Strategy::WholeRecording(_) => 0,
             Strategy::Agreement(state) => state.retained_from(),
             Strategy::Native(state) => state.retained_from(),
+            Strategy::Delegated(source) => source.retained_from,
         }
     }
 
@@ -706,6 +867,21 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
         recording: &mut RecordingReader,
         previews: bool,
     ) -> Result<Option<TranscriptUpdate>, TranscriptionError> {
+        let update = self.decode_step(recording, previews);
+        self.read_to = match &self.strategy {
+            Strategy::Delegated(source) => source.read_to,
+            Strategy::WholeRecording(_) | Strategy::Agreement(_) | Strategy::Native(_) => {
+                recording.held_to()
+            }
+        };
+        update
+    }
+
+    fn decode_step(
+        &mut self,
+        recording: &mut RecordingReader,
+        previews: bool,
+    ) -> Result<Option<TranscriptUpdate>, TranscriptionError> {
         let step = match &mut self.strategy {
             Strategy::WholeRecording(input) => {
                 if self.transcript.is_some() {
@@ -742,6 +918,10 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
                 }
             }
             Strategy::Native(state) => match state.next_finalized_with(recording, &self.cancel)? {
+                Some(step) => step,
+                None => return Ok(None),
+            },
+            Strategy::Delegated(source) => match source.next(recording, previews, &self.cancel)? {
                 Some(step) => step,
                 None => return Ok(None),
             },
@@ -812,6 +992,17 @@ pub struct TranscriptSegment {
 }
 
 impl TranscriptSegment {
+    pub fn new(
+        text: impl Into<String>,
+        span: Option<std::ops::Range<u64>>,
+    ) -> Result<Self, TranscriptionError> {
+        let text = text.into().trim().to_owned();
+        if text.is_empty() || span.as_ref().is_some_and(|span| span.start > span.end) {
+            return Err(TranscriptionError::InvalidSegment);
+        }
+        Ok(Self { text, span })
+    }
+
     fn spanned(words: &[String], span: Option<std::ops::Range<u64>>) -> Option<Self> {
         let text = words.join(" ");
         (!text.is_empty()).then_some(Self { text, span })
@@ -1021,6 +1212,12 @@ pub enum TranscriptionError {
     #[error("no speech was transcribed")]
     NoSpeech,
 
+    #[error("the transcriber was asked to run an operation but offers none")]
+    NoDelegatedOperation,
+
+    #[error("transcript segment has empty text or a reversed audio span")]
+    InvalidSegment,
+
     #[error("transcript processing failed")]
     Processing(#[source] layer::Error),
 }
@@ -1058,6 +1255,198 @@ pub fn english_only(backend: &'static str, language: &Language) -> Result<(), Tr
         backend,
         language: code.as_str().to_owned(),
     })
+}
+
+#[cfg(test)]
+mod operation_source_tests {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    struct Delegated {
+        openings: Arc<Mutex<Vec<bool>>>,
+    }
+
+    impl Transcriber for Delegated {
+        fn validate_language(
+            &self,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
+            Ok(())
+        }
+
+        fn transcribe_with(
+            &self,
+            _: TranscriptionAudio<'_>,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<Hypothesis, TranscriptionError> {
+            panic!("the delegated operation owns decoding")
+        }
+
+        fn open_operation(
+            &self,
+            _: &Language,
+            incremental: bool,
+            _: &CancelToken,
+        ) -> Result<Option<OperationSource>, TranscriptionError> {
+            self.openings.lock().unwrap().push(incremental);
+            let mut steps = VecDeque::from([
+                OperationStep::Update {
+                    update: TranscriptUpdate::Provisional("hello".into()),
+                    retained_from: 0,
+                    read_to: 20,
+                    completed: None,
+                },
+                OperationStep::Update {
+                    update: TranscriptUpdate::Finalized(TranscriptSegment::new(
+                        "hello world",
+                        Some(10..30),
+                    )?),
+                    retained_from: 10,
+                    read_to: 30,
+                    completed: Some(Transcript::new("hello world")?),
+                },
+                OperationStep::Complete {
+                    transcript: Transcript::new("hello world")?,
+                    retained_from: 30,
+                    read_to: 40,
+                },
+            ]);
+            Ok(Some(OperationSource::new(move |recording, _| {
+                recording.fill().map_err(TranscriptionError::Capture)?;
+                Ok(steps.pop_front().expect("completion stops polling"))
+            })))
+        }
+    }
+
+    #[test]
+    fn delegated_updates_preserve_completion_and_audio_spans() {
+        let openings = Arc::new(Mutex::new(Vec::new()));
+        let transcriber: Arc<dyn Transcriber> = Arc::new(Delegated {
+            openings: Arc::clone(&openings),
+        });
+        let transcription = Transcription::<_, Streaming>::delegated(transcriber);
+        let mut recording = RecordingReader::from_samples(&[0.5; 40]);
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(matches!(
+            operation.next_update(&mut recording).unwrap(),
+            Some(TranscriptUpdate::Provisional(text)) if text == "hello"
+        ));
+        assert!(operation.completed().is_none());
+        assert_eq!(recording.held_to(), 40);
+        assert_eq!(operation.read_to(), 20);
+        let Some(TranscriptUpdate::Finalized(segment)) =
+            operation.next_update(&mut recording).unwrap()
+        else {
+            panic!("the next update is finalized");
+        };
+        assert_eq!(segment.span(), Some(10..30));
+        assert_eq!(operation.retained_from(), 10);
+        assert_eq!(operation.read_to(), 30);
+        assert_eq!(operation.completed().unwrap().as_str(), "hello world");
+        assert!(operation.next_update(&mut recording).unwrap().is_none());
+        assert_eq!(operation.retained_from(), 30);
+        assert_eq!(operation.read_to(), 40);
+        assert_eq!(
+            operation.finish(&mut recording).unwrap().as_str(),
+            "hello world"
+        );
+        assert_eq!(*openings.lock().unwrap(), [true]);
+    }
+
+    #[test]
+    fn boxed_whole_operations_skip_previews_and_open_once() {
+        let openings = Arc::new(Mutex::new(Vec::new()));
+        let transcriber: Box<dyn Transcriber> = Box::new(Delegated {
+            openings: Arc::clone(&openings),
+        });
+        let transcription = Transcription::<_, Whole>::delegated(transcriber);
+        let mut recording = RecordingReader::from_samples(&[0.5; 40]);
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(matches!(
+            operation.next(&mut recording, false).unwrap(),
+            Some(TranscriptUpdate::Finalized(_))
+        ));
+        assert_eq!(
+            operation.finish(&mut recording).unwrap().as_str(),
+            "hello world"
+        );
+        assert_eq!(*openings.lock().unwrap(), [false]);
+    }
+
+    struct Local;
+
+    impl Transcriber for Local {
+        fn validate_language(
+            &self,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
+            Ok(())
+        }
+
+        fn transcribe_with(
+            &self,
+            _: TranscriptionAudio<'_>,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<Hypothesis, TranscriptionError> {
+            Ok(Hypothesis::new("local words"))
+        }
+    }
+
+    #[test]
+    fn only_a_delegated_plan_runs_the_transcribers_operation() {
+        let openings = Arc::new(Mutex::new(Vec::new()));
+        let delegating = Delegated {
+            openings: Arc::clone(&openings),
+        };
+        assert!(
+            Transcription::agreement(Cadence::from_millis(10, 20), delegating)
+                .start(&Language::Automatic)
+                .is_ok()
+        );
+        assert!(openings.lock().unwrap().is_empty());
+        assert!(matches!(
+            Transcription::<_, Whole>::delegated(Local).start(&Language::Automatic),
+            Err(TranscriptionError::NoDelegatedOperation)
+        ));
+    }
+
+    #[test]
+    fn cancellation_during_a_delegated_step_discards_its_result() {
+        let cancel = CancelToken::new();
+        let trigger = cancel.clone();
+        let mut source = OperationSource::new(move |_, _| {
+            trigger.cancel();
+            Ok(OperationStep::Complete {
+                transcript: Transcript::new("must not escape")?,
+                retained_from: 0,
+                read_to: 0,
+            })
+        });
+        let mut recording = RecordingReader::from_samples(&[]);
+
+        assert!(matches!(
+            source.next(&mut recording, true, &cancel),
+            Err(TranscriptionError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn external_segments_reject_empty_text_and_reversed_spans() {
+        assert!(TranscriptSegment::new(" ", None).is_err());
+        let reversed = std::ops::Range { start: 30, end: 10 };
+        assert!(TranscriptSegment::new("hello", Some(reversed)).is_err());
+        let segment = TranscriptSegment::new(" hello ", Some(10..10)).unwrap();
+        assert_eq!(segment.as_str(), "hello");
+        assert_eq!(segment.span(), Some(10..10));
+    }
 }
 
 #[cfg(test)]

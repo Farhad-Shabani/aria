@@ -19,6 +19,7 @@ use tokio_rustls::rustls::{
     self, CertificateError, DigitallySignedStruct, DistinguishedName, ServerConfig, SignatureScheme,
 };
 use tokio_rustls::server::TlsStream;
+use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tonic::transport::server::Connected;
 
 use super::connections::Admitted;
@@ -43,23 +44,13 @@ impl Handshake {
     pub(super) fn new(pairing: &Pairing, codes: Arc<PairingCodes>) -> Result<Self, Error> {
         let certificate = CertificateDer::from_pem_slice(pairing.certificate_pem.as_bytes())?;
         let key = PrivateKeyDer::from_pem_slice(pairing.key_pem.as_bytes())?;
-        let provider = rustls::crypto::ring::default_provider();
         let verifier = PhoneVerifier {
             phones: Arc::clone(&pairing.phones),
             codes,
-            algorithms: provider.signature_verification_algorithms,
+            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
         };
-        // TLS 1.2 sends the phone's certificate in the clear.
-        let mut config = ServerConfig::builder_with_provider(Arc::new(provider))
-            .with_protocol_versions(&[&rustls::version::TLS13])?
-            .with_client_cert_verifier(Arc::new(verifier))
-            .with_single_cert(vec![certificate], key)?;
-        config.alpn_protocols = vec![b"h2".to_vec()];
-        // A resumed session skips the verifier.
-        config.session_storage = Arc::new(NoServerSessionStorage {});
-        config.send_tls13_tickets = 0;
         Ok(Self {
-            acceptor: TlsAcceptor::from(Arc::new(config)),
+            acceptor: acceptor(certificate, key, Arc::new(verifier))?,
             phones: Arc::clone(&pairing.phones),
         })
     }
@@ -75,43 +66,80 @@ impl Handshake {
         concurrent: usize,
     ) -> impl Stream<Item = io::Result<Leased<TlsStream<Admitted>>>> {
         let Self { acceptor, phones } = self;
-        admitted
-            .map(move |admitted| {
-                let acceptor = acceptor.clone();
-                let phones = Arc::clone(&phones);
-                async move {
-                    let connection = match admitted {
-                        Ok(connection) => connection,
-                        Err(error) => return Some(Err(error)),
-                    };
-                    let peer = connection.peer().map(tracing::field::display);
-                    match tokio::time::timeout(timeout, acceptor.accept(connection)).await {
-                        Ok(Ok(stream)) => {
-                            let paired = stream
-                                .get_ref()
-                                .1
-                                .peer_certificates()
-                                .and_then(<[_]>::first)
-                                .is_some_and(|leaf| phones.contains(&fingerprint(leaf)));
-                            if !paired {
-                                tracing::debug!(peer, "admitted an unpaired phone to pair");
-                            }
-                            Some(Ok(Leased::new(stream, (!paired).then_some(lease))))
+        secured(acceptor, admitted, timeout, concurrent, move |pin| {
+            if pin.is_some_and(|pin| phones.contains(&pin)) {
+                Lease::Open
+            } else {
+                Lease::For(lease)
+            }
+        })
+    }
+}
+
+/// A LAN server's TLS: 1.3 only, because 1.2 sends the client certificate in
+/// the clear, and no resumption, because a resumed session skips the verifier.
+pub(in crate::daemon) fn acceptor(
+    certificate: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+    verifier: Arc<dyn ClientCertVerifier>,
+) -> Result<TlsAcceptor, rustls::Error> {
+    let provider = rustls::crypto::ring::default_provider();
+    let mut config = ServerConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(vec![certificate], key)?;
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    config.session_storage = Arc::new(NoServerSessionStorage {});
+    config.send_tls13_tickets = 0;
+    Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+/// `admitted` connections past a handshake bounded by `timeout`, `concurrent`
+/// at a time, each leased by what `lease` makes of the peer's pin.
+pub(in crate::daemon) fn secured(
+    acceptor: TlsAcceptor,
+    admitted: impl Stream<Item = io::Result<Admitted>>,
+    timeout: Duration,
+    concurrent: usize,
+    lease: impl Fn(Option<[u8; 32]>) -> Lease + Clone,
+) -> impl Stream<Item = io::Result<Leased<TlsStream<Admitted>>>> {
+    admitted
+        .map(move |admitted| {
+            let acceptor = acceptor.clone();
+            let lease = lease.clone();
+            async move {
+                let connection = match admitted {
+                    Ok(connection) => connection,
+                    Err(error) => return Some(Err(error)),
+                };
+                let peer = connection.peer().map(tracing::field::display);
+                match tokio::time::timeout(timeout, acceptor.accept(connection)).await {
+                    Ok(Ok(stream)) => {
+                        let pin = stream
+                            .get_ref()
+                            .1
+                            .peer_certificates()
+                            .and_then(<[_]>::first)
+                            .map(|leaf| fingerprint(leaf));
+                        let lease = lease(pin);
+                        if matches!(lease, Lease::For(_)) {
+                            tracing::debug!(peer, "admitted an unpaired peer to pair");
                         }
-                        Ok(Err(error)) => {
-                            tracing::debug!(%error, peer, "a LAN handshake failed");
-                            None
-                        }
-                        Err(_elapsed) => {
-                            tracing::debug!(peer, "a LAN handshake timed out");
-                            None
-                        }
+                        Some(Ok(Leased::new(stream, lease)))
+                    }
+                    Ok(Err(error)) => {
+                        tracing::debug!(%error, peer, "a LAN handshake failed");
+                        None
+                    }
+                    Err(_elapsed) => {
+                        tracing::debug!(peer, "a LAN handshake timed out");
+                        None
                     }
                 }
-            })
-            .buffer_unordered(concurrent)
-            .filter_map(future::ready)
-    }
+            }
+        })
+        .buffer_unordered(concurrent)
+        .filter_map(future::ready)
 }
 
 /// Lets a paired phone finish the handshake, or any phone while a pairing
@@ -166,35 +194,62 @@ impl ClientCertVerifier for PhoneVerifier {
     }
 }
 
-/// A connection that closes when its lease ends. Paired phones have none.
-pub(super) struct Leased<IO> {
+/// How long a connection may stay open past its handshake.
+pub(in crate::daemon) enum Lease {
+    Open,
+    For(Duration),
+    UntilCancelled(CancellationToken),
+}
+
+/// A connection that closes when its lease ends.
+pub(in crate::daemon) struct Leased<IO> {
     inner: IO,
-    ends: Option<Pin<Box<Sleep>>>,
-    expired: bool,
+    ends: Option<ConnectionEnd>,
+    ended: Option<io::ErrorKind>,
+}
+
+enum ConnectionEnd {
+    Lease(Pin<Box<Sleep>>),
+    Cancelled(Pin<Box<WaitForCancellationFutureOwned>>),
 }
 
 impl<IO> Leased<IO> {
-    fn new(inner: IO, lease: Option<Duration>) -> Self {
+    pub(in crate::daemon) fn new(inner: IO, lease: Lease) -> Self {
+        let ends = match lease {
+            Lease::Open => None,
+            Lease::For(lease) => Some(ConnectionEnd::Lease(Box::pin(tokio::time::sleep(lease)))),
+            Lease::UntilCancelled(cancel) => {
+                Some(ConnectionEnd::Cancelled(Box::pin(cancel.cancelled_owned())))
+            }
+        };
         Self {
             inner,
-            ends: lease.map(|lease| Box::pin(tokio::time::sleep(lease))),
-            expired: false,
+            ends,
+            ended: None,
         }
     }
 
-    fn ended(&mut self, context: &mut Context<'_>) -> bool {
-        if self.expired {
-            return true;
+    fn ended(&mut self, context: &mut Context<'_>) -> Option<io::ErrorKind> {
+        if self.ended.is_some() {
+            return self.ended;
         }
-        let Some(ends) = self.ends.as_mut() else {
-            return false;
+        let error = match self.ends.as_mut()? {
+            ConnectionEnd::Lease(ends) => {
+                if ends.as_mut().poll(context).is_pending() {
+                    return None;
+                }
+                io::ErrorKind::TimedOut
+            }
+            ConnectionEnd::Cancelled(ends) => {
+                if ends.as_mut().poll(context).is_pending() {
+                    return None;
+                }
+                io::ErrorKind::ConnectionAborted
+            }
         };
-        if ends.as_mut().poll(context).is_pending() {
-            return false;
-        }
-        tracing::debug!("closing a LAN connection whose pairing lease ended");
-        self.expired = true;
-        true
+        tracing::debug!(?error, "closing an expired or cancelled connection");
+        self.ended = Some(error);
+        self.ended
     }
 }
 
@@ -212,8 +267,8 @@ impl<IO: AsyncRead + Unpin> AsyncRead for Leased<IO> {
         context: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        if self.ended(context) {
-            return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
+        if let Some(error) = self.ended(context) {
+            return Poll::Ready(Err(error.into()));
         }
         Pin::new(&mut self.inner).poll_read(context, buffer)
     }
@@ -225,22 +280,22 @@ impl<IO: AsyncWrite + Unpin> AsyncWrite for Leased<IO> {
         context: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.ended(context) {
-            return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
+        if let Some(error) = self.ended(context) {
+            return Poll::Ready(Err(error.into()));
         }
         Pin::new(&mut self.inner).poll_write(context, buffer)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.ended(context) {
-            return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
+        if let Some(error) = self.ended(context) {
+            return Poll::Ready(Err(error.into()));
         }
         Pin::new(&mut self.inner).poll_flush(context)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.ended(context) {
-            return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
+        if let Some(error) = self.ended(context) {
+            return Poll::Ready(Err(error.into()));
         }
         Pin::new(&mut self.inner).poll_shutdown(context)
     }
@@ -248,7 +303,7 @@ impl<IO: AsyncWrite + Unpin> AsyncWrite for Leased<IO> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
 
@@ -298,11 +353,46 @@ mod tests {
     /// blocked, so the lease holds there too.
     #[tokio::test(start_paused = true)]
     async fn a_lease_ends_blocked_output() {
-        let mut flushing = Leased::new(Stalled, Some(LEASE));
+        let mut flushing = Leased::new(Stalled, Lease::For(LEASE));
         assert_eq!(ended(flushing.flush()).await, io::ErrorKind::TimedOut);
-        let mut closing = Leased::new(Stalled, Some(LEASE));
+        let mut closing = Leased::new(Stalled, Lease::For(LEASE));
         assert_eq!(ended(closing.shutdown()).await, io::ErrorKind::TimedOut);
-        let mut writing = Leased::new(Stalled, Some(LEASE));
+        let mut writing = Leased::new(Stalled, Lease::For(LEASE));
         assert_eq!(ended(writing.write(b"h2")).await, io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn cancellation_wakes_blocked_input_and_output() {
+        for operation in ["read", "write", "flush", "shutdown"] {
+            let cancel = CancellationToken::new();
+            let mut connection = Leased::new(Stalled, Lease::UntilCancelled(cancel.clone()));
+            let polled = Arc::new(tokio::sync::Notify::new());
+            let ready = Arc::clone(&polled);
+            let waiting = tokio::spawn(async move {
+                let operation = async {
+                    match operation {
+                        "read" => connection.read(&mut [0]).await.map(|_| ()),
+                        "write" => connection.write(b"h2").await.map(|_| ()),
+                        "flush" => connection.flush().await,
+                        "shutdown" => connection.shutdown().await,
+                        _ => unreachable!(),
+                    }
+                };
+                tokio::pin!(operation);
+                std::future::poll_fn(|context| {
+                    let result = operation.as_mut().poll(context);
+                    ready.notify_one();
+                    result
+                })
+                .await
+            });
+            polled.notified().await;
+            cancel.cancel();
+            let result = tokio::time::timeout(Duration::from_secs(1), waiting)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
+        }
     }
 }

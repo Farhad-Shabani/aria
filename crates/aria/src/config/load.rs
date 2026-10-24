@@ -16,8 +16,8 @@ use super::file::{self, FileConfig};
 use super::{
     CaptureConfig, ConfigError, DaemonConfig, DictationConfig, DictationTimeouts, HotkeyConfig,
     ListenConfig, ListenTranscription, MemoryConfig, RelayConfig, SpeakerConfig,
-    TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig, TtsFallback, TtsModel,
-    WakeBackend, WakeConfig, backend, tts_backend, wake_backend,
+    TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig,
+    TtsFallback, TtsModel, WakeBackend, WakeConfig, backend, tts_backend, wake_backend,
 };
 use super::{ChatAgent, ChatConfig, chat_agent};
 
@@ -262,6 +262,13 @@ pub(super) fn load(environment: &Environment) -> Result<DictationConfig, ConfigE
     dictation(&file_config, environment)
 }
 
+pub(super) fn load_transcription(
+    environment: &Environment,
+) -> Result<TranscriptionBackend, ConfigError> {
+    let file = file::read(&environment.home.join(DEFAULT_CONFIG_RELATIVE_PATH))?;
+    transcription(&file, environment)
+}
+
 pub(super) fn load_daemon(
     environment: &Environment,
     wake_word: WakeWordOverride,
@@ -332,6 +339,9 @@ pub(super) fn listen(
     // Without its own backend, listen inherits the resolved transcription
     // section — when that engine can stream.
     let transcription = match backend {
+        Some(backend) if backend == backend::SERVER => {
+            return Err(ConfigError::ListenRequiresLocal);
+        }
         Some(backend) => TranscriptionSettings {
             backend,
             model: optional_string_value(
@@ -343,9 +353,13 @@ pub(super) fn listen(
                 file.listen.device.as_deref(),
             ),
             interpreter: None,
+            server: None,
         }
-        .resolve(&environment.home)?,
-        None => transcription(file, environment)?,
+        .resolve_local(&environment.home)?,
+        None => match transcription(file, environment)? {
+            TranscriptionBackend::Local(engine) => engine,
+            TranscriptionBackend::Server { .. } => return Err(ConfigError::ListenRequiresLocal),
+        },
     };
     let transcription = match transcription {
         TranscriptionConfig::Parakeet {
@@ -696,12 +710,13 @@ pub(crate) fn loaded_models(file: &FileConfig, home: &Path) -> LoadedModels {
     let environment = Environment::in_home(home.to_path_buf());
     let mut loaded = LoadedModels::default();
     match transcription(file, &environment) {
-        Ok(transcription) => {
-            let engine = transcription.backend_name();
-            if let Some(path) = transcription.model_path() {
-                loaded.add("transcription", Some(engine), path);
+        Ok(TranscriptionBackend::Local(engine)) => {
+            let name = engine.backend_name();
+            if let Some(path) = engine.model_path() {
+                loaded.add("transcription", Some(name), path);
             }
         }
+        Ok(TranscriptionBackend::Server { .. }) => {}
         Err(_) => loaded.unresolved.push("transcription"),
     }
     match listen(file, &environment) {
@@ -1059,7 +1074,7 @@ fn wake_threshold(
 pub(super) fn transcription(
     file: &FileConfig,
     environment: &Environment,
-) -> Result<TranscriptionConfig, ConfigError> {
+) -> Result<TranscriptionBackend, ConfigError> {
     TranscriptionSettings::read(file, environment).resolve(&environment.home)
 }
 
@@ -1072,8 +1087,9 @@ pub(super) fn transcription_defaults(
         model: None,
         device: None,
         interpreter: None,
+        server: None,
     }
-    .resolve(home)
+    .resolve_local(home)
 }
 
 /// The transcription settings as written, before a backend claims them. Only
@@ -1083,6 +1099,7 @@ struct TranscriptionSettings {
     model: Option<String>,
     device: Option<String>,
     interpreter: Option<String>,
+    server: Option<String>,
 }
 
 impl TranscriptionSettings {
@@ -1105,12 +1122,25 @@ impl TranscriptionSettings {
                 environment.transcription_interpreter.as_deref(),
                 file.transcription.interpreter.as_deref(),
             ),
+            server: file.transcription.server.clone(),
         }
     }
 
-    fn resolve(self, home: &Path) -> Result<TranscriptionConfig, ConfigError> {
+    fn resolve(self, home: &Path) -> Result<TranscriptionBackend, ConfigError> {
         self.reject_settings_the_backend_does_not_have()?;
+        if self.backend != backend::SERVER {
+            return self.resolve_local(home).map(TranscriptionBackend::Local);
+        }
+        let endpoint = self.server.ok_or(ConfigError::MissingValue {
+            field: "transcription.server",
+            backend: backend::SERVER,
+        })?;
+        Ok(TranscriptionBackend::Server {
+            endpoint: endpoint.try_into()?,
+        })
+    }
 
+    fn resolve_local(self, home: &Path) -> Result<TranscriptionConfig, ConfigError> {
         match self.backend.as_str() {
             backend::WHISPER => Ok(TranscriptionConfig::Whisper {
                 model: model_location(
@@ -1170,12 +1200,29 @@ impl TranscriptionSettings {
             _ => Err(ConfigError::UnsupportedValue {
                 field: "transcription.backend",
                 value: self.backend,
-                supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, and parakeet-mlx",
+                supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server",
             }),
         }
     }
 
     fn reject_settings_the_backend_does_not_have(&self) -> Result<(), ConfigError> {
+        if self.server.is_some() && self.backend != backend::SERVER {
+            return Err(ConfigError::ServerRequiresServerBackend);
+        }
+        if self.backend == backend::SERVER {
+            for (field, value) in [
+                ("transcription.model", &self.model),
+                ("transcription.device", &self.device),
+                ("transcription.interpreter", &self.interpreter),
+            ] {
+                if value.is_some() {
+                    return Err(ConfigError::NotApplicableToBackend {
+                        field,
+                        backend: backend::SERVER,
+                    });
+                }
+            }
+        }
         if self.interpreter.is_some() && self.backend != backend::PARAKEET_MLX {
             return Err(ConfigError::NotApplicableToBackend {
                 field: "transcription.interpreter",
@@ -1331,6 +1378,107 @@ fn expand_home(value: &str, home: &Path) -> Result<PathBuf, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_requires_an_explicit_https_origin_without_credentials() {
+        assert!(matches!(
+            settings(backend::SERVER).resolve(Path::new("/missing-home")),
+            Err(ConfigError::MissingValue {
+                field: "transcription.server",
+                ..
+            })
+        ));
+        for (endpoint, canonical) in [
+            ("https://localhost:9851", "https://localhost:9851"),
+            ("https://Example.Test/", "https://example.test"),
+            ("https://[::1]:443", "https://[::1]:443"),
+        ] {
+            let file: FileConfig = serde_saphyr::from_str(&format!(
+                "transcription: {{backend: server, server: '{endpoint}'}}"
+            ))
+            .unwrap();
+            let TranscriptionBackend::Server { endpoint } =
+                transcription(&file, &empty_environment()).unwrap()
+            else {
+                panic!("expected a server backend");
+            };
+            assert_eq!(endpoint.to_string(), canonical);
+            let models = loaded_models(&file, Path::new("/missing-home"));
+            assert!(models.unresolved.is_empty());
+            assert!(
+                models
+                    .models
+                    .iter()
+                    .all(|model| model.section != "transcription")
+            );
+        }
+        for endpoint in [
+            "http://localhost",
+            "https://user:secret@example.test",
+            "https://example.test?key=secret",
+            "https://example.test#secret",
+            "https://example.test/path",
+            "",
+            "unix:///tmp/server.sock",
+        ] {
+            assert!(matches!(
+                TranscriptionSettings {
+                    server: Some(endpoint.into()),
+                    ..settings(backend::SERVER)
+                }
+                .resolve(Path::new("/missing-home")),
+                Err(ConfigError::InvalidServerEndpoint)
+            ));
+        }
+        assert!(serde_saphyr::from_str::<FileConfig>("transcription:\n  token: secret\n").is_err());
+    }
+
+    #[test]
+    fn server_and_local_engine_settings_cannot_be_combined() {
+        for field in ["model", "device", "interpreter"] {
+            let file: FileConfig = serde_saphyr::from_str(&format!(
+                "transcription: {{backend: server, server: https://example.test, {field}: unused}}"
+            ))
+            .unwrap();
+            assert!(matches!(
+                transcription(&file, &empty_environment()),
+                Err(ConfigError::NotApplicableToBackend {
+                    backend: backend::SERVER,
+                    ..
+                })
+            ));
+        }
+        let file = serde_saphyr::from_str(
+            "transcription: {backend: parakeet, server: https://example.test}",
+        )
+        .unwrap();
+        assert!(matches!(
+            transcription(&file, &empty_environment()),
+            Err(ConfigError::ServerRequiresServerBackend)
+        ));
+    }
+
+    #[test]
+    fn listen_requires_an_explicit_local_engine_with_server_dictation() {
+        let mut file: FileConfig = serde_saphyr::from_str(
+            "transcription: {backend: server, server: https://example.test}",
+        )
+        .unwrap();
+        assert!(matches!(
+            listen(&file, &empty_environment()),
+            Err(ConfigError::ListenRequiresLocal)
+        ));
+        file.listen.backend = Some(backend::SERVER.to_owned());
+        assert!(matches!(
+            listen(&file, &empty_environment()),
+            Err(ConfigError::ListenRequiresLocal)
+        ));
+        file.listen.backend = Some(backend::MOONSHINE.to_owned());
+        assert!(matches!(
+            listen(&file, &empty_environment()).unwrap().transcription,
+            ListenTranscription::Moonshine { .. }
+        ));
+    }
 
     fn empty_environment() -> Environment {
         Environment::in_home(PathBuf::from("/home/user"))
@@ -1709,6 +1857,7 @@ mod tests {
             model: None,
             device: None,
             interpreter: None,
+            server: None,
         }
     }
 
@@ -1750,7 +1899,7 @@ mod tests {
 
         for (backend, expected) in defaults {
             let transcription = settings(backend)
-                .resolve(Path::new("/home/user"))
+                .resolve_local(Path::new("/home/user"))
                 .expect("a default must resolve");
             assert_eq!(transcription, expected, "{backend}");
         }
@@ -1780,7 +1929,7 @@ mod tests {
             model: Some("~/models/tdt".to_owned()),
             ..settings("parakeet")
         }
-        .resolve(Path::new("/home/user"))
+        .resolve_local(Path::new("/home/user"))
         .expect("parakeet must resolve");
         assert_eq!(
             transcription,

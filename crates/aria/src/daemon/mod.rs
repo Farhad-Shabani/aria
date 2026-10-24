@@ -11,6 +11,7 @@ mod dictation;
 pub mod guided;
 mod host;
 mod hotkey;
+mod inference;
 mod listen;
 mod log;
 mod memory;
@@ -38,6 +39,8 @@ pub use dictation::DictationInitializationError;
 pub use host::{
     Daemon, DaemonBuilder, DaemonFailure, DaemonLifetime, DaemonStopper, RunningDaemon,
 };
+pub use inference::client::{RemoteClientError, remote_invite, remote_pair, remote_revoke};
+pub use inference::host::{InferenceHostError, serve_inference};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
     AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,
@@ -48,6 +51,7 @@ pub use session::{
 pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
+pub(crate) use inference::is_paired_with_server;
 /// What `aria doctor` needs to report about the relay without owning one.
 pub(crate) use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 pub use speech::SpeechInitializationError;
