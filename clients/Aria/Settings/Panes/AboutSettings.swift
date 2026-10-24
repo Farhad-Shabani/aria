@@ -22,9 +22,8 @@ struct AboutSettings: View {
                         .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
             }
-            Section("Updates") {
+            Section {
                 Toggle(
                     "Automatically check for updates",
                     isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })
