@@ -29,7 +29,8 @@ pub struct Choice {
     pub availability: Availability,
     /// Exactly one choice per family. The configured one wins, even with
     /// its model missing: that is a fix to show, not a reason to choose for
-    /// the user. Otherwise the first that is ready, else the first listed.
+    /// the user. Otherwise the one an unset config runs, if ready; else the
+    /// first that is ready, else the first listed.
     pub default: bool,
     pub model: ModelSource,
 }
@@ -50,6 +51,11 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
         .position(|choice| {
             Some(choice.key) == current
                 && !matches!(choice.availability, Availability::Unsupported { .. })
+        })
+        .or_else(|| {
+            choices.iter().position(|choice| {
+                choice.key == B::DEFAULT && choice.availability == Availability::Ready
+            })
         })
         .or_else(|| {
             choices
@@ -117,6 +123,7 @@ impl ModelSource {
 pub(super) trait Backend: Copy + Eq + 'static {
     const TITLE: &'static str;
     const ALL: &'static [Self];
+    const DEFAULT: &'static str;
     /// The value written to config.yaml.
     fn key(self) -> &'static str;
     fn label(self) -> &'static str;
@@ -144,6 +151,7 @@ impl Backend for Stt {
         Self::Nemotron,
         Self::ParakeetMlx,
     ];
+    const DEFAULT: &'static str = backend::DEFAULT;
 
     fn key(self) -> &'static str {
         match self {
@@ -206,6 +214,7 @@ pub(super) enum Tts {
 impl Backend for Tts {
     const TITLE: &'static str = "Text to speech";
     const ALL: &'static [Self] = &[Self::System, Self::Kokoro, Self::Qwen];
+    const DEFAULT: &'static str = tts_backend::DEFAULT;
 
     fn key(self) -> &'static str {
         match self {
@@ -248,6 +257,7 @@ pub(super) enum Chat {
 impl Backend for Chat {
     const TITLE: &'static str = "Chat agent (for `aria ask`)";
     const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex];
+    const DEFAULT: &'static str = chat_agent::DEFAULT;
 
     fn key(self) -> &'static str {
         match self {

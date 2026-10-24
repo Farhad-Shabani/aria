@@ -145,7 +145,10 @@ mod tests {
     fn an_empty_config_uses_the_default_models() {
         let file = config("{}");
 
-        assert_eq!(used_by(&file, "parakeet"), Some("transcription"));
+        assert_eq!(
+            used_by(&file, config::backend::DEFAULT),
+            Some("transcription")
+        );
         assert_eq!(used_by(&file, "kokoro"), None);
         assert_eq!(used_by(&file, "speaker"), Some("speaker"));
         assert_eq!(used_by(&file, "segmentation"), Some("speaker"));
@@ -245,7 +248,7 @@ mod tests {
         let (home, models) = home();
         let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
         touch(&parakeet);
-        let file = config("{}");
+        let file = config("transcription: {backend: parakeet}");
         let refused = |name| removed(home.path(), &file, name).unwrap_err();
 
         assert!(matches!(

@@ -8,6 +8,7 @@ use crate::audio::ReplayPace;
 use crate::dictation::MAX_DICTATION_TIMEOUT;
 use crate::primitives::user_home;
 
+use aria_kit::backend::ModelDownload;
 use aria_kit::synthesis::{SpeakingRate, Voice};
 
 use super::WakeWordOverride;
@@ -25,13 +26,21 @@ pub(super) const DEFAULT_CONFIG_RELATIVE_PATH: &str = ".aria/config.yaml";
 /// below sit inside it.
 const MODELS_DIR: &str = ".aria/models";
 
-const DEFAULT_BACKEND: &str = backend::PARAKEET;
-const DEFAULT_WHISPER_MODEL: &str = "whisper/ggml-large-v3-turbo-q8_0.bin";
-const DEFAULT_WHISPER_CANDLE_MODEL: &str = "whisper-candle/tiny.en";
-const DEFAULT_PARAKEET_MODEL: &str = "parakeet/parakeet-tdt-0.6b-v3";
-const DEFAULT_MOONSHINE_MODEL: &str = "moonshine/base";
-const DEFAULT_NEMOTRON_MODEL: &str = "nemotron/nemotron-speech-streaming-en-0.6b";
-const DEFAULT_WAKE_BACKEND: &str = wake_backend::OPEN_WAKE_WORD;
+/// Where each model sits inside the models directory. Setup downloads into
+/// the same folders.
+pub(crate) mod model_folder {
+    pub(crate) const WHISPER: &str = "whisper";
+    pub(crate) const WHISPER_CANDLE: &str = "whisper-candle/tiny.en";
+    pub(crate) const PARAKEET: &str = "parakeet/parakeet-tdt-0.6b-v3";
+    pub(crate) const MOONSHINE: &str = "moonshine/base";
+    pub(crate) const NEMOTRON: &str = "nemotron/nemotron-speech-streaming-en-0.6b";
+    pub(crate) const QWEN: &str = "qwen/qwen3-tts-0.6b-customvoice";
+    pub(crate) const QWEN_TOKENIZER: &str = "qwen/qwen3-tts-tokenizer";
+    pub(crate) const KOKORO: &str = "kokoro";
+    pub(crate) const SPEAKER: &str = "wespeaker/en";
+    pub(crate) const SEGMENTATION: &str = "pyannote";
+}
+
 const DEFAULT_WAKE_MODEL: &str = "wakeword/aria.onnx";
 const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -43,18 +52,10 @@ const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(320);
 pub(super) const DEFAULT_CAPTURE_BACKEND: &str = "microphone";
 pub(super) const WAV_FILE_CAPTURE_BACKEND: &str = "wav-file";
 
-const DEFAULT_TTS_BACKEND: &str = tts_backend::SYSTEM;
-const DEFAULT_CHAT_AGENT: &str = chat_agent::CLAUDE_CODE;
 /// Long enough for an agent to read a repo and think.
 const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
-const DEFAULT_KOKORO_MODEL: &str = "kokoro/kokoro.onnx";
-const DEFAULT_KOKORO_VOICES: &str = "kokoro/voices.bin";
-const DEFAULT_QWEN_MODEL_DIR: &str = "qwen/qwen3-tts-0.6b-customvoice";
-const DEFAULT_QWEN_TOKENIZER_DIR: &str = "qwen/qwen3-tts-tokenizer";
 
 const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = "~/.aria/transcripts";
-const DEFAULT_SPEAKER_MODEL: &str = "wespeaker/en/model.onnx";
-const DEFAULT_SEGMENTATION_MODEL: &str = "pyannote/segmentation-3.0.onnx";
 const DEFAULT_SPEAKERS_DIR: &str = "~/.aria/speakers";
 const DEFAULT_MEMORY_DIR: &str = "~/.aria/memory";
 const DEFAULT_MEMORY_EXTRACT_MODEL: &str = "sonnet";
@@ -407,13 +408,16 @@ pub(super) fn speaker(
     Ok(SpeakerConfig {
         model: model_location(
             model,
-            DEFAULT_SPEAKER_MODEL,
+            model_file(model_folder::SPEAKER, &aria_speaker::wespeaker::MODEL[0]),
             "speaker.model",
             &environment.home,
         )?,
         segmentation_model: model_location(
             segmentation_model,
-            DEFAULT_SEGMENTATION_MODEL,
+            model_file(
+                model_folder::SEGMENTATION,
+                &aria_segmentation::pyannote::MODEL[0],
+            ),
             "speaker.segmentation_model",
             &environment.home,
         )?,
@@ -492,7 +496,7 @@ pub(super) fn chat(
     let agent = string_value(
         environment.chat_agent.as_deref(),
         file.chat.agent.as_deref(),
-        DEFAULT_CHAT_AGENT,
+        chat_agent::DEFAULT,
     );
     let agent = match agent.as_str() {
         chat_agent::CLAUDE_CODE => ChatAgent::ClaudeCode,
@@ -551,7 +555,7 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
     let backend = string_value(
         environment.tts_backend.as_deref(),
         file.tts.backend.as_deref(),
-        DEFAULT_TTS_BACKEND,
+        tts_backend::DEFAULT,
     );
     let model = optional_string_value(environment.tts_model.as_deref(), file.tts.model.as_deref());
     let voices = optional_string_value(
@@ -566,10 +570,15 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
         tts_backend::KOKORO => {
             reject_tts_setting(tokenizer.is_some(), "tts.tokenizer", tts_backend::KOKORO)?;
             TtsBackend::Model(TtsModel::Kokoro {
-                model: model_location(model, DEFAULT_KOKORO_MODEL, "tts.model", &environment.home)?,
+                model: model_location(
+                    model,
+                    model_file(model_folder::KOKORO, &aria_tts::kokoro::MODEL[0]),
+                    "tts.model",
+                    &environment.home,
+                )?,
                 voices: model_location(
                     voices,
-                    DEFAULT_KOKORO_VOICES,
+                    model_file(model_folder::KOKORO, &aria_tts::kokoro::MODEL[1]),
                     "tts.voices",
                     &environment.home,
                 )?,
@@ -580,13 +589,13 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
             TtsBackend::Model(TtsModel::Qwen {
                 model_dir: model_location(
                     model,
-                    DEFAULT_QWEN_MODEL_DIR,
+                    model_folder::QWEN,
                     "tts.model",
                     &environment.home,
                 )?,
                 tokenizer_dir: model_location(
                     tokenizer,
-                    DEFAULT_QWEN_TOKENIZER_DIR,
+                    model_folder::QWEN_TOKENIZER,
                     "tts.tokenizer",
                     &environment.home,
                 )?,
@@ -628,10 +637,15 @@ pub(super) fn tts(file: &FileConfig, environment: &Environment) -> Result<TtsCon
     })
 }
 
+/// A downloaded file's path relative to the models directory.
+fn model_file(folder: &str, file: &ModelDownload) -> PathBuf {
+    Path::new(folder).join(file.file_name)
+}
+
 /// The configured path, else `default` inside the models directory.
 fn model_location(
     value: Option<String>,
-    default: &'static str,
+    default: impl AsRef<Path>,
     field: &'static str,
     home: &Path,
 ) -> Result<PathBuf, ConfigError> {
@@ -646,12 +660,12 @@ pub(crate) fn transcription_engine(file: &FileConfig) -> &str {
     file.transcription
         .backend
         .as_deref()
-        .unwrap_or(DEFAULT_BACKEND)
+        .unwrap_or(backend::DEFAULT)
 }
 
 /// The speech engine `file` names, or the default.
 pub(crate) fn tts_engine(file: &FileConfig) -> &str {
-    file.tts.backend.as_deref().unwrap_or(DEFAULT_TTS_BACKEND)
+    file.tts.backend.as_deref().unwrap_or(tts_backend::DEFAULT)
 }
 
 pub(crate) fn models_dir(home: &Path) -> PathBuf {
@@ -940,7 +954,7 @@ pub(super) fn wake(
     let backend = parse_wake_backend(&string_value(
         environment.wake_backend.as_deref(),
         file.wake.backend.as_deref(),
-        DEFAULT_WAKE_BACKEND,
+        wake_backend::DEFAULT,
     ))?;
     let model = optional_string_value(
         environment.wake_model.as_deref(),
@@ -1077,7 +1091,7 @@ impl TranscriptionSettings {
             backend: string_value(
                 environment.transcription_backend.as_deref(),
                 file.transcription.backend.as_deref(),
-                DEFAULT_BACKEND,
+                backend::DEFAULT,
             ),
             model: optional_string_value(
                 environment.transcription_model.as_deref(),
@@ -1101,7 +1115,7 @@ impl TranscriptionSettings {
             backend::WHISPER => Ok(TranscriptionConfig::Whisper {
                 model: model_location(
                     self.model,
-                    DEFAULT_WHISPER_MODEL,
+                    model_file(model_folder::WHISPER, &aria_stt::whisper::MODEL[0]),
                     "transcription.model",
                     home,
                 )?,
@@ -1109,7 +1123,7 @@ impl TranscriptionSettings {
             backend::WHISPER_CANDLE => Ok(TranscriptionConfig::WhisperCandle {
                 model_directory: model_location(
                     self.model,
-                    DEFAULT_WHISPER_CANDLE_MODEL,
+                    model_folder::WHISPER_CANDLE,
                     "transcription.model",
                     home,
                 )?,
@@ -1117,7 +1131,7 @@ impl TranscriptionSettings {
             backend::PARAKEET => Ok(TranscriptionConfig::Parakeet {
                 model_directory: model_location(
                     self.model,
-                    DEFAULT_PARAKEET_MODEL,
+                    model_folder::PARAKEET,
                     "transcription.model",
                     home,
                 )?,
@@ -1126,7 +1140,7 @@ impl TranscriptionSettings {
             backend::MOONSHINE => Ok(TranscriptionConfig::Moonshine {
                 model_directory: model_location(
                     self.model,
-                    DEFAULT_MOONSHINE_MODEL,
+                    model_folder::MOONSHINE,
                     "transcription.model",
                     home,
                 )?,
@@ -1134,7 +1148,7 @@ impl TranscriptionSettings {
             backend::NEMOTRON => Ok(TranscriptionConfig::Nemotron {
                 model_directory: model_location(
                     self.model,
-                    DEFAULT_NEMOTRON_MODEL,
+                    model_folder::NEMOTRON,
                     "transcription.model",
                     home,
                 )?,
@@ -2060,9 +2074,11 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_config_loads_the_default_models() {
+    fn listen_inherits_the_transcription_model() {
         let home = Path::new("/home/user");
-        let loaded = loaded_models(&FileConfig::default(), home);
+        let mut file = FileConfig::default();
+        file.transcription.backend = Some(backend::PARAKEET.to_owned());
+        let loaded = loaded_models(&file, home);
         let models = home.join(".aria/models");
 
         assert!(loaded.unresolved.is_empty(), "{:?}", loaded.unresolved);

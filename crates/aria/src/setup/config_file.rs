@@ -255,7 +255,11 @@ mod tests {
         let path = dir.path().join("config.yaml");
         fs::write(&path, "transcription: {model: ~/tdt}\n").unwrap();
 
-        selections().prepare(&path).unwrap().commit().unwrap();
+        let default_engine = Selections {
+            stt: config::backend::DEFAULT.to_owned(),
+            ..selections()
+        };
+        default_engine.prepare(&path).unwrap().commit().unwrap();
 
         assert_eq!(
             read(&path).unwrap().transcription.model.as_deref(),
