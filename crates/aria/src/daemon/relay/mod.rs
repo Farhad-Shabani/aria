@@ -30,8 +30,8 @@ pub(super) use advert::{Advert, instance_name};
 pub(super) use code::PairingCodes;
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
 pub(super) use pairing::{
-    Pairing, PairingError, Phones, fingerprint, load_or_create as load_pairing, presented,
-    require_paired,
+    Pairing, PairingError, Phones, fingerprint, from_hex, load_or_create as load_pairing, mint,
+    presented, require_paired, to_hex,
 };
 pub(super) use preferences::LanPreferences;
 

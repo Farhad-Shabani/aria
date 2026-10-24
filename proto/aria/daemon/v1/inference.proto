@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+// Served by the inference host over mutually authenticated TLS only.
+service InferenceService {
+  rpc GetInfo(InferenceInfoRequest) returns (InferenceInfoResponse);
+  // Start, PCM16 audio, Stop, then clean request EOF. Responses contain raw
+  // updates followed by exactly one Complete; premature EOF is failure.
+  // Audio is mono 16 kHz, at most 600 seconds and 256 KiB per chunk.
+  // Input idle timeout is 10 seconds; the whole session is at most 720 seconds.
+  // Provisional and cumulative finalized text are limited to 128 KiB each.
+  // One admitted session holds the model until its worker exits, even if cancelled.
+  rpc Transcribe(stream InferenceRequest) returns (stream InferenceResponse);
+}
+
+// Same-user Unix socket only. Never registered on the TLS listener.
+service InferenceAdminService {
+  rpc IssueInvite(InferenceInviteRequest) returns (InferenceInviteResponse);
+  rpc Revoke(InferenceRevokeRequest) returns (InferenceRevokeResponse);
+}
+
+message InferenceInfoRequest {}
+
+message InferenceInfoResponse {
+  string engine = 1;
+  repeated RecognitionStrategy strategies = 2;
+}
+
+enum RecognitionStrategy {
+  RECOGNITION_STRATEGY_UNSPECIFIED = 0;
+  RECOGNITION_STRATEGY_WHOLE = 1;
+  // Updates as audio arrives, by the streaming strategy the host's engine uses.
+  RECOGNITION_STRATEGY_STREAMING = 2;
+}
+
+message InferenceRequest {
+  oneof body {
+    InferenceStart start = 1;
+    bytes audio = 2;
+    InferenceStop stop = 3;
+  }
+}
+
+message InferenceStart {
+  string engine = 1;
+  // "auto" or a supported language code.
+  string language = 2;
+  RecognitionStrategy strategy = 3;
+}
+
+message InferenceStop {}
+
+message InferenceResponse {
+  oneof body {
+    InferenceUpdate update = 1;
+    InferenceComplete complete = 2;
+  }
+}
+
+message InferenceUpdate {
+  uint64 retained_from = 1;
+  oneof body {
+    string provisional = 2;
+    InferenceSegment finalized = 3;
+  }
+  // Present when this update completes recognition. The client waits for
+  // Complete and clean response EOF before exposing this update.
+  InferenceComplete completed = 4;
+  // Exclusive sample position read into the model's audio buffer.
+  // Required even when zero.
+  optional uint64 read_to = 5;
+}
+
+message InferenceSegment {
+  string text = 1;
+  InferenceSpan span = 2;
+}
+
+message InferenceSpan {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+message InferenceComplete {
+  string text = 1;
+  string engine = 2;
+}
+
+message InferenceInviteRequest {
+  string endpoint = 1;
+}
+
+message InferenceInviteResponse {
+  // Secret-bearing invitation for deliberate transfer to the enrolling device.
+  bytes invitation_json = 1;
+}
+
+message InferenceRevokeRequest {
+  bytes fingerprint = 1;
+}
+
+message InferenceRevokeResponse {}

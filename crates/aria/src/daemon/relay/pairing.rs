@@ -180,22 +180,41 @@ fn write(document: &PrivateDocument, stored: &StoredPairing) -> Result<(), Pairi
 }
 
 fn generate(instance: &str) -> Result<(StoredPairing, [u8; 32]), PairingError> {
-    let mut params = rcgen::CertificateParams::new(vec![CERTIFICATE_NAME.to_owned()])?;
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, instance);
+    let minted = mint(CERTIFICATE_NAME, Some(instance))?;
+    let stored = StoredPairing {
+        instance: instance.to_owned(),
+        certificate_pem: minted.certificate_pem,
+        key_pem: minted.key_pem,
+        phones: Vec::new(),
+    };
+    Ok((stored, minted.fingerprint))
+}
+
+pub(in crate::daemon) struct Minted {
+    pub(in crate::daemon) certificate_pem: String,
+    pub(in crate::daemon) key_pem: String,
+    pub(in crate::daemon) fingerprint: [u8; 32],
+}
+
+pub(in crate::daemon) fn mint(
+    name: &str,
+    common_name: Option<&str>,
+) -> Result<Minted, rcgen::Error> {
+    let mut params = rcgen::CertificateParams::new(vec![name.to_owned()])?;
+    if let Some(common_name) = common_name {
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, common_name);
+    }
     params.not_after =
         time::OffsetDateTime::now_utc() + time::Duration::days(CERTIFICATE_LIFETIME_DAYS);
     let key = rcgen::KeyPair::generate()?;
     let certificate = params.self_signed(&key)?;
-
-    let stored = StoredPairing {
-        instance: instance.to_owned(),
+    Ok(Minted {
         certificate_pem: certificate.pem(),
         key_pem: key.serialize_pem(),
-        phones: Vec::new(),
-    };
-    Ok((stored, fingerprint(certificate.der())))
+        fingerprint: fingerprint(certificate.der()),
+    })
 }
 
 pub(super) fn random_hex(byte_count: usize) -> Result<String, PairingError> {
@@ -204,8 +223,20 @@ pub(super) fn random_hex(byte_count: usize) -> Result<String, PairingError> {
     Ok(to_hex(&bytes))
 }
 
-pub(super) fn to_hex(bytes: &[u8]) -> String {
+pub(in crate::daemon) fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub(in crate::daemon) fn from_hex(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut bytes = [0; 32];
+    for (byte, digits) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        let digits = std::str::from_utf8(digits).ok()?;
+        *byte = u8::from_str_radix(digits, 16).ok()?;
+    }
+    Some(bytes)
 }
 
 /// The fingerprint of the peer's certificate.
@@ -231,7 +262,7 @@ pub(in crate::daemon) fn require_paired(
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(in crate::daemon) enum PairingError {
+pub(crate) enum PairingError {
     #[error("the pairing file is not usable")]
     Document(#[from] DocumentError),
 

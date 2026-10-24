@@ -6,6 +6,7 @@ use prost::Message;
 const PROTOS: &[&str] = &[
     "../../proto/aria/daemon/v1/daemon.proto",
     "../../proto/aria/daemon/v1/errors.proto",
+    "../../proto/aria/daemon/v1/inference.proto",
     "../../proto/aria/daemon/v1/relay.proto",
     "../../proto/aria/daemon/v1/speech.proto",
 ];

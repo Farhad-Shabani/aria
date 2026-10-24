@@ -80,6 +80,7 @@ impl Selections {
             file.transcription.model = None;
             file.transcription.device = None;
             file.transcription.interpreter = None;
+            file.transcription.server = None;
         }
         if config::tts_engine(file) != self.tts {
             file.tts.model = None;
@@ -228,6 +229,39 @@ mod tests {
                 hotkey: Some(false),
             }
         );
+    }
+
+    #[test]
+    fn server_selection_keeps_its_endpoint_and_local_selection_clears_it() {
+        let mut file: FileConfig = serde_saphyr::from_str(
+            "transcription: {backend: server, server: https://example.test:9851}",
+        )
+        .unwrap();
+        let mut chosen = selections();
+        chosen.stt = "server".to_owned();
+        chosen.apply_to(&mut file);
+        assert_eq!(
+            file.transcription.server.as_deref(),
+            Some("https://example.test:9851")
+        );
+        chosen.stt = "parakeet".to_owned();
+        chosen.apply_to(&mut file);
+        assert_eq!(file.transcription.server, None);
+    }
+
+    #[test]
+    fn switching_to_server_clears_local_engine_settings() {
+        let mut file: FileConfig = serde_saphyr::from_str(
+            "transcription: {backend: parakeet, model: ~/model, device: gpu}",
+        )
+        .unwrap();
+        let mut chosen = selections();
+        chosen.stt = "server".to_owned();
+        chosen.apply_to(&mut file);
+        assert_eq!(file.transcription.backend.as_deref(), Some("server"));
+        assert_eq!(file.transcription.model, None);
+        assert_eq!(file.transcription.device, None);
+        assert_eq!(file.transcription.interpreter, None);
     }
 
     #[test]

@@ -39,6 +39,51 @@ tts:
 This makes speech 1.2 times the normal rate.
 For a change to just one utterance, use [`aria say --rate`](./tts.md#speed-and-voice).
 
+## Server inference
+
+Run the transcription model on a personal server while your desktop records
+and delivers the text. The desktop needs no local transcription model.
+See [Privacy](./privacy.md#server-inference) for what gets sent.
+
+On the server, configure a local transcription engine and its model in
+`~/.aria/config.yaml`, then run:
+
+```sh
+aria serve \
+  --bind 0.0.0.0:9851
+```
+
+In another server terminal, create an invitation. Replace `your-server`
+with an address your device can reach:
+
+```sh
+aria remote invite \
+  --endpoint https://your-server:9851
+```
+
+Keep the invitation private; it expires after 60 seconds and works once.
+On your device, run `aria remote pair`, paste it, then press Ctrl-D.
+
+Replace the `transcription` section in your device's `~/.aria/config.yaml`:
+
+```yaml
+transcription:
+  backend: server
+  server: https://your-server:9851
+```
+
+[Restart the device's service](#apply-changes). Dictation, recorded questions,
+phone relay and history retries use the server. Streaming and previews depend
+on its engine; connection failures stop the request without switching locally.
+
+Speech output, wake words and voice profiles stay on the device. System-audio
+listening needs a separate local `listen.backend`. To return to local
+transcription, select a local backend and remove `transcription.server`.
+
+To block a device, run `aria remote revoke FINGERPRINT` on the server,
+using the fingerprint shown after pairing. If it reports a storage error,
+fix it and revoke again before restarting the server.
+
 ## Apply changes
 
 After editing the file, inspect what your terminal would load:

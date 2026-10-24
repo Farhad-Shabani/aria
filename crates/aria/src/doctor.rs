@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::audio::{WavReplayCapture, check_default_input_device};
 use crate::config::{
     CaptureConfig, ConfigError, DaemonConfig, DictationConfig, Environment, HotkeyConfig,
-    ListenConfig, RelayConfig, SpeakerConfig, TranscriptionConfig, WakeBackend, WakeConfig,
+    ListenConfig, RelayConfig, SpeakerConfig, TranscriptionBackend, WakeBackend, WakeConfig,
     WakeWordOverride,
 };
 use crate::daemon::RELAY_SERVICE_TYPE;
@@ -155,8 +155,17 @@ fn transcription_model(config: Option<&DictationConfig>) -> Check {
     }
 }
 
-fn model(transcription: &TranscriptionConfig) -> Check {
-    match check_model(transcription) {
+fn model(transcription: &TranscriptionBackend) -> Check {
+    let engine = match transcription {
+        TranscriptionBackend::Local(engine) => engine,
+        TranscriptionBackend::Server { endpoint } => {
+            return Check::ok(
+                TRANSCRIPTION_MODEL,
+                format!("server {endpoint}; no local transcription model"),
+            );
+        }
+    };
+    match check_model(engine) {
         Ok(detail) => Check::ok(TRANSCRIPTION_MODEL, detail),
         Err(error) => Check::failed(TRANSCRIPTION_MODEL, error_chain(&error)),
     }
@@ -480,6 +489,16 @@ mod tests {
     }
 
     #[test]
+    fn server_transcription_needs_no_local_model() {
+        let check = model(&TranscriptionBackend::Server {
+            endpoint: "https://example.test:9851".to_owned(),
+        });
+        assert_eq!(check.status, Status::Ok);
+        assert!(check.detail.contains("https://example.test:9851"));
+        assert!(check.detail.contains("no local transcription model"));
+    }
+
+    #[test]
     fn a_replayed_fixture_is_reported_by_path() {
         let directory = tempfile::TempDir::new().expect("test directory should be created");
 
@@ -513,9 +532,11 @@ mod tests {
 
     #[test]
     fn a_missing_model_fails_and_says_which_backend() {
-        let check = model(&TranscriptionConfig::Whisper {
-            model: PathBuf::from("/nonexistent/model.bin"),
-        });
+        let check = model(&TranscriptionBackend::Local(
+            crate::config::TranscriptionConfig::Whisper {
+                model: PathBuf::from("/nonexistent/model.bin"),
+            },
+        ));
 
         assert_eq!(check.status, Status::Failed);
         assert!(check.detail.contains("whisper"));

@@ -10,10 +10,13 @@ use aria_kit::transcription::Layered;
 use aria_kit::voice_activity::SileroVad;
 
 use super::super::capture::{CaptureBackend, PreparedCapture};
+use super::super::inference::client::RemoteTranscriber;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
-use crate::config::{ConfigError, DictationConfig, SpeakerConfig, TranscriptionConfig};
+use crate::config::{
+    ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
+};
 use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
     CleanupError, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
@@ -22,8 +25,8 @@ use crate::dictation::{
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
-    Engine, Language, Mode, StreamingEngine, Transcriber, Transcript, Transcription,
-    TranscriptionError,
+    Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcript, Transcription,
+    TranscriptionError, Whole,
 };
 use crate::vocabulary::{Directory, Vocabulary};
 
@@ -208,9 +211,50 @@ fn load_engine<E: Engine>(
 
 /// Type-erased so capture can open between selecting the engine and building
 /// its pipeline.
-type SelectedEngine = Box<dyn FnOnce(ExecutionParts) -> RuntimeExecutor>;
+struct SelectedEngine {
+    name: &'static str,
+    build: Box<dyn FnOnce(ExecutionParts) -> RuntimeExecutor>,
+}
+
+impl SelectedEngine {
+    fn new<T: Transcriber, M: Mode>(
+        name: &'static str,
+        transcription: Transcription<T, M>,
+    ) -> Self {
+        Self {
+            name,
+            build: Box::new(move |parts: ExecutionParts| parts.finish(name, transcription)),
+        }
+    }
+}
 
 fn select_engine(
+    backend: TranscriptionBackend,
+    loading: ModelLoading,
+    home: &Path,
+) -> Result<SelectedEngine, DictationInitializationError> {
+    match backend {
+        TranscriptionBackend::Local(config) => select_local(config, loading),
+        TranscriptionBackend::Server { endpoint } => select_remote(home, &endpoint),
+    }
+}
+
+/// Asks the server what it runs, so an unreachable server fails the build.
+fn select_remote(
+    home: &Path,
+    endpoint: &str,
+) -> Result<SelectedEngine, DictationInitializationError> {
+    let remote = RemoteTranscriber::connect(home, endpoint, &CancelToken::never())
+        .map_err(DictationInitializationError::Transcription)?;
+    let engine = remote.engine_name();
+    Ok(if remote.supports_streaming() {
+        SelectedEngine::new(engine, Transcription::<_, Streaming>::delegated(remote))
+    } else {
+        SelectedEngine::new(engine, Transcription::<_, Whole>::delegated(remote))
+    })
+}
+
+fn select_local(
     config: TranscriptionConfig,
     loading: ModelLoading,
 ) -> Result<SelectedEngine, DictationInitializationError> {
@@ -255,10 +299,10 @@ where
     E::Config: Clone + Send + Sync + 'static,
 {
     let model = loading.load::<E>(config)?;
-    let transcription = Transcription::complete(E::INPUT, model);
-    Ok(Box::new(move |parts: ExecutionParts| {
-        parts.finish(E::NAME, transcription)
-    }))
+    Ok(SelectedEngine::new(
+        E::NAME,
+        Transcription::complete(E::INPUT, model),
+    ))
 }
 
 fn streaming<E>(
@@ -270,10 +314,10 @@ where
     E::Config: Clone + Send + Sync + 'static,
 {
     let model = loading.load::<E>(config)?;
-    let transcription = Transcription::stream(E::STREAM, model);
-    Ok(Box::new(move |parts: ExecutionParts| {
-        parts.finish(E::NAME, transcription)
-    }))
+    Ok(SelectedEngine::new(
+        E::NAME,
+        Transcription::stream(E::STREAM, model),
+    ))
 }
 
 /// Everything a dictation pipeline needs except the engine.
@@ -323,6 +367,7 @@ impl ExecutionParts {
 }
 
 pub(super) struct BuiltDictation {
+    pub(super) engine: &'static str,
     pub(super) coordinator: DictationCoordinator<RuntimeExecutor>,
     pub(super) wake: Option<WakeWordMonitor>,
     /// The one capture backend, for the other operations that record.
@@ -363,13 +408,13 @@ pub(super) fn build_dictation(
     let policy =
         DictationPolicy::new(timeouts.overall).map_err(DictationInitializationError::Policy)?;
     let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording)?;
-    let engine = select_engine(transcription, loading)?;
+    let engine = select_engine(transcription, loading, home)?;
     let (capture, wake) = capture
         .open()
         .map_err(DictationInitializationError::Capture)?;
     let capture = Arc::new(capture);
     let wake_control = wake.as_ref().map(WakeWordMonitor::control);
-    let execution = engine(ExecutionParts {
+    let execution = (engine.build)(ExecutionParts {
         capture: Arc::clone(&capture),
         delivery,
         transcripts,
@@ -381,6 +426,7 @@ pub(super) fn build_dictation(
         cleanup_llm,
     });
     Ok(BuiltDictation {
+        engine: engine.name,
         coordinator: DictationCoordinator::new(policy, execution, microphone),
         wake,
         capture,
@@ -388,34 +434,77 @@ pub(super) fn build_dictation(
     })
 }
 
+/// What a history retry runs on. A named server `engine` must match what the
+/// server runs.
+pub(super) enum RetryTarget<'a> {
+    Local(TranscriptionConfig),
+    Server {
+        endpoint: String,
+        engine: Option<&'a str>,
+    },
+}
+
+pub(super) struct Retried {
+    pub(super) transcript: Transcript,
+    pub(super) engine: &'static str,
+}
+
 pub(super) fn transcribe_retry(
-    config: DictationConfig,
-    speaker: &SpeakerConfig,
-    vocabulary: &VocabularyRuntime,
-    home: &Path,
+    setup: &super::runtime::RetrySetup,
+    target: RetryTarget<'_>,
     recording: &mut RecordingReader,
     settings: &DictationSettings,
     cancel: &CancelToken,
-) -> Result<Transcript, DictationError> {
+) -> Result<Retried, DictationError> {
+    let config = &setup.dictation;
     let cleanup_llm = config
-        .cleanup_layer(home)
+        .cleanup_layer(&setup.home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
-    let engine = EngineConfig::try_from(config.transcription)?;
-    let transcription = Transcription::complete(engine.input(), engine.load(cancel)?);
-    let snapshot = vocabulary.snapshot(settings.project.as_ref());
-    let pipeline = DictationPipeline::new((), transcription, speaker::reader(speaker), ())
+    let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
+    let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
+    let pipeline = DictationPipeline::new((), transcription, speaker::reader(&setup.speaker), ())
         .cleaning(config.cleanup)
         .backtracking(config.backtrack)
         .hearing_speech(speaker::speech_gate())
         .with(cleanup_llm);
-    pipeline.refresh_enrolled(speaker::enrolled(speaker));
-    pipeline.transcribe(
+    pipeline.refresh_enrolled(speaker::enrolled(&setup.speaker));
+    let transcript = pipeline.transcribe(
         recording,
         &settings.recognition_language,
         settings.own_voice_only,
         Some(snapshot.matcher.as_ref()),
         cancel,
-    )
+    )?;
+    Ok(Retried { transcript, engine })
+}
+
+/// A retry decodes the stored recording once, so every engine runs whole.
+type RetryTranscription = Transcription<Box<dyn Transcriber>, Whole>;
+
+fn retry_transcription(
+    home: &Path,
+    target: RetryTarget<'_>,
+    cancel: &CancelToken,
+) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
+    match target {
+        RetryTarget::Server { endpoint, engine } => {
+            let mut remote = RemoteTranscriber::connect(home, &endpoint, cancel)?;
+            if let Some(engine) = engine {
+                remote = remote.serving(engine)?;
+            }
+            let engine = remote.engine_name();
+            let remote: Box<dyn Transcriber> = Box::new(remote);
+            Ok((Transcription::delegated(remote), engine))
+        }
+        RetryTarget::Local(config) => {
+            let name = config.backend_name();
+            let engine = EngineConfig::try_from(config)?;
+            Ok((
+                Transcription::complete(engine.input(), engine.load(cancel)?),
+                name,
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -425,14 +514,95 @@ mod tests {
     use crate::audio::ReplayPace;
     use crate::config::{CaptureConfig, WakeConfig};
 
+    #[tokio::test]
+    async fn server_dictation_transcribes_replayed_audio_without_local_stt_models() {
+        let server = crate::daemon::inference::host::tests::Fixture::start().await;
+        let home = tempfile::tempdir().unwrap();
+        server.pair_home(home.path().to_owned()).await;
+        let endpoint = server.endpoint().to_owned();
+        tokio::task::spawn_blocking(move || {
+            let environment = crate::config::Environment::in_home(home.path().to_owned());
+            let audio = home.path().join("speech.wav");
+            std::fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../aria-wake/tests/fixtures/negative.wav"),
+                &audio,
+            )
+            .unwrap();
+            let (vocabulary, _worker) = VocabularyRuntime::new(
+                home.path().join("vocabulary"),
+                None,
+                false,
+                crate::vocabulary::discover::LocalCollector::new(
+                    crate::vocabulary::extract::LocalExtractor,
+                ),
+            );
+            for loading in [ModelLoading::Eager, ModelLoading::OnFirstUse] {
+                let mut dictation = DictationConfig::load(&environment).unwrap();
+                dictation.transcription = TranscriptionBackend::Server {
+                    endpoint: endpoint.clone(),
+                };
+                dictation.capture = CaptureConfig::WavFile {
+                    path: audio.clone(),
+                    pace: ReplayPace::Immediate,
+                };
+                let built = build_dictation(
+                    DictationSetup {
+                        dictation,
+                        speaker: SpeakerConfig::load(&environment).unwrap(),
+                        vocabulary: Arc::clone(&vocabulary),
+                        wake: WakeConfig::Disabled,
+                    },
+                    home.path(),
+                    home.path(),
+                    Arc::new(TranscriptStore::new()),
+                    loading,
+                    Gate::new(),
+                )
+                .unwrap();
+                assert_eq!(built.engine, crate::config::backend::WHISPER);
+                let mut settings = crate::preferences::UserPreferences::default()
+                    .resolve_dictation(
+                        crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
+                        None,
+                    );
+                settings.own_voice_only = false;
+                settings.transcript_only = true;
+                settings.delivery_mode = crate::dictation::DeliveryMode::Complete;
+                let outcome = built
+                    .coordinator
+                    .execute(
+                        settings,
+                        CancelToken::never(),
+                        &DictationEventEmitter::unsubscribed(),
+                    )
+                    .unwrap();
+                let crate::dictation::DictationOutcome::Completed(result) = outcome else {
+                    panic!("{outcome:?}");
+                };
+                assert!(result.text.contains("native words"), "{}", result.text);
+                assert!(
+                    result
+                        .text
+                        .split_whitespace()
+                        .all(|word| matches!(word, "native" | "words"))
+                );
+                assert!(!home.path().join(".aria/models").exists());
+            }
+        })
+        .await
+        .unwrap();
+        server.stop().await;
+    }
+
     #[test]
     fn capture_is_validated_before_the_model_loads() {
         let home = tempfile::tempdir().unwrap();
         let environment = crate::config::Environment::in_home(home.path().to_owned());
         let mut config = DictationConfig::load(&environment).unwrap();
-        config.transcription = TranscriptionConfig::Whisper {
+        config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
             model: home.path().join("missing-model.bin"),
-        };
+        });
         config.capture = CaptureConfig::WavFile {
             path: home.path().join("missing-capture.wav"),
             pace: ReplayPace::Immediate,
@@ -494,11 +664,18 @@ mod tests {
             crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
             None,
         );
+        let TranscriptionBackend::Local(engine) = config.transcription.clone() else {
+            panic!("the default backend is local");
+        };
+        let target = RetryTarget::Local(engine);
         let result = transcribe_retry(
-            config,
-            &speaker,
-            &vocabulary,
-            home.path(),
+            &super::super::runtime::RetrySetup {
+                dictation: config,
+                speaker,
+                vocabulary,
+                home: home.path().to_owned(),
+            },
+            target,
             &mut recording,
             &settings,
             &CancelToken::never(),

@@ -23,8 +23,8 @@ use super::load::{
 };
 use super::{
     CaptureConfig, ConfigError, DictationTimeouts, HotkeyConfig, ListenTranscription, RelayConfig,
-    TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsFallback, TtsModel, WakeConfig,
-    WakeWordOverride,
+    TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsFallback,
+    TtsModel, WakeConfig, WakeWordOverride,
 };
 
 pub struct Report {
@@ -197,7 +197,7 @@ fn device_name(device: TranscriptionDevice) -> &'static str {
 fn transcription(
     file: &FileConfig,
     environment: &Environment,
-    config: &TranscriptionConfig,
+    backend: &TranscriptionBackend,
 ) -> Vec<Row> {
     let model = Source::of(
         environment.transcription_model.is_some(),
@@ -206,13 +206,20 @@ fn transcription(
     );
     let mut rows = vec![row(
         "transcription.backend",
-        config.backend_name(),
+        backend.backend_name(),
         Source::of(
             environment.transcription_backend.is_some(),
             file.transcription.backend.is_some(),
             BACKEND_ENV,
         ),
     )];
+    let config = match backend {
+        TranscriptionBackend::Local(config) => config,
+        TranscriptionBackend::Server { endpoint } => {
+            rows.push(row("transcription.server", endpoint, Source::File));
+            return rows;
+        }
+    };
     match config {
         TranscriptionConfig::Whisper { model: path }
         | TranscriptionConfig::WhisperCandle {
@@ -546,7 +553,7 @@ fn chat(
 fn listen(
     file: &FileConfig,
     environment: &Environment,
-    transcription: Option<&TranscriptionConfig>,
+    transcription: Option<&TranscriptionBackend>,
 ) -> Result<Vec<Row>, ConfigError> {
     // Without a backend of its own, listen takes the whole transcription
     // section, and its own model and device settings go unread.
@@ -756,6 +763,22 @@ mod tests {
     }
 
     #[test]
+    fn server_configuration_shows_the_endpoint_without_local_model_settings() {
+        let home =
+            home_with("transcription: {backend: server, server: https://example.test:9851}\n");
+        let report = shown(home.path());
+        let rows = rows(&report);
+        assert_eq!(find(&rows, "transcription.backend").value, "server");
+        let endpoint = find(&rows, "transcription.server");
+        assert_eq!(endpoint.value, "https://example.test:9851");
+        assert_eq!(endpoint.source, Source::File);
+        assert!(!rows.iter().any(|row| matches!(
+            row.key,
+            "transcription.model" | "transcription.device" | "transcription.interpreter"
+        )));
+    }
+
+    #[test]
     fn a_file_value_is_marked_and_shown_with_the_home_expanded() {
         let home = home_with("transcription:\n  backend: parakeet\n  model: ~/custom\n");
         let report = shown(home.path());
@@ -904,6 +927,7 @@ mod tests {
                     model: _,
                     device: _,
                     interpreter: _,
+                    server: _,
                 },
             listen:
                 FileListen {

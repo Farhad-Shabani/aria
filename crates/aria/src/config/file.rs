@@ -177,6 +177,8 @@ pub(crate) struct FileTranscription {
     pub(crate) device: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) interpreter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) server: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]

@@ -44,7 +44,7 @@ pub(crate) enum WakeWordOverride {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DictationConfig {
     pub(crate) capture: CaptureConfig,
-    pub(crate) transcription: TranscriptionConfig,
+    pub(crate) transcription: TranscriptionBackend,
     pub(crate) dictation_timeouts: DictationTimeouts,
     /// Drops fillers and doubled words before delivery.
     pub(crate) cleanup: bool,
@@ -195,6 +195,41 @@ impl DictationConfig {
                 crate::dictation::LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home)
             })
             .transpose()
+    }
+}
+
+pub(crate) fn validate_server_endpoint(endpoint: &str) -> bool {
+    let Ok(uri) = endpoint.parse::<tonic::codegen::http::Uri>() else {
+        return false;
+    };
+    endpoint.len() <= 2048
+        && uri.scheme_str() == Some("https")
+        && uri.host().is_some()
+        && uri
+            .authority()
+            .is_some_and(|authority| !authority.as_str().contains('@'))
+        && uri.query().is_none()
+        && !endpoint.contains('#')
+        && matches!(uri.path(), "" | "/")
+}
+
+/// Where dictation and recorded transcription run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TranscriptionBackend {
+    Local(TranscriptionConfig),
+    Server { endpoint: String },
+}
+
+impl TranscriptionBackend {
+    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
+        load::load_transcription(environment)
+    }
+
+    pub(crate) fn backend_name(&self) -> &'static str {
+        match self {
+            Self::Local(engine) => engine.backend_name(),
+            Self::Server { .. } => backend::SERVER,
+        }
     }
 }
 
@@ -398,6 +433,7 @@ impl TranscriptionConfig {
 /// Names an engine under `transcription.backend`, and labels that engine in
 /// its own logs and errors.
 pub mod backend {
+    pub const SERVER: &str = "server";
     pub const WHISPER: &str = aria_stt::whisper::NAME;
     pub const WHISPER_CANDLE: &str = aria_stt::whisper_candle::NAME;
     pub const PARAKEET: &str = aria_stt::parakeet::NAME;
@@ -410,6 +446,20 @@ pub mod backend {
     #[cfg(target_os = "ios")]
     pub const PARAKEET_MLX: &str = "parakeet-mlx";
     pub const DEFAULT: &str = PARAKEET;
+
+    /// The canonical name of a local engine, or `None`.
+    pub(crate) fn local(name: &str) -> Option<&'static str> {
+        [
+            WHISPER,
+            WHISPER_CANDLE,
+            PARAKEET,
+            MOONSHINE,
+            NEMOTRON,
+            PARAKEET_MLX,
+        ]
+        .into_iter()
+        .find(|engine| *engine == name)
+    }
 }
 
 pub use aria_stt::parakeet::Device as TranscriptionDevice;
@@ -435,6 +485,16 @@ pub(crate) struct DictationTimeouts {
 // field, so the message points at what to edit.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error("transcription.server must be an HTTPS origin without credentials, query or fragment")]
+    InvalidServerEndpoint,
+
+    #[error("transcription.server requires transcription.backend: server")]
+    ServerRequiresServerBackend,
+
+    #[error(
+        "listen requires a local engine; set listen.backend to parakeet, moonshine, or nemotron"
+    )]
+    ListenRequiresLocal,
     #[error("cannot locate the Aria configuration")]
     Home(#[source] UserHomeError),
 

@@ -146,7 +146,7 @@ rust-linux:
             && rustup component add clippy \
             && cargo clippy --locked --workspace --all-targets -- -D warnings \
             && setpriv --bounding-set=-dac_override,-dac_read_search \
-                xvfb-run -a cargo test --locked --workspace --all-targets"
+                xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --workspace --all-targets"
 
 # Rust: build artifacts
 
@@ -220,6 +220,7 @@ _swift-stubs out: _swift-plugins
         --grpc-swift-2_opt=Visibility=Public,Client=true,Server=false,FileNaming=DropPath \
         proto/aria/daemon/v1/daemon.proto \
         proto/aria/daemon/v1/errors.proto \
+        proto/aria/daemon/v1/inference.proto \
         proto/aria/daemon/v1/relay.proto \
         proto/aria/daemon/v1/speech.proto \
         proto/aria/setup/v1/setup.proto \

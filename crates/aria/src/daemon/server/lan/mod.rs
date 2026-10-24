@@ -1,5 +1,5 @@
-mod connections;
-mod tls;
+pub(in crate::daemon) mod connections;
+pub(in crate::daemon) mod tls;
 
 use std::io;
 use std::sync::Arc;
@@ -21,13 +21,13 @@ use connections::Admitted;
 
 use super::{CONNECTION_DRAIN_GRACE, until_grace_after};
 
-/// LAN connections open at once: a few phones, plus dead ones the keepalive
+/// LAN connections open at once: a few devices, plus dead ones the keepalive
 /// has not reaped yet.
-const MAX_LAN_CONNECTIONS: usize = 16;
-/// How many streams may run on one LAN connection. Only one relay can hold
-/// the recorder. The rest is slack for a settings or health call, or a
-/// retry.
-const MAX_RELAY_STREAMS: usize = 4;
+pub(in crate::daemon) const MAX_LAN_CONNECTIONS: usize = 16;
+/// How many streams may run on one LAN connection. One call at a time holds
+/// the recorder or the model. The rest is slack for a settings, info or
+/// health call, or a retry.
+pub(in crate::daemon) const MAX_LAN_STREAMS: usize = 4;
 
 /// The largest `RelayRequest` the relay will decode. The phone ships 256 KiB
 /// chunks; this is generous for one of those and nowhere near a session.
@@ -41,12 +41,12 @@ const MAX_PAIR_MESSAGE_BYTES: usize = 1024;
 
 /// A phone on the LAN finishes its handshake in well under a second. A
 /// connection that has not finished by then holds a socket for nothing.
-const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+pub(in crate::daemon) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a connection admitted on a pairing code stays open. Pair is one
 /// short call, and the phone opens a fresh connection for everything after.
-const PAIRING_LEASE: Duration = Duration::from_secs(15);
-const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
-const RELAY_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(in crate::daemon) const PAIRING_LEASE: Duration = Duration::from_secs(15);
+pub(in crate::daemon) const LAN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
+pub(in crate::daemon) const LAN_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The relay and the port it answers on, together because "served" and
 /// "where" are the same decision: carried apart, a mismatch binds a port
@@ -143,12 +143,12 @@ where
     let pair = PairingRpc::new(codes, phones);
     tonic::transport::Server::builder()
         // Even a paired client gets no more streams than a phone needs.
-        .concurrency_limit_per_connection(MAX_RELAY_STREAMS)
-        .max_concurrent_streams(Some(MAX_RELAY_STREAMS as u32))
+        .concurrency_limit_per_connection(MAX_LAN_STREAMS)
+        .max_concurrent_streams(Some(MAX_LAN_STREAMS as u32))
         // A phone that walks out of range sends no FIN. Without keepalive the
         // connection sits open until something else times it out.
-        .http2_keepalive_interval(Some(RELAY_KEEPALIVE_INTERVAL))
-        .http2_keepalive_timeout(Some(RELAY_KEEPALIVE_TIMEOUT))
+        .http2_keepalive_interval(Some(LAN_KEEPALIVE_INTERVAL))
+        .http2_keepalive_timeout(Some(LAN_KEEPALIVE_TIMEOUT))
         .add_service(InterceptedService::new(
             wire::relay_service_server::RelayServiceServer::new(relay)
                 // Bound each message before the handler sees it. The upload

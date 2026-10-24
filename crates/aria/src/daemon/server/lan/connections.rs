@@ -13,7 +13,7 @@ use tonic::transport::server::{Connected, TcpConnectInfo};
 
 /// Accepted connections, at most `limit` open at once. One past the limit
 /// is closed as it arrives.
-pub(super) fn admitted(
+pub(in crate::daemon) fn admitted(
     listener: TcpListener,
     limit: usize,
 ) -> impl Stream<Item = io::Result<Admitted>> {
@@ -49,7 +49,7 @@ pub(super) fn admitted(
 }
 
 /// A connection holding one of the open slots until it drops.
-pub(super) struct Admitted {
+pub(in crate::daemon) struct Admitted {
     stream: TcpStream,
     _slot: OwnedSemaphorePermit,
 }

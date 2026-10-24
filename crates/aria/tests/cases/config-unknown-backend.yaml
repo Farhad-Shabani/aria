@@ -7,4 +7,4 @@ expect:
   daemon:
     startup: failure
     stderr_contains:
-      - 'transcription.backend does not accept "vosk"; supported values are whisper, whisper-candle, parakeet, moonshine, nemotron, and parakeet-mlx'
+      - 'transcription.backend does not accept "vosk"; supported values are whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server'

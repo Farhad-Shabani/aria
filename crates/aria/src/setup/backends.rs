@@ -1,8 +1,10 @@
 //! The choices setup offers, and what this machine can run.
 
 use std::env;
+use std::path::Path;
 
-use crate::config::{backend, chat_agent, tts_backend};
+use crate::config::{FileConfig, backend, chat_agent, tts_backend};
+use crate::daemon::inference;
 use crate::primitives::file_inspection::InspectedFile;
 
 use super::assets::{self, Asset};
@@ -67,6 +69,23 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
     choices
 }
 
+pub(super) fn stt_choices(file: &FileConfig, home: &Path, host: &Host) -> Vec<Choice> {
+    let mut choices = choices::<Stt>(file.transcription.backend.as_deref(), host);
+    let paired = file
+        .transcription
+        .server
+        .as_deref()
+        .is_some_and(|endpoint| inference::is_paired(home, endpoint));
+    if paired
+        && let Some(server) = choices
+            .iter_mut()
+            .find(|choice| choice.key == backend::SERVER)
+    {
+        server.availability = Availability::Ready;
+    }
+    choices
+}
+
 /// What is known about this machine before any question is asked.
 pub(super) struct Host {
     pub(super) macos: bool,
@@ -108,13 +127,15 @@ pub enum ModelSource {
     /// The engine fetches its model itself, so setup cannot tell its size.
     FetchedOnFirstUse,
     BuiltIn,
+    /// A paired inference server holds the model.
+    Remote,
 }
 
 impl ModelSource {
     pub(super) fn assets(self) -> &'static [Asset] {
         match self {
             Self::Downloads(assets) => assets,
-            Self::FetchedOnFirstUse | Self::BuiltIn => &[],
+            Self::FetchedOnFirstUse | Self::BuiltIn | Self::Remote => &[],
         }
     }
 }
@@ -139,6 +160,7 @@ pub(super) enum Stt {
     Moonshine,
     Nemotron,
     ParakeetMlx,
+    Server,
 }
 
 impl Backend for Stt {
@@ -150,6 +172,7 @@ impl Backend for Stt {
         Self::Moonshine,
         Self::Nemotron,
         Self::ParakeetMlx,
+        Self::Server,
     ];
     const DEFAULT: &'static str = backend::DEFAULT;
 
@@ -161,6 +184,7 @@ impl Backend for Stt {
             Self::Moonshine => backend::MOONSHINE,
             Self::Nemotron => backend::NEMOTRON,
             Self::ParakeetMlx => backend::PARAKEET_MLX,
+            Self::Server => backend::SERVER,
         }
     }
 
@@ -172,6 +196,7 @@ impl Backend for Stt {
             Self::Moonshine => "Moonshine base",
             Self::Nemotron => "Nemotron streaming 0.6B",
             Self::ParakeetMlx => "Parakeet TDT 0.6B (MLX)",
+            Self::Server => "Paired inference server",
         }
     }
 
@@ -188,6 +213,9 @@ impl Backend for Stt {
             Self::ParakeetMlx => Availability::Missing {
                 fix: "set transcription.interpreter to a Python with parakeet-mlx".to_owned(),
             },
+            Self::Server => Availability::Missing {
+                fix: "pair an inference server and set transcription.server".to_owned(),
+            },
         }
     }
 
@@ -200,6 +228,7 @@ impl Backend for Stt {
             Self::Nemotron => ModelSource::Downloads(&[assets::NEMOTRON]),
             // The sidecar downloads the model into its own Hugging Face cache.
             Self::ParakeetMlx => ModelSource::FetchedOnFirstUse,
+            Self::Server => ModelSource::Remote,
         }
     }
 }
@@ -296,17 +325,67 @@ impl Backend for Chat {
 
 #[cfg(test)]
 mod tests {
+    use aria_kit::synthesis::Engine as _;
+    use sha2::Digest;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
-
-    use aria_kit::synthesis::Engine as _;
 
     use super::*;
-    use crate::config::{
-        self, DictationConfig, Environment, FileConfig, TtsBackend, TtsConfig, TtsModel,
-    };
+    use crate::config::{self, DictationConfig, Environment, TtsBackend, TtsConfig, TtsModel};
     use crate::primitives::error_chain;
+
+    #[test]
+    fn server_readiness_checks_existing_pairing_for_the_configured_endpoint() {
+        let home = tempfile::tempdir().unwrap();
+        let host = Host {
+            macos: true,
+            system_voice: Availability::Ready,
+        };
+        let mut file: FileConfig = serde_saphyr::from_str(
+            "transcription: {backend: server, server: https://example.test:9851}",
+        )
+        .unwrap();
+        let available = |file: &FileConfig| {
+            stt_choices(file, home.path(), &host)
+                .into_iter()
+                .find(|choice| choice.key == backend::SERVER)
+                .unwrap()
+                .availability
+        };
+        assert!(matches!(available(&file), Availability::Missing { .. }));
+        let path = inference::Paths::in_home(home.path()).client_identity();
+        assert!(!path.exists());
+
+        let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let certificate = params.self_signed(&key).unwrap();
+        let fingerprint: [u8; 32] = sha2::Sha256::digest(certificate.der()).into();
+        let stored = serde_json::json!({
+            "credentials": {
+                "certificate_pem": certificate.pem(),
+                "key_pem": key.serialize_pem(),
+            },
+            "server": {
+                "endpoint": "https://example.test:9851",
+                "certificate_pem": certificate.pem(),
+                "fingerprint": fingerprint,
+            },
+        });
+        crate::primitives::private_fs::prepare_directory(&home.path().join(".aria")).unwrap();
+        crate::primitives::private_document::PrivateDocument::new(&path, 16 * 1024)
+            .prepare(&stored)
+            .unwrap()
+            .commit()
+            .unwrap()
+            .confirm_durability()
+            .unwrap();
+        assert_eq!(available(&file), Availability::Ready);
+
+        file.transcription.server = Some("https://other.test:9851".to_owned());
+        assert!(matches!(available(&file), Availability::Missing { .. }));
+        file.transcription.server = None;
+        assert!(matches!(available(&file), Availability::Missing { .. }));
+    }
 
     /// Setup must download each model to the path the daemon loads it from.
     #[test]
@@ -376,7 +455,11 @@ mod tests {
         {
             let home = home_with_downloads("transcription", stt.key(), stt.model().assets());
             let environment = Environment::in_home(home.path().to_path_buf());
-            let transcription = DictationConfig::load(&environment).unwrap().transcription;
+            let crate::config::TranscriptionBackend::Local(transcription) =
+                DictationConfig::load(&environment).unwrap().transcription
+            else {
+                panic!("{} is a local engine", stt.key());
+            };
             if let Err(error) = crate::transcription::check_model(&transcription) {
                 panic!("{}: {}", stt.key(), error_chain(&error));
             }
