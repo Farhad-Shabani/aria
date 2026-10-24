@@ -18,19 +18,19 @@ use tokio_rustls::rustls::{
 use tonic::transport::{ClientTlsConfig, Endpoint, Identity};
 
 use super::identity::{
-    CERTIFICATE_NAME, ClientIdentity, Credentials, Invitation, PinnedServer, ServerIdentity,
+    CERTIFICATE_NAME, ClientIdentity, Credentials, Invitation, PinnedServer, ServerAccess,
 };
 use crate::config::ServerEndpoint;
 use crate::daemon::relay::fingerprint;
 
-pub(super) fn server(identity: &Arc<ServerIdentity>) -> Result<TlsAcceptor, Error> {
+pub(super) fn server(access: &Arc<ServerAccess>) -> Result<TlsAcceptor, Error> {
     let verifier = ClientVerifier {
-        identity: Arc::clone(identity),
+        access: Arc::clone(access),
         algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
     };
     let certificate =
-        CertificateDer::from_pem_slice(identity.credentials().certificate_pem.as_bytes())?;
-    let key = PrivateKeyDer::from_pem_slice(identity.credentials().key_pem.as_bytes())?;
+        CertificateDer::from_pem_slice(access.credentials().certificate_pem.as_bytes())?;
+    let key = PrivateKeyDer::from_pem_slice(access.credentials().key_pem.as_bytes())?;
     Ok(crate::daemon::server::lan::tls::acceptor(
         certificate,
         key,
@@ -42,9 +42,6 @@ pub(super) fn invited_endpoint(
     client: &ClientIdentity,
     invitation: &Invitation,
 ) -> Result<Endpoint, Error> {
-    invitation
-        .validate()
-        .map_err(|_| Error::InvalidInvitation)?;
     configured_endpoint(
         client,
         &invitation.endpoint,
@@ -126,7 +123,7 @@ fn certificate_verifier(
 }
 
 struct ClientVerifier {
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     algorithms: WebPkiSupportedAlgorithms,
 }
 
@@ -147,7 +144,7 @@ impl ClientCertVerifier for ClientVerifier {
         intermediates: &[CertificateDer<'_>],
         now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        if !self.identity.contains(&fingerprint(certificate)) && !self.identity.pairing_is_open() {
+        if !self.access.contains(&fingerprint(certificate)) && !self.access.pairing_is_open() {
             return Err(rejected());
         }
         let mut roots = RootCertStore::empty();
@@ -244,8 +241,6 @@ pub(crate) enum Error {
     Rustls(#[from] rustls::Error),
     #[error("the pinned remote certificate is invalid")]
     InvalidPin,
-    #[error("the remote invitation is invalid")]
-    InvalidInvitation,
     #[error("the remote TLS endpoint could not be configured")]
     Transport(#[from] tonic::transport::Error),
 }
@@ -285,10 +280,10 @@ mod tests {
         (endpoint, task, observed)
     }
 
-    fn identities(directory: &tempfile::TempDir) -> (Arc<ServerIdentity>, ClientIdentity) {
+    fn identities(directory: &tempfile::TempDir) -> (Arc<ServerAccess>, ClientIdentity) {
         let parent = directory.path().join("inference");
         (
-            ServerIdentity::load_or_create(&parent.join("server.json")).unwrap(),
+            ServerAccess::load_or_create(&parent.join("server.json")).unwrap(),
             ClientIdentity::load_or_create(&parent.join("client.json")).unwrap(),
         )
     }
@@ -296,14 +291,14 @@ mod tests {
     #[tokio::test]
     async fn production_client_authenticates_both_sides_and_refuses_revocation() {
         let directory = tempfile::tempdir().unwrap();
-        let (identity, client) = identities(&directory);
-        let (address, task, accepted) = listening(server(&identity).unwrap()).await;
-        let invitation = identity.issue(&address).unwrap();
+        let (access, client) = identities(&directory);
+        let (address, task, accepted) = listening(server(&access).unwrap()).await;
+        let invitation = access.issue(&address).unwrap();
         let certificate =
             CertificateDer::from_pem_slice(client.credentials().certificate_pem.as_bytes())
                 .unwrap();
         let pin = fingerprint(&certificate);
-        identity.pair(pin, &invitation.code).unwrap();
+        access.pair(pin, &invitation.code).unwrap();
         let channel = invited_endpoint(&client, &invitation)
             .unwrap()
             .connect()
@@ -318,8 +313,8 @@ mod tests {
         assert!(accepted.await.unwrap());
         task.abort();
 
-        identity.revoke(pin).unwrap();
-        let (address, task, accepted) = listening(server(&identity).unwrap()).await;
+        access.revoke(pin).unwrap();
+        let (address, task, accepted) = listening(server(&access).unwrap()).await;
         let pinned = PinnedServer {
             endpoint: address,
             certificate_pem: invitation.certificate_pem,
@@ -362,11 +357,11 @@ mod tests {
     #[tokio::test]
     async fn the_production_client_refuses_tls12() {
         let directory = tempfile::tempdir().unwrap();
-        let (identity, client) = identities(&directory);
+        let (access, client) = identities(&directory);
         let certificate =
-            CertificateDer::from_pem_slice(identity.credentials().certificate_pem.as_bytes())
+            CertificateDer::from_pem_slice(access.credentials().certificate_pem.as_bytes())
                 .unwrap();
-        let key = PrivateKeyDer::from_pem_slice(identity.credentials().key_pem.as_bytes()).unwrap();
+        let key = PrivateKeyDer::from_pem_slice(access.credentials().key_pem.as_bytes()).unwrap();
         let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
@@ -377,7 +372,7 @@ mod tests {
         .unwrap();
         config.alpn_protocols = vec![b"h2".to_vec()];
         let (address, task, _) = listening(TlsAcceptor::from(Arc::new(config))).await;
-        let invitation = identity.issue(&address).unwrap();
+        let invitation = access.issue(&address).unwrap();
         assert!(
             invited_endpoint(&client, &invitation)
                 .unwrap()

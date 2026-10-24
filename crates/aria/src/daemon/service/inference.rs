@@ -14,28 +14,28 @@ use tonic::{Request, Response, Status};
 
 use crate::config::ServerEndpoint;
 use crate::daemon::inference::engine::{Engine, Input};
-use crate::daemon::inference::identity::{self, Admission, ServerIdentity};
+use crate::daemon::inference::identity::{self, Admission, ServerAccess};
 use crate::daemon::inference::{IDLE_INPUT_TIMEOUT, OVERALL_TIMEOUT, QUEUE_CAPACITY};
 use crate::daemon::relay::presented;
-use crate::inference::{Event, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, Start, Transcript};
+use crate::inference::{Completion, Event, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, Start};
 use crate::ipc::wire;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
 pub(in crate::daemon) struct InferenceRpc {
     engine: Arc<Engine>,
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     jobs: TaskTracker,
 }
 
 impl InferenceRpc {
     pub(in crate::daemon) fn new(
         engine: Arc<Engine>,
-        identity: Arc<ServerIdentity>,
+        access: Arc<ServerAccess>,
         jobs: TaskTracker,
     ) -> Self {
         Self {
             engine,
-            identity,
+            access,
             jobs,
         }
     }
@@ -49,7 +49,7 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         &self,
         request: Request<wire::InferenceInfoRequest>,
     ) -> Result<Response<wire::InferenceInfoResponse>, Status> {
-        authenticate(&self.identity, &request)?;
+        authenticate(&self.access, &request)?;
         Ok(Response::new(self.engine.info().into()))
     }
 
@@ -60,10 +60,10 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         let deadline = Instant::now() + request_timeout(&request)?;
         let peer = presented(&request).ok_or_else(unauthenticated)?;
         let admission = self
-            .identity
+            .access
             .admit(peer)
             .map_err(|error| Status::from(RpcFailure::from(error)))?;
-        let cancel = admission.cancellation().clone();
+        let cancel = admission.async_cancel().clone();
         let cancel_on_drop = cancel.clone().drop_guard();
         let mut requests = request.into_inner();
         let start = until(&cancel, deadline, read_start(&mut requests)).await?;
@@ -72,7 +72,7 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         let (finish, terminal) = oneshot::channel();
         let engine = Arc::clone(&self.engine);
         let worker = self.jobs.spawn_blocking(move || {
-            let result = engine.transcribe(prepared, &admission.cancel_token(), &events);
+            let result = engine.transcribe(prepared, &events, &admission.blocking_cancel());
             (result, admission)
         });
         let supervising = cancel.clone();
@@ -118,7 +118,7 @@ where
     Start::try_from(start).map_err(|_| invalid("invalid inference opening"))
 }
 
-type Worker = JoinHandle<(Result<Transcript, RpcFailure>, Admission)>;
+type Worker = JoinHandle<(Result<Completion, RpcFailure>, Admission)>;
 
 /// Feeds the upload to the worker. A worker that fails first ends the call
 /// without reading the rest of the upload.
@@ -126,7 +126,7 @@ async fn supervise<S>(
     requests: &mut S,
     input: Input,
     mut worker: Worker,
-) -> Result<Transcript, RpcFailure>
+) -> Result<Completion, RpcFailure>
 where
     S: Stream<Item = Result<wire::InferenceRequest, Status>> + Unpin,
 {
@@ -143,8 +143,8 @@ where
 }
 
 fn worker_result(
-    result: Result<(Result<Transcript, RpcFailure>, Admission), tokio::task::JoinError>,
-) -> Result<Transcript, RpcFailure> {
+    result: Result<(Result<Completion, RpcFailure>, Admission), tokio::task::JoinError>,
+) -> Result<Completion, RpcFailure> {
     let (result, _admission) = result.map_err(|_| {
         RpcFailure::new(
             RpcErrorCode::Internal,
@@ -158,7 +158,7 @@ fn worker_result(
 /// A success sends every queued update, then Complete.
 struct Output {
     updates: mpsc::Receiver<Event>,
-    terminal: oneshot::Receiver<Result<Transcript, RpcFailure>>,
+    terminal: oneshot::Receiver<Result<Completion, RpcFailure>>,
     stage: Stage,
     cancel: CancellationToken,
     _cancel_on_drop: DropGuard,
@@ -173,7 +173,7 @@ enum Stage {
 impl Output {
     fn new(
         updates: mpsc::Receiver<Event>,
-        terminal: oneshot::Receiver<Result<Transcript, RpcFailure>>,
+        terminal: oneshot::Receiver<Result<Completion, RpcFailure>>,
         cancel: CancellationToken,
         cancel_on_drop: DropGuard,
     ) -> Self {
@@ -339,13 +339,13 @@ where
 }
 
 pub(in crate::daemon) struct InferencePairingRpc {
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     jobs: TaskTracker,
 }
 
 impl InferencePairingRpc {
-    pub(in crate::daemon) fn new(identity: Arc<ServerIdentity>, jobs: TaskTracker) -> Self {
-        Self { identity, jobs }
+    pub(in crate::daemon) fn new(access: Arc<ServerAccess>, jobs: TaskTracker) -> Self {
+        Self { access, jobs }
     }
 }
 
@@ -357,9 +357,9 @@ impl wire::pairing_service_server::PairingService for InferencePairingRpc {
     ) -> Result<Response<wire::PairResponse>, Status> {
         let peer = presented(&request).ok_or_else(unauthenticated)?;
         let code = request.into_inner().code;
-        let identity = Arc::clone(&self.identity);
+        let access = Arc::clone(&self.access);
         self.jobs
-            .spawn_blocking(move || identity.pair(peer, &code))
+            .spawn_blocking(move || access.pair(peer, &code))
             .await
             .map_err(|_| internal("pairing stopped unexpectedly"))?
             .map_err(|error| Status::from(RpcFailure::from(error)))?;
@@ -368,13 +368,13 @@ impl wire::pairing_service_server::PairingService for InferencePairingRpc {
 }
 
 pub(in crate::daemon) struct InferenceAdminRpc {
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     jobs: TaskTracker,
 }
 
 impl InferenceAdminRpc {
-    pub(in crate::daemon) fn new(identity: Arc<ServerIdentity>, jobs: TaskTracker) -> Self {
-        Self { identity, jobs }
+    pub(in crate::daemon) fn new(access: Arc<ServerAccess>, jobs: TaskTracker) -> Self {
+        Self { access, jobs }
     }
 }
 
@@ -388,7 +388,7 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
             .ok_or(identity::Error::InvalidEndpoint)
             .map_err(|error| Status::from(RpcFailure::from(error)))?;
         let invitation = self
-            .identity
+            .access
             .issue(&endpoint)
             .map_err(|error| Status::from(RpcFailure::from(error)))?;
         let invitation_json = serde_json::to_vec(&invitation)
@@ -407,9 +407,9 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
             .fingerprint
             .try_into()
             .map_err(|_| Status::from(invalid("a fingerprint must contain 32 bytes")))?;
-        let identity = Arc::clone(&self.identity);
+        let access = Arc::clone(&self.access);
         self.jobs
-            .spawn_blocking(move || identity.revoke(pin))
+            .spawn_blocking(move || access.revoke(pin))
             .await
             .map_err(|_| internal("revocation stopped unexpectedly"))?
             .map_err(|error| Status::from(RpcFailure::from(error)))?;
@@ -419,11 +419,11 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
 
 /// Admits a call only from a client this server has paired.
 pub(in crate::daemon) fn authenticate<T>(
-    identity: &ServerIdentity,
+    access: &ServerAccess,
     request: &Request<T>,
 ) -> Result<(), Status> {
     match presented(request) {
-        Some(pin) if identity.contains(&pin) => Ok(()),
+        Some(pin) if access.contains(&pin) => Ok(()),
         _ => Err(unauthenticated()),
     }
 }
@@ -552,7 +552,7 @@ mod tests {
         let (finish, terminal) = oneshot::channel();
         assert!(
             finish
-                .send(Ok(Transcript {
+                .send(Ok(Completion {
                     text: "words".into(),
                     engine: "whisper".into()
                 }))

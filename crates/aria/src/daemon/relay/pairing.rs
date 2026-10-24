@@ -227,7 +227,7 @@ pub(in crate::daemon) fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-pub(in crate::daemon) fn from_hex(value: &str) -> Option<[u8; 32]> {
+pub(in crate::daemon) fn fingerprint_from_hex(value: &str) -> Option<[u8; 32]> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
@@ -288,10 +288,13 @@ mod tests {
     #[test]
     fn fingerprints_round_trip_through_hex_and_reject_anything_else() {
         let fingerprint = [0xab; 32];
-        assert_eq!(from_hex(&to_hex(&fingerprint)), Some(fingerprint));
-        assert_eq!(from_hex(&"AB".repeat(32)), Some(fingerprint));
+        assert_eq!(
+            fingerprint_from_hex(&to_hex(&fingerprint)),
+            Some(fingerprint)
+        );
+        assert_eq!(fingerprint_from_hex(&"AB".repeat(32)), Some(fingerprint));
         for bad in ["é".repeat(32), "ab".repeat(33), "+f".repeat(32)] {
-            assert_eq!(from_hex(&bad), None, "{bad}");
+            assert_eq!(fingerprint_from_hex(&bad), None, "{bad}");
         }
     }
 

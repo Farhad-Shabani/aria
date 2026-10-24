@@ -1134,7 +1134,7 @@ fn run_serve(bind: std::net::SocketAddr) -> anyhow::Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
     aria_stt::whisper::install_logging_hooks();
-    Ok(aria::daemon::serve(bind)?)
+    Ok(aria::daemon::serve_inference(bind)?)
 }
 
 fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
@@ -1143,7 +1143,7 @@ fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
             println!("{}", aria::daemon::remote_invite(&endpoint)?);
         }
         RemoteCommand::Pair => {
-            let fingerprint = aria::daemon::pair_remote(std::io::stdin().lock())?;
+            let fingerprint = aria::daemon::remote_pair(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
             println!(
                 "Set transcription.backend to server and transcription.server to the paired address."

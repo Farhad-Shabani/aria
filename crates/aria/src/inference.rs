@@ -27,15 +27,15 @@ pub(crate) struct Start {
     pub strategy: Strategy,
 }
 
-/// What a server runs. Every engine transcribes whole recordings; some also
-/// stream.
+/// What a server runs. Every engine transcribes whole recordings, so
+/// `strategy` names the strongest one it supports.
 pub(crate) struct Info {
     pub engine: String,
-    pub streaming: bool,
+    pub strategy: Strategy,
 }
 
 #[derive(Clone)]
-pub(crate) struct Transcript {
+pub(crate) struct Completion {
     pub text: String,
     pub engine: String,
 }
@@ -45,7 +45,7 @@ pub(crate) enum Event {
         update: TranscriptUpdate,
         retained_from: u64,
         read_to: u64,
-        completed: Option<Transcript>,
+        completed: Option<Completion>,
     },
-    Complete(Transcript),
+    Complete(Completion),
 }

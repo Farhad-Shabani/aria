@@ -14,10 +14,10 @@ use tonic::transport::{Channel, Endpoint};
 use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, tls};
 use crate::config::{Environment, ServerEndpoint};
-use crate::daemon::relay::{from_hex, to_hex};
+use crate::daemon::relay::{fingerprint_from_hex, to_hex};
 use crate::inference::{
-    Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES, MAX_TEXT_BYTES, Start,
-    Strategy, Transcript,
+    Completion, Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES,
+    MAX_TEXT_BYTES, Start, Strategy,
 };
 use crate::ipc::{protocol, wire};
 use crate::primitives::local_socket::ExclusiveListener;
@@ -142,7 +142,7 @@ impl RemoteTranscriber {
     ) -> Result<Self, RemoteClientError> {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
             .map_err(identity_error)?;
-        let server = identity.paired(endpoint).map_err(identity_error)?;
+        let server = identity.pinned_server(endpoint).map_err(identity_error)?;
         let endpoint = tls::endpoint(&identity, server).map_err(|_| RemoteClientError::Identity)?;
         let runtime = RemoteRuntime::new()?;
         let (channel, info) = runtime
@@ -162,20 +162,15 @@ impl RemoteTranscriber {
             }))?;
         let engine =
             crate::config::backend::local(&info.engine).ok_or(RemoteClientError::Unsupported)?;
-        let strategy = if info.streaming {
-            Strategy::Streaming
-        } else {
-            Strategy::Whole
-        };
         Ok(Self {
             connection: Arc::new(Connection { channel, runtime }),
             engine,
-            strategy,
+            strategy: info.strategy,
         })
     }
 
     /// Refuses a server that runs anything but `engine`.
-    pub(crate) fn serving(self, engine: &str) -> Result<Self, TranscriptionError> {
+    pub(crate) fn require_engine(self, engine: &str) -> Result<Self, TranscriptionError> {
         if self.engine == engine {
             Ok(self)
         } else {
@@ -286,7 +281,7 @@ struct ResponseValidator {
 
 /// A completed transcript the server announced before its tail arrived.
 struct Claim {
-    transcript: Transcript,
+    transcript: Completion,
     held: Vec<Event>,
 }
 
@@ -329,7 +324,7 @@ impl ResponseValidator {
         update: TranscriptUpdate,
         retained_from: u64,
         read_to: u64,
-        completed: Option<Transcript>,
+        completed: Option<Completion>,
         sent: u64,
     ) -> Result<Accepted, RemoteClientError> {
         valid(self.retained_from <= retained_from && self.read_to <= read_to && read_to <= sent)?;
@@ -380,7 +375,7 @@ impl ResponseValidator {
         valid(self.finalized.len() <= MAX_TEXT_BYTES)
     }
 
-    fn claim(&mut self, transcript: Transcript) -> Result<(), RemoteClientError> {
+    fn claim(&mut self, transcript: Completion) -> Result<(), RemoteClientError> {
         valid(transcript.engine == self.engine && !transcript.text.trim().is_empty())?;
         match &self.claim {
             Some(claim) => valid(claim.transcript.text == transcript.text),
@@ -398,7 +393,7 @@ impl ResponseValidator {
     /// The first held update carries the claim, so delivery sees it once.
     fn check_complete(
         &mut self,
-        transcript: Transcript,
+        transcript: Completion,
         uploaded: bool,
     ) -> Result<Accepted, RemoteClientError> {
         valid(
@@ -601,8 +596,8 @@ impl Transcriber for RemoteTranscriber {
     fn open_operation(
         &self,
         language: &Language,
-        cancel: &CancelToken,
         incremental: bool,
+        cancel: &CancelToken,
     ) -> Result<Option<OperationSource>, TranscriptionError> {
         let remote = Self {
             strategy: if incremental {
@@ -709,7 +704,7 @@ async fn send_request(
 
 /// Pairs with the server named in an invitation read from `input`, so the
 /// secret never appears on a command line.
-pub fn pair_remote(input: impl std::io::Read) -> Result<String, RemoteClientError> {
+pub fn remote_pair(input: impl std::io::Read) -> Result<String, RemoteClientError> {
     let invitation = read_invitation(input)?;
     let environment = Environment::capture().map_err(RemoteClientError::Config)?;
     pair_at(environment.home(), &invitation)
@@ -734,17 +729,13 @@ pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteCli
     }
     let invitation: Invitation =
         serde_json::from_str(invitation).map_err(|_| RemoteClientError::Invitation)?;
-    invitation
-        .validate()
-        .map_err(|_| RemoteClientError::Invitation)?;
     let paths = Paths::in_home(home);
     if let Some(parent) = paths.directory().parent() {
         prepare_directory(parent).map_err(|_| RemoteClientError::Storage)?;
     }
     prepare_directory(paths.directory()).map_err(|_| RemoteClientError::Storage)?;
-    let (socket, lock) = paths.pairing_lock();
-    let _lock =
-        ExclusiveListener::bind(socket, lock).map_err(|_| RemoteClientError::PairingLock)?;
+    let _lock = ExclusiveListener::bind(paths.pairing_socket(), paths.pairing_lock())
+        .map_err(|_| RemoteClientError::PairingLock)?;
     let mut identity =
         ClientIdentity::load_or_create(&paths.client_identity()).map_err(identity_error)?;
     let endpoint =
@@ -786,7 +777,8 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
 }
 
 pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
-    let fingerprint = from_hex(fingerprint).ok_or(RemoteClientError::InvalidFingerprint)?;
+    let fingerprint =
+        fingerprint_from_hex(fingerprint).ok_or(RemoteClientError::InvalidFingerprint)?;
     let environment = Environment::capture().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = admin_channel(environment.home()).await?;
@@ -1281,7 +1273,7 @@ mod tests {
             update: TranscriptUpdate,
             retained_from: u64,
             read_to: u64,
-            completed: Option<Transcript>,
+            completed: Option<Completion>,
             sent: u64,
         ) -> Result<Option<Event>, RemoteClientError> {
             let event = Event::Update {
@@ -1299,7 +1291,7 @@ mod tests {
 
         fn complete(
             &mut self,
-            transcript: Transcript,
+            transcript: Completion,
             uploaded: bool,
         ) -> Result<Vec<Event>, RemoteClientError> {
             match self.accept(Event::Complete(transcript), 0, uploaded)? {
@@ -1309,8 +1301,8 @@ mod tests {
         }
     }
 
-    fn transcript(text: &str) -> Transcript {
-        Transcript {
+    fn transcript(text: &str) -> Completion {
+        Completion {
             text: text.into(),
             engine: "whisper".into(),
         }

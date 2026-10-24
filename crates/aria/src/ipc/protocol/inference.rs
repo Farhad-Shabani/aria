@@ -1,6 +1,6 @@
 use crate::inference::{
-    Event, Info, MAX_AUDIO_SAMPLES, MAX_ENGINE_NAME_BYTES, MAX_TEXT_BYTES, Start, Strategy,
-    Transcript,
+    Completion, Event, Info, MAX_AUDIO_SAMPLES, MAX_ENGINE_NAME_BYTES, MAX_TEXT_BYTES, Start,
+    Strategy,
 };
 use crate::ipc::wire;
 use crate::transcription::{TranscriptSegment, TranscriptUpdate};
@@ -61,10 +61,10 @@ impl From<Start> for wire::InferenceStart {
 
 impl From<Info> for wire::InferenceInfoResponse {
     fn from(value: Info) -> Self {
-        let mut strategies = vec![Strategy::Whole.into()];
-        if value.streaming {
-            strategies.push(Strategy::Streaming.into());
-        }
+        let strategies = match value.strategy {
+            Strategy::Whole => vec![Strategy::Whole.into()],
+            Strategy::Streaming => vec![Strategy::Whole.into(), Strategy::Streaming.into()],
+        };
         Self {
             engine: value.engine,
             strategies,
@@ -89,13 +89,17 @@ impl TryFrom<wire::InferenceInfoResponse> for Info {
         }
         Ok(Self {
             engine: value.engine,
-            streaming: strategies.contains(&Strategy::Streaming),
+            strategy: if strategies.contains(&Strategy::Streaming) {
+                Strategy::Streaming
+            } else {
+                Strategy::Whole
+            },
         })
     }
 }
 
-impl From<Transcript> for wire::InferenceComplete {
-    fn from(value: Transcript) -> Self {
+impl From<Completion> for wire::InferenceComplete {
+    fn from(value: Completion) -> Self {
         Self {
             text: value.text,
             engine: value.engine,
@@ -103,7 +107,7 @@ impl From<Transcript> for wire::InferenceComplete {
     }
 }
 
-impl TryFrom<wire::InferenceComplete> for Transcript {
+impl TryFrom<wire::InferenceComplete> for Completion {
     type Error = ProtocolError;
 
     fn try_from(value: wire::InferenceComplete) -> Result<Self, Self::Error> {
@@ -232,7 +236,7 @@ mod tests {
             ),
             retained_from: 8,
             read_to: 32,
-            completed: Some(Transcript {
+            completed: Some(Completion {
                 text: "words".into(),
                 engine: "whisper".into(),
             }),

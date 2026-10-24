@@ -18,22 +18,39 @@ pub(super) const MAX_DOCUMENT_BYTES: u64 = 16 * 1024;
 const MAX_CLIENTS: usize = 16;
 pub(super) const CERTIFICATE_NAME: &str = "aria.inference";
 
+/// Parsing checks the pin and the code, so a parsed invitation is usable.
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "UncheckedInvitation")]
 pub(crate) struct Invitation {
-    pub endpoint: ServerEndpoint,
-    pub certificate_pem: String,
-    pub fingerprint: [u8; 32],
-    pub code: String,
+    pub(super) endpoint: ServerEndpoint,
+    pub(super) certificate_pem: String,
+    pub(super) fingerprint: [u8; 32],
+    pub(super) code: String,
 }
 
-impl Invitation {
-    pub(super) fn validate(&self) -> Result<(), Error> {
-        validate_pin(&self.certificate_pem, &self.fingerprint)?;
-        if !PairingCode::is_well_formed(&self.code) {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UncheckedInvitation {
+    endpoint: ServerEndpoint,
+    certificate_pem: String,
+    fingerprint: [u8; 32],
+    code: String,
+}
+
+impl TryFrom<UncheckedInvitation> for Invitation {
+    type Error = Error;
+
+    fn try_from(invitation: UncheckedInvitation) -> Result<Self, Error> {
+        validate_pin(&invitation.certificate_pem, &invitation.fingerprint)?;
+        if !PairingCode::is_well_formed(&invitation.code) {
             return Err(Error::InvalidInvitation);
         }
-        Ok(())
+        Ok(Self {
+            endpoint: invitation.endpoint,
+            certificate_pem: invitation.certificate_pem,
+            fingerprint: invitation.fingerprint,
+            code: invitation.code,
+        })
     }
 }
 
@@ -65,7 +82,7 @@ struct ServerUpdate<'a> {
     clients: &'a [[u8; 32]],
 }
 
-pub(in crate::daemon) struct ServerIdentity {
+pub(in crate::daemon) struct ServerAccess {
     path: PathBuf,
     credentials: Credentials,
     codes: PairingCodes,
@@ -79,7 +96,7 @@ struct Trust {
     stopped: bool,
 }
 
-impl ServerIdentity {
+impl ServerAccess {
     pub(in crate::daemon) fn load_or_create(path: &Path) -> Result<Arc<Self>, Error> {
         let stored = load_or_create(path, || {
             Ok(StoredServer {
@@ -189,7 +206,7 @@ impl ServerIdentity {
         let cancel = CancellationToken::new();
         state.active = Some((pin, cancel.clone()));
         Ok(Admission {
-            identity: Arc::clone(self),
+            access: Arc::clone(self),
             cancel,
         })
     }
@@ -243,17 +260,17 @@ impl ServerIdentity {
 }
 
 pub(in crate::daemon) struct Admission {
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     cancel: CancellationToken,
 }
 
 impl Admission {
-    pub(in crate::daemon) fn cancellation(&self) -> &CancellationToken {
+    pub(in crate::daemon) fn async_cancel(&self) -> &CancellationToken {
         &self.cancel
     }
 
     /// The same cancellation, for synchronous model work.
-    pub(in crate::daemon) fn cancel_token(&self) -> CancelToken {
+    pub(in crate::daemon) fn blocking_cancel(&self) -> CancelToken {
         let cancel = self.cancel.clone();
         CancelToken::from_fn(move || cancel.is_cancelled())
     }
@@ -262,7 +279,7 @@ impl Admission {
 impl Drop for Admission {
     fn drop(&mut self) {
         self.cancel.cancel();
-        self.identity
+        self.access
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -283,7 +300,7 @@ pub(crate) struct ClientIdentity {
 }
 
 impl ClientIdentity {
-    /// Opens an identity that pairing already created.
+    /// Opens an access that pairing already created.
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
         let stored = PrivateDocument::new(path, MAX_DOCUMENT_BYTES)
             .read::<StoredClient>()?
@@ -323,7 +340,7 @@ impl ClientIdentity {
         Ok(fingerprint(&certificate))
     }
 
-    pub(crate) fn paired(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
+    pub(crate) fn pinned_server(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
         self.stored
             .server
             .as_ref()
@@ -332,7 +349,6 @@ impl ClientIdentity {
     }
 
     pub(super) fn remember(&mut self, invitation: &Invitation) -> Result<(), Error> {
-        invitation.validate()?;
         let server = PinnedServer {
             endpoint: invitation.endpoint.clone(),
             certificate_pem: invitation.certificate_pem.clone(),
@@ -397,15 +413,15 @@ fn persist(document: &PrivateDocument, value: &impl Serialize) -> Result<(), Err
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
-    #[error("the remote identity document is not usable")]
+    #[error("the remote access document is not usable")]
     Document(#[from] DocumentError),
     #[error(
-        "the identity was published, but durability is unconfirmed; authorization was not granted"
+        "the access was published, but durability is unconfirmed; authorization was not granted"
     )]
     DurabilityUnconfirmed(#[source] DocumentError),
     #[error("revocation applies in this process, but restart durability is unconfirmed")]
     RevokeUnconfirmed(#[source] Box<Self>),
-    #[error("the remote identity or certificate is invalid")]
+    #[error("the remote access or certificate is invalid")]
     InvalidIdentity,
     #[error("the invitation is invalid")]
     InvalidInvitation,
@@ -425,7 +441,7 @@ pub(crate) enum Error {
     Certificate(#[from] rcgen::Error),
     #[error("failed to issue an invitation")]
     Invite(#[from] PairingError),
-    #[error("the remote TLS identity is not usable")]
+    #[error("the remote TLS access is not usable")]
     Tls(#[from] super::tls::Error),
 }
 
@@ -446,7 +462,7 @@ impl From<Error> for RpcFailure {
             ),
             Error::Unauthenticated | Error::Unpaired => (
                 RpcErrorCode::Unauthenticated,
-                "remote identity is not authorized",
+                "remote access is not authorized",
             ),
             Error::Full => (
                 RpcErrorCode::PermissionDenied,
@@ -458,7 +474,7 @@ impl From<Error> for RpcFailure {
             | Error::InvalidIdentity
             | Error::Certificate(_)
             | Error::Invite(_)
-            | Error::Tls(_) => (RpcErrorCode::Internal, "remote identity operation failed"),
+            | Error::Tls(_) => (RpcErrorCode::Internal, "remote access operation failed"),
         };
         Self::new(code, message)
     }
@@ -479,9 +495,9 @@ mod tests {
         ServerEndpoint::parse(&format!("https://localhost:{port}")).unwrap()
     }
 
-    fn grant(identity: &ServerIdentity, pin: [u8; 32]) {
-        let invitation = identity.issue(&localhost(5000)).unwrap();
-        identity.pair(pin, &invitation.code).unwrap();
+    fn grant(access: &ServerAccess, pin: [u8; 32]) {
+        let invitation = access.issue(&localhost(5000)).unwrap();
+        access.pair(pin, &invitation.code).unwrap();
     }
 
     enum WriteFault {
@@ -491,7 +507,7 @@ mod tests {
     }
 
     fn faulted_write(
-        identity: &ServerIdentity,
+        access: &ServerAccess,
         clients: &[[u8; 32]],
         fault: &WriteFault,
     ) -> Result<(), Error> {
@@ -502,9 +518,9 @@ mod tests {
         if matches!(fault, WriteFault::Prepare) {
             return Err(error().into());
         }
-        let document = PrivateDocument::new(&identity.path, MAX_DOCUMENT_BYTES);
+        let document = PrivateDocument::new(&access.path, MAX_DOCUMENT_BYTES);
         let prepared = document.prepare(&ServerUpdate {
-            credentials: &identity.credentials,
+            credentials: &access.credentials,
             clients,
         })?;
         if matches!(fault, WriteFault::Rename) {
@@ -520,10 +536,10 @@ mod tests {
     fn malformed_identity_is_never_replaced() {
         let directory = tempfile::tempdir().unwrap();
         let path = path(&directory);
-        ServerIdentity::load_or_create(&path).unwrap();
+        ServerAccess::load_or_create(&path).unwrap();
         for bytes in [b"{ invalid".as_slice(), b"{\"unknown\":true}"] {
             std::fs::write(&path, bytes).unwrap();
-            assert!(ServerIdentity::load_or_create(&path).is_err());
+            assert!(ServerAccess::load_or_create(&path).is_err());
             assert_eq!(std::fs::read(&path).unwrap(), bytes);
         }
     }
@@ -532,20 +548,20 @@ mod tests {
     fn identity_rejects_mismatched_keys_and_excess_clients() {
         let directory = tempfile::tempdir().unwrap();
         let path = path(&directory);
-        ServerIdentity::load_or_create(&path).unwrap();
+        ServerAccess::load_or_create(&path).unwrap();
         let document = PrivateDocument::new(&path, MAX_DOCUMENT_BYTES);
         let mut stored: StoredServer = document.read().unwrap().unwrap();
         stored.credentials.key_pem = generate().unwrap().key_pem;
         persist(&document, &stored).unwrap();
         assert!(matches!(
-            ServerIdentity::load_or_create(&path),
+            ServerAccess::load_or_create(&path),
             Err(Error::Tls(_))
         ));
         stored.credentials = generate().unwrap();
         stored.clients = (0..=MAX_CLIENTS).map(|index| [index as u8; 32]).collect();
         persist(&document, &stored).unwrap();
         assert!(matches!(
-            ServerIdentity::load_or_create(&path),
+            ServerAccess::load_or_create(&path),
             Err(Error::InvalidIdentity)
         ));
     }
@@ -554,16 +570,16 @@ mod tests {
     fn identity_rejects_public_files_symlinks_and_oversized_files() {
         let directory = tempfile::tempdir().unwrap();
         let path = path(&directory);
-        ServerIdentity::load_or_create(&path).unwrap();
+        ServerAccess::load_or_create(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(ServerIdentity::load_or_create(&path).is_err());
+        assert!(ServerAccess::load_or_create(&path).is_err());
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let linked = path.with_file_name("linked.json");
         symlink(&path, &linked).unwrap();
-        assert!(ServerIdentity::load_or_create(&linked).is_err());
+        assert!(ServerAccess::load_or_create(&linked).is_err());
         std::fs::write(&path, vec![b' '; MAX_DOCUMENT_BYTES as usize + 1]).unwrap();
         assert!(matches!(
-            ServerIdentity::load_or_create(&path),
+            ServerAccess::load_or_create(&path),
             Err(Error::Document(DocumentError::TooLarge { .. }))
         ));
     }
@@ -572,112 +588,122 @@ mod tests {
     fn a_pairing_code_grants_once_and_trust_survives_reload() {
         let directory = tempfile::tempdir().unwrap();
         let path = path(&directory);
-        let identity = ServerIdentity::load_or_create(&path).unwrap();
-        let invite = identity.issue(&localhost(5000)).unwrap();
-        identity.pair([1; 32], &invite.code).unwrap();
+        let access = ServerAccess::load_or_create(&path).unwrap();
+        let invite = access.issue(&localhost(5000)).unwrap();
+        access.pair([1; 32], &invite.code).unwrap();
         assert!(matches!(
-            identity.pair([2; 32], &invite.code),
+            access.pair([2; 32], &invite.code),
             Err(Error::Unauthenticated)
         ));
         assert!(
-            ServerIdentity::load_or_create(&path)
+            ServerAccess::load_or_create(&path)
                 .unwrap()
                 .contains(&[1; 32])
         );
     }
 
     #[test]
+    fn a_tampered_invitation_does_not_parse() {
+        let directory = tempfile::tempdir().unwrap();
+        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let issued = serde_json::to_value(access.issue(&localhost(5000)).unwrap()).unwrap();
+        assert!(serde_json::from_value::<Invitation>(issued.clone()).is_ok());
+        for (field, tampered) in [
+            ("code", serde_json::json!("not a pairing code")),
+            ("fingerprint", serde_json::json!(vec![0_u8; 32])),
+        ] {
+            let mut invitation = issued.clone();
+            invitation[field] = tampered;
+            assert!(serde_json::from_value::<Invitation>(invitation).is_err());
+        }
+    }
+
+    #[test]
     fn revocation_ends_peer_connections_and_pairing_creates_a_fresh_lease() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = ServerIdentity::load_or_create(&path(&directory)).unwrap();
-        grant(&identity, [1; 32]);
-        grant(&identity, [2; 32]);
-        let first = identity.connection([1; 32]).unwrap();
-        let another = identity.connection([1; 32]).unwrap();
-        let other_peer = identity.connection([2; 32]).unwrap();
+        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        grant(&access, [1; 32]);
+        grant(&access, [2; 32]);
+        let first = access.connection([1; 32]).unwrap();
+        let another = access.connection([1; 32]).unwrap();
+        let other_peer = access.connection([2; 32]).unwrap();
 
-        identity.revoke([1; 32]).unwrap();
+        access.revoke([1; 32]).unwrap();
 
         assert!(first.is_cancelled());
         assert!(another.is_cancelled());
         assert!(!other_peer.is_cancelled());
-        assert!(identity.connection([1; 32]).is_none());
-        grant(&identity, [1; 32]);
-        let replacement = identity.connection([1; 32]).unwrap();
+        assert!(access.connection([1; 32]).is_none());
+        grant(&access, [1; 32]);
+        let replacement = access.connection([1; 32]).unwrap();
         assert!(!replacement.is_cancelled());
         assert!(first.is_cancelled());
 
-        identity.stop();
+        access.stop();
 
         assert!(replacement.is_cancelled());
         assert!(other_peer.is_cancelled());
-        assert!(identity.connection([1; 32]).is_none());
-        assert!(identity.connection([2; 32]).is_none());
+        assert!(access.connection([1; 32]).is_none());
+        assert!(access.connection([2; 32]).is_none());
     }
 
     #[test]
     fn revoke_racing_connection_never_leaves_an_uncancelled_lease() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = ServerIdentity::load_or_create(&path(&directory)).unwrap();
-        grant(&identity, [1; 32]);
+        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        grant(&access, [1; 32]);
         let barrier = Arc::new(std::sync::Barrier::new(2));
-        let worker = Arc::clone(&identity);
+        let worker = Arc::clone(&access);
         let ready = Arc::clone(&barrier);
         let attempt = std::thread::spawn(move || {
             ready.wait();
             worker.connection([1; 32])
         });
         barrier.wait();
-        identity.revoke([1; 32]).unwrap();
+        access.revoke([1; 32]).unwrap();
         if let Some(connection) = attempt.join().unwrap() {
             assert!(connection.is_cancelled());
         }
-        assert!(identity.connection([1; 32]).is_none());
+        assert!(access.connection([1; 32]).is_none());
     }
 
     #[test]
     fn revoked_work_is_cancelled_but_holds_admission_until_drop() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = ServerIdentity::load_or_create(&path(&directory)).unwrap();
-        grant(&identity, [1; 32]);
-        grant(&identity, [2; 32]);
-        let admitted = identity.admit([1; 32]).unwrap();
-        let token = admitted.cancel_token();
-        identity.revoke([1; 32]).unwrap();
-        assert!(admitted.cancellation().is_cancelled());
+        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        grant(&access, [1; 32]);
+        grant(&access, [2; 32]);
+        let admitted = access.admit([1; 32]).unwrap();
+        let token = admitted.blocking_cancel();
+        access.revoke([1; 32]).unwrap();
+        assert!(admitted.async_cancel().is_cancelled());
         assert!(token.is_cancelled());
-        assert!(matches!(
-            identity.admit([1; 32]),
-            Err(Error::Unauthenticated)
-        ));
-        assert!(matches!(identity.admit([2; 32]), Err(Error::Busy)));
+        assert!(matches!(access.admit([1; 32]), Err(Error::Unauthenticated)));
+        assert!(matches!(access.admit([2; 32]), Err(Error::Busy)));
         drop(admitted);
-        assert!(identity.admit([2; 32]).is_ok());
+        assert!(access.admit([2; 32]).is_ok());
     }
 
     #[test]
     fn revoke_racing_admission_never_leaves_uncancelled_work() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = ServerIdentity::load_or_create(&path(&directory)).unwrap();
-        grant(&identity, [1; 32]);
+        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        grant(&access, [1; 32]);
         let barrier = Arc::new(std::sync::Barrier::new(2));
-        let worker = Arc::clone(&identity);
+        let worker = Arc::clone(&access);
         let ready = Arc::clone(&barrier);
         let attempt = std::thread::spawn(move || {
             ready.wait();
             worker.admit([1; 32])
         });
         barrier.wait();
-        identity.revoke([1; 32]).unwrap();
+        access.revoke([1; 32]).unwrap();
         match attempt.join().unwrap() {
-            Ok(admitted) => assert!(admitted.cancellation().is_cancelled()),
+            Ok(admitted) => assert!(admitted.async_cancel().is_cancelled()),
             Err(Error::Unauthenticated) => {}
             Err(error) => panic!("unexpected admission failure: {error}"),
         }
-        assert!(matches!(
-            identity.admit([1; 32]),
-            Err(Error::Unauthenticated)
-        ));
+        assert!(matches!(access.admit([1; 32]), Err(Error::Unauthenticated)));
     }
 
     #[test]
@@ -689,17 +715,17 @@ mod tests {
         ] {
             let directory = tempfile::tempdir().unwrap();
             let path = path(&directory);
-            let identity = ServerIdentity::load_or_create(&path).unwrap();
-            let mut state = identity.state.lock().unwrap();
+            let access = ServerAccess::load_or_create(&path).unwrap();
+            let mut state = access.state.lock().unwrap();
             assert!(
-                identity
+                access
                     .grant(&mut state, [1; 32], |clients| faulted_write(
-                        &identity, clients, &fault
+                        &access, clients, &fault
                     ))
                     .is_err()
             );
             drop(state);
-            assert!(!identity.contains(&[1; 32]));
+            assert!(!access.contains(&[1; 32]));
             let stored: StoredServer = PrivateDocument::new(path, MAX_DOCUMENT_BYTES)
                 .read()
                 .unwrap()
@@ -720,24 +746,24 @@ mod tests {
         ] {
             let directory = tempfile::tempdir().unwrap();
             let path = path(&directory);
-            let identity = ServerIdentity::load_or_create(&path).unwrap();
-            grant(&identity, [1; 32]);
-            let admitted = identity.admit([1; 32]).unwrap();
-            let connection = identity.connection([1; 32]).unwrap();
-            let mut state = identity.state.lock().unwrap();
+            let access = ServerAccess::load_or_create(&path).unwrap();
+            grant(&access, [1; 32]);
+            let admitted = access.admit([1; 32]).unwrap();
+            let connection = access.connection([1; 32]).unwrap();
+            let mut state = access.state.lock().unwrap();
             assert!(matches!(
-                identity.remove(&mut state, [1; 32], |clients| faulted_write(
-                    &identity, clients, &fault
+                access.remove(&mut state, [1; 32], |clients| faulted_write(
+                    &access, clients, &fault
                 )),
                 Err(Error::RevokeUnconfirmed(_))
             ));
             drop(state);
-            assert!(admitted.cancellation().is_cancelled());
+            assert!(admitted.async_cancel().is_cancelled());
             assert!(connection.is_cancelled());
-            assert!(identity.connection([1; 32]).is_none());
-            assert!(!identity.contains(&[1; 32]));
-            grant(&identity, [2; 32]);
-            let restarted = ServerIdentity::load_or_create(&path).unwrap();
+            assert!(access.connection([1; 32]).is_none());
+            assert!(!access.contains(&[1; 32]));
+            grant(&access, [2; 32]);
+            let restarted = ServerAccess::load_or_create(&path).unwrap();
             assert!(!restarted.contains(&[1; 32]));
             assert!(restarted.contains(&[2; 32]));
         }
@@ -746,7 +772,7 @@ mod tests {
     #[test]
     fn client_persists_identity_before_pairing_and_remembers_only_explicit_server() {
         let directory = tempfile::tempdir().unwrap();
-        let server = ServerIdentity::load_or_create(&path(&directory)).unwrap();
+        let server = ServerAccess::load_or_create(&path(&directory)).unwrap();
         let path = path(&directory).with_file_name("client.json");
         assert!(matches!(ClientIdentity::open(&path), Err(Error::Unpaired)));
         assert!(!path.exists());
@@ -760,7 +786,7 @@ mod tests {
             certificate
         );
         assert!(matches!(
-            client.paired(&localhost(5000)),
+            client.pinned_server(&localhost(5000)),
             Err(Error::Unpaired)
         ));
         client
@@ -769,13 +795,13 @@ mod tests {
         assert!(
             ClientIdentity::load_or_create(&path)
                 .unwrap()
-                .paired(&localhost(5000))
+                .pinned_server(&localhost(5000))
                 .is_ok()
         );
         let respelled = ServerEndpoint::parse("https://LOCALHOST:5000/").unwrap();
-        assert!(client.paired(&respelled).is_ok());
+        assert!(client.pinned_server(&respelled).is_ok());
         assert!(matches!(
-            client.paired(&localhost(5001)),
+            client.pinned_server(&localhost(5001)),
             Err(Error::Unpaired)
         ));
     }
@@ -784,16 +810,16 @@ mod tests {
     fn stopping_rejects_late_revocation_without_writing() {
         let directory = tempfile::tempdir().unwrap();
         let path = path(&directory);
-        let identity = ServerIdentity::load_or_create(&path).unwrap();
-        grant(&identity, [1; 32]);
+        let access = ServerAccess::load_or_create(&path).unwrap();
+        grant(&access, [1; 32]);
         let stored = std::fs::read(&path).unwrap();
 
-        identity.stop();
+        access.stop();
 
-        assert!(matches!(identity.revoke([1; 32]), Err(Error::Stopped)));
+        assert!(matches!(access.revoke([1; 32]), Err(Error::Stopped)));
         assert_eq!(std::fs::read(&path).unwrap(), stored);
         assert!(
-            ServerIdentity::load_or_create(&path)
+            ServerAccess::load_or_create(&path)
                 .unwrap()
                 .contains(&[1; 32])
         );
@@ -802,12 +828,12 @@ mod tests {
     #[test]
     fn stopping_cancels_the_active_operation_and_denies_admission() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = ServerIdentity::load_or_create(&path(&directory)).unwrap();
-        grant(&identity, [1; 32]);
-        let admitted = identity.admit([1; 32]).unwrap();
-        identity.stop();
-        assert!(admitted.cancellation().is_cancelled());
-        assert!(!identity.contains(&[1; 32]));
-        assert!(matches!(identity.admit([1; 32]), Err(Error::Stopped)));
+        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        grant(&access, [1; 32]);
+        let admitted = access.admit([1; 32]).unwrap();
+        access.stop();
+        assert!(admitted.async_cancel().is_cancelled());
+        assert!(!access.contains(&[1; 32]));
+        assert!(matches!(access.admit([1; 32]), Err(Error::Stopped)));
     }
 }

@@ -94,10 +94,10 @@ pub trait Transcriber: Send + Sync + 'static {
     fn open_operation(
         &self,
         language: &Language,
-        cancel: &CancelToken,
         incremental: bool,
+        cancel: &CancelToken,
     ) -> Result<Option<OperationSource>, TranscriptionError> {
-        let _ = (language, cancel, incremental);
+        let _ = (language, incremental, cancel);
         Ok(None)
     }
 }
@@ -186,10 +186,10 @@ impl<T: Transcriber + ?Sized> Transcriber for std::sync::Arc<T> {
     fn open_operation(
         &self,
         language: &Language,
-        cancel: &CancelToken,
         incremental: bool,
+        cancel: &CancelToken,
     ) -> Result<Option<OperationSource>, TranscriptionError> {
-        (**self).open_operation(language, cancel, incremental)
+        (**self).open_operation(language, incremental, cancel)
     }
 }
 
@@ -222,10 +222,10 @@ impl<T: Transcriber + ?Sized> Transcriber for Box<T> {
     fn open_operation(
         &self,
         language: &Language,
-        cancel: &CancelToken,
         incremental: bool,
+        cancel: &CancelToken,
     ) -> Result<Option<OperationSource>, TranscriptionError> {
-        (**self).open_operation(language, cancel, incremental)
+        (**self).open_operation(language, incremental, cancel)
     }
 }
 
@@ -449,6 +449,8 @@ pub struct OperationSource {
 }
 
 impl OperationSource {
+    /// `next(reader, previews)` must fill `reader` through each `read_to`,
+    /// and fully before `Complete`.
     pub fn new(
         next: impl FnMut(&mut RecordingReader, bool) -> Result<OperationStep, TranscriptionError>
         + Send
@@ -701,7 +703,7 @@ impl<T: Transcriber, M: Mode, L: Layer> Transcription<T, M, L> {
             Plan::Local(config) => M::strategy(config, &self.transcriber, language, cancel)?,
             Plan::Delegated => self
                 .transcriber
-                .open_operation(language, cancel, M::INCREMENTAL)?
+                .open_operation(language, M::INCREMENTAL, cancel)?
                 .map(Strategy::Delegated)
                 .ok_or(TranscriptionError::NoDelegatedOperation)?,
         };
@@ -1287,8 +1289,8 @@ mod operation_source_tests {
         fn open_operation(
             &self,
             _: &Language,
-            _: &CancelToken,
             incremental: bool,
+            _: &CancelToken,
         ) -> Result<Option<OperationSource>, TranscriptionError> {
             self.openings.lock().unwrap().push(incremental);
             let mut steps = VecDeque::from([

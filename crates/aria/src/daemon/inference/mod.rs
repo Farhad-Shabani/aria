@@ -41,12 +41,13 @@ impl Paths {
         self.directory.join("server.json")
     }
 
-    /// Serializes pairing on this machine.
-    pub(crate) fn pairing_lock(&self) -> (PathBuf, PathBuf) {
-        (
-            self.directory.join("client.sock"),
-            self.directory.join("client.lock"),
-        )
+    /// With `pairing_lock`, serializes pairing on this machine.
+    pub(crate) fn pairing_socket(&self) -> PathBuf {
+        self.directory.join("client.sock")
+    }
+
+    pub(crate) fn pairing_lock(&self) -> PathBuf {
+        self.directory.join("client.lock")
     }
 
     pub(crate) fn runtime(&self) -> RuntimePaths {
@@ -59,5 +60,5 @@ pub(crate) fn is_paired_with_server(home: &Path, endpoint: &ServerEndpoint) -> b
     let path = Paths::in_home(home).client_identity();
     path.is_file()
         && identity::ClientIdentity::open(&path)
-            .is_ok_and(|identity| identity.paired(endpoint).is_ok())
+            .is_ok_and(|identity| identity.pinned_server(endpoint).is_ok())
 }

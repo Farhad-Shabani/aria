@@ -491,7 +491,7 @@ fn retry_transcription(
         RetryTarget::Server { endpoint, engine } => {
             let mut remote = RemoteTranscriber::connect(home, &endpoint, cancel)?;
             if let Some(engine) = engine {
-                remote = remote.serving(engine)?;
+                remote = remote.require_engine(engine)?;
             }
             let engine = remote.engine_name();
             let remote: Box<dyn Transcriber> = Box::new(remote);
@@ -539,11 +539,9 @@ mod tests {
                 ),
             );
             let mut dictation = DictationConfig::load(&environment).unwrap();
-            dictation.transcription = TranscriptionBackend::Server {
-                endpoint: endpoint.clone(),
-            };
+            dictation.transcription = TranscriptionBackend::Server { endpoint };
             dictation.capture = CaptureConfig::WavFile {
-                path: audio.clone(),
+                path: audio,
                 pace: ReplayPace::Immediate,
             };
             let built = build_dictation(

@@ -21,7 +21,7 @@ use aria_kit::transcription::check_cancelled;
 
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT};
 use crate::inference::{
-    Event, Info, MAX_AUDIO_SECONDS, MAX_TEXT_BYTES, Start, Strategy, Transcript,
+    Completion, Event, Info, MAX_AUDIO_SECONDS, MAX_TEXT_BYTES, Start, Strategy,
 };
 
 pub(in crate::daemon) struct Engine {
@@ -84,7 +84,11 @@ impl Engine {
     pub(in crate::daemon) fn info(&self) -> Info {
         Info {
             engine: self.name.to_owned(),
-            streaming: self.stream.is_some(),
+            strategy: if self.stream.is_some() {
+                Strategy::Streaming
+            } else {
+                Strategy::Whole
+            },
         }
     }
 
@@ -121,9 +125,9 @@ impl Engine {
     pub(in crate::daemon) fn transcribe(
         &self,
         prepared: Prepared,
-        cancel: &CancelToken,
         events: &mpsc::Sender<Event>,
-    ) -> Result<Transcript, RpcFailure> {
+        cancel: &CancelToken,
+    ) -> Result<Completion, RpcFailure> {
         let Prepared {
             start,
             mut recording,
@@ -172,7 +176,7 @@ impl Engine {
                 read_to,
                 completed,
             };
-            emit(events, event, cancel, OUTPUT_STALL_TIMEOUT)?;
+            emit(event, events, OUTPUT_STALL_TIMEOUT, cancel)?;
         }
         check_cancelled(cancel).map_err(transcription_failure)?;
         let transcript = operation
@@ -182,8 +186,8 @@ impl Engine {
         Ok(self.transcript(transcript.as_str()))
     }
 
-    fn transcript(&self, text: &str) -> Transcript {
-        Transcript {
+    fn transcript(&self, text: &str) -> Completion {
+        Completion {
             text: text.to_owned(),
             engine: self.name.to_owned(),
         }
@@ -200,7 +204,7 @@ impl OutputBudget {
     fn admit(
         &mut self,
         update: &TranscriptUpdate,
-        completed: Option<&Transcript>,
+        completed: Option<&Completion>,
     ) -> Result<(), RpcFailure> {
         let text = match update {
             TranscriptUpdate::Provisional(text) => text.as_str(),
@@ -259,10 +263,10 @@ impl Input {
 
 /// Waits for room in a full queue until `timeout`, then fails Busy.
 fn emit(
-    events: &mpsc::Sender<Event>,
     mut event: Event,
-    cancel: &CancelToken,
+    events: &mpsc::Sender<Event>,
     timeout: Duration,
+    cancel: &CancelToken,
 ) -> Result<(), RpcFailure> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -360,10 +364,10 @@ mod tests {
         let sending = events.clone();
         let worker = std::thread::spawn(move || {
             emit(
-                &sending,
                 event(),
-                &CancelToken::never(),
+                &sending,
                 Duration::from_secs(1),
+                &CancelToken::never(),
             )
         });
         std::thread::sleep(Duration::from_millis(20));
@@ -373,17 +377,17 @@ mod tests {
         let cancelled = CancelToken::new();
         cancelled.cancel();
         assert_eq!(
-            emit(&events, event(), &cancelled, OUTPUT_STALL_TIMEOUT)
+            emit(event(), &events, OUTPUT_STALL_TIMEOUT, &cancelled)
                 .unwrap_err()
                 .code,
             RpcErrorCode::Cancelled
         );
         assert_eq!(
             emit(
-                &events,
                 event(),
+                &events,
+                Duration::from_millis(10),
                 &CancelToken::never(),
-                Duration::from_millis(10)
             )
             .unwrap_err()
             .code,

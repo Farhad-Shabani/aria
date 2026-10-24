@@ -32,7 +32,7 @@ use crate::runtime::RuntimeError;
 use crate::transcription::TranscriptionError;
 
 use super::engine::Engine;
-use super::identity::{self, ServerIdentity};
+use super::identity::{self, ServerAccess};
 use super::{Paths, tls};
 use crate::inference::{MAX_AUDIO_MESSAGE_BYTES, MAX_RESPONSE_BYTES};
 
@@ -40,7 +40,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const CONNECTION_DRAIN: Duration = Duration::from_secs(4);
 const MAX_WIRE_MESSAGE: usize = MAX_AUDIO_MESSAGE_BYTES + 1024;
 
-pub fn serve(bind: SocketAddr) -> Result<(), InferenceHostError> {
+pub fn serve_inference(bind: SocketAddr) -> Result<(), InferenceHostError> {
     run(bind).map_err(InferenceHostError)
 }
 
@@ -62,8 +62,8 @@ fn run(bind: SocketAddr) -> Result<(), HostFailure> {
         paths.lock_path(),
     )?);
     remove_all_spools(paths.spool_dir());
-    let identity = ServerIdentity::load_or_create(&inference.server_identity())?;
-    let acceptor = tls::server(&identity)?;
+    let access = ServerAccess::load_or_create(&inference.server_identity())?;
+    let acceptor = tls::server(&access)?;
     let listener = std::net::TcpListener::bind(bind).map_err(HostFailure::Io)?;
     listener.set_nonblocking(true).map_err(HostFailure::Io)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -75,7 +75,7 @@ fn run(bind: SocketAddr) -> Result<(), HostFailure> {
         config,
         paths.spool_dir().to_owned(),
         ownership,
-        identity,
+        access,
         acceptor,
         listener,
         shutdown,
@@ -88,7 +88,7 @@ async fn run_prepared(
     config: EngineConfig,
     spool: PathBuf,
     ownership: Arc<ExclusiveListener>,
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     acceptor: TlsAcceptor,
     listener: std::net::TcpListener,
     mut shutdown: ShutdownSignal,
@@ -97,17 +97,17 @@ async fn run_prepared(
     let local = UnixListener::from_std(ownership.listener().try_clone().map_err(HostFailure::Io)?)
         .map_err(HostFailure::Io)?;
     let jobs = TaskTracker::new();
-    let loading = load_engine(config, spool, ownership, &identity, &jobs, &mut shutdown);
+    let loading = load_engine(config, spool, ownership, &access, &jobs, &mut shutdown);
     let Some(engine) = loading.await? else {
         return Ok(());
     };
     let engine = Arc::new(engine);
-    let router = public_router(Arc::clone(&engine), Arc::clone(&identity), jobs.clone()).await;
-    let admin = admin_router(Arc::clone(&identity), jobs.clone());
+    let router = public_router(Arc::clone(&engine), Arc::clone(&access), jobs.clone()).await;
+    let admin = admin_router(Arc::clone(&access), jobs.clone());
     let address = listener.local_addr().map_err(HostFailure::Io)?;
     let stop = CancellationToken::new();
     let public = router.serve_with_incoming_shutdown(
-        incoming(listener, acceptor, Arc::clone(&identity)),
+        incoming(listener, acceptor, Arc::clone(&access)),
         stop.clone().cancelled_owned(),
     );
     let private =
@@ -120,7 +120,7 @@ async fn run_prepared(
         result = shutdown.triggered() => (result.map_err(HostFailure::Shutdown), Ended::Signal),
     };
     let drain_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
-    identity.stop();
+    access.stop();
     stop.cancel();
     jobs.close();
     let drained = tokio::time::timeout(CONNECTION_DRAIN, async {
@@ -158,7 +158,7 @@ async fn load_engine(
     config: EngineConfig,
     spool: PathBuf,
     ownership: Arc<ExclusiveListener>,
-    identity: &ServerIdentity,
+    access: &ServerAccess,
     jobs: &TaskTracker,
     shutdown: &mut ShutdownSignal,
 ) -> Result<Option<Engine>, HostFailure> {
@@ -173,7 +173,7 @@ async fn load_engine(
         }
         signal = shutdown.triggered() => {
             cancel.cancel();
-            identity.stop();
+            access.stop();
             jobs.close();
             if tokio::time::timeout(SHUTDOWN_GRACE, jobs.wait()).await.is_err() {
                 return Err(HostFailure::Drain);
@@ -185,14 +185,14 @@ async fn load_engine(
 
 async fn public_router(
     engine: Arc<Engine>,
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
     jobs: TaskTracker,
 ) -> tonic::transport::server::Router {
     let (health, service) = tonic_health::server::health_reporter();
     health
         .set_serving::<wire::inference_service_server::InferenceServiceServer<InferenceRpc>>()
         .await;
-    let authentication = Arc::clone(&identity);
+    let authentication = Arc::clone(&access);
     let paired = move |request: tonic::Request<()>| {
         authenticate(&authentication, &request)?;
         Ok(request)
@@ -205,7 +205,7 @@ async fn public_router(
         .add_service(
             wire::inference_service_server::InferenceServiceServer::new(InferenceRpc::new(
                 Arc::clone(&engine),
-                Arc::clone(&identity),
+                Arc::clone(&access),
                 jobs.clone(),
             ))
             .max_decoding_message_size(MAX_WIRE_MESSAGE)
@@ -213,7 +213,7 @@ async fn public_router(
         )
         .add_service(
             wire::pairing_service_server::PairingServiceServer::new(InferencePairingRpc::new(
-                Arc::clone(&identity),
+                Arc::clone(&access),
                 jobs.clone(),
             ))
             .max_decoding_message_size(1024),
@@ -221,16 +221,13 @@ async fn public_router(
         .add_service(InterceptedService::new(service, paired))
 }
 
-fn admin_router(
-    identity: Arc<ServerIdentity>,
-    jobs: TaskTracker,
-) -> tonic::transport::server::Router {
+fn admin_router(access: Arc<ServerAccess>, jobs: TaskTracker) -> tonic::transport::server::Router {
     tonic::transport::Server::builder()
         .concurrency_limit_per_connection(MAX_LAN_STREAMS)
         .max_concurrent_streams(Some(MAX_LAN_STREAMS as u32))
         .add_service(
             wire::inference_admin_service_server::InferenceAdminServiceServer::new(
-                InferenceAdminRpc::new(Arc::clone(&identity), jobs),
+                InferenceAdminRpc::new(Arc::clone(&access), jobs),
             )
             .max_decoding_message_size(4096),
         )
@@ -239,7 +236,7 @@ fn admin_router(
 fn incoming(
     listener: TcpListener,
     acceptor: TlsAcceptor,
-    identity: Arc<ServerIdentity>,
+    access: Arc<ServerAccess>,
 ) -> impl Stream<Item = io::Result<Leased<TlsStream<Admitted>>>> {
     let admitted = connections::admitted(listener, MAX_LAN_CONNECTIONS);
     secured(
@@ -247,7 +244,7 @@ fn incoming(
         admitted,
         TLS_HANDSHAKE_TIMEOUT,
         MAX_LAN_CONNECTIONS,
-        move |pin| match pin.and_then(|pin| identity.connection(pin)) {
+        move |pin| match pin.and_then(|pin| access.connection(pin)) {
             Some(cancel) => Lease::UntilCancelled(cancel),
             None => Lease::For(PAIRING_LEASE),
         },
@@ -386,7 +383,7 @@ pub(in crate::daemon) mod tests {
     }
 
     pub(in crate::daemon) struct Fixture {
-        identity: Arc<ServerIdentity>,
+        access: Arc<ServerAccess>,
         client: ClientIdentity,
         invite: Invitation,
         channel: Channel,
@@ -424,12 +421,12 @@ pub(in crate::daemon) mod tests {
                     .unwrap();
             let ownership =
                 Arc::new(ExclusiveListener::bind(paths.socket_path(), paths.lock_path()).unwrap());
-            let identity =
-                ServerIdentity::load_or_create(&directory.path().join("server.json")).unwrap();
+            let access =
+                ServerAccess::load_or_create(&directory.path().join("server.json")).unwrap();
             let client =
                 ClientIdentity::load_or_create(&directory.path().join("client.json")).unwrap();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let invite = identity
+            let invite = access
                 .issue(
                     &ServerEndpoint::parse(&format!("https://{}", listener.local_addr().unwrap()))
                         .unwrap(),
@@ -444,14 +441,10 @@ pub(in crate::daemon) mod tests {
                 ownership,
             ));
             let jobs = TaskTracker::new();
-            let router = public_router(engine, Arc::clone(&identity), jobs.clone()).await;
+            let router = public_router(engine, Arc::clone(&access), jobs.clone()).await;
             let stop = CancellationToken::new();
             let serving = tokio::spawn(router.serve_with_incoming_shutdown(
-                incoming(
-                    listener,
-                    tls::server(&identity).unwrap(),
-                    Arc::clone(&identity),
-                ),
+                incoming(listener, tls::server(&access).unwrap(), Arc::clone(&access)),
                 stop.clone().cancelled_owned(),
             ));
             let channel = tls::invited_endpoint(&client, &invite)
@@ -460,7 +453,7 @@ pub(in crate::daemon) mod tests {
                 .await
                 .unwrap();
             Self {
-                identity,
+                access,
                 client,
                 invite,
                 channel,
@@ -482,7 +475,7 @@ pub(in crate::daemon) mod tests {
             self.client.remember(&self.invite).unwrap();
             self.channel = tls::endpoint(
                 &self.client,
-                self.client.paired(&self.invite.endpoint).unwrap(),
+                self.client.pinned_server(&self.invite.endpoint).unwrap(),
             )
             .unwrap()
             .connect()
@@ -537,7 +530,7 @@ pub(in crate::daemon) mod tests {
         async fn idle(&self) {
             tokio::time::timeout(Duration::from_secs(2), async {
                 loop {
-                    match self.identity.admit(self.pin()) {
+                    match self.access.admit(self.pin()) {
                         Ok(admission) => {
                             drop(admission);
                             return;
@@ -552,7 +545,7 @@ pub(in crate::daemon) mod tests {
         }
 
         pub(in crate::daemon) async fn stop(self) {
-            self.identity.stop();
+            self.access.stop();
             self.stop.cancel();
             self.jobs.close();
             tokio::time::timeout(Duration::from_secs(2), self.jobs.wait())
@@ -640,19 +633,19 @@ pub(in crate::daemon) mod tests {
         let mut legitimate =
             ClientIdentity::load_or_create(&fixture._directory.path().join("legitimate.json"))
                 .unwrap();
-        let invitation = fixture.identity.issue(fixture.endpoint()).unwrap();
+        let invitation = fixture.access.issue(fixture.endpoint()).unwrap();
         let certificate =
             CertificateDer::from_pem_slice(legitimate.credentials().certificate_pem.as_bytes())
                 .unwrap();
         fixture
-            .identity
+            .access
             .pair(fingerprint(&certificate), &invitation.code)
             .unwrap();
         legitimate.remember(&invitation).unwrap();
 
         let endpoint = tls::endpoint(
             &fixture.client,
-            fixture.client.paired(fixture.endpoint()).unwrap(),
+            fixture.client.pinned_server(fixture.endpoint()).unwrap(),
         )
         .unwrap();
         let mut held = vec![fixture.channel.clone()];
@@ -661,10 +654,13 @@ pub(in crate::daemon) mod tests {
             info(channel.clone()).await.unwrap();
             held.push(channel);
         }
-        fixture.identity.revoke(fixture.pin()).unwrap();
+        fixture.access.revoke(fixture.pin()).unwrap();
 
-        let endpoint =
-            tls::endpoint(&legitimate, legitimate.paired(fixture.endpoint()).unwrap()).unwrap();
+        let endpoint = tls::endpoint(
+            &legitimate,
+            legitimate.pinned_server(fixture.endpoint()).unwrap(),
+        )
+        .unwrap();
         let admitted = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if let Ok(channel) = endpoint.connect().await
@@ -901,7 +897,7 @@ pub(in crate::daemon) mod tests {
         tokio::time::timeout(Duration::from_secs(2), fixture.observed.entered.notified())
             .await
             .unwrap();
-        fixture.identity.revoke(fixture.pin()).unwrap();
+        fixture.access.revoke(fixture.pin()).unwrap();
         assert!(work.await.unwrap().is_err());
         assert!(info(fixture.channel.clone()).await.is_err());
         fixture.model_cancelled().await;
@@ -975,7 +971,7 @@ pub(in crate::daemon) mod tests {
             let local_time = began.elapsed();
             let client = RemoteTranscriber::connect(&home, &endpoint, &CancelToken::never())
                 .unwrap()
-                .serving(name)
+                .require_engine(name)
                 .unwrap();
             let remote = Transcription::<_, Whole>::delegated(client);
             let mut times = Vec::new();
