@@ -12,8 +12,8 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
-use crate::daemon::inference::engine::{Engine, Input};
 use crate::config::ServerEndpoint;
+use crate::daemon::inference::engine::{Engine, Input};
 use crate::daemon::inference::identity::{self, Admission, ServerIdentity};
 use crate::daemon::inference::{
     Event, IDLE_INPUT_TIMEOUT, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, OVERALL_TIMEOUT,
