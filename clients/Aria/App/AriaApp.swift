@@ -98,7 +98,14 @@ struct AriaApp: App {
         // A Window, not a Settings scene: only a Window takes the unified
         // toolbar that puts Back and Forward beside the sidebar.
         Window("Aria Settings", id: WindowID.settings) {
-            SettingsView(preferences: preferences, poller: poller, updates: appDelegate.updates)
+            SettingsView(
+                preferences: preferences,
+                poller: poller,
+                updates: appDelegate.updates,
+                promptHotkeys: appDelegate.promptHotkeys,
+                askChord: appDelegate.askHotkey.chord,
+                promptListChord: appDelegate.promptList.chord
+            )
         }
         .sidebarWindowScene()
         .commands {
@@ -145,7 +152,7 @@ private struct MenuBarLabel: View {
                     NSApplication.shared.activate()
                 }
                 poller.startPolling()
-                controller.trackAskHotkey(preferences)
+                controller.trackHotkeys(preferences)
                 Task { await preferences.sync() }
             }
             // A daemon that came up after launch has preferences nobody read.

@@ -1,10 +1,11 @@
 //! The supervised owner of chat blocking work.
 //!
-//! Callers hold a [`ChatHandle`]; an ask is answered with a ticket at once
-//! and runs on the blocking pool. Asks run side by side, except that asks
-//! on one conversation run one after another: a resumed CLI session cannot
-//! take two turns at once. A cancel ends one ask by ticket; daemon shutdown
-//! cancels what is running.
+//! Callers hold a [`ChatHandle`]; an ask or a prompt run is answered with a
+//! ticket at once and runs on the blocking pool. Jobs run side by side,
+//! except within a lane: asks on one conversation run one after another,
+//! since a resumed CLI session cannot take two turns at once, and prompt
+//! runs share one lane, so two never type into the same field at once. A
+//! cancel ends one job by ticket; daemon shutdown cancels what is running.
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -15,21 +16,21 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::chat::{ChatRequest, SessionKey, Ticket};
+use crate::chat::{ChatRequest, PromptRequest, SessionKey, Ticket};
 
 use super::super::operation::{CallError, Reply, call, operation_cancellation, panic_message};
 use super::super::tasks::Supervised;
-use super::runtime::ChatRuntime;
+use super::runtime::{ChatJob, ChatRuntime};
 
 /// A handoff slot, not a work queue: the lanes inside the actor are.
 const COMMAND_CAPACITY: usize = 1;
 
-/// An ask is answered with its ticket or not at all; nothing it does
+/// A job is answered with its ticket or not at all; nothing it does
 /// before answering can fail.
 pub(in crate::daemon) type ChatCallError = CallError<Infallible>;
 
-struct AskCommand {
-    request: ChatRequest,
+struct SubmitCommand {
+    job: ChatJob,
     reply: Reply<Ticket, Infallible>,
 }
 
@@ -40,11 +41,11 @@ struct CancelCommand {
 }
 
 /// The application-facing entry point for chat. Cloneable; the channels
-/// behind it are private. Cancels travel apart from asks, so one never
+/// behind it are private. Cancels travel apart from jobs, so one never
 /// waits behind the other in the handoff slot.
 #[derive(Clone)]
 pub(in crate::daemon) struct ChatHandle {
-    asks: mpsc::Sender<AskCommand>,
+    submissions: mpsc::Sender<SubmitCommand>,
     cancels: mpsc::Sender<CancelCommand>,
 }
 
@@ -54,15 +55,28 @@ impl ChatHandle {
         &self,
         request: ChatRequest,
     ) -> Result<Ticket, ChatCallError> {
-        let (command, pending) = call(|reply| AskCommand { request, reply });
-        self.asks
+        self.submit(ChatJob::Ask(request)).await
+    }
+
+    /// Answers as soon as the run is taken; the outcome follows as an
+    /// event, as for an ask.
+    pub(in crate::daemon) async fn run_prompt(
+        &self,
+        request: PromptRequest,
+    ) -> Result<Ticket, ChatCallError> {
+        self.submit(ChatJob::Prompt(request)).await
+    }
+
+    async fn submit(&self, job: ChatJob) -> Result<Ticket, ChatCallError> {
+        let (command, pending) = call(|reply| SubmitCommand { job, reply });
+        self.submissions
             .send(command)
             .await
             .map_err(|_closed| CallError::Unavailable)?;
         pending.wait().await
     }
 
-    /// Ends the ask, running or waiting. `false` when it was neither.
+    /// Ends the job, running or waiting. `false` when it was neither.
     pub(in crate::daemon) async fn cancel(&self, ticket: Ticket) -> Result<bool, ChatCallError> {
         let (command, pending) = call(|reply| CancelCommand { ticket, reply });
         self.cancels
@@ -74,30 +88,50 @@ impl ChatHandle {
 }
 
 pub(in crate::daemon) struct ChatActor {
-    asks: mpsc::Receiver<AskCommand>,
+    submissions: mpsc::Receiver<SubmitCommand>,
     cancels: mpsc::Receiver<CancelCommand>,
     runtime: Arc<ChatRuntime>,
     next_ticket: u64,
-    /// Asks waiting behind the one running on their session.
-    lanes: HashMap<SessionKey, VecDeque<(Ticket, ChatRequest)>>,
-    running: HashMap<SessionKey, Running>,
-    /// Each job hands back its session key, so the lane can move on.
-    jobs: JoinSet<SessionKey>,
+    /// Jobs waiting behind the one running in their lane.
+    lanes: HashMap<Lane, VecDeque<(Ticket, ChatJob)>>,
+    running: HashMap<Lane, Running>,
+    /// Each job hands back its lane, so the lane can move on.
+    jobs: JoinSet<Lane>,
 }
 
-/// The one ask on a session, and what a cancel pulls to end it.
+/// Jobs in one lane run one after another.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Lane {
+    Session(SessionKey),
+    /// Every prompt run types into the app in front, so they take turns.
+    Prompts,
+}
+
+impl Lane {
+    fn of(job: &ChatJob) -> Self {
+        match job {
+            ChatJob::Ask(request) => Self::Session(request.key()),
+            ChatJob::Prompt(_) => Self::Prompts,
+        }
+    }
+}
+
+/// The one job running in a lane, and what a cancel pulls to end it.
 struct Running {
     ticket: Ticket,
     token: CancelToken,
 }
 
 pub(in crate::daemon) fn channel(runtime: Arc<ChatRuntime>) -> (ChatHandle, ChatActor) {
-    let (asks, ask_receiver) = mpsc::channel(COMMAND_CAPACITY);
+    let (submissions, submission_receiver) = mpsc::channel(COMMAND_CAPACITY);
     let (cancels, cancel_receiver) = mpsc::channel(COMMAND_CAPACITY);
     (
-        ChatHandle { asks, cancels },
+        ChatHandle {
+            submissions,
+            cancels,
+        },
         ChatActor {
-            asks: ask_receiver,
+            submissions: submission_receiver,
             cancels: cancel_receiver,
             runtime,
             next_ticket: 1,
@@ -118,8 +152,8 @@ impl Supervised for ChatActor {
                 () = shutdown.cancelled() => break,
                 Some(finished) = self.jobs.join_next() => self.finished(finished, &shutdown),
                 Some(command) = self.cancels.recv() => self.cancel(command),
-                ask = self.asks.recv() => match ask {
-                    Some(command) => self.ask(command, &shutdown),
+                submitted = self.submissions.recv() => match submitted {
+                    Some(command) => self.admit(command, &shutdown),
                     None => break,
                 },
             }
@@ -129,29 +163,20 @@ impl Supervised for ChatActor {
 }
 
 impl ChatActor {
-    fn ask(&mut self, command: AskCommand, shutdown: &CancellationToken) {
-        let AskCommand { request, reply } = command;
+    fn admit(&mut self, command: SubmitCommand, shutdown: &CancellationToken) {
+        let SubmitCommand { job, reply } = command;
         let ticket = Ticket(self.next_ticket);
         self.next_ticket += 1;
         reply.answer(ticket);
-        let key = request.key();
-        if self.running.contains_key(&key) {
-            self.lanes
-                .entry(key)
-                .or_default()
-                .push_back((ticket, request));
+        let lane = Lane::of(&job);
+        if self.running.contains_key(&lane) {
+            self.lanes.entry(lane).or_default().push_back((ticket, job));
         } else {
-            self.start(key, ticket, request, shutdown);
+            self.start(lane, ticket, job, shutdown);
         }
     }
 
-    fn start(
-        &mut self,
-        key: SessionKey,
-        ticket: Ticket,
-        request: ChatRequest,
-        shutdown: &CancellationToken,
-    ) {
+    fn start(&mut self, key: Lane, ticket: Ticket, job: ChatJob, shutdown: &CancellationToken) {
         let token = CancelToken::new();
         self.running.insert(
             key.clone(),
@@ -164,7 +189,7 @@ impl ChatActor {
         let cancellation = operation_cancellation(token, shutdown.clone());
         self.jobs.spawn_blocking(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                runtime.execute(ticket, request, cancellation);
+                runtime.execute(ticket, job, cancellation);
             }));
             if let Err(panic) = outcome {
                 tracing::error!(%ticket, panic = panic_message(panic.as_ref()), "a chat job panicked");
@@ -173,7 +198,7 @@ impl ChatActor {
         });
     }
 
-    /// A running ask is pulled by its token and ends itself; a waiting one
+    /// A running job is pulled by its token and ends itself; a waiting one
     /// is lifted out of its lane and ended here, since no job will.
     fn cancel(&mut self, command: CancelCommand) {
         let CancelCommand { ticket, reply } = command;
@@ -183,32 +208,32 @@ impl ChatActor {
             return;
         }
         match self.take_waiting(ticket) {
-            Some(request) => {
-                self.runtime.cancel_unstarted(ticket, request.agent);
+            Some(job) => {
+                self.runtime.cancel_unstarted(ticket, job.agent());
                 reply.answer(true);
             }
             None => reply.answer(false),
         }
     }
 
-    /// Lifts an ask out of its lane, dropping a lane that empties.
-    fn take_waiting(&mut self, ticket: Ticket) -> Option<ChatRequest> {
+    /// Lifts a job out of its lane, dropping a lane that empties.
+    fn take_waiting(&mut self, ticket: Ticket) -> Option<ChatJob> {
         let (key, index) = self.lanes.iter().find_map(|(key, lane)| {
             let index = lane.iter().position(|(queued, _)| *queued == ticket)?;
             Some((key.clone(), index))
         })?;
         let lane = self.lanes.get_mut(&key)?;
-        let taken = lane.remove(index).map(|(_, request)| request);
+        let taken = lane.remove(index).map(|(_, job)| job);
         if lane.is_empty() {
             self.lanes.remove(&key);
         }
         taken
     }
 
-    /// A finished job frees its session for the next ask waiting on it.
+    /// A finished job frees its lane for the next job waiting in it.
     fn finished(
         &mut self,
-        finished: Result<SessionKey, tokio::task::JoinError>,
+        finished: Result<Lane, tokio::task::JoinError>,
         shutdown: &CancellationToken,
     ) {
         let key = match finished {
@@ -225,20 +250,20 @@ impl ChatActor {
             .and_then(|lane| lane.front())
             .map(|(ticket, _)| *ticket)
             .and_then(|ticket| Some((ticket, self.take_waiting(ticket)?)));
-        if let Some((ticket, request)) = next
+        if let Some((ticket, job)) = next
             && !shutdown.is_cancelled()
         {
-            self.start(key, ticket, request, shutdown);
+            self.start(key, ticket, job, shutdown);
         }
     }
 
     /// Running jobs are cancelled through the shutdown token and waited
-    /// out; waiting asks are dropped. Subscribers are gone by now, so
+    /// out; waiting jobs are dropped. Subscribers are gone by now, so
     /// nobody could hear a failure event for them.
     async fn drain(mut self) {
-        self.asks.close();
+        self.submissions.close();
         self.cancels.close();
-        while let Some(command) = self.asks.recv().await {
+        while let Some(command) = self.submissions.recv().await {
             command.reply.unavailable();
         }
         while let Some(command) = self.cancels.recv().await {
@@ -246,7 +271,7 @@ impl ChatActor {
         }
         let waiting: usize = self.lanes.values().map(VecDeque::len).sum();
         if waiting > 0 {
-            tracing::warn!(waiting, "dropping asks that never started");
+            tracing::warn!(waiting, "dropping chat jobs that never started");
         }
         self.lanes.clear();
         while let Some(finished) = self.jobs.join_next().await {
@@ -486,5 +511,23 @@ mod tests {
                 .is_err(),
             "the handle is closed"
         );
+    }
+
+    #[test]
+    fn prompt_runs_share_one_lane_that_no_session_can_name() {
+        let prompt = || {
+            ChatJob::Prompt(PromptRequest {
+                text: "hi".to_owned(),
+                kind: crate::chat::PromptKind::Rewrite,
+                file: "/p.md".into(),
+                agent: crate::config::ChatAgent::ClaudeCode,
+                application: None,
+            })
+        };
+        let mut ask = request("hi", Path::new("/w"), false);
+        ask.session = Some("prompt #1".to_owned());
+
+        assert_eq!(Lane::of(&prompt()), Lane::of(&prompt()));
+        assert_ne!(Lane::of(&ChatJob::Ask(ask)), Lane::of(&prompt()));
     }
 }

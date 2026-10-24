@@ -1,6 +1,6 @@
 import Carbon.HIToolbox
 
-extension AskHotkey {
+extension Chord {
     /// The chord as a menu would write it, modifiers in Apple's order.
     var title: String {
         var glyphs = ""
@@ -43,9 +43,8 @@ extension AskHotkey {
                 &characters
             )
             guard status == noErr, length > 0 else { return nil }
-            // Left as the key prints it. An uppercase letter beside the
-            // glyphs reads as if Shift were part of the chord.
-            return String(utf16CodeUnits: characters, count: length)
+            // Uppercase, as menus write it; Shift shows as its own glyph.
+            return String(utf16CodeUnits: characters, count: length).uppercased()
         }
     }
 

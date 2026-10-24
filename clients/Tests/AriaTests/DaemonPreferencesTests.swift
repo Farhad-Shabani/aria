@@ -184,16 +184,15 @@ final class DaemonPreferencesTests: XCTestCase {
             await preferences.sync()
             transport.duringUpdate = {
                 await preferences.set {
-                    $0.askHotkey = Aria_Daemon_V1_AskHotkey()
+                    $0.askHotkey = Aria_Daemon_V1_Hotkey()
                     $0.vocabularyDirectory = ""
                 }
             }
 
             await preferences.set {
                 $0.muteOutput = true
-                $0.askHotkey.enabled = true
-                $0.askHotkey.keyCode = 7
-                $0.askHotkey.command = true
+                $0.askHotkey.chord.keyCode = 7
+                $0.askHotkey.chord.command = true
                 $0.vocabularyDirectory = "/repo"
             }
 
@@ -203,7 +202,7 @@ final class DaemonPreferencesTests: XCTestCase {
                 XCTAssertTrue(preferences.lastError is FakePreferencesTransport.Unreachable)
             }
             XCTAssertEqual(preferences.snapshot?.muteOutput, true, "the edit stays visible")
-            XCTAssertEqual(preferences.snapshot?.askHotkey.enabled, false)
+            XCTAssertEqual(preferences.snapshot?.askHotkey.hasChord, false)
             XCTAssertEqual(preferences.snapshot?.hasVocabularyDirectory, false)
             transport.updateError = nil
             transport.updates = [accepted(snapshot(revision: 4, mute: true))]
@@ -213,7 +212,7 @@ final class DaemonPreferencesTests: XCTestCase {
             let retried = transport.sentUpdates.last?.patch
             XCTAssertEqual(retried?.muteOutput, true)
             XCTAssertEqual(retried?.hasAskHotkey, true)
-            XCTAssertEqual(retried?.askHotkey, Aria_Daemon_V1_AskHotkey())
+            XCTAssertEqual(retried?.askHotkey, Aria_Daemon_V1_Hotkey())
             XCTAssertEqual(retried?.hasVocabularyDirectory, true)
             XCTAssertEqual(retried?.vocabularyDirectory, "")
             XCTAssertNil(preferences.lastError)

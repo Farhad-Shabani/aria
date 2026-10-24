@@ -6,6 +6,9 @@ struct SettingsView: View {
     @ObservedObject var preferences: DaemonPreferences
     @ObservedObject var poller: StatusPoller
     let updates: UpdateController
+    let promptHotkeys: PromptHotkeys
+    let askChord: ChordBinding
+    let promptListChord: ChordBinding
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
     )
@@ -51,6 +54,9 @@ struct SettingsView: View {
         where snapshot.flatMap({ ApplicationOverrideEdits.overrides(for: id, in: $0.applicationOverrides) }) != nil:
             ApplicationSettings(bundleID: id, preferences: preferences)
                 .id(id)
+        case .prompts where snapshot.flatMap({ PromptEdits.entry(id, in: $0.prompts) }) != nil:
+            PromptSettings(id: id, preferences: preferences, hotkeys: promptHotkeys)
+                .id(id)
         default:
             // A pane with no item pages, or an item removed since it opened.
             page(pane)
@@ -59,11 +65,20 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func page(_ pane: SettingsPane) -> some View {
+        let openPrompt = { history.open(.item(.prompts, id: $0)) }
         switch pane {
         case .general: GeneralSettings(updates: updates)
         case .dictation: DictationSettings(preferences: preferences)
         case .recognition: RecognitionSettings(preferences: preferences)
-        case .shortcuts: ShortcutsSettings(preferences: preferences)
+        case .shortcuts:
+            ShortcutsSettings(
+                preferences: preferences,
+                askChord: askChord,
+                promptListChord: promptListChord,
+                openPrompt: openPrompt
+            )
+        case .prompts:
+            PromptsSettings(preferences: preferences, marked: history.lastItem(in: .prompts), open: openPrompt)
         case .apps:
             AppsSettings(preferences: preferences, marked: history.lastItem(in: .apps)) {
                 history.open(.item(.apps, id: $0))

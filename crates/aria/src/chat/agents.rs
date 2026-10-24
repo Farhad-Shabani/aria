@@ -15,6 +15,7 @@ use aria_kit::cancel::CancelToken;
 use serde::Deserialize;
 
 use super::process::run_cli;
+use super::prompt_run::{self, PromptRun};
 use super::{Agent, AgentError, Session, SessionSpec, Step, TurnSink};
 
 pub(crate) const CLAUDE_BINARY: &str = "claude";
@@ -27,6 +28,29 @@ const SHARED_VARIABLES: &[&str] = &["PATH", "HOME", "USER", "TMPDIR"];
 const CLAUDE_PREFIXES: &[&str] = &["ANTHROPIC_", "CLAUDE_", "CLOUD_ML_", "AWS_", "GOOGLE_"];
 const CODEX_PREFIXES: &[&str] = &["OPENAI_", "CODEX_"];
 const NESTING_VARIABLES: &[&str] = &["CLAUDECODE", "CLAUDE_CODE"];
+
+// A deny-list, so a tool a Codex upgrade adds stays on until it is listed
+// here. Checked against codex-cli 0.163.0's `codex features list`.
+const CODEX_PROMPT_SETTINGS: &[&str] = &[
+    "features.shell_tool=false",
+    "features.unified_exec=false",
+    "features.view_image=false",
+    "features.image_generation=false",
+    "features.multi_agent=false",
+    "features.goals=false",
+    "features.hooks=false",
+    "features.skill_search=false",
+    "features.sleep_tool=false",
+    "features.tool_suggest=false",
+    "features.code_mode_host=false",
+    "features.apps=false",
+    "features.plugins=false",
+    "features.browser_use=false",
+    "features.computer_use=false",
+    "features.in_app_browser=false",
+    "project_doc_max_bytes=0",
+    "web_search=\"disabled\"",
+];
 
 /// `claude` with only the environment it needs.
 pub(crate) fn claude_command() -> Command {
@@ -52,6 +76,18 @@ impl Agent for ClaudeCodeAgent {
     fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session> {
         Box::new(CliSession::new(Cli::Claude, self.binary.clone(), spec))
     }
+
+    fn run_prompt(
+        &self,
+        request: &PromptRun<'_>,
+        cancel: &CancelToken,
+        timeout: Duration,
+    ) -> Result<String, AgentError> {
+        let run = run_directory()?;
+        let mut command = claude_prompt_command(&self.binary, run.path());
+        let output = run_cli(&mut command, &request.prompt(), |_| {}, cancel, timeout)?;
+        output.reply(parse_claude_prompt(&output.stdout))
+    }
 }
 
 /// `codex exec --json`, prompt on stdin. The reply is the last
@@ -61,11 +97,13 @@ impl Agent for ClaudeCodeAgent {
 /// started with.
 pub(crate) struct CodexAgent {
     binary: PathBuf,
+    /// The user's own Codex home, whose login a prompt run borrows.
+    user_home: PathBuf,
 }
 
 impl CodexAgent {
-    pub(crate) fn new(binary: PathBuf) -> Self {
-        Self { binary }
+    pub(crate) fn new(binary: PathBuf, user_home: PathBuf) -> Self {
+        Self { binary, user_home }
     }
 }
 
@@ -73,6 +111,83 @@ impl Agent for CodexAgent {
     fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session> {
         Box::new(CliSession::new(Cli::Codex, self.binary.clone(), spec))
     }
+
+    /// Codex reads its output schema from a file, so the run directory
+    /// holds one, beside a Codex home of the run's own.
+    fn run_prompt(
+        &self,
+        request: &PromptRun<'_>,
+        cancel: &CancelToken,
+        timeout: Duration,
+    ) -> Result<String, AgentError> {
+        let run = run_directory()?;
+        let schema = run.path().join("schema.json");
+        std::fs::write(&schema, prompt_run::SCHEMA).map_err(AgentError::RunDirectory)?;
+        let home = codex_home_for(run.path(), &self.user_home)?;
+        let mut command = codex_prompt_command(&self.binary, run.path(), &home, &schema);
+        let output = run_cli(&mut command, &request.prompt(), |_| {}, cancel, timeout)?;
+        output.reply(parse_codex_prompt(&output.stdout))
+    }
+}
+
+/// An empty directory of Aria's own for one prompt run, so no checkout's
+/// instructions or settings reach the agent. Removed when dropped.
+fn run_directory() -> Result<tempfile::TempDir, AgentError> {
+    tempfile::Builder::new()
+        .prefix("aria-prompt-")
+        .tempdir()
+        .map_err(AgentError::RunDirectory)
+}
+
+/// Codex reads the user's instructions (AGENTS.md), hooks and skills from
+/// its home. A home holding only a link to the login keeps them out.
+fn codex_home_for(run: &Path, user_home: &Path) -> Result<PathBuf, AgentError> {
+    let home = run.join("codex-home");
+    std::fs::create_dir(&home).map_err(AgentError::RunDirectory)?;
+    let login = user_home.join("auth.json");
+    // No login file means an API key in the environment, or no login at all,
+    // which the CLI reports itself.
+    if login.is_file() {
+        std::os::unix::fs::symlink(login, home.join("auth.json"))
+            .map_err(AgentError::RunDirectory)?;
+    }
+    Ok(home)
+}
+
+/// `--tools ""` leaves no tool at all, and `--restricted` ignores user,
+/// project and local settings. `structured_output` carries the answer.
+fn claude_prompt_command(binary: &Path, workdir: &Path) -> Command {
+    let mut command = Cli::Claude.command(binary);
+    command
+        .args(["-p", "--output-format", "json"])
+        .args(["--json-schema", prompt_run::SCHEMA])
+        .arg("--no-session-persistence")
+        .args(["--restricted", "--tools", ""])
+        .arg("--strict-mcp-config")
+        .current_dir(workdir);
+    command
+}
+
+/// Codex has no single switch for "no tools". Its own home drops the
+/// user's config, MCP servers, instructions and hooks; the tool features
+/// left on by default are turned off one by one.
+fn codex_prompt_command(binary: &Path, workdir: &Path, home: &Path, schema: &Path) -> Command {
+    let mut command = Cli::Codex.command(binary);
+    command
+        .env("CODEX_HOME", home)
+        .args(["exec", "--ephemeral"])
+        .arg("--cd")
+        .arg(workdir)
+        .args(["--skip-git-repo-check", "--sandbox", "read-only"]);
+    for setting in CODEX_PROMPT_SETTINGS {
+        command.args(["--config", setting]);
+    }
+    command
+        .arg("--output-schema")
+        .arg(schema)
+        .args(["--json", "-"])
+        .current_dir(workdir);
+    command
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -255,6 +370,42 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<Reply, AgentError> {
 
 #[derive(Deserialize)]
 #[serde(tag = "type")]
+enum ClaudePromptEnvelope {
+    #[serde(rename = "result")]
+    Result {
+        #[serde(default)]
+        is_error: bool,
+        #[serde(default)]
+        result: String,
+        structured_output: Option<serde_json::Value>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// `--output-format json` writes one envelope. The answer is its
+/// `structured_output`; `result` holds the same object as a string.
+fn parse_claude_prompt(stdout: &str) -> Result<String, AgentError> {
+    let envelope: ClaudePromptEnvelope = serde_json::from_str(stdout.trim())
+        .map_err(|error| AgentError::Malformed(error.to_string()))?;
+    let ClaudePromptEnvelope::Result {
+        is_error,
+        result,
+        structured_output,
+    } = envelope
+    else {
+        return Err(AgentError::Malformed("the output has no result".to_owned()));
+    };
+    if is_error {
+        return Err(AgentError::Failed(result));
+    }
+    let answer = structured_output
+        .ok_or_else(|| AgentError::Malformed("the result has no structured output".to_owned()))?;
+    prompt_run::answer_text(answer)
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
 enum CodexEvent {
     #[serde(rename = "thread.started")]
     ThreadStarted { thread_id: String },
@@ -262,6 +413,8 @@ enum CodexEvent {
     ItemStarted { item: CodexItem },
     #[serde(rename = "item.completed")]
     ItemCompleted { item: CodexItem },
+    #[serde(rename = "turn.completed")]
+    TurnCompleted,
     #[serde(rename = "turn.failed")]
     TurnFailed {
         #[serde(default)]
@@ -302,16 +455,8 @@ struct CodexError {
 fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AgentError> {
     let mut thread_id = resumed.map(str::to_owned);
     let mut text = None;
-    for (index, line) in stdout
-        .lines()
-        .enumerate()
-        .filter(|(_index, line)| !line.trim().is_empty())
-    {
-        // The line itself stays out of the message: it may be the reply.
-        let event: CodexEvent = serde_json::from_str(line).map_err(|error| {
-            AgentError::Malformed(format!("line {} is not a codex event: {error}", index + 1))
-        })?;
-        match event {
+    for event in codex_events(stdout) {
+        match event? {
             CodexEvent::ThreadStarted { thread_id: id } => thread_id = Some(id),
             CodexEvent::ItemCompleted {
                 item: CodexItem::AgentMessage { text: message },
@@ -320,6 +465,7 @@ fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AgentError>
             CodexEvent::Error { message } => return Err(AgentError::Failed(message)),
             CodexEvent::ItemStarted { .. }
             | CodexEvent::ItemCompleted { .. }
+            | CodexEvent::TurnCompleted
             | CodexEvent::Other => {}
         }
     }
@@ -327,6 +473,51 @@ fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AgentError>
         text: text.ok_or_else(|| AgentError::Malformed("no agent message".to_owned()))?,
         session_id: thread_id.ok_or_else(|| AgentError::Malformed("no thread id".to_owned()))?,
     })
+}
+
+/// The answer is the last agent message of a completed turn; earlier ones
+/// may be the agent narrating what it is about to do.
+fn parse_codex_prompt(stdout: &str) -> Result<String, AgentError> {
+    let mut last_message = None;
+    let mut completed = false;
+    for event in codex_events(stdout) {
+        match event? {
+            CodexEvent::ItemCompleted {
+                item: CodexItem::AgentMessage { text },
+            } => last_message = Some(text),
+            CodexEvent::TurnCompleted => completed = true,
+            CodexEvent::TurnFailed { error } => return Err(AgentError::Failed(error.message)),
+            CodexEvent::Error { message } => return Err(AgentError::Failed(message)),
+            CodexEvent::ThreadStarted { .. }
+            | CodexEvent::ItemStarted { .. }
+            | CodexEvent::ItemCompleted { .. }
+            | CodexEvent::Other => {}
+        }
+    }
+    if !completed {
+        return Err(AgentError::Malformed(
+            "the turn did not complete".to_owned(),
+        ));
+    }
+    let message =
+        last_message.ok_or_else(|| AgentError::Malformed("no agent message".to_owned()))?;
+    let answer = serde_json::from_str(&message).map_err(|error| {
+        AgentError::Malformed(format!("the last agent message is not JSON: {error}"))
+    })?;
+    prompt_run::answer_text(answer)
+}
+
+fn codex_events(stdout: &str) -> impl Iterator<Item = Result<CodexEvent, AgentError>> + '_ {
+    stdout
+        .lines()
+        .enumerate()
+        .filter(|(_index, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            // The line itself stays out of the message: it may be the reply.
+            serde_json::from_str(line).map_err(|error| {
+                AgentError::Malformed(format!("line {} is not a codex event: {error}", index + 1))
+            })
+        })
 }
 
 /// What one line of the stream says the agent moved on to, if anything.
@@ -690,6 +881,140 @@ mod tests {
 
         assert!(matches!(
             parse_codex(stdout, None),
+            Err(AgentError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_claude_prompt_run_has_no_tools_session_or_settings() {
+        let args = argv(&claude_prompt_command(
+            Path::new("claude"),
+            Path::new("/run"),
+        ));
+
+        for expected in [
+            ["--output-format", "json"],
+            ["--json-schema", prompt_run::SCHEMA],
+            ["--tools", ""],
+        ] {
+            assert!(args.windows(2).any(|pair| pair == expected), "{args:?}");
+        }
+        for flag in [
+            "--no-session-persistence",
+            "--restricted",
+            "--strict-mcp-config",
+        ] {
+            assert!(args.contains(&flag.to_owned()), "{args:?}");
+        }
+        assert!(!args.contains(&"--resume".to_owned()), "{args:?}");
+    }
+
+    #[test]
+    fn a_codex_prompt_run_ignores_user_config_and_turns_tools_off() {
+        let command = codex_prompt_command(
+            Path::new("codex"),
+            Path::new("/run"),
+            Path::new("/run/codex-home"),
+            Path::new("/run/schema.json"),
+        );
+        let args = argv(&command);
+
+        assert!(
+            args.starts_with(&["exec".into(), "--ephemeral".into()]),
+            "{args:?}"
+        );
+        for expected in [
+            ["--cd", "/run"],
+            ["--sandbox", "read-only"],
+            ["--output-schema", "/run/schema.json"],
+        ] {
+            assert!(args.windows(2).any(|pair| pair == expected), "{args:?}");
+        }
+        for setting in CODEX_PROMPT_SETTINGS {
+            assert!(
+                args.windows(2).any(|pair| pair == ["--config", *setting]),
+                "{args:?}"
+            );
+        }
+        assert!(
+            command.get_envs().any(|(name, value)| name == "CODEX_HOME"
+                && value == Some(OsStr::new("/run/codex-home"))),
+            "the run's own Codex home"
+        );
+        assert_eq!(command.get_current_dir(), Some(Path::new("/run")));
+    }
+
+    #[test]
+    fn a_claude_prompt_run_reads_the_structured_output() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":false,"result":"{\"text\":\"ignored\"}","structured_output":{"text":"Send it by Friday."},"session_id":"s"}"#;
+
+        assert_eq!(
+            parse_claude_prompt(stdout).expect("text"),
+            "Send it by Friday."
+        );
+    }
+
+    #[test]
+    fn a_claude_prompt_run_without_an_answer_fails() {
+        let failed = r#"{"type":"result","is_error":true,"result":"not logged in"}"#;
+        match parse_claude_prompt(failed).expect_err("is_error") {
+            AgentError::Failed(reason) => assert_eq!(reason, "not logged in"),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        for stdout in [
+            r#"{"type":"result","is_error":false,"result":"Sure! Here it is."}"#,
+            r#"{"type":"result","is_error":false,"structured_output":{"text":"ok","extra":1}}"#,
+            r#"{"type":"system"}"#,
+            "",
+        ] {
+            assert!(
+                matches!(parse_claude_prompt(stdout), Err(AgentError::Malformed(_))),
+                "{stdout}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_codex_prompt_run_takes_the_last_message_of_a_completed_turn() {
+        let stdout = [
+            r#"{"type":"thread.started","thread_id":"t-1"}"#,
+            r#"{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"I'll clean this up."}}"#,
+            r#"{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"{\"text\":\"Send it by Friday.\"}"}}"#,
+            r#"{"type":"turn.completed","usage":{}}"#,
+        ]
+        .join("\n");
+
+        assert_eq!(
+            parse_codex_prompt(&stdout).expect("text"),
+            "Send it by Friday."
+        );
+    }
+
+    #[test]
+    fn a_codex_prompt_run_that_did_not_finish_cleanly_fails() {
+        let message = r#"{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"{\"text\":\"ok\"}"}}"#;
+        let unfinished = message.to_owned();
+        let failed = format!(
+            "{message}\n{}",
+            r#"{"type":"turn.failed","error":{"message":"quota"}}"#
+        );
+        let prose = format!(
+            "{}\n{}",
+            r#"{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"Sure!"}}"#,
+            r#"{"type":"turn.completed"}"#
+        );
+
+        assert!(matches!(
+            parse_codex_prompt(&unfinished),
+            Err(AgentError::Malformed(_))
+        ));
+        assert!(matches!(
+            parse_codex_prompt(&failed),
+            Err(AgentError::Failed(reason)) if reason == "quota"
+        ));
+        assert!(matches!(
+            parse_codex_prompt(&prose),
             Err(AgentError::Malformed(_))
         ));
     }

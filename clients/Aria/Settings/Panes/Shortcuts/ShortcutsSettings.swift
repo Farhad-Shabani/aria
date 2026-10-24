@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ShortcutsSettings: View {
     let preferences: DaemonPreferences
+    let askChord: ChordBinding
+    let promptListChord: ChordBinding
+    let openPrompt: (String) -> Void
 
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
@@ -20,7 +23,32 @@ struct ShortcutsSettings: View {
                 .disabled(editor.snapshot.storedDictationHotkey == nil)
             }
             Section("Ask") {
-                AskHotkeyRecorder(editor: editor)
+                HotkeyRecorder(
+                    title: "Shortcut",
+                    chord: editor.snapshot.askHotkey.storedChord,
+                    binding: askChord
+                ) {
+                    editor.set(\.askHotkey, to: Aria_Daemon_V1_Hotkey($0))
+                }
+                // Nothing to edit until the daemon sends its ask hotkey.
+                .disabled(!editor.snapshot.hasAskHotkey)
+            }
+            Section("Prompts") {
+                HotkeyRecorder(
+                    title: "Show prompt list",
+                    chord: editor.snapshot.promptListHotkey.storedChord,
+                    binding: promptListChord
+                ) {
+                    editor.set(\.promptListHotkey, to: Aria_Daemon_V1_Hotkey($0))
+                }
+                .disabled(!editor.snapshot.hasPromptListHotkey)
+                ForEach(editor.snapshot.prompts.entries, id: \.id) { entry in
+                    ItemLink {
+                        openPrompt(entry.id)
+                    } label: {
+                        PromptRow(entry: entry)
+                    }
+                }
             }
         }
     }

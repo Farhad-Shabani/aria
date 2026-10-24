@@ -4,11 +4,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ApplicationId, ApplicationOverride, ApplicationOverrides, AskHotkey, AskHotkeyError,
-    DictationOverrides, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError,
-    UserPreferences,
+    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
+    DictationOverrides, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError, Prompt,
+    PromptError, PromptId, Prompts, UserPreferences,
 };
 use crate::audio::SilenceDuration;
+use crate::chat::PromptKind;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
 use crate::hotkey::HotkeyKey;
@@ -83,6 +84,28 @@ struct StoredDocument {
 
 impl StoredDocument {
     fn into_snapshot(self, path: &Path) -> Result<PreferenceSnapshot, PreferenceStoreError> {
+        let invalid_chord = |source| PreferenceStoreError::InvalidChord {
+            path: path.to_path_buf(),
+            source,
+        };
+        let invalid_prompt = |source| PreferenceStoreError::InvalidPrompt {
+            path: path.to_path_buf(),
+            source,
+        };
+        let prompts = self
+            .preferences
+            .prompts
+            .into_iter()
+            .map(|stored| {
+                let chord = stored
+                    .chord
+                    .map(Chord::try_from)
+                    .transpose()
+                    .map_err(invalid_chord)?;
+                stored.into_prompt(chord).map_err(invalid_prompt)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let prompts = Prompts::new(prompts).map_err(invalid_prompt)?;
         let recognition_language =
             self.preferences
                 .recognition_language
@@ -91,48 +114,51 @@ impl StoredDocument {
                     path: path.to_path_buf(),
                     source,
                 })?;
+        let preferences = UserPreferences {
+            dictation_history: self.preferences.dictation_history,
+            history_audio_retention: self.preferences.history_audio_retention,
+            mute_output: self.preferences.mute_output,
+            recognition_language,
+            output_mode: self.preferences.output_mode.into(),
+            delivery_mode: self.preferences.delivery_mode.into(),
+            silence_duration: SilenceDuration::new(Duration::from_millis(
+                self.preferences.silence_duration_ms,
+            ))
+            .map_err(|source| PreferenceStoreError::InvalidSilenceDuration {
+                path: path.to_path_buf(),
+                source,
+            })?,
+            own_voice_only: self.preferences.own_voice_only,
+            project_vocabulary: self.preferences.project_vocabulary,
+            vocabulary_directory: self
+                .preferences
+                .vocabulary_directory
+                .map(|path| crate::vocabulary::Directory::new(path.into()))
+                .transpose()?,
+            dictation_hotkey: self.preferences.dictation_hotkey.into(),
+            ask_hotkey: self.preferences.ask_hotkey.chord().map_err(invalid_chord)?,
+            prompt_list_hotkey: self
+                .preferences
+                .prompt_list_hotkey
+                .chord()
+                .map_err(invalid_chord)?,
+            application_overrides: ApplicationOverrides::try_from(
+                self.preferences.application_overrides,
+            )
+            .map_err(|source| PreferenceStoreError::InvalidApplicationOverrides {
+                path: path.to_path_buf(),
+                source,
+            })?,
+            prompts,
+        };
+        if preferences.shares_a_chord() {
+            return Err(PreferenceStoreError::SharedChord {
+                path: path.to_path_buf(),
+            });
+        }
         Ok(PreferenceSnapshot {
             revision: self.revision,
-            preferences: UserPreferences {
-                dictation_history: self.preferences.dictation_history,
-                history_audio_retention: self.preferences.history_audio_retention,
-                mute_output: self.preferences.mute_output,
-                recognition_language,
-                output_mode: self.preferences.output_mode.into(),
-                delivery_mode: self.preferences.delivery_mode.into(),
-                silence_duration: SilenceDuration::new(Duration::from_millis(
-                    self.preferences.silence_duration_ms,
-                ))
-                .map_err(|source| {
-                    PreferenceStoreError::InvalidSilenceDuration {
-                        path: path.to_path_buf(),
-                        source,
-                    }
-                })?,
-                own_voice_only: self.preferences.own_voice_only,
-                project_vocabulary: self.preferences.project_vocabulary,
-                vocabulary_directory: self
-                    .preferences
-                    .vocabulary_directory
-                    .map(|path| crate::vocabulary::Directory::new(path.into()))
-                    .transpose()?,
-                dictation_hotkey: self.preferences.dictation_hotkey.into(),
-                ask_hotkey: AskHotkey::try_from(self.preferences.ask_hotkey).map_err(|source| {
-                    PreferenceStoreError::InvalidAskHotkey {
-                        path: path.to_path_buf(),
-                        source,
-                    }
-                })?,
-                application_overrides: ApplicationOverrides::try_from(
-                    self.preferences.application_overrides,
-                )
-                .map_err(|source| {
-                    PreferenceStoreError::InvalidApplicationOverrides {
-                        path: path.to_path_buf(),
-                        source,
-                    }
-                })?,
-            },
+            preferences,
         })
     }
 }
@@ -162,11 +188,19 @@ impl From<&PreferenceSnapshot> for StoredDocument {
                     .map(|path| path.as_str().to_owned()),
                 dictation_hotkey: snapshot.preferences.dictation_hotkey.into(),
                 ask_hotkey: snapshot.preferences.ask_hotkey.into(),
+                prompt_list_hotkey: snapshot.preferences.prompt_list_hotkey.into(),
                 application_overrides: snapshot
                     .preferences
                     .application_overrides
                     .iter()
                     .map(StoredApplicationOverride::from)
+                    .collect(),
+                prompts: snapshot
+                    .preferences
+                    .prompts
+                    .entries()
+                    .iter()
+                    .map(StoredPrompt::from)
                     .collect(),
             },
         }
@@ -193,17 +227,25 @@ struct StoredPreferences {
     #[serde(default)]
     dictation_hotkey: StoredHotkeyKey,
     #[serde(default)]
-    ask_hotkey: StoredAskHotkey,
+    ask_hotkey: StoredHotkey,
+    #[serde(default = "prompt_list_off")]
+    prompt_list_hotkey: StoredHotkey,
     #[serde(default)]
     project_vocabulary: bool,
     #[serde(default)]
     vocabulary_directory: Option<String>,
     #[serde(default)]
     application_overrides: Vec<StoredApplicationOverride>,
+    #[serde(default)]
+    prompts: Vec<StoredPrompt>,
 }
 
 fn history_enabled() -> bool {
     true
+}
+
+fn prompt_list_off() -> StoredHotkey {
+    StoredHotkey::from(None)
 }
 
 fn default_stored_delivery_mode() -> StoredDeliveryMode {
@@ -324,8 +366,7 @@ impl TryFrom<Vec<StoredApplicationOverride>> for ApplicationOverrides {
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StoredAskHotkey {
-    enabled: bool,
+struct StoredChord {
     key_code: u16,
     control: bool,
     option: bool,
@@ -333,17 +374,10 @@ struct StoredAskHotkey {
     command: bool,
 }
 
-// An older file has no ask_hotkey; the default chord matches a fresh one.
-impl Default for StoredAskHotkey {
-    fn default() -> Self {
-        AskHotkey::default().into()
-    }
-}
+impl TryFrom<StoredChord> for Chord {
+    type Error = ChordError;
 
-impl TryFrom<StoredAskHotkey> for AskHotkey {
-    type Error = AskHotkeyError;
-
-    fn try_from(stored: StoredAskHotkey) -> Result<Self, Self::Error> {
+    fn try_from(stored: StoredChord) -> Result<Self, Self::Error> {
         Self::new(
             stored.key_code,
             Modifiers {
@@ -352,21 +386,70 @@ impl TryFrom<StoredAskHotkey> for AskHotkey {
                 shift: stored.shift,
                 command: stored.command,
             },
-            stored.enabled,
         )
     }
 }
 
-impl From<AskHotkey> for StoredAskHotkey {
-    fn from(hotkey: AskHotkey) -> Self {
-        let modifiers = hotkey.modifiers();
+impl From<Chord> for StoredChord {
+    fn from(chord: Chord) -> Self {
+        let modifiers = chord.modifiers();
         Self {
-            enabled: hotkey.enabled(),
-            key_code: hotkey.key_code(),
+            key_code: chord.key_code(),
             control: modifiers.control,
             option: modifiers.option,
             shift: modifiers.shift,
             command: modifiers.command,
+        }
+    }
+}
+
+/// Flat, with a switch beside the chord. A chord that is off, or a switch
+/// with no chord, reads as none.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredHotkey {
+    enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_code: Option<u16>,
+    control: bool,
+    option: bool,
+    shift: bool,
+    command: bool,
+}
+
+// An older file has no ask_hotkey; the default chord matches a fresh one.
+impl Default for StoredHotkey {
+    fn default() -> Self {
+        Self::from(Some(Chord::ASK))
+    }
+}
+
+impl StoredHotkey {
+    fn chord(self) -> Result<Option<Chord>, ChordError> {
+        let (true, Some(key_code)) = (self.enabled, self.key_code) else {
+            return Ok(None);
+        };
+        Chord::try_from(StoredChord {
+            key_code,
+            control: self.control,
+            option: self.option,
+            shift: self.shift,
+            command: self.command,
+        })
+        .map(Some)
+    }
+}
+
+impl From<Option<Chord>> for StoredHotkey {
+    fn from(chord: Option<Chord>) -> Self {
+        let chord = chord.map(StoredChord::from);
+        Self {
+            enabled: chord.is_some(),
+            key_code: chord.map(|chord| chord.key_code),
+            control: chord.is_some_and(|chord| chord.control),
+            option: chord.is_some_and(|chord| chord.option),
+            shift: chord.is_some_and(|chord| chord.shift),
+            command: chord.is_some_and(|chord| chord.command),
         }
     }
 }
@@ -393,6 +476,68 @@ impl From<StoredHotkeyKey> for HotkeyKey {
         match value {
             StoredHotkeyKey::RightOption => Self::RightOption,
             StoredHotkeyKey::Fn => Self::Fn,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredPrompt {
+    id: String,
+    name: String,
+    kind: StoredPromptKind,
+    file: PathBuf,
+    enabled: bool,
+    chord: Option<StoredChord>,
+}
+
+impl StoredPrompt {
+    fn into_prompt(self, chord: Option<Chord>) -> Result<Prompt, PromptError> {
+        Prompt::new(
+            PromptId::new(self.id)?,
+            self.name,
+            self.kind.into(),
+            self.file,
+            self.enabled,
+            chord,
+        )
+    }
+}
+
+impl From<&Prompt> for StoredPrompt {
+    fn from(prompt: &Prompt) -> Self {
+        Self {
+            id: prompt.id().as_str().to_owned(),
+            name: prompt.name().to_owned(),
+            kind: prompt.kind().into(),
+            file: prompt.file().to_path_buf(),
+            enabled: prompt.enabled(),
+            chord: prompt.chord().map(StoredChord::from),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredPromptKind {
+    Rewrite,
+    Compose,
+}
+
+impl From<PromptKind> for StoredPromptKind {
+    fn from(kind: PromptKind) -> Self {
+        match kind {
+            PromptKind::Rewrite => Self::Rewrite,
+            PromptKind::Compose => Self::Compose,
+        }
+    }
+}
+
+impl From<StoredPromptKind> for PromptKind {
+    fn from(kind: StoredPromptKind) -> Self {
+        match kind {
+            StoredPromptKind::Rewrite => Self::Rewrite,
+            StoredPromptKind::Compose => Self::Compose,
         }
     }
 }
@@ -443,34 +588,75 @@ mod tests {
         assert!(!document.preferences.project_vocabulary);
         assert!(document.preferences.vocabulary_directory.is_none());
         assert!(document.preferences.application_overrides.is_empty());
+        assert!(document.preferences.prompts.is_empty());
         assert!(matches!(
             document.preferences.dictation_hotkey,
             StoredHotkeyKey::RightOption
         ));
         assert_eq!(
-            AskHotkey::try_from(document.preferences.ask_hotkey).expect("a valid default"),
-            AskHotkey::default()
+            document
+                .preferences
+                .ask_hotkey
+                .chord()
+                .expect("a valid default"),
+            Some(Chord::ASK)
+        );
+        assert_eq!(
+            document
+                .preferences
+                .prompt_list_hotkey
+                .chord()
+                .expect("valid"),
+            None
         );
     }
 
     #[test]
-    fn a_stored_hotkey_round_trips() {
-        let hotkey = AskHotkey::new(
-            49,
-            Modifiers {
-                control: false,
-                option: true,
-                shift: false,
-                command: true,
-            },
-            false,
+    fn a_stored_hotkey_round_trips_and_keeps_the_flat_layout() {
+        let modifiers = Modifiers {
+            option: true,
+            command: true,
+            ..Modifiers::default()
+        };
+        let chord = Chord::new(49, modifiers).expect("a chord");
+        for hotkey in [Some(chord), None] {
+            let decoded = StoredHotkey::from(hotkey).chord().expect("decodes");
+            assert_eq!(decoded, hotkey);
+        }
+
+        let released: StoredHotkey = serde_json::from_str(
+            r#"{"enabled":true,"key_code":0,"control":true,"option":true,"shift":false,"command":false}"#,
         )
-        .expect("a disabled chord is valid");
+        .expect("a released file's ask hotkey parses");
+        assert_eq!(released.chord().expect("valid"), Some(Chord::ASK));
 
-        let decoded =
-            AskHotkey::try_from(StoredAskHotkey::from(hotkey)).expect("the hotkey should decode");
+        let switched_off: StoredHotkey = serde_json::from_str(
+            r#"{"enabled":false,"key_code":0,"control":true,"option":true,"shift":false,"command":false}"#,
+        )
+        .expect("a released file's switched-off ask hotkey parses");
+        assert_eq!(switched_off.chord().expect("valid"), None);
 
-        assert_eq!(decoded, hotkey);
+        let on_without_a_key: StoredHotkey = serde_json::from_str(
+            r#"{"enabled":true,"control":false,"option":false,"shift":false,"command":false}"#,
+        )
+        .expect("a switch with no chord parses");
+        assert_eq!(on_without_a_key.chord().expect("valid"), None);
+    }
+
+    #[test]
+    fn a_file_that_gives_one_chord_two_jobs_is_refused() {
+        let document: StoredDocument = serde_json::from_str(
+            r#"{"revision":2,"preferences":{"recognition_language":"en","output_mode":"insert",
+                "silence_duration_ms":1500,"prompts":[{"id":"p","name":"P","kind":"rewrite",
+                "file":"/p.md","enabled":true,"chord":{"key_code":0,"control":true,
+                "option":true,"shift":false,"command":false}}]}}"#,
+        )
+        .expect("the document parses");
+
+        assert!(matches!(
+            document.into_snapshot(Path::new("/p.json")),
+            Err(PreferenceStoreError::SharedChord { .. })
+        ));
     }
 
     #[test]
@@ -530,6 +716,58 @@ mod tests {
         assert!(matches!(
             invalid.into_snapshot(path),
             Err(PreferenceStoreError::InvalidApplicationOverrides { .. })
+        ));
+    }
+
+    #[test]
+    fn stored_prompts_round_trip() {
+        let prompt = Prompt::new(
+            PromptId::new("7f3c2a90-1b2d").expect("id"),
+            "Polish".to_owned(),
+            PromptKind::Compose,
+            PathBuf::from("/prompts/polish.md"),
+            false,
+            Some(
+                Chord::new(
+                    35,
+                    Modifiers {
+                        control: true,
+                        ..Modifiers::default()
+                    },
+                )
+                .expect("chord"),
+            ),
+        )
+        .expect("prompt");
+        let snapshot = PreferenceSnapshot {
+            revision: 3,
+            preferences: UserPreferences {
+                prompts: Prompts::new(vec![prompt]).expect("prompts"),
+                ..UserPreferences::default()
+            },
+        };
+
+        let encoded = serde_json::to_string(&StoredDocument::from(&snapshot)).expect("encode");
+        let decoded: StoredDocument = serde_json::from_str(&encoded).expect("decode");
+
+        assert_eq!(
+            decoded.into_snapshot(Path::new("/p.json")).expect("valid"),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn a_stored_prompt_with_a_relative_file_is_refused() {
+        let document: StoredDocument = serde_json::from_str(
+            r#"{"revision":2,"preferences":{"recognition_language":"en","output_mode":"insert",
+                "silence_duration_ms":1500,"prompts":[{"id":"p","name":"P","kind":"rewrite",
+                "file":"p.md","enabled":true,"chord":null}]}}"#,
+        )
+        .expect("the document parses");
+
+        assert!(matches!(
+            document.into_snapshot(Path::new("/p.json")),
+            Err(PreferenceStoreError::InvalidPrompt { .. })
         ));
     }
 }

@@ -885,6 +885,8 @@ mod tests {
             delivery_timeout: _,
             overall_timeout: _,
             unattended: _,
+            // The Codex CLI's own setting, not one of Aria's.
+            codex_home: _,
         } = Environment::in_home(PathBuf::new());
         let FileConfig {
             capture:

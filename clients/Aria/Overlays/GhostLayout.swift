@@ -23,8 +23,8 @@ struct GhostLayout: Equatable {
         let height: CGFloat
         if let field {
             // Later lines wrap at the field's edges, like the app's own text.
-            // ponytail: the field's text insets are unknown, so wrapped lines
-            // start at its frame; read per-line left edges if they look off.
+            // The field's text insets are unknown, so wrapped lines start at
+            // its frame. Per-line left edges would place them exactly.
             left = field.minX
             width = field.width
             firstLineIndent = max(0, caret.minX - field.minX)

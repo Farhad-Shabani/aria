@@ -98,6 +98,7 @@ pub(super) const RECORDING_TIMEOUT_ENV: &str = "ARIA_DICTATION_RECORDING_TIMEOUT
 pub(super) const DELIVERY_TIMEOUT_ENV: &str = "ARIA_DICTATION_DELIVERY_TIMEOUT";
 pub(super) const OVERALL_TIMEOUT_ENV: &str = "ARIA_DICTATION_OVERALL_TIMEOUT";
 pub(crate) const UNATTENDED_ENV: &str = "ARIA_UNATTENDED";
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
 
 /// The environment variables config resolution reads, captured up front
 /// so resolution takes plain values.
@@ -142,6 +143,7 @@ pub(crate) struct Environment {
     pub(super) delivery_timeout: Option<String>,
     pub(super) overall_timeout: Option<String>,
     pub(super) unattended: Option<String>,
+    pub(super) codex_home: Option<PathBuf>,
 }
 
 impl Environment {
@@ -186,6 +188,7 @@ impl Environment {
             delivery_timeout: environment(DELIVERY_TIMEOUT_ENV)?,
             overall_timeout: environment(OVERALL_TIMEOUT_ENV)?,
             unattended: environment(UNATTENDED_ENV)?,
+            codex_home: std::env::var_os(CODEX_HOME_ENV).map(PathBuf::from),
         })
     }
 
@@ -231,11 +234,19 @@ impl Environment {
             delivery_timeout: None,
             overall_timeout: None,
             unattended: None,
+            codex_home: None,
         }
     }
 
     pub(crate) fn home(&self) -> &Path {
         &self.home
+    }
+
+    /// Where the Codex CLI keeps its login, as it finds it itself.
+    pub(crate) fn codex_home(&self) -> PathBuf {
+        self.codex_home
+            .clone()
+            .unwrap_or_else(|| self.home.join(".codex"))
     }
 
     /// Raw, because what counts as unattended is the daemon's call.

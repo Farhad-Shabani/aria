@@ -59,20 +59,24 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         own_voice_only,
         dictation_hotkey,
         ask_hotkey,
+        prompt_list_hotkey,
         project_vocabulary,
         vocabulary_directory,
         dictation_history,
         history_audio_retention,
         mute_output,
         application_overrides,
+        prompts,
     } = patch;
     let mac_only = [
         ("delivery_mode", delivery_mode.is_some()),
         ("silence_duration_ms", silence_duration_ms.is_some()),
         ("dictation_hotkey", dictation_hotkey.is_some()),
         ("ask_hotkey", ask_hotkey.is_some()),
+        ("prompt_list_hotkey", prompt_list_hotkey.is_some()),
         ("mute_output", mute_output.is_some()),
         ("application_overrides", application_overrides.is_some()),
+        ("prompts", prompts.is_some()),
     ];
     if let Some((field, _)) = mac_only.iter().find(|(_, set)| *set) {
         return Err(RpcFailure::new(
@@ -153,7 +157,15 @@ mod tests {
                 ..Default::default()
             },
             wire::PreferencePatch {
-                ask_hotkey: Some(wire::AskHotkey::default()),
+                ask_hotkey: Some(wire::Hotkey::default()),
+                ..Default::default()
+            },
+            wire::PreferencePatch {
+                prompt_list_hotkey: Some(wire::Hotkey::default()),
+                ..Default::default()
+            },
+            wire::PreferencePatch {
+                prompts: Some(wire::Prompts::default()),
                 ..Default::default()
             },
             wire::PreferencePatch {

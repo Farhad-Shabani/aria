@@ -125,6 +125,51 @@ public nonisolated enum Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf.Enum, Swif
 
 }
 
+/// What a prompt makes of what was said. Either way the transcript is
+/// material for the agent, never instructions to it.
+public nonisolated enum Aria_Daemon_V1_PromptKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// The same words and meaning, cleaned up or restyled.
+  case rewrite // = 1
+
+  /// New text made from what was said, such as a reply, a translation, or a
+  /// summary.
+  case compose // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .rewrite
+    case 2: self = .compose
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .rewrite: return 1
+    case .compose: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_PromptKind] = [
+    .unspecified,
+    .rewrite,
+    .compose,
+  ]
+
+}
+
 public nonisolated enum Aria_Daemon_V1_OutputMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -1173,8 +1218,7 @@ public nonisolated struct Aria_Daemon_V1_PreferenceConflict: Sendable {
   fileprivate var _current: Aria_Daemon_V1_PreferenceSnapshot? = nil
 }
 
-/// Grouped as the Settings window shows them: Dictation, Recognition,
-/// Shortcuts, Apps, Privacy.
+/// Grouped as the Settings window shows them.
 public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1231,14 +1275,34 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
     set {_uniqueStorage()._dictationHotkey = newValue}
   }
 
-  public var askHotkey: Aria_Daemon_V1_AskHotkey {
-    get {_storage._askHotkey ?? Aria_Daemon_V1_AskHotkey()}
+  /// Press to record, again to send, again to cancel.
+  public var askHotkey: Aria_Daemon_V1_Hotkey {
+    get {_storage._askHotkey ?? Aria_Daemon_V1_Hotkey()}
     set {_uniqueStorage()._askHotkey = newValue}
   }
   /// Returns true if `askHotkey` has been explicitly set.
   public var hasAskHotkey: Bool {_storage._askHotkey != nil}
   /// Clears the value of `askHotkey`. Subsequent reads from it will return its default value.
   public mutating func clearAskHotkey() {_uniqueStorage()._askHotkey = nil}
+
+  /// Lists the prompts that are on, so one runs without its own chord.
+  public var promptListHotkey: Aria_Daemon_V1_Hotkey {
+    get {_storage._promptListHotkey ?? Aria_Daemon_V1_Hotkey()}
+    set {_uniqueStorage()._promptListHotkey = newValue}
+  }
+  /// Returns true if `promptListHotkey` has been explicitly set.
+  public var hasPromptListHotkey: Bool {_storage._promptListHotkey != nil}
+  /// Clears the value of `promptListHotkey`. Subsequent reads from it will return its default value.
+  public mutating func clearPromptListHotkey() {_uniqueStorage()._promptListHotkey = nil}
+
+  public var prompts: Aria_Daemon_V1_Prompts {
+    get {_storage._prompts ?? Aria_Daemon_V1_Prompts()}
+    set {_uniqueStorage()._prompts = newValue}
+  }
+  /// Returns true if `prompts` has been explicitly set.
+  public var hasPrompts: Bool {_storage._prompts != nil}
+  /// Clears the value of `prompts`. Subsequent reads from it will return its default value.
+  public mutating func clearPrompts() {_uniqueStorage()._prompts = nil}
 
   public var applicationOverrides: Aria_Daemon_V1_ApplicationOverrides {
     get {_storage._applicationOverrides ?? Aria_Daemon_V1_ApplicationOverrides()}
@@ -1264,6 +1328,57 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
   public init() {}
 
   fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+/// A Markdown file that says what to make of a recording, and the chord
+/// that runs it the way the ask hotkey runs an ask.
+public nonisolated struct Aria_Daemon_V1_Prompt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Stable across renames: what RunPrompt names.
+  public var id: String = String()
+
+  public var name: String = String()
+
+  /// UNSPECIFIED is invalid.
+  public var kind: Aria_Daemon_V1_PromptKind = .unspecified
+
+  /// An absolute path to the Markdown instructions, read on each run.
+  public var file: String = String()
+
+  /// Off, it runs neither from the prompt list nor from its chord.
+  public var enabled: Bool = false
+
+  /// Absent for a prompt run only from the prompt list.
+  public var chord: Aria_Daemon_V1_Chord {
+    get {_chord ?? Aria_Daemon_V1_Chord()}
+    set {_chord = newValue}
+  }
+  /// Returns true if `chord` has been explicitly set.
+  public var hasChord: Bool {self._chord != nil}
+  /// Clears the value of `chord`. Subsequent reads from it will return its default value.
+  public mutating func clearChord() {self._chord = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chord: Aria_Daemon_V1_Chord? = nil
+}
+
+/// At most 16 entries, each ID and each chord once.
+public nonisolated struct Aria_Daemon_V1_Prompts: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var entries: [Aria_Daemon_V1_Prompt] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// Dictation settings that replace the preferences above. Each absent field
@@ -1435,14 +1550,33 @@ public nonisolated struct Aria_Daemon_V1_PreferencePatch: @unchecked Sendable {
   /// Clears the value of `dictationHotkey`. Subsequent reads from it will return its default value.
   public mutating func clearDictationHotkey() {_uniqueStorage()._dictationHotkey = nil}
 
-  public var askHotkey: Aria_Daemon_V1_AskHotkey {
-    get {_storage._askHotkey ?? Aria_Daemon_V1_AskHotkey()}
+  public var askHotkey: Aria_Daemon_V1_Hotkey {
+    get {_storage._askHotkey ?? Aria_Daemon_V1_Hotkey()}
     set {_uniqueStorage()._askHotkey = newValue}
   }
   /// Returns true if `askHotkey` has been explicitly set.
   public var hasAskHotkey: Bool {_storage._askHotkey != nil}
   /// Clears the value of `askHotkey`. Subsequent reads from it will return its default value.
   public mutating func clearAskHotkey() {_uniqueStorage()._askHotkey = nil}
+
+  public var promptListHotkey: Aria_Daemon_V1_Hotkey {
+    get {_storage._promptListHotkey ?? Aria_Daemon_V1_Hotkey()}
+    set {_uniqueStorage()._promptListHotkey = newValue}
+  }
+  /// Returns true if `promptListHotkey` has been explicitly set.
+  public var hasPromptListHotkey: Bool {_storage._promptListHotkey != nil}
+  /// Clears the value of `promptListHotkey`. Subsequent reads from it will return its default value.
+  public mutating func clearPromptListHotkey() {_uniqueStorage()._promptListHotkey = nil}
+
+  /// Replaces every entry.
+  public var prompts: Aria_Daemon_V1_Prompts {
+    get {_storage._prompts ?? Aria_Daemon_V1_Prompts()}
+    set {_uniqueStorage()._prompts = newValue}
+  }
+  /// Returns true if `prompts` has been explicitly set.
+  public var hasPrompts: Bool {_storage._prompts != nil}
+  /// Clears the value of `prompts`. Subsequent reads from it will return its default value.
+  public mutating func clearPrompts() {_uniqueStorage()._prompts = nil}
 
   /// Replaces every entry.
   public var applicationOverrides: Aria_Daemon_V1_ApplicationOverrides {
@@ -1479,15 +1613,12 @@ public nonisolated struct Aria_Daemon_V1_PreferencePatch: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-/// The chord that runs an ask: press to record, again to send, again to
-/// cancel. A chord is registered rather than watched, so unlike HotkeyKey
-/// it needs no Accessibility grant. At least one modifier is required.
-public nonisolated struct Aria_Daemon_V1_AskHotkey: Sendable {
+/// A key held with at least one modifier. A chord is registered rather than
+/// watched, so unlike HotkeyKey it needs no Accessibility grant.
+public nonisolated struct Aria_Daemon_V1_Chord: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
-
-  public var enabled: Bool = false
 
   /// The platform virtual key code.
   public var keyCode: UInt32 = 0
@@ -1503,6 +1634,29 @@ public nonisolated struct Aria_Daemon_V1_AskHotkey: Sendable {
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+}
+
+/// One of the Mac app's shortcuts. A patch that sets it with no chord
+/// clears it.
+public nonisolated struct Aria_Daemon_V1_Hotkey: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var chord: Aria_Daemon_V1_Chord {
+    get {_chord ?? Aria_Daemon_V1_Chord()}
+    set {_chord = newValue}
+  }
+  /// Returns true if `chord` has been explicitly set.
+  public var hasChord: Bool {self._chord != nil}
+  /// Clears the value of `chord`. Subsequent reads from it will return its default value.
+  public mutating func clearChord() {self._chord = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chord: Aria_Daemon_V1_Chord? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_ListHistoryRequest: Sendable {
@@ -1901,6 +2055,25 @@ public nonisolated struct Aria_Daemon_V1_AskResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Aria_Daemon_V1_RunPromptRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var text: String = String()
+
+  /// A stored, enabled Prompt's ID.
+  public var promptID: String = String()
+
+  /// The bundle ID of the app in front when the chord was first pressed. The
+  /// result is typed only there. Empty when unknown.
+  public var applicationID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Aria_Daemon_V1_CancelAskRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1979,6 +2152,9 @@ public nonisolated struct Aria_Daemon_V1_ChatEvent: Sendable {
 
   /// The skill being loaded; only when step is SKILL.
   public var skill: String = String()
+
+  /// On REPLIED: the reply went to the clipboard instead of being typed.
+  public var copied: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2332,6 +2508,10 @@ nonisolated extension Aria_Daemon_V1_DictationStage: SwiftProtobuf._ProtoNamePro
 
 nonisolated extension Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DELIVERY_OUTCOME_UNSPECIFIED\0\u{1}DELIVERY_OUTCOME_INSERTED\0\u{1}DELIVERY_OUTCOME_COPIED\0")
+}
+
+nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROMPT_KIND_UNSPECIFIED\0\u{1}PROMPT_KIND_REWRITE\0\u{1}PROMPT_KIND_COMPOSE\0")
 }
 
 nonisolated extension Aria_Daemon_V1_OutputMode: SwiftProtobuf._ProtoNameProviding {
@@ -3162,7 +3342,7 @@ nonisolated extension Aria_Daemon_V1_PreferenceConflict: SwiftProtobuf.Message, 
 
 nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UserPreferences"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}prompt_list_hotkey\0\u{1}prompts\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode = .unspecified
@@ -3174,7 +3354,9 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
     var _projectVocabulary: Bool = false
     var _vocabularyDirectory: String? = nil
     var _dictationHotkey: Aria_Daemon_V1_HotkeyKey = .unspecified
-    var _askHotkey: Aria_Daemon_V1_AskHotkey? = nil
+    var _askHotkey: Aria_Daemon_V1_Hotkey? = nil
+    var _promptListHotkey: Aria_Daemon_V1_Hotkey? = nil
+    var _prompts: Aria_Daemon_V1_Prompts? = nil
     var _applicationOverrides: Aria_Daemon_V1_ApplicationOverrides? = nil
     var _dictationHistory: Bool = false
     var _historyAudioRetention: Bool = false
@@ -3198,6 +3380,8 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
       _vocabularyDirectory = source._vocabularyDirectory
       _dictationHotkey = source._dictationHotkey
       _askHotkey = source._askHotkey
+      _promptListHotkey = source._promptListHotkey
+      _prompts = source._prompts
       _applicationOverrides = source._applicationOverrides
       _dictationHistory = source._dictationHistory
       _historyAudioRetention = source._historyAudioRetention
@@ -3229,9 +3413,11 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
         case 8: try { try decoder.decodeSingularStringField(value: &_storage._vocabularyDirectory) }()
         case 9: try { try decoder.decodeSingularEnumField(value: &_storage._dictationHotkey) }()
         case 10: try { try decoder.decodeSingularMessageField(value: &_storage._askHotkey) }()
-        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._applicationOverrides) }()
-        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
-        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
+        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._promptListHotkey) }()
+        case 12: try { try decoder.decodeSingularMessageField(value: &_storage._prompts) }()
+        case 13: try { try decoder.decodeSingularMessageField(value: &_storage._applicationOverrides) }()
+        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
+        case 15: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
         default: break
         }
       }
@@ -3274,14 +3460,20 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
       try { if let v = _storage._askHotkey {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
       } }()
-      try { if let v = _storage._applicationOverrides {
+      try { if let v = _storage._promptListHotkey {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
       } }()
+      try { if let v = _storage._prompts {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+      } }()
+      try { if let v = _storage._applicationOverrides {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      } }()
       if _storage._dictationHistory != false {
-        try visitor.visitSingularBoolField(value: _storage._dictationHistory, fieldNumber: 12)
+        try visitor.visitSingularBoolField(value: _storage._dictationHistory, fieldNumber: 14)
       }
       if _storage._historyAudioRetention != false {
-        try visitor.visitSingularBoolField(value: _storage._historyAudioRetention, fieldNumber: 13)
+        try visitor.visitSingularBoolField(value: _storage._historyAudioRetention, fieldNumber: 15)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -3302,6 +3494,8 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
         if _storage._vocabularyDirectory != rhs_storage._vocabularyDirectory {return false}
         if _storage._dictationHotkey != rhs_storage._dictationHotkey {return false}
         if _storage._askHotkey != rhs_storage._askHotkey {return false}
+        if _storage._promptListHotkey != rhs_storage._promptListHotkey {return false}
+        if _storage._prompts != rhs_storage._prompts {return false}
         if _storage._applicationOverrides != rhs_storage._applicationOverrides {return false}
         if _storage._dictationHistory != rhs_storage._dictationHistory {return false}
         if _storage._historyAudioRetention != rhs_storage._historyAudioRetention {return false}
@@ -3309,6 +3503,95 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_Prompt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Prompt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}kind\0\u{1}file\0\u{1}enabled\0\u{1}chord\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.file) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.enabled) }()
+      case 6: try { try decoder.decodeSingularMessageField(value: &self._chord) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 3)
+    }
+    if !self.file.isEmpty {
+      try visitor.visitSingularStringField(value: self.file, fieldNumber: 4)
+    }
+    if self.enabled != false {
+      try visitor.visitSingularBoolField(value: self.enabled, fieldNumber: 5)
+    }
+    try { if let v = self._chord {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_Prompt, rhs: Aria_Daemon_V1_Prompt) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.file != rhs.file {return false}
+    if lhs.enabled != rhs.enabled {return false}
+    if lhs._chord != rhs._chord {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_Prompts: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Prompts"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.entries.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.entries, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_Prompts, rhs: Aria_Daemon_V1_Prompts) -> Bool {
+    if lhs.entries != rhs.entries {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3429,7 +3712,7 @@ nonisolated extension Aria_Daemon_V1_ApplicationOverrides: SwiftProtobuf.Message
 
 nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PreferencePatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}prompt_list_hotkey\0\u{1}prompts\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode? = nil
@@ -3441,7 +3724,9 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
     var _projectVocabulary: Bool? = nil
     var _vocabularyDirectory: String? = nil
     var _dictationHotkey: Aria_Daemon_V1_HotkeyKey? = nil
-    var _askHotkey: Aria_Daemon_V1_AskHotkey? = nil
+    var _askHotkey: Aria_Daemon_V1_Hotkey? = nil
+    var _promptListHotkey: Aria_Daemon_V1_Hotkey? = nil
+    var _prompts: Aria_Daemon_V1_Prompts? = nil
     var _applicationOverrides: Aria_Daemon_V1_ApplicationOverrides? = nil
     var _dictationHistory: Bool? = nil
     var _historyAudioRetention: Bool? = nil
@@ -3465,6 +3750,8 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
       _vocabularyDirectory = source._vocabularyDirectory
       _dictationHotkey = source._dictationHotkey
       _askHotkey = source._askHotkey
+      _promptListHotkey = source._promptListHotkey
+      _prompts = source._prompts
       _applicationOverrides = source._applicationOverrides
       _dictationHistory = source._dictationHistory
       _historyAudioRetention = source._historyAudioRetention
@@ -3496,9 +3783,11 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
         case 8: try { try decoder.decodeSingularStringField(value: &_storage._vocabularyDirectory) }()
         case 9: try { try decoder.decodeSingularEnumField(value: &_storage._dictationHotkey) }()
         case 10: try { try decoder.decodeSingularMessageField(value: &_storage._askHotkey) }()
-        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._applicationOverrides) }()
-        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
-        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
+        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._promptListHotkey) }()
+        case 12: try { try decoder.decodeSingularMessageField(value: &_storage._prompts) }()
+        case 13: try { try decoder.decodeSingularMessageField(value: &_storage._applicationOverrides) }()
+        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
+        case 15: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
         default: break
         }
       }
@@ -3541,14 +3830,20 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
       try { if let v = _storage._askHotkey {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
       } }()
-      try { if let v = _storage._applicationOverrides {
+      try { if let v = _storage._promptListHotkey {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
       } }()
+      try { if let v = _storage._prompts {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+      } }()
+      try { if let v = _storage._applicationOverrides {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      } }()
       try { if let v = _storage._dictationHistory {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 12)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 14)
       } }()
       try { if let v = _storage._historyAudioRetention {
-        try visitor.visitSingularBoolField(value: v, fieldNumber: 13)
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 15)
       } }()
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -3569,6 +3864,8 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
         if _storage._vocabularyDirectory != rhs_storage._vocabularyDirectory {return false}
         if _storage._dictationHotkey != rhs_storage._dictationHotkey {return false}
         if _storage._askHotkey != rhs_storage._askHotkey {return false}
+        if _storage._promptListHotkey != rhs_storage._promptListHotkey {return false}
+        if _storage._prompts != rhs_storage._prompts {return false}
         if _storage._applicationOverrides != rhs_storage._applicationOverrides {return false}
         if _storage._dictationHistory != rhs_storage._dictationHistory {return false}
         if _storage._historyAudioRetention != rhs_storage._historyAudioRetention {return false}
@@ -3581,9 +3878,9 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
   }
 }
 
-nonisolated extension Aria_Daemon_V1_AskHotkey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".AskHotkey"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0\u{3}key_code\0\u{1}control\0\u{1}option\0\u{1}shift\0\u{1}command\0")
+nonisolated extension Aria_Daemon_V1_Chord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Chord"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}key_code\0\u{1}control\0\u{1}option\0\u{1}shift\0\u{1}command\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3591,46 +3888,75 @@ nonisolated extension Aria_Daemon_V1_AskHotkey: SwiftProtobuf.Message, SwiftProt
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.enabled) }()
-      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.keyCode) }()
-      case 3: try { try decoder.decodeSingularBoolField(value: &self.control) }()
-      case 4: try { try decoder.decodeSingularBoolField(value: &self.option) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.shift) }()
-      case 6: try { try decoder.decodeSingularBoolField(value: &self.command) }()
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.keyCode) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.control) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.option) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.shift) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.command) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.enabled != false {
-      try visitor.visitSingularBoolField(value: self.enabled, fieldNumber: 1)
-    }
     if self.keyCode != 0 {
-      try visitor.visitSingularUInt32Field(value: self.keyCode, fieldNumber: 2)
+      try visitor.visitSingularUInt32Field(value: self.keyCode, fieldNumber: 1)
     }
     if self.control != false {
-      try visitor.visitSingularBoolField(value: self.control, fieldNumber: 3)
+      try visitor.visitSingularBoolField(value: self.control, fieldNumber: 2)
     }
     if self.option != false {
-      try visitor.visitSingularBoolField(value: self.option, fieldNumber: 4)
+      try visitor.visitSingularBoolField(value: self.option, fieldNumber: 3)
     }
     if self.shift != false {
-      try visitor.visitSingularBoolField(value: self.shift, fieldNumber: 5)
+      try visitor.visitSingularBoolField(value: self.shift, fieldNumber: 4)
     }
     if self.command != false {
-      try visitor.visitSingularBoolField(value: self.command, fieldNumber: 6)
+      try visitor.visitSingularBoolField(value: self.command, fieldNumber: 5)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_AskHotkey, rhs: Aria_Daemon_V1_AskHotkey) -> Bool {
-    if lhs.enabled != rhs.enabled {return false}
+  public static func ==(lhs: Aria_Daemon_V1_Chord, rhs: Aria_Daemon_V1_Chord) -> Bool {
     if lhs.keyCode != rhs.keyCode {return false}
     if lhs.control != rhs.control {return false}
     if lhs.option != rhs.option {return false}
     if lhs.shift != rhs.shift {return false}
     if lhs.command != rhs.command {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_Hotkey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Hotkey"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chord\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._chord) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._chord {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_Hotkey, rhs: Aria_Daemon_V1_Hotkey) -> Bool {
+    if lhs._chord != rhs._chord {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4305,6 +4631,46 @@ nonisolated extension Aria_Daemon_V1_AskResponse: SwiftProtobuf.Message, SwiftPr
   }
 }
 
+nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RunPromptRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.promptID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.applicationID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
+    }
+    if !self.promptID.isEmpty {
+      try visitor.visitSingularStringField(value: self.promptID, fieldNumber: 2)
+    }
+    if !self.applicationID.isEmpty {
+      try visitor.visitSingularStringField(value: self.applicationID, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RunPromptRequest, rhs: Aria_Daemon_V1_RunPromptRequest) -> Bool {
+    if lhs.text != rhs.text {return false}
+    if lhs.promptID != rhs.promptID {return false}
+    if lhs.applicationID != rhs.applicationID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Aria_Daemon_V1_CancelAskRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CancelAskRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ticket\0")
@@ -4421,7 +4787,7 @@ nonisolated extension Aria_Daemon_V1_ResolveAskResponse: SwiftProtobuf.Message, 
 
 nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ChatEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{3}error_code\0\u{1}ticket\0\u{1}text\0\u{3}error_message\0\u{1}agent\0\u{1}step\0\u{1}skill\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{3}error_code\0\u{1}ticket\0\u{1}text\0\u{3}error_message\0\u{1}agent\0\u{1}step\0\u{1}skill\0\u{1}copied\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4437,6 +4803,7 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
       case 6: try { try decoder.decodeSingularEnumField(value: &self.agent) }()
       case 7: try { try decoder.decodeSingularEnumField(value: &self.step) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.skill) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.copied) }()
       default: break
       }
     }
@@ -4467,6 +4834,9 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
     if !self.skill.isEmpty {
       try visitor.visitSingularStringField(value: self.skill, fieldNumber: 8)
     }
+    if self.copied != false {
+      try visitor.visitSingularBoolField(value: self.copied, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4479,6 +4849,7 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
     if lhs.agent != rhs.agent {return false}
     if lhs.step != rhs.step {return false}
     if lhs.skill != rhs.skill {return false}
+    if lhs.copied != rhs.copied {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

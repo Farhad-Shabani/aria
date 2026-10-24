@@ -771,6 +771,7 @@ mod tests {
         let mine = ChatReply {
             text: "one".to_owned(),
             delivery_error: None,
+            copied: false,
         };
         let events = vec![
             chat(2, ChatStageKind::Working(Step::Thinking)),

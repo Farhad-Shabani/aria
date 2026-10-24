@@ -1843,11 +1843,25 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "RunPrompt" metadata.
+        public enum RunPrompt: Sendable {
+            /// Request type for "RunPrompt".
+            public typealias Input = Aria_Daemon_V1_RunPromptRequest
+            /// Response type for "RunPrompt".
+            public typealias Output = Aria_Daemon_V1_AskResponse
+            /// Descriptor for "RunPrompt".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "RunPrompt",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.ChatService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Ask.descriptor,
             Cancel.descriptor,
-            Resolve.descriptor
+            Resolve.descriptor,
+            RunPrompt.descriptor
         ]
     }
 }
@@ -1941,6 +1955,32 @@ extension Aria_Daemon_V1_ChatService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ResolveAskResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RunPrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Run a stored prompt on a transcript and type the result into the app the
+        /// > request names, else the one in front. One fresh agent run with no
+        /// > conversation, memory, or tools. Progress and the outcome arrive as
+        /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RunPromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_AskResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func runPrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RunPromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RunPromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_AskResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -2068,6 +2108,43 @@ extension Aria_Daemon_V1_ChatService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "RunPrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Run a stored prompt on a transcript and type the result into the app the
+        /// > request names, else the one in front. One fresh agent run with no
+        /// > conversation, memory, or tools. Progress and the outcome arrive as
+        /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RunPromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_AskResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func runPrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RunPromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RunPromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_AskResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.RunPrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -2163,6 +2240,38 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ResolveAskRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ResolveAskResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RunPrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Run a stored prompt on a transcript and type the result into the app the
+    /// > request names, else the one in front. One fresh agent run with no
+    /// > conversation, memory, or tools. Progress and the outcome arrive as
+    /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func runPrompt<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RunPromptRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.runPrompt(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RunPromptRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_AskResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -2272,6 +2381,42 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             metadata: metadata
         )
         return try await self.resolve(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RunPrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Run a stored prompt on a transcript and type the result into the app the
+    /// > request names, else the one in front. One fresh agent run with no
+    /// > conversation, memory, or tools. Progress and the outcome arrive as
+    /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func runPrompt<Result>(
+        _ message: Aria_Daemon_V1_RunPromptRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RunPromptRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.runPrompt(
             request: request,
             options: options,
             onResponse: handleResponse

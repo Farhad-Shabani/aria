@@ -10,6 +10,7 @@
 - [Dictation history](./history.md)
 - [Read text aloud](./tts.md)
 - [Ask a question](./voice-chat.md)
+- [Prompts (Mac)](./prompts.md)
 - [Project vocabulary](./project-spellings.md)
 - [Wake word](./wake-word.md)
 - [Voice profiles (Mac)](./speaker-verification.md)

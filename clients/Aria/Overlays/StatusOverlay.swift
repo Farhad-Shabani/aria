@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 enum PillState: Equatable {
@@ -14,12 +15,10 @@ enum PillState: Equatable {
     case excluded(String?)
     /// A press that failed, in the words the person needs.
     case failed(String)
-    /// An ask in flight: `claude · reading`, and since when.
+    /// An ask in flight: its step, such as `reading · +1`, and since when.
     case asking(String, since: Date)
-    /// An ask that came back, by agent. Shown the way a delivered press is.
-    case replied(String)
-    /// An ask that did not, by agent. Shown the way a failed press is.
-    case noReply(String)
+    case replied(copied: Bool)
+    case noReply
 
     init?(
         _ event: Aria_Daemon_V1_DictationEvent?,
@@ -47,21 +46,21 @@ enum PillState: Equatable {
     /// The pill for an ask that just ended, or nothing for one under way.
     init?(ended event: Aria_Daemon_V1_ChatEvent) {
         switch event.stage {
-        case .replied: self = .replied(event.agent.shortName)
-        case .failed: self = .noReply(event.agent.shortName)
+        case .replied: self = .replied(copied: event.copied)
+        case .failed: self = .noReply
         default: return nil
         }
     }
 
-    /// The pill for the asks in flight: the oldest one's agent and step,
-    /// and how many more wait behind it.
+    /// The pill for the asks in flight: the oldest one's step, and how many
+    /// others are in flight.
     init?(asks: AsksInFlight) {
         guard let oldest = asks.oldest else { return nil }
-        var label = "\(oldest.agent.shortName) · \(oldest.stepLabel)"
+        var step = oldest.stepLabel
         if asks.count > 1 {
-            label += " · +\(asks.count - 1)"
+            step += " · +\(asks.count - 1)"
         }
-        self = .asking(label, since: oldest.since)
+        self = .asking(step, since: oldest.since)
     }
 
     /// How long the pill stays once the press is over. A live press has no
@@ -99,8 +98,15 @@ enum PillState: Equatable {
         }
     }
 
-    /// The words beside the mark, or none where the mark says it all.
-    var label: String? {
+    /// The words beside the mark, or none where the mark says it all. A
+    /// prompt's name leads its own run, so a wrong chord shows before
+    /// anything is said.
+    func label(prompt: String? = nil) -> String? {
+        let words = [prompt, detail].compactMap { $0 }
+        return words.isEmpty ? nil : words.joined(separator: " · ")
+    }
+
+    private var detail: String? {
         switch self {
         case .recording: return nil
         case .transcribing: return "transcribing"
@@ -112,9 +118,9 @@ enum PillState: Equatable {
         case .interrupted: return "stopped · focus moved"
         case .excluded(let app): return "off in \(app ?? "this app")"
         case .failed(let message): return message
-        case .asking(let label, _): return label
-        case .replied(let agent): return "\(agent) · replied"
-        case .noReply(let agent): return "\(agent) · no reply"
+        case .asking(let step, _): return step
+        case .replied(let copied): return copied ? "copied" : "replied"
+        case .noReply: return "no reply"
         }
     }
 
@@ -180,7 +186,7 @@ enum Motion: Equatable {
 
 /// One ask the daemon has not answered yet.
 struct Ask: Equatable {
-    let agent: Aria_Daemon_V1_ChatAgent
+    let ticket: UInt64
     var step: Aria_Daemon_V1_ChatStep
     var skill: String
     let since: Date
@@ -206,7 +212,8 @@ struct AsksInFlight: Equatable {
         switch event.stage {
         case .working:
             var ask =
-                asks[event.ticket] ?? Ask(agent: event.agent, step: .thinking, skill: "", since: now)
+                asks[event.ticket]
+                ?? Ask(ticket: event.ticket, step: .thinking, skill: "", since: now)
             ask.step = event.step
             ask.skill = event.skill
             asks[event.ticket] = ask
@@ -229,14 +236,25 @@ extension Aria_Daemon_V1_ChatStep {
     }
 }
 
-extension Aria_Daemon_V1_ChatAgent {
-    /// The short name the pill has room for.
-    var shortName: String {
-        switch self {
-        case .claudeCode: return "claude"
-        case .codex: return "codex"
-        case .unspecified, .UNRECOGNIZED: return "agent"
-        }
+private struct Pill: Equatable {
+    let state: PillState
+    let prompt: String?
+
+    var label: String? { state.label(prompt: prompt?.shortenedForPill) }
+}
+
+enum OverlayStyle {
+    static let fill = Color.black.opacity(0.75)
+    static let font = Font.system(size: 12, weight: .medium)
+}
+
+extension String {
+    /// A name short enough to leave room in the pill for the step and the
+    /// clock.
+    var shortenedForPill: String {
+        let length = 20
+        guard count > length else { return self }
+        return prefix(length - 1).trimmingCharacters(in: .whitespaces) + "…"
     }
 }
 
@@ -251,10 +269,15 @@ final class StatusController: ObservableObject {
     @Published private(set) var live: PillState?
 
     private let events: DaemonEvents
+    private let prompts: PromptHotkeys
     private let panel = FloatingPanel(width: pillWidth, bottomMargin: pillBottomMargin)
     private var foregroundState: PillState?
+    private var foregroundRun: RunID?
+    /// The recording the daemon opened last. Only its opening event names it.
+    private var lastRecording: UInt64?
     private var asks = AsksInFlight()
-    private var shown: PillState?
+    private var runsChange: AnyCancellable?
+    private var shown: Pill?
     /// The microphone, as of the last level the daemon sent. The ribbon
     /// reads it every frame, so a new level needs no redraw of the pill.
     private let level = LiveLevel()
@@ -262,8 +285,9 @@ final class StatusController: ObservableObject {
     private var expiry: Task<Void, Never>?
 
     /// Shares the caption's stream: one subscription feeds every overlay.
-    init(events: DaemonEvents) {
+    init(events: DaemonEvents, prompts: PromptHotkeys) {
         self.events = events
+        self.prompts = prompts
     }
 
     /// The caller starts the stream once every overlay has registered.
@@ -275,19 +299,26 @@ final class StatusController: ObservableObject {
                 self.show(nil)
                 return
             }
+            if event.stage == .recording { self.lastRecording = event.recordingID }
             guard let state = PillState(event) else { return }
-            self.show(state)
+            self.show(state, run: self.lastRecording.map(RunID.recording))
         }
         events.onChat { [weak self] chat in
             guard let self else { return }
             if let chat, let ended = PillState(ended: chat) {
-                self.show(ended)
+                self.show(ended, run: .ticket(chat.ticket))
             }
             self.asks.apply(chat)
             self.render()
         }
         events.onLevel { [weak self] level in
             self?.level.value = level
+        }
+        // A chord learns its recording and ticket on its own call, which can
+        // land after the event that opened them, so a late name redraws.
+        // Published values arrive before they are stored, hence the hop.
+        runsChange = prompts.$runs.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.render() }
         }
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -299,10 +330,11 @@ final class StatusController: ObservableObject {
     }
 
     /// A press that ended keeps the pill for its own lifetime, then lets go.
-    private func show(_ state: PillState?) {
+    private func show(_ state: PillState?, run: RunID? = nil) {
         expiry?.cancel()
         expiry = nil
         foregroundState = state
+        foregroundRun = run
         render()
         guard let life = state?.life else { return }
         expiry = Task { [weak self] in
@@ -317,18 +349,19 @@ final class StatusController: ObservableObject {
         // A press is the person's turn; it outranks whatever an agent is doing.
         let live = foregroundState ?? PillState(asks: asks)
         if self.live != live { self.live = live }
+        let run = foregroundState == nil ? asks.oldest.map { RunID.ticket($0.ticket) } : foregroundRun
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
-        let wanted = enabled ? live : nil
+        let wanted = enabled ? live.map { Pill(state: $0, prompt: run.flatMap(prompts.runs.prompt(of:))) } : nil
         guard wanted != shown else { return }
         shown = wanted
         // A new press starts from silence rather than the last one's level.
-        if case .recording = wanted { level.value = 0 }
+        if case .recording = wanted?.state { level.value = 0 }
         draw(wanted)
     }
 
-    private func draw(_ state: PillState?) {
-        if let state {
-            panel.show(StatusPillView(state: state, level: level))
+    private func draw(_ pill: Pill?) {
+        if let pill {
+            panel.show(StatusPillView(pill: pill, level: level))
         } else {
             panel.hide()
         }
@@ -336,41 +369,43 @@ final class StatusController: ObservableObject {
 }
 
 /// Room for the longest failure message; the capsule centres in it.
-private let pillWidth: CGFloat = 480
+let pillWidth: CGFloat = 480
 /// The ribbon and the bar share one slot, so a press never jumps as the
 /// mic gives way to the machine. A glyph is its own size, as on the board.
 private let markWidth = RibbonTuning.width
 private let markHeight = RibbonTuning.height
-private let pillBottomMargin: CGFloat = 34
+let pillBottomMargin: CGFloat = 34
 
 /// A mark and, where there is something to read, a word for it.
 private struct StatusPillView: View {
-    let state: PillState
+    let pill: Pill
     let level: LiveLevel
 
     var body: some View {
+        let state = pill.state
+        let label = pill.label
         HStack(spacing: 7) {
             Mark(state: state, level: level)
-            if state.label != nil || state.since != nil {
+            if label != nil || state.since != nil {
                 HStack(spacing: 4) {
-                    if let label = state.label {
+                    if let label {
                         Text(label)
                     }
                     if let since = state.since {
-                        if state.label != nil {
+                        if label != nil {
                             Text("·")
                         }
                         Text(since, style: .timer)
                     }
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(OverlayStyle.font)
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.trailing, 4)
             }
         }
         .padding(9)
-        .background(.black.opacity(0.75), in: Capsule())
+        .background(OverlayStyle.fill, in: Capsule())
     }
 }
 
@@ -389,7 +424,7 @@ private struct Mark: View {
             Ribbon(state: state, level: level)
         case .delivering:
             Bar(tint: state.tint)
-        case .delivered(.copied, _):
+        case .delivered(.copied, _), .replied(copied: true):
             Glyph(name: "doc.on.clipboard", tint: state.tint)
         case .delivered, .replied:
             Glyph(name: "checkmark", tint: state.tint)
@@ -399,10 +434,17 @@ private struct Mark: View {
             Glyph(name: "hand.raised", tint: state.tint)
         case .excluded:
             Glyph(name: "nosign", tint: state.tint)
-        case .failed, .noReply, .asking:
+        case .asking:
+            // The symbol Mac apps use for work an AI model is doing.
+            Glyph(name: "sparkles", tint: state.tint)
+                .modifier(Breathing(motion: state.motion))
+        case .failed, .noReply:
             // Keyed on the motion: a new motion is a new dot with its own
             // loop, while a label change under the same motion keeps this one.
-            Dot(tint: state.tint, motion: state.motion)
+            Circle()
+                .fill(state.tint)
+                .frame(width: 10, height: 10)
+                .modifier(Breathing(motion: state.motion))
                 .id(state.motion)
         }
     }
@@ -443,16 +485,13 @@ private struct Glyph: View {
     }
 }
 
-private struct Dot: View {
-    let tint: Color
+private struct Breathing: ViewModifier {
     let motion: Motion
 
     @State private var swelling = false
 
-    var body: some View {
-        Circle()
-            .fill(tint)
-            .frame(width: 10, height: 10)
+    func body(content: Content) -> some View {
+        content
             .scaleEffect(swelling ? motion.scale : 1)
             .animation(motion.animation, value: swelling)
             .onAppear { swelling = motion != .still }

@@ -14,7 +14,6 @@ struct AppsSettings: View {
                 id: \.applicationID,
                 noun: "App",
                 empty: "No Apps",
-                footer: "Other apps use Dictation settings.",
                 marked: marked,
                 canAdd: apps.entries.count < ApplicationOverrideEdits.maximumApps,
                 add: { add(editor) },

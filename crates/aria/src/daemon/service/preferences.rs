@@ -89,6 +89,9 @@ fn failure(operation: &'static str, error: PreferencesCallError) -> RpcFailure {
 }
 
 pub(super) fn store_error(operation: &'static str, error: PreferenceStoreError) -> RpcFailure {
+    if matches!(error, PreferenceStoreError::ChordInUse) {
+        return RpcFailure::new(RpcErrorCode::InvalidRequest, error.to_string());
+    }
     let durability_unconfirmed =
         matches!(error, PreferenceStoreError::DurabilityUnconfirmed { .. });
     tracing::error!(operation, error = %error_chain(&error), "preference store operation failed");

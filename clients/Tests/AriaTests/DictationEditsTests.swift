@@ -38,13 +38,14 @@ final class DictationEditsTests: XCTestCase {
         patch.silenceDurationMs = 2500
         patch.ownVoiceOnly = true
         patch.dictationHotkey = .fn
-        patch.askHotkey.enabled = true
-        patch.askHotkey.keyCode = 7
+        patch.askHotkey.chord.keyCode = 7
+        patch.promptListHotkey.chord.keyCode = 8
         patch.projectVocabulary = true
         patch.vocabularyDirectory = "/repo"
         patch.dictationHistory = false
         patch.historyAudioRetention = true
         patch.muteOutput = true
+        patch.prompts.entries = [PromptEdits.newEntry(for: URL(fileURLWithPath: "/p.md"))]
         var combined = Aria_Daemon_V1_PreferencePatch()
         patch.apply(to: &combined)
         XCTAssertEqual(combined, patch)
@@ -68,5 +69,17 @@ final class DictationEditsTests: XCTestCase {
         XCTAssertEqual(snapshot.outputMode, .copy)
         XCTAssertTrue(snapshot.muteOutput)
         XCTAssertFalse(snapshot.hasVocabularyDirectory)
+    }
+
+    func test_patchApply_replacesEveryPrompt() {
+        var snapshot = Aria_Daemon_V1_UserPreferences()
+        snapshot.prompts.entries = [
+            PromptEdits.newEntry(for: URL(fileURLWithPath: "/a.md")),
+            PromptEdits.newEntry(for: URL(fileURLWithPath: "/b.md")),
+        ]
+        var patch = Aria_Daemon_V1_PreferencePatch()
+        patch.prompts = Aria_Daemon_V1_Prompts()
+        patch.apply(to: &snapshot)
+        XCTAssertEqual(snapshot.prompts.entries, [])
     }
 }
