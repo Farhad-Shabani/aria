@@ -3,13 +3,13 @@ import Combine
 @MainActor
 final class ChordBinding: ObservableObject {
     private let shortcut = GlobalShortcut()
-    private let action: () -> Void
+    private let action: @MainActor () -> Void
     /// What is registered, so an unchanged preference costs nothing.
     private(set) var bound: Chord?
     /// Carbon turned the chord down.
     @Published private(set) var refused = false
 
-    init(action: @escaping () -> Void) {
+    init(action: @escaping @MainActor () -> Void) {
         self.action = action
     }
 

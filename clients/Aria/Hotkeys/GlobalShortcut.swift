@@ -34,7 +34,7 @@ final class GlobalShortcut {
     /// Replaces whatever was registered before, so a settings change lands
     /// without a restart. False when Carbon refuses the chord.
     @discardableResult
-    func register(keyCode: UInt32, modifiers: UInt32, action: @escaping () -> Void) -> Bool {
+    func register(keyCode: UInt32, modifiers: UInt32, action: @escaping @MainActor () -> Void) -> Bool {
         unregister()
         self.keyCode = keyCode
         self.modifiers = modifiers
@@ -112,10 +112,8 @@ final class GlobalShortcut {
 private let ariaSignature = OSType(0x4152_4941)
 
 /// The Carbon callback is a bare C function pointer and captures nothing, so
-/// what each press runs lives here, keyed by hot key id. Only
-/// `GlobalShortcut` writes it and only this callback reads it, both on the
-/// main thread — Carbon dispatches nowhere else.
-nonisolated(unsafe) private var pressActions: [UInt32: () -> Void] = [:]
+/// what each press runs lives here, keyed by hot key id.
+@MainActor private var pressActions: [UInt32: @MainActor () -> Void] = [:]
 
 private func handleHotKey(
     _ call: EventHandlerCallRef?,
@@ -132,9 +130,14 @@ private func handleHotKey(
         nil,
         &pressed
     )
-    guard status == noErr, pressed.signature == ariaSignature, let action = pressActions[pressed.id] else {
+    guard status == noErr, pressed.signature == ariaSignature else {
         return OSStatus(eventNotHandledErr)
     }
-    action()
-    return noErr
+    let id = pressed.id
+    // Carbon dispatches only on the main thread; this traps if that changes.
+    return MainActor.assumeIsolated {
+        guard let action = pressActions[id] else { return OSStatus(eventNotHandledErr) }
+        action()
+        return noErr
+    }
 }

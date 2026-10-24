@@ -69,7 +69,7 @@ final class PromptList {
     }
 
     /// With no modifier, so the bare key works while the list shows.
-    private func take(_ keyCode: Int, action: @escaping () -> Void) {
+    private func take(_ keyCode: Int, action: @escaping @MainActor () -> Void) {
         let key = GlobalShortcut()
         if key.register(keyCode: UInt32(keyCode), modifiers: 0, action: action) {
             listKeys.append(key)
