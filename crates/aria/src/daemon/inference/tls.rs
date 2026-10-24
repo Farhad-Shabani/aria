@@ -20,6 +20,7 @@ use tonic::transport::{ClientTlsConfig, Endpoint, Identity};
 use super::identity::{
     CERTIFICATE_NAME, ClientIdentity, Credentials, Invitation, PinnedServer, ServerIdentity,
 };
+use crate::config::ServerEndpoint;
 use crate::daemon::relay::fingerprint;
 
 pub(super) fn server(identity: &Arc<ServerIdentity>) -> Result<TlsAcceptor, Error> {
@@ -63,11 +64,10 @@ pub(super) fn endpoint(client: &ClientIdentity, server: &PinnedServer) -> Result
 
 fn configured_endpoint(
     client: &ClientIdentity,
-    address: &str,
+    address: &ServerEndpoint,
     pem: &str,
     pin: [u8; 32],
 ) -> Result<Endpoint, Error> {
-    super::identity::validate_endpoint(address).map_err(|_| Error::InvalidEndpoint)?;
     let certificate = CertificateDer::from_pem_slice(pem.as_bytes())?;
     if fingerprint(&certificate) != pin {
         return Err(Error::InvalidPin);
@@ -84,7 +84,7 @@ fn configured_endpoint(
             &credentials.key_pem,
         ))
         .timeout(Duration::from_secs(5));
-    Ok(Endpoint::from_shared(address.to_owned())?
+    Ok(Endpoint::from_shared(address.to_string())?
         .connect_timeout(Duration::from_secs(5))
         .tls_config_with_verifier(tls, verifier)?)
 }
@@ -246,8 +246,6 @@ pub(crate) enum Error {
     InvalidPin,
     #[error("the remote invitation is invalid")]
     InvalidInvitation,
-    #[error("the remote endpoint is invalid")]
-    InvalidEndpoint,
     #[error("the remote TLS endpoint could not be configured")]
     Transport(#[from] tonic::transport::Error),
 }
@@ -263,12 +261,13 @@ mod tests {
     async fn listening(
         acceptor: TlsAcceptor,
     ) -> (
-        String,
+        ServerEndpoint,
         tokio::task::JoinHandle<()>,
         tokio::sync::oneshot::Receiver<bool>,
     ) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("https://{}", listener.local_addr().unwrap());
+        let endpoint =
+            ServerEndpoint::parse(&format!("https://{}", listener.local_addr().unwrap())).unwrap();
         let (accepted, observed) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             let incoming = futures_util::stream::once(async move {

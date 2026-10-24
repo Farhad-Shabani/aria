@@ -17,7 +17,7 @@ use super::{
     OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, Start, Strategy,
     Transcript, tls,
 };
-use crate::config::Environment;
+use crate::config::{Environment, ServerEndpoint};
 use crate::daemon::relay::{from_hex, to_hex};
 use crate::ipc::{protocol, wire};
 use crate::primitives::local_socket::ExclusiveListener;
@@ -42,6 +42,10 @@ pub enum RemoteClientError {
     PairingLock,
     #[error("remote invitation is invalid or exceeds {} KiB", MAX_DOCUMENT_BYTES / 1024)]
     Invitation,
+    #[error("remote endpoint must be an HTTPS origin without credentials, path, query, or fragment")]
+    InvalidEndpoint,
+    #[error("client fingerprint must be 64 hexadecimal digits")]
+    InvalidFingerprint,
     #[error("remote identity is missing, invalid or not paired with this endpoint")]
     Identity,
     #[error(
@@ -123,13 +127,17 @@ impl RemoteTranscriber {
     /// this build does not know is refused.
     pub(crate) fn connect(
         home: &Path,
-        endpoint: &str,
+        endpoint: &ServerEndpoint,
         cancel: &CancelToken,
     ) -> Result<Self, TranscriptionError> {
         Self::open(home, endpoint, cancel).map_err(transcription_error)
     }
 
-    fn open(home: &Path, endpoint: &str, cancel: &CancelToken) -> Result<Self, RemoteClientError> {
+    fn open(
+        home: &Path,
+        endpoint: &ServerEndpoint,
+        cancel: &CancelToken,
+    ) -> Result<Self, RemoteClientError> {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
             .map_err(identity_error)?;
         let server = identity.paired(endpoint).map_err(identity_error)?;
@@ -628,6 +636,8 @@ fn transcription_error(error: RemoteClientError) -> TranscriptionError {
         | RemoteClientError::Storage
         | RemoteClientError::PairingLock
         | RemoteClientError::Invitation
+        | RemoteClientError::InvalidEndpoint
+        | RemoteClientError::InvalidFingerprint
         | RemoteClientError::Identity
         | RemoteClientError::DurabilityUnconfirmed
         | RemoteClientError::RevocationUnconfirmed
@@ -756,9 +766,7 @@ pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteCli
 }
 
 pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
-    if !crate::config::validate_server_endpoint(endpoint) {
-        return Err(RemoteClientError::Invitation);
-    }
+    let endpoint = ServerEndpoint::parse(endpoint).ok_or(RemoteClientError::InvalidEndpoint)?;
     let environment = Environment::capture().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = admin_channel(environment.home()).await?;
@@ -766,7 +774,7 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
             wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)
                 .max_decoding_message_size(MAX_DOCUMENT_BYTES as usize + 1024)
                 .issue_invite(wire::InferenceInviteRequest {
-                    endpoint: endpoint.to_owned(),
+                    endpoint: endpoint.to_string(),
                 })
                 .await
                 .map_err(rpc_error)?;
@@ -776,7 +784,7 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
 }
 
 pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
-    let fingerprint = from_hex(fingerprint).ok_or(RemoteClientError::Invitation)?;
+    let fingerprint = from_hex(fingerprint).ok_or(RemoteClientError::InvalidFingerprint)?;
     let environment = Environment::capture().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = admin_channel(environment.home()).await?;
@@ -1672,7 +1680,11 @@ mod tests {
     fn connecting_unpaired_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
         assert!(matches!(
-            RemoteTranscriber::open(home.path(), "https://server.example", &CancelToken::never()),
+            RemoteTranscriber::open(
+                home.path(),
+                &ServerEndpoint::parse("https://server.example").unwrap(),
+                &CancelToken::never()
+            ),
             Err(RemoteClientError::Identity)
         ));
         assert!(!home.path().join(".aria/inference/client.json").exists());

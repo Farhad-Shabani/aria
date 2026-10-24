@@ -3,7 +3,7 @@
 use std::env;
 use std::path::Path;
 
-use crate::config::{FileConfig, backend, chat_agent, tts_backend};
+use crate::config::{FileConfig, ServerEndpoint, backend, chat_agent, tts_backend};
 use crate::daemon::inference;
 use crate::primitives::file_inspection::InspectedFile;
 
@@ -75,7 +75,8 @@ pub(super) fn stt_choices(file: &FileConfig, home: &Path, host: &Host) -> Vec<Ch
         .transcription
         .server
         .as_deref()
-        .is_some_and(|endpoint| inference::is_paired(home, endpoint));
+        .and_then(ServerEndpoint::parse)
+        .is_some_and(|endpoint| inference::is_paired(home, &endpoint));
     if paired
         && let Some(server) = choices
             .iter_mut()

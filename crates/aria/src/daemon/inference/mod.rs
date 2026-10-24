@@ -7,6 +7,7 @@ pub(crate) mod tls;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::config::ServerEndpoint;
 use crate::runtime::RuntimePaths;
 use crate::transcription::{Language, TranscriptUpdate};
 
@@ -66,7 +67,7 @@ impl Paths {
 }
 
 /// Whether this home holds a pin for `endpoint`.
-pub(crate) fn is_paired(home: &Path, endpoint: &str) -> bool {
+pub(crate) fn is_paired(home: &Path, endpoint: &ServerEndpoint) -> bool {
     let path = Paths::in_home(home).client_identity();
     path.is_file()
         && identity::ClientIdentity::open(&path)

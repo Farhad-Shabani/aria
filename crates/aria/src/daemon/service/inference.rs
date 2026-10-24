@@ -13,7 +13,8 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
 use crate::daemon::inference::engine::{Engine, Input};
-use crate::daemon::inference::identity::{Admission, ServerIdentity};
+use crate::config::ServerEndpoint;
+use crate::daemon::inference::identity::{self, Admission, ServerIdentity};
 use crate::daemon::inference::{
     Event, IDLE_INPUT_TIMEOUT, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, OVERALL_TIMEOUT,
     QUEUE_CAPACITY, Start, Transcript,
@@ -385,7 +386,9 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
         &self,
         request: Request<wire::InferenceInviteRequest>,
     ) -> Result<Response<wire::InferenceInviteResponse>, Status> {
-        let endpoint = request.into_inner().endpoint;
+        let endpoint = ServerEndpoint::parse(&request.into_inner().endpoint)
+            .ok_or(identity::Error::InvalidEndpoint)
+            .map_err(|error| Status::from(RpcFailure::from(error)))?;
         let invitation = self
             .identity
             .issue(&endpoint)

@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn server_transcription_needs_no_local_model() {
         let check = model(&TranscriptionBackend::Server {
-            endpoint: "https://example.test:9851".to_owned(),
+            endpoint: crate::config::ServerEndpoint::parse("https://example.test:9851").unwrap(),
         });
         assert_eq!(check.status, Status::Ok);
         assert!(check.detail.contains("https://example.test:9851"));

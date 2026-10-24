@@ -15,6 +15,7 @@ use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
 use crate::config::{
+    ServerEndpoint,
     ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
 };
 use crate::delivery::{DeliveryError, PlatformTextDelivery};
@@ -242,7 +243,7 @@ fn select_engine(
 /// Asks the server what it runs, so an unreachable server fails the build.
 fn select_remote(
     home: &Path,
-    endpoint: &str,
+    endpoint: &ServerEndpoint,
 ) -> Result<SelectedEngine, DictationInitializationError> {
     let remote = RemoteTranscriber::connect(home, endpoint, &CancelToken::never())
         .map_err(DictationInitializationError::Transcription)?;
@@ -439,7 +440,7 @@ pub(super) fn build_dictation(
 pub(super) enum RetryTarget<'a> {
     Local(TranscriptionConfig),
     Server {
-        endpoint: String,
+        endpoint: ServerEndpoint,
         engine: Option<&'a str>,
     },
 }

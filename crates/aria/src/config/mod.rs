@@ -198,26 +198,52 @@ impl DictationConfig {
     }
 }
 
-pub(crate) fn validate_server_endpoint(endpoint: &str) -> bool {
-    let Ok(uri) = endpoint.parse::<tonic::codegen::http::Uri>() else {
-        return false;
-    };
-    endpoint.len() <= 2048
-        && uri.scheme_str() == Some("https")
-        && uri.host().is_some()
-        && uri
-            .authority()
-            .is_some_and(|authority| !authority.as_str().contains('@'))
-        && uri.query().is_none()
-        && !endpoint.contains('#')
-        && matches!(uri.path(), "" | "/")
+/// An HTTPS origin with no credentials, path, query, or fragment. Pairing
+/// matches endpoints exactly, so spellings of one origin share one form.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub(crate) struct ServerEndpoint(String);
+
+impl ServerEndpoint {
+    pub(crate) fn parse(endpoint: &str) -> Option<Self> {
+        let uri = endpoint.parse::<tonic::codegen::http::Uri>().ok()?;
+        let authority = uri.authority()?.as_str();
+        let valid = endpoint.len() <= 2048
+            && uri.scheme_str() == Some("https")
+            && uri.host().is_some()
+            && !authority.contains('@')
+            && uri.query().is_none()
+            && !endpoint.contains('#')
+            && matches!(uri.path(), "" | "/");
+        valid.then(|| Self(format!("https://{}", authority.to_ascii_lowercase())))
+    }
+}
+
+impl TryFrom<String> for ServerEndpoint {
+    type Error = ConfigError;
+
+    fn try_from(endpoint: String) -> Result<Self, ConfigError> {
+        Self::parse(&endpoint).ok_or(ConfigError::InvalidServerEndpoint)
+    }
+}
+
+impl From<ServerEndpoint> for String {
+    fn from(endpoint: ServerEndpoint) -> Self {
+        endpoint.0
+    }
+}
+
+impl fmt::Display for ServerEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 /// Where dictation and recorded transcription run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TranscriptionBackend {
     Local(TranscriptionConfig),
-    Server { endpoint: String },
+    Server { endpoint: ServerEndpoint },
 }
 
 impl TranscriptionBackend {

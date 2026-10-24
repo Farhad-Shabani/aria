@@ -295,6 +295,7 @@ pub(in crate::daemon) mod tests {
     use super::super::identity::{ClientIdentity, Invitation};
     use super::super::Event;
     use super::*;
+    use crate::config::ServerEndpoint;
     use crate::audio::RecordingReader;
     use crate::daemon::relay::fingerprint;
     use crate::transcription::{
@@ -429,7 +430,10 @@ pub(in crate::daemon) mod tests {
                 ClientIdentity::load_or_create(&directory.path().join("client.json")).unwrap();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let invite = identity
-                .issue(&format!("https://{}", listener.local_addr().unwrap()))
+                .issue(
+                    &ServerEndpoint::parse(&format!("https://{}", listener.local_addr().unwrap()))
+                        .unwrap(),
+                )
                 .unwrap();
             let engine = Arc::new(Engine::new(
                 name,
@@ -495,7 +499,7 @@ pub(in crate::daemon) mod tests {
             )
         }
 
-        pub(in crate::daemon) fn endpoint(&self) -> &str {
+        pub(in crate::daemon) fn endpoint(&self) -> &ServerEndpoint {
             &self.invite.endpoint
         }
 
@@ -560,7 +564,7 @@ pub(in crate::daemon) mod tests {
 
     pub(in crate::daemon) struct PairedClient {
         pub(in crate::daemon) home: tempfile::TempDir,
-        endpoint: String,
+        endpoint: ServerEndpoint,
     }
 
     impl PairedClient {
@@ -721,7 +725,7 @@ pub(in crate::daemon) mod tests {
             fixture.channel.clone(),
         )
         .issue_invite(wire::InferenceInviteRequest {
-            endpoint: fixture.invite.endpoint.clone(),
+            endpoint: fixture.invite.endpoint.to_string(),
         })
         .await
         .unwrap_err();

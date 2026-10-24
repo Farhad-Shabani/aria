@@ -8,6 +8,7 @@ use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::config::ServerEndpoint;
 use crate::daemon::relay::{PairingCodes, PairingError, fingerprint, mint};
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
@@ -19,7 +20,7 @@ pub(super) const CERTIFICATE_NAME: &str = "aria.inference";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Invitation {
-    pub endpoint: String,
+    pub endpoint: ServerEndpoint,
     pub certificate_pem: String,
     pub fingerprint: [u8; 32],
     pub code: String,
@@ -27,7 +28,6 @@ pub(crate) struct Invitation {
 
 impl Invitation {
     pub(super) fn validate(&self) -> Result<(), Error> {
-        validate_endpoint(&self.endpoint)?;
         validate_pin(&self.certificate_pem, &self.fingerprint)?;
         if self.code.len() != 32
             || !self
@@ -44,7 +44,7 @@ impl Invitation {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PinnedServer {
-    pub endpoint: String,
+    pub endpoint: ServerEndpoint,
     pub certificate_pem: String,
     pub fingerprint: [u8; 32],
 }
@@ -114,14 +114,13 @@ impl ServerIdentity {
         }))
     }
 
-    pub(in crate::daemon) fn issue(&self, endpoint: &str) -> Result<Invitation, Error> {
-        validate_endpoint(endpoint)?;
+    pub(in crate::daemon) fn issue(&self, endpoint: &ServerEndpoint) -> Result<Invitation, Error> {
         let (code, _) = self.codes.issue(Instant::now())?;
         let certificate =
             CertificateDer::from_pem_slice(self.credentials.certificate_pem.as_bytes())
                 .map_err(|_| Error::InvalidIdentity)?;
         Ok(Invitation {
-            endpoint: endpoint.to_owned(),
+            endpoint: endpoint.clone(),
             certificate_pem: self.credentials.certificate_pem.clone(),
             fingerprint: fingerprint(&certificate),
             code: code.raw().to_owned(),
@@ -309,7 +308,6 @@ impl ClientIdentity {
     fn validated(path: &Path, stored: StoredClient) -> Result<Self, Error> {
         super::tls::validate_credentials(&stored.credentials)?;
         if let Some(server) = &stored.server {
-            validate_endpoint(&server.endpoint)?;
             validate_pin(&server.certificate_pem, &server.fingerprint)?;
         }
         Ok(Self {
@@ -329,12 +327,11 @@ impl ClientIdentity {
         Ok(fingerprint(&certificate))
     }
 
-    pub(crate) fn paired(&self, endpoint: &str) -> Result<&PinnedServer, Error> {
-        validate_endpoint(endpoint)?;
+    pub(crate) fn paired(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
         self.stored
             .server
             .as_ref()
-            .filter(|server| server.endpoint == endpoint)
+            .filter(|server| &server.endpoint == endpoint)
             .ok_or(Error::Unpaired)
     }
 
@@ -359,14 +356,6 @@ impl ClientIdentity {
         )?;
         self.stored.server = Some(server);
         Ok(())
-    }
-}
-
-pub(super) fn validate_endpoint(endpoint: &str) -> Result<(), Error> {
-    if crate::config::validate_server_endpoint(endpoint) {
-        Ok(())
-    } else {
-        Err(Error::InvalidEndpoint)
     }
 }
 
@@ -455,8 +444,12 @@ mod tests {
         directory.path().join("inference").join("server.json")
     }
 
+    fn localhost(port: u16) -> ServerEndpoint {
+        ServerEndpoint::parse(&format!("https://localhost:{port}")).unwrap()
+    }
+
     fn grant(identity: &ServerIdentity, pin: [u8; 32]) {
-        let invitation = identity.issue("https://localhost:5000").unwrap();
+        let invitation = identity.issue(&localhost(5000)).unwrap();
         identity.pair(pin, &invitation.code).unwrap();
     }
 
@@ -549,7 +542,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = path(&directory);
         let identity = ServerIdentity::load_or_create(&path).unwrap();
-        let invite = identity.issue("https://localhost:5000").unwrap();
+        let invite = identity.issue(&localhost(5000)).unwrap();
         identity.pair([1; 32], &invite.code).unwrap();
         assert!(matches!(
             identity.pair([2; 32], &invite.code),
@@ -736,20 +729,22 @@ mod tests {
             certificate
         );
         assert!(matches!(
-            client.paired("https://localhost:5000"),
+            client.paired(&localhost(5000)),
             Err(Error::Unpaired)
         ));
         client
-            .remember(&server.issue("https://localhost:5000").unwrap())
+            .remember(&server.issue(&localhost(5000)).unwrap())
             .unwrap();
         assert!(
             ClientIdentity::load_or_create(&path)
                 .unwrap()
-                .paired("https://localhost:5000")
+                .paired(&localhost(5000))
                 .is_ok()
         );
+        let respelled = ServerEndpoint::parse("https://LOCALHOST:5000/").unwrap();
+        assert!(client.paired(&respelled).is_ok());
         assert!(matches!(
-            client.paired("https://localhost:5001"),
+            client.paired(&localhost(5001)),
             Err(Error::Unpaired)
         ));
     }

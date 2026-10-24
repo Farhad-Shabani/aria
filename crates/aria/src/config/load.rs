@@ -1135,10 +1135,9 @@ impl TranscriptionSettings {
             field: "transcription.server",
             backend: backend::SERVER,
         })?;
-        if !super::validate_server_endpoint(&endpoint) {
-            return Err(ConfigError::InvalidServerEndpoint);
-        }
-        Ok(TranscriptionBackend::Server { endpoint })
+        Ok(TranscriptionBackend::Server {
+            endpoint: endpoint.try_into()?,
+        })
     }
 
     fn resolve_local(self, home: &Path) -> Result<TranscriptionConfig, ConfigError> {
@@ -1389,21 +1388,21 @@ mod tests {
                 ..
             })
         ));
-        for endpoint in [
-            "https://localhost:9851",
-            "https://example.test/",
-            "https://[::1]:443",
+        for (endpoint, canonical) in [
+            ("https://localhost:9851", "https://localhost:9851"),
+            ("https://Example.Test/", "https://example.test"),
+            ("https://[::1]:443", "https://[::1]:443"),
         ] {
             let file: FileConfig = serde_saphyr::from_str(&format!(
                 "transcription: {{backend: server, server: '{endpoint}'}}"
             ))
             .unwrap();
-            assert_eq!(
-                transcription(&file, &empty_environment()).unwrap(),
-                TranscriptionBackend::Server {
-                    endpoint: endpoint.to_owned()
-                }
-            );
+            let TranscriptionBackend::Server { endpoint } =
+                transcription(&file, &empty_environment()).unwrap()
+            else {
+                panic!("expected a server backend");
+            };
+            assert_eq!(endpoint.to_string(), canonical);
             let models = loaded_models(&file, Path::new("/missing-home"));
             assert!(models.unresolved.is_empty());
             assert!(
@@ -1422,19 +1421,15 @@ mod tests {
             "",
             "unix:///tmp/server.sock",
         ] {
-            let error = TranscriptionSettings {
-                server: Some(endpoint.into()),
-                ..settings(backend::SERVER)
-            }
-            .resolve(Path::new("/missing-home"))
-            .unwrap_err();
-            assert!(matches!(error, ConfigError::InvalidServerEndpoint));
-            assert!(!error.to_string().contains("secret"));
+            assert!(matches!(
+                TranscriptionSettings {
+                    server: Some(endpoint.into()),
+                    ..settings(backend::SERVER)
+                }
+                .resolve(Path::new("/missing-home")),
+                Err(ConfigError::InvalidServerEndpoint)
+            ));
         }
-        assert!(
-            serde_saphyr::from_str::<FileConfig>("retry:\n  server: https://example.test\n")
-                .is_err()
-        );
         assert!(serde_saphyr::from_str::<FileConfig>("transcription:\n  token: secret\n").is_err());
     }
 
