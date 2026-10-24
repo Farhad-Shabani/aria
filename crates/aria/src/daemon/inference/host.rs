@@ -880,6 +880,8 @@ pub(in crate::daemon) mod tests {
         tokio::time::timeout(Duration::from_secs(2), fixture.jobs.wait())
             .await
             .unwrap();
+        // The tracker lets go before the worker's returned admission drops.
+        fixture.idle().await;
         assert!(
             transcribe(fixture.channel.clone(), recording())
                 .await
