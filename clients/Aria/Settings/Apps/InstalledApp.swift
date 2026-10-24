@@ -19,6 +19,19 @@ struct InstalledApp {
         icon = workspace.icon(forFile: url.path)
     }
 
+    /// The lookup reads the disk, and Settings redraws its app rows on every
+    /// preference change. An app installed while Aria runs keeps showing its
+    /// bundle ID until Aria relaunches.
+    @MainActor
+    static func lookUp(_ bundleID: String) -> InstalledApp {
+        if let app = lookedUp[bundleID] { return app }
+        let app = InstalledApp(bundleID: bundleID)
+        lookedUp[bundleID] = app
+        return app
+    }
+
+    @MainActor private static var lookedUp: [String: InstalledApp] = [:]
+
     /// Nil when the user cancels. An app without a bundle ID cannot be told
     /// apart when in front, so choosing one beeps and adds nothing.
     @MainActor

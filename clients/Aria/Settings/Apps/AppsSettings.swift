@@ -38,25 +38,21 @@ struct AppsSettings: View {
     }
 }
 
-/// Looks its app up once per bundle ID: the lookup reads the disk, and the
-/// list redraws on every preference change.
 private struct AppRow: View {
     let bundleID: String
     let excluded: Bool
 
-    @State private var app: InstalledApp?
-
     var body: some View {
+        let app = InstalledApp.lookUp(bundleID)
         HStack {
-            Image(nsImage: app?.icon ?? NSImage())
+            Image(nsImage: app.icon)
                 .resizable()
                 .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
-            Text(app?.name ?? "")
+            Text(app.name)
             if excluded {
                 Spacer()
                 Text("Off").foregroundStyle(.secondary)
             }
         }
-        .task(id: bundleID) { app = InstalledApp(bundleID: bundleID) }
     }
 }
