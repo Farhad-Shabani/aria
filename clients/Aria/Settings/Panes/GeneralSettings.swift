@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GeneralSettings: View {
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject var setup: SetupStatus
     @StateObject private var loginItem = LoginItem()
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.enabledByDefault
@@ -31,10 +32,20 @@ struct GeneralSettings: View {
             }
             Section {
                 LabeledContent {
-                    Button("Set Up Aria…") { openWindow(id: WindowID.setup) }
+                    if setup.required.isEmpty {
+                        Button("Open…") { openWindow(id: WindowID.setup) }
+                    } else {
+                        Button("Finish Setup…") { openWindow(id: WindowID.setup) }
+                            .buttonStyle(.borderedProminent)
+                    }
                 } label: {
-                    Text("Setup")
-                    Text("Engines, hotkey access, and your voice.")
+                    // One branch per line count, so the row stays centered.
+                    if let reason = setup.reason {
+                        Text("Aria Setup")
+                        Text(reason)
+                    } else {
+                        Text("Aria Setup")
+                    }
                 }
             }
         }

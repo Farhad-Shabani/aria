@@ -9,6 +9,7 @@ struct SettingsView: View {
     let promptHotkeys: PromptHotkeys
     let askChord: ChordBinding
     let promptListChord: ChordBinding
+    @ObservedObject var setupStatus: SetupStatus
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
     )
@@ -17,7 +18,8 @@ struct SettingsView: View {
         SidebarWindow {
             SettingsSidebar(
                 selection: Binding(get: { history.current.pane }, set: { history.open(.pane($0)) }),
-                daemon: poller.state
+                daemon: poller.state,
+                setup: setupStatus
             )
         } detail: {
             page
@@ -36,6 +38,11 @@ struct SettingsView: View {
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
         }
         .onAppear { Task { await preferences.sync() } }
+        // Returning from System Settings or closing the setup window both
+        // make this window key, and either may have finished a step.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            Task { await setupStatus.refresh() }
+        }
     }
 
     @ViewBuilder
@@ -67,7 +74,7 @@ struct SettingsView: View {
     private func page(_ pane: SettingsPane) -> some View {
         let openPrompt = { history.open(.item(.prompts, id: $0)) }
         switch pane {
-        case .general: GeneralSettings()
+        case .general: GeneralSettings(setup: setupStatus)
         case .dictation: DictationSettings(preferences: preferences)
         case .recognition: RecognitionSettings(preferences: preferences)
         case .shortcuts:

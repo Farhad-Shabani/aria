@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = WindowPresentation()
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
+    let setupStatus = SetupStatus()
     let updates = UpdateController()
 
     static let captionsEnabledKey = "captionsEnabled"
@@ -111,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             do {
                 let inspection = try await SetupClient.inspect()
+                self?.setupStatus.show(inspection)
                 let offeredBefore = defaults.bool(forKey: Self.setupOfferedKey)
                 guard SetupState.shouldOffer(missing: inspection.missing, offeredBefore: offeredBefore) else { return }
                 defaults.set(true, forKey: Self.setupOfferedKey)

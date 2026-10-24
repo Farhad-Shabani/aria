@@ -27,7 +27,7 @@ Without Homebrew:
    engines and models.
 
 When setup finishes, Aria asks for your password to add the `aria` command to
-the terminal. Skip it if you only use the menu bar app. **Set Up Aria…** in
+the terminal. Skip it if you only use the menu bar app. **Aria Setup** in
 **Settings → General** asks again later.
 
 If you can't enter an administrator password, add this line to `~/.zshrc`

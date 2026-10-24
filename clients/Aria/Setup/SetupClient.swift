@@ -211,7 +211,7 @@ extension SetupState.Effects {
             installCommandLineTool: {
                 do {
                     if try CommandLineTool.install() { return nil }
-                    return "The aria command was not installed; run Set Up Aria… in Settings → General to add it."
+                    return "The aria command was not installed; open Aria Setup in Settings → General to add it."
                 } catch {
                     return "The aria command was not installed: \(error.localizedDescription)"
                 }

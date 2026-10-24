@@ -4,7 +4,7 @@
 
 Use Aria's hotkey to type speech into an app. Complete
 [installation and setup](./installation.md), then open Aria from Applications.
-It appears in the menu bar. To run setup again, choose **Set Up Aria…** in
+It appears in the menu bar. To run setup again, open **Aria Setup** in
 **Settings → General**.
 
 ## Permissions
