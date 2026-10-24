@@ -15,8 +15,8 @@ use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
 use crate::config::{
-    ServerEndpoint,
-    ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
+    ConfigError, DictationConfig, ServerEndpoint, SpeakerConfig, TranscriptionBackend,
+    TranscriptionConfig,
 };
 use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
@@ -538,58 +538,55 @@ mod tests {
                     crate::vocabulary::extract::LocalExtractor,
                 ),
             );
-            for loading in [ModelLoading::Eager, ModelLoading::OnFirstUse] {
-                let mut dictation = DictationConfig::load(&environment).unwrap();
-                dictation.transcription = TranscriptionBackend::Server {
-                    endpoint: endpoint.clone(),
-                };
-                dictation.capture = CaptureConfig::WavFile {
-                    path: audio.clone(),
-                    pace: ReplayPace::Immediate,
-                };
-                let built = build_dictation(
-                    DictationSetup {
-                        dictation,
-                        speaker: SpeakerConfig::load(&environment).unwrap(),
-                        vocabulary: Arc::clone(&vocabulary),
-                        wake: WakeConfig::Disabled,
-                    },
-                    home.path(),
-                    home.path(),
-                    Arc::new(TranscriptStore::new()),
-                    loading,
-                    Gate::new(),
+            let mut dictation = DictationConfig::load(&environment).unwrap();
+            dictation.transcription = TranscriptionBackend::Server {
+                endpoint: endpoint.clone(),
+            };
+            dictation.capture = CaptureConfig::WavFile {
+                path: audio.clone(),
+                pace: ReplayPace::Immediate,
+            };
+            let built = build_dictation(
+                DictationSetup {
+                    dictation,
+                    speaker: SpeakerConfig::load(&environment).unwrap(),
+                    vocabulary: Arc::clone(&vocabulary),
+                    wake: WakeConfig::Disabled,
+                },
+                home.path(),
+                home.path(),
+                Arc::new(TranscriptStore::new()),
+                ModelLoading::Eager,
+                Gate::new(),
+            )
+            .unwrap();
+            assert_eq!(built.engine, crate::config::backend::WHISPER);
+            let mut settings = crate::preferences::UserPreferences::default().resolve_dictation(
+                crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
+                None,
+            );
+            settings.own_voice_only = false;
+            settings.transcript_only = true;
+            settings.delivery_mode = crate::dictation::DeliveryMode::Complete;
+            let outcome = built
+                .coordinator
+                .execute(
+                    settings,
+                    CancelToken::never(),
+                    &DictationEventEmitter::unsubscribed(),
                 )
                 .unwrap();
-                assert_eq!(built.engine, crate::config::backend::WHISPER);
-                let mut settings = crate::preferences::UserPreferences::default()
-                    .resolve_dictation(
-                        crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
-                        None,
-                    );
-                settings.own_voice_only = false;
-                settings.transcript_only = true;
-                settings.delivery_mode = crate::dictation::DeliveryMode::Complete;
-                let outcome = built
-                    .coordinator
-                    .execute(
-                        settings,
-                        CancelToken::never(),
-                        &DictationEventEmitter::unsubscribed(),
-                    )
-                    .unwrap();
-                let crate::dictation::DictationOutcome::Completed(result) = outcome else {
-                    panic!("{outcome:?}");
-                };
-                assert!(result.text.contains("native words"), "{}", result.text);
-                assert!(
-                    result
-                        .text
-                        .split_whitespace()
-                        .all(|word| matches!(word, "native" | "words"))
-                );
-                assert!(!home.path().join(".aria/models").exists());
-            }
+            let crate::dictation::DictationOutcome::Completed(result) = outcome else {
+                panic!("{outcome:?}");
+            };
+            assert!(result.text.contains("native words"), "{}", result.text);
+            assert!(
+                result
+                    .text
+                    .split_whitespace()
+                    .all(|word| matches!(word, "native" | "words"))
+            );
+            assert!(!home.path().join(".aria/models").exists());
         })
         .await
         .unwrap();

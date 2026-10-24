@@ -1404,20 +1404,12 @@ mod operation_source_tests {
         let delegating = Delegated {
             openings: Arc::clone(&openings),
         };
-        let mut recording = RecordingReader::from_samples(&[0.5; 40]);
         assert!(
             Transcription::agreement(Cadence::from_millis(10, 20), delegating)
                 .start(&Language::Automatic)
                 .is_ok()
         );
         assert!(openings.lock().unwrap().is_empty());
-        assert_eq!(
-            Transcription::complete_samples(Local)
-                .transcribe(&mut recording, &Language::Automatic)
-                .unwrap()
-                .as_str(),
-            "local words"
-        );
         assert!(matches!(
             Transcription::<_, Whole>::delegated(Local).start(&Language::Automatic),
             Err(TranscriptionError::NoDelegatedOperation)

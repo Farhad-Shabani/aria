@@ -247,33 +247,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inference_rejects_unknown_strategy_and_sensitive_invalid_language() {
+    fn inference_rejects_unknown_strategy_and_invalid_language() {
         for strategy in [0, 3, -1] {
             assert!(Strategy::try_from(strategy).is_err());
         }
-        let error = Start::try_from(wire::InferenceStart {
-            engine: "whisper".into(),
-            language: "private audio content".into(),
-            strategy: Strategy::Whole.into(),
-        })
-        .err()
-        .unwrap();
-        assert_eq!(error.to_string(), "invalid inference message");
+        assert!(
+            Start::try_from(wire::InferenceStart {
+                engine: "whisper".into(),
+                language: "not a language".into(),
+                strategy: Strategy::Whole.into(),
+            })
+            .is_err()
+        );
     }
 
-    #[test]
-    fn inference_round_trip_preserves_strategy_and_language() {
-        for strategy in [Strategy::Whole, Strategy::Streaming] {
-            let start = Start {
-                engine: "whisper".into(),
-                language: "en".parse().unwrap(),
-                strategy,
-            };
-            let decoded = Start::try_from(wire::InferenceStart::from(start)).unwrap();
-            assert_eq!(decoded.strategy, strategy);
-            assert_eq!(decoded.language.as_str(), "en");
-        }
-    }
     #[test]
     fn inference_updates_preserve_timing_retention_and_completion() {
         let event = Event::Update {

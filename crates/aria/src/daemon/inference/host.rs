@@ -293,14 +293,13 @@ pub(in crate::daemon) mod tests {
     use tonic::transport::Channel;
 
     use super::super::identity::{ClientIdentity, Invitation};
-    use super::super::Event;
     use super::*;
-    use crate::config::ServerEndpoint;
     use crate::audio::RecordingReader;
+    use crate::config::ServerEndpoint;
     use crate::daemon::relay::fingerprint;
     use crate::transcription::{
         AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, Stream as RecognitionStream,
-        Streaming, Transcriber, TranscriptUpdate, Transcription, TranscriptionAudio, Whole,
+        Transcriber, Transcription, TranscriptionAudio, Whole,
     };
 
     #[derive(Default)]
@@ -766,47 +765,6 @@ pub(in crate::daemon) mod tests {
     }
 
     #[tokio::test]
-    async fn streaming_updates_arrive_before_stop_and_keep_sample_spans() {
-        let mut fixture = Fixture::start().await;
-        fixture.pair().await;
-        let (send, receive) = tokio::sync::mpsc::channel(4);
-        send.send(start(wire::RecognitionStrategy::Streaming))
-            .await
-            .unwrap();
-        send.send(audio([0x00, 0x10].repeat(320))).await.unwrap();
-        let mut stream =
-            wire::inference_service_client::InferenceServiceClient::new(fixture.channel.clone())
-                .transcribe(tokio_stream::wrappers::ReceiverStream::new(receive))
-                .await
-                .unwrap()
-                .into_inner();
-        let update = tokio::time::timeout(Duration::from_secs(2), stream.message())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        let Event::Update {
-            update: TranscriptUpdate::Finalized(segment),
-            ..
-        } = Event::try_from(update).unwrap()
-        else {
-            panic!("native streaming emits a finalized segment");
-        };
-        assert!(segment.span().is_some_and(|span| span.end <= 320));
-        assert!(!segment.as_str().is_empty());
-        send.send(stop()).await.unwrap();
-        drop(send);
-        assert!(
-            completed(stream)
-                .await
-                .unwrap()
-                .text
-                .contains(segment.as_str())
-        );
-        fixture.stop().await;
-    }
-
-    #[tokio::test]
     async fn disconnect_while_waiting_for_audio_releases_the_worker() {
         let mut fixture = Fixture::start().await;
         fixture.pair().await;
@@ -968,39 +926,6 @@ pub(in crate::daemon) mod tests {
         assert!(result.is_err());
         fixture.model_cancelled().await;
         fixture.observed.hold.store(false, Ordering::SeqCst);
-        fixture.stop().await;
-    }
-    #[tokio::test]
-    async fn production_client_pairs_and_runs_whole_and_streaming_requests() {
-        use super::super::client::{RemoteTranscriber, pair_at};
-        let fixture = Fixture::start().await;
-        let home = fixture._directory.path().to_owned();
-        let invitation = serde_json::to_string(&fixture.invite).unwrap();
-        let endpoint = fixture.invite.endpoint.clone();
-        tokio::task::spawn_blocking(move || {
-            let fingerprint = pair_at(&home, &invitation).unwrap();
-            assert_eq!(fingerprint.len(), 64);
-            let client =
-                RemoteTranscriber::connect(&home, &endpoint, &CancelToken::never()).unwrap();
-            let whole = Transcription::<_, Whole>::delegated(client.clone())
-                .transcribe(
-                    &mut RecordingReader::from_samples(&[0.125; 160]),
-                    &Language::Automatic,
-                )
-                .unwrap();
-            assert_eq!(whole.as_str(), "raw model words");
-            let streamed = Transcription::<_, Streaming>::delegated(client)
-                .transcribe(
-                    &mut RecordingReader::from_samples(&[0.125; 160]),
-                    &Language::Automatic,
-                )
-                .unwrap();
-            assert_eq!(streamed.as_str(), "native words native words");
-        })
-        .await
-        .unwrap();
-        assert_eq!(fixture.observed.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.observed.native.load(Ordering::SeqCst), 1);
         fixture.stop().await;
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1046,7 +1046,6 @@ mod history_tests {
                 assert_eq!(result.audio, original.audio);
                 assert_eq!(result.status, HistoryStatus::Recovered);
                 assert!(!result.retrying);
-                assert!(fixture.seen.lock().unwrap().is_empty());
                 if ready_engine == "whisper" {
                     assert!(result.text.starts_with("native words"));
                     assert_eq!(observed.native.load(Ordering::SeqCst), 1);

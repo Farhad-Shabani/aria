@@ -42,7 +42,9 @@ pub enum RemoteClientError {
     PairingLock,
     #[error("remote invitation is invalid or exceeds {} KiB", MAX_DOCUMENT_BYTES / 1024)]
     Invitation,
-    #[error("remote endpoint must be an HTTPS origin without credentials, path, query, or fragment")]
+    #[error(
+        "remote endpoint must be an HTTPS origin without credentials, path, query, or fragment"
+    )]
     InvalidEndpoint,
     #[error("client fingerprint must be 64 hexadecimal digits")]
     InvalidFingerprint,
