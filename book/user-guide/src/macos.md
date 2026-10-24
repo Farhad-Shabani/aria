@@ -4,7 +4,8 @@
 
 Use Aria's hotkey to type speech into an app. Complete
 [installation and setup](./installation.md), then open Aria from Applications.
-It appears in the menu bar. **Set Up Aria…** reopens setup if you need it.
+It appears in the menu bar. To run setup again, choose **Set Up Aria…** in
+**Settings → General**.
 
 ## Permissions
 
@@ -37,9 +38,12 @@ Other keyboard or mouse input while you hold the key can cancel the recording.
 
 ## Captions
 
-Enable **Show Captions** in Aria's menu to display recognized text while
-recording. With this option on, Aria types the completed transcript after you
-stop. With it off, Aria types finalized segments while you speak.
+Turn on **Show captions** in **Settings → General** to see what Aria hears in
+a panel while you record. Captions work with either delivery choice.
+
+**Settings → Dictation → Deliver** decides when Aria types. With
+**While speaking**, Aria types finalized segments as you speak. With
+**After recording stops**, it types the completed transcript when you stop.
 
 While Aria types segments, words it has heard but not typed yet show faintly
 at the cursor. Aria may still change them before it types them. Apps that do

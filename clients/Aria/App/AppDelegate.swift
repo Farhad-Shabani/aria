@@ -12,10 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setupState = SetupState(effects: .live)
     let updates = UpdateController()
 
-    static let enabledKey = "captionsEnabled"
+    static let captionsEnabledKey = "captionsEnabled"
+    static let captionsEnabledByDefault = false
     private static let setupOfferedKey = "setupOffered"
-    // Matches the daemon's delivery_mode default: streaming, captions off.
-    static let enabledByDefault = false
 
     private let events = DaemonEvents()
     private let panel = FloatingPanel(width: captionWidth, bottomMargin: captionBottomMargin)
@@ -64,9 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let launchKind = NSAppleEventManager.shared().currentAppleEvent?
             .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
         settings.didLaunch(atLogin: launchKind == keyAELaunchedAsLogInItem)
-        UserDefaults.standard.register(defaults: [Self.enabledKey: Self.enabledByDefault])
+        UserDefaults.standard.register(defaults: [Self.captionsEnabledKey: Self.captionsEnabledByDefault])
 
-        caption.setEnabled(UserDefaults.standard.bool(forKey: Self.enabledKey))
+        caption.setEnabled(UserDefaults.standard.bool(forKey: Self.captionsEnabledKey))
         events.onCaption { [weak self] snapshot in
             guard let self else { return }
             caption.apply(snapshot, now: ProcessInfo.processInfo.systemUptime)
@@ -81,8 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         RunLoop.main.add(timer, forMode: .common)
         expiryTimer = timer
-        // The menu's toggle writes to UserDefaults; react without waiting for
-        // the next caption. The notification can arrive on any thread.
+        // The Settings toggle writes to UserDefaults; react without waiting
+        // for the next caption. The notification can arrive on any thread.
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
@@ -90,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.caption.setEnabled(UserDefaults.standard.bool(forKey: Self.enabledKey))
+                self.caption.setEnabled(UserDefaults.standard.bool(forKey: Self.captionsEnabledKey))
                 self.render()
             }
         }
@@ -105,8 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         offerSetupOnce()
     }
 
-    /// A Mac with something missing gets the wizard once; after that it
-    /// waits in the menu.
+    /// A Mac with something missing gets the setup wizard once; after that,
+    /// setup waits in Settings → General.
     private func offerSetupOnce() {
         let defaults = UserDefaults.standard
         Task { [weak self] in

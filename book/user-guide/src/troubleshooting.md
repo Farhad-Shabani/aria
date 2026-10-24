@@ -6,9 +6,9 @@ Start with the symptom you see.
 
 ## Command not found
 
-On a Mac, finish **Set Up Aria…** from the menu bar; it installs the command
-(see [installation](./installation.md#mac)). On Linux, make sure `~/.local/bin`
-is on your `PATH`. Then open a new terminal and try `aria --help`.
+On a Mac, finish **Set Up Aria…** in **Settings → General**; it installs the
+command (see [installation](./installation.md#mac)). On Linux, make sure
+`~/.local/bin` is on your `PATH`. Then open a new terminal and try `aria --help`.
 
 ## Service unavailable
 

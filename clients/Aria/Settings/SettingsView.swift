@@ -67,7 +67,7 @@ struct SettingsView: View {
     private func page(_ pane: SettingsPane) -> some View {
         let openPrompt = { history.open(.item(.prompts, id: $0)) }
         switch pane {
-        case .general: GeneralSettings(updates: updates)
+        case .general: GeneralSettings()
         case .dictation: DictationSettings(preferences: preferences)
         case .recognition: RecognitionSettings(preferences: preferences)
         case .shortcuts:
@@ -85,7 +85,7 @@ struct SettingsView: View {
             }
         case .privacy: PrivacySettings(preferences: preferences)
         case .phone: PhoneSettings(poller: poller)
-        case .about: AboutSettings()
+        case .about: AboutSettings(updates: updates)
         }
     }
 }

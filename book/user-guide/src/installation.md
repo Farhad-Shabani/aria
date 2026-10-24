@@ -28,7 +28,7 @@ Without Homebrew:
 
 When setup finishes, Aria asks for your password to add the `aria` command to
 the terminal. Skip it if you only use the menu bar app. **Set Up Aria…** in
-the menu asks again later.
+**Settings → General** asks again later.
 
 If you can't enter an administrator password, add this line to `~/.zshrc`
 instead:
@@ -109,7 +109,7 @@ model again if you choose its engine later.
 
 On a Mac, Aria offers new releases itself. Choose **Check for Updates…** from
 its menu to check now, or set automatic checks and installs in
-**Settings → General**. With Homebrew, run `brew upgrade --cask --greedy aria`,
+**Settings → About**. With Homebrew, run `brew upgrade --cask --greedy aria`,
 because Aria updates itself and a plain `brew upgrade` skips it.
 
 To remove Aria from a Mac, quit it and move it to the Trash, or run

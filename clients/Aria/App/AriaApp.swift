@@ -7,10 +7,7 @@ struct AriaApp: App {
         client: DaemonClient()
     )
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var preferences = DaemonPreferences(
-        transport: UnixSocketPreferences(),
-        captionsDefaultsKey: AppDelegate.enabledKey
-    )
+    @StateObject private var preferences = DaemonPreferences(transport: UnixSocketPreferences())
 
     var body: some Scene {
         MenuBarExtra {
@@ -39,20 +36,6 @@ struct AriaApp: App {
                         .padding(.horizontal, 8)
                 }
                 Divider()
-                Toggle(
-                    "Show Captions",
-                    isOn: Binding(
-                        get: { preferences.captionsEnabled },
-                        set: { on in
-                            Task { await preferences.set { $0.deliveryMode = on ? .complete : .streaming } }
-                        }
-                    )
-                )
-                .disabled(preferences.deliveryLocked)
-                .toggleStyle(.checkbox)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-                Divider()
                 VStack(spacing: 2) {
                     Button {
                         openWindow(id: WindowID.dictationHistory)
@@ -72,20 +55,18 @@ struct AriaApp: App {
                     }
                     .keyboardShortcut(",")
                     CheckForUpdatesButton(updates: appDelegate.updates)
-                    Button {
-                        appDelegate.setup.request()
-                    } label: {
-                        Text("Set Up Aria…")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
                 }
                 Divider()
                 Button {
                     NSApplication.shared.terminate(nil)
                 } label: {
-                    Text("Quit Aria")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        Text("Quit Aria")
+                        Spacer()
+                        Text("⌘Q").foregroundStyle(.secondary)
+                    }
                 }
+                .keyboardShortcut("q")
             }
             .buttonStyle(MenuActionStyle())
             .padding(8)

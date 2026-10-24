@@ -235,8 +235,7 @@ where
         events: &DictationEventEmitter,
         vocabulary: Option<&Vocabulary>,
     ) -> Result<DictationResult, DictationError> {
-        let captions =
-            settings.delivery_mode == DeliveryMode::Complete && !settings.transcript_only;
+        let captions = !settings.transcript_only;
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), false));
         }
@@ -506,8 +505,7 @@ impl<'a> Published<'a> {
             streaming: settings.delivery_mode == DeliveryMode::Streaming,
             kept: Vec::new(),
             failure: None,
-            caption: (settings.delivery_mode == DeliveryMode::Complete
-                && !settings.transcript_only)
+            caption: (!settings.transcript_only)
                 .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
             completion: Completion::Pending,
             control,
@@ -1561,10 +1559,10 @@ mod tests {
     }
 
     #[test]
-    fn streaming_and_transcript_only_runs_emit_no_caption_snapshots() {
-        for (mode, transcript_only) in [
-            (DeliveryMode::Streaming, false),
-            (DeliveryMode::Complete, true),
+    fn captions_follow_both_delivery_modes_but_not_a_transcript_only_run() {
+        for (mode, transcript_only, captioned) in [
+            (DeliveryMode::Streaming, false, true),
+            (DeliveryMode::Complete, true, false),
         ] {
             let (_directory, capture) = capture();
             let pipeline = DictationPipeline::new(
@@ -1578,7 +1576,14 @@ mod tests {
             settings.transcript_only = transcript_only;
             pipeline.run_observed(settings, &events).unwrap();
             drop(events);
-            assert!(snapshots.iter().next().is_none());
+            let snapshots: Vec<_> = snapshots.iter().collect();
+            assert_eq!(
+                snapshots
+                    .iter()
+                    .any(|snapshot| snapshot.committed.as_ref() == "hello"),
+                captioned
+            );
+            assert_eq!(snapshots.last().is_some_and(|last| last.ended), captioned);
         }
     }
 

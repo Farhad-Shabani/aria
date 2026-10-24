@@ -1,12 +1,14 @@
 import SwiftUI
 
 struct GeneralSettings: View {
-    @ObservedObject var updates: UpdateController
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var loginItem = LoginItem()
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.enabledByDefault
     @AppStorage(GhostController.enabledKey)
     private var ghostTextEnabled = GhostController.enabledByDefault
+    @AppStorage(AppDelegate.captionsEnabledKey)
+    private var captionsEnabled = AppDelegate.captionsEnabledByDefault
 
     var body: some View {
         Form {
@@ -22,25 +24,17 @@ struct GeneralSettings: View {
                     Text("Show inline preview")
                     Text("Words Aria hasn't typed yet appear faintly at the cursor.")
                 }
+                Toggle(isOn: $captionsEnabled) {
+                    Text("Show captions")
+                    Text("What Aria hears appears in a panel while you speak.")
+                }
             }
-            Section("Updates") {
-                Toggle(
-                    "Automatically check for updates",
-                    isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })
-                )
-                Toggle(
-                    "Automatically download and install",
-                    isOn: Binding(get: { updates.installsAutomatically }, set: { updates.setInstallsAutomatically($0) })
-                )
-                .disabled(!updates.checksAutomatically)
+            Section {
                 LabeledContent {
-                    Button("Check for Updates…") { updates.checkForUpdates() }
-                        .disabled(!updates.canCheck)
+                    Button("Set Up Aria…") { openWindow(id: WindowID.setup) }
                 } label: {
-                    Text(Bundle.main.displayName)
-                    if let version = Bundle.main.shortVersion {
-                        Text("Version \(version)")
-                    }
+                    Text("Setup")
+                    Text("Engines, hotkey access, and your voice.")
                 }
             }
         }
