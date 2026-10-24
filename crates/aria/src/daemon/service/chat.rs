@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
 
-use crate::chat::{AgentError, ChatRequest, Ticket};
+use crate::chat::{AgentError, ChatRequest, PromptCall, Ticket};
 use crate::ipc::wire;
 use crate::primitives::error_chain;
 use crate::rpc::{RpcErrorCode, RpcFailure};
@@ -75,6 +75,38 @@ impl wire::chat_service_server::ChatService for ChatRpc {
             Ok(was_pending) => {
                 tracing::info!(method = METHOD, status = "ok", %ticket, was_pending, "request served");
                 Ok(Response::new(wire::CancelAskResponse { was_pending }))
+            }
+            Err(error) => Err(super::failed(METHOD, failure(error))),
+        }
+    }
+
+    async fn run_prompt(
+        &self,
+        request: Request<wire::RunPromptRequest>,
+    ) -> Result<Response<wire::AskResponse>, Status> {
+        const METHOD: &str = "ChatService/RunPrompt";
+        self.require_persistent(METHOD)?;
+        let call = PromptCall::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let runtime = Arc::clone(&self.runtime);
+        let request = tokio::task::spawn_blocking(move || runtime.prompt_request(call))
+            .await
+            .map_err(|_panicked| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new(RpcErrorCode::Internal, "reading the prompt failed"),
+                )
+            })?
+            .map_err(|error| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new((&error).into(), error_chain(&error)),
+                )
+            })?;
+        match self.chat.run_prompt(request).await {
+            Ok(ticket) => {
+                tracing::info!(method = METHOD, status = "ok", %ticket, "request served");
+                Ok(Response::new(ticket.into()))
             }
             Err(error) => Err(super::failed(METHOD, failure(error))),
         }

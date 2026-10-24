@@ -5,10 +5,4 @@ extension Aria_Daemon_V1_UserPreferences {
     var storedDictationHotkey: HotkeyKey? {
         HotkeyKey(wire: dictationHotkey)
     }
-
-    /// Nil when the daemon predates the ask chord or stored a key code no
-    /// keyboard produces.
-    var storedAskHotkey: AskHotkey? {
-        hasAskHotkey ? AskHotkey(wire: askHotkey) : nil
-    }
 }

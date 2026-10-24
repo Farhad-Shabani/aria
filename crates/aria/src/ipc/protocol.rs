@@ -11,7 +11,10 @@ use aria_kit::synthesis::{
 };
 
 use crate::audio::{SilenceDuration, SilenceDurationError};
-use crate::chat::{AskTarget, ChatReply, ChatRequest, ChatStage, ChatStageKind, Step, Ticket};
+use crate::chat::{
+    AskTarget, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, PromptKind, Step,
+    Ticket,
+};
 use crate::config::ChatAgent;
 use crate::delivery::{DeliveryOutcome, Placement, Rect};
 use crate::dictation::{
@@ -22,9 +25,9 @@ use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
 use crate::hotkey::HotkeyKey;
 use crate::listen::ListenStage;
 use crate::preferences::{
-    ApplicationId, ApplicationOverride, ApplicationOverrides, AskHotkey, AskHotkeyError,
-    DictationOverrides, Modifiers, OverrideError, PreferencePatch, PreferenceSnapshot,
-    UpdateResult, UserPreferences,
+    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
+    DictationOverrides, Modifiers, OverrideError, PreferencePatch, PreferenceSnapshot, Prompt,
+    PromptError, PromptId, Prompts, UpdateResult, UserPreferences,
 };
 use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::speaker::{Role, SpeakerName, SpeakerNameError};
@@ -315,11 +318,13 @@ impl From<ChatStage> for wire::ChatEvent {
                     agent,
                     step: i32::from(step),
                     skill,
+                    copied: false,
                 }
             }
             ChatStageKind::Replied(ChatReply {
                 text,
                 delivery_error,
+                copied,
             }) => Self {
                 stage: wire::ChatStage::Replied as i32,
                 error_code: delivery_error.map_or(0, i32::from),
@@ -329,6 +334,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 agent,
                 step: 0,
                 skill: String::new(),
+                copied,
             },
             ChatStageKind::Failed { code, message } => Self {
                 stage: wire::ChatStage::Failed as i32,
@@ -339,6 +345,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 agent,
                 step: 0,
                 skill: String::new(),
+                copied: false,
             },
         }
     }
@@ -358,6 +365,7 @@ impl TryFrom<&wire::ChatEvent> for ChatStage {
                     0 => None,
                     code => Some(RpcErrorCode::try_from(code)?),
                 },
+                copied: event.copied,
             }),
             Ok(wire::ChatStage::Failed) => ChatStageKind::Failed {
                 code: RpcErrorCode::try_from(event.error_code)?,
@@ -476,6 +484,25 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             new: request.new_conversation,
             output_mode,
             own_voice: request.own_voice,
+        })
+    }
+}
+
+impl TryFrom<wire::RunPromptRequest> for PromptCall {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::RunPromptRequest) -> Result<Self, Self::Error> {
+        if request.text.trim().is_empty() {
+            return Err(ProtocolError::EmptyPrompt);
+        }
+        let application = Some(request.application_id)
+            .filter(|id| !id.is_empty())
+            .map(ApplicationId::new)
+            .transpose()?;
+        Ok(Self {
+            text: request.text,
+            prompt: PromptId::new(request.prompt_id)?,
+            application,
         })
     }
 }
@@ -1303,13 +1330,23 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
                     preferences.dictation_hotkey,
                     "hotkey key",
                 )?,
-                ask_hotkey: preferences
-                    .ask_hotkey
-                    .ok_or(ProtocolError::MissingBody("ask hotkey"))?
-                    .try_into()?,
+                ask_hotkey: Option::<Chord>::try_from(
+                    preferences
+                        .ask_hotkey
+                        .ok_or(ProtocolError::MissingBody("ask hotkey"))?,
+                )?,
+                prompt_list_hotkey: Option::<Chord>::try_from(
+                    preferences
+                        .prompt_list_hotkey
+                        .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
+                )?,
                 application_overrides: preferences
                     .application_overrides
                     .ok_or(ProtocolError::MissingBody("application overrides"))?
+                    .try_into()?,
+                prompts: preferences
+                    .prompts
+                    .ok_or(ProtocolError::MissingBody("prompts"))?
                     .try_into()?,
             },
         })
@@ -1338,7 +1375,9 @@ impl From<PreferencePatch> for wire::PreferencePatch {
             dictation_hotkey: patch
                 .dictation_hotkey
                 .map(|key| wire::HotkeyKey::from(key) as i32),
-            ask_hotkey: patch.ask_hotkey.map(wire::AskHotkey::from),
+            ask_hotkey: patch.ask_hotkey.map(wire::Hotkey::from),
+            prompt_list_hotkey: patch.prompt_list_hotkey.map(wire::Hotkey::from),
+            prompts: patch.prompts.as_ref().map(wire::Prompts::from),
             project_vocabulary: patch.project_vocabulary,
             vocabulary_directory: patch
                 .vocabulary_directory
@@ -1377,7 +1416,9 @@ impl From<&PreferenceSnapshot> for wire::PreferenceSnapshot {
                 dictation_hotkey: wire::HotkeyKey::from(snapshot.preferences.dictation_hotkey)
                     as i32,
                 ask_hotkey: Some(snapshot.preferences.ask_hotkey.into()),
+                prompt_list_hotkey: Some(snapshot.preferences.prompt_list_hotkey.into()),
                 application_overrides: Some((&snapshot.preferences.application_overrides).into()),
+                prompts: Some((&snapshot.preferences.prompts).into()),
             }),
         }
     }
@@ -1434,7 +1475,15 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
                 .dictation_hotkey
                 .map(|value| decode_enum::<wire::HotkeyKey>(value, "hotkey key"))
                 .transpose()?,
-            ask_hotkey: patch.ask_hotkey.map(AskHotkey::try_from).transpose()?,
+            ask_hotkey: patch
+                .ask_hotkey
+                .map(Option::<Chord>::try_from)
+                .transpose()?,
+            prompt_list_hotkey: patch
+                .prompt_list_hotkey
+                .map(Option::<Chord>::try_from)
+                .transpose()?,
+            prompts: patch.prompts.map(Prompts::try_from).transpose()?,
             project_vocabulary: patch.project_vocabulary,
             vocabulary_directory: patch
                 .vocabulary_directory
@@ -1550,35 +1599,120 @@ impl TryFrom<wire::ResolveAskResponse> for AskTarget {
     }
 }
 
-impl TryFrom<wire::AskHotkey> for AskHotkey {
+impl TryFrom<wire::Chord> for Chord {
     type Error = ProtocolError;
 
-    fn try_from(hotkey: wire::AskHotkey) -> Result<Self, Self::Error> {
-        let key_code = u16::try_from(hotkey.key_code)
-            .map_err(|_too_wide| ProtocolError::AskHotkeyKeyCode(hotkey.key_code))?;
+    fn try_from(chord: wire::Chord) -> Result<Self, Self::Error> {
+        let key_code = u16::try_from(chord.key_code)
+            .map_err(|_too_wide| ProtocolError::ChordKeyCode(chord.key_code))?;
         Ok(Self::new(
             key_code,
             Modifiers {
-                control: hotkey.control,
-                option: hotkey.option,
-                shift: hotkey.shift,
-                command: hotkey.command,
+                control: chord.control,
+                option: chord.option,
+                shift: chord.shift,
+                command: chord.command,
             },
-            hotkey.enabled,
         )?)
     }
 }
 
-impl From<AskHotkey> for wire::AskHotkey {
-    fn from(hotkey: AskHotkey) -> Self {
-        let modifiers = hotkey.modifiers();
+impl From<Chord> for wire::Chord {
+    fn from(chord: Chord) -> Self {
+        let modifiers = chord.modifiers();
         Self {
-            enabled: hotkey.enabled(),
-            key_code: u32::from(hotkey.key_code()),
+            key_code: u32::from(chord.key_code()),
             control: modifiers.control,
             option: modifiers.option,
             shift: modifiers.shift,
             command: modifiers.command,
+        }
+    }
+}
+
+impl TryFrom<wire::Hotkey> for Option<Chord> {
+    type Error = ProtocolError;
+
+    fn try_from(hotkey: wire::Hotkey) -> Result<Self, Self::Error> {
+        hotkey.chord.map(Chord::try_from).transpose()
+    }
+}
+
+impl From<Option<Chord>> for wire::Hotkey {
+    fn from(chord: Option<Chord>) -> Self {
+        Self {
+            chord: chord.map(wire::Chord::from),
+        }
+    }
+}
+
+impl TryFrom<wire::Prompts> for Prompts {
+    type Error = ProtocolError;
+
+    fn try_from(prompts: wire::Prompts) -> Result<Self, Self::Error> {
+        let entries = prompts
+            .entries
+            .into_iter()
+            .map(Prompt::try_from)
+            .collect::<Result<_, _>>()?;
+        Ok(Self::new(entries)?)
+    }
+}
+
+impl From<&Prompts> for wire::Prompts {
+    fn from(prompts: &Prompts) -> Self {
+        Self {
+            entries: prompts.entries().iter().map(wire::Prompt::from).collect(),
+        }
+    }
+}
+
+impl TryFrom<wire::Prompt> for Prompt {
+    type Error = ProtocolError;
+
+    fn try_from(prompt: wire::Prompt) -> Result<Self, Self::Error> {
+        let chord = prompt.chord.map(Chord::try_from).transpose()?;
+        Ok(Self::new(
+            PromptId::new(prompt.id)?,
+            prompt.name,
+            decode_enum::<wire::PromptKind>(prompt.kind, "prompt kind")?,
+            prompt.file.into(),
+            prompt.enabled,
+            chord,
+        )?)
+    }
+}
+
+impl From<&Prompt> for wire::Prompt {
+    fn from(prompt: &Prompt) -> Self {
+        Self {
+            id: prompt.id().as_str().to_owned(),
+            name: prompt.name().to_owned(),
+            kind: wire::PromptKind::from(prompt.kind()) as i32,
+            file: prompt.file().to_string_lossy().into_owned(),
+            enabled: prompt.enabled(),
+            chord: prompt.chord().map(wire::Chord::from),
+        }
+    }
+}
+
+impl From<PromptKind> for wire::PromptKind {
+    fn from(kind: PromptKind) -> Self {
+        match kind {
+            PromptKind::Rewrite => Self::Rewrite,
+            PromptKind::Compose => Self::Compose,
+        }
+    }
+}
+
+impl WireEnum for wire::PromptKind {
+    type Domain = PromptKind;
+
+    fn into_domain(self) -> Option<Self::Domain> {
+        match self {
+            Self::Rewrite => Some(PromptKind::Rewrite),
+            Self::Compose => Some(PromptKind::Compose),
+            Self::Unspecified => None,
         }
     }
 }
@@ -1839,13 +1973,16 @@ pub enum ProtocolError {
     InvalidSpeakingRate(SpeakingRateError),
 
     #[error(transparent)]
-    InvalidAskHotkey(#[from] AskHotkeyError),
+    InvalidChord(#[from] ChordError),
 
     #[error(transparent)]
     InvalidApplicationOverrides(#[from] OverrideError),
 
-    #[error("ask shortcut key code {0} is not a key code")]
-    AskHotkeyKeyCode(u32),
+    #[error("chord key code {0} is not a key code")]
+    ChordKeyCode(u32),
+
+    #[error(transparent)]
+    InvalidPrompt(#[from] PromptError),
 }
 
 #[cfg(test)]
@@ -2065,10 +2202,12 @@ mod tests {
             ChatStageKind::Replied(ChatReply {
                 text: "hi".to_owned(),
                 delivery_error: None,
+                copied: true,
             }),
             ChatStageKind::Replied(ChatReply {
                 text: "hi".to_owned(),
                 delivery_error: Some(RpcErrorCode::DeliveryTargetChanged),
+                copied: false,
             }),
             ChatStageKind::Failed {
                 code: RpcErrorCode::AgentUnavailable,
@@ -2516,61 +2655,96 @@ mod tests {
     }
 
     #[test]
-    fn an_ask_hotkey_round_trips() {
-        let hotkey = AskHotkey::new(
-            13,
-            Modifiers {
-                control: true,
-                option: false,
-                shift: true,
-                command: false,
-            },
-            true,
-        )
-        .expect("a chord with modifiers is valid");
+    fn prompts_round_trip_and_need_their_kind() {
+        let prompts = Prompts::new(vec![
+            Prompt::new(
+                PromptId::new("7f3c2a90").expect("id"),
+                "Polish".to_owned(),
+                PromptKind::Compose,
+                "/prompts/polish.md".into(),
+                true,
+                Some(Chord::ASK),
+            )
+            .expect("prompt"),
+        ])
+        .expect("prompts");
 
-        let decoded =
-            AskHotkey::try_from(wire::AskHotkey::from(hotkey)).expect("the hotkey should decode");
+        let decoded = Prompts::try_from(wire::Prompts::from(&prompts)).expect("decodes");
+        assert_eq!(decoded, prompts);
 
-        assert_eq!(decoded, hotkey);
+        let mut wire = wire::Prompts::from(&prompts);
+        wire.entries[0].file = "relative.md".to_owned();
+        assert!(matches!(
+            Prompts::try_from(wire),
+            Err(ProtocolError::InvalidPrompt(_))
+        ));
+        let mut wire = wire::Prompts::from(&prompts);
+        wire.entries[0].kind = wire::PromptKind::Unspecified as i32;
+        assert!(matches!(
+            Prompts::try_from(wire),
+            Err(ProtocolError::InvalidEnum {
+                field: "prompt kind",
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn an_enabled_hotkey_without_a_modifier_is_refused() {
-        let bare = wire::AskHotkey {
-            enabled: true,
-            key_code: 13,
-            control: false,
-            option: false,
-            shift: false,
-            command: false,
-        };
-
-        assert!(AskHotkey::try_from(bare).is_err());
-        // Disabled, the same chord is only a remembered choice.
-        assert!(
-            AskHotkey::try_from(wire::AskHotkey {
-                enabled: false,
-                ..bare
+    fn a_prompt_call_needs_words_a_prompt_id_and_at_most_a_real_app() {
+        let call = |text: &str, id: &str, app: &str| {
+            PromptCall::try_from(wire::RunPromptRequest {
+                text: text.to_owned(),
+                prompt_id: id.to_owned(),
+                application_id: app.to_owned(),
             })
-            .is_ok()
+        };
+        assert!(matches!(
+            call(" ", "p", ""),
+            Err(ProtocolError::EmptyPrompt)
+        ));
+        assert!(call("hi", "../p", "").is_err());
+        assert!(call("hi", "p", "not an app").is_err());
+        assert_eq!(call("hi", "p", "").expect("valid").application, None);
+        assert!(
+            call("hi", "p", "com.apple.Notes")
+                .expect("valid")
+                .application
+                .is_some()
         );
     }
 
     #[test]
-    fn a_hotkey_key_code_wider_than_a_key_is_refused() {
-        let absurd = wire::AskHotkey {
-            enabled: true,
-            key_code: u32::from(u16::MAX) + 1,
+    fn a_hotkey_round_trips_and_needs_a_chord_with_a_modifier() {
+        let chord = wire::Chord {
+            key_code: 13,
             control: true,
             option: false,
-            shift: false,
+            shift: true,
             command: false,
         };
+        let hotkey =
+            Option::<Chord>::try_from(wire::Hotkey { chord: Some(chord) }).expect("decodes");
+        assert_eq!(wire::Hotkey::from(hotkey).chord, Some(chord));
+        let cleared = PreferencePatch::try_from(wire::PreferencePatch {
+            ask_hotkey: Some(wire::Hotkey { chord: None }),
+            ..Default::default()
+        })
+        .expect("decodes");
+        assert_eq!(cleared.ask_hotkey, Some(None));
 
+        let bare = wire::Chord {
+            control: false,
+            shift: false,
+            ..chord
+        };
+        assert!(Chord::try_from(bare).is_err());
+        let absurd = wire::Chord {
+            key_code: u32::from(u16::MAX) + 1,
+            ..chord
+        };
         assert!(matches!(
-            AskHotkey::try_from(absurd),
-            Err(ProtocolError::AskHotkeyKeyCode(_))
+            Chord::try_from(absurd),
+            Err(ProtocolError::ChordKeyCode(_))
         ));
     }
 

@@ -34,6 +34,14 @@ read-only agent settings restrict edits; they do not make the agent offline.
 Starting a fresh Ask conversation does not delete earlier records. Clearing
 Aria's dictation history does not delete agent conversations.
 
+## Prompts
+
+[A prompt](./prompts.md) sends what you said and the prompt file's text to
+Claude Code or Codex, which may send them to cloud services. Each run is
+fresh: no project, conversation, or memory, and none of your agent's own
+instructions, settings, or tools. Aria keeps no prompt recording in dictation
+history.
+
 ## Updates
 
 The Mac app checks GitHub for a new release about once a day. The check sends

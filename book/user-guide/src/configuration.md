@@ -15,6 +15,8 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 - **Recognition** sets the language, voice filtering, and project vocabulary.
 - **Shortcuts** chooses right Option or Fn for the dictation hotkey, and sets
   the Ask shortcut.
+- **Prompts** lists Markdown files that say what to make of what you say,
+  each with its own shortcut. See [Prompts](./prompts.md).
 - **Privacy** controls dictation history and retained audio.
 - **Phone** pairs Aria for iPhone.
 

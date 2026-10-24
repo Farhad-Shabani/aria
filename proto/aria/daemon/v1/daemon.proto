@@ -193,24 +193,76 @@ message PreferenceConflict {
   PreferenceSnapshot current = 1;
 }
 
-// Grouped as the Settings window shows them: Dictation, Recognition,
-// Shortcuts, Apps, Privacy.
+// Grouped as the Settings window shows them.
 message UserPreferences {
+  // Dictation
+
   OutputMode output_mode = 1;
   DeliveryMode delivery_mode = 2;
   // Whole milliseconds, 100 to 10000 inclusive.
   uint64 silence_duration_ms = 3;
   bool mute_output = 4;
+
+  // Recognition
+
   // A language code such as "en" or "en-us", or "auto" to detect.
   string recognition_language = 5;
   bool own_voice_only = 6;
   bool project_vocabulary = 7;
   optional string vocabulary_directory = 8;
+
+  // Shortcuts
+
   HotkeyKey dictation_hotkey = 9;
-  AskHotkey ask_hotkey = 10;
-  ApplicationOverrides application_overrides = 11;
-  bool dictation_history = 12;
-  bool history_audio_retention = 13;
+  // Press to record, again to send, again to cancel.
+  Hotkey ask_hotkey = 10;
+  // Lists the prompts that are on, so one runs without its own chord.
+  Hotkey prompt_list_hotkey = 11;
+
+  // Prompts
+
+  Prompts prompts = 12;
+
+  // Apps
+
+  ApplicationOverrides application_overrides = 13;
+
+  // Privacy
+
+  bool dictation_history = 14;
+  bool history_audio_retention = 15;
+}
+
+// A Markdown file that says what to make of a recording, and the chord
+// that runs it the way the ask hotkey runs an ask.
+message Prompt {
+  // Stable across renames: what RunPrompt names.
+  string id = 1;
+  string name = 2;
+  // UNSPECIFIED is invalid.
+  PromptKind kind = 3;
+  // An absolute path to the Markdown instructions, read on each run.
+  string file = 4;
+  // Off, it runs neither from the prompt list nor from its chord.
+  bool enabled = 5;
+  // Absent for a prompt run only from the prompt list.
+  Chord chord = 6;
+}
+
+// What a prompt makes of what was said. Either way the transcript is
+// material for the agent, never instructions to it.
+enum PromptKind {
+  PROMPT_KIND_UNSPECIFIED = 0;
+  // The same words and meaning, cleaned up or restyled.
+  PROMPT_KIND_REWRITE = 1;
+  // New text made from what was said, such as a reply, a translation, or a
+  // summary.
+  PROMPT_KIND_COMPOSE = 2;
+}
+
+// At most 16 entries, each ID and each chord once.
+message Prompts {
+  repeated Prompt entries = 1;
 }
 
 // Dictation settings that replace the preferences above. Each absent field
@@ -240,11 +292,16 @@ message ApplicationOverrides {
 // Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
 // Numbered as `UserPreferences`.
 message PreferencePatch {
+  // Dictation
+
   optional OutputMode output_mode = 1;
   optional DeliveryMode delivery_mode = 2;
   // Whole milliseconds, 100 to 10000 inclusive.
   optional uint64 silence_duration_ms = 3;
   optional bool mute_output = 4;
+
+  // Recognition
+
   // A language code such as "en" or "en-us", or "auto" to detect.
   optional string recognition_language = 5;
   // Filter for enrolled owner voices when a speaker model and owner exist.
@@ -252,12 +309,27 @@ message PreferencePatch {
   optional bool project_vocabulary = 7;
   // Empty clears the selected directory; absent leaves it unchanged.
   optional string vocabulary_directory = 8;
+
+  // Shortcuts
+
   optional HotkeyKey dictation_hotkey = 9;
-  AskHotkey ask_hotkey = 10;
+  Hotkey ask_hotkey = 10;
+  Hotkey prompt_list_hotkey = 11;
+
+  // Prompts
+
   // Replaces every entry.
-  ApplicationOverrides application_overrides = 11;
-  optional bool dictation_history = 12;
-  optional bool history_audio_retention = 13;
+  Prompts prompts = 12;
+
+  // Apps
+
+  // Replaces every entry.
+  ApplicationOverrides application_overrides = 13;
+
+  // Privacy
+
+  optional bool dictation_history = 14;
+  optional bool history_audio_retention = 15;
 }
 
 enum OutputMode {
@@ -287,17 +359,21 @@ enum HotkeyKey {
   HOTKEY_KEY_FN = 2;
 }
 
-// The chord that runs an ask: press to record, again to send, again to
-// cancel. A chord is registered rather than watched, so unlike HotkeyKey
-// it needs no Accessibility grant. At least one modifier is required.
-message AskHotkey {
-  bool enabled = 1;
+// A key held with at least one modifier. A chord is registered rather than
+// watched, so unlike HotkeyKey it needs no Accessibility grant.
+message Chord {
   // The platform virtual key code.
-  uint32 key_code = 2;
-  bool control = 3;
-  bool option = 4;
-  bool shift = 5;
-  bool command = 6;
+  uint32 key_code = 1;
+  bool control = 2;
+  bool option = 3;
+  bool shift = 4;
+  bool command = 5;
+}
+
+// One of the Mac app's shortcuts. A patch that sets it with no chord
+// clears it.
+message Hotkey {
+  Chord chord = 1;
 }
 
 // ---------- history ----------
@@ -457,6 +533,11 @@ service ChatService {
   // Where an ask goes, for a client with no working directory of its own.
   // Answers with the focused project, else the configured one.
   rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
+  // Run a stored prompt on a transcript and type the result into the app the
+  // request names, else the one in front. One fresh agent run with no
+  // conversation, memory, or tools. Progress and the outcome arrive as
+  // `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+  rpc RunPrompt(RunPromptRequest) returns (AskResponse);
 }
 
 message AskRequest {
@@ -479,6 +560,15 @@ message AskRequest {
 
 message AskResponse {
   uint64 ticket = 1;
+}
+
+message RunPromptRequest {
+  string text = 1;
+  // A stored, enabled Prompt's ID.
+  string prompt_id = 2;
+  // The bundle ID of the app in front when the chord was first pressed. The
+  // result is typed only there. Empty when unknown.
+  string application_id = 3;
 }
 
 message CancelAskRequest {
@@ -515,6 +605,8 @@ message ChatEvent {
   ChatStep step = 7;
   // The skill being loaded; only when step is SKILL.
   string skill = 8;
+  // On REPLIED: the reply went to the clipboard instead of being typed.
+  bool copied = 9;
 }
 
 enum ChatAgent {

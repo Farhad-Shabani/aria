@@ -65,8 +65,8 @@ struct SetupView: View {
         preferences.snapshot?.storedDictationHotkey ?? .default
     }
 
-    private var askHotkey: AskHotkey? {
-        preferences.snapshot?.storedAskHotkey.flatMap { $0.isActive ? $0 : nil }
+    private var askHotkey: Chord? {
+        preferences.snapshot?.askHotkey.storedChord
     }
 
     private var footer: some View {

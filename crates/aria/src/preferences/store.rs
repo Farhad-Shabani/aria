@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use tokio::sync::watch;
 
 use super::{
-    ApplicationOverrides, AskHotkey, Language, PreferenceStoreError, UserPreferences, file,
+    ApplicationOverrides, Chord, Language, PreferenceStoreError, Prompts, UserPreferences, file,
 };
 use crate::audio::SilenceDuration;
 use crate::delivery::OutputMode;
@@ -30,11 +30,13 @@ pub struct PreferencePatch {
     pub silence_duration: Option<SilenceDuration>,
     pub own_voice_only: Option<bool>,
     pub dictation_hotkey: Option<HotkeyKey>,
-    pub ask_hotkey: Option<AskHotkey>,
+    pub ask_hotkey: Option<Option<Chord>>,
+    pub prompt_list_hotkey: Option<Option<Chord>>,
     pub project_vocabulary: Option<bool>,
     pub vocabulary_directory: Option<Option<crate::vocabulary::Directory>>,
     /// Replaces every entry.
     pub application_overrides: Option<ApplicationOverrides>,
+    pub prompts: Option<Prompts>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,9 @@ impl PreferenceStore {
         }
 
         let preferences = patch.apply_to(&current.preferences);
+        if preferences.shares_a_chord() {
+            return Err(PreferenceStoreError::ChordInUse);
+        }
         if preferences == current.preferences {
             return Ok(UpdateResult::Updated(current.clone()));
         }
@@ -137,6 +142,9 @@ impl PreferencePatch {
             own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),
             dictation_hotkey: self.dictation_hotkey.unwrap_or(current.dictation_hotkey),
             ask_hotkey: self.ask_hotkey.unwrap_or(current.ask_hotkey),
+            prompt_list_hotkey: self
+                .prompt_list_hotkey
+                .unwrap_or(current.prompt_list_hotkey),
             project_vocabulary: self
                 .project_vocabulary
                 .unwrap_or(current.project_vocabulary),
@@ -147,6 +155,7 @@ impl PreferencePatch {
                 .application_overrides
                 .unwrap_or_else(|| current.application_overrides.clone())
                 .without_inert(output_mode, delivery_mode),
+            prompts: self.prompts.unwrap_or_else(|| current.prompts.clone()),
         }
     }
 }
@@ -384,6 +393,44 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn a_chord_the_ask_already_holds_is_refused_for_the_prompt_list() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let store = PreferenceStore::open(dir.path().join("preferences.json")).unwrap();
+
+        let result = store.update(
+            0,
+            PreferencePatch {
+                prompt_list_hotkey: Some(Some(Chord::ASK)),
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(PreferenceStoreError::ChordInUse)));
+    }
+
+    #[test]
+    fn a_cleared_shortcut_survives_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    ask_hotkey: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let preferences = PreferenceStore::open(&path)
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .preferences;
+        assert_eq!(preferences.ask_hotkey, None);
     }
 
     #[test]

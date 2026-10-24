@@ -5,6 +5,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case dictation
     case recognition
     case shortcuts
+    case prompts
     case apps
     case privacy
     case phone
@@ -12,7 +13,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     static let sidebarGroups: [[SettingsPane]] = [
         [.general],
-        [.dictation, .recognition, .shortcuts, .apps],
+        [.dictation, .recognition, .shortcuts, .prompts, .apps],
         [.privacy, .phone],
         [.about],
     ]
@@ -25,6 +26,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .dictation: "Dictation"
         case .recognition: "Recognition"
         case .shortcuts: "Shortcuts"
+        case .prompts: "Prompts"
         case .apps: "Apps"
         case .privacy: "Privacy"
         case .phone: "Phone"
@@ -38,6 +40,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .dictation: "mic.fill"
         case .recognition: "waveform"
         case .shortcuts: "keyboard.fill"
+        case .prompts: "text.badge.star"
         case .apps: "square.grid.2x2.fill"
         case .privacy: "hand.raised.fill"
         case .phone: "iphone"
@@ -51,6 +54,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .dictation: .red
         case .recognition: .purple
         case .shortcuts: .indigo
+        case .prompts: .orange
         case .privacy, .apps: .blue
         case .phone: .green
         }

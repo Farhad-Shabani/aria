@@ -50,6 +50,7 @@ mod tests {
         let replied = ChatStageKind::Replied(ChatReply {
             text: "done".to_owned(),
             delivery_error: None,
+            copied: false,
         });
         let failed = ChatStageKind::Failed {
             code: RpcErrorCode::AgentFailed,

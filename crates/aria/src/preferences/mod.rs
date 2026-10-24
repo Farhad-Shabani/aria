@@ -1,7 +1,9 @@
 //! Shared user choices, independent of daemon setup and resource limits.
 
+mod chord;
 mod file;
 mod overrides;
+mod prompts;
 mod store;
 
 use std::path::PathBuf;
@@ -14,9 +16,11 @@ use crate::hotkey::HotkeyKey;
 use crate::primitives::private_document::DocumentError;
 use crate::transcription::{Language, LanguageCode, LanguageCodeError};
 
+pub use chord::{Chord, ChordError, Modifiers};
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
 };
+pub use prompts::{Prompt, PromptError, PromptId, Prompts};
 pub(crate) use store::PreferenceStore;
 pub use store::{PreferencePatch, PreferenceSnapshot, UpdateResult};
 
@@ -32,86 +36,29 @@ pub struct UserPreferences {
     /// Dictation types only what an enrolled voice said.
     pub own_voice_only: bool,
     pub dictation_hotkey: HotkeyKey,
-    pub ask_hotkey: AskHotkey,
+    /// Only the Mac app reads these.
+    pub ask_hotkey: Option<Chord>,
+    pub prompt_list_hotkey: Option<Chord>,
     pub project_vocabulary: bool,
     pub vocabulary_directory: Option<crate::vocabulary::Directory>,
     pub application_overrides: ApplicationOverrides,
+    pub prompts: Prompts,
 }
 
-/// The chord that runs an ask: press to record, again to send, again to
-/// cancel. Nothing in the daemon reads it. It lives here because this is
-/// where a choice shared between the app and the settings window belongs,
-/// and because a chord is registered by whoever owns a run loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AskHotkey {
-    enabled: bool,
-    key_code: u16,
-    modifiers: Modifiers,
-}
-
-/// The modifiers held with the chord's key, named rather than masked: the
-/// mask constants belong to one platform and this is stored on all of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Modifiers {
-    pub control: bool,
-    pub option: bool,
-    pub shift: bool,
-    pub command: bool,
-}
-
-impl Modifiers {
-    pub fn is_empty(self) -> bool {
-        !(self.control || self.option || self.shift || self.command)
+impl UserPreferences {
+    /// One chord can run only one thing: the ask, the prompt list, or a
+    /// prompt.
+    pub(super) fn shares_a_chord(&self) -> bool {
+        let chords: Vec<Chord> = [self.ask_hotkey, self.prompt_list_hotkey]
+            .into_iter()
+            .chain(self.prompts.entries().iter().map(Prompt::chord))
+            .flatten()
+            .collect();
+        chords
+            .iter()
+            .enumerate()
+            .any(|(index, chord)| chords[..index].contains(chord))
     }
-}
-
-impl AskHotkey {
-    /// A chord with no modifier takes a bare key away from every
-    /// application, so an enabled one must carry a modifier.
-    pub fn new(key_code: u16, modifiers: Modifiers, enabled: bool) -> Result<Self, AskHotkeyError> {
-        if enabled && modifiers.is_empty() {
-            return Err(AskHotkeyError::NoModifier);
-        }
-        Ok(Self {
-            enabled,
-            key_code,
-            modifiers,
-        })
-    }
-
-    pub fn enabled(self) -> bool {
-        self.enabled
-    }
-
-    pub fn key_code(self) -> u16 {
-        self.key_code
-    }
-
-    pub fn modifiers(self) -> Modifiers {
-        self.modifiers
-    }
-}
-
-impl Default for AskHotkey {
-    /// Control-option-A. `0` is `kVK_ANSI_A`, the letter, not an absence.
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            key_code: 0,
-            modifiers: Modifiers {
-                control: true,
-                option: true,
-                shift: false,
-                command: false,
-            },
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AskHotkeyError {
-    #[error("an enabled ask hotkey needs at least one modifier")]
-    NoModifier,
 }
 
 impl Default for UserPreferences {
@@ -126,10 +73,12 @@ impl Default for UserPreferences {
             silence_duration: SilenceDuration::default(),
             own_voice_only: false,
             dictation_hotkey: HotkeyKey::RightOption,
-            ask_hotkey: AskHotkey::default(),
+            ask_hotkey: Some(Chord::ASK),
+            prompt_list_hotkey: None,
             project_vocabulary: false,
             vocabulary_directory: None,
             application_overrides: ApplicationOverrides::default(),
+            prompts: Prompts::default(),
         }
     }
 }
@@ -231,11 +180,11 @@ pub enum PreferenceStoreError {
         source: SilenceDurationError,
     },
 
-    #[error("preference file {} contains an invalid ask hotkey", path.display())]
-    InvalidAskHotkey {
+    #[error("preference file {} contains an invalid chord", path.display())]
+    InvalidChord {
         path: PathBuf,
         #[source]
-        source: AskHotkeyError,
+        source: ChordError,
     },
 
     #[error("preference file {} contains invalid application overrides", path.display())]
@@ -243,6 +192,13 @@ pub enum PreferenceStoreError {
         path: PathBuf,
         #[source]
         source: OverrideError,
+    },
+
+    #[error("preference file {} contains an invalid prompt", path.display())]
+    InvalidPrompt {
+        path: PathBuf,
+        #[source]
+        source: PromptError,
     },
 
     #[error("failed to serialize preferences")]
@@ -271,6 +227,12 @@ pub enum PreferenceStoreError {
 
     #[error("preference revision is exhausted")]
     RevisionExhausted,
+
+    #[error("one chord is set for two things")]
+    ChordInUse,
+
+    #[error("preference file {} sets one chord for two things", path.display())]
+    SharedChord { path: PathBuf },
 
     #[error("preference state lock is poisoned")]
     LockPoisoned,

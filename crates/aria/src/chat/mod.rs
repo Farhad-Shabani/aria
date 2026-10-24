@@ -7,6 +7,7 @@
 mod agents;
 mod process;
 mod projects;
+mod prompt_run;
 mod sessions;
 mod subscribers;
 
@@ -29,6 +30,8 @@ pub(crate) use agents::{
 };
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
+pub use prompt_run::PromptKind;
+pub(crate) use prompt_run::{InstructionsError, PromptRun, read_instructions};
 pub(crate) use sessions::{SessionStore, SessionStoreError};
 pub(crate) use subscribers::ChatSubscribers;
 
@@ -128,6 +131,27 @@ impl std::fmt::Display for SessionKey {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptCall {
+    pub(crate) text: String,
+    pub(crate) prompt: crate::preferences::PromptId,
+    /// The app in front when the chord was pressed, the only one the result
+    /// may be typed into. None when the caller could not tell.
+    pub(crate) application: Option<crate::preferences::ApplicationId>,
+}
+
+/// A prompt call resolved against the stored prompt and the configured
+/// agent. One fresh agent run; no conversation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptRequest {
+    pub(crate) text: String,
+    pub(crate) kind: PromptKind,
+    /// The Markdown instructions, read when the run starts.
+    pub(crate) file: PathBuf,
+    pub(crate) agent: ChatAgent,
+    pub(crate) application: Option<crate::preferences::ApplicationId>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ChatRequestError {
     #[error("failed to read the chat configuration")]
@@ -206,6 +230,8 @@ pub struct ChatReply {
     /// Set when delivery was asked for and failed. The reply still
     /// came back, so a listener can show it instead.
     pub delivery_error: Option<RpcErrorCode>,
+    /// The reply went to the clipboard instead of being typed.
+    pub copied: bool,
 }
 
 pub(crate) type ChatEventEmitter = EventEmitter<ChatStage>;
@@ -219,6 +245,15 @@ pub(crate) struct SessionSpec<'a> {
 /// A kind of agent and how to reach it.
 pub(crate) trait Agent: Send + Sync {
     fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session>;
+
+    /// One run outside any conversation or project, with no tools: the
+    /// text to type, or why there is none.
+    fn run_prompt(
+        &self,
+        request: &PromptRun<'_>,
+        cancel: &CancelToken,
+        timeout: Duration,
+    ) -> Result<String, AgentError>;
 }
 
 /// One conversation with an agent, taking one turn at a time.
@@ -261,6 +296,9 @@ pub(crate) enum AgentError {
 
     #[error("failed to write the prompt to the agent")]
     Input(#[source] std::io::Error),
+
+    #[error("failed to prepare the agent's run directory")]
+    RunDirectory(#[source] std::io::Error),
 
     #[error("failed to read the agent's output")]
     Io(#[source] std::io::Error),
@@ -334,6 +372,15 @@ pub(crate) enum ChatError {
 
     #[error("failed to read shared preferences")]
     Preferences(#[source] crate::preferences::PreferenceStoreError),
+
+    #[error("no stored prompt has that ID")]
+    UnknownPrompt,
+
+    #[error("that prompt is turned off")]
+    PromptOff,
+
+    #[error(transparent)]
+    Instructions(#[from] InstructionsError),
 }
 
 impl From<&ChatError> for RpcErrorCode {
@@ -343,7 +390,10 @@ impl From<&ChatError> for RpcErrorCode {
                 Self::Internal
             }
             ChatError::Agent(AgentError::Missing { .. }) => Self::AgentUnavailable,
-            ChatError::Agent(AgentError::NoWorkdir(_)) => Self::InvalidRequest,
+            ChatError::Agent(AgentError::NoWorkdir(_))
+            | ChatError::UnknownPrompt
+            | ChatError::PromptOff
+            | ChatError::Instructions(_) => Self::InvalidRequest,
             ChatError::Agent(AgentError::Timeout(_)) => Self::AgentTimeout,
             ChatError::Agent(AgentError::Cancelled)
             | ChatError::Delivery(DeliveryError::Cancelled) => Self::Cancelled,

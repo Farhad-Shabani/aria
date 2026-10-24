@@ -259,7 +259,7 @@ struct TryOutPage: View {
 struct DonePage: View {
     @ObservedObject var state: SetupState
     let dictationKey: HotkeyKey
-    let askHotkey: AskHotkey?
+    let askHotkey: Chord?
 
     var body: some View {
         Form {
@@ -276,7 +276,7 @@ struct DonePage: View {
                         LabeledContent("Dictate hands-free", value: "Say the wake word")
                     }
                     if let askHotkey {
-                        LabeledContent("Ask your agent", value: "Press \(askHotkey.title)")
+                        LabeledContent("Ask your agent") { ChordLabel(chord: askHotkey) }
                     }
                 }
             }

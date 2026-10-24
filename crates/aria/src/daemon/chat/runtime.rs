@@ -13,14 +13,15 @@ use aria_kit::cancel::CancelToken;
 use crate::chat::{
     Agent, AgentError, AskTarget, CLAUDE_BINARY, CODEX_BINARY, ChatError, ChatEventEmitter,
     ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers, ClaudeCodeAgent, CodexAgent,
-    Projects, ResolveError, SessionSpec, SessionStore, Step, Ticket, TurnSink,
+    Projects, PromptCall, PromptRequest, PromptRun, ResolveError, SessionSpec, SessionStore, Step,
+    Ticket, TurnSink, read_instructions,
 };
 use crate::config::{ChatAgent, ChatConfig, Environment, MemoryConfig, SpeakerConfig};
 use crate::delivery::{
-    DeliveryError, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
+    DeliveryError, DeliveryOutcome, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
 };
 use crate::memory::{DB_FILE, Store, load_profile_block};
-use crate::preferences::PreferenceStore;
+use crate::preferences::{ApplicationId, PreferenceStore};
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 use crate::speaker::{ProfileStore, Role};
@@ -32,6 +33,20 @@ use super::super::subscriptions::Subscriptions;
 const SESSION_FILE: &str = "chat-session.json";
 
 type AgentFactory = Box<dyn Fn(ChatAgent) -> Box<dyn Agent> + Send + Sync>;
+
+pub(in crate::daemon) enum ChatJob {
+    Ask(ChatRequest),
+    Prompt(PromptRequest),
+}
+
+impl ChatJob {
+    pub(in crate::daemon) fn agent(&self) -> ChatAgent {
+        match self {
+            Self::Ask(request) => request.agent,
+            Self::Prompt(request) => request.agent,
+        }
+    }
+}
 
 pub(in crate::daemon) struct ChatRuntime {
     emitter: ChatEventEmitter,
@@ -58,7 +73,7 @@ impl ChatRuntime {
             context.config_environment.clone(),
             context.preferences_path.with_file_name(SESSION_FILE),
             event_emitter(context, subscriptions),
-            Box::new(build_agent),
+            build_agents(context.config_environment.codex_home()),
             preferences,
             memory_wake,
         )
@@ -82,22 +97,26 @@ impl ChatRuntime {
         }
     }
 
-    /// Runs one ask to its end. Everything a caller learns arrives as an
+    /// Runs one job to its end. Everything a caller learns arrives as an
     /// event under `ticket`.
     pub(in crate::daemon) fn execute(
         &self,
         ticket: Ticket,
-        request: ChatRequest,
+        job: ChatJob,
         cancellation: CancelToken,
     ) {
-        let agent = request.agent;
+        let agent = job.agent();
         if cancellation.is_cancelled() {
             self.cancel_unstarted(ticket, agent);
             return;
         }
         let mut recorder = TurnRecorder::new(&self.emitter, ticket, agent);
         recorder.step(Step::Thinking);
-        let kind = match self.ask(&mut recorder, request, &cancellation) {
+        let outcome = match job {
+            ChatJob::Ask(request) => self.ask(&mut recorder, request, &cancellation),
+            ChatJob::Prompt(request) => self.run_prompt(request, &cancellation),
+        };
+        let kind = match outcome {
             Ok(kind) => kind,
             Err(error) => failed(&error),
         };
@@ -106,6 +125,34 @@ impl ChatRuntime {
             agent,
             kind,
         });
+    }
+
+    /// The prompt and agent as stored now; a later edit applies to the
+    /// next run.
+    pub(in crate::daemon) fn prompt_request(
+        &self,
+        call: PromptCall,
+    ) -> Result<PromptRequest, ChatError> {
+        let snapshot = self
+            .preferences
+            .snapshot()
+            .map_err(ChatError::Preferences)?;
+        let prompt = snapshot
+            .preferences
+            .prompts
+            .find(call.prompt.as_str())
+            .ok_or(ChatError::UnknownPrompt)?;
+        if !prompt.enabled() {
+            return Err(ChatError::PromptOff);
+        }
+        let config = ChatConfig::load(&self.config_environment).map_err(ChatError::Config)?;
+        Ok(PromptRequest {
+            text: call.text,
+            kind: prompt.kind(),
+            file: prompt.file().to_path_buf(),
+            agent: config.agent,
+            application: call.application,
+        })
     }
 
     /// Ends an ask that never ran, the way a cancelled run ends.
@@ -163,7 +210,7 @@ impl ChatRuntime {
             Some(mode) => {
                 match Delivery::prepare(
                     mode,
-                    self.target_policy()?,
+                    self.target_policy(None)?,
                     config.delivery_timeout,
                     cancel,
                 ) {
@@ -192,15 +239,60 @@ impl ChatRuntime {
             self.remember(memory, &request);
         }
 
-        let delivery_error =
-            refused.or_else(|| delivery.and_then(|delivery| delivery.deliver(&text, cancel)));
-        Ok(ChatStageKind::Replied(ChatReply {
-            text,
-            delivery_error,
-        }))
+        let delivered = match (refused, delivery) {
+            (Some(code), _) => Some(Err(code)),
+            (None, Some(delivery)) => Some(delivery.deliver(&text, cancel)),
+            (None, None) => None,
+        };
+        Ok(replied(text, delivered))
     }
 
-    fn target_policy(&self) -> Result<TargetPolicy, ChatError> {
+    /// No memory, conversation, or project: the transcript and the user's
+    /// instructions are all the agent sees. The target is bound before the
+    /// agent runs, so speech meant for an app with Aria off, or for an app
+    /// the user has since left, is never sent.
+    fn run_prompt(
+        &self,
+        request: PromptRequest,
+        cancel: &CancelToken,
+    ) -> Result<ChatStageKind, ChatError> {
+        let config = ChatConfig::load(&self.config_environment).map_err(ChatError::Config)?;
+        let delivery = Delivery::prepare(
+            OutputMode::InsertOrCopy,
+            self.target_policy(request.application.as_ref())?,
+            config.delivery_timeout,
+            cancel,
+        )?;
+        let text = self.prompt_answer(&request, config.timeout, cancel)?;
+        if cancel.is_cancelled() {
+            return Err(ChatError::Agent(AgentError::Cancelled));
+        }
+        let delivered = delivery.deliver(&text, cancel);
+        Ok(replied(text, Some(delivered)))
+    }
+
+    fn prompt_answer(
+        &self,
+        request: &PromptRequest,
+        timeout: Duration,
+        cancel: &CancelToken,
+    ) -> Result<String, ChatError> {
+        let instructions = read_instructions(&request.file)?;
+        let run = PromptRun {
+            kind: request.kind,
+            instructions: &instructions,
+            transcript: &request.text,
+        };
+        Ok(self
+            .agent(request.agent)
+            .run_prompt(&run, cancel, timeout)?)
+    }
+
+    /// Refuses an app with Aria off and, when given, any app but `application`.
+    fn target_policy(
+        &self,
+        application: Option<&ApplicationId>,
+    ) -> Result<TargetPolicy, ChatError> {
         let overrides = self
             .preferences
             .snapshot()
@@ -208,7 +300,7 @@ impl ChatRuntime {
             .preferences
             .application_overrides;
         Ok(TargetPolicy {
-            overridden_for: None,
+            overridden_for: application.map(|id| id.as_str().to_owned()),
             excluded: overrides.excluded_ids(),
         })
     }
@@ -353,11 +445,11 @@ fn failed(error: &ChatError) -> ChatStageKind {
     }
 }
 
-fn build_agent(agent: ChatAgent) -> Box<dyn Agent> {
-    match agent {
+fn build_agents(codex_home: PathBuf) -> AgentFactory {
+    Box::new(move |agent| match agent {
         ChatAgent::ClaudeCode => Box::new(ClaudeCodeAgent::new(CLAUDE_BINARY.into())),
-        ChatAgent::Codex => Box::new(CodexAgent::new(CODEX_BINARY.into())),
-    }
+        ChatAgent::Codex => Box::new(CodexAgent::new(CODEX_BINARY.into(), codex_home.clone())),
+    })
 }
 
 /// A reply's delivery, bound to its target before the agent runs.
@@ -387,7 +479,7 @@ impl Delivery {
 
     /// Types the reply at the target; a failure is reported, not fatal,
     /// because the reply itself still reaches the caller.
-    fn deliver(self, text: &str, cancel: &CancelToken) -> Option<RpcErrorCode> {
+    fn deliver(self, text: &str, cancel: &CancelToken) -> Result<DeliveryOutcome, RpcErrorCode> {
         let text = self.platform.caret(&self.target).insert(text);
         match self
             .policy
@@ -397,19 +489,31 @@ impl Delivery {
                     .deliver(&self.target, &text, || cancel.is_cancelled())
             })
             .and_then(|outcome| {
-                if outcome == crate::delivery::DeliveryOutcome::Inserted {
+                if outcome == DeliveryOutcome::Inserted {
                     self.platform
                         .finish(&self.target, || cancel.is_cancelled())?;
                 }
                 Ok(outcome)
             }) {
-            Ok(_) => None,
+            Ok(outcome) => Ok(outcome),
             Err(failed) => {
                 tracing::warn!(error = %error_chain(&failed), "the reply was not delivered");
-                Some(RpcErrorCode::from(&ChatError::Delivery(failed)))
+                Err(RpcErrorCode::from(&ChatError::Delivery(failed)))
             }
         }
     }
+}
+
+/// A reply, and what became of its delivery when one was asked for.
+fn replied(
+    text: String,
+    delivered: Option<Result<DeliveryOutcome, RpcErrorCode>>,
+) -> ChatStageKind {
+    ChatStageKind::Replied(ChatReply {
+        text,
+        delivery_error: delivered.and_then(Result::err),
+        copied: matches!(delivered, Some(Ok(DeliveryOutcome::Copied))),
+    })
 }
 
 /// Nobody hears an unattended run, so it subscribes no sound. A connected
@@ -430,6 +534,7 @@ pub(super) mod tests {
     use std::sync::Mutex;
     use std::sync::mpsc::{Sender, channel};
 
+    use crate::chat::PromptKind;
     use crate::chat::Session;
 
     use super::*;
@@ -449,6 +554,17 @@ pub(super) mod tests {
                 log: Arc::clone(&self.0),
                 resume: spec.resume.map(str::to_owned),
             })
+        }
+
+        fn run_prompt(
+            &self,
+            request: &PromptRun<'_>,
+            _cancel: &CancelToken,
+            _timeout: Duration,
+        ) -> Result<String, AgentError> {
+            let mut log = self.0.lock().expect("the log is not poisoned");
+            log.prompts.push(request.prompt());
+            Ok("Polished.".to_owned())
         }
     }
 
@@ -553,6 +669,134 @@ pub(super) mod tests {
             .expect("the owner enrolls");
     }
 
+    fn prompt_request(file: PathBuf) -> PromptRequest {
+        PromptRequest {
+            text: "um send it friday".to_owned(),
+            kind: PromptKind::Rewrite,
+            file,
+            agent: ChatAgent::ClaudeCode,
+            application: None,
+        }
+    }
+
+    #[test]
+    fn a_prompt_request_names_only_a_stored_prompt_that_is_on() {
+        use crate::preferences::{PreferencePatch, Prompt, PromptId, Prompts};
+
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_agents(&Arc::default()));
+        let prompt = |id: &str, enabled| {
+            Prompt::new(
+                PromptId::new(id).expect("id"),
+                id.to_owned(),
+                PromptKind::Rewrite,
+                home.path().join(format!("{id}.md")),
+                enabled,
+                None,
+            )
+            .expect("prompt")
+        };
+        let prompts =
+            Prompts::new(vec![prompt("on", true), prompt("off", false)]).expect("prompts");
+        runtime
+            .preferences
+            .update(
+                0,
+                PreferencePatch {
+                    prompts: Some(prompts),
+                    ..PreferencePatch::default()
+                },
+            )
+            .expect("stored");
+
+        let call = |id: &str| PromptCall {
+            text: "hi".to_owned(),
+            prompt: PromptId::new(id).expect("id"),
+            application: None,
+        };
+        let request = runtime
+            .prompt_request(call("on"))
+            .expect("an enabled prompt");
+        assert_eq!(request.file, home.path().join("on.md"));
+        assert!(matches!(
+            runtime.prompt_request(call("off")),
+            Err(ChatError::PromptOff)
+        ));
+        assert!(matches!(
+            runtime.prompt_request(call("gone")),
+            Err(ChatError::UnknownPrompt)
+        ));
+    }
+
+    #[test]
+    fn a_prompt_run_for_an_app_no_longer_in_front_never_reaches_the_agent() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let file = home.path().join("polish.md");
+        std::fs::write(&file, "Fix grammar.").expect("the prompt file");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_agents(&log));
+        let request = PromptRequest {
+            application: Some(ApplicationId::new("com.example.left-behind").expect("id")),
+            ..prompt_request(file)
+        };
+
+        let error = runtime
+            .run_prompt(request, &CancelToken::never())
+            .expect_err("the app the chord was pressed in is not in front");
+
+        assert!(matches!(
+            error,
+            ChatError::Delivery(DeliveryError::TargetChanged)
+        ));
+        assert!(log.lock().unwrap().prompts.is_empty(), "nothing was sent");
+    }
+
+    #[test]
+    fn a_prompt_run_hands_one_fresh_run_the_instructions_then_the_transcript() {
+        let home = home_with_memory();
+        let instructions = home.path().join("polish.md");
+        std::fs::write(&instructions, "Fix grammar.").expect("the prompt file");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_agents(&log));
+
+        let text = runtime
+            .prompt_answer(
+                &prompt_request(instructions),
+                Duration::from_secs(5),
+                &CancelToken::never(),
+            )
+            .expect("the run succeeds");
+
+        assert_eq!(text, "Polished.");
+        let log = log.lock().unwrap();
+        assert!(log.sessions.is_empty(), "no conversation was opened");
+        let [prompt] = log.prompts.as_slice() else {
+            panic!("one run: {:?}", log.prompts);
+        };
+        assert!(prompt.starts_with("Fix grammar."), "{prompt}");
+        assert!(prompt.contains("um send it friday"), "{prompt}");
+        assert!(!prompt.contains("Is Sam"), "memory stays out: {prompt}");
+    }
+
+    #[test]
+    fn a_prompt_run_without_its_file_never_reaches_the_agent() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_agents(&log));
+
+        let error = runtime
+            .prompt_answer(
+                &prompt_request(home.path().join("moved.md")),
+                Duration::from_secs(5),
+                &CancelToken::never(),
+            )
+            .expect_err("the file is missing");
+
+        assert!(matches!(error, ChatError::Instructions(_)));
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
+        assert!(log.lock().unwrap().prompts.is_empty());
+    }
+
     #[test]
     fn memory_off_records_nothing_and_changes_no_prompt() {
         let home = tempfile::tempdir().expect("a temp home");
@@ -642,6 +886,15 @@ pub(super) mod tests {
         fn open(&self, _spec: SessionSpec<'_>) -> Box<dyn Session> {
             Box::new(FailingSession)
         }
+
+        fn run_prompt(
+            &self,
+            _request: &PromptRun<'_>,
+            _cancel: &CancelToken,
+            _timeout: Duration,
+        ) -> Result<String, AgentError> {
+            Err(AgentError::Failed("down".to_owned()))
+        }
     }
 
     struct FailingSession;
@@ -687,7 +940,7 @@ pub(super) mod tests {
         request: ChatRequest,
     ) -> ChatStageKind {
         let agent = request.agent;
-        runtime.execute(Ticket(ticket), request, CancelToken::never());
+        runtime.execute(Ticket(ticket), ChatJob::Ask(request), CancelToken::never());
         let mut steps = Vec::new();
         loop {
             let stage = events.recv().expect("a stage arrives");
@@ -836,7 +1089,7 @@ pub(super) mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
 
-        runtime.execute(Ticket(1), request("hi", work, false), cancel);
+        runtime.execute(Ticket(1), ChatJob::Ask(request("hi", work, false)), cancel);
 
         let ended = events.recv().expect("the end arrives");
         assert!(
@@ -1032,6 +1285,17 @@ pub(super) mod tests {
                 release: Arc::clone(&self.release),
                 resume: None,
             })
+        }
+
+        fn run_prompt(
+            &self,
+            _request: &PromptRun<'_>,
+            _cancel: &CancelToken,
+            _timeout: Duration,
+        ) -> Result<String, AgentError> {
+            Err(AgentError::Failed(
+                "a parked agent only takes turns".to_owned(),
+            ))
         }
     }
 

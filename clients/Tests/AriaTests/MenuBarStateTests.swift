@@ -18,15 +18,15 @@ final class MenuBarStateTests: XCTestCase {
         XCTAssertEqual(state(pill: .recording(since: epoch)), .listening)
         XCTAssertEqual(state(pill: .transcribing), .working)
         XCTAssertEqual(state(pill: .delivering), .working)
-        XCTAssertEqual(state(pill: .asking("claude · reading", since: epoch)), .working)
+        XCTAssertEqual(state(pill: .asking("reading", since: epoch)), .working)
         XCTAssertEqual(state(pill: .delivered(.inserted, words: 3)), .done)
         XCTAssertEqual(state(pill: .delivered(.copied, words: 3)), .done)
-        XCTAssertEqual(state(pill: .replied("claude")), .done)
+        XCTAssertEqual(state(pill: .replied(copied: false)), .done)
     }
 
     func test_aFailureNeedsThePerson() {
         XCTAssertEqual(state(pill: .failed("Dictation failed")), .attention)
-        XCTAssertEqual(state(pill: .noReply("claude")), .attention)
+        XCTAssertEqual(state(pill: .noReply), .attention)
     }
 
     func test_idleIsReady() {

@@ -14,20 +14,61 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 /// Registration is nonexclusive, so another app may receive the same chord.
 @MainActor
 final class GlobalShortcut {
+    private static var lastID: UInt32 = 0
+    private static var handler: EventHandlerRef?
+    /// Every registered shortcut, so recording a new chord can let them all
+    /// go: a registered chord fires before the Settings window sees the key.
+    private static var registered: [UInt32: GlobalShortcut] = [:]
+    private static var paused = false
+
+    private let id: UInt32
+    private var keyCode: UInt32 = 0
+    private var modifiers: UInt32 = 0
     private var hotKey: EventHotKeyRef?
-    private var handler: EventHandlerRef?
+
+    init() {
+        Self.lastID += 1
+        id = Self.lastID
+    }
 
     /// Replaces whatever was registered before, so a settings change lands
     /// without a restart. False when Carbon refuses the chord.
     @discardableResult
     func register(keyCode: UInt32, modifiers: UInt32, action: @escaping () -> Void) -> Bool {
         unregister()
-        installHandler()
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        pressActions[id] = action
+        Self.registered[id] = self
+        return Self.paused || take()
+    }
+
+    func unregister() {
+        release()
+        pressActions[id] = nil
+        Self.registered[id] = nil
+    }
+
+    static func pause(_ pausing: Bool) {
+        guard pausing != paused else { return }
+        paused = pausing
+        for shortcut in registered.values {
+            if pausing {
+                shortcut.release()
+            } else {
+                shortcut.take()
+            }
+        }
+    }
+
+    @discardableResult
+    private func take() -> Bool {
+        Self.installHandler()
         var reference: EventHotKeyRef?
         let status = RegisterEventHotKey(
             keyCode,
             modifiers,
-            EventHotKeyID(signature: ariaSignature, id: askShortcutID),
+            EventHotKeyID(signature: ariaSignature, id: id),
             GetEventDispatcherTarget(),
             0,
             &reference
@@ -37,21 +78,19 @@ final class GlobalShortcut {
             return false
         }
         hotKey = reference
-        pressAction = action
         return true
     }
 
-    func unregister() {
+    private func release() {
         if let hotKey {
             UnregisterEventHotKey(hotKey)
         }
         hotKey = nil
-        pressAction = nil
     }
 
-    /// The handler outlives each registration: it dispatches by hot key id,
-    /// so re-registering reuses it.
-    private func installHandler() {
+    /// One handler serves every shortcut and outlives each registration: it
+    /// dispatches by hot key id.
+    private static func installHandler() {
         guard handler == nil else { return }
         var pressedKind = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -68,16 +107,15 @@ final class GlobalShortcut {
     }
 }
 
-/// 'ARIA'. With the id below it separates this chord from one another
-/// framework in the process registered.
+/// 'ARIA'. With each shortcut's id it separates these chords from ones
+/// another framework in the process registered.
 private let ariaSignature = OSType(0x4152_4941)
-private let askShortcutID: UInt32 = 1
 
 /// The Carbon callback is a bare C function pointer and captures nothing, so
-/// what a press runs lives here. Only `GlobalShortcut` writes it and only
-/// this callback reads it, both on the main thread — Carbon dispatches
-/// nowhere else.
-nonisolated(unsafe) private var pressAction: (() -> Void)?
+/// what each press runs lives here, keyed by hot key id. Only
+/// `GlobalShortcut` writes it and only this callback reads it, both on the
+/// main thread — Carbon dispatches nowhere else.
+nonisolated(unsafe) private var pressActions: [UInt32: () -> Void] = [:]
 
 private func handleHotKey(
     _ call: EventHandlerCallRef?,
@@ -94,9 +132,9 @@ private func handleHotKey(
         nil,
         &pressed
     )
-    guard status == noErr, pressed.signature == ariaSignature, pressed.id == askShortcutID else {
+    guard status == noErr, pressed.signature == ariaSignature, let action = pressActions[pressed.id] else {
         return OSStatus(eventNotHandledErr)
     }
-    pressAction?()
+    action()
     return noErr
 }

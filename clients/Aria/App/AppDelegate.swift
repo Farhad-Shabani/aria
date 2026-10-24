@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import os
 
@@ -20,21 +21,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel = FloatingPanel(width: captionWidth, bottomMargin: captionBottomMargin)
     let status: StatusController
     private let ghost: GhostController
-    private let askHotkey: AskHotkeyController
+    let askHotkey: PressController
+    let promptHotkeys: PromptHotkeys
+    let promptList: PromptList
     private var caption = CaptionState()
     private var shownCommitted: String?
     private var shownProvisional: String?
     private var expiryTimer: Timer?
+    private var askChordChange: AnyCancellable?
 
     override init() {
-        status = StatusController(events: events)
+        promptHotkeys = PromptHotkeys(events: events)
+        promptList = PromptList(prompts: promptHotkeys)
+        status = StatusController(events: events, prompts: promptHotkeys)
         ghost = GhostController(events: events)
-        askHotkey = AskHotkeyController(events: events)
+        askHotkey = PressController(events: events, operation: .ask)
         super.init()
     }
 
-    func trackAskHotkey(_ preferences: DaemonPreferences) {
-        askHotkey.track(preferences)
+    /// A menu bar scene body sits idle while the menu is closed, so the
+    /// stored chords are watched rather than read through a SwiftUI
+    /// `onChange`.
+    func trackHotkeys(_ preferences: DaemonPreferences) {
+        askChordChange = preferences.$snapshot
+            .map { $0?.askHotkey.storedChord }
+            .sink { [weak self] chord in
+                Task { @MainActor in self?.askHotkey.chord.bind(chord) }
+            }
+        promptHotkeys.track(preferences)
+        promptList.track(preferences)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

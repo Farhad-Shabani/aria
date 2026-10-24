@@ -71,11 +71,13 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasOwnVoiceOnly { patch.ownVoiceOnly = ownVoiceOnly }
         if hasDictationHotkey { patch.dictationHotkey = dictationHotkey }
         if hasAskHotkey { patch.askHotkey = askHotkey }
+        if hasPromptListHotkey { patch.promptListHotkey = promptListHotkey }
         if hasProjectVocabulary { patch.projectVocabulary = projectVocabulary }
         if hasVocabularyDirectory { patch.vocabularyDirectory = vocabularyDirectory }
         if hasDictationHistory { patch.dictationHistory = dictationHistory }
         if hasHistoryAudioRetention { patch.historyAudioRetention = historyAudioRetention }
         if hasMuteOutput { patch.muteOutput = muteOutput }
+        if hasPrompts { patch.prompts = prompts }
         if hasApplicationOverrides { patch.applicationOverrides = applicationOverrides }
     }
 
@@ -87,6 +89,7 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasOwnVoiceOnly { preferences.ownVoiceOnly = ownVoiceOnly }
         if hasDictationHotkey { preferences.dictationHotkey = dictationHotkey }
         if hasAskHotkey { preferences.askHotkey = askHotkey }
+        if hasPromptListHotkey { preferences.promptListHotkey = promptListHotkey }
         if hasProjectVocabulary { preferences.projectVocabulary = projectVocabulary }
         if hasVocabularyDirectory {
             // Empty clears on the wire; the snapshot shows none.
@@ -99,6 +102,7 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasDictationHistory { preferences.dictationHistory = dictationHistory }
         if hasHistoryAudioRetention { preferences.historyAudioRetention = historyAudioRetention }
         if hasMuteOutput { preferences.muteOutput = muteOutput }
+        if hasPrompts { preferences.prompts = prompts }
         if hasApplicationOverrides { preferences.applicationOverrides = applicationOverrides }
     }
 }
