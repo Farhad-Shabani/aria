@@ -28,8 +28,8 @@ struct AriaApp: App {
                     .disabled(poller.state == .working)
                 }
                 .padding(8)
-                if let error = poller.lastError {
-                    Text(error)
+                if let failure = poller.failure {
+                    Text(failure.message)
                         .font(.caption)
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)

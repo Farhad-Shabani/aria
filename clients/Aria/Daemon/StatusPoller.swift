@@ -3,13 +3,43 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "StatusPoller")
 
+/// Why the last start or stop went wrong, in words a user can act on. The
+/// underlying error goes to the log.
+enum DaemonControlFailure: Equatable {
+    case start
+    case stop
+    case restart
+    case stillRunning
+    case unresponsive
+    case backgroundItemOff
+
+    /// Aria turned off in Login Items is the one start failure the user can
+    /// fix directly, so it gets its own message.
+    static func starting(_ error: any Error, otherwise failure: Self) -> Self {
+        if case DaemonClientError.agentDisabled = error { return .backgroundItemOff }
+        return failure
+    }
+
+    var message: String {
+        switch self {
+        case .start: "Aria couldn't start. Run aria doctor in Terminal to see why."
+        case .stop: "Aria couldn't stop. Run aria doctor in Terminal to see why."
+        case .restart: "Aria couldn't restart. Run aria doctor in Terminal to see why."
+        case .stillRunning: "Aria didn't stop in time."
+        case .unresponsive: "Aria started but didn't respond."
+        case .backgroundItemOff:
+            "Aria is off in the background. Turn it on in System Settings → General → Login Items."
+        }
+    }
+}
+
 /// Publishes daemon state for the menu bar. Polls every few seconds;
 /// `working` bridges the gap while a start/stop command is in flight so
 /// the UI can disable the toggle.
 @MainActor
 final class StatusPoller: ObservableObject {
     @Published private(set) var state: DaemonState = .stopped
-    @Published private(set) var lastError: String?
+    @Published private(set) var failure: DaemonControlFailure?
 
     private let client: any DaemonControlling
     /// How often a start or stop is checked for, up to 20 times.
@@ -39,7 +69,7 @@ final class StatusPoller: ObservableObject {
         let running = await client.isRunning()
         guard state != .working else { return }
         if running && state == .stopped {
-            lastError = nil
+            failure = nil
         }
         state = running ? .running : .stopped
     }
@@ -51,7 +81,7 @@ final class StatusPoller: ObservableObject {
             try await client.retireLegacyService()
         } catch {
             log.error("Retiring the legacy service failed: \(error.localizedDescription, privacy: .private)")
-            lastError = error.localizedDescription
+            failure = .start
             return
         }
         await pollOnce()
@@ -64,7 +94,7 @@ final class StatusPoller: ObservableObject {
         guard state != .working else { return }
         let shouldStart = state != .running
         state = .working
-        lastError = nil
+        failure = nil
         do {
             if shouldStart {
                 try await client.start()
@@ -77,7 +107,7 @@ final class StatusPoller: ObservableObject {
             log.error(
                 "Daemon \(shouldStart ? "start" : "stop", privacy: .public) failed: \(error.localizedDescription, privacy: .private)"
             )
-            lastError = error.localizedDescription
+            failure = shouldStart ? .starting(error, otherwise: .start) : .stop
             let running = await client.isRunning()
             state = running ? .running : .stopped
         }
@@ -101,27 +131,28 @@ final class StatusPoller: ObservableObject {
     func restart(whileStopped: () throws -> Void = {}) async throws {
         guard state != .working else { throw RestartFailure.busy }
         state = .working
-        lastError = nil
+        failure = nil
         if await !client.hasExited() {
             do {
                 try await client.stop()
             } catch {
                 log.error("Daemon stop before restart failed: \(error.localizedDescription, privacy: .private)")
-                lastError = error.localizedDescription
+                failure = .restart
             }
         }
         guard await awaitExit() else {
+            failure = .stillRunning
             state = await client.isRunning() ? .running : .stopped
             throw RestartFailure.stillRunning
         }
         let stopped = Result { try whileStopped() }
         do {
             try await client.start()
-            lastError = nil
+            failure = nil
             state = await awaitRunning() ? .running : .stopped
         } catch {
             log.error("Daemon start after restart failed: \(error.localizedDescription, privacy: .private)")
-            lastError = error.localizedDescription
+            failure = .starting(error, otherwise: .restart)
             state = await client.isRunning() ? .running : .stopped
         }
         try stopped.get()
@@ -143,7 +174,7 @@ final class StatusPoller: ObservableObject {
             try? await Task.sleep(for: probeInterval)
         }
         log.error("Daemon launched but its socket never accepted")
-        lastError = "Aria started but didn't respond."
+        failure = .unresponsive
         return false
     }
 }

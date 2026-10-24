@@ -52,8 +52,8 @@ struct PhoneSettings: View {
     @ViewBuilder
     private var problems: some View {
         switch pairing.status {
-        case .failed(let message):
-            Text(message).foregroundStyle(.red)
+        case .failed:
+            Text("Aria couldn't make a pairing code. Run aria doctor in Terminal to see why.").foregroundStyle(.red)
         case .loading, .restarting, .relayOff, .daemonOff, .live:
             EmptyView()
         }

@@ -26,7 +26,7 @@ final class PhonePairing: ObservableObject {
         case loading
         case relayOff
         case daemonOff
-        case failed(String)
+        case failed
         case live(PairingInvite, expiresAt: Date)
         case restarting
     }
@@ -100,12 +100,12 @@ final class PhonePairing: ObservableObject {
 
     /// The daemon registers IssueInvite only while the relay runs, so
     /// unimplemented means the relay is off. Unavailable means the daemon is
-    /// not listening at all.
+    /// not listening at all. Any other error is logged, not shown.
     nonisolated static func status(for error: any Error) -> Status {
         switch (error as? RPCError)?.code {
         case .unimplemented: return .relayOff
         case .unavailable: return .daemonOff
-        default: return .failed(error.localizedDescription)
+        default: return .failed
         }
     }
 
@@ -131,7 +131,7 @@ final class PhonePairing: ObservableObject {
             log.error(
                 "Turning phone pairing \(on ? "on" : "off", privacy: .public) failed: \(error.localizedDescription, privacy: .private)"
             )
-            actionError = "Phone pairing could not be turned \(on ? "on" : "off"): \(error.localizedDescription)"
+            actionError = "Phone pairing could not be turned \(on ? "on" : "off")."
             status = .loading
             await poll()
             return
@@ -155,9 +155,12 @@ final class PhonePairing: ObservableObject {
         do {
             try await poller.restart(whileStopped: daemon.removePairingFile)
             actionError = nil
+        } catch let failure as StatusPoller.RestartFailure {
+            log.error("Revoking phones failed: \(failure.localizedDescription, privacy: .private)")
+            actionError = "Phones could not be revoked: \(failure.localizedDescription)"
         } catch {
             log.error("Revoking phones failed: \(error.localizedDescription, privacy: .private)")
-            actionError = "Phones could not be revoked: \(error.localizedDescription)"
+            actionError = "Phones could not be revoked."
         }
         status = .loading
         await poll()
