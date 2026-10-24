@@ -220,7 +220,6 @@ _swift-stubs out: _swift-plugins
         --grpc-swift-2_opt=Visibility=Public,Client=true,Server=false,FileNaming=DropPath \
         proto/aria/daemon/v1/daemon.proto \
         proto/aria/daemon/v1/errors.proto \
-        proto/aria/daemon/v1/inference.proto \
         proto/aria/daemon/v1/relay.proto \
         proto/aria/daemon/v1/speech.proto \
         proto/aria/setup/v1/setup.proto \
