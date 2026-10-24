@@ -34,13 +34,10 @@ struct DictationSettings: View {
     }
 
     private func delivery(_ editor: PreferencesEditor) -> some View {
-        Picker(selection: editor.binding(\.deliveryMode, \.deliveryMode)) {
+        Picker("Deliver", selection: editor.binding(\.deliveryMode, \.deliveryMode)) {
             ForEach(DictationEdits.deliveryModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
-        } label: {
-            Text("Deliver")
-            Text("Same switch as Show Captions in the menu bar.")
         }
         .disabled(DictationEdits.locksDelivery(editor.snapshot.outputMode))
     }

@@ -70,9 +70,9 @@ For example, “meet me at 3, actually 4” can become “meet me at 4”.
 This handles only simple, unambiguous corrections within a clause. More complex
 corrections stay as spoken.
 
-Corrections apply to the completed transcript. For Mac hotkey dictation,
-enable **Show Captions** to deliver after stopping. Live insertion cannot
-retract earlier text, so it keeps the original words and correction cue.
+Corrections apply to the completed transcript. For Mac hotkey dictation, set
+**Settings → Dictation → Deliver** to **After recording stops**. Live insertion
+cannot retract earlier text, so it keeps the original words and correction cue.
 
 For names Aria regularly spells differently, try [Project vocabulary](./project-spellings.md).
 If recording fails, use [Troubleshooting](./troubleshooting.md).

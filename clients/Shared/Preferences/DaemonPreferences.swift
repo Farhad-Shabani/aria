@@ -6,9 +6,6 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 
 /// Synchronizes daemon preferences through one revision and pending patch.
 /// The transport decides which daemon and over what; this class does not.
-///
-/// The Mac passes a UserDefaults key so its overlay keeps the captions choice
-/// while the daemon is unavailable; the phone passes none.
 @MainActor
 final class DaemonPreferences: ObservableObject {
     enum UpdateError: LocalizedError {
@@ -23,31 +20,23 @@ final class DaemonPreferences: ObservableObject {
         }
     }
 
-    @Published private(set) var captionsEnabled: Bool
     /// Nil until the daemon answers.
     @Published private(set) var snapshot: Aria_Daemon_V1_UserPreferences?
     /// The last failed sync or push; cleared by the next one that succeeds.
     @Published private(set) var lastError: (any Error)?
 
     private let transport: any PreferencesTransport
-    private let captionsDefaultsKey: String?
     private var revision: UInt64?
     /// Changes the daemon has not accepted yet; the next sync pushes them.
     private var pending = Aria_Daemon_V1_PreferencePatch()
     private var pushing = false
 
-    init(transport: any PreferencesTransport, captionsDefaultsKey: String? = nil) {
+    init(transport: any PreferencesTransport) {
         self.transport = transport
-        self.captionsDefaultsKey = captionsDefaultsKey
-        captionsEnabled = captionsDefaultsKey.map { UserDefaults.standard.bool(forKey: $0) } ?? false
     }
 
     var historyEnabled: Bool {
         snapshot?.dictationHistory ?? true
-    }
-
-    var deliveryLocked: Bool {
-        snapshot.map { DictationEdits.locksDelivery($0.outputMode) } ?? false
     }
 
     func sync() async {
@@ -76,10 +65,7 @@ final class DaemonPreferences: ObservableObject {
         edit(&pending)
         if var shown = snapshot {
             pending.apply(to: &shown)
-            show(shown)
-        } else if pending.hasDeliveryMode {
-            // Offline, the captions choice must still move the overlay.
-            showCaptions(pending.deliveryMode == .complete)
+            snapshot = shown
         }
         await push()
     }
@@ -89,19 +75,7 @@ final class DaemonPreferences: ObservableObject {
     private func adopt(_ accepted: Aria_Daemon_V1_UserPreferences) {
         var shown = accepted
         pending.apply(to: &shown)
-        show(shown)
-    }
-
-    private func show(_ preferences: Aria_Daemon_V1_UserPreferences) {
-        snapshot = preferences
-        showCaptions(preferences.deliveryMode == .complete)
-    }
-
-    private func showCaptions(_ on: Bool) {
-        captionsEnabled = on
-        if let captionsDefaultsKey {
-            UserDefaults.standard.set(on, forKey: captionsDefaultsKey)
-        }
+        snapshot = shown
     }
 
     /// A status that says the daemon will never take this push as sent, as

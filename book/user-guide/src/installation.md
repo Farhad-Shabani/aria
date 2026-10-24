@@ -23,12 +23,12 @@ Without Homebrew:
 1. Download [Aria.dmg](https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg).
 2. Open it and drag **Aria** to **Applications**.
 3. Open Aria from Applications. It appears in the menu bar and opens its setup
-   window. **Express Setup** uses the defaults; **Customize…** lets you choose
-   engines and models.
+   window. **Continue** uses the defaults; **Customize…** lets you choose engines
+   and models.
 
 When setup finishes, Aria asks for your password to add the `aria` command to
-the terminal. Skip it if you only use the menu bar app. **Set Up Aria…** in
-the menu asks again later.
+the terminal. Skip it if you only use the menu bar app. **Aria Setup** in
+**Settings → General** asks again later.
 
 If you can't enter an administrator password, add this line to `~/.zshrc`
 instead:
@@ -109,7 +109,7 @@ model again if you choose its engine later.
 
 On a Mac, Aria offers new releases itself. Choose **Check for Updates…** from
 its menu to check now, or set automatic checks and installs in
-**Settings → General**. With Homebrew, run `brew upgrade --cask --greedy aria`,
+**Settings → About**. With Homebrew, run `brew upgrade --cask --greedy aria`,
 because Aria updates itself and a plain `brew upgrade` skips it.
 
 To remove Aria from a Mac, quit it and move it to the Trash, or run

@@ -1,12 +1,15 @@
 import SwiftUI
 
 struct GeneralSettings: View {
-    @ObservedObject var updates: UpdateController
+    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var setup: SetupStatus
     @StateObject private var loginItem = LoginItem()
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.enabledByDefault
     @AppStorage(GhostController.enabledKey)
     private var ghostTextEnabled = GhostController.enabledByDefault
+    @AppStorage(AppDelegate.captionsEnabledKey)
+    private var captionsEnabled = AppDelegate.captionsEnabledByDefault
 
     var body: some View {
         Form {
@@ -22,24 +25,26 @@ struct GeneralSettings: View {
                     Text("Show inline preview")
                     Text("Words Aria hasn't typed yet appear faintly at the cursor.")
                 }
+                Toggle(isOn: $captionsEnabled) {
+                    Text("Show captions")
+                    Text("What Aria hears appears in a panel while you speak.")
+                }
             }
-            Section("Updates") {
-                Toggle(
-                    "Automatically check for updates",
-                    isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })
-                )
-                Toggle(
-                    "Automatically download and install",
-                    isOn: Binding(get: { updates.installsAutomatically }, set: { updates.setInstallsAutomatically($0) })
-                )
-                .disabled(!updates.checksAutomatically)
+            Section {
                 LabeledContent {
-                    Button("Check for Updates…") { updates.checkForUpdates() }
-                        .disabled(!updates.canCheck)
+                    if setup.required.isEmpty {
+                        Button("Open…") { openWindow(id: WindowID.setup) }
+                    } else {
+                        Button("Finish Setup…") { openWindow(id: WindowID.setup) }
+                            .buttonStyle(.borderedProminent)
+                    }
                 } label: {
-                    Text(Bundle.main.displayName)
-                    if let version = Bundle.main.shortVersion {
-                        Text("Version \(version)")
+                    // One branch per line count, so the row stays centered.
+                    if let reason = setup.reason {
+                        Text("Aria Setup")
+                        Text(reason)
+                    } else {
+                        Text("Aria Setup")
                     }
                 }
             }

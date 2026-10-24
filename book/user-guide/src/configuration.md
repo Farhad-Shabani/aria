@@ -11,7 +11,7 @@ App preference changes apply immediately; file changes require a restart.
 Open **Settings…** from Aria's menu. The sidebar lists these pages:
 
 - **General** controls launch at login, the status pill, the inline preview,
-  and update checks.
+  and captions. It also reopens setup.
 - **Dictation** sets output, delivery, muting while recording, and the
   silence that ends dictation.
 - **Recognition** sets the language, voice filtering, and project vocabulary.
@@ -21,6 +21,7 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   each with its own shortcut. See [Prompts](./prompts.md).
 - **Privacy** controls dictation history and retained audio.
 - **Phone** pairs Aria for iPhone.
+- **About** shows the version and checks for updates.
 
 The language picker offers English, the default, and automatic detection.
 These choices still depend on the selected model's supported languages.

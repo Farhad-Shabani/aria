@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AboutSettings: View {
+    @ObservedObject var updates: UpdateController
     private static let legal = "https://github.com/Farhad-Shabani/aria/blob/main/legal/"
     private let licenses = Bundle.main.resourceURL?.appending(path: "Licenses")
 
@@ -16,9 +17,22 @@ struct AboutSettings: View {
                     if let copyright = Bundle.main.copyright {
                         Text(copyright).font(.caption).foregroundStyle(.secondary)
                     }
+                    Button("Check for Updates…") { updates.checkForUpdates() }
+                        .disabled(!updates.canCheck)
+                        .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+            }
+            Section {
+                Toggle(
+                    "Automatically check for updates",
+                    isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })
+                )
+                Toggle(
+                    "Automatically download and install",
+                    isOn: Binding(get: { updates.installsAutomatically }, set: { updates.setInstallsAutomatically($0) })
+                )
+                .disabled(!updates.checksAutomatically)
             }
             Section {
                 if let url = URL(string: Self.legal + "privacy-policy.md") {
