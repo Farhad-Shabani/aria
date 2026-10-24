@@ -23,8 +23,8 @@ Without Homebrew:
 1. Download [Aria.dmg](https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg).
 2. Open it and drag **Aria** to **Applications**.
 3. Open Aria from Applications. It appears in the menu bar and opens its setup
-   window. **Express Setup** uses the defaults; **Customize…** lets you choose
-   engines and models.
+   window. **Continue** uses the defaults; **Customize…** lets you choose engines
+   and models.
 
 When setup finishes, Aria asks for your password to add the `aria` command to
 the terminal. Skip it if you only use the menu bar app. **Aria Setup** in

@@ -87,7 +87,7 @@ struct SetupView: View {
             }
             Button("Customize…") { state.next() }
                 .disabled(state.step == .inspecting)
-            Button("Express Setup") { state.express() }
+            Button("Continue") { state.express() }
                 .primaryAction()
                 .disabled(state.step == .inspecting || state.blockedBy != nil)
         case .choices:

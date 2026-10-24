@@ -31,7 +31,7 @@ struct WelcomePage: View {
             }
         } header: {
             if !plan.isEmpty {
-                Text("Express Setup downloads")
+                Text("Downloads")
             }
         } footer: {
             DownloadFooter(total: SetupState.total(plan), notes: state.selfFetchingNotes)
