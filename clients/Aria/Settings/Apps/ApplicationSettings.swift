@@ -5,14 +5,16 @@ struct ApplicationSettings: View {
     let bundleID: String
     let preferences: DaemonPreferences
 
+    /// Looked up once per app, not on every preference change.
+    @State private var app: InstalledApp?
+
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
             let apps = editor.snapshot.applicationOverrides
             if let overrides = ApplicationOverrideEdits.overrides(for: bundleID, in: apps) {
-                let app = InstalledApp(bundleID: bundleID)
                 let excluded = ApplicationOverrideEdits.isExcluded(bundleID, in: apps)
-                ItemPage(title: app.name) {
-                    Image(nsImage: app.icon)
+                ItemPage(title: app?.name ?? "") {
+                    Image(nsImage: app?.icon ?? NSImage())
                         .resizable()
                         .frame(width: SettingsMetrics.headerIconSide, height: SettingsMetrics.headerIconSide)
                 } content: {
@@ -29,6 +31,7 @@ struct ApplicationSettings: View {
                 }
             }
         }
+        .task(id: bundleID) { app = InstalledApp(bundleID: bundleID) }
     }
 
     private func turnedOff(_ excluded: Bool, _ editor: PreferencesEditor) -> Binding<Bool> {

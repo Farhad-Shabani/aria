@@ -24,21 +24,7 @@ struct AppsSettings: View {
                 },
                 open: open
             ) { entry in
-                row(entry)
-            }
-        }
-    }
-
-    private func row(_ entry: Aria_Daemon_V1_ApplicationOverride) -> some View {
-        let app = InstalledApp(bundleID: entry.applicationID)
-        return HStack {
-            Image(nsImage: app.icon)
-                .resizable()
-                .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
-            Text(app.name)
-            if entry.excluded {
-                Spacer()
-                Text("Off").foregroundStyle(.secondary)
+                AppRow(bundleID: entry.applicationID, excluded: entry.excluded)
             }
         }
     }
@@ -49,5 +35,28 @@ struct AppsSettings: View {
             ApplicationOverrideEdits.add(bundleID, to: &$0)
         }
         open(bundleID)
+    }
+}
+
+/// Looks its app up once per bundle ID: the lookup reads the disk, and the
+/// list redraws on every preference change.
+private struct AppRow: View {
+    let bundleID: String
+    let excluded: Bool
+
+    @State private var app: InstalledApp?
+
+    var body: some View {
+        HStack {
+            Image(nsImage: app?.icon ?? NSImage())
+                .resizable()
+                .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
+            Text(app?.name ?? "")
+            if excluded {
+                Spacer()
+                Text("Off").foregroundStyle(.secondary)
+            }
+        }
+        .task(id: bundleID) { app = InstalledApp(bundleID: bundleID) }
     }
 }
