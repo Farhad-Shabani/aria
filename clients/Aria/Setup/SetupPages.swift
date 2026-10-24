@@ -153,6 +153,7 @@ struct InstallingPage: View {
                     } label: {
                         Text(row.title).foregroundStyle(row.progress == .pending ? .secondary : .primary)
                     }
+                    .accessibilityValue(spoken(row.progress))
                     if row.step == .models {
                         ForEach(state.downloadProgress.keys.sorted(), id: \.self) { model in
                             if let progress = state.downloadProgress[model] { bar(model, progress) }
@@ -171,6 +172,15 @@ struct InstallingPage: View {
             ProgressView().controlSize(.small)
         case .done:
             StatusMark(status: .done)
+        }
+    }
+
+    /// The mark is hidden from VoiceOver, so the row says its progress.
+    private func spoken(_ progress: SetupState.InstallRow.Progress) -> String {
+        switch progress {
+        case .pending: "Not started"
+        case .running: "In progress"
+        case .done: "Done"
         }
     }
 
