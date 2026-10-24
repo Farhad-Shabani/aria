@@ -1,9 +1,8 @@
-use crate::daemon::inference::{
+use crate::inference::{
     Event, Info, MAX_AUDIO_SAMPLES, MAX_ENGINE_NAME_BYTES, MAX_TEXT_BYTES, Start, Strategy,
-    Transcript, identity,
+    Transcript,
 };
 use crate::ipc::wire;
-use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::transcription::{TranscriptSegment, TranscriptUpdate};
 
 use super::ProtocolError;
@@ -204,42 +203,6 @@ impl TryFrom<wire::InferenceResponse> for Event {
 
 fn valid_engine(engine: &str) -> bool {
     !engine.is_empty() && engine.len() <= MAX_ENGINE_NAME_BYTES
-}
-
-impl From<identity::Error> for RpcFailure {
-    fn from(error: identity::Error) -> Self {
-        use identity::Error;
-        let (code, message) = match error {
-            Error::RevokeUnconfirmed(_) => (
-                RpcErrorCode::DurabilityUnconfirmed,
-                "client denied for this process; revocation durability is unconfirmed",
-            ),
-            Error::DurabilityUnconfirmed(_) => (
-                RpcErrorCode::DurabilityUnconfirmed,
-                "trust was written but durability is unconfirmed",
-            ),
-            Error::InvalidInvitation | Error::InvalidEndpoint => (
-                RpcErrorCode::InvalidRequest,
-                "invalid remote invitation or endpoint",
-            ),
-            Error::Unauthenticated | Error::Unpaired => (
-                RpcErrorCode::Unauthenticated,
-                "remote identity is not authorized",
-            ),
-            Error::Full => (
-                RpcErrorCode::PermissionDenied,
-                "client enrollment limit reached",
-            ),
-            Error::Busy => (RpcErrorCode::Busy, "inference is busy"),
-            Error::Stopped => (RpcErrorCode::ShuttingDown, "inference host is stopping"),
-            Error::Document(_)
-            | Error::InvalidIdentity
-            | Error::Certificate(_)
-            | Error::Invite(_)
-            | Error::Tls(_) => (RpcErrorCode::Internal, "remote identity operation failed"),
-        };
-        Self::new(code, message)
-    }
 }
 
 #[cfg(test)]

@@ -19,9 +19,9 @@ use crate::transcription::{
 };
 use aria_kit::transcription::check_cancelled;
 
-use super::{
-    Event, Info, MAX_AUDIO_SECONDS, MAX_TEXT_BYTES, OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, Start,
-    Strategy, Transcript,
+use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT};
+use crate::inference::{
+    Event, Info, MAX_AUDIO_SECONDS, MAX_TEXT_BYTES, Start, Strategy, Transcript,
 };
 
 pub(in crate::daemon) struct Engine {

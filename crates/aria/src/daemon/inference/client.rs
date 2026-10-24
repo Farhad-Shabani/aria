@@ -12,13 +12,13 @@ use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
 use tonic::transport::{Channel, Endpoint};
 
 use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
-use super::{
-    Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES, MAX_TEXT_BYTES,
-    OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, Start, Strategy,
-    Transcript, tls,
-};
+use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, tls};
 use crate::config::{Environment, ServerEndpoint};
 use crate::daemon::relay::{from_hex, to_hex};
+use crate::inference::{
+    Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES, MAX_TEXT_BYTES, Start,
+    Strategy, Transcript,
+};
 use crate::ipc::{protocol, wire};
 use crate::primitives::local_socket::ExclusiveListener;
 use crate::primitives::private_fs::prepare_directory;

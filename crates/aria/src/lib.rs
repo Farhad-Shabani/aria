@@ -15,6 +15,7 @@ pub(crate) mod event;
 pub(crate) mod feedback;
 pub mod history;
 pub(crate) mod hotkey;
+pub(crate) mod inference;
 pub(crate) mod ipc;
 pub mod listen;
 pub mod memory;

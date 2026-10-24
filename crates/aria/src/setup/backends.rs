@@ -4,7 +4,6 @@ use std::env;
 use std::path::Path;
 
 use crate::config::{FileConfig, ServerEndpoint, backend, chat_agent, tts_backend};
-use crate::daemon::inference;
 use crate::primitives::file_inspection::InspectedFile;
 
 use super::assets::{self, Asset};
@@ -76,7 +75,7 @@ pub(super) fn stt_choices(file: &FileConfig, home: &Path, host: &Host) -> Vec<Ch
         .server
         .as_deref()
         .and_then(ServerEndpoint::parse)
-        .is_some_and(|endpoint| inference::is_paired(home, &endpoint));
+        .is_some_and(|endpoint| crate::daemon::is_paired_with_server(home, &endpoint));
     if paired
         && let Some(server) = choices
             .iter_mut()
@@ -354,7 +353,7 @@ mod tests {
                 .availability
         };
         assert!(matches!(available(&file), Availability::Missing { .. }));
-        let path = inference::Paths::in_home(home.path()).client_identity();
+        let path = home.path().join(".aria/inference/client.json");
         assert!(!path.exists());
 
         let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();

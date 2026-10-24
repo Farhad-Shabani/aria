@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::ServerEndpoint;
-use crate::daemon::relay::{PairingCodes, PairingError, fingerprint, mint};
+use crate::daemon::relay::{PairingCode, PairingCodes, PairingError, fingerprint, mint};
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
+use crate::rpc::{RpcErrorCode, RpcFailure};
 
 pub(super) const MAX_DOCUMENT_BYTES: u64 = 16 * 1024;
 const MAX_CLIENTS: usize = 16;
@@ -29,12 +30,7 @@ pub(crate) struct Invitation {
 impl Invitation {
     pub(super) fn validate(&self) -> Result<(), Error> {
         validate_pin(&self.certificate_pem, &self.fingerprint)?;
-        if self.code.len() != 32
-            || !self
-                .code
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
+        if !PairingCode::is_well_formed(&self.code) {
             return Err(Error::InvalidInvitation);
         }
         Ok(())
@@ -431,6 +427,41 @@ pub(crate) enum Error {
     Invite(#[from] PairingError),
     #[error("the remote TLS identity is not usable")]
     Tls(#[from] super::tls::Error),
+}
+
+impl From<Error> for RpcFailure {
+    fn from(error: Error) -> Self {
+        let (code, message) = match error {
+            Error::RevokeUnconfirmed(_) => (
+                RpcErrorCode::DurabilityUnconfirmed,
+                "client denied for this process; revocation durability is unconfirmed",
+            ),
+            Error::DurabilityUnconfirmed(_) => (
+                RpcErrorCode::DurabilityUnconfirmed,
+                "trust was written but durability is unconfirmed",
+            ),
+            Error::InvalidInvitation | Error::InvalidEndpoint => (
+                RpcErrorCode::InvalidRequest,
+                "invalid remote invitation or endpoint",
+            ),
+            Error::Unauthenticated | Error::Unpaired => (
+                RpcErrorCode::Unauthenticated,
+                "remote identity is not authorized",
+            ),
+            Error::Full => (
+                RpcErrorCode::PermissionDenied,
+                "client enrollment limit reached",
+            ),
+            Error::Busy => (RpcErrorCode::Busy, "inference is busy"),
+            Error::Stopped => (RpcErrorCode::ShuttingDown, "inference host is stopping"),
+            Error::Document(_)
+            | Error::InvalidIdentity
+            | Error::Certificate(_)
+            | Error::Invite(_)
+            | Error::Tls(_) => (RpcErrorCode::Internal, "remote identity operation failed"),
+        };
+        Self::new(code, message)
+    }
 }
 
 #[cfg(test)]

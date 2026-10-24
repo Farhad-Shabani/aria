@@ -33,7 +33,8 @@ use crate::transcription::TranscriptionError;
 
 use super::engine::Engine;
 use super::identity::{self, ServerIdentity};
-use super::{MAX_AUDIO_MESSAGE_BYTES, MAX_RESPONSE_BYTES, Paths, tls};
+use super::{Paths, tls};
+use crate::inference::{MAX_AUDIO_MESSAGE_BYTES, MAX_RESPONSE_BYTES};
 
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const CONNECTION_DRAIN: Duration = Duration::from_secs(4);

@@ -15,11 +15,9 @@ use tonic::{Request, Response, Status};
 use crate::config::ServerEndpoint;
 use crate::daemon::inference::engine::{Engine, Input};
 use crate::daemon::inference::identity::{self, Admission, ServerIdentity};
-use crate::daemon::inference::{
-    Event, IDLE_INPUT_TIMEOUT, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, OVERALL_TIMEOUT,
-    QUEUE_CAPACITY, Start, Transcript,
-};
+use crate::daemon::inference::{IDLE_INPUT_TIMEOUT, OVERALL_TIMEOUT, QUEUE_CAPACITY};
 use crate::daemon::relay::presented;
+use crate::inference::{Event, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, Start, Transcript};
 use crate::ipc::wire;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
@@ -578,7 +576,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let (mut reader, writer) = crate::audio::Recording::open_spooled(
             directory.path(),
-            Duration::from_secs(crate::daemon::inference::MAX_AUDIO_SECONDS),
+            Duration::from_secs(crate::inference::MAX_AUDIO_SECONDS),
         )
         .unwrap();
         let mut requests = tokio_stream::iter([
