@@ -69,6 +69,19 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The items created on one calendar day.
+struct HistoryDay: Equatable {
+    let start: Date
+    let items: [HistoryItem]
+
+    /// Newest day first; items keep their order within a day.
+    static func grouping(_ items: [HistoryItem], calendar: Calendar = .current) -> [HistoryDay] {
+        Dictionary(grouping: items) { calendar.startOfDay(for: $0.created) }
+            .sorted { $0.key > $1.key }
+            .map { HistoryDay(start: $0.key, items: $0.value) }
+    }
+}
+
 struct HistoryPage: Sendable {
     var items: [HistoryItem]
     var next: UInt64?
@@ -115,7 +128,10 @@ final class DictationHistoryState: ObservableObject {
         var waitForRetry: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
     }
 
-    @Published private(set) var items: [HistoryItem] = []
+    @Published private(set) var items: [HistoryItem] = [] {
+        didSet { days = HistoryDay.grouping(items) }
+    }
+    @Published private(set) var days: [HistoryDay] = []
     @Published private(set) var selectedID: UInt64?
     @Published private(set) var detail: HistoryItem?
     @Published private(set) var loading = false
