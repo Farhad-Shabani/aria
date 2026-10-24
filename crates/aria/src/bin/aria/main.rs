@@ -1945,7 +1945,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remote_pair_accepts_no_secret_argument_and_limits_stdin() {
+    fn remote_pair_takes_no_secret_argument_and_serve_needs_an_address() {
         assert!(Cli::try_parse_from(["aria", "remote", "pair"]).is_ok());
         assert!(Cli::try_parse_from(["aria", "remote", "pair", "secret"]).is_err());
         assert!(Cli::try_parse_from(["aria", "serve"]).is_err());

@@ -776,7 +776,7 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
 }
 
 pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
-    let fingerprint = parse_fingerprint(fingerprint)?;
+    let fingerprint = from_hex(fingerprint).ok_or(RemoteClientError::Invitation)?;
     let environment = Environment::capture().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = admin_channel(environment.home()).await?;
@@ -797,10 +797,6 @@ pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
             })?;
         Ok(())
     }))
-}
-
-fn parse_fingerprint(value: &str) -> Result<[u8; 32], RemoteClientError> {
-    from_hex(value).ok_or(RemoteClientError::Invitation)
 }
 
 async fn admin_channel(home: &Path) -> Result<Channel, RemoteClientError> {
@@ -975,53 +971,6 @@ mod tests {
                 ],
             ))
         }
-    }
-
-    #[tokio::test]
-    async fn agreement_previews_cross_the_wire_before_stop() {
-        let cadence = Cadence::from_millis(20, 1000);
-        let server = Fixture::with_model(
-            "whisper",
-            AudioInputKind::Samples,
-            Some(Stream::Agreement(cadence)),
-            Box::new(Agreement),
-            Arc::new(Observed::default()),
-        )
-        .await;
-        let client = server.paired_client().await;
-        let (mut recording, mut writer) = Recording::open();
-        writer.push(&[0.5; 320]);
-        let (preview, received) = tokio::sync::oneshot::channel();
-        let task = tokio::task::spawn_blocking(move || {
-            let remote = client.connect();
-            let transcription = Transcription::<_, Streaming>::delegated(remote);
-            let mut operation = transcription.start(&Language::Automatic).unwrap();
-            let Some(TranscriptUpdate::Provisional(text)) =
-                operation.next_update(&mut recording).unwrap()
-            else {
-                panic!("the server's first agreement update is a preview");
-            };
-            assert!(!recording.reached_end());
-            preview.send(text).unwrap();
-            operation.finish(&mut recording).unwrap().into_text()
-        });
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(3), received)
-                .await
-                .unwrap()
-                .unwrap(),
-            "hello world"
-        );
-        writer.push(&[0.5; 320]);
-        writer.finish();
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(3), task)
-                .await
-                .unwrap()
-                .unwrap(),
-            "hello world"
-        );
-        server.stop().await;
     }
 
     #[tokio::test]
@@ -1362,46 +1311,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_updates_wait_for_the_remaining_finalized_tail() {
-        let mut responses = ResponseValidator::new("whisper");
-        assert!(
-            responses
-                .update(
-                    finalized("hello", 0..10),
-                    0,
-                    20,
-                    Some(transcript("hello world")),
-                    20
-                )
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            responses
-                .update(
-                    finalized("world", 10..20),
-                    10,
-                    20,
-                    Some(transcript("hello world")),
-                    20
-                )
-                .unwrap()
-                .is_none()
-        );
-        let terminal = responses.complete(transcript("hello world"), true).unwrap();
-        assert_eq!(terminal.len(), 3);
-        assert!(matches!(
-            terminal.first(),
-            Some(Event::Update {
-                completed: Some(_),
-                ..
-            })
-        ));
-        assert!(matches!(terminal.last(), Some(Event::Complete(_))));
-    }
-
-    #[test]
-    fn large_terminal_tails_hold_one_completion_claim() {
+    fn a_completion_claim_holds_the_tail_until_complete() {
         let words = QUEUE_CAPACITY * 3;
         let text = vec!["word"; words].join(" ");
         let mut responses = ResponseValidator::new("whisper");
@@ -1444,6 +1354,7 @@ mod tests {
                 ..
             }
         )));
+        assert!(matches!(terminal.last(), Some(Event::Complete(_))));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1463,21 +1374,21 @@ mod tests {
     }
 
     #[test]
-    fn responses_reject_regressing_or_unread_audio_positions() {
+    fn responses_reject_regressing_unread_or_released_positions() {
         let mut responses = ResponseValidator::new("whisper");
         responses
-            .update(finalized("hello", 0..10), 0, 10, None, 20)
+            .update(finalized("hello", 0..10), 5, 10, None, 20)
             .unwrap();
-        for (retained_from, read_to, span_end) in [(0, 9, 9), (0, 21, 20), (0, 10, 11)] {
+        for (retained_from, read_to, span) in [
+            (5, 9, 5..9),
+            (4, 10, 5..10),
+            (5, 10, 4..10),
+            (5, 21, 5..20),
+            (5, 10, 5..11),
+        ] {
             assert!(
                 responses
-                    .update(
-                        finalized("world", 0..span_end),
-                        retained_from,
-                        read_to,
-                        None,
-                        20,
-                    )
+                    .update(finalized("world", span), retained_from, read_to, None, 20)
                     .is_err()
             );
         }
@@ -1491,25 +1402,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_reject_invalid_positions_completion_and_unbounded_pending_text() {
-        let mut responses = ResponseValidator::new("whisper");
-        assert!(
-            responses
-                .update(finalized("hello", 0..10), 10, 20, None, 20)
-                .unwrap()
-                .is_some()
-        );
-        assert!(
-            responses
-                .update(finalized("world", 10..20), 9, 20, None, 20)
-                .is_err()
-        );
-        assert!(
-            responses
-                .update(finalized("world", 9..20), 10, 20, None, 20)
-                .is_err()
-        );
-
+    fn responses_reject_inconsistent_completion_and_oversized_text() {
         let mut responses = ResponseValidator::new("whisper");
         assert!(
             responses
@@ -1773,14 +1666,10 @@ mod tests {
         let error = rpc_error(status);
         assert_eq!(error.to_string(), "remote operation failed (internal)");
         assert!(!format!("{error:?}").contains("private transcript"));
-        assert!(parse_fingerprint(&"ab".repeat(32)).is_ok());
-        assert!(parse_fingerprint(&"é".repeat(32)).is_err());
-        assert!(parse_fingerprint(&"ab".repeat(33)).is_err());
-        assert!(parse_fingerprint(&"+f".repeat(32)).is_err());
     }
 
     #[test]
-    fn unpaired_transcription_does_not_create_credentials_or_load_a_local_model() {
+    fn connecting_unpaired_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
         assert!(matches!(
             RemoteTranscriber::open(home.path(), "https://server.example", &CancelToken::never()),

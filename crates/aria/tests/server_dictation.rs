@@ -33,11 +33,10 @@ fn run(sandbox: &Sandbox, command: &mut Command, input: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+#[ignore = "requires ARIA_TEST_WHISPER_MODEL and real native inference"]
 fn desktop_dictates_through_a_server_without_local_stt() {
-    let Some(model) = std::env::var_os("ARIA_TEST_WHISPER_MODEL") else {
-        eprintln!("set ARIA_TEST_WHISPER_MODEL to exercise real server inference");
-        return;
-    };
+    let model = std::env::var_os("ARIA_TEST_WHISPER_MODEL")
+        .expect("set ARIA_TEST_WHISPER_MODEL to the test model");
     let model = aria_harness::yaml_string(&Path::new(&model).display().to_string()).unwrap();
     let server = Sandbox::create(&format!(
         "transcription:\n  backend: whisper\n  model: {model}\n"

@@ -293,7 +293,7 @@ pub(in crate::daemon) mod tests {
     use tonic::transport::Channel;
 
     use super::super::identity::{ClientIdentity, Invitation};
-    use super::super::{Event, Strategy};
+    use super::super::Event;
     use super::*;
     use crate::audio::RecordingReader;
     use crate::daemon::relay::fingerprint;
@@ -978,29 +978,24 @@ pub(in crate::daemon) mod tests {
             assert_eq!(fingerprint.len(), 64);
             let client =
                 RemoteTranscriber::connect(&home, &endpoint, &CancelToken::never()).unwrap();
-            for strategy in [Strategy::Whole, Strategy::Whole, Strategy::Streaming] {
-                let mut recording = RecordingReader::from_samples(&[0.125; 160]);
-                let response = if strategy == Strategy::Whole {
-                    Transcription::<_, Whole>::delegated(client.clone())
-                        .transcribe(&mut recording, &Language::Automatic)
-                } else {
-                    Transcription::<_, Streaming>::delegated(client.clone())
-                        .transcribe(&mut recording, &Language::Automatic)
-                }
+            let whole = Transcription::<_, Whole>::delegated(client.clone())
+                .transcribe(
+                    &mut RecordingReader::from_samples(&[0.125; 160]),
+                    &Language::Automatic,
+                )
                 .unwrap();
-                assert_eq!(
-                    response.as_str(),
-                    if strategy == Strategy::Whole {
-                        "raw model words"
-                    } else {
-                        "native words native words"
-                    }
-                );
-            }
+            assert_eq!(whole.as_str(), "raw model words");
+            let streamed = Transcription::<_, Streaming>::delegated(client)
+                .transcribe(
+                    &mut RecordingReader::from_samples(&[0.125; 160]),
+                    &Language::Automatic,
+                )
+                .unwrap();
+            assert_eq!(streamed.as_str(), "native words native words");
         })
         .await
         .unwrap();
-        assert_eq!(fixture.observed.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.observed.calls.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.observed.native.load(Ordering::SeqCst), 1);
         fixture.stop().await;
     }

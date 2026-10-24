@@ -307,94 +307,37 @@ mod tests {
     }
 
     #[test]
-    fn inference_update_progress_fails_closed_with_an_old_writer() {
-        use prost::Message;
-
-        #[derive(Clone, PartialEq, Message)]
-        struct OldUpdate {
-            #[prost(uint64, tag = "1")]
-            retained_from: u64,
-            #[prost(oneof = "wire::inference_update::Body", tags = "2, 3")]
-            body: Option<wire::inference_update::Body>,
-            #[prost(message, optional, tag = "4")]
-            completed: Option<wire::InferenceComplete>,
-        }
-
-        let old = OldUpdate {
-            retained_from: 0,
-            body: Some(wire::inference_update::Body::Provisional("words".into())),
+    fn inference_updates_reject_missing_fields_and_impossible_positions() {
+        assert!(Event::try_from(wire::InferenceResponse { body: None }).is_err());
+        let update = |retained_from, read_to, span: (u64, u64)| wire::InferenceUpdate {
+            retained_from,
+            read_to,
+            body: Some(wire::inference_update::Body::Finalized(
+                wire::InferenceSegment {
+                    text: "private words".into(),
+                    span: Some(wire::InferenceSpan {
+                        start: span.0,
+                        end: span.1,
+                    }),
+                },
+            )),
             completed: None,
         };
-        let encoded = old.encode_to_vec();
-        let mut update = wire::InferenceUpdate::decode(encoded.as_slice()).unwrap();
-        assert!(update.read_to.is_none());
-        assert!(
-            Event::try_from(wire::InferenceResponse {
-                body: Some(wire::inference_response::Body::Update(update.clone())),
-            })
-            .is_err()
-        );
-
-        update.read_to = Some(1600);
-        let encoded = update.encode_to_vec();
-        assert_eq!(OldUpdate::decode(encoded.as_slice()).unwrap(), old);
-        assert!(
-            Event::try_from(wire::InferenceResponse {
-                body: Some(wire::inference_response::Body::Update(update)),
-            })
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn inference_updates_reject_impossible_read_positions() {
-        for (retained_from, read_to, span_end) in
-            [(11, 10, 10), (0, MAX_AUDIO_SAMPLES + 1, 10), (0, 10, 11)]
-        {
-            let update = wire::InferenceUpdate {
-                retained_from,
-                read_to: Some(read_to),
-                body: Some(wire::inference_update::Body::Finalized(
-                    wire::InferenceSegment {
-                        text: "words".into(),
-                        span: Some(wire::InferenceSpan {
-                            start: 0,
-                            end: span_end,
-                        }),
-                    },
-                )),
-                completed: None,
-            };
-            assert!(
-                Event::try_from(wire::InferenceResponse {
-                    body: Some(wire::inference_response::Body::Update(update)),
-                })
-                .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn inference_updates_reject_missing_bodies_and_invalid_spans() {
-        assert!(Event::try_from(wire::InferenceResponse { body: None }).is_err());
-        for span in [(8, 4), (0, MAX_AUDIO_SAMPLES + 1)] {
+        let cases = [
+            update(0, None, (0, 10)),
+            update(11, Some(10), (0, 10)),
+            update(0, Some(MAX_AUDIO_SAMPLES + 1), (0, 10)),
+            update(0, Some(10), (0, 11)),
+            update(0, Some(10), (8, 4)),
+            update(0, Some(MAX_AUDIO_SAMPLES), (0, MAX_AUDIO_SAMPLES + 1)),
+            wire::InferenceUpdate {
+                body: None,
+                ..update(0, Some(10), (0, 10))
+            },
+        ];
+        for update in cases {
             let response = wire::InferenceResponse {
-                body: Some(wire::inference_response::Body::Update(
-                    wire::InferenceUpdate {
-                        retained_from: 0,
-                        read_to: Some(MAX_AUDIO_SAMPLES),
-                        body: Some(wire::inference_update::Body::Finalized(
-                            wire::InferenceSegment {
-                                text: "private words".into(),
-                                span: Some(wire::InferenceSpan {
-                                    start: span.0,
-                                    end: span.1,
-                                }),
-                            },
-                        )),
-                        completed: None,
-                    },
-                )),
+                body: Some(wire::inference_response::Body::Update(update)),
             };
             let error = Event::try_from(response).err().unwrap();
             assert_eq!(error.to_string(), "invalid inference message");

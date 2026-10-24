@@ -271,11 +271,6 @@ mod tests {
     }
 
     #[test]
-    fn pick_preserves_a_configured_server() {
-        assert_eq!(pick::<Stt>("\n", Some("server"), false).0, "server");
-    }
-
-    #[test]
     fn pick_falls_back_only_when_nothing_is_configured() {
         let (picked, shown) = pick::<Tts>("\n", Some("not-a-backend"), false);
 

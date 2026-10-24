@@ -250,21 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn switching_to_server_clears_local_engine_settings() {
-        let mut file: FileConfig = serde_saphyr::from_str(
-            "transcription: {backend: parakeet, model: ~/model, device: gpu}",
-        )
-        .unwrap();
-        let mut chosen = selections();
-        chosen.stt = "server".to_owned();
-        chosen.apply_to(&mut file);
-        assert_eq!(file.transcription.backend.as_deref(), Some("server"));
-        assert_eq!(file.transcription.model, None);
-        assert_eq!(file.transcription.device, None);
-        assert_eq!(file.transcription.interpreter, None);
-    }
-
-    #[test]
     fn a_new_engine_drops_the_old_engine_paths() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");

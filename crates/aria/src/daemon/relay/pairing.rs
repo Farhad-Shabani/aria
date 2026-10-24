@@ -285,6 +285,16 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn fingerprints_round_trip_through_hex_and_reject_anything_else() {
+        let fingerprint = [0xab; 32];
+        assert_eq!(from_hex(&to_hex(&fingerprint)), Some(fingerprint));
+        assert_eq!(from_hex(&"AB".repeat(32)), Some(fingerprint));
+        for bad in ["é".repeat(32), "ab".repeat(33), "+f".repeat(32)] {
+            assert_eq!(from_hex(&bad), None, "{bad}");
+        }
+    }
+
     fn pairing_path(directory: &tempfile::TempDir) -> std::path::PathBuf {
         directory.path().join("phone").join("pairing.json")
     }
