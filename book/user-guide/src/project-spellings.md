@@ -1,3 +1,5 @@
+{{#title Correct dictation with project vocabulary - Aria User Guide}}
+
 # Project vocabulary
 
 Aria can correct names from a folder you choose. For example, “aria dash stt”

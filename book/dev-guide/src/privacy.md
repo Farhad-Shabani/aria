@@ -1,3 +1,5 @@
+{{#title Speech library privacy and temporary recordings - Using Aria Libraries}}
+
 # Privacy
 
 Whisper, Kokoro, and the system voice run on your machine and make no network

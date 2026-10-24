@@ -1,3 +1,5 @@
+{{#title Reuse speech engines and sessions in Rust - Using Aria Libraries}}
+
 # Engines and sessions
 
 The examples use two kinds of object: a loaded engine and a session for one

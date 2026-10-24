@@ -1,3 +1,5 @@
+{{#title Speech recognition and synthesis in Rust - Using Aria Libraries}}
+
 # Welcome to Aria
 
 Aria's Rust libraries turn speech into text and text into spoken audio. Use

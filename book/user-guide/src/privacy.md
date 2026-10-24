@@ -1,3 +1,5 @@
+{{#title Privacy, local speech, and saved data - Aria User Guide}}
+
 # Privacy
 
 Aria processes dictation and speech generation locally. Local processing does

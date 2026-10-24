@@ -1,3 +1,5 @@
+{{#title Start dictation with a wake word - Aria User Guide}}
+
 # Wake word
 
 Wake-word monitoring starts dictation when a local model detects its trained

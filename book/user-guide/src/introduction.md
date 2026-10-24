@@ -1,3 +1,5 @@
+{{#title Dictation, speech, and voice agents - Aria User Guide}}
+
 # Welcome to Aria
 
 Aria lets you type by speaking, hear text read aloud, and ask questions about a

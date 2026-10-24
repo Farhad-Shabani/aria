@@ -1,3 +1,5 @@
+{{#title Generate speech in Rust with Kokoro or system voices - Using Aria Libraries}}
+
 # Generate speech
 
 Use the system voice when you want text read aloud without downloading a model.
