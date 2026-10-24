@@ -38,7 +38,7 @@ struct SettingsView: View {
         .onChange(of: history.current.pane) { _, pane in
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
         }
-        .onAppear { Task { await preferences.sync() } }
+        .task { await preferences.sync() }
         // Returning from System Settings or closing the setup window both
         // make this window key, and either may have finished a step.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
