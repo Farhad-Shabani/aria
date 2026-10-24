@@ -105,6 +105,7 @@ impl WakeBackend {
 pub mod wake_backend {
     pub const OPEN_WAKE_WORD: &str = aria_wake::openwakeword::NAME;
     pub const LIVEKIT: &str = aria_wake::livekit::NAME;
+    pub const DEFAULT: &str = OPEN_WAKE_WORD;
 }
 
 /// The speech defaults every utterance falls back to when its request names
@@ -175,6 +176,7 @@ pub mod tts_backend {
     pub const KOKORO: &str = aria_tts::kokoro::NAME;
     pub const QWEN: &str = aria_tts::qwen::NAME;
     pub const SYSTEM: &str = aria_tts::system::NAME;
+    pub const DEFAULT: &str = SYSTEM;
 }
 
 impl DictationConfig {
@@ -236,6 +238,7 @@ impl ChatAgent {
 pub mod chat_agent {
     pub const CLAUDE_CODE: &str = "claude-code";
     pub const CODEX: &str = "codex";
+    pub const DEFAULT: &str = CLAUDE_CODE;
 }
 
 /// Listen mode: system-audio capture transcribed to a file. Loaded per Start,
@@ -324,7 +327,7 @@ impl ListenConfig {
 pub(crate) use file::{FileConfig, read as read_file};
 pub(crate) use load::{
     Environment, LoadedModel, UNATTENDED_ENV, default_path, loaded_models, memory_directory,
-    models_dir, transcription_engine, tts_engine,
+    model_folder, models_dir, transcription_engine, tts_engine,
 };
 pub use show::show;
 
@@ -406,6 +409,7 @@ pub mod backend {
     pub const PARAKEET_MLX: &str = aria_stt::parakeet_mlx::NAME;
     #[cfg(target_os = "ios")]
     pub const PARAKEET_MLX: &str = "parakeet-mlx";
+    pub const DEFAULT: &str = PARAKEET;
 }
 
 pub use aria_stt::parakeet::Device as TranscriptionDevice;

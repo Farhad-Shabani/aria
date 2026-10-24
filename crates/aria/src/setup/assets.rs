@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use aria_kit::backend::{ModelDownload, Unpack};
 
+use crate::config::model_folder;
+
 use super::SetupError;
 use super::download;
 
@@ -43,45 +45,45 @@ pub(super) const WHISPER: Asset = Asset {
     name: "whisper",
     title: "Whisper large-v3-turbo",
     default: true,
-    folders: &[("whisper", aria_stt::whisper::MODEL)],
+    folders: &[(model_folder::WHISPER, aria_stt::whisper::MODEL)],
 };
 
 pub(super) const WHISPER_CANDLE: Asset = Asset {
     name: "whisper-candle",
     title: "Whisper tiny.en (candle)",
     default: true,
-    folders: &[("whisper-candle/tiny.en", aria_stt::whisper_candle::MODEL)],
+    folders: &[(
+        model_folder::WHISPER_CANDLE,
+        aria_stt::whisper_candle::MODEL,
+    )],
 };
 
 pub(super) const PARAKEET: Asset = Asset {
     name: "parakeet",
     title: "Parakeet TDT 0.6B",
     default: true,
-    folders: &[("parakeet/parakeet-tdt-0.6b-v3", aria_stt::parakeet::MODEL)],
+    folders: &[(model_folder::PARAKEET, aria_stt::parakeet::MODEL)],
 };
 
 pub(super) const MOONSHINE: Asset = Asset {
     name: "moonshine",
     title: "Moonshine base",
     default: true,
-    folders: &[("moonshine/base", aria_stt::moonshine::MODEL)],
+    folders: &[(model_folder::MOONSHINE, aria_stt::moonshine::MODEL)],
 };
 
 pub(super) const NEMOTRON: Asset = Asset {
     name: "nemotron",
     title: "Nemotron streaming 0.6B",
     default: true,
-    folders: &[(
-        "nemotron/nemotron-speech-streaming-en-0.6b",
-        aria_stt::nemotron::MODEL,
-    )],
+    folders: &[(model_folder::NEMOTRON, aria_stt::nemotron::MODEL)],
 };
 
 pub(super) const KOKORO: Asset = Asset {
     name: "kokoro",
     title: "Kokoro TTS",
     default: true,
-    folders: &[("kokoro", aria_tts::kokoro::MODEL)],
+    folders: &[(model_folder::KOKORO, aria_tts::kokoro::MODEL)],
 };
 
 pub(super) const QWEN: Asset = Asset {
@@ -89,12 +91,9 @@ pub(super) const QWEN: Asset = Asset {
     title: "Qwen3 TTS",
     default: true,
     folders: &[
+        (model_folder::QWEN, aria_tts::qwen::model_files::MODEL),
         (
-            "qwen/qwen3-tts-0.6b-customvoice",
-            aria_tts::qwen::model_files::MODEL,
-        ),
-        (
-            "qwen/qwen3-tts-tokenizer",
+            model_folder::QWEN_TOKENIZER,
             aria_tts::qwen::model_files::SPEECH_TOKENIZER,
         ),
     ],
@@ -111,13 +110,16 @@ pub(super) const EXTRAS: [Asset; 2] = [
         name: SPEAKER,
         title: "Speaker verification",
         default: false,
-        folders: &[("wespeaker/en", aria_speaker::wespeaker::MODEL)],
+        folders: &[(model_folder::SPEAKER, aria_speaker::wespeaker::MODEL)],
     },
     Asset {
         name: "segmentation",
         title: "Speaker segmentation",
         default: true,
-        folders: &[("pyannote", aria_segmentation::pyannote::MODEL)],
+        folders: &[(
+            model_folder::SEGMENTATION,
+            aria_segmentation::pyannote::MODEL,
+        )],
     },
 ];
 

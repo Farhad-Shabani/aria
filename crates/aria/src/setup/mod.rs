@@ -1098,8 +1098,8 @@ mod tests {
     fn yes_takes_the_default_choice_when_nothing_is_configured() {
         let defaults = Selections::defaults(&inspection(Existing::default()));
 
-        assert_eq!(defaults.stt, "parakeet");
-        assert_eq!(defaults.tts, "system");
+        assert_eq!(defaults.stt, config::backend::DEFAULT);
+        assert_eq!(defaults.tts, config::tts_backend::DEFAULT);
         assert!(!defaults.wake);
         assert!(defaults.hotkey);
     }
@@ -1118,7 +1118,7 @@ mod tests {
 
         assert_eq!(
             names(&selections),
-            ["parakeet", SPEAKER_ASSET, "segmentation"]
+            [config::backend::DEFAULT, SPEAKER_ASSET, "segmentation"]
         );
 
         selections.stt = "future-stt".to_owned();

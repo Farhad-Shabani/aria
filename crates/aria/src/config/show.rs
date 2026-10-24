@@ -746,7 +746,10 @@ mod tests {
             };
             assert_eq!(row.source, expected, "{}", row.key);
         }
-        assert_eq!(find(&rows, "transcription.backend").value, "parakeet");
+        assert_eq!(
+            find(&rows, "transcription.backend").value,
+            super::super::backend::DEFAULT
+        );
         assert_eq!(find(&rows, "dictation_timeouts.recording").value, "300s");
         assert_eq!(find(&rows, "wake.enabled").value, "false");
         assert_eq!(find(&rows, "dictation_backtrack").value, "false");
