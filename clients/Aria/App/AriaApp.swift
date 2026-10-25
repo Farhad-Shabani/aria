@@ -160,17 +160,19 @@ private struct CheckForUpdatesButton: View {
 }
 
 private struct MenuActionStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .foregroundStyle(isEnabled ? .primary : .tertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
             .background {
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(.primary.opacity(configuration.isPressed ? 0.12 : isHovered ? 0.06 : 0))
+                    .fill(.primary.opacity(configuration.isPressed ? 0.12 : isHovered && isEnabled ? 0.06 : 0))
             }
             .onHover { isHovered = $0 }
     }

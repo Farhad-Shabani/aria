@@ -15,6 +15,14 @@ struct TranscriptionSection: View {
             }
             .disabled(!server.canChooseLocation)
             serverRow
+            if server.notice == .needsSetup {
+                LabeledContent {
+                    Button("Aria Setup…") { openWindow(id: WindowID.setup) }
+                } label: {
+                    Text("Speech Model")
+                    Text("No speech model is on this Mac yet.")
+                }
+            }
         } header: {
             Text("Transcription")
         } footer: {
@@ -48,7 +56,7 @@ struct TranscriptionSection: View {
         LabeledContent {
             HStack {
                 if setup.server != nil {
-                    Button("Forget…") { isConfirmingForget = true }
+                    Button("Forget…", role: .destructive) { isConfirmingForget = true }
                         .disabled(!server.canForget)
                         .help(setup.transcription == .server ? "Set Runs on to This Mac first." : "")
                 }
@@ -82,12 +90,7 @@ struct TranscriptionSection: View {
             switch server.notice {
             case .failed(let message):
                 Text(message).foregroundStyle(.failure)
-            case .needsSetup:
-                HStack {
-                    Text("No speech model is on this Mac yet.").foregroundStyle(.failure)
-                    Button("Aria Setup…") { openWindow(id: WindowID.setup) }
-                }
-            case nil:
+            case .needsSetup, nil:
                 Text("Audio goes to the server only when Runs on is My server.")
             }
         }

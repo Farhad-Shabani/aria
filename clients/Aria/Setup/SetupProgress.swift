@@ -13,9 +13,9 @@ struct SetupProgress {
             case .welcome: "Welcome"
             case .engines: "Engines"
             case .install: "Install"
-            case .hotkey: "Hotkey access"
-            case .voice: "Your voice"
-            case .tryOut: "Try it"
+            case .hotkey: "Hotkey Access"
+            case .voice: "Your Voice"
+            case .tryOut: "Try It"
             }
         }
     }

@@ -17,23 +17,39 @@ struct SetupView: View {
         SidebarWindow {
             SetupRail(progress: state.progress)
         } detail: {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                // The outgoing and incoming pages overlap here instead of
-                // sharing the column; the id follows the page, not the step.
-                ZStack(alignment: .topLeading) {
-                    page
-                        .id(state.step.order)
-                        .transition(transition)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
-                footer
-            }
+            detail
         }
         .animation(.easeInOut(duration: 0.25), value: state.step)
         .onAppear { state.start() }
         .onDisappear { state.stop() }
+    }
+
+    /// On macOS 26 the header and footer are bars, so a long page blurs
+    /// under them instead of stopping at a hard edge.
+    @ViewBuilder private var detail: some View {
+        if #available(macOS 26, *) {
+            pages
+                .safeAreaBar(edge: .top, alignment: .leading) { header }
+                .safeAreaBar(edge: .bottom) { footer }
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                pages
+                footer
+            }
+        }
+    }
+
+    /// The outgoing and incoming pages overlap here instead of sharing the
+    /// column; the id follows the page, not the step.
+    private var pages: some View {
+        ZStack(alignment: .topLeading) {
+            page
+                .id(state.step.order)
+                .transition(transition)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipShape(SidesOnly())
     }
 
     private var header: some View {
@@ -130,6 +146,14 @@ struct SetupView: View {
             insertion: .move(edge: state.isMovingForward ? .trailing : .leading),
             removal: .move(edge: state.isMovingForward ? .leading : .trailing)
         )
+    }
+}
+
+/// Clips a sliding page at the column's sides but not its top and bottom,
+/// where the page scrolls on under the header and footer.
+private struct SidesOnly: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(rect.insetBy(dx: 0, dy: -rect.height))
     }
 }
 

@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 
 struct DictationHistoryView: View {
+    /// Where the status lines and footer buttons start, so they share an edge.
+    private static let edgeInset: CGFloat = 12
+
     @StateObject private var state = DictationHistoryState(effects: DictationHistoryClient.effects)
     @State private var deletion: HistoryItem?
     @State private var isConfirmingClear = false
@@ -9,43 +12,32 @@ struct DictationHistoryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(
-                    "Search transcriptions…",
-                    text: Binding(get: { state.query }, set: { state.search($0) })
-                )
-                .textFieldStyle(.plain)
-                Button {
-                    state.refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .help("Refresh history")
-                .accessibilityLabel("Refresh history")
-            }
-            .disabled(state.isClearing)
-            .padding()
-            Divider()
             HSplitView {
                 historyList.frame(minWidth: 200, idealWidth: 260, maxWidth: 340)
                 detail.frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
             }
             .disabled(state.isClearing)
             if let error = state.error {
-                Text(error.message)
-                    .foregroundStyle(.failure)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
+                statusLine(Text(error.message).foregroundStyle(.failure))
             }
             if let notice = state.notice {
-                Text(notice).foregroundStyle(.secondary).padding(.bottom, 8)
+                statusLine(Text(notice).foregroundStyle(.secondary))
             }
             Divider()
             footer
         }
         .frame(minWidth: 620, minHeight: 420)
+        .searchable(
+            text: Binding(get: { state.query }, set: { state.search($0) }),
+            prompt: "Search Transcriptions"
+        )
+        .toolbar {
+            ToolbarItem {
+                Button("Refresh", systemImage: "arrow.clockwise") { state.refresh() }
+                    .help("Refresh History")
+                    .disabled(state.isClearing)
+            }
+        }
         .onAppear {
             isVisible = true
             NSApplication.shared.activate()
@@ -106,13 +98,13 @@ struct DictationHistoryView: View {
                     ProgressView("Loading history…")
                 } else if let error = state.error {
                     ContentUnavailableView(
-                        error == .offline ? "Aria unavailable" : "History unavailable",
+                        error == .offline ? "Aria Unavailable" : "History Unavailable",
                         systemImage: "exclamationmark.triangle",
                         description: Text(error.message)
                     )
                 } else {
                     ContentUnavailableView(
-                        state.query.isEmpty ? "No dictation history" : "No matches",
+                        state.query.isEmpty ? "No Dictation History" : "No Matches",
                         systemImage: "text.bubble",
                         description: Text(
                             state.query.isEmpty
@@ -191,10 +183,11 @@ struct DictationHistoryView: View {
                     }
                 }
                 .font(.callout)
-                .padding(16)
+                // Rows pad their text by 12 more, so it starts where the transcript does.
+                .padding(12)
             }
-        } else {
-            Text("Select a dictation").foregroundStyle(.secondary)
+        } else if state.selectedID == nil && !state.items.isEmpty {
+            ContentUnavailableView("No Dictation Selected", systemImage: "text.bubble")
         }
     }
 
@@ -209,12 +202,12 @@ struct DictationHistoryView: View {
                         state.isClearing || entry.isRetrying || state.retryingID == entry.id || state.deletingID != nil)
                 let isRetrying = entry.isRetrying || state.retryingID == entry.id
                 if !entry.text.isEmpty && entry.status != .deletionPending {
-                    Button("Copy text") { state.copy() }
+                    Button("Copy Text") { state.copy() }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                         .disabled(state.isClearing)
                 }
                 if entry.isRetryable || isRetrying {
-                    Button(isRetrying ? "Retrying…" : "Retry transcription") { state.retry() }
+                    Button(isRetrying ? "Retrying…" : "Retry Transcription") { state.retry() }
                         .buttonStyle(.borderedProminent)
                         .disabled(
                             state.isClearing || entry.isRetrying || state.retryingID != nil
@@ -222,7 +215,14 @@ struct DictationHistoryView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(Self.edgeInset)
+    }
+
+    private func statusLine(_ text: some View) -> some View {
+        text
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Self.edgeInset)
+            .padding(.vertical, 8)
     }
 
     private func dayTitle(_ date: Date) -> String {

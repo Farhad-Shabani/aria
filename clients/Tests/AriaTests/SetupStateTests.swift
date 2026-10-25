@@ -147,6 +147,12 @@ final class SetupStateTests: XCTestCase {
         return state
     }
 
+    func testModelTitleFallsBackToItsKey() async {
+        let state = await welcome(Harness())
+        XCTAssertEqual(state.title(ofModel: "speaker"), "Speaker")
+        XCTAssertEqual(state.title(ofModel: "unknown"), "unknown")
+    }
+
     func testExpressAppliesTheDefaultsWithoutTheChoicePages() async {
         let harness = Harness()
         let state = await welcome(harness)

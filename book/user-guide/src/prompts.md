@@ -61,7 +61,7 @@ in these cases:
 - You switched apps before stopping. Aria sends nothing to the agent.
 - You switched apps while the agent worked. Aria drops the result.
 - You said nothing. Aria sends nothing to the agent.
-- The app has **Turn Off Aria** on in **Settings → Apps**.
+- Aria is switched off for the app in **Settings → Apps**.
 
 Some apps don't accept typed text. Then the result goes to the clipboard,
 and the status overlay says **copied**.

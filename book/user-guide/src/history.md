@@ -23,7 +23,7 @@ and recordings with no accepted speech are not saved in history.
 ## Review
 
 On a Mac, choose **Dictation History…** from Aria's menu. Search for an entry,
-then select it to read the text. **Copy text** copies it for use elsewhere.
+then select it to read the text. **Copy Text** copies it for use elsewhere.
 
 From a terminal, run:
 
@@ -38,7 +38,7 @@ For scripts, add `--json` to print one JSON array. Each entry also carries
 
 ## Retry
 
-If an entry still has its recording, choose **Retry transcription** in the
+If an entry still has its recording, choose **Retry Transcription** in the
 Mac app. From a terminal, use the entry's ID; for example:
 
 ```sh
