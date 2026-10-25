@@ -13,7 +13,7 @@ use std::time::Duration;
 use crate::dictation::DictationEventEmitter;
 use crate::dictation::{ExecutionControl, RecordingId, StopMode};
 
-const CANCEL_RELEASE_GRACE: Duration = Duration::from_millis(250);
+const CANCELLATION_POLL: Duration = Duration::from_millis(5);
 
 /// The one gate in front of the capture backend. Named for what it
 /// does, not the device: `aria_kit::audio::Microphone` is the device.
@@ -46,6 +46,8 @@ pub(crate) enum Admitted {
     StopAccepted,
     /// Something else is recording.
     Busy,
+    Cancelled,
+    TimedOut,
 }
 
 impl Gate {
@@ -65,28 +67,38 @@ impl Gate {
         control: Arc<ExecutionControl>,
     ) -> Admitted {
         let mut holder = self.hold();
-        if control.should_stop() {
-            return Admitted::Busy;
-        }
-        if let Some(Holder::Dictation(running)) = holder.as_ref()
-            && running.is_cancelled()
-        {
-            let cancelled = Arc::clone(running);
+        let cancelled = match holder.as_ref() {
+            Some(Holder::Dictation(running)) if running.is_cancelled() => Some(Arc::clone(running)),
+            _ => None,
+        };
+        loop {
+            if control.is_cancelled() {
+                return Admitted::Cancelled;
+            }
+            if control.deadline_expired() {
+                return Admitted::TimedOut;
+            }
+            let waiting_for_cleanup = matches!(
+                (holder.as_ref(), cancelled.as_ref()),
+                (Some(Holder::Dictation(running)), Some(cancelled))
+                    if Arc::ptr_eq(running, cancelled)
+            );
+            if !waiting_for_cleanup {
+                break;
+            }
+            // Cancellation has no notification, so waiting must poll it.
             let (released, _) = self
                 .released
-                .wait_timeout_while(holder, CANCEL_RELEASE_GRACE, |holder| {
-                    !control.should_stop()
-                        && matches!(holder, Some(Holder::Dictation(running)) if Arc::ptr_eq(running, &cancelled))
-                })
+                .wait_timeout(holder, CANCELLATION_POLL)
                 .unwrap_or_else(|poisoned| {
                     tracing::error!("the microphone lock was poisoned; recovering");
                     poisoned.into_inner()
                 });
             holder = released;
-            // A waiter must not toggle a different recording that won the slot.
-            if holder.is_some() || control.should_stop() {
-                return Admitted::Busy;
-            }
+        }
+        // A waiter must not toggle a different recording that won the slot.
+        if cancelled.is_some() && holder.is_some() {
+            return Admitted::Busy;
         }
         match holder.as_ref() {
             Some(Holder::Dictation(running))
@@ -250,6 +262,7 @@ mod tests {
             while observed.len() < waiting.len() {
                 observed.insert(checking.recv_timeout(EDGE_WAIT).unwrap());
             }
+            thread::sleep(Duration::from_millis(350));
             drop(first);
             let outcomes: Vec<_> = waiting
                 .into_iter()
@@ -289,9 +302,10 @@ mod tests {
             let waiting = scope.spawn(|| gate.admit_dictation(StopMode::Manual, next));
             checking.recv_timeout(EDGE_WAIT).unwrap();
             cancellation.cancel();
-            drop(first);
-            assert!(matches!(waiting.join().unwrap(), Admitted::Busy));
+            assert!(matches!(waiting.join().unwrap(), Admitted::Cancelled));
+            assert!(gate.admit_enrollment().is_none());
         });
+        drop(first);
         assert!(gate.admit_enrollment().is_some());
     }
 

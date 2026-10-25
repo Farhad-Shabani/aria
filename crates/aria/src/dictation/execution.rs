@@ -551,10 +551,8 @@ where
                 );
                 Ok(Admission::StopAccepted)
             }
-            Admitted::Busy if control.is_cancelled() => Err(DictationError::Cancelled),
-            Admitted::Busy if control.deadline_expired() => {
-                Err(DictationError::OverallTimeout(control.overall_timeout()))
-            }
+            Admitted::Cancelled => Err(DictationError::Cancelled),
+            Admitted::TimedOut => Err(DictationError::OverallTimeout(control.overall_timeout())),
             Admitted::Busy => {
                 tracing::info!(
                     status = "rejected",
@@ -750,9 +748,11 @@ mod tests {
         let timeout = Duration::from_millis(20);
         Arc::get_mut(&mut coordinator).unwrap().policy = DictationPolicy::new(timeout).unwrap();
 
+        let started = Instant::now();
         let next = coordinator.admit(&settings(StopMode::Manual), CancelToken::never());
 
         assert!(matches!(next, Err(DictationError::OverallTimeout(actual)) if actual == timeout));
+        assert!(started.elapsed() < Duration::from_millis(200));
         assert!(coordinator.microphone.admit_relay().is_none());
         drop(first);
         assert!(coordinator.microphone.admit_relay().is_some());
