@@ -271,11 +271,19 @@ impl ExecutionControl {
 
     #[cfg(test)]
     pub(crate) fn for_test(stop_mode: StopMode) -> Arc<Self> {
+        Self::for_test_with_cancellation(stop_mode, CancelToken::new())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_with_cancellation(
+        stop_mode: StopMode,
+        cancellation: CancelToken,
+    ) -> Arc<Self> {
         let policy = DictationPolicy::new(Duration::from_secs(5)).expect("test policy is valid");
         Arc::new(Self::new(
             RecordingId(0),
             stop_mode,
-            CancelToken::new(),
+            cancellation,
             policy.deadline(),
             false,
         ))
@@ -543,6 +551,8 @@ where
                 );
                 Ok(Admission::StopAccepted)
             }
+            Admitted::Cancelled => Err(DictationError::Cancelled),
+            Admitted::TimedOut => Err(DictationError::OverallTimeout(control.overall_timeout())),
             Admitted::Busy => {
                 tracing::info!(
                     status = "rejected",
@@ -703,6 +713,49 @@ mod tests {
         let (coordinator, _recording, _events) = coordinator();
 
         assert!(!coordinator.stop_recording(RecordingId(1)));
+    }
+
+    #[test]
+    fn a_cancelled_press_does_not_toggle_an_active_recording() {
+        let (coordinator, recording, events) = coordinator();
+        thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                coordinator.execute(settings(StopMode::Manual), CancelToken::never(), &events)
+            });
+            let id = recording_started(&recording);
+            let cancellation = CancelToken::new();
+            cancellation.cancel();
+            let next = coordinator.execute(
+                settings(StopMode::Manual),
+                cancellation,
+                &DictationEventEmitter::unsubscribed(),
+            );
+            let still_recording = coordinator.stop_recording(id);
+            first.join().unwrap().unwrap();
+            assert!(matches!(next, Err(DictationError::Cancelled)));
+            assert!(still_recording);
+        });
+    }
+
+    #[test]
+    fn an_admission_deadline_during_cancelled_cleanup_reports_timeout() {
+        let (mut coordinator, _recording, _events) = coordinator();
+        let cancellation = CancelToken::new();
+        let first = coordinator
+            .admit(&settings(StopMode::Manual), cancellation.clone())
+            .unwrap();
+        cancellation.cancel();
+        let timeout = Duration::from_millis(20);
+        Arc::get_mut(&mut coordinator).unwrap().policy = DictationPolicy::new(timeout).unwrap();
+
+        let started = Instant::now();
+        let next = coordinator.admit(&settings(StopMode::Manual), CancelToken::never());
+
+        assert!(matches!(next, Err(DictationError::OverallTimeout(actual)) if actual == timeout));
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert!(coordinator.microphone.admit_relay().is_none());
+        drop(first);
+        assert!(coordinator.microphone.admit_relay().is_some());
     }
 
     #[test]

@@ -6,16 +6,20 @@
 //! Refusing it here is the honest answer, and the claim is released by drop
 //! on every exit path.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::Duration;
 
 #[cfg(test)]
 use crate::dictation::DictationEventEmitter;
 use crate::dictation::{ExecutionControl, RecordingId, StopMode};
 
+const CANCELLATION_POLL: Duration = Duration::from_millis(5);
+
 /// The one gate in front of the capture backend. Named for what it
 /// does, not the device: `aria_kit::audio::Microphone` is the device.
 pub(crate) struct Gate {
     holder: Mutex<Option<Holder>>,
+    released: Condvar,
 }
 
 /// What is recording. A dictation is kept whole because a second manual press
@@ -42,12 +46,15 @@ pub(crate) enum Admitted {
     StopAccepted,
     /// Something else is recording.
     Busy,
+    Cancelled,
+    TimedOut,
 }
 
 impl Gate {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             holder: Mutex::new(None),
+            released: Condvar::new(),
         })
     }
 
@@ -60,6 +67,39 @@ impl Gate {
         control: Arc<ExecutionControl>,
     ) -> Admitted {
         let mut holder = self.hold();
+        let cancelled = match holder.as_ref() {
+            Some(Holder::Dictation(running)) if running.is_cancelled() => Some(Arc::clone(running)),
+            _ => None,
+        };
+        loop {
+            if control.is_cancelled() {
+                return Admitted::Cancelled;
+            }
+            if control.deadline_expired() {
+                return Admitted::TimedOut;
+            }
+            let waiting_for_cleanup = matches!(
+                (holder.as_ref(), cancelled.as_ref()),
+                (Some(Holder::Dictation(running)), Some(cancelled))
+                    if Arc::ptr_eq(running, cancelled)
+            );
+            if !waiting_for_cleanup {
+                break;
+            }
+            // Cancellation has no notification, so waiting must poll it.
+            let (released, _) = self
+                .released
+                .wait_timeout(holder, CANCELLATION_POLL)
+                .unwrap_or_else(|poisoned| {
+                    tracing::error!("the microphone lock was poisoned; recovering");
+                    poisoned.into_inner()
+                });
+            holder = released;
+        }
+        // A waiter must not toggle a different recording that won the slot.
+        if cancelled.is_some() && holder.is_some() {
+            return Admitted::Busy;
+        }
         match holder.as_ref() {
             Some(Holder::Dictation(running))
                 if running.stop_mode() == StopMode::Manual
@@ -146,11 +186,20 @@ pub(crate) struct Claim {
 impl Drop for Claim {
     fn drop(&mut self) {
         *self.gate.hold() = None;
+        self.gate.released.notify_all();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::sync::mpsc;
+    use std::thread;
+
+    use aria_kit::cancel::CancelToken;
+
+    use crate::dictation::testing::EDGE_WAIT;
+
     use super::*;
 
     fn control(stop_mode: StopMode) -> Arc<ExecutionControl> {
@@ -164,6 +213,100 @@ mod tests {
             gate.admit_dictation(StopMode::OnSilence, control(StopMode::OnSilence)),
             Admitted::Claimed(_)
         ));
+    }
+
+    fn cancelling(gate: &Arc<Gate>) -> (Admitted, mpsc::Receiver<thread::ThreadId>) {
+        let cancellation = CancelToken::new();
+        let (observed, checking) = mpsc::channel();
+        let running = ExecutionControl::for_test_with_cancellation(
+            StopMode::Manual,
+            CancelToken::from_fn({
+                let cancellation = cancellation.clone();
+                move || {
+                    let cancelled = cancellation.is_cancelled();
+                    if cancelled {
+                        let _ = observed.send(thread::current().id());
+                    }
+                    cancelled
+                }
+            }),
+        );
+        let first = gate.admit_dictation(StopMode::Manual, running);
+        assert!(matches!(first, Admitted::Claimed(_)));
+        cancellation.cancel();
+        (first, checking)
+    }
+
+    #[test]
+    fn competing_waiters_do_not_stop_the_recording_that_wins() {
+        let gate = Gate::new();
+        let (first, checking) = cancelling(&gate);
+        let controls = [control(StopMode::Manual), control(StopMode::Manual)];
+        let _recordings: Vec<_> = controls
+            .iter()
+            .map(|control| {
+                control
+                    .start_recording(&DictationEventEmitter::unsubscribed())
+                    .unwrap()
+            })
+            .collect();
+
+        thread::scope(|scope| {
+            let waiting: Vec<_> = controls
+                .iter()
+                .map(|control| {
+                    scope.spawn(|| gate.admit_dictation(StopMode::Manual, Arc::clone(control)))
+                })
+                .collect();
+            let mut observed = HashSet::new();
+            while observed.len() < waiting.len() {
+                observed.insert(checking.recv_timeout(EDGE_WAIT).unwrap());
+            }
+            thread::sleep(Duration::from_millis(350));
+            drop(first);
+            let outcomes: Vec<_> = waiting
+                .into_iter()
+                .map(|waiter| waiter.join().unwrap())
+                .collect();
+            assert_eq!(
+                outcomes
+                    .iter()
+                    .filter(|outcome| matches!(outcome, Admitted::Claimed(_)))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                outcomes
+                    .iter()
+                    .filter(|outcome| matches!(outcome, Admitted::Busy))
+                    .count(),
+                1
+            );
+            for control in &controls {
+                assert!(
+                    control.request_recording_stop(),
+                    "neither waiter stops the other's recording"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_waiter_cancelled_during_cleanup_never_claims_the_microphone() {
+        let gate = Gate::new();
+        let (first, checking) = cancelling(&gate);
+        let cancellation = CancelToken::new();
+        let next =
+            ExecutionControl::for_test_with_cancellation(StopMode::Manual, cancellation.clone());
+        thread::scope(|scope| {
+            let waiting = scope.spawn(|| gate.admit_dictation(StopMode::Manual, next));
+            checking.recv_timeout(EDGE_WAIT).unwrap();
+            cancellation.cancel();
+            assert!(matches!(waiting.join().unwrap(), Admitted::Cancelled));
+            assert!(gate.admit_enrollment().is_none());
+        });
+        drop(first);
+        assert!(gate.admit_enrollment().is_some());
     }
 
     #[test]
