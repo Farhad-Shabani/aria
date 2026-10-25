@@ -174,7 +174,12 @@ impl<C: AudioCapture> Enroller<C> {
         let result = self.run(request, cancellation, events);
         match &result {
             Ok(_) => events.emit(EnrollmentStage::Enrolled),
-            Err(EnrollError::Cancelled) => events.emit(EnrollmentStage::Cancelled),
+            // A client that hangs up has already dropped its RPC call, so the
+            // RPC layer never logs this ending.
+            Err(EnrollError::Cancelled) => {
+                tracing::info!(status = "cancelled", "a speaker enrollment ended");
+                events.emit(EnrollmentStage::Cancelled);
+            }
             Err(error) => events.emit(EnrollmentStage::Failed(error.code())),
         }
         result
