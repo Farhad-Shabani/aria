@@ -25,6 +25,7 @@ final class GlobalShortcut {
     private var keyCode: UInt32 = 0
     private var modifiers: UInt32 = 0
     private var hotKey: EventHotKeyRef?
+    private var action: (@MainActor () -> Void)?
 
     init() {
         Self.lastID += 1
@@ -38,15 +39,23 @@ final class GlobalShortcut {
         unregister()
         self.keyCode = keyCode
         self.modifiers = modifiers
-        pressActions[id] = action
+        self.action = action
         Self.registered[id] = self
         return Self.paused || take()
     }
 
     func unregister() {
         release()
-        pressActions[id] = nil
+        action = nil
         Self.registered[id] = nil
+    }
+
+    /// Runs the shortcut Carbon reports pressed. False for an id this app
+    /// did not register.
+    fileprivate static func press(_ id: UInt32) -> Bool {
+        guard let action = registered[id]?.action else { return false }
+        action()
+        return true
     }
 
     static func pause(_ pausing: Bool) {
@@ -111,10 +120,8 @@ final class GlobalShortcut {
 /// another framework in the process registered.
 private let ariaSignature = OSType(0x4152_4941)
 
-/// The Carbon callback is a bare C function pointer and captures nothing, so
-/// what each press runs lives here, keyed by hot key id.
-@MainActor private var pressActions: [UInt32: @MainActor () -> Void] = [:]
-
+/// A bare C function pointer that captures nothing, so it finds the pressed
+/// shortcut by hot key id.
 private func handleHotKey(
     _ call: EventHandlerCallRef?,
     _ event: EventRef?,
@@ -136,8 +143,6 @@ private func handleHotKey(
     let id = pressed.id
     // Carbon dispatches only on the main thread; this traps if that changes.
     return MainActor.assumeIsolated {
-        guard let action = pressActions[id] else { return OSStatus(eventNotHandledErr) }
-        action()
-        return noErr
+        GlobalShortcut.press(id) ? noErr : OSStatus(eventNotHandledErr)
     }
 }
