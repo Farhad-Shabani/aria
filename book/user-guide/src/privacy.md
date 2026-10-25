@@ -85,4 +85,6 @@ the cache; forgetting a folder removes its cached names.
 
 Voice profiles store a numeric representation of enrolled speech locally.
 They are recognition aids, not a way to authenticate a user or guarantee that
-other voices are excluded.
+other voices are excluded. A profile can still identify your voice, so treat
+it as personal data. Backups of your home folder, such as Time Machine,
+include it.
