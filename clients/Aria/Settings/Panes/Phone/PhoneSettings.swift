@@ -5,7 +5,7 @@ struct PhoneSettings: View {
 
     @ObservedObject var poller: StatusPoller
     @StateObject private var pairing: PhonePairing
-    @State private var confirmsRevoke = false
+    @State private var isConfirmingRevoke = false
 
     init(poller: StatusPoller) {
         self.poller = poller
@@ -75,7 +75,7 @@ struct PhoneSettings: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 8)
-        .confirmationDialog("Revoke every paired phone?", isPresented: $confirmsRevoke) {
+        .confirmationDialog("Revoke every paired phone?", isPresented: $isConfirmingRevoke) {
             Button("Revoke and Restart Aria", role: .destructive) {
                 Task { await pairing.revoke() }
             }
@@ -119,7 +119,7 @@ struct PhoneSettings: View {
                 Text("Copy Code").frame(maxWidth: .infinity)
             }
             Button(role: .destructive) {
-                confirmsRevoke = true
+                isConfirmingRevoke = true
             } label: {
                 Text("Revoke All…").frame(maxWidth: .infinity)
             }

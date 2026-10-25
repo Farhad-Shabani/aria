@@ -97,7 +97,7 @@ private struct Mark: View {
 private struct Bar: View {
     let tint: Color
 
-    @State private var running = false
+    @State private var isRunning = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -108,11 +108,11 @@ private struct Bar: View {
                 Capsule()
                     .fill(tint)
                     .frame(width: markWidth, height: 3)
-                    .scaleEffect(x: running || reduceMotion ? 1 : 0.001, anchor: .leading)
+                    .scaleEffect(x: isRunning || reduceMotion ? 1 : 0.001, anchor: .leading)
             }
             .clipShape(Capsule())
-            .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: running)
-            .onAppear { running = !reduceMotion }
+            .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: isRunning)
+            .onAppear { isRunning = !reduceMotion }
     }
 }
 
@@ -131,13 +131,13 @@ private struct Glyph: View {
 private struct Breathing: ViewModifier {
     let motion: Motion
 
-    @State private var swelling = false
+    @State private var isSwelling = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(swelling ? motion.scale : 1)
-            .animation(motion.animation, value: swelling)
-            .onAppear { swelling = motion != .still && !reduceMotion }
+            .scaleEffect(isSwelling ? motion.scale : 1)
+            .animation(motion.animation, value: isSwelling)
+            .onAppear { isSwelling = motion != .still && !reduceMotion }
     }
 }

@@ -18,7 +18,7 @@ final class GhostStateTests: XCTestCase {
         return state
     }
 
-    func test_placedWordsShowUntilTheyLand() {
+    func testPlacedWordsShowUntilTheyLand() {
         var state = enabled()
         state.apply(snapshot(text: "turn lift"), now: 0)
         XCTAssertTrue(state.isVisible)
@@ -27,13 +27,13 @@ final class GhostStateTests: XCTestCase {
         XCTAssertFalse(state.isVisible)
     }
 
-    func test_wordsWithoutACaretShowNothing() {
+    func testWordsWithoutACaretShowNothing() {
         var state = enabled()
         state.apply(snapshot(text: "turn lift", placed: false), now: 0)
         XCTAssertFalse(state.isVisible)
     }
 
-    func test_turningItOffClearsAndKeepsItHidden() {
+    func testTurningItOffClearsAndKeepsItHidden() {
         var state = enabled()
         state.apply(snapshot(text: "words"), now: 0)
         state.setEnabled(false)
@@ -42,7 +42,7 @@ final class GhostStateTests: XCTestCase {
         XCTAssertFalse(state.isVisible)
     }
 
-    func test_aGhostLeftAloneExpires() {
+    func testAGhostLeftAloneExpires() {
         var state = enabled()
         state.apply(snapshot(text: "words"), now: 0)
         state.expire(now: GhostState.expiry - 0.1)
@@ -53,7 +53,7 @@ final class GhostStateTests: XCTestCase {
 }
 
 final class GhostLayoutTests: XCTestCase {
-    func test_aFieldWrapsTheGhostLikeItsOwnText() {
+    func testAFieldWrapsTheGhostLikeItsOwnText() {
         let layout = GhostLayout(
             caret: CGRect(x: 160, y: 100, width: 0, height: 20),
             field: CGRect(x: 100, y: 90, width: 300, height: 200),
@@ -68,7 +68,7 @@ final class GhostLayoutTests: XCTestCase {
         XCTAssertEqual(layout.frame, CGRect(x: 100, y: 780, width: 300, height: 120))
     }
 
-    func test_aShortFieldStillHoldsOneLine() {
+    func testAShortFieldStillHoldsOneLine() {
         let layout = GhostLayout(
             caret: CGRect(x: 160, y: 100, width: 0, height: 20),
             field: CGRect(x: 100, y: 95, width: 300, height: 20),
@@ -80,7 +80,7 @@ final class GhostLayoutTests: XCTestCase {
         XCTAssertEqual(layout.frame.maxY, 900)
     }
 
-    func test_withoutAFieldTheGhostFloatsFromTheCaret() {
+    func testWithoutAFieldTheGhostFloatsFromTheCaret() {
         let layout = GhostLayout(
             caret: CGRect(x: 160, y: 100, width: 0, height: 20),
             field: nil,

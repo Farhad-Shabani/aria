@@ -7,7 +7,7 @@ final class ChordBinding: ObservableObject {
     /// What is registered, so an unchanged preference costs nothing.
     private(set) var bound: Chord?
     /// Carbon turned the chord down.
-    @Published private(set) var refused = false
+    @Published private(set) var wasRefused = false
 
     init(action: @escaping @MainActor () -> Void) {
         self.action = action
@@ -17,12 +17,12 @@ final class ChordBinding: ObservableObject {
         guard let chord else {
             shortcut.unregister()
             bound = nil
-            refused = false
+            wasRefused = false
             return
         }
         guard chord != bound else { return }
         let taken = shortcut.register(keyCode: UInt32(chord.keyCode), modifiers: chord.carbonModifiers, action: action)
         bound = taken ? chord : nil
-        refused = !taken
+        wasRefused = !taken
     }
 }

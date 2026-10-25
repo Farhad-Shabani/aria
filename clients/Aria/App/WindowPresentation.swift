@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 final class WindowPresentation {
     private var open: (() -> Void)?
-    private var pending = false
+    private var isPending = false
 
     func didLaunch(atLogin: Bool) {
         if !atLogin { request() }
@@ -13,7 +13,7 @@ final class WindowPresentation {
 
     func request() {
         guard let open else {
-            pending = true
+            isPending = true
             return
         }
         open()
@@ -21,8 +21,8 @@ final class WindowPresentation {
 
     func register(_ open: @escaping () -> Void) {
         self.open = open
-        if pending {
-            pending = false
+        if isPending {
+            isPending = false
             open()
         }
     }

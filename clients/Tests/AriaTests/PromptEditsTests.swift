@@ -3,10 +3,10 @@ import XCTest
 @testable import Aria
 
 final class PromptEditsTests: XCTestCase {
-    func test_entry_isAnEnabledRewriteNamedAfterTheFileWithNoChord() {
+    func testEntryIsAnEnabledRewriteNamedAfterTheFileWithNoChord() {
         let id = UUID()
 
-        let entry = PromptEdits.newEntry(for: URL(fileURLWithPath: "/notes/../prompts/Email reply.md"), id: id)
+        let entry = PromptEdits.makeEntry(for: URL(fileURLWithPath: "/notes/../prompts/Email reply.md"), id: id)
 
         XCTAssertEqual(entry.id, id.uuidString)
         XCTAssertEqual(entry.name, "Email reply")

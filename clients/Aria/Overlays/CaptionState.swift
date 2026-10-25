@@ -4,32 +4,32 @@ struct CaptionState {
     private static let expiry: TimeInterval = 5
     private(set) var committed = ""
     private(set) var provisional = ""
-    private var enabled = false
+    private var isEnabled = false
     private var recording: UInt64?
-    private var ended = false
+    private var hasEnded = false
     private var updatedAt: TimeInterval?
 
-    mutating func setEnabled(_ enabled: Bool) {
-        guard self.enabled != enabled else { return }
-        self.enabled = enabled
+    mutating func setEnabled(_ isEnabled: Bool) {
+        guard self.isEnabled != isEnabled else { return }
+        self.isEnabled = isEnabled
         clearText()
     }
 
     mutating func apply(_ snapshot: Aria_Daemon_V1_CaptionSnapshot?, now: TimeInterval) {
         guard let snapshot else {
             recording = nil
-            ended = false
+            hasEnded = false
             clearText()
             return
         }
         if let recording, snapshot.recordingID < recording { return }
         if recording != snapshot.recordingID {
             recording = snapshot.recordingID
-            ended = false
+            hasEnded = false
         }
-        guard !ended else { return }
-        ended = snapshot.ended
-        guard enabled, !ended else {
+        guard !hasEnded else { return }
+        hasEnded = snapshot.ended
+        guard isEnabled, !hasEnded else {
             clearText()
             return
         }

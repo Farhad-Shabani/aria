@@ -24,7 +24,7 @@ struct TryOutPage: View {
             Text(heard)
                 .font(.title3)
                 .textSelection(.enabled)
-        } else if state.busy {
+        } else if state.isBusy {
             Label {
                 Text("Listening…")
             } icon: {

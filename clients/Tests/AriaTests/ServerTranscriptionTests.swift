@@ -89,7 +89,7 @@ final class ServerTranscriptionTests: XCTestCase {
         return inspection
     }
 
-    func test_thisMacPrefersThePreviousEngineThenTheFirstWithItsModelOnDisk() {
+    func testThisMacPrefersThePreviousEngineThenTheFirstWithItsModelOnDisk() {
         var mac = Self.mac(runningOn: "server")
         mac.stt.append(Self.engine("moonshine"))
         mac.models.append(Self.model("moonshine", onDisk: .complete))
@@ -105,7 +105,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertNil(ServerTranscription.localEngine(in: mac, preferring: nil))
     }
 
-    func test_aLocationIsChosenOnlyWithAPairingOrToLeaveTheServer() {
+    func testALocationIsChosenOnlyWithAPairingOrToLeaveTheServer() {
         let setup = SetupStatus()
         let server = ServerTranscription(effects: Spy(Self.mac(runningOn: "whisper")).effects, setup: setup)
         var unpaired = Self.mac(runningOn: "whisper")
@@ -120,7 +120,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertTrue(server.canChooseLocation)
     }
 
-    func test_switchingAppliesTheEngineAndKeepsTheOtherChoices() async {
+    func testSwitchingAppliesTheEngineAndKeepsTheOtherChoices() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         let setup = SetupStatus()
         let server = ServerTranscription(effects: spy.effects, setup: setup)
@@ -139,7 +139,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(spy.daemon, [], "a registered service restarts itself")
     }
 
-    func test_thisMacWithoutALocalModelAppliesNothingAndPointsToSetup() async {
+    func testThisMacWithoutALocalModelAppliesNothingAndPointsToSetup() async {
         var inspection = Self.mac(runningOn: "server")
         inspection.models = [Self.model("parakeet", onDisk: .absent), Self.model("whisper", onDisk: .absent)]
         let spy = Spy(inspection)
@@ -151,7 +151,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(server.notice, .needsSetup)
     }
 
-    func test_aFailedApplyWithoutAServiceRestartsTheAppsDaemon() async {
+    func testAFailedApplyWithoutAServiceRestartsTheAppsDaemon() async {
         var inspection = Self.mac(runningOn: "whisper")
         inspection.service.job = .absent
         let spy = Spy(inspection)
@@ -162,10 +162,10 @@ final class ServerTranscriptionTests: XCTestCase {
 
         XCTAssertEqual(spy.daemon, ["stop", "start"])
         XCTAssertEqual(server.notice, .failed("Refused."))
-        XCTAssertFalse(server.busy)
+        XCTAssertFalse(server.isBusy)
     }
 
-    func test_aSwitchThatLandedIsNotReportedAsFailed() async {
+    func testASwitchThatLandedIsNotReportedAsFailed() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         spy.inspectFailsAfterApply = true
         let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
@@ -176,7 +176,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(server.notice, .failed("Saved, but Aria couldn’t read it back: Refused."))
     }
 
-    func test_pairingReappliesOnlyAServerAlreadyInUse() async {
+    func testPairingReappliesOnlyAServerAlreadyInUse() async {
         let local = Spy(Self.mac(runningOn: "whisper"))
         let pairedLocally = await ServerTranscription(effects: local.effects, setup: SetupStatus())
             .pair(invitation: "{}")
@@ -193,7 +193,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
     /// The invitation works once, so a pairing that landed must not ask
     /// for it again when only the follow-up apply failed.
-    func test_aPairingThatLandedSucceedsEvenWhenItsApplyFails() async {
+    func testAPairingThatLandedSucceedsEvenWhenItsApplyFails() async {
         let spy = Spy(Self.mac(runningOn: "server"))
         spy.applyFails = true
         let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
@@ -205,7 +205,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(server.notice, .failed("Refused."))
     }
 
-    func test_aFailedPairingShowsTheReasonAndAppliesNothing() async {
+    func testAFailedPairingShowsTheReasonAndAppliesNothing() async {
         let spy = Spy(Self.mac(runningOn: "server"))
         spy.pairFails = true
         let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
@@ -216,10 +216,10 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(server.pairingFailure, "Refused.")
         XCTAssertNil(server.notice)
         XCTAssertEqual(spy.applied, [])
-        XCTAssertFalse(server.busy)
+        XCTAssertFalse(server.isBusy)
     }
 
-    func test_anInvitationShowsItsAddressBeforePairing() {
+    func testAnInvitationShowsItsAddressBeforePairing() {
         let invitation = #"{"endpoint":"https://box.local:9851","certificate_pem":"x","fingerprint":[],"code":"c"}"#
         XCTAssertEqual(ServerTranscription.invitationAddress(invitation), "box.local:9851")
         XCTAssertNil(ServerTranscription.invitationAddress("hello"))
@@ -229,7 +229,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(ServerTranscription.address(of: "https://box.local"), "box.local")
     }
 
-    func test_onlyAServerNotInUseCanBeForgotten() async {
+    func testOnlyAServerNotInUseCanBeForgotten() async {
         let remote = Spy(Self.mac(runningOn: "server"))
         let setupOnServer = SetupStatus()
         setupOnServer.show(remote.inspection)
@@ -249,7 +249,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertFalse(server.canForget)
     }
 
-    func test_aFailedForgetKeepsTheServerAndSaysWhy() async {
+    func testAFailedForgetKeepsTheServerAndSaysWhy() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         spy.forgetFails = true
         let setup = SetupStatus()
@@ -260,10 +260,10 @@ final class ServerTranscriptionTests: XCTestCase {
 
         XCTAssertEqual(server.notice, .failed("Refused."))
         XCTAssertNotNil(setup.server)
-        XCTAssertFalse(server.busy)
+        XCTAssertFalse(server.isBusy)
     }
 
-    func test_pairingShowsTheAddressAndStartsOverAfterAFailure() async {
+    func testPairingShowsTheAddressAndStartsOverAfterAFailure() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         spy.pairFails = true
         let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())

@@ -6,17 +6,17 @@ import XCTest
 final class SpeakerClientTests: XCTestCase {
     private let fallback = "Aria couldn’t save the voice. Try again."
 
-    func test_failure_keepsDaemonTextOutOfTheMessage() {
+    func testFailureKeepsDaemonTextOutOfTheMessage() {
         let raw = RPCError(code: .internalError, message: "raw daemon detail")
         XCTAssertEqual(SpeakerClient.failure(raw, fallback: fallback).errorDescription, fallback)
     }
 
-    func test_failure_saysWhenAriaIsNotRunning() {
+    func testFailureSaysWhenAriaIsNotRunning() {
         let failure = SpeakerClient.failure(RPCError(code: .unavailable, message: ""), fallback: fallback)
         XCTAssertEqual(failure.errorDescription, "Aria isn’t running.")
     }
 
-    func test_failure_usesTheFallbackForAnErrorOutsideGRPC() {
+    func testFailureUsesTheFallbackForAnErrorOutsideGRPC() {
         struct Broken: Error {}
         XCTAssertEqual(SpeakerClient.failure(Broken(), fallback: fallback).errorDescription, fallback)
     }

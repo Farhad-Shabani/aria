@@ -13,7 +13,7 @@ final class ChildProcess: Sendable {
     private struct State {
         var output = Output()
         var openPipes = 2
-        var exited = false
+        var hasExited = false
         var waiters: [CheckedContinuation<Output, Never>] = []
     }
 
@@ -48,7 +48,7 @@ final class ChildProcess: Sendable {
         process.terminationHandler = { [weak self] process in
             self?.update { state in
                 state.output.status = process.terminationStatus
-                state.exited = true
+                state.hasExited = true
             }
         }
         try process.run()
@@ -88,7 +88,7 @@ final class ChildProcess: Sendable {
     private func update(_ change: (inout State) -> Void) {
         let finished: (waiters: [CheckedContinuation<Output, Never>], output: Output)? = state.withLock { state in
             change(&state)
-            guard state.exited, state.openPipes == 0, !state.waiters.isEmpty else { return nil }
+            guard state.hasExited, state.openPipes == 0, !state.waiters.isEmpty else { return nil }
             defer { state.waiters = [] }
             return (state.waiters, state.output)
         }

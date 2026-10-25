@@ -8,14 +8,14 @@ final class VoiceColorsTests: XCTestCase {
         UserDefaults(suiteName: "VoiceColorsTests-\(UUID())")!
     }
 
-    func test_eachNewVoiceTakesTheLeastWornColor() {
+    func testEachNewVoiceTakesTheLeastWornColor() {
         XCTAssertEqual(VoiceColors.next(after: []), .blue)
         XCTAssertEqual(VoiceColors.next(after: [.blue, .gold]), .clay)
         XCTAssertEqual(VoiceColors.next(after: VoiceColor.palette + [.blue]), .clay)
         XCTAssertEqual(VoiceColors.next(after: [.plain]), .blue, "None is chosen, never handed out")
     }
 
-    func test_syncFreesTheColorOfARemovedVoice() {
+    func testSyncFreesTheColorOfARemovedVoice() {
         let colors = VoiceColors(defaults: defaults())
         colors.sync(enrolled: ["farhad", "sam"])
         XCTAssertEqual(colors.color(of: "sam"), .clay)
@@ -27,7 +27,7 @@ final class VoiceColorsTests: XCTestCase {
         XCTAssertEqual(colors.color(of: "ada"), .clay)
     }
 
-    func test_aChosenColorOutlivesTheApp() {
+    func testAChosenColorOutlivesTheApp() {
         let store = defaults()
         let colors = VoiceColors(defaults: store)
         colors.assignColor(to: "farhad")

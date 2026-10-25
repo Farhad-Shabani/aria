@@ -3,7 +3,7 @@ import XCTest
 @testable import Aria
 
 final class PromptRunsTests: XCTestCase {
-    func test_aRunIsNamedByItsRecordingAndItsTicket() {
+    func testARunIsNamedByItsRecordingAndItsTicket() {
         var runs = PromptRuns()
         runs.add(.recording(7), prompt: "Polish")
         runs.add(.ticket(3), prompt: "Polish")
@@ -13,7 +13,7 @@ final class PromptRunsTests: XCTestCase {
         XCTAssertNil(runs.prompt(of: .recording(3)))
     }
 
-    func test_onlyTheLatestRunsAreKept() {
+    func testOnlyTheLatestRunsAreKept() {
         var runs = PromptRuns()
         for ticket in UInt64(1)...40 {
             runs.add(.ticket(ticket), prompt: "Polish")

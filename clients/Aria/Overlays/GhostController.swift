@@ -5,7 +5,7 @@ import AppKit
 @MainActor
 final class GhostController {
     static let enabledKey = "ghostTextEnabled"
-    static let enabledByDefault = true
+    static let isEnabledByDefault = true
     private static let clearingStages: [Aria_Daemon_V1_DictationStage] = [
         .segmentDelivered, .delivered, .failed, .cancelled,
     ]
@@ -21,7 +21,7 @@ final class GhostController {
 
     /// The caller starts the stream once every overlay has registered.
     func start() {
-        UserDefaults.standard.register(defaults: [Self.enabledKey: Self.enabledByDefault])
+        UserDefaults.standard.register(defaults: [Self.enabledKey: Self.isEnabledByDefault])
         state.setEnabled(UserDefaults.standard.bool(forKey: Self.enabledKey))
         events.onGhost { [weak self] snapshot in
             guard let self else { return }

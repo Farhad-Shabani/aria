@@ -5,20 +5,20 @@ import os
 @testable import Aria
 
 final class PhonePairingTests: XCTestCase {
-    func test_status_tellsRelayOffFromDaemonOffFromTheRest() {
+    func testStatusTellsRelayOffFromDaemonOffFromTheRest() {
         XCTAssertEqual(PhonePairing.status(for: RPCError(code: .unimplemented, message: "")), .relayOff)
         XCTAssertEqual(PhonePairing.status(for: RPCError(code: .unavailable, message: "")), .daemonOff)
         XCTAssertEqual(PhonePairing.status(for: RPCError(code: .internalError, message: "raw detail")), .failed)
     }
 
-    func test_nextPoll_waitsForExpiryWhenSooner_andNeverSpins() {
+    func testNextPollWaitsForExpiryWhenSoonerAndNeverSpins() {
         let now = Date(timeIntervalSinceReferenceDate: 1_000)
         XCTAssertEqual(PhonePairing.nextPoll(expiresAt: now.addingTimeInterval(30), now: now), .seconds(2))
         XCTAssertEqual(PhonePairing.nextPoll(expiresAt: now.addingTimeInterval(0.5), now: now), .milliseconds(500))
         XCTAssertEqual(PhonePairing.nextPoll(expiresAt: now, now: now), .milliseconds(250))
     }
 
-    func test_wasRedeemed_onlyWhenTheCodeHadTimeLeft() {
+    func testWasRedeemedOnlyWhenTheCodeHadTimeLeft() {
         let expiresAt = Date(timeIntervalSinceReferenceDate: 1_000)
         XCTAssertTrue(PhonePairing.wasRedeemed(expiresAt: expiresAt, replacedAt: expiresAt.addingTimeInterval(-30)))
         XCTAssertFalse(PhonePairing.wasRedeemed(expiresAt: expiresAt, replacedAt: expiresAt.addingTimeInterval(-0.5)))
@@ -26,7 +26,7 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
-    func test_poll_countsACodeReplacedEarlyAsAPairing() async {
+    func testPollCountsACodeReplacedEarlyAsAPairing() async {
         let now = Date.now
         let pairing = Self.pairing(invites: [
             Self.issued("a", expiresAt: now + 60), Self.issued("b", expiresAt: now + 120),
@@ -41,7 +41,7 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
-    func test_poll_doesNotCountAnExpiredCodeAsAPairing() async {
+    func testPollDoesNotCountAnExpiredCodeAsAPairing() async {
         let now = Date.now
         let pairing = Self.pairing(invites: [
             Self.issued("a", expiresAt: now + 0.5), Self.issued("b", expiresAt: now + 60),
@@ -54,7 +54,7 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
-    func test_turnOn_reportsAFailedSaveAndReleasesTheSwitch() async {
+    func testTurnOnReportsAFailedSaveAndReleasesTheSwitch() async {
         struct Unwritable: LocalizedError {
             var errorDescription: String? { "read-only" }
         }
@@ -68,7 +68,7 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
-    func test_revoke_removesThePairingFileWhileAriaIsStopped() async {
+    func testRevokeRemovesThePairingFileWhileAriaIsStopped() async {
         let control = FakeDaemonControl()
         control.running = true
         let pairing = Self.pairing(invites: [], control: control) { control.record("remove") }

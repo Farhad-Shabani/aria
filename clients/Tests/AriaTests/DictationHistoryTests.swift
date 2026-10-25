@@ -16,7 +16,7 @@ final class DictationHistoryTests: XCTestCase {
         var retryContinuation: CheckedContinuation<HistoryItem, Error>?
         var clearCalls = 0
         var clearFailure: HistoryFailure?
-        var cleanupPending = false
+        var isCleanupPending = false
 
         var effects: DictationHistoryState.Effects {
             .init(
@@ -36,7 +36,7 @@ final class DictationHistoryTests: XCTestCase {
                     if let error = self.clearFailure { throw error }
                     let deletedEntries = UInt64(self.entries.count)
                     self.entries = []
-                    return HistoryClearResult(deletedEntries: deletedEntries, cleanupPending: self.cleanupPending)
+                    return HistoryClearResult(deletedEntries: deletedEntries, isCleanupPending: self.isCleanupPending)
                 },
                 retry: { _ in try await withCheckedThrowingContinuation { self.retryContinuation = $0 } },
                 copy: { text in
@@ -59,7 +59,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTFail("State did not settle", file: file, line: line)
     }
 
-    func test_refresh_preservesSelectionAndFetchesFullText() async {
+    func testRefreshPreservesSelectionAndFetchesFullText() async {
         let harness = Harness()
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
@@ -73,7 +73,7 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_days_groupNewestFirstAndKeepOrderWithinADay() {
+    func testDaysGroupNewestFirstAndKeepOrderWithinADay() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = .gmt
         let day: TimeInterval = 86_400
@@ -88,7 +88,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(days.map { $0.items.map(\.id) }, [[3], [2, 1]])
     }
 
-    func test_days_followTheListedItems() async {
+    func testDaysFollowTheListedItems() async {
         let harness = Harness()
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
@@ -97,7 +97,7 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_supersededSearch_cannotReplaceNewResults() async {
+    func testSupersededSearchCannotReplaceNewResults() async {
         let harness = Harness()
         var continuations: [CheckedContinuation<HistoryPage, Error>] = []
         var effects = harness.effects
@@ -117,7 +117,7 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_refresh_keepsSelectionBeyondFirstPage() async {
+    func testRefreshKeepsSelectionBeyondFirstPage() async {
         let harness = Harness()
         var effects = harness.effects
         effects.list = { _, before in
@@ -133,13 +133,13 @@ final class DictationHistoryTests: XCTestCase {
         state.select(1)
         await waitUntil { state.detail?.id == 1 }
         state.refresh()
-        await waitUntil { !state.loading && state.detail?.id == 1 }
+        await waitUntil { !state.isLoading && state.detail?.id == 1 }
         XCTAssertEqual(state.items.map(\.id), [2, 1])
         XCTAssertEqual(state.selectedID, 1)
         state.close()
     }
 
-    func test_supersededSelection_cannotReplaceCurrentDetail() async {
+    func testSupersededSelectionCannotReplaceCurrentDetail() async {
         let harness = Harness()
         var reads: [UInt64: CheckedContinuation<HistoryItem, Error>] = [:]
         var effects = harness.effects
@@ -157,7 +157,7 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_failedDelete_keepsEntryAndReportsStorageFailure() async {
+    func testFailedDeleteKeepsEntryAndReportsStorageFailure() async {
         let harness = Harness()
         harness.deletionFails = true
         let state = DictationHistoryState(effects: harness.effects)
@@ -170,7 +170,7 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_delete_selectsNeighborAfterAcknowledgement() async {
+    func testDeleteSelectsNeighborAfterAcknowledgement() async {
         let harness = Harness()
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
@@ -181,9 +181,9 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_retry_afterSelectionChange_updatesOwnRowWithoutCopy() async {
+    func testRetryAfterSelectionChangeUpdatesOwnRowWithoutCopy() async {
         let harness = Harness()
-        harness.entries[0].retryable = true
+        harness.entries[0].isRetryable = true
         harness.entries[0].status = .transcriptionFailed
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
@@ -191,7 +191,7 @@ final class DictationHistoryTests: XCTestCase {
         state.retry()
         await waitUntil { harness.retryContinuation != nil }
         state.clear()
-        XCTAssertFalse(state.clearing)
+        XCTAssertFalse(state.isClearing)
         XCTAssertEqual(harness.clearCalls, 0)
         state.delete(2)
         XCTAssertNil(state.deletingID)
@@ -199,18 +199,18 @@ final class DictationHistoryTests: XCTestCase {
         await waitUntil { state.detail?.id == 1 }
         harness.entries[0].text = "Recovered text"
         harness.entries[0].status = .recovered
-        harness.entries[0].retryable = false
+        harness.entries[0].isRetryable = false
         harness.retryContinuation?.resume(returning: harness.entries[0])
-        await waitUntil { state.retryingID == nil && !state.loading && state.detail?.id == 1 }
+        await waitUntil { state.retryingID == nil && !state.isLoading && state.detail?.id == 1 }
         XCTAssertEqual(state.items.first?.text, "Recovered text")
         XCTAssertEqual(state.detail?.text, "Text 1")
         XCTAssertTrue(harness.copied.isEmpty)
         state.close()
     }
 
-    func test_close_cancelsRetryWithoutReplacingEntry() async {
+    func testCloseCancelsRetryWithoutReplacingEntry() async {
         let harness = Harness()
-        harness.entries[0].retryable = true
+        harness.entries[0].isRetryable = true
         var effects = harness.effects
         var cancelled = false
         effects.retry = { _ in
@@ -230,10 +230,10 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(state.detail?.text, "Text 2")
     }
 
-    func test_reopenDuringCancelledRetry_refreshesWhenServerReleasesEntry() async {
+    func testReopenDuringCancelledRetryRefreshesWhenServerReleasesEntry() async {
         let harness = Harness()
         harness.entries[0].status = .transcriptionFailed
-        harness.entries[0].retryable = true
+        harness.entries[0].isRetryable = true
         var effects = harness.effects
         var poll: CheckedContinuation<Void, Error>?
         effects.waitForRetry = { try await withCheckedThrowingContinuation { poll = $0 } }
@@ -242,27 +242,27 @@ final class DictationHistoryTests: XCTestCase {
         await waitUntil { state.detail != nil }
         state.retry()
         await waitUntil { harness.retryContinuation != nil }
-        harness.entries[0].retrying = true
-        harness.entries[0].retryable = false
+        harness.entries[0].isRetrying = true
+        harness.entries[0].isRetryable = false
         state.close()
         state.refresh()
-        await waitUntil { state.detail?.retrying == true && poll != nil }
+        await waitUntil { state.detail?.isRetrying == true && poll != nil }
 
-        harness.entries[0].retrying = false
-        harness.entries[0].retryable = true
+        harness.entries[0].isRetrying = false
+        harness.entries[0].isRetryable = true
         harness.retryContinuation?.resume(throwing: HistoryFailure.cancelled)
         poll?.resume()
-        await waitUntil { state.detail?.retryable == true && state.retryingID == nil }
-        XCTAssertFalse(state.detail?.retrying ?? true)
-        XCTAssertFalse(state.items[0].retrying)
+        await waitUntil { state.detail?.isRetryable == true && state.retryingID == nil }
+        XCTAssertFalse(state.detail?.isRetrying ?? true)
+        XCTAssertFalse(state.items[0].isRetrying)
         XCTAssertNil(state.error)
         XCTAssertTrue(harness.copied.isEmpty)
         state.close()
     }
 
-    func test_close_stopsRetryStatusPolling() async {
+    func testCloseStopsRetryStatusPolling() async {
         let harness = Harness()
-        harness.entries[0].retrying = true
+        harness.entries[0].isRetrying = true
         var effects = harness.effects
         var reads = 0
         var poll: CheckedContinuation<Void, Error>?
@@ -280,7 +280,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(reads, 1)
     }
 
-    func test_failedClipboardWrite_doesNotClaimCopied() async {
+    func testFailedClipboardWriteDoesNotClaimCopied() async {
         let harness = Harness()
         harness.copySucceeds = false
         let state = DictationHistoryState(effects: harness.effects)
@@ -292,9 +292,9 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_clear_resetsSearchPagesAndSelectionAndPreservesCleanupNotice() async {
+    func testClearResetsSearchPagesAndSelectionAndPreservesCleanupNotice() async {
         let harness = Harness()
-        harness.cleanupPending = true
+        harness.isCleanupPending = true
         var effects = harness.effects
         var requests: [(String, UInt64?)] = []
         var warning: String?
@@ -314,7 +314,7 @@ final class DictationHistoryTests: XCTestCase {
         state.select(1)
         await waitUntil { state.detail?.id == 1 }
         state.clear()
-        await waitUntil { harness.clearCalls == 1 && !state.clearing && !state.loading }
+        await waitUntil { harness.clearCalls == 1 && !state.isClearing && !state.isLoading }
         XCTAssertTrue(state.items.isEmpty)
         XCTAssertNil(state.selectedID)
         XCTAssertNil(state.detail)
@@ -324,22 +324,22 @@ final class DictationHistoryTests: XCTestCase {
         let notice = "Dictation text cleared. Some recordings could not be removed; Aria will retry."
         XCTAssertEqual(state.notice, notice)
         state.refresh()
-        await waitUntil { !state.loading }
+        await waitUntil { !state.isLoading }
         XCTAssertNil(state.notice)
         warning = "History storage needs attention."
         state.refresh()
-        await waitUntil { !state.loading }
+        await waitUntil { !state.isLoading }
         XCTAssertEqual(state.notice, warning)
         XCTAssertTrue(state.canClear)
-        harness.cleanupPending = false
+        harness.isCleanupPending = false
         warning = nil
         state.clear()
-        await waitUntil { harness.clearCalls == 2 && !state.clearing && !state.loading }
+        await waitUntil { harness.clearCalls == 2 && !state.isClearing && !state.isLoading }
         XCTAssertNil(state.notice)
         state.close()
     }
 
-    func test_clear_invalidatesReadsAndBlocksOverlappingOperations() async {
+    func testClearInvalidatesReadsAndBlocksOverlappingOperations() async {
         let harness = Harness()
         var lists: [CheckedContinuation<HistoryPage, Error>] = []
         var read: CheckedContinuation<HistoryItem, Error>?
@@ -364,17 +364,17 @@ final class DictationHistoryTests: XCTestCase {
         state.refresh()
         state.loadMore(after: 1)
         state.select(1)
-        XCTAssertTrue(state.clearing)
+        XCTAssertTrue(state.isClearing)
         XCTAssertFalse(state.canClear)
         XCTAssertNil(state.deletingID)
         XCTAssertNil(state.retryingID)
         XCTAssertEqual(state.query, "")
         XCTAssertEqual(state.selectedID, 2)
         XCTAssertEqual(lists.count, 2)
-        clear?.resume(returning: HistoryClearResult(deletedEntries: 2, cleanupPending: false))
+        clear?.resume(returning: HistoryClearResult(deletedEntries: 2, isCleanupPending: false))
         await waitUntil { lists.count == 3 }
         lists[2].resume(returning: HistoryPage(items: []))
-        await waitUntil { !state.loading }
+        await waitUntil { !state.isLoading }
         lists[1].resume(returning: HistoryPage(items: harness.entries))
         read?.resume(returning: Self.item(2))
         for _ in 0..<20 { await Task.yield() }
@@ -384,7 +384,7 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
-    func test_failedClear_preservesErrorWhileRefreshingAuthoritativeState() async {
+    func testFailedClearPreservesErrorWhileRefreshingAuthoritativeState() async {
         for failure in [HistoryFailure.busy, .storage, .clearUncertain, .unsupported] {
             let harness = Harness()
             harness.clearFailure = failure
@@ -393,7 +393,9 @@ final class DictationHistoryTests: XCTestCase {
             await waitUntil { state.detail != nil }
             harness.entries = [Self.item(1)]
             state.clear()
-            await waitUntil { harness.clearCalls == 1 && !state.clearing && !state.loading && state.detail?.id == 1 }
+            await waitUntil {
+                harness.clearCalls == 1 && !state.isClearing && !state.isLoading && state.detail?.id == 1
+            }
             XCTAssertEqual(state.error, failure)
             XCTAssertEqual(state.items.map(\.id), [1])
             XCTAssertTrue(state.canClear)
@@ -401,20 +403,20 @@ final class DictationHistoryTests: XCTestCase {
         }
     }
 
-    func test_clear_isBlockedByKnownRetry() async {
+    func testClearIsBlockedByKnownRetry() async {
         let harness = Harness()
-        harness.entries[1].retrying = true
+        harness.entries[1].isRetrying = true
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         XCTAssertFalse(state.canClear)
         state.clear()
-        XCTAssertFalse(state.clearing)
+        XCTAssertFalse(state.isClearing)
         XCTAssertEqual(harness.clearCalls, 0)
         state.close()
     }
 
-    func test_closeDuringClear_releasesControlsAndIgnoresLateCompletion() async {
+    func testCloseDuringClearReleasesControlsAndIgnoresLateCompletion() async {
         let harness = Harness()
         var clears: [CheckedContinuation<HistoryClearResult, Error>] = []
         var effects = harness.effects
@@ -423,24 +425,24 @@ final class DictationHistoryTests: XCTestCase {
         state.clear()
         await waitUntil { clears.count == 1 }
         state.close()
-        XCTAssertFalse(state.clearing)
+        XCTAssertFalse(state.isClearing)
         XCTAssertEqual(state.error, .clearUncertain)
         state.refresh()
         await waitUntil { state.detail != nil }
         XCTAssertEqual(state.error, .clearUncertain)
         state.clear()
         await waitUntil { clears.count == 2 }
-        clears[0].resume(returning: HistoryClearResult(deletedEntries: 2, cleanupPending: false))
+        clears[0].resume(returning: HistoryClearResult(deletedEntries: 2, isCleanupPending: false))
         for _ in 0..<20 { await Task.yield() }
-        XCTAssertTrue(state.clearing)
+        XCTAssertTrue(state.isClearing)
         XCTAssertEqual(state.items.count, 2)
         clears[1].resume(throwing: HistoryFailure.busy)
-        await waitUntil { !state.clearing && !state.loading }
+        await waitUntil { !state.isClearing && !state.isLoading }
         XCTAssertEqual(state.error, .busy)
         state.close()
     }
 
-    func test_clearFailures_distinguishUnsupportedAndUncertainCompletion() {
+    func testClearFailuresDistinguishUnsupportedAndUncertainCompletion() {
         XCTAssertEqual(DictationHistoryClient.failure(RPCError(code: .unimplemented, message: "")), .unsupported)
         for failure in [HistoryFailure.offline, .storage, .timeout, .cancelled, .failed] {
             XCTAssertEqual(DictationHistoryClient.clearFailure(failure), .clearUncertain)
@@ -450,7 +452,7 @@ final class DictationHistoryTests: XCTestCase {
         }
     }
 
-    func test_metadata_omitsUnknownApplicationDurationAndWords() throws {
+    func testMetadataOmitsUnknownApplicationDurationAndWords() throws {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .relay
@@ -459,10 +461,10 @@ final class DictationHistoryTests: XCTestCase {
         let item = try DictationHistoryClient.item(wire)
         XCTAssertEqual(item.metadata.map(\.0), ["Source", "Status", "Created", "Audio"])
         XCTAssertEqual(item.source, "Relayed dictation")
-        XCTAssertFalse(item.retryable)
+        XCTAssertFalse(item.isRetryable)
     }
 
-    func test_transcriptionError_showsExplanationInsteadOfRawCategory() throws {
+    func testTranscriptionErrorShowsExplanationInsteadOfRawCategory() throws {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .local
@@ -478,7 +480,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(try DictationHistoryClient.item(wire).message, "Aria could not finish this recording in time.")
     }
 
-    func test_audioExpiry_matchesAvailability() throws {
+    func testAudioExpiryMatchesAvailability() throws {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .local
@@ -515,7 +517,7 @@ final class DictationHistoryTests: XCTestCase {
         }
     }
 
-    func test_errorDetails_distinguishStorageFromOffline() throws {
+    func testErrorDetailsDistinguishStorageFromOffline() throws {
         var error = Aria_Daemon_V1_RpcError()
         error.code = .historyUnavailable
         let status = GoogleRPCStatus(
@@ -528,7 +530,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(DictationHistoryClient.failure(RPCError(code: .unavailable, message: "")), .offline)
     }
 
-    func test_projectFailure_usesCodeRegardlessOfMessage() throws {
+    func testProjectFailureUsesCodeRegardlessOfMessage() throws {
         var error = Aria_Daemon_V1_RpcError()
         error.code = .historyProjectUnavailable
         error.message = "A differently worded explanation."
@@ -541,7 +543,7 @@ final class DictationHistoryTests: XCTestCase {
             .projectUnavailable)
     }
 
-    func test_historyPreference_preservesExplicitFalse() throws {
+    func testHistoryPreferencePreservesExplicitFalse() throws {
         var patch = Aria_Daemon_V1_PreferencePatch()
         XCTAssertFalse(patch.hasDictationHistory)
         patch.dictationHistory = false

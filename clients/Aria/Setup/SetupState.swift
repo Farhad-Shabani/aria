@@ -59,13 +59,13 @@ final class SetupState: ObservableObject {
 
     @Published private(set) var step: Step = .inspecting {
         didSet {
-            forward = step.order >= oldValue.order
+            isMovingForward = step.order >= oldValue.order
             progress.record(step)
         }
     }
     @Published private(set) var progress = SetupProgress()
     /// Whether the last step change moved ahead, so pages slide the right way.
-    @Published private(set) var forward = true
+    @Published private(set) var isMovingForward = true
     @Published private(set) var inspection = Aria_Setup_V1_Inspection()
     /// New engines bring a new model list, so the download picks start over.
     @Published var selections = Aria_Setup_V1_Selections() {
@@ -82,10 +82,10 @@ final class SetupState: ObservableObject {
     @Published private(set) var enrolled: String?
     @Published private(set) var heard: String?
     /// Whether the dictation hotkey answers, so Done can teach it.
-    @Published private(set) var hotkeyReady = false
+    @Published private(set) var isHotkeyReady = false
     /// A step's own failure, which setup carries on past.
     @Published private(set) var notice: String?
-    @Published private(set) var busy = false
+    @Published private(set) var isBusy = false
 
     private let effects: Effects
     private var applyTask: Task<Void, Never>?
@@ -298,8 +298,8 @@ final class SetupState: ObservableObject {
 
     func recordVoice() {
         let name = voiceName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, !busy else { return }
-        busy = true
+        guard !name.isEmpty, !isBusy else { return }
+        isBusy = true
         notice = nil
         voicePrompt = "Starting…"
         Task {
@@ -310,14 +310,14 @@ final class SetupState: ObservableObject {
             } catch {
                 notice = error.localizedDescription
             }
-            busy = false
+            isBusy = false
             voicePrompt = nil
         }
     }
 
     /// What the daemon says between samples; shown only while recording.
     func speakerEvent(_ event: Aria_Daemon_V1_SpeakerEvent) {
-        guard step == .voice, busy else { return }
+        guard step == .voice, isBusy else { return }
         switch event.stage {
         case .recording: voicePrompt = "Say something (\(event.index)/\(event.samples))…"
         case .sampleTaken: voicePrompt = "Heard (\(event.index)/\(event.samples))"
@@ -326,8 +326,8 @@ final class SetupState: ObservableObject {
     }
 
     func tryPress() {
-        guard !busy else { return }
-        busy = true
+        guard !isBusy else { return }
+        isBusy = true
         notice = nil
         heard = nil
         Task {
@@ -338,7 +338,7 @@ final class SetupState: ObservableObject {
             } catch {
                 notice = error.localizedDescription
             }
-            busy = false
+            isBusy = false
         }
     }
 
@@ -390,7 +390,7 @@ final class SetupState: ObservableObject {
 
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
-        hotkeyReady = selections.hotkey && summary.grant == .armed
+        isHotkeyReady = selections.hotkey && summary.grant == .armed
         if selections.hotkey && summary.grant != .armed {
             step = .grant
             watchGrant()
@@ -407,7 +407,7 @@ final class SetupState: ObservableObject {
                 // Skip may have moved on while the check was out.
                 guard !Task.isCancelled else { return }
                 if armed {
-                    hotkeyReady = true
+                    isHotkeyReady = true
                     if step == .grant { await enterVoice() }
                     return
                 }

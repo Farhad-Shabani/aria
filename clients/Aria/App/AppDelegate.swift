@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let updates = UpdateController()
 
     static let captionsEnabledKey = "captionsEnabled"
-    static let captionsEnabledByDefault = false
+    static let areCaptionsEnabledByDefault = false
     private static let setupOfferedKey = "setupOffered"
 
     private let events = DaemonEvents()
@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let launchKind = NSAppleEventManager.shared().currentAppleEvent?
             .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
         settings.didLaunch(atLogin: launchKind == keyAELaunchedAsLogInItem)
-        UserDefaults.standard.register(defaults: [Self.captionsEnabledKey: Self.captionsEnabledByDefault])
+        UserDefaults.standard.register(defaults: [Self.captionsEnabledKey: Self.areCaptionsEnabledByDefault])
 
         caption.setEnabled(UserDefaults.standard.bool(forKey: Self.captionsEnabledKey))
         events.onCaption { [weak self] snapshot in

@@ -4,12 +4,12 @@ import XCTest
 @testable import Aria
 
 final class ChordCaptureTests: XCTestCase {
-    func test_deleteAlone_clearsTheChord() {
+    func testDeleteAloneClearsTheChord() {
         XCTAssertEqual(Chord.captured(keyCode: UInt16(kVK_Delete), modifiers: []), .cleared)
         XCTAssertEqual(Chord.captured(keyCode: UInt16(kVK_ForwardDelete), modifiers: []), .cleared)
     }
 
-    func test_deleteWithAModifier_isAChord() {
+    func testDeleteWithAModifierIsAChord() {
         let captured = Chord.captured(keyCode: UInt16(kVK_Delete), modifiers: [.control, .option])
         guard case .chord(let chord) = captured else {
             return XCTFail("\(captured)")

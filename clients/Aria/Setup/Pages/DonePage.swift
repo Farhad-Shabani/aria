@@ -12,7 +12,7 @@ struct DonePage: View {
                     if state.selections.hotkey {
                         LabeledContent(
                             "Dictate",
-                            value: state.hotkeyReady
+                            value: state.isHotkeyReady
                                 ? "Tap \(dictationKey.title)" : "Works once Accessibility access is given"
                         )
                     }

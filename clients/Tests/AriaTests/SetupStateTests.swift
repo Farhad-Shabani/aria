@@ -147,7 +147,7 @@ final class SetupStateTests: XCTestCase {
         return state
     }
 
-    func test_express_appliesTheDefaultsWithoutTheChoicePages() async {
+    func testExpressAppliesTheDefaultsWithoutTheChoicePages() async {
         let harness = Harness()
         let state = await welcome(harness)
         XCTAssertEqual(state.missingSummary, "Missing: configuration.")
@@ -163,19 +163,19 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.step == .welcome }
     }
 
-    func test_pagesSlideForwardExceptOnBackAndCancel() async {
+    func testPagesSlideForwardExceptOnBackAndCancel() async {
         let harness = Harness()
         let state = await welcome(harness)
-        XCTAssertTrue(state.forward)
+        XCTAssertTrue(state.isMovingForward)
         state.next()
-        XCTAssertTrue(state.forward)
+        XCTAssertTrue(state.isMovingForward)
         state.back()
-        XCTAssertFalse(state.forward)
+        XCTAssertFalse(state.isMovingForward)
         state.next()
-        XCTAssertTrue(state.forward)
+        XCTAssertTrue(state.isMovingForward)
     }
 
-    func test_changingEngines_startsTheDownloadPicksOver() async {
+    func testChangingEnginesStartsTheDownloadPicksOver() async {
         let harness = Harness()
         let state = await welcome(harness)
         state.next()
@@ -186,7 +186,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.downloads, ["parakeet", "kokoro", "segmentation"])
     }
 
-    func test_customize_walksBackToTheWelcomePage() async {
+    func testCustomizeWalksBackToTheWelcomePage() async {
         let harness = Harness()
         let state = await welcome(harness)
 
@@ -196,7 +196,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .welcome)
     }
 
-    func test_stagesAndOrder_followTheSteps() {
+    func testStagesAndOrderFollowTheSteps() {
         let walk: [SetupState.Step] = [
             .inspecting, .welcome, .choices, .applying, .grant, .voice, .tryOut, .done, .failed("x"),
         ]
@@ -209,7 +209,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(SetupState.Step.welcome.title, "Welcome to Aria")
     }
 
-    func test_summaries_readAsSentences() async {
+    func testSummariesReadAsSentences() async {
         let harness = Harness()
         let state = await welcome(harness)
         state.next()
@@ -232,7 +232,7 @@ final class SetupStateTests: XCTestCase {
             state.installRows.map(\.title), ["Configuration", "Wake-word models", "Models", "Background service"])
     }
 
-    func test_freshMac_walksEveryStepToDone() async {
+    func testFreshMacWalksEveryStepToDone() async {
         let harness = Harness()
         harness.commandLineToolProblem = "The aria command was not installed."
         let state = await walkToApplying(harness)
@@ -264,7 +264,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.notice, "The aria command was not installed.", "the Done page says what did not land")
     }
 
-    func test_applyEvents_driveTheStepAndTheProgress() async {
+    func testApplyEventsDriveTheStepAndTheProgress() async {
         let harness = Harness()
         let state = await walkToApplying(harness)
         var started = Aria_Setup_V1_SetupEvent()
@@ -282,7 +282,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.downloadProgress["parakeet"]?.received, 5)
     }
 
-    func test_continueAnyway_leavesTheGrantPage() async {
+    func testContinueAnywayLeavesTheGrantPage() async {
         let harness = Harness()
         harness.summary = Self.summary(grant: .waiting)
         let state = await walkToApplying(harness)
@@ -293,7 +293,7 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.step == .voice }
     }
 
-    func test_cancelDuringApply_returnsToTheChoices() async {
+    func testCancelDuringApplyReturnsToTheChoices() async {
         let harness = Harness()
         let state = await walkToApplying(harness)
 
@@ -303,7 +303,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(harness.startedDaemon, 1, "a cancelled apply must restart the daemon it stopped")
     }
 
-    func test_applyFailure_isShownAndRetryReinspects() async {
+    func testApplyFailureIsShownAndRetryReinspects() async {
         let harness = Harness()
         harness.applyError = SetupClientError.failed("curl exited with 22")
         let state = await welcome(harness)
@@ -316,7 +316,7 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.step == .welcome }
     }
 
-    func test_applyFailure_leavesAServiceDaemonAlone() async {
+    func testApplyFailureLeavesAServiceDaemonAlone() async {
         let harness = Harness()
         harness.inspection.service.job = .running
         harness.applyError = SetupClientError.failed("curl exited with 22")
@@ -328,21 +328,21 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(harness.startedDaemon, 0, "the service supervises its own daemon")
     }
 
-    func test_grantWaits_untilTheHotkeyArms() async {
+    func testGrantWaitsUntilTheHotkeyArms() async {
         let harness = Harness()
         harness.summary = Self.summary(grant: .waiting)
         let state = await walkToApplying(harness)
 
         harness.applyContinuation?.resume(returning: harness.summary)
         await waitUntil { state.step == .grant }
-        XCTAssertFalse(state.hotkeyReady)
+        XCTAssertFalse(state.isHotkeyReady)
 
         harness.armed = true
         await waitUntil { state.step == .voice }
-        XCTAssertTrue(state.hotkeyReady, "Done teaches the hotkey once it arms")
+        XCTAssertTrue(state.isHotkeyReady, "Done teaches the hotkey once it arms")
     }
 
-    func test_voiceIsSkipped_whenSomeoneIsEnrolledOrTheModelWasSkipped() async {
+    func testVoiceIsSkippedWhenSomeoneIsEnrolledOrTheModelWasSkipped() async {
         let harness = Harness()
         var ada = Aria_Daemon_V1_EnrolledSpeaker()
         ada.name = "Ada"
@@ -358,7 +358,7 @@ final class SetupStateTests: XCTestCase {
     /// The answers come from the daemon's own `--yes` rule, verbatim: an
     /// engine this Mac cannot run blocks the page, one setup does not
     /// know passes through.
-    func test_configuredMac_startsFromItsAnswersAndHasNothingToDownload() async {
+    func testConfiguredMacStartsFromItsAnswersAndHasNothingToDownload() async {
         var inspection = Self.freshMac()
         inspection.defaults.stt = "parakeet-mlx"
         inspection.defaults.tts = "kokoro"
@@ -389,7 +389,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertFalse(SetupState.shouldOffer(missing: inspection.missing, offeredBefore: false))
     }
 
-    func test_planFollowsTheChosenEngines() {
+    func testPlanFollowsTheChosenEngines() {
         let inspection = Self.freshMac()
         var selections = inspection.defaults
         selections.tts = "kokoro"
@@ -400,14 +400,14 @@ final class SetupStateTests: XCTestCase {
         )
     }
 
-    func test_planSkipsAModelConfiguredElsewhere() {
+    func testPlanSkipsAModelConfiguredElsewhere() {
         var inspection = Self.freshMac()
         inspection.models[0].external = true
 
         XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.name).contains("parakeet"))
     }
 
-    func test_expressPreview_matchesTheDownloadRequest() async {
+    func testExpressPreviewMatchesTheDownloadRequest() async {
         var inspection = Self.freshMac()
         inspection.models[3].onDisk = .complete
         let harness = Harness()
@@ -422,7 +422,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(harness.applied?.downloads, preview.map(\.name))
     }
 
-    func test_total_neverClaimsAnExactSizeForAResumedDownload() {
+    func testTotalNeverClaimsAnExactSizeForAResumedDownload() {
         var resumed = Self.model("parakeet", engine: "parakeet")
         resumed.onDisk = .partial
 
@@ -431,7 +431,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(SetupState.total([resumed, Self.model("speaker")]), "Total download: up to 20 bytes")
     }
 
-    func test_engineDownload_tellsWhatPickingItFetches() {
+    func testEngineDownloadTellsWhatPickingItFetches() {
         var inspection = Self.freshMac()
         inspection.models[1].onDisk = .partial
         var nemotron = Self.model("nemotron", engine: "nemotron")
@@ -454,7 +454,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(source(.unspecified), .status("Size unknown"), "never shown as nothing to download")
     }
 
-    func test_selfFetchingEngine_isNotedOutsideTheTotal() async {
+    func testSelfFetchingEngineIsNotedOutsideTheTotal() async {
         var inspection = Self.freshMac()
         inspection.stt[1].availability = .missing
         inspection.stt[1].model = .fetchedOnFirstUse
@@ -467,7 +467,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(SetupState.expressPlan(state.inspection, state.selections).map(\.name), ["segmentation"])
     }
 
-    func test_wizardIsOfferedOnce() {
+    func testWizardIsOfferedOnce() {
         var missing = Aria_Setup_V1_Missing()
         missing.kind = .grant
         XCTAssertTrue(SetupState.shouldOffer(missing: [missing], offeredBefore: false))

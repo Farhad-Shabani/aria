@@ -28,10 +28,10 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     var source: String = "Dictation"
     var application: String?
     var duration: Double?
-    var complete = true
-    var retryable = false
+    var isComplete = true
+    var isRetryable = false
     var audio: Audio = .unavailable
-    var retrying = false
+    var isRetrying = false
     var warning: String?
     var message: String?
 
@@ -47,7 +47,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
         }
         if !text.isEmpty {
             rows.append(
-                (complete ? "Words" : "Words (incomplete)", "\(text.split(whereSeparator: \.isWhitespace).count)"))
+                (isComplete ? "Words" : "Words (incomplete)", "\(text.split(whereSeparator: \.isWhitespace).count)"))
         }
         if status == .transcriptionFailed {
             let description: String
@@ -85,5 +85,5 @@ struct HistoryPage: Sendable {
 
 struct HistoryClearResult: Sendable {
     var deletedEntries: UInt64
-    var cleanupPending: Bool
+    var isCleanupPending: Bool
 }

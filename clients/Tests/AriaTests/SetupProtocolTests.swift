@@ -3,7 +3,7 @@ import XCTest
 @testable import Aria
 
 final class SetupProtocolTests: XCTestCase {
-    func test_frames_rejectMalformedLengths() throws {
+    func testFramesRejectMalformedLengths() throws {
         for lastByte: UInt8 in [2, 0x80, 0xff] {
             var reader = SetupFrames.Reader()
             let prefix = Data(repeating: 0x80, count: 9)
@@ -14,7 +14,7 @@ final class SetupProtocolTests: XCTestCase {
         }
     }
 
-    func test_frames_rejectOversizedLengths() throws {
+    func testFramesRejectOversizedLengths() throws {
         let lengths: [[UInt8]] = [
             [0x80, 0x80, 0x80, 0x80, 0x08],
             Array(repeating: 0xff, count: 8) + [0x7f],
@@ -28,7 +28,7 @@ final class SetupProtocolTests: XCTestCase {
         }
     }
 
-    func test_frames_acceptTheMaximumLengthWithoutAllocatingItsPayload() throws {
+    func testFramesAcceptTheMaximumLengthWithoutAllocatingItsPayload() throws {
         var reader = SetupFrames.Reader()
         XCTAssertTrue(try reader.push(Data([0xff, 0xff, 0xff, 0xff, 0x07])).isEmpty)
         XCTAssertThrowsError(try reader.finish()) { error in
@@ -36,7 +36,7 @@ final class SetupProtocolTests: XCTestCase {
         }
     }
 
-    func test_frames_finishRejectsPartialPrefixesAndPayloads() throws {
+    func testFramesFinishRejectsPartialPrefixesAndPayloads() throws {
         for bytes in [Data([0x80]), Data([2, 0x01]), Data([0, 2, 0x01])] {
             var reader = SetupFrames.Reader()
             _ = try reader.push(bytes)
@@ -46,7 +46,7 @@ final class SetupProtocolTests: XCTestCase {
         }
     }
 
-    func test_frames_acceptEmptyAndNoncanonicalFrames() throws {
+    func testFramesAcceptEmptyAndNoncanonicalFrames() throws {
         var reader = SetupFrames.Reader()
         XCTAssertNoThrow(try reader.finish())
         let frames = try reader.push(Data([0, 0x80, 0, 1, 0x42]))
@@ -56,7 +56,7 @@ final class SetupProtocolTests: XCTestCase {
 
     /// The child's stdout arrives in arbitrary chunks; frames must come out
     /// whole and in order regardless of where the chunks cut.
-    func test_frames_surviveBeingSplitAcrossReads() throws {
+    func testFramesSurviveBeingSplitAcrossReads() throws {
         var download = Aria_Setup_V1_DownloadProgress()
         download.model = "whisper"
         download.received = 10
@@ -79,7 +79,7 @@ final class SetupProtocolTests: XCTestCase {
         }
     }
 
-    func test_frames_encodeALengthLongerThanOneByte() throws {
+    func testFramesEncodeALengthLongerThanOneByte() throws {
         var request = Aria_Setup_V1_ApplyRequest()
         request.downloads = Array(repeating: "a-model-name", count: 40)
         let frame = try SetupFrames.encode(request)
@@ -92,7 +92,7 @@ final class SetupProtocolTests: XCTestCase {
         XCTAssertTrue(frames[0].count > 127, "the length must have needed two varint bytes")
     }
 
-    func test_outcome_readsTheSummaryTheInterruptOrTheChildsOwnAccount() {
+    func testOutcomeReadsTheSummaryTheInterruptOrTheChildsOwnAccount() {
         var summary = Aria_Setup_V1_Summary()
         summary.grant = .waiting
         let finished = SetupClient.Run(summary: summary, status: 0, stderr: Data())
@@ -106,7 +106,7 @@ final class SetupProtocolTests: XCTestCase {
         XCTAssertEqual(SetupClient.outcome(silent, cancelled: false).failure, .failed("aria setup exited with 9"))
     }
 
-    func test_outcome_reportsTruncationWithoutHidingCancellationOrChildFailure() {
+    func testOutcomeReportsTruncationWithoutHidingCancellationOrChildFailure() {
         var run = SetupClient.Run(summary: nil, status: 0, stderr: Data(), frameError: .truncated)
         XCTAssertEqual(SetupClient.outcome(run, cancelled: false).failure, .invalidOutput(.truncated))
         XCTAssertEqual(SetupClient.outcome(run, cancelled: true).failure, .cancelled)

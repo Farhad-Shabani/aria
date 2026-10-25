@@ -4,8 +4,8 @@ struct TranscriptionSection: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var server: ServerTranscription
     @ObservedObject var setup: SetupStatus
-    @State private var pairing = false
-    @State private var forgetting = false
+    @State private var isPairing = false
+    @State private var isConfirmingForget = false
 
     var body: some View {
         Section {
@@ -20,10 +20,12 @@ struct TranscriptionSection: View {
         } footer: {
             footer
         }
-        .sheet(isPresented: $pairing) {
-            PairServerSheet(server: server, runsOnServer: setup.transcription == .server, isPresented: $pairing)
+        .sheet(isPresented: $isPairing) {
+            PairServerSheet(server: server, runsOnServer: setup.transcription == .server, isPresented: $isPairing)
         }
-        .confirmationDialog("Forget this server?", isPresented: $forgetting, presenting: setup.server) { paired in
+        .confirmationDialog(
+            "Forget this server?", isPresented: $isConfirmingForget, presenting: setup.server
+        ) { paired in
             Button("Copy Revoke Command and Forget", role: .destructive) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString("aria remote revoke \(paired.clientFingerprint)", forType: .string)
@@ -46,15 +48,15 @@ struct TranscriptionSection: View {
         LabeledContent {
             HStack {
                 if setup.server != nil {
-                    Button("Forget…") { forgetting = true }
+                    Button("Forget…") { isConfirmingForget = true }
                         .disabled(!server.canForget)
                         .help(setup.transcription == .server ? "Set Runs on to This Mac first." : "")
                 }
                 Button(setup.server == nil ? "Pair…" : "Pair Again…") {
                     server.beginPairing()
-                    pairing = true
+                    isPairing = true
                 }
-                .disabled(server.busy)
+                .disabled(server.isBusy)
             }
         } label: {
             Text("Server")
@@ -74,7 +76,7 @@ struct TranscriptionSection: View {
 
     @ViewBuilder
     private var footer: some View {
-        if server.busy {
+        if server.isBusy {
             Text("Updating Aria…")
         } else {
             switch server.notice {
@@ -130,7 +132,7 @@ private struct PairServerSheet: View {
                 if case .confirming(let invitation, _) = server.pairingStep {
                     Button("Pair") { Task { await pair(invitation) } }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(server.busy)
+                        .disabled(server.isBusy)
                 } else {
                     Button("Paste Invitation") { server.paste(NSPasteboard.general.string(forType: .string) ?? "") }
                         .keyboardShortcut(.defaultAction)

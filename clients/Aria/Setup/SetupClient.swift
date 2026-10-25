@@ -176,7 +176,7 @@ extension SetupState.Effects {
             apply: { request, onEvent in try await SetupClient.apply(request, onEvent: onEvent) },
             stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
             startDaemon: { await SetupClient.startDaemonAfterFailedApply() },
-            hotkeyArmed: { await HealthClient.serving(HealthClient.hotkeyService) },
+            hotkeyArmed: { await HealthClient.isServing(HealthClient.hotkeyService) },
             openAccessibility: {
                 let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
                 if let url = URL(string: pane) { NSWorkspace.shared.open(url) }

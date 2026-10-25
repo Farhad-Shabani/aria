@@ -14,7 +14,7 @@ struct ChordRecorder: View {
     let title: String
     let chord: Chord?
     /// Carbon turned the chord down, so another app holds it.
-    let inUse: Bool
+    let isInUse: Bool
     let record: (Chord) -> Void
     /// Removes the chord, from the ⓧ beside it or Delete while recording.
     let clear: () -> Void
@@ -25,7 +25,7 @@ struct ChordRecorder: View {
     var body: some View {
         LabeledContent {
             HStack {
-                if chord != nil && !capturing {
+                if chord != nil && !isCapturing {
                     Button("Clear Shortcut", systemImage: "xmark.circle.fill", action: clear)
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
@@ -33,16 +33,16 @@ struct ChordRecorder: View {
                         .help("Clear Shortcut")
                 }
                 Button {
-                    if capturing {
+                    if isCapturing {
                         endCapture()
                     } else {
                         beginCapture()
                     }
                 } label: {
-                    if !capturing, let chord {
+                    if !isCapturing, let chord {
                         ChordLabel(chord: chord)
                     } else {
-                        Text(capturing ? "Press keys…" : "Record")
+                        Text(isCapturing ? "Press keys…" : "Record")
                     }
                 }
             }
@@ -67,10 +67,10 @@ struct ChordRecorder: View {
         }
     }
 
-    private var capturing: Bool { monitor != nil }
+    private var isCapturing: Bool { monitor != nil }
 
     private var warning: String? {
-        refusal ?? (inUse ? "Shortcut is in use" : nil)
+        refusal ?? (isInUse ? "Shortcut is in use" : nil)
     }
 
     private func beginCapture() {

@@ -6,19 +6,19 @@ import XCTest
 final class ChildProcessTests: XCTestCase {
     private let shell = URL(fileURLWithPath: "/bin/sh")
 
-    func test_run_reportsExitStatus() async throws {
+    func testRunReportsExitStatus() async throws {
         let output = try await ChildProcess.run(shell, ["-c", "exit 3"])
         XCTAssertEqual(output.status, 3)
     }
 
-    func test_run_collectsBothPipes() async throws {
+    func testRunCollectsBothPipes() async throws {
         let output = try await ChildProcess.run(shell, ["-c", "printf out; printf err >&2"])
         XCTAssertEqual(output.status, 0)
         XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), "out")
         XCTAssertEqual(String(decoding: output.stderr, as: UTF8.self), "err")
     }
 
-    func test_launch_writesInputAndStreamsStdout() async throws {
+    func testLaunchWritesInputAndStreamsStdout() async throws {
         let child = ChildProcess(shell, ["-c", "cat"])
         let streamed = Mutex(Data())
         try child.launch(input: Data("request".utf8)) { chunk in
@@ -32,7 +32,7 @@ final class ChildProcessTests: XCTestCase {
 
     /// Far more stderr than a pipe buffers, written before any stdout: a
     /// reader that took stdout to its end first would never see it close.
-    func test_run_drainsLargeStderrBeforeStdout() async throws {
+    func testRunDrainsLargeStderrBeforeStdout() async throws {
         let stderrBytes = 1 << 20
         let script = "head -c \(stderrBytes) /dev/zero >&2; printf done"
         let output = try await ChildProcess.run(shell, ["-c", script])
@@ -41,7 +41,7 @@ final class ChildProcessTests: XCTestCase {
         XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), "done")
     }
 
-    func test_run_cancellationInterruptsChild() async throws {
+    func testRunCancellationInterruptsChild() async throws {
         let shell = shell
         let run = Task { try await ChildProcess.run(shell, ["-c", "printf started; exec sleep 30"]) }
         try await Task.sleep(for: .milliseconds(200))
@@ -51,7 +51,7 @@ final class ChildProcessTests: XCTestCase {
         XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), "started")
     }
 
-    func test_run_throwsForMissingExecutable() async {
+    func testRunThrowsForMissingExecutable() async {
         do {
             _ = try await ChildProcess.run(URL(fileURLWithPath: "/nonexistent/aria"), [])
             XCTFail("expected a launch failure")

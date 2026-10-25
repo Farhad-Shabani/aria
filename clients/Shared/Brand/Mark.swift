@@ -83,7 +83,7 @@ struct MarkMotion: Equatable, Sendable {
     /// Seconds in the current stage.
     private(set) var elapsed = 0.0
     /// Whether this rest follows a delivery, so the check unbends first.
-    private var returning = false
+    private var isReturning = false
 
     /// Moves `dt` seconds on, in `stage`, hearing the voice at `level`.
     mutating func advance(_ stage: MarkStage, level: Double, dt: Double) {
@@ -102,7 +102,7 @@ struct MarkMotion: Equatable, Sendable {
     }
 
     private mutating func enter(_ next: MarkStage) {
-        returning = stage == .done && next == .rest
+        isReturning = stage == .done && next == .rest
         if next == .listening {
             // A new press starts from the resting wave, not the last press.
             ribbon = RibbonMotion(height: Self.restShare)
@@ -122,7 +122,7 @@ struct MarkMotion: Equatable, Sendable {
             }
             return Self.bent(easeOutCubic((elapsed - MarkTuning.settle) / MarkTuning.bend))
         case .rest:
-            guard returning else { return Self.resting }
+            guard isReturning else { return Self.resting }
             if elapsed < MarkTuning.unbend {
                 return Self.bent(easeOutCubic(1 - elapsed / MarkTuning.unbend))
             }

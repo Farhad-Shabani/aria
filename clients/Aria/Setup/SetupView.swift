@@ -105,15 +105,15 @@ struct SetupView: View {
             Button("Open System Settings") { state.openAccessibility() }
                 .primaryAction()
         case .voice:
-            Button("Skip") { state.next() }.disabled(state.busy)
+            Button("Skip") { state.next() }.disabled(state.isBusy)
             Button("Record") { state.recordVoice() }
                 .primaryAction()
-                .disabled(state.busy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
-            Button(state.heard == nil ? "Skip" : "Finish") { state.next() }.disabled(state.busy)
+            Button(state.heard == nil ? "Skip" : "Finish") { state.next() }.disabled(state.isBusy)
             Button("Record") { state.tryPress() }
                 .primaryAction()
-                .disabled(state.busy)
+                .disabled(state.isBusy)
         case .done:
             Button("Close") { dismiss() }
                 .primaryAction()
@@ -127,8 +127,8 @@ struct SetupView: View {
     private var transition: AnyTransition {
         if reduceMotion { return .opacity }
         return .asymmetric(
-            insertion: .move(edge: state.forward ? .trailing : .leading),
-            removal: .move(edge: state.forward ? .leading : .trailing)
+            insertion: .move(edge: state.isMovingForward ? .trailing : .leading),
+            removal: .move(edge: state.isMovingForward ? .leading : .trailing)
         )
     }
 }

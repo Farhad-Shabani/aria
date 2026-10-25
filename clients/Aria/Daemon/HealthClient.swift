@@ -9,7 +9,7 @@ enum HealthClient {
     static let hotkeyService = "aria.hotkey"
 
     /// Whether `service` is serving. A daemon that does not answer is not.
-    static func serving(_ service: String) async -> Bool {
+    static func isServing(_ service: String) async -> Bool {
         var request = Grpc_Health_V1_HealthCheckRequest()
         request.service = service
         do {

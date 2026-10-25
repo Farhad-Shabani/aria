@@ -7,19 +7,19 @@ struct GhostState {
     static let expiry: TimeInterval = 5
     private(set) var text = ""
     private(set) var placement: Aria_Daemon_V1_Placement?
-    private var enabled = false
+    private var isEnabled = false
     private var updatedAt: TimeInterval?
 
     var isVisible: Bool { !text.isEmpty && placement != nil }
 
-    mutating func setEnabled(_ enabled: Bool) {
-        guard self.enabled != enabled else { return }
-        self.enabled = enabled
+    mutating func setEnabled(_ isEnabled: Bool) {
+        guard self.isEnabled != isEnabled else { return }
+        self.isEnabled = isEnabled
         clear()
     }
 
     mutating func apply(_ snapshot: Aria_Daemon_V1_GhostSnapshot?, now: TimeInterval) {
-        guard enabled, let snapshot, !snapshot.text.isEmpty, snapshot.hasPlacement else {
+        guard isEnabled, let snapshot, !snapshot.text.isEmpty, snapshot.hasPlacement else {
             clear()
             return
         }

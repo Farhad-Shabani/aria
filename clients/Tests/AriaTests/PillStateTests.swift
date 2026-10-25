@@ -20,11 +20,11 @@ final class PillStateTests: XCTestCase {
         return event
     }
 
-    func test_noAsks_noPill() {
+    func testNoAsksNoPill() {
         XCTAssertNil(PillState(asks: AsksInFlight()))
     }
 
-    func test_oneAsk_namesTheAgentAndItsStep() {
+    func testOneAskNamesTheAgentAndItsStep() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 3), now: epoch)
         XCTAssertEqual(PillState(asks: asks), .asking("thinking", since: epoch))
@@ -33,20 +33,20 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState(asks: asks), .asking("reading", since: epoch))
     }
 
-    func test_skillStep_carriesTheSkillName() {
+    func testSkillStepCarriesTheSkillName() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 1, step: .skill, skill: "pair"), now: epoch)
         XCTAssertEqual(PillState(asks: asks), .asking("skill: pair", since: epoch))
     }
 
-    func test_severalAsks_countTheRestBehindTheOldest() {
+    func testSeveralAsksCountTheRestBehindTheOldest() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 5, agent: .codex, step: .running), now: epoch)
         asks.apply(event(.working, ticket: 3, step: .reading), now: epoch + 1)
         XCTAssertEqual(PillState(asks: asks), .asking("reading · +1", since: epoch + 1))
     }
 
-    func test_replyAndFailure_retireTheirTicket() {
+    func testReplyAndFailureRetireTheirTicket() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 1))
         asks.apply(event(.working, ticket: 2))
@@ -56,20 +56,20 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState(asks: asks))
     }
 
-    func test_losingTheStream_clearsEveryAsk() {
+    func testLosingTheStreamClearsEveryAsk() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 1))
         asks.apply(nil)
         XCTAssertEqual(asks.count, 0)
     }
 
-    func test_motionPerState() {
+    func testMotionPerState() {
         XCTAssertEqual(PillState.recording(since: epoch).motion, .still)
         XCTAssertEqual(PillState.transcribing.motion, .still)
         XCTAssertEqual(PillState.asking("reading", since: epoch).motion, .breathe)
     }
 
-    func test_aDeliveredPressNamesWhereItsTextWent() {
+    func testADeliveredPressNamesWhereItsTextWent() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .delivered
         event.outcome = .copied
@@ -87,7 +87,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState(event), .delivered(.unknown, words: 1))
     }
 
-    func test_aFocusChangeEndsCalmlyWhetherOrNotTextLanded() {
+    func testAFocusChangeEndsCalmlyWhetherOrNotTextLanded() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .failed
         event.errorCode = .deliveryTargetChanged
@@ -98,7 +98,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState.interrupted.life, .seconds(2))
     }
 
-    func test_anAppWithAriaOffSaysSoByName() {
+    func testAnAppWithAriaOffSaysSoByName() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .failed
         event.errorCode = .applicationExcluded
@@ -108,13 +108,13 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState.excluded(nil).life, .seconds(2))
     }
 
-    func test_aSegmentDoesNotChangeThePill() {
+    func testASegmentDoesNotChangeThePill() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .segmentTranscribed
         XCTAssertNil(PillState(event))
     }
 
-    func test_onlyAFinishedPressLetsGoOfThePill() {
+    func testOnlyAFinishedPressLetsGoOfThePill() {
         XCTAssertNil(PillState.recording(since: epoch).life)
         XCTAssertNil(PillState.transcribing.life)
         XCTAssertNotNil(PillState.delivered(.copied, words: 3).life)
@@ -122,7 +122,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertNotNil(PillState.failed("No speech detected").life)
     }
 
-    func test_aPromptsNameLeadsItsRun_andAnAskNamesNoAgent() {
+    func testAPromptsNameLeadsItsRunAndAnAskNamesNoAgent() {
         let asking = PillState.asking("reading · +1", since: epoch)
         XCTAssertEqual(asking.label(), "reading · +1")
         XCTAssertEqual(PillState.noReply.label(), "no reply")
@@ -135,13 +135,13 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState.recording(since: epoch).label())
     }
 
-    func test_aLongNameEndsInAnEllipsis() {
+    func testALongNameEndsInAnEllipsis() {
         let recording = PillState.recording(since: epoch)
         XCTAssertEqual(recording.label(prompt: "Polish"), "Polish")
         XCTAssertEqual(recording.label(prompt: "Formal email to the leadership team"), "Formal email to the…")
     }
 
-    func test_theRingFollowsTheLastEnrolledVoiceOfThePress() {
+    func testTheRingFollowsTheLastEnrolledVoiceOfThePress() {
         func event(_ stage: Aria_Daemon_V1_DictationStage, speaker: String = "") -> Aria_Daemon_V1_DictationEvent {
             var event = Aria_Daemon_V1_DictationEvent()
             event.stage = stage

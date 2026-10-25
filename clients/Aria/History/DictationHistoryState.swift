@@ -22,13 +22,13 @@ final class DictationHistoryState: ObservableObject {
     @Published private(set) var days: [HistoryDay] = []
     @Published private(set) var selectedID: UInt64?
     @Published private(set) var detail: HistoryItem?
-    @Published private(set) var loading = false
-    @Published private(set) var detailLoading = false
+    @Published private(set) var isLoading = false
+    @Published private(set) var isLoadingDetail = false
     @Published private(set) var error: HistoryFailure?
     @Published private(set) var notice: String?
     @Published private(set) var retryingID: UInt64?
     @Published private(set) var deletingID: UInt64?
-    @Published private(set) var clearing = false
+    @Published private(set) var isClearing = false
     @Published private(set) var query = ""
     private var next: UInt64?
     private var listGeneration = 0
@@ -44,28 +44,28 @@ final class DictationHistoryState: ObservableObject {
     init(effects: Effects) { self.effects = effects }
 
     var canClear: Bool {
-        !clearing && deletingID == nil && retryingID == nil
-            && detail?.retrying != true && !items.contains(where: \.retrying)
+        !isClearing && deletingID == nil && retryingID == nil
+            && detail?.isRetrying != true && !items.contains(where: \.isRetrying)
     }
 
     func search(_ value: String) {
-        guard !clearing else { return }
+        guard !isClearing else { return }
         query = value
         refresh(debounce: true)
     }
 
     func refresh(debounce: Bool = false, preservingError: Bool = false) {
-        guard !clearing else { return }
+        guard !isClearing else { return }
         listTask?.cancel()
         listGeneration += 1
         let generation = listGeneration
         let requestedQuery = query
         guard requestedQuery.utf8.count <= 256 else {
-            loading = false
+            isLoading = false
             error = .queryTooLong
             return
         }
-        loading = true
+        isLoading = true
         if !preservingError && error != .clearUncertain { error = nil }
         listTask = Task {
             do {
@@ -83,21 +83,21 @@ final class DictationHistoryState: ObservableObject {
                 next = page.next
                 notice = clearNotice ?? page.warning
                 clearNotice = nil
-                loading = false
+                isLoading = false
                 let id = selectedID.flatMap { id in items.contains { $0.id == id } ? id : nil }
                 select(id ?? items.first?.id)
             } catch {
                 guard generation == listGeneration, !Task.isCancelled else { return }
-                loading = false
+                isLoading = false
                 self.error = error as? HistoryFailure ?? .failed
             }
         }
     }
 
     func loadMore(after id: UInt64) {
-        guard !clearing, id == items.last?.id, let cursor = next, !loading else { return }
+        guard !isClearing, id == items.last?.id, let cursor = next, !isLoading else { return }
         let generation = listGeneration
-        loading = true
+        isLoading = true
         listTask = Task {
             do {
                 let page = try await effects.list(query, cursor)
@@ -106,17 +106,17 @@ final class DictationHistoryState: ObservableObject {
                 items.append(contentsOf: page.items.filter { !existing.contains($0.id) })
                 next = page.next
                 notice = page.warning
-                loading = false
+                isLoading = false
             } catch {
                 guard generation == listGeneration, !Task.isCancelled else { return }
-                loading = false
+                isLoading = false
                 self.error = error as? HistoryFailure ?? .failed
             }
         }
     }
 
     func select(_ id: UInt64?) {
-        guard !clearing else { return }
+        guard !isClearing else { return }
         detailTask?.cancel()
         detailGeneration += 1
         let generation = detailGeneration
@@ -127,7 +127,7 @@ final class DictationHistoryState: ObservableObject {
             detail = nil
         }
         selectedID = id
-        detailLoading = id != nil && detail == nil
+        isLoadingDetail = id != nil && detail == nil
         guard let id else { return }
         detailTask = Task {
             do {
@@ -138,25 +138,25 @@ final class DictationHistoryState: ObservableObject {
                     if let index = items.firstIndex(where: { $0.id == id }) {
                         items[index] = entry
                     }
-                    detailLoading = false
-                    guard entry.retrying else { return }
+                    isLoadingDetail = false
+                    guard entry.isRetrying else { return }
                     try await effects.waitForRetry()
                 }
             } catch {
                 guard generation == detailGeneration, !Task.isCancelled else { return }
-                detailLoading = false
+                isLoadingDetail = false
                 self.error = error as? HistoryFailure ?? .failed
             }
         }
     }
 
     func copy() {
-        guard !clearing, let detail, !detail.text.isEmpty else { return }
+        guard !isClearing, let detail, !detail.text.isEmpty else { return }
         notice = effects.copy(detail.text) ? "Copied" : "Could not copy the text. Try again."
     }
 
     func retry() {
-        guard !clearing, let entry = detail, entry.retryable, retryingID == nil,
+        guard !isClearing, let entry = detail, entry.isRetryable, retryingID == nil,
             deletingID != entry.id
         else { return }
         retryingID = entry.id
@@ -180,7 +180,7 @@ final class DictationHistoryState: ObservableObject {
     }
 
     func delete(_ id: UInt64) {
-        guard !clearing, deletingID == nil, retryingID != id else { return }
+        guard !isClearing, deletingID == nil, retryingID != id else { return }
         deletingID = id
         deleteTask = Task {
             defer { deletingID = nil }
@@ -204,13 +204,13 @@ final class DictationHistoryState: ObservableObject {
 
     func clear() {
         guard canClear else { return }
-        clearing = true
+        isClearing = true
         listGeneration += 1
         detailGeneration += 1
         listTask?.cancel()
         detailTask?.cancel()
-        loading = false
-        detailLoading = false
+        isLoading = false
+        isLoadingDetail = false
         error = nil
         notice = nil
         clearNotice = nil
@@ -224,14 +224,14 @@ final class DictationHistoryState: ObservableObject {
                 next = nil
                 query = ""
                 clearNotice =
-                    result.cleanupPending
+                    result.isCleanupPending
                     ? "Dictation text cleared. Some recordings could not be removed; Aria will retry." : nil
                 notice = clearNotice
-                clearing = false
+                isClearing = false
                 refresh()
             } catch {
                 guard !Task.isCancelled else { return }
-                clearing = false
+                isClearing = false
                 self.error = error as? HistoryFailure ?? .clearUncertain
                 refresh(preservingError: true)
             }
@@ -246,9 +246,9 @@ final class DictationHistoryState: ObservableObject {
         retryTask?.cancel()
         deleteTask?.cancel()
         clearTask?.cancel()
-        if clearing { error = .clearUncertain }
-        clearing = false
-        loading = false
-        detailLoading = false
+        if isClearing { error = .clearUncertain }
+        isClearing = false
+        isLoading = false
+        isLoadingDetail = false
     }
 }

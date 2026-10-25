@@ -4,7 +4,7 @@ import XCTest
 @testable import Aria
 
 final class VocabularyProtocolTests: XCTestCase {
-    func test_dictationProject_roundTripsDirectoryAndExplicitDisable() throws {
+    func testDictationProjectRoundTripsDirectoryAndExplicitDisable() throws {
         var request = Aria_Daemon_V1_StartDictationRequest()
         request.projectDirectory = "/work/aria"
         let selected = try Aria_Daemon_V1_StartDictationRequest(
@@ -19,7 +19,7 @@ final class VocabularyProtocolTests: XCTestCase {
         XCTAssertNil(Aria_Daemon_V1_StartDictationRequest().project)
     }
 
-    func test_preferencePatch_preservesExplicitFalseAndAbsentProjectFields() throws {
+    func testPreferencePatchPreservesExplicitFalseAndAbsentProjectFields() throws {
         var patch = Aria_Daemon_V1_PreferencePatch()
         patch.deliveryMode = .complete
         let captions = try Aria_Daemon_V1_PreferencePatch(serializedBytes: patch.serializedData())

@@ -19,7 +19,7 @@ final class GlobalShortcut {
     /// Every registered shortcut, so recording a new chord can let them all
     /// go: a registered chord fires before the Settings window sees the key.
     private static var registered: [UInt32: GlobalShortcut] = [:]
-    private static var paused = false
+    private static var isPaused = false
 
     private let id: UInt32
     private var keyCode: UInt32 = 0
@@ -41,7 +41,7 @@ final class GlobalShortcut {
         self.modifiers = modifiers
         self.action = action
         Self.registered[id] = self
-        return Self.paused || take()
+        return Self.isPaused || take()
     }
 
     func unregister() {
@@ -58,8 +58,8 @@ final class GlobalShortcut {
     }
 
     static func pause(_ pausing: Bool) {
-        guard pausing != paused else { return }
-        paused = pausing
+        guard pausing != isPaused else { return }
+        isPaused = pausing
         for shortcut in registered.values {
             if pausing {
                 shortcut.release()

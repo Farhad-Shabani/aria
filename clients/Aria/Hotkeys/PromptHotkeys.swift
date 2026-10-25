@@ -81,7 +81,7 @@ final class PromptHotkeys: ObservableObject {
             controllers[id] = controller
             controller.chord.bind(plan.chords[id])
         }
-        refused = Set(controllers.filter { $0.value.chord.refused }.keys)
+        refused = Set(controllers.filter { $0.value.chord.wasRefused }.keys)
     }
 
     /// Named as the prompt is called now, so the pill matches Settings.

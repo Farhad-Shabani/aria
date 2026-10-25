@@ -73,7 +73,7 @@ enum DictationHistoryClient {
                 }
             }
             return HistoryClearResult(
-                deletedEntries: response.deletedEntryCount, cleanupPending: response.audioCleanupPending)
+                deletedEntries: response.deletedEntryCount, isCleanupPending: response.audioCleanupPending)
         } catch {
             throw clearFailure(error)
         }
@@ -130,10 +130,10 @@ enum DictationHistoryClient {
             source: source,
             application: wire.hasApplication && !wire.application.name.isEmpty ? wire.application.name : nil,
             duration: wire.hasDurationMs ? Double(wire.durationMs) / 1_000 : nil,
-            complete: wire.transcriptionComplete,
-            retryable: wire.canRegenerate,
+            isComplete: wire.transcriptionComplete,
+            isRetryable: wire.canRegenerate,
             audio: audio,
-            retrying: wire.regenerating,
+            isRetrying: wire.regenerating,
             warning: wire.hasWarning ? wire.warning : nil,
             message: wire.hasError ? transcriptionMessage(wire.error.code) : nil
         )

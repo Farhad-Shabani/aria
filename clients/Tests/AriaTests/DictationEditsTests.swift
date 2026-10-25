@@ -3,26 +3,26 @@ import XCTest
 @testable import Aria
 
 final class DictationEditsTests: XCTestCase {
-    func test_copyOutput_forcesCompleteDelivery() {
+    func testCopyOutputForcesCompleteDelivery() {
         var patch = Aria_Daemon_V1_PreferencePatch()
         DictationEdits.setOutput(.copy, in: &patch)
         XCTAssertEqual(patch.outputMode, .copy)
         XCTAssertEqual(patch.deliveryMode, .complete)
     }
 
-    func test_insertOutput_leavesDeliveryAlone() {
+    func testInsertOutputLeavesDeliveryAlone() {
         var patch = Aria_Daemon_V1_PreferencePatch()
         DictationEdits.setOutput(.insert, in: &patch)
         XCTAssertEqual(patch.outputMode, .insert)
         XCTAssertFalse(patch.hasDeliveryMode)
     }
 
-    func test_silenceMilliseconds_roundsToWholeMilliseconds() {
+    func testSilenceMillisecondsRoundsToWholeMilliseconds() {
         XCTAssertEqual(DictationEdits.silenceMilliseconds(seconds: 1.5), 1500)
         XCTAssertEqual(DictationEdits.silenceMilliseconds(seconds: 0.2999999), 300)
     }
 
-    func test_languageChoices_appendOnlyAnUnknownStoredCode() {
+    func testLanguageChoicesAppendOnlyAnUnknownStoredCode() {
         XCTAssertEqual(DictationEdits.languageChoices(including: "en"), ["auto", "en"])
         XCTAssertEqual(DictationEdits.languageChoices(including: ""), ["auto", "en"])
         XCTAssertEqual(DictationEdits.languageChoices(including: "pt-br"), ["auto", "en", "pt-br"])
@@ -30,7 +30,7 @@ final class DictationEditsTests: XCTestCase {
 
     /// The two messages share field numbers, so a protobuf merge is the
     /// reference the hand-written overlay must match field for field.
-    func test_patchApply_coversEveryField() throws {
+    func testPatchApplyCoversEveryField() throws {
         var patch = Aria_Daemon_V1_PreferencePatch()
         patch.recognitionLanguage = "de"
         patch.outputMode = .copy
@@ -45,7 +45,7 @@ final class DictationEditsTests: XCTestCase {
         patch.dictationHistory = false
         patch.historyAudioRetention = true
         patch.muteOutput = true
-        patch.prompts.entries = [PromptEdits.newEntry(for: URL(fileURLWithPath: "/p.md"))]
+        patch.prompts.entries = [PromptEdits.makeEntry(for: URL(fileURLWithPath: "/p.md"))]
         var combined = Aria_Daemon_V1_PreferencePatch()
         patch.apply(to: &combined)
         XCTAssertEqual(combined, patch)
@@ -57,7 +57,7 @@ final class DictationEditsTests: XCTestCase {
         XCTAssertEqual(overlaid, merged)
     }
 
-    func test_patchApply_laysOnlySetFieldsOverSnapshot() {
+    func testPatchApplyLaysOnlySetFieldsOverSnapshot() {
         var snapshot = Aria_Daemon_V1_UserPreferences()
         snapshot.outputMode = .insert
         snapshot.muteOutput = true
@@ -71,11 +71,11 @@ final class DictationEditsTests: XCTestCase {
         XCTAssertFalse(snapshot.hasVocabularyDirectory)
     }
 
-    func test_patchApply_replacesEveryPrompt() {
+    func testPatchApplyReplacesEveryPrompt() {
         var snapshot = Aria_Daemon_V1_UserPreferences()
         snapshot.prompts.entries = [
-            PromptEdits.newEntry(for: URL(fileURLWithPath: "/a.md")),
-            PromptEdits.newEntry(for: URL(fileURLWithPath: "/b.md")),
+            PromptEdits.makeEntry(for: URL(fileURLWithPath: "/a.md")),
+            PromptEdits.makeEntry(for: URL(fileURLWithPath: "/b.md")),
         ]
         var patch = Aria_Daemon_V1_PreferencePatch()
         patch.prompts = Aria_Daemon_V1_Prompts()
