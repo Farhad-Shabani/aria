@@ -2,19 +2,15 @@ import SwiftUI
 
 struct RecognitionSettings: View {
     let preferences: DaemonPreferences
+    @ObservedObject var voices: VoiceProfiles
+    let setup: SetupStatus
 
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
             Section {
                 language(editor)
             }
-            Section("Voice") {
-                Toggle(isOn: editor.binding(\.ownVoiceOnly, \.ownVoiceOnly)) {
-                    Text("Only type my own voice")
-                    Text("Needs an enrolled owner voice.")
-                }
-                .help("Enroll your voice in Terminal: aria speaker enroll <name> --role owner")
-            }
+            VoiceSection(voices: voices, setup: setup, editor: editor)
             Section("Vocabulary") {
                 Toggle("Use project vocabulary", isOn: editor.binding(\.projectVocabulary, \.projectVocabulary))
                 vocabularyFolder(editor)

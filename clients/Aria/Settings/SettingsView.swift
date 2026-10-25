@@ -10,6 +10,7 @@ struct SettingsView: View {
     let askChord: ChordBinding
     let promptListChord: ChordBinding
     @ObservedObject var setupStatus: SetupStatus
+    let voices: VoiceProfiles
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
     )
@@ -41,7 +42,10 @@ struct SettingsView: View {
         // Returning from System Settings or closing the setup window both
         // make this window key, and either may have finished a step.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            Task { await setupStatus.refresh() }
+            Task {
+                await setupStatus.refresh()
+                await voices.refresh()
+            }
         }
     }
 
@@ -76,7 +80,7 @@ struct SettingsView: View {
         switch pane {
         case .general: GeneralSettings(setup: setupStatus)
         case .dictation: DictationSettings(preferences: preferences)
-        case .recognition: RecognitionSettings(preferences: preferences)
+        case .recognition: RecognitionSettings(preferences: preferences, voices: voices, setup: setupStatus)
         case .shortcuts:
             ShortcutsSettings(
                 preferences: preferences,
