@@ -10,7 +10,7 @@ struct RecognitionSettings: View {
             Section {
                 language(editor)
             }
-            VoiceSection(voices: voices, setup: setup, editor: editor)
+            VoiceSection(voices: voices, colors: voices.colors, setup: setup, editor: editor)
             Section("Vocabulary") {
                 Toggle("Use project vocabulary", isOn: editor.binding(\.projectVocabulary, \.projectVocabulary))
                 vocabularyFolder(editor)

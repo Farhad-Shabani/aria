@@ -1747,6 +1747,7 @@ impl From<DictationStage> for wire::DictationEvent {
         let mut recording = 0;
         let mut outcome = wire::DeliveryOutcome::Unspecified;
         let mut words = 0;
+        let mut speaker = String::new();
         let (code, error) = match stage {
             DictationStage::Recording(id) => {
                 recording = id.0;
@@ -1764,8 +1765,14 @@ impl From<DictationStage> for wire::DictationEvent {
             }
             DictationStage::Cancelled => (wire::DictationStage::Cancelled, 0),
             DictationStage::Failed(code) => (wire::DictationStage::Failed, code.into()),
-            DictationStage::SegmentTranscribed(segment) => {
+            DictationStage::SegmentTranscribed {
+                text: segment,
+                speaker: heard_in,
+            } => {
                 text = segment.to_string();
+                speaker = heard_in
+                    .map(|name| name.as_str().to_owned())
+                    .unwrap_or_default();
                 (wire::DictationStage::SegmentTranscribed, 0)
             }
             DictationStage::SegmentDelivered => (wire::DictationStage::SegmentDelivered, 0),
@@ -1777,6 +1784,7 @@ impl From<DictationStage> for wire::DictationEvent {
             recording_id: recording,
             outcome: outcome as i32,
             word_count: words,
+            speaker,
         }
     }
 }
@@ -1791,9 +1799,13 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             }
             Ok(wire::DictationStage::Transcribing) => Ok(Self::Transcribing),
             Ok(wire::DictationStage::Delivering) => Ok(Self::Delivering),
-            Ok(wire::DictationStage::SegmentTranscribed) => {
-                Ok(Self::SegmentTranscribed(Arc::from(event.text.as_str())))
-            }
+            Ok(wire::DictationStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
+                text: Arc::from(event.text.as_str()),
+                speaker: match event.speaker.as_str() {
+                    "" => None,
+                    name => Some(speaker_name(name)?),
+                },
+            }),
             Ok(wire::DictationStage::SegmentDelivered) => Ok(Self::SegmentDelivered),
             Ok(wire::DictationStage::Delivered) => Ok(Self::Delivered {
                 outcome: delivery_outcome(event.outcome),
@@ -2139,7 +2151,14 @@ mod tests {
             DictationStage::Cancelled,
             DictationStage::Failed(RpcErrorCode::NoSpeech),
             DictationStage::Failed(RpcErrorCode::Unknown(9_999)),
-            DictationStage::SegmentTranscribed(Arc::from("a segment")),
+            DictationStage::SegmentTranscribed {
+                text: Arc::from("a segment"),
+                speaker: None,
+            },
+            DictationStage::SegmentTranscribed {
+                text: Arc::from("a segment"),
+                speaker: Some(SpeakerName::new("ada").expect("a valid name")),
+            },
             DictationStage::SegmentDelivered,
         ];
 

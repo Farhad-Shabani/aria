@@ -139,4 +139,30 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual("Polish".shortenedForPill, "Polish")
         XCTAssertEqual("Formal email to the leadership team".shortenedForPill, "Formal email to the…")
     }
+
+    func test_theRingFollowsTheLastEnrolledVoiceOfThePress() {
+        func event(_ stage: Aria_Daemon_V1_DictationStage, speaker: String = "") -> Aria_Daemon_V1_DictationEvent {
+            var event = Aria_Daemon_V1_DictationEvent()
+            event.stage = stage
+            event.speaker = speaker
+            return event
+        }
+        var heard = HeardVoice()
+
+        heard.apply(event(.segmentTranscribed, speaker: "farhad"))
+        heard.apply(event(.segmentTranscribed))
+        XCTAssertEqual(heard.name, "farhad", "an unmatched segment keeps the ring")
+
+        heard.apply(event(.segmentTranscribed, speaker: "sam"))
+        XCTAssertEqual(heard.name, "sam")
+
+        heard.apply(event(.recording))
+        XCTAssertNil(heard.name, "a new press starts unheard")
+
+        heard.apply(event(.segmentTranscribed, speaker: "farhad"))
+        heard.apply(event(.delivered))
+        XCTAssertEqual(heard.name, "farhad", "the result still wears the voice")
+        heard.apply(event(.failed))
+        XCTAssertNil(heard.name, "a press that fails before it records is unheard")
+    }
 }

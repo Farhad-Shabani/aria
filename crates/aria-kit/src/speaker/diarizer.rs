@@ -70,6 +70,17 @@ impl<E: Embedder> Diarizer<E> {
             .count()
     }
 
+    /// The enrolled profile nearest this embedding, and how near, as a
+    /// cosine. The caller sets the bar it must clear.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(super) fn closest_enrolled(&self, embedding: &[f32]) -> Option<(&Profile, f32)> {
+        closest(
+            self.enrolled
+                .iter()
+                .map(|profile| (profile, dot(&profile.vector, embedding))),
+        )
+    }
+
     /// How close this voice comes to the nearest profile the machine's owner
     /// enrolled, as a cosine. `None` when nobody owns a profile — a guest is
     /// recognized by name, but is not the person the machine answers to.

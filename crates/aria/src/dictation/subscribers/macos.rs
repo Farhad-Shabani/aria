@@ -44,7 +44,7 @@ impl Cue {
             DictationStage::Failed(_) => Some(Self::Error),
             DictationStage::Transcribing
             | DictationStage::Delivering
-            | DictationStage::SegmentTranscribed(..)
+            | DictationStage::SegmentTranscribed { .. }
             | DictationStage::SegmentDelivered
             | DictationStage::Cancelled => None,
         }

@@ -980,6 +980,10 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// Set on DICTATION_STAGE_DELIVERED: how many words landed.
   public var wordCount: UInt32 = 0
 
+  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
+  /// is speaking. Empty until a voice is recognized.
+  public var speaker: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2871,7 +2875,7 @@ nonisolated extension Aria_Daemon_V1_StopDictationResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DictationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{1}speaker\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2885,6 +2889,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
       case 4: try { try decoder.decodeSingularUInt64Field(value: &self.recordingID) }()
       case 5: try { try decoder.decodeSingularEnumField(value: &self.outcome) }()
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.wordCount) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.speaker) }()
       default: break
       }
     }
@@ -2909,6 +2914,9 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if self.wordCount != 0 {
       try visitor.visitSingularUInt32Field(value: self.wordCount, fieldNumber: 6)
     }
+    if !self.speaker.isEmpty {
+      try visitor.visitSingularStringField(value: self.speaker, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2919,6 +2927,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if lhs.recordingID != rhs.recordingID {return false}
     if lhs.outcome != rhs.outcome {return false}
     if lhs.wordCount != rhs.wordCount {return false}
+    if lhs.speaker != rhs.speaker {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

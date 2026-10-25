@@ -12,7 +12,7 @@ use aria_kit::voice_activity::{SileroVad, VoiceActivityDetector};
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
 use crate::delivery::{DeliveryOutcome, Placement};
 use crate::primitives::error_chain;
-use crate::speaker::{Label, SegmentLabeler, SegmentReader, Verdict};
+use crate::speaker::{Label, SegmentLabeler, SegmentReader, SpeakerName, Verdict};
 use crate::transcription::{
     Language, Mode, Transcriber, Transcript, Transcription, TranscriptionError,
 };
@@ -434,7 +434,8 @@ where
                     apply_corrections(&mut text, self.cleanup, vocabulary, &cancel).map_err(
                         |error| published.failure.take().unwrap_or_else(|| started(error)),
                     )?;
-                    published.segment(heard, &text, sinks)?;
+                    let speaker = reader.labeler().heard_speaker().cloned();
+                    published.segment(heard, &text, speaker, sinks)?;
                 }
                 // A preview is the decoder's guess; only a finalized segment
                 // is worth correcting.
@@ -519,10 +520,13 @@ impl<'a> Published<'a> {
         }
     }
 
+    /// `speaker` is the enrolled voice of the press so far, which clients
+    /// show; the segment's own label is what history keeps.
     fn segment<S>(
         &mut self,
         heard: Heard,
         corrected: &str,
+        speaker: Option<SpeakerName>,
         sinks: &mut S,
     ) -> Result<(), DictationError>
     where
@@ -536,7 +540,7 @@ impl<'a> Published<'a> {
         if corrected.is_empty() {
             return Ok(());
         }
-        let Some((speaker, embedding)) = voice(heard.verdict) else {
+        let Some((label, embedding)) = voice(heard.verdict) else {
             tracing::debug!("segment in another voice not delivered");
             return Ok(());
         };
@@ -547,7 +551,7 @@ impl<'a> Published<'a> {
         }
         let published = sinks.segment(Utterance {
             text: corrected,
-            speaker: speaker.as_ref(),
+            speaker: label.as_ref(),
             embedding: embedding.as_deref(),
             at: heard.at,
             span: heard.span,
@@ -588,8 +592,10 @@ impl<'a> Published<'a> {
             caption.committed = caption_suffix(&joined);
             self.events.emit(caption.clone());
         }
-        self.events
-            .emit(DictationStage::SegmentTranscribed(Arc::from(corrected)));
+        self.events.emit(DictationStage::SegmentTranscribed {
+            text: Arc::from(corrected),
+            speaker,
+        });
         if self.streaming {
             self.events.emit(DictationStage::SegmentDelivered);
             self.events
@@ -1403,7 +1409,9 @@ mod tests {
             .unwrap()
             .unwrap();
         published.provisional("uncommitted guess", &sinks);
-        published.segment(heard, "turn left", &mut sinks).unwrap();
+        published
+            .segment(heard, "turn left", None, &mut sinks)
+            .unwrap();
         assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
         let transcript = operation.finish(&mut recording).unwrap();
         let (transcript, mut completion) = published.finish(transcript, &mut sinks).unwrap();
@@ -2312,7 +2320,7 @@ mod tests {
                     heard.verdict = Verdict::Stranger;
                 }
                 published
-                    .segment(heard, corrected.unwrap_or(text), &mut sinks)
+                    .segment(heard, corrected.unwrap_or(text), None, &mut sinks)
                     .unwrap();
             }
             assert_eq!(capture.should_stop(), fail);
@@ -2405,7 +2413,9 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let heard = heard(directory.path(), "turn left");
-        published.segment(heard, "turn left", &mut sinks).unwrap();
+        published
+            .segment(heard, "turn left", None, &mut sinks)
+            .unwrap();
         published.provisional("", &sinks);
         drop(published);
         drop(events);
@@ -2439,7 +2449,7 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let heard = heard(directory.path(), "one");
-        published.segment(heard, "one", &mut sinks).unwrap();
+        published.segment(heard, "one", None, &mut sinks).unwrap();
         // The recording drains after the failure, so previews keep arriving.
         published.provisional("one two", &sinks);
         drop(published);
@@ -2529,7 +2539,7 @@ mod tests {
             sinks.dictation_started(&settings, &control).unwrap();
             for text in ["one", "two"] {
                 let heard = heard(directory.path(), text);
-                published.segment(heard, text, &mut sinks).unwrap();
+                published.segment(heard, text, None, &mut sinks).unwrap();
             }
 
             let result = published.finish(Transcript::new("one two").unwrap(), &mut sinks);
@@ -2555,7 +2565,7 @@ mod tests {
         for (text, corrected) in [("um", Some("")), ("run", None)] {
             let heard = heard(directory.path(), text);
             published
-                .segment(heard, corrected.unwrap_or(text), &mut sinks)
+                .segment(heard, corrected.unwrap_or(text), None, &mut sinks)
                 .unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
@@ -2919,6 +2929,42 @@ mod tests {
                 .expect("the enrolled voice is delivered");
         }
         assert_eq!(*positions.lock().unwrap(), [0, 0]);
+    }
+
+    #[test]
+    fn segments_name_the_enrolled_voice_they_were_heard_in() {
+        let alex = SpeakerName::new("alex").unwrap();
+        for mode in [DeliveryMode::Streaming, DeliveryMode::Complete] {
+            for (voice, expected) in [(OWN, Some(alex.clone())), (OTHER, None)] {
+                let (_directory, capture) = judged_capture();
+                let log = CallLog::default();
+                let pipeline = DictationPipeline::new(
+                    capture,
+                    Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+                    hearing(voice),
+                    (log.history(), log.cursor()),
+                );
+                let (send, stages) = std::sync::mpsc::channel();
+                let events = DictationEventEmitter::forwarded_by(move |event| {
+                    if let super::super::DictationEvent::Stage(stage) = event {
+                        let _ = send.send(stage);
+                    }
+                });
+
+                pipeline
+                    .run_observed(settings(mode, OutputMode::Insert), &events)
+                    .unwrap();
+
+                let speakers: Vec<_> = stages
+                    .try_iter()
+                    .filter_map(|stage| match stage {
+                        DictationStage::SegmentTranscribed { speaker, .. } => Some(speaker),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(speakers, [expected], "{mode:?}");
+            }
+        }
     }
 
     #[test]

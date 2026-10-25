@@ -40,21 +40,35 @@ final class VoiceProfiles: ObservableObject {
     @Published private(set) var enrollment: Enrollment?
     @Published var name = ""
 
+    let colors: VoiceColors
     private let effects: Effects
     private var recording: Task<Void, Never>?
 
-    init(effects: Effects) {
+    init(effects: Effects, colors: VoiceColors) {
         self.effects = effects
+        self.colors = colors
     }
 
     var hasOwner: Bool {
         speakers?.contains { $0.role == .owner } ?? false
     }
 
+    var ownVoiceSummary: String {
+        Self.ownVoiceSummary(owners: speakers?.filter { $0.role == .owner }.map(\.name) ?? [])
+    }
+
+    static func ownVoiceSummary(owners: [String]) -> String {
+        guard !owners.isEmpty else { return "Set up your voice to use this." }
+        let names = owners.map { "\($0)’s" }.formatted(.list(type: .and))
+        return "Types only \(names) \(owners.count == 1 ? "voice" : "voices")."
+    }
+
     /// A refresh cancelled by leaving the pane is not a failure worth showing.
     func refresh() async {
         do {
-            speakers = try await effects.list()
+            let speakers = try await effects.list()
+            self.speakers = speakers
+            colors.sync(enrolled: speakers.map(\.name))
             failure = nil
         } catch {
             guard !Task.isCancelled else { return }
