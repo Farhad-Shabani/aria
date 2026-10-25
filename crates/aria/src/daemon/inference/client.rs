@@ -9,25 +9,22 @@ use aria_kit::audio::{RecordingReader, pcm16_from_f32};
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Channel;
 
-use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
+use super::identity::{ClientIdentity, MAX_DOCUMENT_BYTES};
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, tls};
-use crate::config::{Environment, ServerEndpoint};
-use crate::daemon::relay::{fingerprint_from_hex, to_hex};
+use crate::config::ServerEndpoint;
 use crate::inference::{
     Completion, Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES,
     MAX_TEXT_BYTES, Start, Strategy,
 };
 use crate::ipc::{protocol, wire};
-use crate::primitives::local_socket::ExclusiveListener;
-use crate::primitives::private_fs::prepare_directory;
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
     Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
 };
 
-const ADMIN_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const ADMIN_TIMEOUT: Duration = Duration::from_secs(10);
 const CANCEL_POLL: Duration = Duration::from_millis(25);
 /// 100 ms of audio per message.
 const AUDIO_CHUNK_SAMPLES: u64 = 1600;
@@ -705,115 +702,7 @@ async fn send_request(
         .map_err(|_| RemoteClientError::Connection)
 }
 
-/// Pairs with the server named in an invitation read from `input`, so the
-/// secret never appears on a command line.
-pub fn remote_pair(input: impl std::io::Read) -> Result<String, RemoteClientError> {
-    let invitation = read_invitation(input)?;
-    let environment = Environment::capture().map_err(RemoteClientError::Config)?;
-    pair_at(environment.home(), &invitation)
-}
-
-fn read_invitation(input: impl std::io::Read) -> Result<String, RemoteClientError> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    input
-        .take(MAX_DOCUMENT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| RemoteClientError::Invitation)?;
-    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-        return Err(RemoteClientError::Invitation);
-    }
-    String::from_utf8(bytes).map_err(|_| RemoteClientError::Invitation)
-}
-
-pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
-    if invitation.len() as u64 > MAX_DOCUMENT_BYTES {
-        return Err(RemoteClientError::Invitation);
-    }
-    let invitation: Invitation =
-        serde_json::from_str(invitation).map_err(|_| RemoteClientError::Invitation)?;
-    let paths = Paths::in_home(home);
-    if let Some(parent) = paths.directory().parent() {
-        prepare_directory(parent).map_err(|_| RemoteClientError::Storage)?;
-    }
-    prepare_directory(paths.directory()).map_err(|_| RemoteClientError::Storage)?;
-    let _lock = ExclusiveListener::bind(paths.pairing_socket(), paths.pairing_lock())
-        .map_err(|_| RemoteClientError::PairingLock)?;
-    let mut identity =
-        ClientIdentity::load_or_create(&paths.client_identity()).map_err(identity_error)?;
-    let endpoint =
-        tls::invited_endpoint(&identity, &invitation).map_err(|_| RemoteClientError::Identity)?;
-    run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
-        let channel = endpoint
-            .connect()
-            .await
-            .map_err(|_| RemoteClientError::Connection)?;
-        wire::pairing_service_client::PairingServiceClient::new(channel)
-            .max_decoding_message_size(1024)
-            .pair(wire::PairRequest {
-                code: invitation.code.clone(),
-            })
-            .await
-            .map_err(rpc_error)?;
-        Ok(())
-    }))?;
-    identity.remember(&invitation).map_err(identity_error)?;
-    Ok(to_hex(&identity.fingerprint().map_err(identity_error)?))
-}
-
-pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
-    let endpoint = ServerEndpoint::parse(endpoint).ok_or(RemoteClientError::InvalidEndpoint)?;
-    let environment = Environment::capture().map_err(RemoteClientError::Config)?;
-    run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
-        let channel = admin_channel(environment.home()).await?;
-        let response =
-            wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)
-                .max_decoding_message_size(MAX_DOCUMENT_BYTES as usize + 1024)
-                .issue_invite(wire::InferenceInviteRequest {
-                    endpoint: endpoint.to_string(),
-                })
-                .await
-                .map_err(rpc_error)?;
-        String::from_utf8(response.into_inner().invitation_json)
-            .map_err(|_| RemoteClientError::Response)
-    }))
-}
-
-pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
-    let fingerprint =
-        fingerprint_from_hex(fingerprint).ok_or(RemoteClientError::InvalidFingerprint)?;
-    let environment = Environment::capture().map_err(RemoteClientError::Config)?;
-    run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
-        let channel = admin_channel(environment.home()).await?;
-        wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)
-            .max_decoding_message_size(1024)
-            .revoke(wire::InferenceRevokeRequest {
-                fingerprint: fingerprint.to_vec(),
-            })
-            .await
-            .map_err(|status| {
-                if protocol::rpc_failure(&status)
-                    .is_some_and(|failure| failure.code == RpcErrorCode::DurabilityUnconfirmed)
-                {
-                    RemoteClientError::RevocationUnconfirmed
-                } else {
-                    rpc_error(status)
-                }
-            })?;
-        Ok(())
-    }))
-}
-
-async fn admin_channel(home: &Path) -> Result<Channel, RemoteClientError> {
-    let runtime = Paths::in_home(home).runtime();
-    Endpoint::from_shared(format!("unix://{}", runtime.socket_path().display()))
-        .map_err(|_| RemoteClientError::Connection)?
-        .connect()
-        .await
-        .map_err(|_| RemoteClientError::Connection)
-}
-
-fn run<T>(
+pub(super) fn run<T>(
     future: impl Future<Output = Result<T, RemoteClientError>>,
 ) -> Result<T, RemoteClientError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -825,7 +714,7 @@ fn run<T>(
     result
 }
 
-async fn bounded<T>(
+pub(super) async fn bounded<T>(
     cancel: &CancelToken,
     timeout: Duration,
     future: impl Future<Output = Result<T, RemoteClientError>>,
@@ -848,7 +737,7 @@ async fn bounded<T>(
     }
 }
 
-fn identity_error(error: super::identity::Error) -> RemoteClientError {
+pub(super) fn identity_error(error: super::identity::Error) -> RemoteClientError {
     use super::identity::Error;
     match error {
         Error::DurabilityUnconfirmed(_) => RemoteClientError::DurabilityUnconfirmed,
@@ -868,7 +757,7 @@ fn identity_error(error: super::identity::Error) -> RemoteClientError {
     }
 }
 
-fn rpc_error(status: tonic::Status) -> RemoteClientError {
+pub(super) fn rpc_error(status: tonic::Status) -> RemoteClientError {
     match protocol::rpc_failure(&status).map(|failure| failure.code) {
         Some(RpcErrorCode::Cancelled) => RemoteClientError::Cancelled,
         Some(RpcErrorCode::DurabilityUnconfirmed) => RemoteClientError::DurabilityUnconfirmed,
@@ -1714,14 +1603,6 @@ mod tests {
             Ok(())
         })
         .unwrap();
-    }
-
-    #[test]
-    fn invitations_are_bounded_utf8() {
-        let limit = MAX_DOCUMENT_BYTES as usize;
-        assert!(read_invitation(&vec![b'a'; limit + 1][..]).is_err());
-        assert!(read_invitation(&[255][..]).is_err());
-        assert_eq!(read_invitation(&b"{}"[..]).unwrap(), "{}");
     }
 
     #[test]
