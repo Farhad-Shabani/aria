@@ -81,7 +81,7 @@ struct VoiceSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(speaker.name)
                 Text(speaker.role == .owner ? "Owner" : "Guest")
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()

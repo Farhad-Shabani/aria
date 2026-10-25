@@ -121,7 +121,6 @@ struct PhoneSettings: View {
             } label: {
                 Text("Revoke All…").frame(maxWidth: .infinity)
             }
-            .foregroundStyle(.red)
             .disabled(!pairing.canRevoke)
         }
     }

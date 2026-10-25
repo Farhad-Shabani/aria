@@ -32,18 +32,19 @@ struct RecognitionSettings: View {
     /// The daemon clears the folder when sent an empty path.
     private func vocabularyFolder(_ editor: PreferencesEditor) -> some View {
         let chosen = editor.snapshot.hasVocabularyDirectory ? editor.snapshot.vocabularyDirectory : nil
-        return LabeledContent("Folder") {
+        return LabeledContent {
             HStack {
-                Text(chosen ?? "No folder chosen")
-                    .foregroundStyle(chosen == nil ? .secondary : .primary)
-                    .truncationMode(.middle)
-                    .lineLimit(1)
                 Button("Choose…") {
                     if let path = Self.chooseFolder() { editor.set(\.vocabularyDirectory, to: path) }
                 }
                 Button("Clear") { editor.set(\.vocabularyDirectory, to: "") }
                     .disabled(chosen == nil)
             }
+        } label: {
+            Text("Folder")
+            Text(chosen.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 

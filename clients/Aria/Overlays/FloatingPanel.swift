@@ -37,7 +37,7 @@ final class FloatingPanel {
             self.host = host
             panel.contentView = host
         }
-        position(panel, height: max(height, 44))
+        position(panel, height: height)
         // A show during a fade-out is the next press: cancel the fade.
         panel.alphaValue = 1
         panel.orderFrontRegardless()

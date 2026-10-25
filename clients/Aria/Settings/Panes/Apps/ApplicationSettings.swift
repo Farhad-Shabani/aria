@@ -15,11 +15,12 @@ struct ApplicationSettings: View {
                     Image(nsImage: app.icon)
                         .resizable()
                         .frame(width: SettingsMetrics.headerIconSide, height: SettingsMetrics.headerIconSide)
+                } accessory: {
+                    Toggle("Aria in \(app.name)", isOn: isOn(excluded, editor))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
                 } content: {
                     Section {
-                        // The accent color reads as switched on, the opposite of this switch.
-                        Toggle("Turn Off Aria", isOn: turnedOff(excluded, editor))
-                            .tint(.red)
                         if !excluded {
                             ForEach(AppSetting.shown(for: bundleID, overrides: overrides), id: \.self) { setting in
                                 control(setting, overrides: overrides, editor)
@@ -31,13 +32,13 @@ struct ApplicationSettings: View {
         }
     }
 
-    private func turnedOff(_ excluded: Bool, _ editor: PreferencesEditor) -> Binding<Bool> {
+    private func isOn(_ excluded: Bool, _ editor: PreferencesEditor) -> Binding<Bool> {
         let bundleID = bundleID
         return Binding(
-            get: { excluded },
-            set: { off in
+            get: { !excluded },
+            set: { on in
                 editor.editLatest(\.applicationOverrides, \.applicationOverrides) {
-                    ApplicationOverrideEdits.setExcluded(off, for: bundleID, in: &$0)
+                    ApplicationOverrideEdits.setExcluded(!on, for: bundleID, in: &$0)
                 }
             }
         )

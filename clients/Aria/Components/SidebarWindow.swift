@@ -22,11 +22,22 @@ struct SidebarWindow<Sidebar: View, Detail: View>: View {
             detail
                 .formStyle(.grouped)
                 .toolbar(removing: .title)
-                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                .softToolbarEdge()
         }
         .frame(width: Layout.width)
         .frame(minHeight: Layout.minimumHeight)
         // A menu bar app is not active, so its window would open behind others.
         .onAppear { NSApplication.shared.activate() }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    fileprivate func softToolbarEdge() -> some View {
+        if #available(macOS 26, *) {
+            scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        }
     }
 }

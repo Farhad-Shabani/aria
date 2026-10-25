@@ -95,7 +95,7 @@ final class PromptList {
 
 private let listWidth = OverlayStyle.pillWidth
 /// Above the pill, so a pill still showing stays readable.
-private let listBottomMargin = OverlayStyle.pillBottomMargin + 52
+private let listBottomMargin = OverlayStyle.pillBottomMargin + 46
 
 private enum Layout {
     static let maxNameWidth: CGFloat = 280

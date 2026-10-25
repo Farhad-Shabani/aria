@@ -61,8 +61,9 @@ the app, then choose its settings. Aria uses them when that app is in front as
 dictation starts. Switching apps mid-recording changes nothing. Other apps use
 **Settings → Dictation**. Flags such as `aria dictate --mode copy` still win.
 
-Switch on **Turn Off Aria** on an app's page, and Aria starts no dictation or
-Ask and types or copies nothing while that app is in front, even from the phone.
+Switch off the switch at the top of an app's page, and Aria starts no
+dictation or Ask and types or copies nothing while that app is in front, even
+from the phone.
 
 ## Dictate from iPhone and Apple Watch
 

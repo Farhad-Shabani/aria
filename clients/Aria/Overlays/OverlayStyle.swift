@@ -20,8 +20,8 @@ enum OverlayStyle {
 
     /// Room for the longest failure message; the capsule centres in it.
     static let pillWidth: CGFloat = 480
-    static let pillBottomMargin: CGFloat = 34
+    static let pillBottomMargin: CGFloat = 40
     static let captionWidth: CGFloat = 720
     /// High enough to clear the status pill, so both can show at once.
-    static let captionBottomMargin: CGFloat = 90
+    static let captionBottomMargin: CGFloat = 96
 }

@@ -219,6 +219,10 @@ final class SetupState: ObservableObject {
         }
     }
 
+    func title(ofModel name: String) -> String {
+        inspection.models.first { $0.name == name }?.title ?? name
+    }
+
     static func size(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
@@ -474,13 +478,13 @@ extension SetupState.Step {
     var title: String {
         switch self {
         case .inspecting, .welcome: "Welcome to Aria"
-        case .choices: "Choose your engines"
-        case .applying: "Setting up…"
-        case .grant: "Allow the hotkey"
-        case .voice: "Your voice"
-        case .tryOut: "Try it"
-        case .done: "Aria is ready"
-        case .failed: "Setup did not finish"
+        case .choices: "Choose Your Engines"
+        case .applying: "Setting Up…"
+        case .grant: "Allow the Hotkey"
+        case .voice: "Your Voice"
+        case .tryOut: "Try It"
+        case .done: "Aria Is Ready"
+        case .failed: "Setup Did Not Finish"
         }
     }
 

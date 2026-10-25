@@ -45,7 +45,7 @@ struct InstallingPage: View {
 
     private func bar(_ model: String, _ progress: Aria_Setup_V1_DownloadProgress) -> some View {
         let received = min(progress.received, progress.total)
-        let title = state.inspection.models.first { $0.name == model }?.title ?? model
+        let title = state.title(ofModel: model)
         return ProgressView(value: Double(received), total: Double(max(progress.total, 1))) {
             Text("\(title) · \(SetupState.size(received)) of \(SetupState.size(progress.total))")
                 .font(.callout)
