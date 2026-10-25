@@ -13,13 +13,13 @@ struct CaptionView: View {
         let tail = Text(provisional).italic().foregroundStyle(.white.opacity(0.85))
         Text("\(committed)\(separator)\(tail)")
             .font(OverlayStyle.captionFont)
-            .foregroundStyle(.white)
+            .foregroundStyle(OverlayStyle.ink)
             .lineLimit(2)
             .truncationMode(.head)  // the newest words matter most
             .multilineTextAlignment(.center)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(OverlayStyle.fill, in: RoundedRectangle(cornerRadius: 10))
+            .background(OverlayStyle.fill, in: RoundedRectangle(cornerRadius: OverlayStyle.cardCornerRadius))
             .frame(maxWidth: OverlayStyle.captionWidth)
     }
 }

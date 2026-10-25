@@ -31,7 +31,7 @@ struct AriaApp: App {
                 if let failure = poller.failure {
                     Text(failure.message)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.failure)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 8)
                 }
@@ -42,7 +42,6 @@ struct AriaApp: App {
                         NSApplication.shared.activate()
                     } label: {
                         Text("Dictation History…")
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Button {
                         appDelegate.settings.request()
@@ -155,7 +154,6 @@ private struct CheckForUpdatesButton: View {
             updates.checkForUpdates()
         } label: {
             Text("Check for Updates…")
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .disabled(!updates.canCheck)
     }
@@ -166,6 +164,7 @@ private struct MenuActionStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .contentShape(Rectangle())

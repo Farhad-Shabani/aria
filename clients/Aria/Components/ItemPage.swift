@@ -1,9 +1,5 @@
 import SwiftUI
 
-private enum Layout {
-    static let spacing: CGFloat = 10
-}
-
 /// One item's page: a header naming it, then the item's own sections.
 struct ItemPage<Icon: View, Accessory: View, Content: View>: View {
     let title: String
@@ -14,7 +10,7 @@ struct ItemPage<Icon: View, Accessory: View, Content: View>: View {
 
     var body: some View {
         Section {
-            HStack(spacing: Layout.spacing) {
+            HStack(spacing: SettingsMetrics.headerSpacing) {
                 icon
                 HeadlineStack(title: title) {
                     if let subtitle {

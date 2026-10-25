@@ -81,10 +81,10 @@ struct TranscriptionSection: View {
         } else {
             switch server.notice {
             case .failed(let message):
-                Text(message).foregroundStyle(.red)
+                Text(message).foregroundStyle(.failure)
             case .needsSetup:
                 HStack {
-                    Text("No speech model is on this Mac yet.").foregroundStyle(.red)
+                    Text("No speech model is on this Mac yet.").foregroundStyle(.failure)
                     Button("Aria Setup…") { openWindow(id: WindowID.setup) }
                 }
             case nil:
@@ -96,7 +96,6 @@ struct TranscriptionSection: View {
 
 private struct PairServerSheet: View {
     private static let width: CGFloat = 420
-    private static let glyphSide: CGFloat = 56
     private static let inviteCommand = "aria remote invite --endpoint https://your-server:9851"
 
     @ObservedObject var server: ServerTranscription
@@ -104,13 +103,8 @@ private struct PairServerSheet: View {
     @Binding var isPresented: Bool
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "server.rack")
-                .font(.title)
-                .foregroundStyle(.white)
-                .frame(width: Self.glyphSide, height: Self.glyphSide)
-                .background(Circle().fill(.blue))
-                .accessibilityHidden(true)
+        VStack(spacing: SettingsMetrics.sheetSpacing) {
+            SheetGlyph(symbol: "server.rack", tint: .blue)
             Text("Pair with a Server").font(.headline)
             if case .confirming(_, let address) = server.pairingStep {
                 confirmation(address)
@@ -121,7 +115,7 @@ private struct PairServerSheet: View {
                 ? "The clipboard holds no invitation." : server.pairingFailure
             {
                 Text(failure)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.failure)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }

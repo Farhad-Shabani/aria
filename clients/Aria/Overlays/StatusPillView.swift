@@ -38,7 +38,7 @@ struct StatusPillView: View {
                 }
                 .font(OverlayStyle.labelFont)
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(OverlayStyle.ink)
                 .padding(.trailing, 4)
             }
         }

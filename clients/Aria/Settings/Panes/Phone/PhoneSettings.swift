@@ -53,13 +53,11 @@ struct PhoneSettings: View {
     private var problems: some View {
         switch pairing.status {
         case .failed:
-            Text("Aria couldn't make a pairing code. Run aria doctor in Terminal to see why.").foregroundStyle(.red)
+            Text("Aria couldn't make a pairing code. Run aria doctor in Terminal to see why.").foregroundStyle(.failure)
         case .loading, .restarting, .relayOff, .daemonOff, .live:
             EmptyView()
         }
-        if let error = pairing.actionError {
-            Text(error).foregroundStyle(.red)
-        }
+        NoticeText(notice: pairing.actionError)
     }
 
     private func live(_ invite: PairingInvite, expiresAt: Date) -> some View {

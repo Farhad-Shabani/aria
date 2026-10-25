@@ -18,9 +18,7 @@ struct VoiceSection: View {
         } header: {
             Text("Voice")
         } footer: {
-            if let failure = voices.failure {
-                Text(failure).foregroundStyle(.red)
-            }
+            NoticeText(notice: voices.failure)
         }
         Section {
             ownVoiceOnly

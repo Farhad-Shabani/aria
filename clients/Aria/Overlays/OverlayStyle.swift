@@ -3,6 +3,9 @@ import SwiftUI
 /// How the overlays look, and where they sit at the bottom of the screen.
 enum OverlayStyle {
     static let fill = Color.black.opacity(0.75)
+    static let ink = Color.white
+    static let dimInk = Color.white.opacity(0.5)
+    static let cardCornerRadius: CGFloat = 12
     static let labelFont = Font.system(size: 12, weight: .medium)
     static let captionFont = Font.system(size: 13, weight: .medium)
     static let glyphFont = Font.system(size: 10, weight: .bold)

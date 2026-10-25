@@ -62,7 +62,7 @@ struct PromptSettings: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
-                    Text("File not found").foregroundStyle(.red)
+                    Text("File not found").foregroundStyle(.failure)
                 }
             }
         }
