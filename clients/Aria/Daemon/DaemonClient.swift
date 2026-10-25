@@ -186,7 +186,7 @@ struct DaemonClient: DaemonControlling {
     func start() async throws {
         let method = try Self.startMethod(
             agentStatus: Self.agent.status,
-            jobLoaded: await Self.agentLoaded(),
+            jobLoaded: await Self.isAgentLoaded(),
             override: Self.daemonBinaryOverride()
         )
         switch method {
@@ -224,12 +224,12 @@ struct DaemonClient: DaemonControlling {
     /// the kickstart to report.
     private static func awaitAgentLoaded() async {
         for _ in 0..<agentLoadProbes {
-            if await agentLoaded() { return }
+            if await isAgentLoaded() { return }
             try? await Task.sleep(for: agentLoadPoll)
         }
     }
 
-    private static func agentLoaded() async -> Bool {
+    private static func isAgentLoaded() async -> Bool {
         (try? await run(launchctl, ["print", agentTarget])) != nil
     }
 

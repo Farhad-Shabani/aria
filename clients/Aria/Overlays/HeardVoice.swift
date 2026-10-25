@@ -5,17 +5,17 @@ import Foundation
 /// keeps the last, so the ring does not drop out mid-press.
 struct HeardVoice {
     private(set) var name: String?
-    private var ended = false
+    private var hasEnded = false
 
     mutating func apply(_ event: Aria_Daemon_V1_DictationEvent) {
-        if ended {
+        if hasEnded {
             name = nil
-            ended = false
+            hasEnded = false
         }
         switch event.stage {
         case .recording: name = nil
         case .segmentTranscribed where !event.speaker.isEmpty: name = event.speaker
-        case .delivered, .cancelled, .failed: ended = true
+        case .delivered, .cancelled, .failed: hasEnded = true
         default: break
         }
     }

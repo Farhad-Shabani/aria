@@ -162,7 +162,7 @@ private struct CheckForUpdatesButton: View {
 }
 
 private struct MenuActionStyle: ButtonStyle {
-    @State private var hovered = false
+    @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -171,8 +171,8 @@ private struct MenuActionStyle: ButtonStyle {
             .contentShape(Rectangle())
             .background {
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(.primary.opacity(configuration.isPressed ? 0.12 : hovered ? 0.06 : 0))
+                    .fill(.primary.opacity(configuration.isPressed ? 0.12 : isHovered ? 0.06 : 0))
             }
-            .onHover { hovered = $0 }
+            .onHover { isHovered = $0 }
     }
 }

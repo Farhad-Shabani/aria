@@ -5,11 +5,11 @@ struct GeneralSettings: View {
     @ObservedObject var setup: SetupStatus
     @StateObject private var loginItem = LoginItem()
     @AppStorage(StatusController.enabledKey)
-    private var statusPillEnabled = StatusController.enabledByDefault
+    private var statusPillEnabled = StatusController.isEnabledByDefault
     @AppStorage(GhostController.enabledKey)
-    private var ghostTextEnabled = GhostController.enabledByDefault
+    private var ghostTextEnabled = GhostController.isEnabledByDefault
     @AppStorage(AppDelegate.captionsEnabledKey)
-    private var captionsEnabled = AppDelegate.captionsEnabledByDefault
+    private var captionsEnabled = AppDelegate.areCaptionsEnabledByDefault
 
     var body: some View {
         Form {

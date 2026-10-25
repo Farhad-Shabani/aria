@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class PreferencesLoadFailureTests: XCTestCase {
-    func test_loadFailure_waitsOutADaemonThatIsNotListening() async {
+    func testLoadFailureWaitsOutADaemonThatIsNotListening() async {
         let transport = FakePreferencesTransport()
         transport.snapshotError = RPCError(code: .unavailable, message: "")
         let preferences = DaemonPreferences(transport: transport)
@@ -15,7 +15,7 @@ final class PreferencesLoadFailureTests: XCTestCase {
         XCTAssertNil(preferences.loadFailure)
     }
 
-    func test_loadFailure_reportsARefusal() async {
+    func testLoadFailureReportsARefusal() async {
         struct Refused: LocalizedError {
             var errorDescription: String? { "refused" }
         }

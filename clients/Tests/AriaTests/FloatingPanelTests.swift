@@ -6,7 +6,7 @@ import XCTest
 
 @MainActor
 final class FloatingPanelTests: XCTestCase {
-    func test_overlayStaysAbovePopupMenus() throws {
+    func testOverlayStaysAbovePopupMenus() throws {
         let existing = Set(NSApp.windows.map(\.windowNumber))
         let overlay = FloatingPanel(width: 480, bottomMargin: 34)
         overlay.show(Text("typing"))

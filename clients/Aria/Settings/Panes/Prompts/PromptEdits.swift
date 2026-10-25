@@ -13,7 +13,7 @@ enum PromptEdits {
     }
 
     /// A rewrite, on so the prompt list shows it, with no chord yet.
-    static func newEntry(for file: URL, id: UUID = UUID()) -> Aria_Daemon_V1_Prompt {
+    static func makeEntry(for file: URL, id: UUID = UUID()) -> Aria_Daemon_V1_Prompt {
         var entry = Aria_Daemon_V1_Prompt()
         entry.id = id.uuidString
         entry.name = file.deletingPathExtension().lastPathComponent

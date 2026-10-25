@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class PreferencesEditorTests: XCTestCase {
-    func test_binding_pushesOnlyTheEditedField() async throws {
+    func testBindingPushesOnlyTheEditedField() async throws {
         let transport = FakePreferencesTransport()
         var loaded = Aria_Daemon_V1_PreferenceSnapshot()
         loaded.revision = 1
@@ -32,7 +32,7 @@ final class PreferencesEditorTests: XCTestCase {
         XCTAssertEqual(transport.sentUpdates.map(\.patch), [expected])
     }
 
-    func test_editLatest_keepsTwoQuickEdits() async throws {
+    func testEditLatestKeepsTwoQuickEdits() async throws {
         let transport = FakePreferencesTransport()
         var loaded = Aria_Daemon_V1_PreferenceSnapshot()
         loaded.revision = 1

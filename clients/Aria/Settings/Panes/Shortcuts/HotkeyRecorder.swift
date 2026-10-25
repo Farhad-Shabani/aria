@@ -7,7 +7,7 @@ struct HotkeyRecorder: View {
     let set: (Chord?) -> Void
 
     var body: some View {
-        ChordRecorder(title: title, chord: chord, inUse: binding.refused, record: set) {
+        ChordRecorder(title: title, chord: chord, isInUse: binding.wasRefused, record: set) {
             set(nil)
         }
     }

@@ -9,12 +9,12 @@ final class MenuBarStateTests: XCTestCase {
         MenuBarState(daemon: daemon, pill: pill)
     }
 
-    func test_theDaemonComesFirst() {
+    func testTheDaemonComesFirst() {
         XCTAssertEqual(state(.stopped, pill: .recording(since: epoch)), .stopped)
         XCTAssertEqual(state(.working, pill: .recording(since: epoch)), .switching)
     }
 
-    func test_aRunningDaemonFollowsThePill() {
+    func testARunningDaemonFollowsThePill() {
         XCTAssertEqual(state(pill: .recording(since: epoch)), .listening)
         XCTAssertEqual(state(pill: .transcribing), .working)
         XCTAssertEqual(state(pill: .delivering), .working)
@@ -24,12 +24,12 @@ final class MenuBarStateTests: XCTestCase {
         XCTAssertEqual(state(pill: .replied(copied: false)), .done)
     }
 
-    func test_aFailureNeedsThePerson() {
+    func testAFailureNeedsThePerson() {
         XCTAssertEqual(state(pill: .failed("Dictation failed")), .attention)
         XCTAssertEqual(state(pill: .noReply), .attention)
     }
 
-    func test_idleIsReady() {
+    func testIdleIsReady() {
         XCTAssertEqual(state(), .ready)
         XCTAssertEqual(state(pill: .cancelled), .ready)
         XCTAssertEqual(state(pill: .interrupted), .ready)

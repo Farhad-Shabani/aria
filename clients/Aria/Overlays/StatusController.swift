@@ -6,7 +6,7 @@ import Foundation
 @MainActor
 final class StatusController: ObservableObject {
     static let enabledKey = "statusPillEnabled"
-    static let enabledByDefault = true
+    static let isEnabledByDefault = true
 
     /// What the pill would show, for the menu bar, even with the pill turned off.
     @Published private(set) var live: PillState?
@@ -38,7 +38,7 @@ final class StatusController: ObservableObject {
 
     /// The caller starts the stream once every overlay has registered.
     func start() {
-        UserDefaults.standard.register(defaults: [Self.enabledKey: Self.enabledByDefault])
+        UserDefaults.standard.register(defaults: [Self.enabledKey: Self.isEnabledByDefault])
         events.onDictation { [weak self] event in
             guard let self else { return }
             guard let event else {

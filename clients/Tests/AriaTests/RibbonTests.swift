@@ -17,7 +17,7 @@ final class RibbonTests: XCTestCase {
         return motion
     }
 
-    func test_voiceRisesFastAndFallsSlower() {
+    func testVoiceRisesFastAndFallsSlower() {
         let risen = listening(to: 1, for: 0.05)
         XCTAssertGreaterThan(risen.level, 0.9)
 
@@ -26,7 +26,7 @@ final class RibbonTests: XCTestCase {
         XCTAssertGreaterThan(falling.level, 0.5)
     }
 
-    func test_silenceBreathesWithinItsBand() {
+    func testSilenceBreathesWithinItsBand() {
         var motion = listening(to: 0, for: 2)
         var lowest = Double.infinity
         var highest = -Double.infinity
@@ -40,20 +40,20 @@ final class RibbonTests: XCTestCase {
         XCTAssertGreaterThan(highest - lowest, RibbonTuning.breathSwing / 2)
     }
 
-    func test_louderFlowsFasterAndAlwaysLeftToRight() {
+    func testLouderFlowsFasterAndAlwaysLeftToRight() {
         let quiet = listening(to: 0, for: 1)
         let loud = listening(to: 1, for: 1)
         XCTAssertLessThan(quiet.phase, 0)
         XCTAssertLessThan(loud.phase, quiet.phase)
     }
 
-    func test_sweepIsFlatBehindTheEdgeAndWavyAhead() {
+    func testSweepIsFlatBehindTheEdgeAndWavyAhead() {
         let halfway = RibbonTuning.sweepPeriod / 2
         XCTAssertEqual(RibbonMotion.sweepShare(0.1, elapsed: halfway), 0, accuracy: 1e-9)
         XCTAssertEqual(RibbonMotion.sweepShare(0.9, elapsed: halfway), RibbonTuning.sweepHeight, accuracy: 1e-9)
     }
 
-    func test_bothCurrentsShareOneHeight() {
+    func testBothCurrentsShareOneHeight() {
         let flat = RibbonMotion.currents(phase: 0, share: { _ in 0 })
         let upperLine = RibbonTuning.middle - RibbonTuning.spread / 2
         let lowerLine = RibbonTuning.middle + RibbonTuning.spread / 2
@@ -73,7 +73,7 @@ final class RibbonTests: XCTestCase {
         XCTAssertEqual(upperPeak, lowerPeak, accuracy: 1e-3)
     }
 
-    func test_transcribingTakesOverWithoutAJump() {
+    func testTranscribingTakesOverWithoutAJump() {
         var motion = listening(to: 0.9, for: 1)
         let spoken = motion.share(at: 0.5)
         let phase = motion.phase
@@ -99,7 +99,7 @@ final class RibbonTests: XCTestCase {
         }
     }
 
-    func test_sweepNeverSnapsBetweenLaps() {
+    func testSweepNeverSnapsBetweenLaps() {
         // Step across several laps; no frame may move any point far.
         var elapsed = 0.0
         while elapsed < RibbonTuning.sweepPeriod * 3 {
@@ -113,7 +113,7 @@ final class RibbonTests: XCTestCase {
     }
 
     @MainActor
-    func test_aNewPressStartsFromSilence() {
+    func testANewPressStartsFromSilence() {
         let model = RibbonModel()
         let first = Date(timeIntervalSince1970: 1_000)
         var date = first
@@ -127,7 +127,7 @@ final class RibbonTests: XCTestCase {
         XCTAssertEqual(model.motion, RibbonMotion())
     }
 
-    func test_aLongStallMovesOnlyOneCappedFrame() {
+    func testALongStallMovesOnlyOneCappedFrame() {
         var motion = RibbonMotion()
         motion.listen(to: 1, for: 5)
         XCTAssertEqual(motion.clock, RibbonTuning.maxFrameGap, accuracy: 1e-9)

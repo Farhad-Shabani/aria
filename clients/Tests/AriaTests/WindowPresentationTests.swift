@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class WindowPresentationTests: XCTestCase {
-    func test_launch_waits_for_settings_action() {
+    func testLaunchWaitsForSettingsAction() {
         let presentation = WindowPresentation()
         var opened = 0
 
@@ -15,7 +15,7 @@ final class WindowPresentationTests: XCTestCase {
         XCTAssertEqual(opened, 1)
     }
 
-    func test_launch_and_reopen_present_settings() {
+    func testLaunchAndReopenPresentSettings() {
         let presentation = WindowPresentation()
         var opened = 0
         presentation.register { opened += 1 }
@@ -26,7 +26,7 @@ final class WindowPresentationTests: XCTestCase {
         XCTAssertEqual(opened, 2)
     }
 
-    func test_login_stays_quiet_until_reopened() {
+    func testLoginStaysQuietUntilReopened() {
         let presentation = WindowPresentation()
         var opened = 0
 

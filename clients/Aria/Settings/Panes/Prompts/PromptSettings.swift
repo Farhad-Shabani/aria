@@ -75,7 +75,7 @@ struct PromptSettings: View {
             ChordRecorder(
                 title: "Shortcut",
                 chord: entry.storedChord,
-                inUse: hotkeys.refused.contains(id)
+                isInUse: hotkeys.refused.contains(id)
             ) { chord in
                 editor.editPrompt(id) { $0.chord = chord.wire }
             } clear: {
@@ -93,7 +93,7 @@ private struct PromptNameField: View {
     let name: String
     let rename: (String) -> Void
     @State private var draft: String
-    @FocusState private var focused: Bool
+    @FocusState private var isFocused: Bool
 
     init(name: String, rename: @escaping (String) -> Void) {
         self.name = name
@@ -103,7 +103,7 @@ private struct PromptNameField: View {
 
     var body: some View {
         TextField("Name", text: $draft)
-            .focused($focused)
+            .focused($isFocused)
             .onSubmit(commit)
             .task(id: draft) {
                 try? await Task.sleep(for: Self.typingPause)
@@ -112,7 +112,7 @@ private struct PromptNameField: View {
             }
             // A save echoing back mid-typing would undo the keys after it.
             .onChange(of: name) { _, latest in
-                if !focused { draft = latest }
+                if !isFocused { draft = latest }
             }
             .onDisappear(perform: commit)
     }
@@ -122,7 +122,7 @@ private struct PromptNameField: View {
     private func commit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            if !focused { draft = name }
+            if !isFocused { draft = name }
             return
         }
         if trimmed != name { rename(trimmed) }

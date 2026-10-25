@@ -73,7 +73,7 @@ struct PressGesture: Equatable {
     /// a manual recording, so a transcript can arrive with no second press
     /// behind it.
     mutating func issued(ticket: UInt64) {
-        guard beforeTicket else { return }
+        guard isBeforeTicket else { return }
         phase = endedEarly.contains(ticket) ? .idle : .asking(ticket: ticket)
         endedEarly.removeAll()
     }
@@ -93,7 +93,7 @@ struct PressGesture: Equatable {
 
     var isIdle: Bool { phase == .idle }
 
-    private var beforeTicket: Bool {
+    private var isBeforeTicket: Bool {
         switch phase {
         case .recording, .stopRequested, .sending: true
         case .idle, .asking: false

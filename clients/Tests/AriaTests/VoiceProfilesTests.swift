@@ -60,7 +60,7 @@ final class VoiceProfilesTests: XCTestCase {
         XCTFail("State did not settle", file: file, line: line)
     }
 
-    func test_aNewVoiceIsTheOwnersUntilAnOwnerExists() async {
+    func testANewVoiceIsTheOwnersUntilAnOwnerExists() async {
         let harness = Harness()
         harness.speakers = [Self.speaker("sam", .guest)]
         let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
@@ -76,7 +76,7 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertEqual(voices.enrollment?.role, .guest)
     }
 
-    func test_reRecordingKeepsTheRoleAndReplaces() async {
+    func testReRecordingKeepsTheRoleAndReplaces() async {
         let harness = Harness()
         let sam = Self.speaker("sam", .guest)
         harness.speakers = [sam]
@@ -90,7 +90,7 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertEqual(harness.enrolled, [Enrolled(name: "sam", role: .guest, replace: true)])
     }
 
-    func test_progressFollowsTheDaemonsSamples() {
+    func testProgressFollowsTheDaemonsSamples() {
         let voices = VoiceProfiles(effects: Harness().effects, colors: Self.colors())
         voices.beginAdding()
         voices.name = "alex"
@@ -104,7 +104,7 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertEqual(voices.enrollment?.phase, .recording(taken: 2, listening: false))
     }
 
-    func test_aFailedRecordingReturnsToTheNameWithTheReason() async {
+    func testAFailedRecordingReturnsToTheNameWithTheReason() async {
         let harness = Harness()
         harness.enrollError = TryOutError.stopped
         let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
@@ -117,11 +117,11 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertEqual(voices.enrollment?.failure, TryOutError.stopped.localizedDescription)
     }
 
-    func test_everySampleHasASentenceToRead() {
+    func testEverySampleHasASentenceToRead() {
         XCTAssertEqual(VoiceProfiles.sentences.count, VoiceProfiles.samples)
     }
 
-    func test_cancelClosesTheSheetAndIgnoresLateEvents() async {
+    func testCancelClosesTheSheetAndIgnoresLateEvents() async {
         let harness = Harness()
         harness.suspendsEnroll = true
         let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
@@ -139,7 +139,7 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertNil(voices.failure)
     }
 
-    func test_theOwnVoiceToggleNamesWhoseVoiceItKeeps() {
+    func testTheOwnVoiceToggleNamesWhoseVoiceItKeeps() {
         XCTAssertEqual(VoiceProfiles.ownVoiceSummary(owners: []), "Set up your voice to use this.")
         XCTAssertEqual(VoiceProfiles.ownVoiceSummary(owners: ["Farhad"]), "Types only Farhad’s voice.")
         XCTAssertEqual(

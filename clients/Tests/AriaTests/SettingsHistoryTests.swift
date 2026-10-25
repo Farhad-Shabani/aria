@@ -3,7 +3,7 @@ import XCTest
 @testable import Aria
 
 final class SettingsHistoryTests: XCTestCase {
-    func test_backAndForward_retraceTheVisitedPanes() {
+    func testBackAndForwardRetraceTheVisitedPanes() {
         var history = SettingsHistory(current: .pane(.general))
         history.open(.pane(.dictation))
         history.open(.pane(.phone))
@@ -18,7 +18,7 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertTrue(history.canGoForward)
     }
 
-    func test_open_afterGoingBack_dropsTheForwardPanes() {
+    func testOpenAfterGoingBackDropsTheForwardPanes() {
         var history = SettingsHistory(current: .pane(.general))
         history.open(.pane(.dictation))
         history.goBack()
@@ -30,7 +30,7 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertEqual(history.current, .pane(.general))
     }
 
-    func test_open_theCurrentPane_recordsNothing() {
+    func testOpenTheCurrentPaneRecordsNothing() {
         var history = SettingsHistory(current: .pane(.general))
 
         history.open(.pane(.general))
@@ -38,7 +38,7 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertFalse(history.canGoBack)
     }
 
-    func test_anAppPage_goesBackToTheAppsList() {
+    func testAnAppPageGoesBackToTheAppsList() {
         var history = SettingsHistory(current: .pane(.apps))
         history.open(.item(.apps, id: "com.tinyspeck.slackmacgap"))
 
@@ -49,7 +49,7 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertEqual(history.current, .item(.apps, id: "com.tinyspeck.slackmacgap"))
     }
 
-    func test_goingBackFromAnItem_marksItInItsList() {
+    func testGoingBackFromAnItemMarksItInItsList() {
         var history = SettingsHistory(current: .pane(.apps))
         history.open(.item(.apps, id: "com.a"))
         XCTAssertNil(history.lastItem(in: .apps))

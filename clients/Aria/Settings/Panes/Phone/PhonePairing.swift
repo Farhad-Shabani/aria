@@ -34,7 +34,7 @@ final class PhonePairing: ObservableObject {
     @Published private(set) var status: Status = .loading
     @Published private(set) var phonePairedAt: Date?
     /// The switch position shown while Aria restarts. Nil otherwise.
-    @Published private(set) var target: Bool?
+    @Published private(set) var targetIsOn: Bool?
     @Published private(set) var actionError: String?
 
     private let poller: StatusPoller
@@ -51,15 +51,15 @@ final class PhonePairing: ObservableObject {
     }
 
     var isOn: Bool {
-        target ?? isLive
+        targetIsOn ?? isLive
     }
 
     var canSwitch: Bool {
-        target == nil && poller.state != .working && (isLive || status == .relayOff)
+        targetIsOn == nil && poller.state != .working && (isLive || status == .relayOff)
     }
 
     var canRevoke: Bool {
-        target == nil && poller.state != .working
+        targetIsOn == nil && poller.state != .working
     }
 
     func run() async {
@@ -121,8 +121,8 @@ final class PhonePairing: ObservableObject {
     /// The daemon reads the pairing setting only at start, so the restart is
     /// what applies it.
     func turn(on: Bool) async {
-        target = on
-        defer { target = nil }
+        targetIsOn = on
+        defer { targetIsOn = nil }
         // The code goes at once, so nobody scans it while pairing turns off.
         status = .restarting
         do {
@@ -149,8 +149,8 @@ final class PhonePairing: ObservableObject {
     /// Deleting the pairing file while Aria is stopped makes the daemon mint a
     /// new certificate on start, which cuts off every paired phone.
     func revoke() async {
-        target = true
-        defer { target = nil }
+        targetIsOn = true
+        defer { targetIsOn = nil }
         status = .restarting
         do {
             try await poller.restart(whileStopped: daemon.removePairingFile)

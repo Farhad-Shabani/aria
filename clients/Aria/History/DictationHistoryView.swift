@@ -4,8 +4,8 @@ import SwiftUI
 struct DictationHistoryView: View {
     @StateObject private var state = DictationHistoryState(effects: DictationHistoryClient.effects)
     @State private var deletion: HistoryItem?
-    @State private var confirmingClear = false
-    @State private var visible = false
+    @State private var isConfirmingClear = false
+    @State private var isVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,14 +24,14 @@ struct DictationHistoryView: View {
                 .help("Refresh history")
                 .accessibilityLabel("Refresh history")
             }
-            .disabled(state.clearing)
+            .disabled(state.isClearing)
             .padding()
             Divider()
             HSplitView {
                 historyList.frame(minWidth: 200, idealWidth: 260, maxWidth: 340)
                 detail.frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
             }
-            .disabled(state.clearing)
+            .disabled(state.isClearing)
             if let error = state.error {
                 Text(error.message)
                     .foregroundStyle(.red)
@@ -47,28 +47,28 @@ struct DictationHistoryView: View {
         }
         .frame(minWidth: 620, minHeight: 420)
         .onAppear {
-            visible = true
+            isVisible = true
             NSApplication.shared.activate()
             state.refresh()
         }
         .onDisappear {
-            visible = false
+            isVisible = false
             state.close()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
             if ($0.object as? NSWindow)?.title == "Dictation History" {
-                visible = true
+                isVisible = true
                 state.refresh()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) {
             if ($0.object as? NSWindow)?.title == "Dictation History" {
-                visible = false
+                isVisible = false
                 state.close()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .dictationHistoryChanged)) { _ in
-            if visible { state.refresh() }
+            if isVisible { state.refresh() }
         }
         .confirmationDialog(
             "Delete this dictation?",
@@ -86,7 +86,7 @@ struct DictationHistoryView: View {
             )
         }
         .confirmationDialog(
-            "Clear all dictation history?", isPresented: $confirmingClear, titleVisibility: .visible
+            "Clear all dictation history?", isPresented: $isConfirmingClear, titleVisibility: .visible
         ) {
             Button("Clear History", role: .destructive) { state.clear() }
             Button("Cancel", role: .cancel) {}
@@ -102,7 +102,7 @@ struct DictationHistoryView: View {
     private var historyList: some View {
         if state.items.isEmpty {
             VStack(spacing: 10) {
-                if state.loading {
+                if state.isLoading {
                     ProgressView("Loading history…")
                 } else if let error = state.error {
                     ContentUnavailableView(
@@ -139,7 +139,7 @@ struct DictationHistoryView: View {
                         }
                     }
                 }
-                if state.loading { ProgressView().frame(maxWidth: .infinity) }
+                if state.isLoading { ProgressView().frame(maxWidth: .infinity) }
             }
             .listStyle(.sidebar)
         }
@@ -147,7 +147,7 @@ struct DictationHistoryView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if state.detailLoading {
+        if state.isLoadingDetail {
             ProgressView("Loading dictation…")
         } else if let entry = state.detail {
             VStack(alignment: .leading, spacing: 0) {
@@ -200,24 +200,25 @@ struct DictationHistoryView: View {
 
     private var footer: some View {
         HStack {
-            Button(state.clearing ? "Clearing…" : "Clear History…", role: .destructive) { confirmingClear = true }
+            Button(state.isClearing ? "Clearing…" : "Clear History…", role: .destructive) { isConfirmingClear = true }
                 .disabled(!state.canClear)
             Spacer()
             if let entry = state.detail {
                 Button("Delete…", role: .destructive) { deletion = entry }
                     .disabled(
-                        state.clearing || entry.retrying || state.retryingID == entry.id || state.deletingID != nil)
-                let retrying = entry.retrying || state.retryingID == entry.id
+                        state.isClearing || entry.isRetrying || state.retryingID == entry.id || state.deletingID != nil)
+                let isRetrying = entry.isRetrying || state.retryingID == entry.id
                 if !entry.text.isEmpty && entry.status != .deletionPending {
                     Button("Copy text") { state.copy() }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
-                        .disabled(state.clearing)
+                        .disabled(state.isClearing)
                 }
-                if entry.retryable || retrying {
-                    Button(retrying ? "Retrying…" : "Retry transcription") { state.retry() }
+                if entry.isRetryable || isRetrying {
+                    Button(isRetrying ? "Retrying…" : "Retry transcription") { state.retry() }
                         .buttonStyle(.borderedProminent)
                         .disabled(
-                            state.clearing || entry.retrying || state.retryingID != nil || state.deletingID == entry.id)
+                            state.isClearing || entry.isRetrying || state.retryingID != nil
+                                || state.deletingID == entry.id)
                 }
             }
         }

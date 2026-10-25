@@ -11,7 +11,7 @@ final class SetupStatusTests: XCTestCase {
         return missing
     }
 
-    func test_onlyTheGrantAndTheRecognitionModelAreRequired() {
+    func testOnlyTheGrantAndTheRecognitionModelAreRequired() {
         var inspection = SetupStateTests.freshMac()
         inspection.missing = [
             Self.missing(.config),
@@ -28,7 +28,7 @@ final class SetupStatusTests: XCTestCase {
         )
     }
 
-    func test_theSpeakerModelCountsWhenCompleteOrExternal() {
+    func testTheSpeakerModelCountsWhenCompleteOrExternal() {
         func inspection(_ change: (inout Aria_Setup_V1_Model) -> Void) -> Aria_Setup_V1_Inspection {
             var inspection = SetupStateTests.freshMac()
             inspection.models = inspection.models.map { model in
@@ -39,8 +39,8 @@ final class SetupStatusTests: XCTestCase {
             return inspection
         }
 
-        XCTAssertFalse(SetupStatus.speakerModelOnDisk(in: inspection { $0.onDisk = .partial }))
-        XCTAssertTrue(SetupStatus.speakerModelOnDisk(in: inspection { $0.onDisk = .complete }))
-        XCTAssertTrue(SetupStatus.speakerModelOnDisk(in: inspection { $0.external = true }))
+        XCTAssertFalse(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.onDisk = .partial }))
+        XCTAssertTrue(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.onDisk = .complete }))
+        XCTAssertTrue(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.external = true }))
     }
 }

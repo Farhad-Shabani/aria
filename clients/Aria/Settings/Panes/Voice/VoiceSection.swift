@@ -46,7 +46,7 @@ struct VoiceSection: View {
 
     @ViewBuilder
     private func profiles(_ speakers: [Aria_Daemon_V1_EnrolledSpeaker]) -> some View {
-        if !setup.speakerModelOnDisk {
+        if !setup.hasSpeakerModelOnDisk {
             LabeledContent {
                 Button("Aria Setup…") { openWindow(id: WindowID.setup) }
             } label: {

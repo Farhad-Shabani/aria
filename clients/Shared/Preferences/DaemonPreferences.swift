@@ -29,21 +29,21 @@ final class DaemonPreferences: ObservableObject {
     private var revision: UInt64?
     /// Changes the daemon has not accepted yet; the next sync pushes them.
     private var pending = Aria_Daemon_V1_PreferencePatch()
-    private var pushing = false
+    private var isPushing = false
 
     init(transport: any PreferencesTransport) {
         self.transport = transport
     }
 
-    var historyEnabled: Bool {
+    var isHistoryEnabled: Bool {
         snapshot?.dictationHistory ?? true
     }
 
     func sync() async {
-        guard !pushing else { return }
+        guard !isPushing else { return }
         do {
             let snapshot = try await transport.snapshot()
-            guard !pushing else { return }
+            guard !isPushing else { return }
             // A snapshot fetched before a push landed is older than what
             // we already know; adopting it would revert the push.
             guard snapshot.revision >= revision ?? 0 else { return }
@@ -97,9 +97,9 @@ final class DaemonPreferences: ObservableObject {
     }
 
     private func push() async {
-        guard !pushing else { return }
-        pushing = true
-        defer { pushing = false }
+        guard !isPushing else { return }
+        isPushing = true
+        defer { isPushing = false }
         var conflicts = 0
         while pending != Aria_Daemon_V1_PreferencePatch() {
             let sent = pending

@@ -3,12 +3,12 @@ import XCTest
 @testable import Aria
 
 final class CommandLineToolTests: XCTestCase {
-    func test_shellQuoted_keepsQuotesAndSpacesLiteral() {
+    func testShellQuotedKeepsQuotesAndSpacesLiteral() {
         XCTAssertEqual(CommandLineTool.shellQuoted("/Apps/My Aria.app"), "'/Apps/My Aria.app'")
         XCTAssertEqual(CommandLineTool.shellQuoted("it's"), "'it'\\''s'")
     }
 
-    func test_onlyAnInstalledCopyLinks() {
+    func testOnlyAnInstalledCopyLinks() {
         XCTAssertTrue(CommandLineTool.isInstalledLocation(URL(fileURLWithPath: "/Applications/Aria.app")))
         XCTAssertTrue(CommandLineTool.isInstalledLocation(URL(fileURLWithPath: "/Users/me/Applications/Aria.app")))
         XCTAssertFalse(
@@ -18,7 +18,7 @@ final class CommandLineToolTests: XCTestCase {
                 URL(fileURLWithPath: "/private/var/folders/x/AppTranslocation/1234/d/Aria.app")))
     }
 
-    func test_appleScriptQuoted_escapesBackslashesAndDoubleQuotes() {
+    func testAppleScriptQuotedEscapesBackslashesAndDoubleQuotes() {
         XCTAssertEqual(CommandLineTool.appleScriptQuoted(#"a "b" \c"#), #""a \"b\" \\c""#)
     }
 }

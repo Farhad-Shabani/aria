@@ -11,7 +11,7 @@ final class AppsSettingsTests: XCTestCase {
         return apps
     }
 
-    func test_adding_anAppTwice_keepsOneEntry() {
+    func testAddingAnAppTwiceKeepsOneEntry() {
         var apps = withSlack()
 
         ApplicationOverrideEdits.add(slack, to: &apps)
@@ -20,7 +20,7 @@ final class AppsSettingsTests: XCTestCase {
         XCTAssertEqual(ApplicationOverrideEdits.overrides(for: slack, in: apps), Aria_Daemon_V1_DictationOverrides())
     }
 
-    func test_removing_dropsOnlyThatApp() {
+    func testRemovingDropsOnlyThatApp() {
         var apps = withSlack()
         ApplicationOverrideEdits.add("com.apple.Notes", to: &apps)
 
@@ -29,7 +29,7 @@ final class AppsSettingsTests: XCTestCase {
         XCTAssertEqual(apps.entries.map(\.applicationID), ["com.apple.Notes"])
     }
 
-    func test_choosingDefault_clearsTheSetting() {
+    func testChoosingDefaultClearsTheSetting() {
         var apps = withSlack()
         ApplicationOverrideEdits.setOutput(.insertAndSubmit, for: slack, in: &apps)
 
@@ -38,7 +38,7 @@ final class AppsSettingsTests: XCTestCase {
         XCTAssertEqual(ApplicationOverrideEdits.overrides(for: slack, in: apps)?.hasOutputMode, false)
     }
 
-    func test_aChoiceMatchingDictation_readsAsDefault() {
+    func testAChoiceMatchingDictationReadsAsDefault() {
         let dictation = Aria_Daemon_V1_OutputMode.insert
 
         XCTAssertNil(ApplicationOverrideEdits.choice(Optional(dictation), dictation: dictation))
@@ -46,7 +46,7 @@ final class AppsSettingsTests: XCTestCase {
         XCTAssertEqual(ApplicationOverrideEdits.choice(.copy, dictation: dictation), .copy)
     }
 
-    func test_switchingAriaOff_keepsTheAppsSettings() {
+    func testSwitchingAriaOffKeepsTheAppsSettings() {
         var apps = withSlack()
         ApplicationOverrideEdits.setOutput(.copy, for: slack, in: &apps)
 
@@ -58,7 +58,7 @@ final class AppsSettingsTests: XCTestCase {
         XCTAssertFalse(ApplicationOverrideEdits.isExcluded(slack, in: apps))
     }
 
-    func test_editingAnAppNotInTheList_changesNothing() {
+    func testEditingAnAppNotInTheListChangesNothing() {
         let original = withSlack()
         var apps = original
 
@@ -67,26 +67,26 @@ final class AppsSettingsTests: XCTestCase {
         XCTAssertEqual(apps, original)
     }
 
-    func test_groups_knowCommonAppsAndLeaveOthersOut() {
+    func testGroupsKnowCommonAppsAndLeaveOthersOut() {
         XCTAssertEqual(AppGroup.of(bundleID: slack), .chat)
         XCTAssertEqual(AppGroup.of(bundleID: "com.apple.Terminal"), .terminal)
         XCTAssertNil(AppGroup.of(bundleID: "com.example.unknown"))
     }
 
-    func test_anAppInNoGroup_showsEverySetting() {
+    func testAnAppInNoGroupShowsEverySetting() {
         let shown = AppSetting.shown(for: "com.example.unknown", overrides: Aria_Daemon_V1_DictationOverrides())
 
         XCTAssertEqual(shown, AppSetting.allCases)
     }
 
-    func test_aStoredSetting_isAlwaysShown() {
+    func testAStoredSettingIsAlwaysShown() {
         var overrides = Aria_Daemon_V1_DictationOverrides()
         overrides.deliveryMode = .complete
 
         XCTAssertTrue(AppSetting.shown(for: slack, overrides: overrides).contains(.delivery))
     }
 
-    func test_anAppPage_belongsToTheAppsPane() {
+    func testAnAppPageBelongsToTheAppsPane() {
         XCTAssertEqual(SettingsPage.item(.apps, id: slack).pane, .apps)
         XCTAssertEqual(SettingsPage.pane(.privacy).pane, .privacy)
     }

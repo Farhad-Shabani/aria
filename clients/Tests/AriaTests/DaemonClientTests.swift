@@ -3,7 +3,7 @@ import XCTest
 @testable import Aria
 
 final class DaemonClientTests: XCTestCase {
-    func test_cliFailure_keepsTheFirstLineAsASentence() {
+    func testCLIFailureKeepsTheFirstLineAsASentence() {
         let anyhow = Data("Error: remote invitation is invalid\n\nCaused by:\n    eof\n".utf8)
         XCTAssertEqual(DaemonClient.cliFailure(stderr: anyhow, fallback: "Failed."), "Remote invitation is invalid.")
         XCTAssertEqual(
@@ -12,21 +12,21 @@ final class DaemonClientTests: XCTestCase {
         XCTAssertEqual(DaemonClient.cliFailure(stderr: Data(), fallback: "Failed."), "Failed.")
     }
 
-    func test_lockedPid_parsesPlainPid() {
+    func testLockedPidParsesPlainPid() {
         XCTAssertEqual(DaemonClient.lockedPid("4258"), 4258)
     }
 
-    func test_lockedPid_toleratesSurroundingWhitespace() {
+    func testLockedPidToleratesSurroundingWhitespace() {
         XCTAssertEqual(DaemonClient.lockedPid("4258\n"), 4258)
     }
 
-    func test_lockedPid_rejectsMissingEmptyOrGarbage() {
+    func testLockedPidRejectsMissingEmptyOrGarbage() {
         XCTAssertNil(DaemonClient.lockedPid(nil))
         XCTAssertNil(DaemonClient.lockedPid(""))
         XCTAssertNil(DaemonClient.lockedPid("not a pid"))
     }
 
-    func test_daemonBinaryCandidates_overrideWinsAndExpandsTilde() {
+    func testDaemonBinaryCandidatesOverrideWinsAndExpandsTilde() {
         let defaults = scratchDefaults()
         defaults.set("~/bin/aria", forKey: "ariaDaemonBinary")
         let candidates = DaemonClient.daemonBinaryCandidates(defaults: defaults)
@@ -35,7 +35,7 @@ final class DaemonClientTests: XCTestCase {
         XCTAssertFalse(candidates[0].path.contains("~"))
     }
 
-    func test_daemonBinaryCandidates_findTheBundledHelper() {
+    func testDaemonBinaryCandidatesFindTheBundledHelper() {
         let candidates = DaemonClient.daemonBinaryCandidates(
             bundledExecutable: URL(fileURLWithPath: "/Applications/Aria.app/Contents/MacOS/Aria"),
             defaults: scratchDefaults()
@@ -54,7 +54,7 @@ final class DaemonClientTests: XCTestCase {
         return defaults
     }
 
-    func test_startMethod_followsTheAgent() throws {
+    func testStartMethodFollowsTheAgent() throws {
         XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: nil), .kickstart)
         XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: false, override: nil), .register)
         XCTAssertEqual(
@@ -62,7 +62,7 @@ final class DaemonClientTests: XCTestCase {
         XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .notFound, jobLoaded: false, override: nil), .register)
     }
 
-    func test_startMethod_leavesATurnedOffAgentOff() {
+    func testStartMethodLeavesATurnedOffAgentOff() {
         XCTAssertThrowsError(
             try DaemonClient.startMethod(agentStatus: .requiresApproval, jobLoaded: false, override: nil)
         ) { error in
@@ -72,7 +72,7 @@ final class DaemonClientTests: XCTestCase {
         }
     }
 
-    func test_startMethod_spawnsAnOverriddenBinaryWhateverTheAgent() throws {
+    func testStartMethodSpawnsAnOverriddenBinaryWhateverTheAgent() throws {
         let bin = URL(fileURLWithPath: "/opt/aria/target/release/aria")
         XCTAssertEqual(try DaemonClient.startMethod(agentStatus: .enabled, jobLoaded: true, override: bin), .spawn(bin))
         XCTAssertEqual(

@@ -58,7 +58,7 @@ final class StatusPollerTests: XCTestCase {
         StatusPoller(client: fake, probeInterval: .milliseconds(1))
     }
 
-    func test_pollOnce_reflectsRunningDaemon() async {
+    func testPollOnceReflectsRunningDaemon() async {
         let fake = FakeDaemonControl()
         fake.running = true
         let poller = self.poller(fake)
@@ -66,14 +66,14 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .running)
     }
 
-    func test_pollOnce_reflectsStoppedDaemon() async {
+    func testPollOnceReflectsStoppedDaemon() async {
         let fake = FakeDaemonControl()
         let poller = self.poller(fake)
         await poller.pollOnce()
         XCTAssertEqual(poller.state, .stopped)
     }
 
-    func test_toggle_fromStopped_startsDaemon() async {
+    func testToggleFromStoppedStartsDaemon() async {
         let fake = FakeDaemonControl()
         let poller = self.poller(fake)
         await poller.pollOnce()
@@ -82,7 +82,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertNil(poller.failure)
     }
 
-    func test_toggle_waitsForTheSocketBeforeRunning() async {
+    func testToggleWaitsForTheSocketBeforeRunning() async {
         let fake = FakeDaemonControl()
         let poller = self.poller(fake)
         await poller.pollOnce()
@@ -92,7 +92,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(fake.startLag, 0)
     }
 
-    func test_toggle_fromRunning_stopsDaemon() async {
+    func testToggleFromRunningStopsDaemon() async {
         let fake = FakeDaemonControl()
         fake.running = true
         let poller = self.poller(fake)
@@ -101,7 +101,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .stopped)
     }
 
-    func test_toggle_startFailure_surfacesErrorAndRepolls() async {
+    func testToggleStartFailureSurfacesErrorAndRepolls() async {
         let fake = FakeDaemonControl()
         fake.startError = DaemonClientError.ariaBinaryMissing("/nope/bin/aria")
         let poller = self.poller(fake)
@@ -111,7 +111,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.failure, .start)
     }
 
-    func test_toggle_namesTheFailedActionWithoutItsDetail() async {
+    func testToggleNamesTheFailedActionWithoutItsDetail() async {
         let fake = FakeDaemonControl()
         fake.running = true
         fake.stopError = DaemonClientError.commandFailed("launchctl kill exited with 3: No such process")
@@ -122,7 +122,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertFalse(poller.failure?.message.contains("launchctl") ?? true)
     }
 
-    func test_toggle_pointsAtLoginItemsWhenTheAgentIsOff() async {
+    func testTogglePointsAtLoginItemsWhenTheAgentIsOff() async {
         let fake = FakeDaemonControl()
         fake.startError = DaemonClientError.agentDisabled
         let poller = self.poller(fake)
@@ -130,7 +130,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.failure, .backgroundItemOff)
     }
 
-    func test_toggle_reportsADaemonThatNeverListens() async {
+    func testToggleReportsADaemonThatNeverListens() async {
         let fake = FakeDaemonControl()
         fake.startLag = 100
         let poller = self.poller(fake)
@@ -138,7 +138,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.failure, .unresponsive)
     }
 
-    func test_toggle_clearsPreviousError() async {
+    func testToggleClearsPreviousError() async {
         let fake = FakeDaemonControl()
         fake.startError = DaemonClientError.commandFailed("boom")
         let poller = self.poller(fake)
@@ -150,7 +150,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .running)
     }
 
-    func test_ensureRunning_startsAStoppedDaemon() async {
+    func testEnsureRunningStartsAStoppedDaemon() async {
         let fake = FakeDaemonControl()
         let poller = self.poller(fake)
         await poller.ensureRunning()
@@ -158,7 +158,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .running)
     }
 
-    func test_ensureRunning_leavesARunningDaemonAlone() async {
+    func testEnsureRunningLeavesARunningDaemonAlone() async {
         let fake = FakeDaemonControl()
         fake.running = true
         fake.startError = DaemonClientError.commandFailed("must not start")
@@ -168,7 +168,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .running)
     }
 
-    func test_ensureRunning_startsNothingAfterAFailedRetirement() async {
+    func testEnsureRunningStartsNothingAfterAFailedRetirement() async {
         let fake = FakeDaemonControl()
         fake.retireError = DaemonClientError.commandFailed("uninstall failed")
         let poller = self.poller(fake)
@@ -177,7 +177,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(fake.calls, [])
     }
 
-    func test_restart_stopsThenStartsARunningDaemon() async throws {
+    func testRestartStopsThenStartsARunningDaemon() async throws {
         let fake = FakeDaemonControl()
         fake.running = true
         let poller = self.poller(fake)
@@ -187,7 +187,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .running)
     }
 
-    func test_restart_ofAStoppedDaemon_onlyStarts() async throws {
+    func testRestartOfAStoppedDaemonOnlyStarts() async throws {
         let fake = FakeDaemonControl()
         let poller = self.poller(fake)
         await poller.pollOnce()
@@ -197,7 +197,7 @@ final class StatusPollerTests: XCTestCase {
     }
 
     /// Revoke All: the pairing file goes only once the process exits.
-    func test_restart_runsWhileStoppedOnlyOnceTheDaemonHasExited() async throws {
+    func testRestartRunsWhileStoppedOnlyOnceTheDaemonHasExited() async throws {
         let fake = FakeDaemonControl()
         fake.running = true
         fake.exitLag = 2
@@ -210,7 +210,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(fake.calls, ["stop", "whileStopped", "start"])
     }
 
-    func test_restart_ofADaemonThatWillNotExit_skipsWhileStoppedAndThrows() async {
+    func testRestartOfADaemonThatWillNotExitSkipsWhileStoppedAndThrows() async {
         let fake = FakeDaemonControl()
         fake.running = true
         fake.ignoresStop = true
@@ -228,7 +228,7 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.failure, .stillRunning)
     }
 
-    func test_restart_startsAgainEvenWhenWhileStoppedFails() async {
+    func testRestartStartsAgainEvenWhenWhileStoppedFails() async {
         struct Failed: Error {}
         let fake = FakeDaemonControl()
         fake.running = true

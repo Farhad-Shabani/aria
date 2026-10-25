@@ -34,7 +34,7 @@ final class ServerTranscription: ObservableObject {
         case needsSetup
     }
 
-    @Published private(set) var busy = false
+    @Published private(set) var isBusy = false
     @Published private(set) var notice: Notice?
     @Published private(set) var pairingFailure: String?
     @Published private(set) var pairingStep = PairingStep.instructions
@@ -49,13 +49,13 @@ final class ServerTranscription: ObservableObject {
 
     /// Going to the server needs a pairing; coming back never does.
     var canChooseLocation: Bool {
-        !busy && (setup.server != nil || setup.transcription == .server)
+        !isBusy && (setup.server != nil || setup.transcription == .server)
     }
 
     func use(_ location: TranscriptionLocation) async {
-        guard !busy else { return }
-        busy = true
-        defer { busy = false }
+        guard !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
         notice = nil
         do {
             let inspection = try await effects.inspect()
@@ -92,13 +92,13 @@ final class ServerTranscription: ObservableObject {
 
     /// Only from This Mac: forgetting the server in use would fail every dictation.
     var canForget: Bool {
-        !busy && setup.server != nil && setup.transcription == .thisMac
+        !isBusy && setup.server != nil && setup.transcription == .thisMac
     }
 
     func forget() async {
         guard canForget else { return }
-        busy = true
-        defer { busy = false }
+        isBusy = true
+        defer { isBusy = false }
         notice = nil
         do {
             try await effects.forget()
@@ -127,9 +127,9 @@ final class ServerTranscription: ObservableObject {
     /// False when busy or pairing failed. A server in use is applied again,
     /// so the config takes the new address.
     func pair(invitation: String) async -> Bool {
-        guard !busy else { return false }
-        busy = true
-        defer { busy = false }
+        guard !isBusy else { return false }
+        isBusy = true
+        defer { isBusy = false }
         pairingFailure = nil
         notice = nil
         do {

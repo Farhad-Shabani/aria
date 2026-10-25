@@ -10,7 +10,7 @@ final class SetupStatus: ObservableObject {
     @Published private(set) var required: [Aria_Setup_V1_Missing] = []
     /// Optimistic until inspected: a failed inspection should not lock out
     /// voice setup, and enrolling reports a missing model itself.
-    @Published private(set) var speakerModelOnDisk = true
+    @Published private(set) var hasSpeakerModelOnDisk = true
     @Published private(set) var server: Aria_Setup_V1_PairedServer?
     @Published private(set) var transcription = TranscriptionLocation.thisMac
 
@@ -18,7 +18,7 @@ final class SetupStatus: ObservableObject {
 
     func show(_ inspection: Aria_Setup_V1_Inspection) {
         required = Self.required(in: inspection)
-        speakerModelOnDisk = Self.speakerModelOnDisk(in: inspection)
+        hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
         transcription = inspection.defaults.stt == Self.serverEngine ? .server : .thisMac
     }
@@ -47,7 +47,7 @@ final class SetupStatus: ObservableObject {
     /// Setup's name for the embedding model an enrollment needs.
     static let speakerModel = "speaker"
 
-    static func speakerModelOnDisk(in inspection: Aria_Setup_V1_Inspection) -> Bool {
+    static func hasSpeakerModelOnDisk(in inspection: Aria_Setup_V1_Inspection) -> Bool {
         inspection.models.contains { $0.name == speakerModel && ($0.onDisk == .complete || $0.external) }
     }
 

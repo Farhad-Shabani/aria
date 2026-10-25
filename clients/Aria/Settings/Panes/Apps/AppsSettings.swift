@@ -24,7 +24,7 @@ struct AppsSettings: View {
                 },
                 open: open
             ) { entry in
-                AppRow(bundleID: entry.applicationID, excluded: entry.excluded)
+                AppRow(bundleID: entry.applicationID, isExcluded: entry.excluded)
             }
         }
     }
@@ -40,7 +40,7 @@ struct AppsSettings: View {
 
 private struct AppRow: View {
     let bundleID: String
-    let excluded: Bool
+    let isExcluded: Bool
 
     var body: some View {
         let app = InstalledApp.lookUp(bundleID)
@@ -49,7 +49,7 @@ private struct AppRow: View {
                 .resizable()
                 .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
             Text(app.name)
-            if excluded {
+            if isExcluded {
                 Spacer()
                 Text("Off").foregroundStyle(.secondary)
             }

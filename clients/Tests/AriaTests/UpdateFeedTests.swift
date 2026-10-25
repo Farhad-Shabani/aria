@@ -1,7 +1,7 @@
 import XCTest
 
 final class UpdateFeedTests: XCTestCase {
-    func test_bundleNamesASignedHttpsFeed() throws {
+    func testBundleNamesASignedHTTPSFeed() throws {
         let info = try XCTUnwrap(Bundle.main.infoDictionary)
         let feed = try XCTUnwrap((info["SUFeedURL"] as? String).flatMap(URL.init(string:)))
         XCTAssertEqual(feed.scheme, "https")

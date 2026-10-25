@@ -10,7 +10,7 @@ final class PairingInviteTests: XCTestCase {
         return try XCTUnwrap(invite.url?.absoluteString)
     }
 
-    func test_url_roundTrips() throws {
+    func testURLRoundTrips() throws {
         let invite = PairingInvite(
             instanceName: "Aria (Alex's MacBook)", code: "c0de", fingerprint: fingerprint)
         let url = try XCTUnwrap(invite.url)
@@ -19,13 +19,13 @@ final class PairingInviteTests: XCTestCase {
         XCTAssertEqual(PairingInvite(url: url), invite)
     }
 
-    func test_wrongSchemeOrVersion_isRejected() throws {
+    func testWrongSchemeOrVersionIsRejected() throws {
         let good = try inviteText()
         XCTAssertNil(PairingInvite(url: URL(string: good.replacingOccurrences(of: "aria-pair://", with: "https://"))!))
         XCTAssertNil(PairingInvite(url: URL(string: good.replacingOccurrences(of: "//v1?", with: "//v2?"))!))
     }
 
-    func test_missingInstanceOrCode_isRejected() throws {
+    func testMissingInstanceOrCodeIsRejected() throws {
         let good = try inviteText()
         XCTAssertNil(
             PairingInvite(url: URL(string: good.replacingOccurrences(of: "instance=Aria", with: "instance="))!))
@@ -33,14 +33,14 @@ final class PairingInviteTests: XCTestCase {
         XCTAssertNil(PairingInvite(url: URL(string: good.replacingOccurrences(of: "code=c0de&", with: ""))!))
     }
 
-    func test_missingMalformedOrShortFingerprint_isRejected() {
+    func testMissingMalformedOrShortFingerprintIsRejected() {
         XCTAssertNil(PairingInvite(url: URL(string: "aria-pair://v1?instance=Aria&code=ab")!))
         XCTAssertNil(PairingInvite(url: URL(string: "aria-pair://v1?instance=Aria&code=ab&fp=")!))
         XCTAssertNil(PairingInvite(url: URL(string: "aria-pair://v1?instance=Aria&code=ab&fp=%%%")!))
         XCTAssertNil(PairingInvite(url: URL(string: "aria-pair://v1?instance=Aria&code=ab&fp=MDA")!))
     }
 
-    func test_fingerprint_isSHA256() {
+    func testFingerprintIsSHA256() {
         // FIPS 180-4 vector for "abc".
         let expected = Data(
             [
