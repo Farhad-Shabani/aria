@@ -11,7 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
     let setupStatus = SetupStatus()
-    let voices = VoiceProfiles(effects: .live)
+    let voiceColors = VoiceColors()
+    let voices: VoiceProfiles
     let updates = UpdateController()
 
     static let captionsEnabledKey = "captionsEnabled"
@@ -34,7 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         promptHotkeys = PromptHotkeys(events: events)
         promptList = PromptList(prompts: promptHotkeys)
-        status = StatusController(events: events, prompts: promptHotkeys)
+        voices = VoiceProfiles(effects: .live, colors: voiceColors)
+        status = StatusController(events: events, prompts: promptHotkeys, colors: voiceColors)
         ghost = GhostController(events: events)
         askHotkey = PressController(events: events, operation: .ask)
         super.init()

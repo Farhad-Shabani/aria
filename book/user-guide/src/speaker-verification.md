@@ -43,7 +43,8 @@ It shows each profile's name and role.
 ## Use your profile
 
 Enrollment does not turn filtering on. In the Mac app, enable
-**Settings → Recognition → Only type my voice**.
+**Settings → Recognition → Only type my voice**. It types only voices marked
+**Owner**.
 It is off by default, and the CLI has no control for this preference.
 
 Filtering needs the speaker model and an owner profile. Without the model,
@@ -52,6 +53,15 @@ Without an owner profile, or when a sample is inconclusive, speech can pass
 through. Do not rely on it to
 keep private background speech out of a recording. Retained originals can
 contain voices excluded from the delivered text.
+
+## See who is speaking
+
+While you dictate, a colored ring around the status pill shows whose voice
+Aria hears. Each voice gets a color. No ring means Aria hasn't matched the
+voice yet.
+
+To change a voice's color, or hide its ring, open that voice's menu in
+**Settings → Recognition**.
 
 ## Other speakers
 

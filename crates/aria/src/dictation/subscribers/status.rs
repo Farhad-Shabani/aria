@@ -42,7 +42,7 @@ impl StatusFile {
             | DictationStage::Transcribing
             | DictationStage::Delivering => self.publish(stage.label()),
             // A segment lands while the speaker is still talking.
-            DictationStage::SegmentTranscribed(..) | DictationStage::SegmentDelivered => {}
+            DictationStage::SegmentTranscribed { .. } | DictationStage::SegmentDelivered => {}
             DictationStage::Delivered { .. }
             | DictationStage::Cancelled
             | DictationStage::Failed(..) => {

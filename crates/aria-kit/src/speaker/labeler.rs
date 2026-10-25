@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use super::{Diarizer, Embedder, Label};
+use super::{Diarizer, ENROLLED_THRESHOLD, Embedder, Label, Role, SpeakerName};
 use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::primitives::error_chain;
 use crate::transcription::{
@@ -39,6 +39,9 @@ pub struct SegmentLabeler<E> {
     /// The voice of the turn so far, and its embedding.
     turn: Vec<f32>,
     turn_voice: Option<Vec<f32>>,
+    /// The sum of kept segment embeddings since the last rewind, each
+    /// weighted by its speech. A pause does not clear it, unlike the turn.
+    heard: Option<Vec<f32>>,
 }
 
 pub enum Verdict {
@@ -65,6 +68,7 @@ impl<E: Embedder> SegmentLabeler<E> {
             only_own_voice: false,
             turn: Vec::new(),
             turn_voice: None,
+            heard: None,
         }
     }
 
@@ -104,6 +108,23 @@ impl<E: Embedder> SegmentLabeler<E> {
         if let Some(diarizer) = self.diarizer.as_mut() {
             diarizer.set_enrolled(enrolled);
         }
+    }
+
+    fn forget_heard_voice(&mut self) {
+        self.heard = None;
+    }
+
+    /// The enrolled voice the recording so far sounds like. It builds across
+    /// pauses: one stretch of speech rarely holds enough to match. An owner
+    /// clears the own-voice check's bar, a guest the bar naming always uses.
+    pub fn heard_speaker(&self) -> Option<&SpeakerName> {
+        let heard = super::normalized(self.heard.clone()?)?;
+        let (profile, similarity) = self.diarizer.as_ref()?.closest_enrolled(&heard)?;
+        let bar = match profile.role {
+            Role::Owner => OWN_VOICE_THRESHOLD,
+            Role::Guest => ENROLLED_THRESHOLD,
+        };
+        (similarity >= bar).then_some(&profile.name)
     }
 
     /// Whether the turn heard so far is in the owner's voice. `None` until
@@ -234,7 +255,20 @@ impl<E: Embedder> SegmentLabeler<E> {
         if self.only_own_voice && self.own_voice() == Some(false) {
             return Verdict::Stranger;
         }
+        // After the stranger check: a voice kept out must not name the
+        // speech that was kept.
+        if let Some(embedding) = &embedding {
+            self.hear(embedding, voice.len());
+        }
         Verdict::Keep { label, embedding }
+    }
+
+    fn hear(&mut self, embedding: &[f32], speech: usize) {
+        let weight = speech as f32;
+        let heard = self.heard.get_or_insert_with(|| vec![0.0; embedding.len()]);
+        for (sum, value) in heard.iter_mut().zip(embedding) {
+            *sum += value * weight;
+        }
     }
 
     /// Adds a segment's voice to the turn, opening a new turn after a pause,
@@ -306,6 +340,7 @@ impl<E: Embedder> SegmentReader<E> {
     /// zero, and a window measured from the old position would clamp to
     /// nothing. The labeler's memory of voices stays.
     pub fn rewind(&mut self) {
+        self.labeler.forget_heard_voice();
         self.mark = 0;
         self.before = 0;
         self.awaiting_finalized = false;
@@ -623,6 +658,89 @@ mod tests {
         let mut labeler = SegmentLabeler::new(None, Some(Diarizer::new(Voice(voice), enrolled)));
         labeler.set_only_own_voice(true);
         labeler
+    }
+
+    /// Returns the queued voices in order, one per call.
+    struct Voices(std::collections::VecDeque<[f32; 2]>);
+
+    impl Embedder for Voices {
+        fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
+            Ok(self.0.pop_front().map(|voice| voice.to_vec()))
+        }
+
+        fn dimension(&self) -> usize {
+            2
+        }
+    }
+
+    fn enrolled(role: super::super::Role) -> Vec<super::super::Profile> {
+        vec![super::super::enrolled_voice("alex", role, OWN.to_vec())]
+    }
+
+    /// Each observed segment embeds its turn, then itself.
+    fn hearing(voices: &[[f32; 2]], role: super::super::Role) -> SegmentLabeler<Voices> {
+        let voices = Voices(voices.iter().copied().collect());
+        SegmentLabeler::new(None, Some(Diarizer::new(voices, enrolled(role))))
+    }
+
+    #[test]
+    fn the_heard_voice_builds_across_pauses_until_rewound() {
+        // A faint match on its own: 0.3 against the enrolled voice.
+        const FAINT: [f32; 2] = [0.3, 0.953_939_2];
+        let labeler = hearing(&[OWN, OWN, FAINT, FAINT], super::super::Role::Owner);
+        let mut reader = SegmentReader::new(labeler);
+
+        reader.labeler_mut().observe(&[0.0; 1_600], 0);
+        reader
+            .labeler_mut()
+            .observe(&[0.0; 1_600], TURN_GAP_SAMPLES);
+        assert_eq!(
+            reader.labeler().heard_speaker().map(SpeakerName::as_str),
+            Some("alex"),
+            "the faint turn after the pause does not undo the first"
+        );
+
+        reader.rewind();
+        assert_eq!(reader.labeler().heard_speaker(), None);
+    }
+
+    #[test]
+    fn a_guest_needs_the_naming_bar_an_owner_does_not() {
+        // 0.45 against the enrolled voice: past the owner's bar, short of a name's.
+        const NEAR: [f32; 2] = [0.45, 0.893_029_7];
+        for (role, named) in [
+            (super::super::Role::Owner, true),
+            (super::super::Role::Guest, false),
+        ] {
+            let mut labeler = hearing(&[NEAR, NEAR], role);
+            labeler.observe(&[0.0; 1_600], 0);
+            assert_eq!(labeler.heard_speaker().is_some(), named, "{role:?}");
+        }
+    }
+
+    #[test]
+    fn a_voice_kept_out_does_not_name_the_speech_kept() {
+        let mut labeler = hearing(&[OTHER, OTHER, OWN, OWN], super::super::Role::Owner);
+        labeler.set_only_own_voice(true);
+
+        let judged = TURN_JUDGED_SAMPLES;
+        assert!(matches!(
+            labeler.observe(&vec![0.0; judged], 0),
+            Verdict::Stranger
+        ));
+        labeler.observe(&[0.0; 1_600], TURN_GAP_SAMPLES);
+
+        assert_eq!(
+            labeler.heard_speaker().map(SpeakerName::as_str),
+            Some("alex")
+        );
+    }
+
+    #[test]
+    fn a_stranger_is_never_the_heard_voice() {
+        let mut stranger = labeler(OTHER);
+        stranger.observe(&[0.0; 1_600], 0);
+        assert_eq!(stranger.heard_speaker(), None);
     }
 
     #[test]

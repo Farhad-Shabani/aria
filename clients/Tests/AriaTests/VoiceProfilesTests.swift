@@ -48,6 +48,10 @@ final class VoiceProfilesTests: XCTestCase {
         return event
     }
 
+    private static func colors() -> VoiceColors {
+        VoiceColors(defaults: UserDefaults(suiteName: "VoiceProfilesTests-\(UUID())")!)
+    }
+
     private func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         for _ in 0..<1_000 {
             if condition() { return }
@@ -59,11 +63,12 @@ final class VoiceProfilesTests: XCTestCase {
     func test_aNewVoiceIsTheOwnersUntilAnOwnerExists() async {
         let harness = Harness()
         harness.speakers = [Self.speaker("sam", .guest)]
-        let voices = VoiceProfiles(effects: harness.effects)
+        let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
         await voices.refresh()
 
         voices.beginAdding()
         XCTAssertEqual(voices.enrollment?.role, .owner)
+        XCTAssertEqual(voices.colors.color(of: "sam"), .blue, "a listed voice gets a color")
 
         harness.speakers.append(Self.speaker("alex", .owner))
         await voices.refresh()
@@ -75,7 +80,7 @@ final class VoiceProfilesTests: XCTestCase {
         let harness = Harness()
         let sam = Self.speaker("sam", .guest)
         harness.speakers = [sam]
-        let voices = VoiceProfiles(effects: harness.effects)
+        let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
         await voices.refresh()
 
         voices.beginRerecording(sam)
@@ -86,7 +91,7 @@ final class VoiceProfilesTests: XCTestCase {
     }
 
     func test_progressFollowsTheDaemonsSamples() {
-        let voices = VoiceProfiles(effects: Harness().effects)
+        let voices = VoiceProfiles(effects: Harness().effects, colors: Self.colors())
         voices.beginAdding()
         voices.name = "alex"
         voices.speakerEvent(Self.event(.recording, index: 1))
@@ -102,7 +107,7 @@ final class VoiceProfilesTests: XCTestCase {
     func test_aFailedRecordingReturnsToTheNameWithTheReason() async {
         let harness = Harness()
         harness.enrollError = TryOutError.stopped
-        let voices = VoiceProfiles(effects: harness.effects)
+        let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
         voices.beginAdding()
         voices.name = " alex "
         voices.start()
@@ -119,7 +124,7 @@ final class VoiceProfilesTests: XCTestCase {
     func test_cancelClosesTheSheetAndIgnoresLateEvents() async {
         let harness = Harness()
         harness.suspendsEnroll = true
-        let voices = VoiceProfiles(effects: harness.effects)
+        let voices = VoiceProfiles(effects: harness.effects, colors: Self.colors())
         voices.beginAdding()
         voices.name = "alex"
         voices.start()
@@ -132,5 +137,14 @@ final class VoiceProfilesTests: XCTestCase {
 
         XCTAssertNil(voices.enrollment)
         XCTAssertNil(voices.failure)
+    }
+
+    func test_theOwnVoiceToggleNamesWhoseVoiceItKeeps() {
+        XCTAssertEqual(VoiceProfiles.ownVoiceSummary(owners: []), "Set up your voice to use this.")
+        XCTAssertEqual(VoiceProfiles.ownVoiceSummary(owners: ["Farhad"]), "Types only Farhad’s voice.")
+        XCTAssertEqual(
+            VoiceProfiles.ownVoiceSummary(owners: ["Farhad", "Alex"]),
+            "Types only Farhad’s and Alex’s voices."
+        )
     }
 }

@@ -236,9 +236,32 @@ extension Aria_Daemon_V1_ChatStep {
     }
 }
 
+/// The enrolled voice heard in the press on screen. Each press starts
+/// unheard, even one that fails before it records. An event naming no voice
+/// keeps the last, so the ring does not drop out mid-press.
+struct HeardVoice {
+    private(set) var name: String?
+    private var ended = false
+
+    mutating func apply(_ event: Aria_Daemon_V1_DictationEvent) {
+        if ended {
+            name = nil
+            ended = false
+        }
+        switch event.stage {
+        case .recording: name = nil
+        case .segmentTranscribed where !event.speaker.isEmpty: name = event.speaker
+        case .delivered, .cancelled, .failed: ended = true
+        default: break
+        }
+    }
+}
+
 private struct Pill: Equatable {
     let state: PillState
     let prompt: String?
+    /// The color of the voice heard; none until one is recognized.
+    let voice: VoiceColor?
 
     var label: String? { state.label(prompt: prompt?.shortenedForPill) }
 }
@@ -246,6 +269,7 @@ private struct Pill: Equatable {
 enum OverlayStyle {
     static let fill = Color.black.opacity(0.75)
     static let font = Font.system(size: 12, weight: .medium)
+    static let ringWidth: CGFloat = 1
 }
 
 extension String {
@@ -270,6 +294,8 @@ final class StatusController: ObservableObject {
 
     private let events: DaemonEvents
     private let prompts: PromptHotkeys
+    private let colors: VoiceColors
+    private var heard = HeardVoice()
     private let panel = FloatingPanel(width: pillWidth, bottomMargin: pillBottomMargin)
     private var foregroundState: PillState?
     private var foregroundRun: RunID?
@@ -285,9 +311,10 @@ final class StatusController: ObservableObject {
     private var expiry: Task<Void, Never>?
 
     /// Shares the caption's stream: one subscription feeds every overlay.
-    init(events: DaemonEvents, prompts: PromptHotkeys) {
+    init(events: DaemonEvents, prompts: PromptHotkeys, colors: VoiceColors) {
         self.events = events
         self.prompts = prompts
+        self.colors = colors
     }
 
     /// The caller starts the stream once every overlay has registered.
@@ -300,6 +327,7 @@ final class StatusController: ObservableObject {
                 return
             }
             if event.stage == .recording { self.lastRecording = event.recordingID }
+            self.hear(event)
             guard let state = PillState(event) else { return }
             self.show(state, run: self.lastRecording.map(RunID.recording))
         }
@@ -329,6 +357,11 @@ final class StatusController: ObservableObject {
         }
     }
 
+    private func hear(_ event: Aria_Daemon_V1_DictationEvent) {
+        heard.apply(event)
+        render()
+    }
+
     /// A press that ended keeps the pill for its own lifetime, then lets go.
     private func show(_ state: PillState?, run: RunID? = nil) {
         expiry?.cancel()
@@ -351,7 +384,15 @@ final class StatusController: ObservableObject {
         if self.live != live { self.live = live }
         let run = foregroundState == nil ? asks.oldest.map { RunID.ticket($0.ticket) } : foregroundRun
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
-        let wanted = enabled ? live.map { Pill(state: $0, prompt: run.flatMap(prompts.runs.prompt(of:))) } : nil
+        // Only a press is spoken; an agent's step has no voice to show.
+        let voice: VoiceColor? =
+            switch foregroundRun {
+            case .ticket: nil
+            case .recording, nil: foregroundState == nil ? nil : heard.name.map(colors.assignColor(to:))
+            }
+        let wanted =
+            enabled
+            ? live.map { Pill(state: $0, prompt: run.flatMap(prompts.runs.prompt(of:)), voice: voice) } : nil
         guard wanted != shown else { return }
         shown = wanted
         // A new press starts from silence rather than the last one's level.
@@ -406,6 +447,11 @@ private struct StatusPillView: View {
         }
         .padding(9)
         .background(OverlayStyle.fill, in: Capsule())
+        .overlay {
+            if let ring = pill.voice?.ring {
+                Capsule().strokeBorder(ring, lineWidth: OverlayStyle.ringWidth)
+            }
+        }
     }
 }
 

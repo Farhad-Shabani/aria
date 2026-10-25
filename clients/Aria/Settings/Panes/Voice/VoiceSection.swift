@@ -5,6 +5,7 @@ struct VoiceSection: View {
 
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var voices: VoiceProfiles
+    @ObservedObject var colors: VoiceColors
     @ObservedObject var setup: SetupStatus
     let editor: PreferencesEditor
     @State private var removing: Aria_Daemon_V1_EnrolledSpeaker?
@@ -77,7 +78,7 @@ struct VoiceSection: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(width: Self.monogramSide, height: Self.monogramSide)
-                .background(Circle().fill(.gray))
+                .background(Circle().fill(colors.color(of: speaker.name)?.monogram ?? .gray))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(speaker.name)
@@ -87,6 +88,12 @@ struct VoiceSection: View {
             }
             Spacer()
             Menu {
+                Picker("Color", selection: color(of: speaker.name)) {
+                    choice(.plain)
+                    Divider()
+                    ForEach(VoiceColor.palette, id: \.self, content: choice)
+                }
+                Divider()
                 Button("Set Up Again…") { voices.beginRerecording(speaker) }
                 Button("Remove…", role: .destructive) { removing = speaker }
             } label: {
@@ -99,12 +106,27 @@ struct VoiceSection: View {
         }
     }
 
+    private func choice(_ color: VoiceColor) -> some View {
+        Label {
+            Text(color.title)
+        } icon: {
+            Image(nsImage: color.swatch)
+        }
+        .tag(color)
+    }
+
+    /// Every listed voice has a color once the list syncs; Blue only stands
+    /// in for the moment before.
+    private func color(of name: String) -> Binding<VoiceColor> {
+        Binding(get: { colors.color(of: name) ?? .blue }, set: { colors.set($0, for: name) })
+    }
+
     /// Stays switchable off when the owner's voice is gone, so a stale
     /// setting can still be cleared.
     private var ownVoiceOnly: some View {
         Toggle(isOn: editor.binding(\.ownVoiceOnly, \.ownVoiceOnly)) {
             Text("Only type my voice")
-            Text(voices.hasOwner ? "Other voices are ignored while you dictate." : "Set up your voice to use this.")
+            Text(voices.ownVoiceSummary)
         }
         .disabled(!voices.hasOwner && !editor.snapshot.ownVoiceOnly)
     }

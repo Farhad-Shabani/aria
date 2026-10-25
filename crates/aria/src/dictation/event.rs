@@ -6,6 +6,7 @@ use super::level::MicLevel;
 use crate::delivery::{DeliveryOutcome, Placement};
 use crate::event::EventEmitter;
 use crate::rpc::RpcErrorCode;
+use crate::speaker::SpeakerName;
 
 use super::RecordingId;
 
@@ -25,7 +26,12 @@ pub enum DictationStage {
     },
     Cancelled,
     Failed(RpcErrorCode),
-    SegmentTranscribed(Arc<str>),
+    /// A finalized segment, and the enrolled voice the press so far sounds
+    /// like.
+    SegmentTranscribed {
+        text: Arc<str>,
+        speaker: Option<SpeakerName>,
+    },
     SegmentDelivered,
 }
 
@@ -55,7 +61,7 @@ impl DictationStage {
             Self::Delivered { .. } => "delivered",
             Self::Cancelled => "cancelled",
             Self::Failed(..) => "failed",
-            Self::SegmentTranscribed(..) => "segment transcribed",
+            Self::SegmentTranscribed { .. } => "segment transcribed",
             Self::SegmentDelivered => "segment delivered",
         }
     }
