@@ -219,7 +219,6 @@ final class SetupState: ObservableObject {
         }
     }
 
-    /// Progress and the summary name models by key; the inspection knows their titles.
     func title(ofModel name: String) -> String {
         inspection.models.first { $0.name == name }?.title ?? name
     }

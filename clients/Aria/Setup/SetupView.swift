@@ -24,8 +24,6 @@ struct SetupView: View {
         .onDisappear { state.stop() }
     }
 
-    /// On macOS 26 the header and footer are bars, so a long page blurs
-    /// under them instead of stopping at a hard edge.
     @ViewBuilder private var detail: some View {
         if #available(macOS 26, *) {
             pages
@@ -149,8 +147,7 @@ struct SetupView: View {
     }
 }
 
-/// Clips a sliding page at the column's sides but not its top and bottom,
-/// where the page scrolls on under the header and footer.
+/// Clips only the sides, so the page still scrolls under the header and footer.
 private struct SidesOnly: Shape {
     func path(in rect: CGRect) -> Path {
         Path(rect.insetBy(dx: 0, dy: -rect.height))

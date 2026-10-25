@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 struct DictationHistoryView: View {
-    /// Where the status lines and footer buttons start, so they share an edge.
     private static let edgeInset: CGFloat = 12
 
     @StateObject private var state = DictationHistoryState(effects: DictationHistoryClient.effects)
@@ -183,7 +182,6 @@ struct DictationHistoryView: View {
                     }
                 }
                 .font(.callout)
-                // Rows pad their text by 12 more, so it starts where the transcript does.
                 .padding(12)
             }
         } else if state.selectedID == nil && !state.items.isEmpty {

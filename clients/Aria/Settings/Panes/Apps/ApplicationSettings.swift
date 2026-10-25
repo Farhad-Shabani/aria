@@ -32,7 +32,6 @@ struct ApplicationSettings: View {
         }
     }
 
-    /// On means Aria works in this app.
     private func isOn(_ excluded: Bool, _ editor: PreferencesEditor) -> Binding<Bool> {
         let bundleID = bundleID
         return Binding(
