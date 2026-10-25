@@ -36,9 +36,9 @@ struct StatusPillView: View {
                         Text(since, style: .timer)
                     }
                 }
-                .font(OverlayStyle.font)
+                .font(OverlayStyle.labelFont)
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(OverlayStyle.ink)
                 .padding(.trailing, 4)
             }
         }
@@ -122,7 +122,7 @@ private struct Glyph: View {
 
     var body: some View {
         Image(systemName: name)
-            .font(.system(size: 10, weight: .bold))
+            .font(OverlayStyle.glyphFont)
             .foregroundStyle(tint)
             .frame(width: markHeight, height: markHeight)
     }

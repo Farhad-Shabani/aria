@@ -49,7 +49,7 @@ struct EnginesPage: View {
             Text(title)
             if let chosen, !chosen.note.isEmpty {
                 Text(chosen.note)
-                    .foregroundStyle(chosen.availability == .unsupported ? Color.red : Color.secondary)
+                    .foregroundStyle(chosen.availability == .unsupported ? Color.failure : Color.secondary)
             }
         }
     }

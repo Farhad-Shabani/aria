@@ -12,7 +12,7 @@ struct PromptRow: View {
                 if flagsMissingFile && !PromptFile.exists(entry) {
                     Text("File not found")
                         .font(.subheadline)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.failure)
                 }
             }
             Spacer()

@@ -13,9 +13,7 @@ struct WelcomePage: View {
                 if let missing = state.missingSummary {
                     Text(missing)
                 }
-                if let blocked = state.blockedBy {
-                    Text(blocked).foregroundStyle(.red)
-                }
+                NoticeText(notice: state.blockedBy)
             }
             if state.step == .welcome { expressDownloads }
         }

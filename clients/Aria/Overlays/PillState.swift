@@ -78,13 +78,13 @@ enum PillState: Equatable {
     var tint: Color {
         switch self {
         case .recording, .cancelled, .failed, .noReply:
-            return Color(red: 0.88, green: 0.42, blue: 0.45)
+            return OverlayStyle.alertTint
         case .transcribing, .delivering, .asking:
-            return Color(red: 0.90, green: 0.75, blue: 0.48)
+            return OverlayStyle.workingTint
         case .delivered, .replied:
-            return Color(red: 0.48, green: 0.80, blue: 0.59)
+            return OverlayStyle.doneTint
         case .interrupted, .excluded:
-            return Color(white: 0.72)
+            return OverlayStyle.quietTint
         }
     }
 

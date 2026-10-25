@@ -2,26 +2,21 @@ import SwiftUI
 
 struct VoiceEnrollmentSheet: View {
     private static let width: CGFloat = 380
-    private static let glyphSide: CGFloat = 56
+    private static let accent = Color.purple
     private static let dotSide: CGFloat = 8
 
     @ObservedObject var voices: VoiceProfiles
     let enrollment: VoiceProfiles.Enrollment
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "waveform")
-                .font(.title)
-                .foregroundStyle(.white)
-                .frame(width: Self.glyphSide, height: Self.glyphSide)
-                .background(Circle().fill(.purple))
-                .accessibilityHidden(true)
+        VStack(spacing: SettingsMetrics.sheetSpacing) {
+            SheetGlyph(symbol: "waveform", tint: Self.accent)
             switch enrollment.phase {
             case .naming: naming
             case .recording(let taken, let listening): recording(taken: taken, listening: listening)
             }
         }
-        .padding(24)
+        .padding(SettingsMetrics.sheetPadding)
         .frame(width: Self.width)
     }
 
@@ -41,7 +36,7 @@ struct VoiceEnrollmentSheet: View {
         }
         if let failure = enrollment.failure {
             Text(failure)
-                .foregroundStyle(.red)
+                .foregroundStyle(.failure)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -83,8 +78,8 @@ struct VoiceEnrollmentSheet: View {
 
     private func dot(done: Bool, current: Bool) -> some View {
         Circle()
-            .fill(done ? AnyShapeStyle(.purple) : AnyShapeStyle(.quaternary))
-            .overlay { if current { Circle().strokeBorder(.purple, lineWidth: 2) } }
+            .fill(done ? AnyShapeStyle(Self.accent) : AnyShapeStyle(.quaternary))
+            .overlay { if current { Circle().strokeBorder(Self.accent, lineWidth: 2) } }
             .frame(width: Self.dotSide, height: Self.dotSide)
     }
 }

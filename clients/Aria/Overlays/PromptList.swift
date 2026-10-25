@@ -109,23 +109,23 @@ private struct PromptListView: View {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 HStack(spacing: 10) {
                     Text("\(index + 1)")
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(OverlayStyle.dimInk)
                     Text(entry.name)
                         .lineLimit(1)
                         .frame(maxWidth: Layout.maxNameWidth, alignment: .leading)
                     Spacer(minLength: 16)
                     if let chord = entry.storedChord {
                         ChordLabel(chord: chord)
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(OverlayStyle.dimInk)
                     }
                 }
             }
         }
-        .font(OverlayStyle.font)
+        .font(OverlayStyle.labelFont)
         .monospacedDigit()
-        .foregroundStyle(.white)
+        .foregroundStyle(OverlayStyle.ink)
         .padding(12)
         .fixedSize()
-        .background(OverlayStyle.fill, in: RoundedRectangle(cornerRadius: 12))
+        .background(OverlayStyle.fill, in: RoundedRectangle(cornerRadius: OverlayStyle.cardCornerRadius))
     }
 }

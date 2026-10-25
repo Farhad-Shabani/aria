@@ -24,7 +24,7 @@ struct StatusMark: View {
         case .done, .current: AnyShapeStyle(.tint)
         case .upcoming: AnyShapeStyle(.secondary)
         case .skipped: AnyShapeStyle(.tertiary)
-        case .failed: AnyShapeStyle(.red)
+        case .failed: AnyShapeStyle(.failure)
         }
     }
 }

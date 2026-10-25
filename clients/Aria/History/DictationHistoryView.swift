@@ -34,7 +34,7 @@ struct DictationHistoryView: View {
             .disabled(state.isClearing)
             if let error = state.error {
                 Text(error.message)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.failure)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
                     .padding(.vertical, 8)

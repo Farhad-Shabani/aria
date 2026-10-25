@@ -51,7 +51,7 @@ struct ChordRecorder: View {
             // for a second line and lift the row off center.
             if let warning {
                 Text(title)
-                Text(warning).foregroundStyle(.red)
+                Text(warning).foregroundStyle(.failure)
             } else {
                 Text(title)
             }
