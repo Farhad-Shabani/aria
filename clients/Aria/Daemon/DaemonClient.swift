@@ -27,8 +27,7 @@ enum DaemonClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .ariaBinaryMissing(let path): return "aria binary not found at \(path)"
-        case .agentDisabled:
-            return "Aria is off in the background. Turn it on in System Settings → General → Login Items."
+        case .agentDisabled: return "the Login Items background item is off"
         case .commandFailed(let message): return message
         }
     }
@@ -205,17 +204,20 @@ struct DaemonClient: DaemonControlling {
         do {
             output = try await ChildProcess.run(executable, arguments)
         } catch {
-            throw DaemonClientError.commandFailed(
-                "\(name) failed to launch: \(error.localizedDescription)"
-            )
+            throw launchFailed(name, error)
         }
         guard output.status == 0 else {
-            let message = String(decoding: output.stderr, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw DaemonClientError.commandFailed(
-                "\(name) exited with \(output.status): \(message)"
-            )
+            throw exitFailed(name, status: output.status, stderr: output.stderr)
         }
+    }
+
+    private static func launchFailed(_ name: String, _ error: any Error) -> DaemonClientError {
+        .commandFailed("\(name) failed to launch: \(error.localizedDescription)")
+    }
+
+    private static func exitFailed(_ name: String, status: Int32, stderr: Data) -> DaemonClientError {
+        let message = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return .commandFailed("\(name) exited with \(status): \(message)")
     }
 
     private static func spawnDaemon(at bin: URL) throws {
@@ -229,22 +231,17 @@ struct DaemonClient: DaemonControlling {
         do {
             try process.run()
         } catch {
-            throw DaemonClientError.commandFailed(
-                "aria daemon failed to launch: \(error.localizedDescription)"
-            )
+            throw launchFailed("aria daemon", error)
         }
     }
 
     func stop() async throws {
-        // The agent's daemon reads the login shell's PATH before it takes
-        // its lock; launchd reaches it then too. A job with no process
-        // fails here and falls to the lock, which reports why.
-        if Self.daemonBinaryOverride() == nil {
+        if Self.stopsThroughAgent {
             do {
                 try await Self.run(Self.launchctl, Self.killAgentArguments)
                 return
             } catch {
-                log.notice("launchctl kill failed, trying the lock: \(error.localizedDescription, privacy: .private)")
+                Self.logKillFallback(error)
             }
         }
         try Self.signalLockHolder()
@@ -253,15 +250,24 @@ struct DaemonClient: DaemonControlling {
     /// `stop()` that blocks the calling thread, for the one caller that
     /// cannot await: `applicationWillTerminate`, where no task gets to resume.
     static func signalStop() throws {
-        if daemonBinaryOverride() == nil {
+        if stopsThroughAgent {
             do {
                 try killAgentBlocking()
                 return
             } catch {
-                log.notice("launchctl kill failed, trying the lock: \(error.localizedDescription, privacy: .private)")
+                logKillFallback(error)
             }
         }
         try signalLockHolder()
+    }
+
+    /// The agent's daemon reads the login shell's PATH before it takes its
+    /// lock; launchd reaches it then too. A job with no process fails the
+    /// kill and falls to the lock, which reports why.
+    private static var stopsThroughAgent: Bool { daemonBinaryOverride() == nil }
+
+    private static func logKillFallback(_ error: any Error) {
+        log.notice("launchctl kill failed, trying the lock: \(error.localizedDescription, privacy: .private)")
     }
 
     private static var killAgentArguments: [String] { ["kill", "SIGTERM", agentTarget] }
@@ -272,11 +278,17 @@ struct DaemonClient: DaemonControlling {
         process.arguments = killAgentArguments
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
+        let stderr = Pipe()
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            throw launchFailed("launchctl kill", error)
+        }
+        let errors = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            throw DaemonClientError.commandFailed("launchctl kill exited with \(process.terminationStatus)")
+            throw exitFailed("launchctl kill", status: process.terminationStatus, stderr: errors)
         }
     }
 

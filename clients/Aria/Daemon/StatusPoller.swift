@@ -120,7 +120,7 @@ final class StatusPoller: ObservableObject {
         var errorDescription: String? {
             switch self {
             case .busy: return "Aria is busy starting or stopping."
-            case .stillRunning: return "Aria didn't stop in time."
+            case .stillRunning: return DaemonControlFailure.stillRunning.message
             }
         }
     }
