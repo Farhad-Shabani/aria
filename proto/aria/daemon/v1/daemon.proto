@@ -95,9 +95,8 @@ message DictationEvent {
   DeliveryOutcome outcome = 5;
   // Set on DICTATION_STAGE_DELIVERED: how many words landed.
   uint32 word_count = 6;
-  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled voice the
-  // press so far sounds like. Empty when none matches, or without a
-  // speaker model. A live guess, not proof of who spoke.
+  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
+  // is speaking. Empty until a voice is recognized.
   string speaker = 7;
 }
 

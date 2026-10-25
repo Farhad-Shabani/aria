@@ -980,9 +980,8 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// Set on DICTATION_STAGE_DELIVERED: how many words landed.
   public var wordCount: UInt32 = 0
 
-  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled voice the
-  /// press so far sounds like. Empty when none matches, or without a
-  /// speaker model. A live guess, not proof of who spoke.
+  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
+  /// is speaking. Empty until a voice is recognized.
   public var speaker: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
