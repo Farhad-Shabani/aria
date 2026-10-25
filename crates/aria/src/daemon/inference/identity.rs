@@ -8,8 +8,9 @@ use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use super::PairedServer;
 use crate::config::ServerEndpoint;
-use crate::daemon::relay::{PairingCode, PairingCodes, PairingError, fingerprint, mint};
+use crate::daemon::relay::{PairingCode, PairingCodes, PairingError, fingerprint, mint, to_hex};
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
 use crate::rpc::{RpcErrorCode, RpcFailure};
@@ -297,6 +298,7 @@ struct StoredClient {
 pub(crate) struct ClientIdentity {
     path: PathBuf,
     stored: StoredClient,
+    fingerprint: String,
 }
 
 impl ClientIdentity {
@@ -323,8 +325,12 @@ impl ClientIdentity {
         if let Some(server) = &stored.server {
             validate_pin(&server.certificate_pem, &server.fingerprint)?;
         }
+        let certificate =
+            CertificateDer::from_pem_slice(stored.credentials.certificate_pem.as_bytes())
+                .map_err(|_| Error::InvalidIdentity)?;
         Ok(Self {
             path: path.to_owned(),
+            fingerprint: to_hex(&fingerprint(&certificate)),
             stored,
         })
     }
@@ -333,15 +339,16 @@ impl ClientIdentity {
         &self.stored.credentials
     }
 
-    pub(super) fn fingerprint(&self) -> Result<[u8; 32], Error> {
-        let certificate =
-            CertificateDer::from_pem_slice(self.stored.credentials.certificate_pem.as_bytes())
-                .map_err(|_| Error::InvalidIdentity)?;
-        Ok(fingerprint(&certificate))
+    /// Hex, the form `aria remote revoke` takes on the server.
+    pub(super) fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 
-    pub(super) fn paired_endpoint(&self) -> Option<&ServerEndpoint> {
-        self.stored.server.as_ref().map(|server| &server.endpoint)
+    pub(super) fn paired_server(&self) -> Option<PairedServer> {
+        self.stored.server.as_ref().map(|server| PairedServer {
+            endpoint: server.endpoint.clone(),
+            client_fingerprint: self.fingerprint.clone(),
+        })
     }
 
     pub(super) fn pinned_server(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {

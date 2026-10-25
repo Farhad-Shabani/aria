@@ -1,7 +1,9 @@
+pub(crate) mod admin;
 pub(crate) mod client;
 pub(crate) mod engine;
 pub(crate) mod host;
 pub(crate) mod identity;
+pub(crate) mod pairing;
 pub(crate) mod tls;
 
 use std::path::{Path, PathBuf};
@@ -58,7 +60,6 @@ impl Paths {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PairedServer {
     pub(crate) endpoint: ServerEndpoint,
-    /// Hex, the form `aria remote revoke` takes on the server.
     pub(crate) client_fingerprint: String,
 }
 
@@ -68,18 +69,11 @@ pub(crate) fn paired_server(home: &Path) -> Result<Option<PairedServer>, identit
     if !path.is_file() {
         return Ok(None);
     }
-    let identity = match identity::ClientIdentity::open(&path) {
-        Ok(identity) => identity,
-        Err(identity::Error::Unpaired) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let Some(endpoint) = identity.paired_endpoint() else {
-        return Ok(None);
-    };
-    Ok(Some(PairedServer {
-        endpoint: endpoint.clone(),
-        client_fingerprint: crate::daemon::relay::to_hex(&identity.fingerprint()?),
-    }))
+    match identity::ClientIdentity::open(&path) {
+        Ok(identity) => Ok(identity.paired_server()),
+        Err(identity::Error::Unpaired) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

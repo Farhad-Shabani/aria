@@ -39,8 +39,10 @@ pub use dictation::DictationInitializationError;
 pub use host::{
     Daemon, DaemonBuilder, DaemonFailure, DaemonLifetime, DaemonStopper, RunningDaemon,
 };
-pub use inference::client::{RemoteClientError, remote_invite, remote_pair, remote_revoke};
+pub use inference::admin::{remote_invite, remote_revoke};
+pub use inference::client::RemoteClientError;
 pub use inference::host::{InferenceHostError, serve_inference};
+pub use inference::pairing::remote_pair;
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
     AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,

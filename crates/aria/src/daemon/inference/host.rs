@@ -28,7 +28,7 @@ use crate::daemon::shutdown::{ShutdownError, ShutdownSignal};
 use crate::ipc::wire;
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
-use crate::runtime::RuntimeError;
+use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::transcription::TranscriptionError;
 
 use super::engine::Engine;
@@ -44,7 +44,7 @@ pub fn serve_inference(bind: SocketAddr) -> Result<(), InferenceHostError> {
     run(bind).map_err(InferenceHostError)
 }
 
-fn run(bind: SocketAddr) -> Result<(), HostFailure> {
+fn run(address: SocketAddr) -> Result<(), HostFailure> {
     let shutdown = ShutdownSignal::install()?;
     let environment = Environment::capture()?;
     let config = match TranscriptionBackend::load(&environment)? {
@@ -55,94 +55,158 @@ fn run(bind: SocketAddr) -> Result<(), HostFailure> {
             }));
         }
     };
-    let inference = Paths::in_home(environment.home());
-    let paths = inference.runtime().prepare()?;
-    let ownership = Arc::new(ExclusiveListener::bind(
-        paths.socket_path(),
-        paths.lock_path(),
-    )?);
-    remove_all_spools(paths.spool_dir());
-    let access = ServerAccess::load_or_create(&inference.server_identity())?;
-    let acceptor = tls::server(&access)?;
-    let listener = std::net::TcpListener::bind(bind).map_err(HostFailure::Io)?;
-    listener.set_nonblocking(true).map_err(HostFailure::Io)?;
+    let state = Paths::in_home(environment.home());
+    let runtime_paths = state.runtime().prepare()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("aria-inference")
         .build()
         .map_err(HostFailure::Io)?;
-    let result = runtime.block_on(run_prepared(
-        config,
-        paths.spool_dir().to_owned(),
-        ownership,
-        access,
-        acceptor,
-        listener,
-        shutdown,
-    ));
+    let result = runtime.block_on(async {
+        Host::bind(address, &state, &runtime_paths)?
+            .serve(config, shutdown)
+            .await
+    });
     runtime.shutdown_timeout(Duration::ZERO);
     result
 }
 
-async fn run_prepared(
-    config: EngineConfig,
-    spool: PathBuf,
+/// The LAN and same-user listeners and the pairing state, ready to load the model.
+struct Host {
     ownership: Arc<ExclusiveListener>,
+    spool: PathBuf,
     access: Arc<ServerAccess>,
     acceptor: TlsAcceptor,
-    listener: std::net::TcpListener,
-    mut shutdown: ShutdownSignal,
-) -> Result<(), HostFailure> {
-    let listener = TcpListener::from_std(listener).map_err(HostFailure::Io)?;
-    let local = UnixListener::from_std(ownership.listener().try_clone().map_err(HostFailure::Io)?)
-        .map_err(HostFailure::Io)?;
-    let jobs = TaskTracker::new();
-    let loading = load_engine(config, spool, ownership, &access, &jobs, &mut shutdown);
-    let Some(engine) = loading.await? else {
-        return Ok(());
-    };
-    let engine = Arc::new(engine);
-    let router = public_router(Arc::clone(&engine), Arc::clone(&access), jobs.clone()).await;
-    let admin = admin_router(Arc::clone(&access), jobs.clone());
-    let address = listener.local_addr().map_err(HostFailure::Io)?;
-    let stop = CancellationToken::new();
-    let public = router.serve_with_incoming_shutdown(
-        incoming(listener, acceptor, Arc::clone(&access)),
-        stop.clone().cancelled_owned(),
-    );
-    let private =
-        admin.serve_with_incoming_shutdown(same_user(local), stop.clone().cancelled_owned());
-    tokio::pin!(public, private);
-    tracing::info!(engine = engine.name(), %address, "inference server ready");
-    let (result, ended) = tokio::select! {
-        result = &mut public => (result.map_err(HostFailure::Transport), Ended::Public),
-        result = &mut private => (result.map_err(HostFailure::Transport), Ended::Private),
-        result = shutdown.triggered() => (result.map_err(HostFailure::Shutdown), Ended::Signal),
-    };
-    let drain_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
-    access.stop();
-    stop.cancel();
-    jobs.close();
-    let drained = tokio::time::timeout(CONNECTION_DRAIN, async {
-        if ended != Ended::Public {
-            (&mut public).await.map_err(HostFailure::Transport)?;
-        }
-        if ended != Ended::Private {
-            (&mut private).await.map_err(HostFailure::Transport)?;
-        }
-        Ok::<_, HostFailure>(())
-    })
-    .await;
-    if let Ok(Err(error)) = drained {
-        return Err(error);
+    public: TcpListener,
+    private: UnixListener,
+    jobs: TaskTracker,
+}
+
+impl Host {
+    /// Must run inside a tokio runtime: the listeners register with its reactor.
+    fn bind(
+        address: SocketAddr,
+        state: &Paths,
+        runtime: &PreparedRuntimePaths,
+    ) -> Result<Self, HostFailure> {
+        let ownership = Arc::new(ExclusiveListener::bind(
+            runtime.socket_path(),
+            runtime.lock_path(),
+        )?);
+        let spool = runtime.spool_dir().to_owned();
+        remove_all_spools(&spool);
+        let access = ServerAccess::load_or_create(&state.server_identity())?;
+        let acceptor = tls::server(&access)?;
+        let public = std::net::TcpListener::bind(address).map_err(HostFailure::Io)?;
+        public.set_nonblocking(true).map_err(HostFailure::Io)?;
+        let public = TcpListener::from_std(public).map_err(HostFailure::Io)?;
+        let private =
+            UnixListener::from_std(ownership.listener().try_clone().map_err(HostFailure::Io)?)
+                .map_err(HostFailure::Io)?;
+        Ok(Self {
+            ownership,
+            spool,
+            access,
+            acceptor,
+            public,
+            private,
+            jobs: TaskTracker::new(),
+        })
     }
-    if tokio::time::timeout_at(drain_deadline, jobs.wait())
-        .await
-        .is_err()
-    {
-        return Err(HostFailure::Drain);
+
+    async fn serve(
+        self,
+        config: EngineConfig,
+        mut shutdown: ShutdownSignal,
+    ) -> Result<(), HostFailure> {
+        let Some(engine) = self.load_engine(config, &mut shutdown).await? else {
+            return Ok(());
+        };
+        let Self {
+            access,
+            acceptor,
+            public,
+            private,
+            jobs,
+            ..
+        } = self;
+        let engine = Arc::new(engine);
+        let router = public_router(Arc::clone(&engine), Arc::clone(&access), jobs.clone()).await;
+        let admin = admin_router(Arc::clone(&access), jobs.clone());
+        let address = public.local_addr().map_err(HostFailure::Io)?;
+        let stop = CancellationToken::new();
+        let public_serving = router.serve_with_incoming_shutdown(
+            incoming(public, acceptor, Arc::clone(&access)),
+            stop.clone().cancelled_owned(),
+        );
+        let private_serving =
+            admin.serve_with_incoming_shutdown(same_user(private), stop.clone().cancelled_owned());
+        tokio::pin!(public_serving, private_serving);
+        tracing::info!(engine = engine.name(), %address, "inference server ready");
+        let (result, ended) = tokio::select! {
+            result = &mut public_serving => (result.map_err(HostFailure::Transport), Ended::Public),
+            result = &mut private_serving => (result.map_err(HostFailure::Transport), Ended::Private),
+            result = shutdown.triggered() => (result.map_err(HostFailure::Shutdown), Ended::Signal),
+        };
+        let drain_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+        access.stop();
+        stop.cancel();
+        jobs.close();
+        let drained = tokio::time::timeout(CONNECTION_DRAIN, async {
+            if ended != Ended::Public {
+                (&mut public_serving)
+                    .await
+                    .map_err(HostFailure::Transport)?;
+            }
+            if ended != Ended::Private {
+                (&mut private_serving)
+                    .await
+                    .map_err(HostFailure::Transport)?;
+            }
+            Ok::<_, HostFailure>(())
+        })
+        .await;
+        if let Ok(Err(error)) = drained {
+            return Err(error);
+        }
+        if tokio::time::timeout_at(drain_deadline, jobs.wait())
+            .await
+            .is_err()
+        {
+            return Err(HostFailure::Drain);
+        }
+        result
     }
-    result
+
+    /// Loads the model, or stops cleanly when shutdown arrives first.
+    async fn load_engine(
+        &self,
+        config: EngineConfig,
+        shutdown: &mut ShutdownSignal,
+    ) -> Result<Option<Engine>, HostFailure> {
+        let cancel = CancelToken::new();
+        let loading_cancel = cancel.clone();
+        let ownership = Arc::clone(&self.ownership);
+        let spool = self.spool.clone();
+        let mut loading = self
+            .jobs
+            .spawn_blocking(move || Engine::load(config, spool, ownership, &loading_cancel));
+        tokio::select! {
+            result = &mut loading => {
+                let engine = result.map_err(|_| HostFailure::Worker)?;
+                engine.map(Some).map_err(HostFailure::Model)
+            }
+            signal = shutdown.triggered() => {
+                cancel.cancel();
+                self.access.stop();
+                self.jobs.close();
+                if tokio::time::timeout(SHUTDOWN_GRACE, self.jobs.wait()).await.is_err() {
+                    return Err(HostFailure::Drain);
+                }
+                signal.map_err(HostFailure::Shutdown).map(|()| None)
+            }
+        }
+    }
 }
 
 /// A server that stopped on its own needs no drain.
@@ -151,36 +215,6 @@ enum Ended {
     Public,
     Private,
     Signal,
-}
-
-/// Loads the model, or stops cleanly when shutdown arrives first.
-async fn load_engine(
-    config: EngineConfig,
-    spool: PathBuf,
-    ownership: Arc<ExclusiveListener>,
-    access: &ServerAccess,
-    jobs: &TaskTracker,
-    shutdown: &mut ShutdownSignal,
-) -> Result<Option<Engine>, HostFailure> {
-    let cancel = CancelToken::new();
-    let loading_cancel = cancel.clone();
-    let mut loading =
-        jobs.spawn_blocking(move || Engine::load(config, spool, ownership, &loading_cancel));
-    tokio::select! {
-        result = &mut loading => {
-            let engine = result.map_err(|_| HostFailure::Worker)?;
-            engine.map(Some).map_err(HostFailure::Model)
-        }
-        signal = shutdown.triggered() => {
-            cancel.cancel();
-            access.stop();
-            jobs.close();
-            if tokio::time::timeout(SHUTDOWN_GRACE, jobs.wait()).await.is_err() {
-                return Err(HostFailure::Drain);
-            }
-            signal.map_err(HostFailure::Shutdown).map(|()| None)
-        }
-    }
 }
 
 async fn public_router(
@@ -521,7 +555,7 @@ pub(in crate::daemon) mod tests {
         pub(in crate::daemon) async fn pair_home(&self, home: PathBuf) {
             let invitation = serde_json::to_string(&self.invite).unwrap();
             tokio::task::spawn_blocking(move || {
-                super::super::client::pair_at(&home, &invitation).unwrap()
+                super::super::pairing::pair_at(&home, &invitation).unwrap()
             })
             .await
             .unwrap();
