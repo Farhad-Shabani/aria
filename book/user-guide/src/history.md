@@ -49,6 +49,11 @@ Retry replaces the entry's text without keeping the previous version. It does
 not type or copy the result into another app. A failed retry leaves the
 previous text in place.
 
+Retries use the same [local or server setting](./configuration.md#server-inference)
+as dictation. Enabled voice filtering runs locally before upload. The
+server must provide the requested engine. A failed retry leaves the saved
+text unchanged and never falls back to a local model.
+
 ## Keep successful recordings
 
 To make future successful dictations available for retry, enable

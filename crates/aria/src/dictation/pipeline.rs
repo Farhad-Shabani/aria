@@ -183,7 +183,8 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
     DictationPipeline<C, T, M, E, V, S, L>
 {
     /// Transcribes caller-provided audio with the shared engine and speaker filter.
-    /// Returns text without publishing it to sinks.
+    /// Returns text without publishing it to sinks, and the engine a delegated
+    /// operation ran on.
     pub(crate) fn transcribe(
         &self,
         recording: &mut RecordingReader,
@@ -191,7 +192,7 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
         own_voice_only: bool,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationError> {
+    ) -> Result<(Transcript, Option<&'static str>), DictationError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
@@ -211,10 +212,11 @@ impl<C, T: Transcriber, M: Mode, E: Embedder, V: VoiceActivityDetector, S, L: La
             return Err(DictationError::Cancelled);
         }
         let heard = gated.as_mut().unwrap_or(recording);
-        self.transcription
-            .transcribe_with(heard, language, cancel)
-            .and_then(|transcript| self.finalize(transcript, vocabulary, cancel))
-            .map_err(DictationError::from)
+        let mut operation = self.transcription.start_with(language, cancel)?;
+        let served_by = operation.served_by();
+        let transcript = operation.finish(heard)?;
+        let transcript = self.finalize(transcript, vocabulary, cancel)?;
+        Ok((transcript, served_by))
     }
 }
 
@@ -391,6 +393,9 @@ where
             .transcription
             .start_with(&settings.recognition_language, &cancel)
             .map_err(started)?;
+        if let Some(engine) = operation.served_by() {
+            sinks.served_by(engine);
+        }
         // Complete delivery filters audio before decoding. Streaming instead
         // checks the predicted voice for each finalized segment.
         let mut gated = match settings.delivery_mode {
@@ -419,7 +424,7 @@ where
                     .map(|heard| heard.map(HeardUpdate::Finalized))
             }
             .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
-            scan.hear_through(recording.held_to());
+            scan.hear_through(operation.read_to());
             match update {
                 Some(HeardUpdate::Finalized(_)) if !scan.heard() => guessed += 1,
                 Some(HeardUpdate::Provisional(_)) if !scan.heard() => {}
@@ -691,9 +696,11 @@ fn log_transcription_error(
         | TranscriptionError::UnsupportedBackend { .. }
         | TranscriptionError::UnsupportedDevice { .. }
         | TranscriptionError::NoNativeStream
+        | TranscriptionError::NoDelegatedOperation
         | TranscriptionError::LoadPanicked
         | TranscriptionError::Cancelled
         | TranscriptionError::NoSpeech
+        | TranscriptionError::InvalidSegment
         | TranscriptionError::Processing(_) => "transcription",
     };
     log_stage_error(
@@ -822,6 +829,11 @@ where
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
         self.0.completed(utterance.clone()).map_err(Into::into)?;
         self.1.completed(utterance).map_err(Into::into)
+    }
+
+    fn served_by(&mut self, engine: &'static str) {
+        self.0.served_by(engine);
+        self.1.served_by(engine);
     }
 
     fn delivered(&self) -> Option<DeliveryOutcome> {
@@ -2086,6 +2098,7 @@ mod tests {
             pipeline
                 .transcribe(&mut recording, &Language::Automatic, false, None, &cancel,)
                 .unwrap()
+                .0
                 .as_str(),
             "Meet at 3."
         );
@@ -2721,7 +2734,7 @@ mod tests {
         );
 
         assert!(matches!(refused, Err(DictationError::NoSpeech)));
-        assert_eq!(heard.expect("the recording is heard").as_str(), "Mm-hmm.");
+        assert_eq!(heard.expect("the recording is heard").0.as_str(), "Mm-hmm.");
     }
 
     /// The pill reads where the text went off this event, so the outcome
@@ -2837,7 +2850,7 @@ mod tests {
             )
             .expect("the enrolled voice is typed");
 
-        assert_eq!(heard.as_str(), "hello");
+        assert_eq!(heard.0.as_str(), "hello");
     }
 
     #[test]

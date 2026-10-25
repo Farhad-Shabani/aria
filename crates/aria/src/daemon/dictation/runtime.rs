@@ -6,12 +6,14 @@ use aria_kit::cancel::{CancelToken, Deadline};
 
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use crate::audio::{RecordingReader, WakeWordMonitor};
-use crate::config::{ConfigError, DictationConfig, SpeakerConfig, WakeConfig};
+use crate::config::{
+    ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
+};
 use crate::dictation::subscribers::DictationSubscribers;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, MAX_DICTATION_TIMEOUT, RecordingId,
-    StopMode,
+    StopMode, Transcribed,
 };
 use crate::event::EventEmitter;
 use crate::history::{HistoryEntry, HistoryError, RetryOptions};
@@ -19,14 +21,14 @@ use crate::microphone::Gate;
 use crate::preferences::{PreferenceStore, PreferenceStoreError};
 use crate::primitives::lazy::Lazy;
 use crate::rpc::RpcErrorCode;
-use crate::transcription::{Language, Transcript};
+use crate::transcription::Language;
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
 use super::super::transcripts::{History, TranscriptStore};
 use super::assembly::{
-    BuiltDictation, DictationInitializationError, ModelLoading, RuntimeExecutor, build_dictation,
-    transcribe_retry,
+    BuiltDictation, DictationInitializationError, ModelLoading, RetryTarget, RuntimeExecutor,
+    build_dictation, transcribe_retry,
 };
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -63,28 +65,31 @@ pub(in crate::daemon) struct DictationRuntime {
     coordinator: CoordinatorState,
     transcripts: Arc<TranscriptStore>,
     microphone: Arc<Gate>,
-    engine: &'static str,
     retry: Lazy<RetrySetup, ConfigError>,
 }
 
-struct RetrySetup {
-    dictation: DictationConfig,
-    speaker: SpeakerConfig,
-    vocabulary: Arc<VocabularyRuntime>,
-    home: std::path::PathBuf,
+pub(super) struct RetrySetup {
+    pub(super) dictation: DictationConfig,
+    pub(super) speaker: SpeakerConfig,
+    pub(super) vocabulary: Arc<VocabularyRuntime>,
+    pub(super) home: std::path::PathBuf,
+}
+
+struct ReadyDictation {
+    coordinator: DictationCoordinator<RuntimeExecutor>,
+    engine: &'static str,
 }
 
 /// A coordinator the daemon already holds, or how to build one when the first
 /// press asks for it.
 enum CoordinatorState {
-    Ready(DictationCoordinator<RuntimeExecutor>),
+    Ready(ReadyDictation),
     /// Boxed: the empty slot inside is as wide as the coordinator it will
     /// hold, and a ready runtime should not pay for that.
     Deferred(Box<DeferredCoordinator>),
 }
 
-type DeferredCoordinator =
-    Lazy<DictationCoordinator<RuntimeExecutor>, DictationInitializationError>;
+type DeferredCoordinator = Lazy<ReadyDictation, DictationInitializationError>;
 
 impl DictationRuntime {
     /// The emitter exists from daemon construction, not from the first press.
@@ -118,7 +123,6 @@ impl DictationRuntime {
             emitter: event_emitter(context, subscriptions),
             transcripts: Arc::clone(&transcripts),
             microphone: Arc::clone(&microphone),
-            engine: DEFERRED_ENGINE,
             preferences,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
@@ -143,7 +147,10 @@ impl DictationRuntime {
                         ModelLoading::OnFirstUse,
                         Arc::clone(&microphone),
                     )
-                    .map(|built| built.coordinator)
+                    .map(|built| ReadyDictation {
+                        coordinator: built.coordinator,
+                        engine: built.engine,
+                    })
                 },
             ))),
         }
@@ -157,7 +164,6 @@ impl DictationRuntime {
             emitter: EventEmitter::unsubscribed(),
             transcripts: Arc::new(TranscriptStore::new()),
             microphone: Gate::new(),
-            engine: DEFERRED_ENGINE,
             retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
             preferences,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(|| {
@@ -172,11 +178,10 @@ impl DictationRuntime {
     pub(in crate::daemon) fn execute_with(&mut self, executor: RuntimeExecutor) {
         let policy = crate::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
             .expect("the longest timeout is a valid policy");
-        self.coordinator = CoordinatorState::Ready(DictationCoordinator::new(
-            policy,
-            executor,
-            Arc::clone(&self.microphone),
-        ));
+        self.coordinator = CoordinatorState::Ready(ReadyDictation {
+            coordinator: DictationCoordinator::new(policy, executor, Arc::clone(&self.microphone)),
+            engine: DEFERRED_ENGINE,
+        });
     }
 
     /// Startup waits for the model here, so a daemon that cannot transcribe
@@ -190,12 +195,12 @@ impl DictationRuntime {
         setup: DictationSetup,
         microphone: Arc<Gate>,
     ) -> Result<(Self, Option<WakeWordMonitor>, Recorder), DictationInitializationError> {
-        let engine = setup.dictation.transcription.backend_name();
         let retry_dictation = setup.dictation.clone();
         let retry_speaker = setup.speaker.clone();
         let retry_vocabulary = Arc::clone(&setup.vocabulary);
         let retry_home = context.config_environment.home().to_path_buf();
         let BuiltDictation {
+            engine,
             coordinator,
             wake: monitor,
             capture,
@@ -211,7 +216,10 @@ impl DictationRuntime {
         let runtime = Self {
             emitter: event_emitter(context, subscriptions),
             preferences,
-            coordinator: CoordinatorState::Ready(coordinator),
+            coordinator: CoordinatorState::Ready(ReadyDictation {
+                coordinator,
+                engine,
+            }),
             retry: Lazy::new(move || {
                 Ok(RetrySetup {
                     dictation: retry_dictation.clone(),
@@ -222,7 +230,6 @@ impl DictationRuntime {
             }),
             transcripts,
             microphone,
-            engine,
         };
         Ok((
             runtime,
@@ -237,12 +244,8 @@ impl DictationRuntime {
     /// Ends the named recording and lets transcription finish. Returns false
     /// if it is not running, without loading a deferred coordinator.
     pub(in crate::daemon) fn stop_recording(&self, recording: RecordingId) -> bool {
-        match &self.coordinator {
-            CoordinatorState::Ready(coordinator) => coordinator.stop_recording(recording),
-            CoordinatorState::Deferred(deferred) => deferred
-                .built()
-                .is_some_and(|coordinator| coordinator.stop_recording(recording)),
-        }
+        self.ready()
+            .is_some_and(|ready| ready.coordinator.stop_recording(recording))
     }
 
     /// Announces a stage on the same channel a press uses, so the Mac's
@@ -313,7 +316,8 @@ impl DictationRuntime {
     }
 
     pub(in crate::daemon) fn history(&self) -> History {
-        History::new(Arc::clone(&self.transcripts), self.engine)
+        let engine = self.ready().map_or(DEFERRED_ENGINE, |ready| ready.engine);
+        History::new(Arc::clone(&self.transcripts), engine)
     }
 
     pub(in crate::daemon) fn transcribe(
@@ -321,7 +325,7 @@ impl DictationRuntime {
         recording: &mut RecordingReader,
         settings: &DictationSettings,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationRuntimeError> {
+    ) -> Result<Transcribed, DictationRuntimeError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled.into());
         }
@@ -350,7 +354,7 @@ impl DictationRuntime {
             .admit_history_retry()
             .ok_or(HistoryError::Busy)?;
         let mut lease = store.begin_retry(id)?;
-        let mut engine = options.engine.as_deref().unwrap_or(&lease.entry.engine);
+        let requested = options.engine.unwrap_or_else(|| lease.entry.engine.clone());
         let attempt = (|| {
             let settings = self
                 .history_settings()
@@ -360,42 +364,16 @@ impl DictationRuntime {
             let request = cancel.clone();
             let operation =
                 CancelToken::from_fn(move || request.is_cancelled() || deadline.expired());
-            let outcome = if engine == self.engine
-                && matches!(self.coordinator, CoordinatorState::Ready(_))
-            {
-                self.transcribe(&mut lease.recording, &settings, &operation)
-            } else {
-                let setup = self.retry.get().map_err(|_| HistoryError::Transcription)?;
-                if engine == DEFERRED_ENGINE {
-                    engine = setup.dictation.transcription.backend_name();
-                }
-                let mut config = setup.dictation.clone();
-                config.transcription = config
-                    .transcription
-                    .for_backend(engine, &setup.home)
-                    .map_err(|_| HistoryError::Transcription)?;
-                transcribe_retry(
-                    config,
-                    &setup.speaker,
-                    &setup.vocabulary,
-                    &setup.home,
-                    &mut lease.recording,
-                    &settings,
-                    &operation,
-                )
-                .map_err(DictationRuntimeError::Execution)
-            };
+            let retried = self.retry_on(&requested, &mut lease.recording, &settings, &operation);
             check_retry(&cancel, deadline)?;
-            outcome
-                .map(|transcript| (transcript, settings))
-                .map_err(|_| HistoryError::Transcription)
+            Ok((retried?, settings))
         })();
         match attempt {
-            Ok((transcript, settings)) => {
+            Ok((retried, settings)) => {
                 let mut recovered = store.recover(
                     id,
-                    transcript.as_str(),
-                    engine,
+                    retried.transcript.as_str(),
+                    retried.engine,
                     settings.recognition_language.as_str(),
                     settings.history_audio_retention,
                 )?;
@@ -408,6 +386,34 @@ impl DictationRuntime {
                 Err(error)
             }
         }
+    }
+
+    /// The live coordinator serves a retry for its own engine, or for any
+    /// engine its server runs. Anything else builds a one-off pipeline, so a
+    /// retry never initializes capture.
+    fn retry_on(
+        &self,
+        requested: &str,
+        recording: &mut RecordingReader,
+        settings: &DictationSettings,
+        cancel: &CancelToken,
+    ) -> Result<Transcribed, HistoryError> {
+        if self
+            .ready()
+            .is_some_and(|ready| ready.engine == requested || ready.engine == backend::SERVER)
+        {
+            let transcribed = self
+                .transcribe(recording, settings, cancel)
+                .map_err(|_| HistoryError::Transcription)?;
+            if names_an_engine(requested) && transcribed.engine != requested {
+                return Err(HistoryError::Transcription);
+            }
+            return Ok(transcribed);
+        }
+        let setup = self.retry.get().map_err(|_| HistoryError::Transcription)?;
+        let target = retry_target(setup, requested)?;
+        transcribe_retry(setup, target, recording, settings, cancel)
+            .map_err(|_| HistoryError::Transcription)
     }
 
     pub(in crate::daemon) fn execute(
@@ -449,9 +455,41 @@ impl DictationRuntime {
         &self,
     ) -> Result<&DictationCoordinator<RuntimeExecutor>, DictationInitializationError> {
         match &self.coordinator {
-            CoordinatorState::Ready(coordinator) => Ok(coordinator),
-            CoordinatorState::Deferred(deferred) => deferred.get(),
+            CoordinatorState::Ready(ready) => Ok(&ready.coordinator),
+            CoordinatorState::Deferred(deferred) => deferred.get().map(|ready| &ready.coordinator),
         }
+    }
+
+    /// The coordinator once it exists, without building a deferred one.
+    fn ready(&self) -> Option<&ReadyDictation> {
+        match &self.coordinator {
+            CoordinatorState::Ready(ready) => Some(ready),
+            CoordinatorState::Deferred(deferred) => deferred.built(),
+        }
+    }
+}
+
+/// `DEFERRED_ENGINE` and `backend::SERVER` label a dictation, not an engine,
+/// so a retry of either runs on whatever is configured.
+fn names_an_engine(label: &str) -> bool {
+    label != DEFERRED_ENGINE && label != backend::SERVER
+}
+
+fn retry_target<'a>(
+    setup: &RetrySetup,
+    requested: &'a str,
+) -> Result<RetryTarget<'a>, HistoryError> {
+    let named = names_an_engine(requested).then_some(requested);
+    match (&setup.dictation.transcription, named) {
+        (TranscriptionBackend::Server { endpoint }, engine) => Ok(RetryTarget::Server {
+            endpoint: endpoint.clone(),
+            engine,
+        }),
+        (TranscriptionBackend::Local(local), None) => Ok(RetryTarget::Local(local.clone())),
+        (TranscriptionBackend::Local(local), Some(engine)) => local
+            .for_backend(engine, &setup.home)
+            .map(RetryTarget::Local)
+            .map_err(|_| HistoryError::Transcription),
     }
 }
 
@@ -709,7 +747,7 @@ mod history_tests {
             own_voice_only: bool,
             project: Option<&crate::vocabulary::Directory>,
             _: &CancelToken,
-        ) -> Result<Transcript, DictationError> {
+        ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());
             assert!(project.is_none());
             self.seen
@@ -720,7 +758,10 @@ mod history_tests {
                 cancel.cancel();
                 return Err(DictationError::Cancelled);
             }
-            Ok(Transcript::new("recovered words").unwrap())
+            Ok(Transcribed {
+                transcript: crate::transcription::Transcript::new("recovered words").unwrap(),
+                engine: "test",
+            })
         }
     }
 
@@ -787,10 +828,12 @@ mod history_tests {
                 runtime: DictationRuntime {
                     emitter: EventEmitter::unsubscribed(),
                     preferences,
-                    coordinator: CoordinatorState::Ready(coordinator),
+                    coordinator: CoordinatorState::Ready(ReadyDictation {
+                        coordinator,
+                        engine: "test",
+                    }),
                     transcripts,
                     microphone,
-                    engine: "test",
                     retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
                 },
             }
@@ -905,6 +948,132 @@ mod history_tests {
         assert!(!unchanged.retrying);
         assert!(fixture.seen.lock().unwrap().is_empty());
         assert!(fixture.runtime.microphone.admit_relay().is_some());
+    }
+
+    #[tokio::test]
+    async fn remote_history_retry_records_the_engine_the_server_ran() {
+        use std::sync::atomic::Ordering;
+        let server = crate::daemon::inference::host::tests::Fixture::start().await;
+        let mut fixture = Fixture::new(None);
+        let home = fixture._directory.path().to_owned();
+        server.pair_home(home.clone()).await;
+        let endpoint = server.endpoint().to_owned();
+        let observed = Arc::clone(&server.observed);
+        tokio::task::spawn_blocking(move || {
+            let audio = home.join("speech.wav");
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../aria-wake/tests/fixtures/negative.wav"),
+                &audio,
+            )
+            .unwrap();
+            std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let project = home.join("original-project");
+            std::fs::create_dir(&project).unwrap();
+            let mut original = entry();
+            original.engine = backend::SERVER.into();
+            original.own_voice_only = false;
+            original.project = Some(project.clone());
+            let original = fixture
+                .runtime
+                .transcripts
+                .storage()
+                .unwrap()
+                .insert(original, Some(&audio))
+                .unwrap();
+            fixture
+                .runtime
+                .preferences
+                .update(
+                    0,
+                    crate::preferences::PreferencePatch {
+                        history_audio_retention: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let environment = crate::config::Environment::in_home(home.clone());
+            let mut config = DictationConfig::load(&environment).unwrap();
+            config.transcription = TranscriptionBackend::Server { endpoint };
+            config.capture = crate::config::CaptureConfig::WavFile {
+                path: audio,
+                pace: crate::audio::ReplayPace::Immediate,
+            };
+            let speaker = SpeakerConfig::load(&environment).unwrap();
+            let (vocabulary, _worker) = VocabularyRuntime::new(
+                home.join("vocabulary"),
+                None,
+                false,
+                crate::vocabulary::discover::LocalCollector::new(
+                    crate::vocabulary::extract::LocalExtractor,
+                ),
+            );
+            let built = build_dictation(
+                DictationSetup {
+                    dictation: config.clone(),
+                    speaker: speaker.clone(),
+                    vocabulary: Arc::clone(&vocabulary),
+                    wake: WakeConfig::Disabled,
+                },
+                &home,
+                &home,
+                Arc::clone(&fixture.runtime.transcripts),
+                ModelLoading::Eager,
+                Arc::clone(&fixture.runtime.microphone),
+            )
+            .unwrap();
+            assert_eq!(built.engine, backend::SERVER);
+            fixture.runtime.coordinator = CoordinatorState::Ready(ReadyDictation {
+                coordinator: built.coordinator,
+                engine: built.engine,
+            });
+            fixture.runtime.retry = Lazy::new(move || {
+                Ok(RetrySetup {
+                    dictation: config.clone(),
+                    speaker: speaker.clone(),
+                    vocabulary: Arc::clone(&vocabulary),
+                    home: home.clone(),
+                })
+            });
+            for named in [None, Some("whisper")] {
+                let result = fixture
+                    .runtime
+                    .retry_history(
+                        original.id,
+                        RetryOptions {
+                            engine: named.map(Into::into),
+                            language: None,
+                        },
+                        CancelToken::never(),
+                    )
+                    .unwrap();
+                assert_eq!(result.id, original.id);
+                assert_eq!(result.created_at_ms, original.created_at_ms);
+                assert_eq!(result.engine, "whisper");
+                assert_eq!(result.language, "fr");
+                assert_eq!(result.project.as_deref(), Some(project.as_path()));
+                assert_eq!(result.audio, original.audio);
+                assert_eq!(result.status, HistoryStatus::Recovered);
+                assert!(!result.retrying);
+                assert!(result.text.starts_with("native words"));
+            }
+            assert_eq!(observed.native.load(Ordering::SeqCst), 2);
+            assert_eq!(observed.calls.load(Ordering::SeqCst), 0);
+            assert!(matches!(
+                fixture.runtime.retry_history(
+                    original.id,
+                    RetryOptions {
+                        engine: Some("parakeet".into()),
+                        language: None,
+                    },
+                    CancelToken::never(),
+                ),
+                Err(HistoryError::Transcription)
+            ));
+        })
+        .await
+        .unwrap();
+        server.stop().await;
     }
 
     #[test]

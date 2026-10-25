@@ -42,6 +42,16 @@ struct Cli {
 enum Command {
     #[command(hide = true)]
     Daemon,
+    #[command(about = "Host transcription for paired devices without opening audio devices")]
+    Serve {
+        #[arg(long)]
+        bind: std::net::SocketAddr,
+    },
+    #[command(about = "Pair with or administer an inference server")]
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommand,
+    },
     #[cfg(target_os = "macos")]
     #[command(name = aria::accessibility::CHECK_SUBCOMMAND, hide = true)]
     AccessibilityCheck,
@@ -289,6 +299,9 @@ enum HistoryCommand {
         yes: bool,
     },
     /// Transcribe a retained recording and replace its saved text
+    #[command(
+        long_about = "Transcribe a retained recording and replace its saved text. Uses the configured local or server transcription backend. Failure preserves the previous text."
+    )]
     Retry {
         #[arg(value_parser = clap::value_parser!(u64).range(1..=i64::MAX as u64))]
         id: u64,
@@ -415,9 +428,24 @@ impl From<CliOutputMode> for OutputMode {
     }
 }
 
+#[derive(Subcommand)]
+enum RemoteCommand {
+    #[command(about = "Print a secret invitation from the local inference server")]
+    Invite {
+        #[arg(long)]
+        endpoint: String,
+    },
+    #[command(about = "Pair using a secret invitation read from stdin; does not enable uploads")]
+    Pair,
+    #[command(about = "Revoke a client and cancel its active inference")]
+    Revoke { fingerprint: String },
+}
+
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Daemon => run_daemon(),
+        Command::Serve { bind } => run_serve(bind),
+        Command::Remote { command } => run_remote(command),
         #[cfg(target_os = "macos")]
         Command::AccessibilityCheck => {
             std::process::exit(aria::accessibility::Trust::in_process().exit_code())
@@ -1097,6 +1125,36 @@ fn answer(prompt: &str) -> anyhow::Result<String> {
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
     Ok(line.trim().to_lowercase())
+}
+
+fn run_serve(bind: std::net::SocketAddr) -> anyhow::Result<()> {
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(log_filter(None))
+        .with_writer(std::io::stderr)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
+    aria_stt::whisper::install_logging_hooks();
+    Ok(aria::daemon::serve_inference(bind)?)
+}
+
+fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
+    match command {
+        RemoteCommand::Invite { endpoint } => {
+            println!("{}", aria::daemon::remote_invite(&endpoint)?);
+        }
+        RemoteCommand::Pair => {
+            let fingerprint = aria::daemon::remote_pair(std::io::stdin().lock())?;
+            println!("Paired client: {fingerprint}");
+            println!(
+                "Set transcription.backend to server and transcription.server to the paired address."
+            );
+        }
+        RemoteCommand::Revoke { fingerprint } => {
+            aria::daemon::remote_revoke(&fingerprint)?;
+            println!("Client revoked.");
+        }
+    }
+    Ok(())
 }
 
 fn run_daemon() -> anyhow::Result<()> {

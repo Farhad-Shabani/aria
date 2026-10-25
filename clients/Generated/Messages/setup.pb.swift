@@ -33,6 +33,9 @@ public nonisolated enum Aria_Setup_V1_ModelSource: SwiftProtobuf.Enum, Swift.Cas
   /// The engine fetches it itself, so setup cannot tell its size.
   case fetchedOnFirstUse // = 2
   case builtIn // = 3
+
+  /// A paired inference server holds the model; nothing lands on this machine.
+  case remote // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -45,6 +48,7 @@ public nonisolated enum Aria_Setup_V1_ModelSource: SwiftProtobuf.Enum, Swift.Cas
     case 1: self = .downloads
     case 2: self = .fetchedOnFirstUse
     case 3: self = .builtIn
+    case 4: self = .remote
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -55,6 +59,7 @@ public nonisolated enum Aria_Setup_V1_ModelSource: SwiftProtobuf.Enum, Swift.Cas
     case .downloads: return 1
     case .fetchedOnFirstUse: return 2
     case .builtIn: return 3
+    case .remote: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -65,6 +70,7 @@ public nonisolated enum Aria_Setup_V1_ModelSource: SwiftProtobuf.Enum, Swift.Cas
     .downloads,
     .fetchedOnFirstUse,
     .builtIn,
+    .remote,
   ]
 
 }
@@ -828,7 +834,7 @@ public nonisolated struct Aria_Setup_V1_ServiceStatus: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.setup.v1"
 
 nonisolated extension Aria_Setup_V1_ModelSource: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_SOURCE_UNSPECIFIED\0\u{1}MODEL_SOURCE_DOWNLOADS\0\u{1}MODEL_SOURCE_FETCHED_ON_FIRST_USE\0\u{1}MODEL_SOURCE_BUILT_IN\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_SOURCE_UNSPECIFIED\0\u{1}MODEL_SOURCE_DOWNLOADS\0\u{1}MODEL_SOURCE_FETCHED_ON_FIRST_USE\0\u{1}MODEL_SOURCE_BUILT_IN\0\u{1}MODEL_SOURCE_REMOTE\0")
 }
 
 nonisolated extension Aria_Setup_V1_Availability: SwiftProtobuf._ProtoNameProviding {

@@ -7,7 +7,9 @@ use tokio_stream::{Stream, StreamExt};
 /// Accepted connections from processes running as the daemon's own user.
 /// The private runtime directory already keeps other users out. This check
 /// still holds if its permissions are ever wrong.
-pub(super) fn same_user(listener: UnixListener) -> impl Stream<Item = io::Result<UnixStream>> {
+pub(in crate::daemon) fn same_user(
+    listener: UnixListener,
+) -> impl Stream<Item = io::Result<UnixStream>> {
     let uid = rustix::process::getuid().as_raw();
     // EMFILE repeats on every poll until a descriptor frees up.
     let mut failing = false;

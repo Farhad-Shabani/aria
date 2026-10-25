@@ -9,6 +9,12 @@
 transcription:
   backend: whisper
 
+# Run transcription on a paired personal server, with no local STT model.
+# Pairing alone does not enable uploads. See the privacy guide before enabling.
+# transcription:
+#   backend: server
+#   server: https://your-server:9851
+
 # Parakeet uses a directory of ONNX files and detects the spoken language.
 # Aria rejects an explicit recognition language other than English.
 # transcription:

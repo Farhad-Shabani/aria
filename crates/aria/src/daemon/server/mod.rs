@@ -5,8 +5,8 @@
 //! injected [`Services`].
 
 mod activity;
-mod lan;
-mod local;
+pub(in crate::daemon) mod lan;
+pub(in crate::daemon) mod local;
 
 use std::future::Future;
 use std::io;

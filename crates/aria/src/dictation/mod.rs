@@ -29,7 +29,7 @@ pub(crate) use event::{
 };
 pub(crate) use execution::{
     DictationCoordinator, DictationError, DictationExecutor, DictationPolicy, DictationPolicyError,
-    ExecutionControl,
+    ExecutionControl, Transcribed,
 };
 use level::Meter;
 pub(crate) use level::MicLevel;

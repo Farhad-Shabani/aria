@@ -40,7 +40,7 @@ pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
 pub use backends::{Availability, Choice};
-use backends::{Backend, Chat, Host, Stt, Tts, choices};
+use backends::{Backend, Chat, Host, Stt, Tts, choices, stt_choices};
 pub use config_file::{ConfigWrite, Existing, Selections};
 use models::OnDisk;
 use prompt::Prompts;
@@ -249,7 +249,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     Ok(Inspection {
         config_path,
         macos: host.macos,
-        stt: choices::<Stt>(existing.stt.as_deref(), &host),
+        stt: stt_choices(&file, &home, &host),
         tts: choices::<Tts>(existing.tts.as_deref(), &host),
         chat: choices::<Chat>(existing.chat.as_deref(), &host),
         models: model_states(&home, &file),
@@ -1102,6 +1102,43 @@ mod tests {
         assert_eq!(defaults.tts, config::tts_backend::DEFAULT);
         assert!(!defaults.wake);
         assert!(defaults.hotkey);
+    }
+
+    #[test]
+    fn server_selection_needs_no_local_transcription_download() {
+        let mut inspection = inspection(Existing {
+            stt: Some("server".to_owned()),
+            tts: Some("system".to_owned()),
+            ..configured()
+        });
+        let file = serde_saphyr::from_str(
+            "transcription: {backend: server, server: https://example.test:9851}",
+        )
+        .unwrap();
+        inspection.models = model_states(&inspection.home, &file);
+        let selections = Selections::defaults(&inspection);
+        assert_eq!(selections.stt, "server");
+        assert_eq!(
+            inspection
+                .stt
+                .iter()
+                .find(|choice| choice.default)
+                .unwrap()
+                .key,
+            "server"
+        );
+        assert!(
+            inspection
+                .downloads_for(&selections)
+                .iter()
+                .all(|model| model.engine.is_none())
+        );
+        assert!(
+            !inspection
+                .missing()
+                .iter()
+                .any(|missing| matches!(missing, Missing::Model(_)))
+        );
     }
 
     #[test]

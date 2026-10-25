@@ -146,7 +146,7 @@ rust-linux:
             && rustup component add clippy \
             && cargo clippy --locked --workspace --all-targets -- -D warnings \
             && setpriv --bounding-set=-dac_override,-dac_read_search \
-                xvfb-run -a cargo test --locked --workspace --all-targets"
+                xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --workspace --all-targets"
 
 # Rust: build artifacts
 

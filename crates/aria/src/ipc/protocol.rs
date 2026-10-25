@@ -36,6 +36,8 @@ use crate::transcription::LanguageCodeError;
 
 use super::wire;
 
+mod inference;
+
 // Handlers speak domain types; every wire message and status is assembled
 // through the conversions here.
 
@@ -1018,19 +1020,12 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
     type Error = ProtocolError;
 
     fn try_from(request: wire::RegenerateHistoryRequest) -> Result<Self, Self::Error> {
-        use crate::config::backend;
         let id = history_id(request.id)?;
-        if request.engine.as_deref().is_some_and(|engine| {
-            !matches!(
-                engine,
-                backend::WHISPER
-                    | backend::WHISPER_CANDLE
-                    | backend::PARAKEET
-                    | backend::MOONSHINE
-                    | backend::NEMOTRON
-                    | backend::PARAKEET_MLX
-            )
-        }) {
+        if request
+            .engine
+            .as_deref()
+            .is_some_and(|engine| crate::config::backend::local(engine).is_none())
+        {
             return Err(ProtocolError::InvalidHistory("engine"));
         }
         Ok((
@@ -1927,6 +1922,8 @@ impl TryFrom<i32> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
+    #[error("invalid inference message")]
+    InvalidInference,
     #[error("invalid history {0}")]
     InvalidHistory(&'static str),
     #[error("invalid vocabulary term count {0}")]

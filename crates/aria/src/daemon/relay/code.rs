@@ -20,6 +20,14 @@ impl PairingCode {
     pub(in crate::daemon) fn raw(&self) -> &str {
         &self.0
     }
+
+    /// Whether `code` has the shape `PairingCodes::issue` mints.
+    pub(in crate::daemon) fn is_well_formed(code: &str) -> bool {
+        code.len() == CODE_BYTES * 2
+            && code
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    }
 }
 
 impl fmt::Debug for PairingCode {
@@ -110,6 +118,16 @@ mod tests {
         assert_eq!(remaining, CODE_LIFETIME);
         assert_eq!(again, first);
         assert_eq!(left, Duration::from_secs(40));
+    }
+
+    #[test]
+    fn issued_codes_are_well_formed_and_nothing_else_is() {
+        let (code, _) = PairingCodes::default().issue(Instant::now()).unwrap();
+        assert!(PairingCode::is_well_formed(code.raw()));
+        let upper = code.raw().to_ascii_uppercase();
+        for malformed in [&upper, &code.raw()[1..], "+0123456789abcdef0123456789abcde"] {
+            assert!(!PairingCode::is_well_formed(malformed));
+        }
     }
 
     #[test]

@@ -25,9 +25,10 @@ If setup or recording fails, start with [Troubleshooting](./troubleshooting.md).
 
 ## Your data
 
-Dictation and speech generation run on your machine. Downloading models needs
-network access. Ask uses an external agent, which may send your question and
-project content to cloud services.
+Dictation and speech generation run locally by default. You can move
+transcription to a [personal server](./configuration.md#server-inference).
+Downloading models needs network access. Ask uses an external agent, which
+may send your question and project content to cloud services.
 
 Dictation history is enabled by default. Read [Privacy](./privacy.md) before
 recording sensitive material; [history controls](./history.md#saving) explain

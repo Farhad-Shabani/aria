@@ -2,7 +2,7 @@
 
 # Privacy
 
-Aria processes dictation and speech generation locally. Local processing does
+Aria processes dictation and speech generation locally by default. Local processing does
 not mean nothing is saved: dictation history is on by default, and transcripts
 can also reach your clipboard, other apps, and files.
 
@@ -16,6 +16,28 @@ from the text.
 Recording also uses temporary plaintext audio files. Aria deletes them when
 it no longer needs them. File deletion is not secure erasure and
 cannot remove backups or snapshots.
+
+## Server inference
+
+When you [use a server](./configuration.md#server-inference), your audio goes
+to it for transcription. Whoever runs that server can hear the audio and read
+the text. Pairing alone sends nothing; uploads start only when you switch
+transcription to the server.
+
+Your voice profile and corrections never leave your computer. **Only type my
+own voice** checks the speaker before upload when you deliver **After
+recording stops** and when you retry from history. With **While speaking**,
+audio leaves before Aria knows who spoke. The check helps recognition; it
+cannot promise that other voices are left out.
+
+The server keeps no history. It deletes its working copies when each
+transcription ends, though crashes and backups can keep them. Encryption
+protects audio on the way, not from the person running the server. Pairing
+keys sit unencrypted in `~/.aria/inference/`, readable only by your account.
+
+To stop uploads, switch back to a local engine and restart Aria. Cancelling a
+dictation or revoking your device stops what comes next. Neither can take
+back audio the server already has.
 
 ## Clipboard and apps
 

@@ -203,6 +203,34 @@ impl Recording {
         writer.begin();
         (reader, writer)
     }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn open_spooled(
+        directory: &std::path::Path,
+        maximum_duration: Duration,
+    ) -> Result<(RecordingReader, SpooledRecordingWriter), CaptureError> {
+        let (reader, writer) = Self::open();
+        let spool = WavSpool::create(directory, maximum_duration, &writer)?;
+        Ok((reader, SpooledRecordingWriter { writer, spool }))
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub struct SpooledRecordingWriter {
+    writer: RecordingWriter,
+    spool: WavSpool,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl SpooledRecordingWriter {
+    pub fn push(&mut self, samples: &[i16]) -> Result<(), SpoolError> {
+        self.spool.write_samples(samples)
+    }
+
+    pub fn finish(self) {
+        self.writer
+            .close(self.spool.finish().map_err(CaptureError::from));
+    }
 }
 
 /// The write end of a [`Recording`].
@@ -419,6 +447,21 @@ impl RecordingReader {
         }
         self.failure()?;
         Ok(self.held_to() >= position)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    /// Takes whatever audio has arrived, without waiting for more.
+    pub fn fill_available(&mut self) -> Result<(), CaptureError> {
+        if self.outcome.is_some() {
+            return self.failure();
+        }
+        let mut state = self.recording.lock();
+        let ready = !state.queue(self.queue).pending.is_empty() || state.ended.is_some();
+        drop(state);
+        if ready {
+            self.take()?;
+        }
+        Ok(())
     }
 
     /// Waits for capture to end.
@@ -663,6 +706,79 @@ mod tests {
     use super::*;
 
     const SAMPLES: [i16; 4] = [0, 16_384, -16_384, 32_767];
+
+    #[test]
+    fn available_reads_return_at_once_then_observe_audio_and_completion() {
+        let (mut recording, mut writer) = Recording::open();
+        recording.fill_available().unwrap();
+        assert_eq!(recording.held_to(), 0);
+        assert!(!recording.reached_end());
+
+        writer.push(&[0.25, 0.5]);
+        recording.fill_available().unwrap();
+        assert_eq!(recording.samples(), [0.25, 0.5]);
+        assert!(!recording.reached_end());
+
+        writer.finish();
+        recording.fill_available().unwrap();
+        assert!(recording.reached_end());
+    }
+
+    #[test]
+    fn available_reads_report_a_dropped_writer() {
+        let (mut recording, writer) = Recording::open();
+        drop(writer);
+        assert!(matches!(
+            recording.fill_available(),
+            Err(CaptureError::SourceGone)
+        ));
+        assert!(matches!(
+            recording.fill_available(),
+            Err(CaptureError::AlreadyFailed)
+        ));
+    }
+
+    #[test]
+    fn live_spools_keep_stream_and_file_equal_and_own_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut recording, mut writer) =
+            Recording::open_spooled(directory.path(), Duration::from_secs(1)).unwrap();
+        writer.push(&SAMPLES).unwrap();
+        recording.fill_available().unwrap();
+        assert_eq!(recording.samples(), expected());
+        assert!(!recording.reached_end());
+
+        writer.finish();
+        let path = recording
+            .finished_audio()
+            .unwrap()
+            .path()
+            .unwrap()
+            .to_owned();
+        let samples = hound::WavReader::open(&path)
+            .unwrap()
+            .into_samples::<i16>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(samples, SAMPLES);
+        assert!(path.exists());
+        drop(recording);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn live_spools_enforce_the_limit_and_fail_when_abandoned() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut recording, mut writer) =
+            Recording::open_spooled(directory.path(), Duration::from_millis(1)).unwrap();
+        assert!(matches!(
+            writer.push(&[0; 17]),
+            Err(SpoolError::LimitExceeded { .. })
+        ));
+        drop(writer);
+        assert!(matches!(recording.fill(), Err(CaptureError::SourceGone)));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
 
     /// One recording fed a batch at a time from another thread, as capture feeds
     /// one, so the reader blocks between batches.

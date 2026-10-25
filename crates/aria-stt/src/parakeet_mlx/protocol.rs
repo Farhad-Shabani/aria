@@ -170,8 +170,10 @@ pub(super) fn still_serving(
             | TranscriptionError::UnsupportedBackend { .. }
             | TranscriptionError::UnsupportedDevice { .. }
             | TranscriptionError::NoNativeStream
+            | TranscriptionError::NoDelegatedOperation
             | TranscriptionError::LoadPanicked
             | TranscriptionError::Cancelled
+            | TranscriptionError::InvalidSegment
             | TranscriptionError::NoSpeech,
         ) => false,
     }
