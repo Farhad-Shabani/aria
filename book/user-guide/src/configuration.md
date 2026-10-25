@@ -66,7 +66,8 @@ Keep the invitation private; it works once, within 60 seconds. Copy it,
 then pair:
 
 - **On a Mac:** in **Settings → Recognition**, click **Pair…**, then
-  **Paste and Pair**. Set **Runs on** to **My server**.
+  **Paste Invitation**. Check the address, click **Pair**, and set **Runs on**
+  to **My server**.
 - **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
   Then run `aria setup` and choose **Paired inference server**.
 
@@ -78,6 +79,9 @@ rather than switching to a local engine.
 Speech output, wake words and voice profiles stay on the device. System-audio
 listening needs its own local `listen.backend`. To go back, set **Runs on** to
 **This Mac**, or choose a local engine in `aria setup`.
+
+To unpair, set **Runs on** to **This Mac** and click **Forget…**, or run
+`aria remote forget`. The server keeps trusting the device until you block it.
 
 To block a device, run `aria remote revoke FINGERPRINT` on the server.
 `aria remote pair` prints the fingerprint; in Settings, Control-click the

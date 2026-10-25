@@ -55,6 +55,8 @@ pub enum RemoteClientError {
         "remote revocation durability is unconfirmed; repair persistence before relying on it across restart"
     )]
     RevocationUnconfirmed,
+    #[error("the pairing was removed, but the disk did not confirm it; forget again ({0})")]
+    ForgetUnconfirmed(String),
     #[error("cannot start the remote client runtime")]
     Runtime,
     #[error("cannot establish the authenticated remote connection")]
@@ -638,6 +640,7 @@ fn transcription_error(error: RemoteClientError) -> TranscriptionError {
         | RemoteClientError::Identity
         | RemoteClientError::DurabilityUnconfirmed
         | RemoteClientError::RevocationUnconfirmed
+        | RemoteClientError::ForgetUnconfirmed(_)
         | RemoteClientError::Runtime
         | RemoteClientError::Connection
         | RemoteClientError::Rpc(_)

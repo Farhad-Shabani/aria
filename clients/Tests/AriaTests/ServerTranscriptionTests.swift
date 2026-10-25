@@ -16,6 +16,8 @@ final class ServerTranscriptionTests: XCTestCase {
         var paired: [String] = []
         var daemon: [String] = []
         var pairFails = false
+        var forgotten = 0
+        var forgetFails = false
         var inspectFailsAfterApply = false
         var applyFails = false
 
@@ -32,6 +34,11 @@ final class ServerTranscriptionTests: XCTestCase {
                 pair: { invitation in
                     self.paired.append(invitation)
                     if self.pairFails { throw Refused() }
+                },
+                forget: {
+                    if self.forgetFails { throw Refused() }
+                    self.forgotten += 1
+                    self.inspection.clearServer()
                 },
                 apply: { request in
                     self.requests.append(request)
@@ -210,5 +217,69 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertNil(server.notice)
         XCTAssertEqual(spy.applied, [])
         XCTAssertFalse(server.busy)
+    }
+
+    func test_anInvitationShowsItsAddressBeforePairing() {
+        let invitation = #"{"endpoint":"https://box.local:9851","certificate_pem":"x","fingerprint":[],"code":"c"}"#
+        XCTAssertEqual(ServerTranscription.invitationAddress(invitation), "box.local:9851")
+        XCTAssertNil(ServerTranscription.invitationAddress("hello"))
+        XCTAssertNil(ServerTranscription.invitationAddress(#"{"endpoint":"http://box:9851"}"#))
+        XCTAssertEqual(
+            ServerTranscription.invitationAddress(#"{"endpoint":"HTTPS://Box.local:9851/"}"#), "box.local:9851")
+        XCTAssertEqual(ServerTranscription.address(of: "https://box.local"), "box.local")
+    }
+
+    func test_onlyAServerNotInUseCanBeForgotten() async {
+        let remote = Spy(Self.mac(runningOn: "server"))
+        let setupOnServer = SetupStatus()
+        setupOnServer.show(remote.inspection)
+        let onServer = ServerTranscription(effects: remote.effects, setup: setupOnServer)
+        XCTAssertFalse(onServer.canForget)
+        await onServer.forget()
+        XCTAssertEqual(remote.forgotten, 0)
+
+        let local = Spy(Self.mac(runningOn: "whisper"))
+        let setup = SetupStatus()
+        setup.show(local.inspection)
+        let server = ServerTranscription(effects: local.effects, setup: setup)
+        XCTAssertTrue(server.canForget)
+        await server.forget()
+        XCTAssertEqual(local.forgotten, 1)
+        XCTAssertNil(setup.server)
+        XCTAssertFalse(server.canForget)
+    }
+
+    func test_aFailedForgetKeepsTheServerAndSaysWhy() async {
+        let spy = Spy(Self.mac(runningOn: "whisper"))
+        spy.forgetFails = true
+        let setup = SetupStatus()
+        setup.show(spy.inspection)
+        let server = ServerTranscription(effects: spy.effects, setup: setup)
+
+        await server.forget()
+
+        XCTAssertEqual(server.notice, .failed("Refused."))
+        XCTAssertNotNil(setup.server)
+        XCTAssertFalse(server.busy)
+    }
+
+    func test_pairingShowsTheAddressAndStartsOverAfterAFailure() async {
+        let spy = Spy(Self.mac(runningOn: "whisper"))
+        spy.pairFails = true
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let invitation = #"{"endpoint":"https://box.local:9851"}"#
+
+        server.paste("hello")
+        XCTAssertEqual(server.pairingStep, .unreadable)
+        server.paste(invitation)
+        XCTAssertEqual(server.pairingStep, .confirming(invitation: invitation, address: "box.local:9851"))
+
+        let paired = await server.pair(invitation: invitation)
+        XCTAssertFalse(paired)
+        XCTAssertEqual(server.pairingStep, .instructions)
+        XCTAssertEqual(server.pairingFailure, "Refused.")
+
+        server.paste(invitation)
+        XCTAssertNil(server.pairingFailure, "a fresh invitation starts without the old error")
     }
 }

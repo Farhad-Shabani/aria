@@ -123,27 +123,35 @@ struct DaemonClient: DaemonControlling {
 
     /// The invitation is a secret, so it goes over stdin, never the arguments.
     static func pairServer(invitation: String) async throws {
+        try await remote(["pair"], input: Data(invitation.utf8), fallback: "Pairing failed.")
+    }
+
+    static func forgetServer() async throws {
+        try await remote(["forget"], fallback: "The server was not forgotten.")
+    }
+
+    private static func remote(_ arguments: [String], input: Data? = nil, fallback: String) async throws {
         let binary = try ariaBinary()
         let output: ChildProcess.Output
         do {
-            output = try await ChildProcess.run(binary, ["remote", "pair"], input: Data(invitation.utf8))
+            output = try await ChildProcess.run(binary, ["remote"] + arguments, input: input)
         } catch {
             throw launchFailed("aria remote", error)
         }
         guard output.status == 0 else {
-            throw DaemonClientError.commandFailed(pairFailure(stderr: output.stderr))
+            throw DaemonClientError.commandFailed(cliFailure(stderr: output.stderr, fallback: fallback))
         }
     }
 
     private static let cliErrorPrefix = "Error: "
 
-    static func pairFailure(stderr: Data) -> String {
+    static func cliFailure(stderr: Data, fallback: String) -> String {
         let lines = String(decoding: stderr, as: UTF8.self).split(whereSeparator: \.isNewline)
         var message = lines.first.map(String.init) ?? ""
         if message.hasPrefix(cliErrorPrefix) {
             message.removeFirst(cliErrorPrefix.count)
         }
-        guard let first = message.first else { return "Pairing failed." }
+        guard let first = message.first else { return fallback }
         let sentence = first.uppercased() + message.dropFirst()
         return sentence.hasSuffix(".") ? sentence : sentence + "."
     }
