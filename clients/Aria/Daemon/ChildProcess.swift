@@ -27,9 +27,9 @@ final class ChildProcess: Sendable {
 
     /// Cancelling the task interrupts the child; what it printed until then
     /// is still returned.
-    static func run(_ executable: URL, _ arguments: [String]) async throws -> Output {
+    static func run(_ executable: URL, _ arguments: [String], input: Data? = nil) async throws -> Output {
         let child = ChildProcess(executable, arguments)
-        try child.launch()
+        try child.launch(input: input)
         return await withTaskCancellationHandler {
             await child.exit()
         } onCancel: {

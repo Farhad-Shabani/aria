@@ -6,13 +6,14 @@ use std::io::{Read, Write};
 
 use prost::Message;
 
+use crate::daemon::PairedServer;
 use crate::supervisor::{DaemonState, Job, Status};
 
 use super::backends::ModelSource;
 use super::models::OnDisk;
 use super::{
     ApplyOptions, Availability, Choice, ConfigWrite, Grant, Inspection, Missing, ModelState,
-    Outcome, Selections, SetupError, SetupEvent, Step, Summary, voice_model_present,
+    Outcome, Pairing, Selections, SetupError, SetupEvent, Step, Summary, voice_model_present,
 };
 
 #[allow(unreachable_pub, reason = "Prost generates public types")]
@@ -103,6 +104,19 @@ impl From<&Inspection> for generated::Inspection {
             service: Some((&inspection.service).into()),
             grant: generated::Grant::from(inspection.grant) as i32,
             missing: inspection.missing().iter().map(Into::into).collect(),
+            server: match &inspection.pairing {
+                Pairing::Paired(paired) => Some(paired.into()),
+                Pairing::Unpaired | Pairing::Unusable => None,
+            },
+        }
+    }
+}
+
+impl From<&PairedServer> for generated::PairedServer {
+    fn from(server: &PairedServer) -> Self {
+        Self {
+            endpoint: server.endpoint.to_string(),
+            client_fingerprint: server.client_fingerprint.clone(),
         }
     }
 }

@@ -29,6 +29,15 @@ message Inspection {
   Grant grant = 10;
   // What a run still has to put in place; empty once setup is done.
   repeated Missing missing = 11;
+  // Unset when nothing is paired.
+  PairedServer server = 12;
+}
+
+// Choosing the server engine writes this endpoint to the config.
+message PairedServer {
+  string endpoint = 1;
+  // Hex, the form `aria remote revoke` takes on the server.
+  string client_fingerprint = 2;
 }
 
 message Engine {

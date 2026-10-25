@@ -121,6 +121,33 @@ struct DaemonClient: DaemonControlling {
         try await run(try ariaBinary(), ["phone", enabled ? "enable" : "disable"])
     }
 
+    /// The invitation is a secret, so it goes over stdin, never the arguments.
+    static func pairServer(invitation: String) async throws {
+        let binary = try ariaBinary()
+        let output: ChildProcess.Output
+        do {
+            output = try await ChildProcess.run(binary, ["remote", "pair"], input: Data(invitation.utf8))
+        } catch {
+            throw launchFailed("aria remote", error)
+        }
+        guard output.status == 0 else {
+            throw DaemonClientError.commandFailed(pairFailure(stderr: output.stderr))
+        }
+    }
+
+    private static let cliErrorPrefix = "Error: "
+
+    static func pairFailure(stderr: Data) -> String {
+        let lines = String(decoding: stderr, as: UTF8.self).split(whereSeparator: \.isNewline)
+        var message = lines.first.map(String.init) ?? ""
+        if message.hasPrefix(cliErrorPrefix) {
+            message.removeFirst(cliErrorPrefix.count)
+        }
+        guard let first = message.first else { return "Pairing failed." }
+        let sentence = first.uppercased() + message.dropFirst()
+        return sentence.hasSuffix(".") ? sentence : sentence + "."
+    }
+
     /// Removes the service older setups installed, once, since it shares the
     /// agent's label. Call it before reading the agent's status. A service
     /// the user installs later stays theirs.

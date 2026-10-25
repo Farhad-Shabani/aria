@@ -363,20 +363,18 @@ final class SetupState: ObservableObject {
         request.selections = selections
         request.downloads = Self.plan(inspection, selections).map(\.name).filter(downloads.contains)
         applyTask = Task {
-            // The service refuses a socket some other daemon owns, and the
-            // app spawns one itself while no service exists.
-            let shouldStopDaemon = inspection.service.job == .absent
-            if shouldStopDaemon { await effects.stopDaemon() }
             do {
-                let summary = try await effects.apply(request) { event in
-                    Task { @MainActor [weak self] in self?.absorb(event) }
+                let summary = try await SetupClient.handingOffDaemon(
+                    inspection, stop: effects.stopDaemon, start: effects.startDaemon
+                ) {
+                    try await effects.apply(request) { event in
+                        Task { @MainActor [weak self] in self?.absorb(event) }
+                    }
                 }
                 await finishApply(summary)
             } catch SetupClientError.cancelled {
-                if shouldStopDaemon { await effects.startDaemon() }
                 step = origin
             } catch {
-                if shouldStopDaemon { await effects.startDaemon() }
                 step = .failed(error.localizedDescription)
             }
         }

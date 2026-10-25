@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setupStatus = SetupStatus()
     let voiceColors = VoiceColors()
     let voices: VoiceProfiles
+    lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus)
     let updates = UpdateController()
 
     static let captionsEnabledKey = "captionsEnabled"

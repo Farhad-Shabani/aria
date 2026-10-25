@@ -3,6 +3,13 @@ import XCTest
 @testable import Aria
 
 final class DaemonClientTests: XCTestCase {
+    func test_pairFailure_keepsTheFirstLineAsASentence() {
+        let anyhow = Data("Error: remote invitation is invalid\n\nCaused by:\n    eof\n".utf8)
+        XCTAssertEqual(DaemonClient.pairFailure(stderr: anyhow), "Remote invitation is invalid.")
+        XCTAssertEqual(DaemonClient.pairFailure(stderr: Data("Already a sentence.".utf8)), "Already a sentence.")
+        XCTAssertEqual(DaemonClient.pairFailure(stderr: Data()), "Pairing failed.")
+    }
+
     func test_lockedPid_parsesPlainPid() {
         XCTAssertEqual(DaemonClient.lockedPid("4258"), 4258)
     }

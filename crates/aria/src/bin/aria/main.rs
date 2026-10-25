@@ -1145,9 +1145,7 @@ fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
         RemoteCommand::Pair => {
             let fingerprint = aria::daemon::remote_pair(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
-            println!(
-                "Set transcription.backend to server and transcription.server to the paired address."
-            );
+            println!("To use it, choose the paired inference server in `aria setup`.");
         }
         RemoteCommand::Revoke { fingerprint } => {
             aria::daemon::remote_revoke(&fingerprint)?;

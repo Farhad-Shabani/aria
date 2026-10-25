@@ -35,9 +35,10 @@ transcription ends, though crashes and backups can keep them. Encryption
 protects audio on the way, not from the person running the server. Pairing
 keys sit unencrypted in `~/.aria/inference/`, readable only by your account.
 
-To stop uploads, switch back to a local engine and restart Aria. Cancelling a
-dictation or revoking your device stops what comes next. Neither can take
-back audio the server already has.
+To stop uploads, set **Runs on** to **This Mac** in **Settings → Recognition**,
+or choose a local engine in `aria setup`. Cancelling a dictation or revoking
+your device stops what comes next. Neither can take back audio the server
+already has.
 
 ## Clipboard and apps
 

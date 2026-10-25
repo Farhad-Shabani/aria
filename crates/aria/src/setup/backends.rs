@@ -1,9 +1,8 @@
 //! The choices setup offers, and what this machine can run.
 
 use std::env;
-use std::path::Path;
 
-use crate::config::{FileConfig, ServerEndpoint, backend, chat_agent, tts_backend};
+use crate::config::{FileConfig, backend, chat_agent, tts_backend};
 use crate::primitives::file_inspection::InspectedFile;
 
 use super::assets::{self, Asset};
@@ -68,14 +67,10 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
     choices
 }
 
-pub(super) fn stt_choices(file: &FileConfig, home: &Path, host: &Host) -> Vec<Choice> {
+/// Applying the server choice writes the paired server's address, so a
+/// pairing alone makes it ready.
+pub(super) fn stt_choices(file: &FileConfig, paired: bool, host: &Host) -> Vec<Choice> {
     let mut choices = choices::<Stt>(file.transcription.backend.as_deref(), host);
-    let paired = file
-        .transcription
-        .server
-        .as_deref()
-        .and_then(ServerEndpoint::parse)
-        .is_some_and(|endpoint| crate::daemon::is_paired_with_server(home, &endpoint));
     if paired
         && let Some(server) = choices
             .iter_mut()
@@ -214,7 +209,7 @@ impl Backend for Stt {
                 fix: "set transcription.interpreter to a Python with parakeet-mlx".to_owned(),
             },
             Self::Server => Availability::Missing {
-                fix: "pair an inference server and set transcription.server".to_owned(),
+                fix: "pair an inference server first".to_owned(),
             },
         }
     }
@@ -326,65 +321,30 @@ impl Backend for Chat {
 #[cfg(test)]
 mod tests {
     use aria_kit::synthesis::Engine as _;
-    use sha2::Digest;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
 
     use super::*;
     use crate::config::{self, DictationConfig, Environment, TtsBackend, TtsConfig, TtsModel};
     use crate::primitives::error_chain;
 
     #[test]
-    fn server_readiness_checks_existing_pairing_for_the_configured_endpoint() {
-        let home = tempfile::tempdir().unwrap();
+    fn server_is_ready_once_a_server_is_paired() {
         let host = Host {
             macos: true,
             system_voice: Availability::Ready,
         };
-        let mut file: FileConfig = serde_saphyr::from_str(
-            "transcription: {backend: server, server: https://example.test:9851}",
-        )
-        .unwrap();
-        let available = |file: &FileConfig| {
-            stt_choices(file, home.path(), &host)
+        let file = FileConfig::default();
+        let available = |paired: bool| {
+            stt_choices(&file, paired, &host)
                 .into_iter()
                 .find(|choice| choice.key == backend::SERVER)
                 .unwrap()
                 .availability
         };
-        assert!(matches!(available(&file), Availability::Missing { .. }));
-        let path = home.path().join(".aria/inference/client.json");
-        assert!(!path.exists());
-
-        let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
-        let key = rcgen::KeyPair::generate().unwrap();
-        let certificate = params.self_signed(&key).unwrap();
-        let fingerprint: [u8; 32] = sha2::Sha256::digest(certificate.der()).into();
-        let stored = serde_json::json!({
-            "credentials": {
-                "certificate_pem": certificate.pem(),
-                "key_pem": key.serialize_pem(),
-            },
-            "server": {
-                "endpoint": "https://example.test:9851",
-                "certificate_pem": certificate.pem(),
-                "fingerprint": fingerprint,
-            },
-        });
-        crate::primitives::private_fs::prepare_directory(&home.path().join(".aria")).unwrap();
-        crate::primitives::private_document::PrivateDocument::new(&path, 16 * 1024)
-            .prepare(&stored)
-            .unwrap()
-            .commit()
-            .unwrap()
-            .confirm_durability()
-            .unwrap();
-        assert_eq!(available(&file), Availability::Ready);
-
-        file.transcription.server = Some("https://other.test:9851".to_owned());
-        assert!(matches!(available(&file), Availability::Missing { .. }));
-        file.transcription.server = None;
-        assert!(matches!(available(&file), Availability::Missing { .. }));
+        assert!(matches!(available(false), Availability::Missing { .. }));
+        assert_eq!(available(true), Availability::Ready);
     }
 
     /// Setup must download each model to the path the daemon loads it from.

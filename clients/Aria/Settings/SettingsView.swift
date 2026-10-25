@@ -11,6 +11,7 @@ struct SettingsView: View {
     let promptListChord: ChordBinding
     @ObservedObject var setupStatus: SetupStatus
     let voices: VoiceProfiles
+    let serverTranscription: ServerTranscription
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
     )
@@ -80,7 +81,10 @@ struct SettingsView: View {
         switch pane {
         case .general: GeneralSettings(setup: setupStatus)
         case .dictation: DictationSettings(preferences: preferences)
-        case .recognition: RecognitionSettings(preferences: preferences, voices: voices, setup: setupStatus)
+        case .recognition:
+            RecognitionSettings(
+                preferences: preferences, voices: voices, serverTranscription: serverTranscription,
+                setup: setupStatus)
         case .shortcuts:
             ShortcutsSettings(
                 preferences: preferences,

@@ -55,10 +55,92 @@ impl Paths {
     }
 }
 
-/// Whether this home holds a pin for `endpoint`.
-pub(crate) fn is_paired_with_server(home: &Path, endpoint: &ServerEndpoint) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PairedServer {
+    pub(crate) endpoint: ServerEndpoint,
+    /// Hex, the form `aria remote revoke` takes on the server.
+    pub(crate) client_fingerprint: String,
+}
+
+pub(crate) fn paired_server(home: &Path) -> Result<Option<PairedServer>, identity::Error> {
     let path = Paths::in_home(home).client_identity();
-    path.is_file()
-        && identity::ClientIdentity::open(&path)
-            .is_ok_and(|identity| identity.pinned_server(endpoint).is_ok())
+    // Opening creates the private directory; an unpaired home stays untouched.
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let identity = match identity::ClientIdentity::open(&path) {
+        Ok(identity) => identity,
+        Err(identity::Error::Unpaired) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some(endpoint) = identity.paired_endpoint() else {
+        return Ok(None);
+    };
+    Ok(Some(PairedServer {
+        endpoint: endpoint.clone(),
+        client_fingerprint: crate::daemon::relay::to_hex(&identity.fingerprint()?),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use sha2::Digest;
+
+    use super::*;
+    use crate::primitives::private_document::PrivateDocument;
+
+    #[test]
+    fn a_home_reports_the_server_it_holds_a_pin_for() {
+        let home = tempfile::tempdir().unwrap();
+        let aria = home.path().join(".aria");
+        crate::primitives::private_fs::prepare_directory(&aria).unwrap();
+        assert_eq!(paired_server(home.path()).unwrap(), None);
+        assert!(
+            !aria.join("inference").exists(),
+            "looking leaves an unpaired home alone"
+        );
+
+        let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let certificate = params.self_signed(&key).unwrap();
+        let fingerprint: [u8; 32] = sha2::Sha256::digest(certificate.der()).into();
+        let stored = serde_json::json!({
+            "credentials": {
+                "certificate_pem": certificate.pem(),
+                "key_pem": key.serialize_pem(),
+            },
+            "server": {
+                "endpoint": "https://example.test:9851",
+                "certificate_pem": certificate.pem(),
+                "fingerprint": fingerprint,
+            },
+        });
+        PrivateDocument::new(Paths::in_home(home.path()).client_identity(), 16 * 1024)
+            .prepare(&stored)
+            .unwrap()
+            .commit()
+            .unwrap()
+            .confirm_durability()
+            .unwrap();
+
+        let hex: String = fingerprint
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            paired_server(home.path()).unwrap(),
+            Some(PairedServer {
+                endpoint: ServerEndpoint::parse("https://example.test:9851").unwrap(),
+                client_fingerprint: hex,
+            }),
+            "the client signs with this certificate"
+        );
+
+        let path = Paths::in_home(home.path()).client_identity();
+        std::fs::write(&path, "{").unwrap();
+        assert!(
+            paired_server(home.path()).is_err(),
+            "a damaged pin is not hidden"
+        );
+    }
 }
