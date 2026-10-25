@@ -439,6 +439,8 @@ enum RemoteCommand {
     Pair,
     #[command(about = "Revoke a client and cancel its active inference")]
     Revoke { fingerprint: String },
+    #[command(about = "Forget the paired server and this machine's key for it")]
+    Forget,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -1150,6 +1152,27 @@ fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
         RemoteCommand::Revoke { fingerprint } => {
             aria::daemon::remote_revoke(&fingerprint)?;
             println!("Client revoked.");
+        }
+        RemoteCommand::Forget => {
+            let forgotten = aria::setup::forget_server()?;
+            match &forgotten {
+                aria::daemon::Forgotten::NothingPaired => println!("No server is paired."),
+                aria::daemon::Forgotten::Server { .. } => println!("Forgot the paired server."),
+                aria::daemon::Forgotten::UnfinishedPairing { .. } => {
+                    println!("Removed the key from a pairing that did not finish.");
+                }
+                aria::daemon::Forgotten::Unreadable => {
+                    println!("Removed an unreadable pairing file; its fingerprint is unknown.");
+                }
+            }
+            if matches!(
+                forgotten,
+                aria::daemon::Forgotten::Server { .. }
+                    | aria::daemon::Forgotten::UnfinishedPairing { .. }
+            ) {
+                println!("To block this machine on the server too, run there:");
+                println!("  {}", forgotten.revoke_hint());
+            }
         }
     }
     Ok(())

@@ -42,7 +42,7 @@ pub use host::{
 pub use inference::admin::{remote_invite, remote_revoke};
 pub use inference::client::RemoteClientError;
 pub use inference::host::{InferenceHostError, serve_inference};
-pub use inference::pairing::remote_pair;
+pub use inference::pairing::{Forgotten, remote_pair};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
     AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,
@@ -54,6 +54,9 @@ pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
 pub(crate) use inference::Paths as InferencePaths;
+pub(crate) use inference::pairing::forget as forget_paired_server;
+#[cfg(test)]
+pub(crate) use inference::pin_server_for_tests;
 pub(crate) use inference::{PairedServer, paired_server};
 /// What `aria doctor` needs to report about the relay without owning one.
 pub(crate) use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;

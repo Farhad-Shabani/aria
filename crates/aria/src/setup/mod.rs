@@ -21,7 +21,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::{self, ConfigError, FileConfig, ServerEndpoint};
 use crate::daemon::{
-    DaemonSession, EnrollmentRequest, InferencePaths, PairedServer, SpeakerName, StopMode, guided,
+    DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
+    StopMode, guided,
 };
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
@@ -100,6 +101,37 @@ enum Pairing {
     Paired(PairedServer),
     /// The pin file can't be read; pairing again needs it removed.
     Unusable,
+}
+
+impl Pairing {
+    fn read(home: &Path) -> Self {
+        match crate::daemon::paired_server(home) {
+            Ok(Some(paired)) => Self::Paired(paired),
+            Ok(None) => Self::Unpaired,
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "inference pairing is unusable");
+                Self::Unusable
+            }
+        }
+    }
+
+    /// `None` for a local engine.
+    fn endpoint_for(
+        &self,
+        selections: &Selections,
+        home: &Path,
+    ) -> Result<Option<&ServerEndpoint>, SetupError> {
+        if selections.stt != config::backend::SERVER {
+            return Ok(None);
+        }
+        match self {
+            Self::Paired(paired) => Ok(Some(&paired.endpoint)),
+            Self::Unpaired => Err(SetupError::ServerNotPaired),
+            Self::Unusable => Err(SetupError::PairingUnusable {
+                path: InferencePaths::in_home(home).client_identity(),
+            }),
+        }
+    }
 }
 
 /// One model setup can fetch, and whether it already is on disk.
@@ -227,6 +259,21 @@ pub enum Grant {
     Waiting,
 }
 
+/// Under setup's lock, so a run that switches to the server cannot slip in
+/// between the check and the removal.
+pub fn forget_server() -> Result<Forgotten, SetupError> {
+    let home = user_home::resolve().map_err(SetupError::Home)?;
+    forget_server_at(&home, &config_path()?)
+}
+
+fn forget_server_at(home: &Path, config_path: &Path) -> Result<Forgotten, SetupError> {
+    let _lock = lock_setup(config_path)?;
+    if config::transcription_engine(&config_file::read(config_path)?) == config::backend::SERVER {
+        return Err(SetupError::ServerInUse);
+    }
+    crate::daemon::forget_paired_server(home).map_err(SetupError::Forget)
+}
+
 pub fn set_phone_pairing(enabled: bool) -> Result<ConfigWrite, SetupError> {
     config_file::set_phone_pairing(&config_path()?, enabled)
 }
@@ -249,14 +296,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     let config_path = config_path()?;
     let host = Host::probe();
     let file = config_file::read(&config_path)?;
-    let pairing = match crate::daemon::paired_server(&home) {
-        Ok(Some(paired)) => Pairing::Paired(paired),
-        Ok(None) => Pairing::Unpaired,
-        Err(error) => {
-            tracing::warn!(error = %error_chain(&error), "inference pairing is unusable");
-            Pairing::Unusable
-        }
-    };
+    let pairing = Pairing::read(&home);
     let existing = Existing::of(&file);
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.status())
@@ -323,17 +363,7 @@ impl Inspection {
         &self,
         selections: &Selections,
     ) -> Result<Option<&ServerEndpoint>, SetupError> {
-        let wants_server = selections.stt == config::backend::SERVER;
-        if !wants_server {
-            return Ok(None);
-        }
-        match &self.pairing {
-            Pairing::Paired(paired) => Ok(Some(&paired.endpoint)),
-            Pairing::Unpaired => Err(SetupError::ServerNotPaired),
-            Pairing::Unusable => Err(SetupError::PairingUnusable {
-                path: InferencePaths::in_home(&self.home).client_identity(),
-            }),
-        }
+        self.pairing.endpoint_for(selections, &self.home)
     }
 
     /// What a run still has to put in place; empty once setup is done.
@@ -464,8 +494,10 @@ pub fn apply(
             name: unknown.clone(),
         });
     }
-    let endpoint = inspection.server_endpoint(selections)?;
     let _lock = lock_setup(&inspection.config_path)?;
+    // Read again under the lock: a forget may have run since inspection.
+    let pairing = Pairing::read(&inspection.home);
+    let endpoint = pairing.endpoint_for(selections, &inspection.home)?;
 
     observe(SetupEvent::Started(Step::Config))?;
     // Staged here so a bad config fails before any download. Staged again
@@ -878,6 +910,12 @@ pub enum SetupError {
     #[error("another setup is already running")]
     Busy,
 
+    #[error("transcription runs on the paired server; set it to this machine first")]
+    ServerInUse,
+
+    #[error(transparent)]
+    Forget(crate::daemon::RemoteClientError),
+
     #[error("{name} is in use by `{section}` in config.yaml; change that section first")]
     ModelInUse {
         name: &'static str,
@@ -1139,6 +1177,7 @@ mod tests {
     fn writable_inspection(home: &Path) -> Inspection {
         let mut inspection = inspection(configured());
         inspection.config_path = home.join(".aria/config.yaml");
+        inspection.home = home.to_path_buf();
         inspection
     }
 
@@ -1416,23 +1455,61 @@ mod tests {
     fn apply_refuses_the_server_until_one_is_usably_paired() {
         let home = tempfile::tempdir().unwrap();
         let mut inspection = writable_inspection(home.path());
+        inspection.pairing = paired("https://box.test:9851");
         let mut selections = Selections::defaults(&inspection);
         selections.stt = "server".to_owned();
 
         let result = apply(&selections, &no_downloads(), &inspection, &mut |_| Ok(()));
-        assert!(matches!(result, Err(SetupError::ServerNotPaired)));
+        assert!(
+            matches!(result, Err(SetupError::ServerNotPaired)),
+            "the pin on disk decides, not the inspection"
+        );
 
-        inspection.pairing = Pairing::Unusable;
+        let identity = crate::daemon::InferencePaths::in_home(home.path()).client_identity();
+        crate::primitives::private_fs::prepare_directory(&home.path().join(".aria")).unwrap();
+        crate::primitives::private_fs::prepare_directory(identity.parent().unwrap()).unwrap();
+        fs::write(&identity, "{").unwrap();
         let result = apply(&selections, &no_downloads(), &inspection, &mut |_| Ok(()));
         assert!(matches!(result, Err(SetupError::PairingUnusable { .. })));
 
-        inspection.pairing = paired("https://box.test:9851");
+        fs::remove_file(&identity).unwrap();
+        crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
         let mut steps = Vec::new();
         let _ = apply(&selections, &no_downloads(), &inspection, &mut |event| {
             steps.push(event);
             Err(SetupError::Invalid("stop after the config check"))
         });
         assert_eq!(steps, [SetupEvent::Started(Step::Config)]);
+    }
+
+    #[test]
+    fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join(".aria/config.yaml");
+        crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+
+        let running = lock_setup(&config).unwrap();
+        assert!(matches!(
+            forget_server_at(home.path(), &config),
+            Err(SetupError::Busy)
+        ));
+        drop(running);
+
+        fs::write(
+            &config,
+            "transcription: {backend: server, server: https://box.test:9851}\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            forget_server_at(home.path(), &config),
+            Err(SetupError::ServerInUse)
+        ));
+
+        fs::write(&config, "transcription: {backend: whisper}\n").unwrap();
+        assert!(matches!(
+            forget_server_at(home.path(), &config),
+            Ok(Forgotten::Server { .. })
+        ));
     }
 
     #[test]

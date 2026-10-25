@@ -76,12 +76,47 @@ pub(crate) fn paired_server(home: &Path) -> Result<Option<PairedServer>, identit
     }
 }
 
+/// Stores a client identity pinned to `endpoint`, as pairing would, and
+/// returns its fingerprint.
 #[cfg(test)]
-mod tests {
+pub(crate) fn pin_server_for_tests(home: &Path, endpoint: &str) -> String {
     use sha2::Digest;
 
+    let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
+    let key = rcgen::KeyPair::generate().unwrap();
+    let certificate = params.self_signed(&key).unwrap();
+    let fingerprint: [u8; 32] = sha2::Sha256::digest(certificate.der()).into();
+    let stored = serde_json::json!({
+        "credentials": {
+            "certificate_pem": certificate.pem(),
+            "key_pem": key.serialize_pem(),
+        },
+        "server": {
+            "endpoint": endpoint,
+            "certificate_pem": certificate.pem(),
+            "fingerprint": fingerprint,
+        },
+    });
+    crate::primitives::private_fs::prepare_directory(&home.join(".aria")).unwrap();
+    crate::primitives::private_document::PrivateDocument::new(
+        Paths::in_home(home).client_identity(),
+        identity::MAX_DOCUMENT_BYTES,
+    )
+    .prepare(&stored)
+    .unwrap()
+    .commit()
+    .unwrap()
+    .confirm_durability()
+    .unwrap();
+    fingerprint
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
     use super::*;
-    use crate::primitives::private_document::PrivateDocument;
 
     #[test]
     fn a_home_reports_the_server_it_holds_a_pin_for() {
@@ -94,33 +129,7 @@ mod tests {
             "looking leaves an unpaired home alone"
         );
 
-        let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
-        let key = rcgen::KeyPair::generate().unwrap();
-        let certificate = params.self_signed(&key).unwrap();
-        let fingerprint: [u8; 32] = sha2::Sha256::digest(certificate.der()).into();
-        let stored = serde_json::json!({
-            "credentials": {
-                "certificate_pem": certificate.pem(),
-                "key_pem": key.serialize_pem(),
-            },
-            "server": {
-                "endpoint": "https://example.test:9851",
-                "certificate_pem": certificate.pem(),
-                "fingerprint": fingerprint,
-            },
-        });
-        PrivateDocument::new(Paths::in_home(home.path()).client_identity(), 16 * 1024)
-            .prepare(&stored)
-            .unwrap()
-            .commit()
-            .unwrap()
-            .confirm_durability()
-            .unwrap();
-
-        let hex: String = fingerprint
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let hex = pin_server_for_tests(home.path(), "https://example.test:9851");
         assert_eq!(
             paired_server(home.path()).unwrap(),
             Some(PairedServer {
