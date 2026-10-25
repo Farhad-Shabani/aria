@@ -86,7 +86,8 @@ struct AriaApp: App {
                 promptHotkeys: appDelegate.promptHotkeys,
                 askChord: appDelegate.askHotkey.chord,
                 promptListChord: appDelegate.promptList.chord,
-                setupStatus: appDelegate.setupStatus
+                setupStatus: appDelegate.setupStatus,
+                voices: appDelegate.voices
             )
         }
         .sidebarWindowScene()

@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
     let setupStatus = SetupStatus()
+    let voices = VoiceProfiles(effects: .live)
     let updates = UpdateController()
 
     static let captionsEnabledKey = "captionsEnabled"
@@ -96,7 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         events.onSpeaker { [weak self] event in
-            if let event { self?.setupState.speakerEvent(event) }
+            guard let self, let event else { return }
+            setupState.speakerEvent(event)
+            voices.speakerEvent(event)
         }
 
         status.start()

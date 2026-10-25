@@ -25,8 +25,8 @@ the text. Pairing alone sends nothing; uploads start only when you switch
 transcription to the server.
 
 Your voice profile and corrections never leave your computer. **Only type my
-own voice** checks the speaker before upload when you deliver **After
-recording stops** and when you retry from history. With **While speaking**,
+voice** checks the speaker before upload when you deliver **After recording
+stops** and when you retry from history. With **While speaking**,
 audio leaves before Aria knows who spoke. The check helps recognition; it
 cannot promise that other voices are left out.
 
@@ -85,4 +85,6 @@ the cache; forgetting a folder removes its cached names.
 
 Voice profiles store a numeric representation of enrolled speech locally.
 They are recognition aids, not a way to authenticate a user or guarantee that
-other voices are excluded.
+other voices are excluded. A profile can still identify your voice, so treat
+it as personal data. Backups of your home folder, such as Time Machine,
+include it.

@@ -8,11 +8,15 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 @MainActor
 final class SetupStatus: ObservableObject {
     @Published private(set) var required: [Aria_Setup_V1_Missing] = []
+    /// Optimistic until inspected: a failed inspection should not lock out
+    /// voice setup, and enrolling reports a missing model itself.
+    @Published private(set) var speakerModelOnDisk = true
 
     var reason: String? { required.first.map(Self.explanation) }
 
     func show(_ inspection: Aria_Setup_V1_Inspection) {
         required = Self.required(in: inspection)
+        speakerModelOnDisk = Self.speakerModelOnDisk(in: inspection)
     }
 
     func refresh() async {
@@ -32,6 +36,13 @@ final class SetupStatus: ObservableObject {
             case .config, .wakeword, .service, .unspecified, .UNRECOGNIZED: false
             }
         }
+    }
+
+    /// Setup's name for the embedding model an enrollment needs.
+    static let speakerModel = "speaker"
+
+    static func speakerModelOnDisk(in inspection: Aria_Setup_V1_Inspection) -> Bool {
+        inspection.models.contains { $0.name == speakerModel && ($0.onDisk == .complete || $0.external) }
     }
 
     private static func explanation(_ missing: Aria_Setup_V1_Missing) -> String {

@@ -17,7 +17,13 @@ voices through when it cannot make a confident match.
 Complete [setup](./installation.md#setup), accept the speaker-model download,
 and keep the background service running. Allow microphone access when asked.
 
-To create an owner profile named `alex`:
+In the Mac app, open **Settings → Recognition** and click **Set Up…** under
+**Voice**. Enter your name, click **Start**, and read each sentence aloud.
+Pause after each one; the pause tells Aria the sentence is done. A voice
+added while there is no owner becomes the owner. Other voices are guests; add
+one with **Add Voice…**.
+
+In the terminal, to create an owner profile named `alex`:
 
 ```sh
 aria speaker enroll alex \
@@ -37,7 +43,7 @@ It shows each profile's name and role.
 ## Use your profile
 
 Enrollment does not turn filtering on. In the Mac app, enable
-**Settings → Recognition → Only type my own voice**.
+**Settings → Recognition → Only type my voice**.
 It is off by default, and the CLI has no control for this preference.
 
 Filtering needs the speaker model and an owner profile. Without the model,
@@ -62,7 +68,10 @@ first labels printed in the terminal.
 
 ## Replace or remove
 
-To replace `alex` with new recordings, keep its role explicit:
+In the Mac app, each voice in **Settings → Recognition** has a menu with
+**Set Up Again…** and **Remove…**.
+
+In the terminal, to replace `alex` with new recordings, keep its role explicit:
 
 ```sh
 aria speaker enroll alex \

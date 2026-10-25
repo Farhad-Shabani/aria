@@ -27,4 +27,20 @@ final class SetupStatusTests: XCTestCase {
             [Self.missing(.model, model: "parakeet"), Self.missing(.grant)]
         )
     }
+
+    func test_theSpeakerModelCountsWhenCompleteOrExternal() {
+        func inspection(_ change: (inout Aria_Setup_V1_Model) -> Void) -> Aria_Setup_V1_Inspection {
+            var inspection = SetupStateTests.freshMac()
+            inspection.models = inspection.models.map { model in
+                var model = model
+                if model.name == SetupStatus.speakerModel { change(&model) }
+                return model
+            }
+            return inspection
+        }
+
+        XCTAssertFalse(SetupStatus.speakerModelOnDisk(in: inspection { $0.onDisk = .partial }))
+        XCTAssertTrue(SetupStatus.speakerModelOnDisk(in: inspection { $0.onDisk = .complete }))
+        XCTAssertTrue(SetupStatus.speakerModelOnDisk(in: inspection { $0.external = true }))
+    }
 }

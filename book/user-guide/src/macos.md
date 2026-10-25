@@ -47,7 +47,7 @@ a panel while you record. Captions work with either delivery choice.
 
 While Aria types segments, words it has heard but not typed yet show faintly
 at the cursor. Aria may still change them before it types them. Apps that do
-not report their cursor show none, and neither does **Only type my own voice**.
+not report their cursor show none, and neither does **Only type my voice**.
 Turn them off with **Show inline preview** under **Settings → General → On
 screen**.
 
