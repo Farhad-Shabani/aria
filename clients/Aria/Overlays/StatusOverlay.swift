@@ -450,8 +450,7 @@ private struct Mark: View {
     }
 }
 
-/// One bar in the ribbon's slot, filling left to right while text goes in,
-/// segment by segment. Under Reduce Motion it stays full.
+/// One bar in the ribbon's slot, filling left to right while text goes in.
 private struct Bar: View {
     let tint: Color
 

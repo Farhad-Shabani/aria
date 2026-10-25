@@ -63,14 +63,12 @@ enum SetupClient {
         return try outcome(finished, cancelled: Task.isCancelled).get()
     }
 
-    /// What `setup apply` printed, read up to its summary or to the first
-    /// frame that cannot be read.
     private struct ApplyFrames {
         var reader = SetupFrames.Reader()
         var summary: Aria_Setup_V1_Summary?
         var unreadable: (any Error)?
 
-        /// False once a frame cannot be read.
+        /// False on the push that finds an unreadable frame.
         mutating func push(_ chunk: Data, onEvent: (Aria_Setup_V1_SetupEvent) -> Void) -> Bool {
             guard summary == nil, unreadable == nil else { return true }
             do {

@@ -100,7 +100,7 @@ final class PhonePairing: ObservableObject {
 
     /// The daemon registers IssueInvite only while the relay runs, so
     /// unimplemented means the relay is off. Unavailable means the daemon is
-    /// not listening at all. Any other error is logged, not shown.
+    /// not listening at all. Any other error's detail is logged, not shown.
     nonisolated static func status(for error: any Error) -> Status {
         switch (error as? RPCError)?.code {
         case .unimplemented: return .relayOff

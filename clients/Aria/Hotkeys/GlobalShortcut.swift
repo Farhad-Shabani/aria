@@ -50,8 +50,7 @@ final class GlobalShortcut {
         Self.registered[id] = nil
     }
 
-    /// Runs the shortcut Carbon reports pressed. False for an id this app
-    /// did not register.
+    /// False for an id this app did not register.
     fileprivate static func press(_ id: UInt32) -> Bool {
         guard let action = registered[id]?.action else { return false }
         action()

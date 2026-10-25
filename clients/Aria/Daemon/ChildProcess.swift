@@ -25,8 +25,8 @@ final class ChildProcess: Sendable {
         process.arguments = arguments
     }
 
-    /// Runs the child to exit and collects both pipes. Cancelling the task
-    /// interrupts the child; what it printed until then is still returned.
+    /// Cancelling the task interrupts the child; what it printed until then
+    /// is still returned.
     static func run(_ executable: URL, _ arguments: [String]) async throws -> Output {
         let child = ChildProcess(executable, arguments)
         try child.launch()
@@ -37,9 +37,7 @@ final class ChildProcess: Sendable {
         }
     }
 
-    /// Writes `input` to the child's stdin and closes it; without `input`,
-    /// stdin reads as empty. Stdout chunks go to `onStdout` in order when it
-    /// is given, and into the output otherwise.
+    /// With `onStdout`, stdout goes there in order and stays out of the output.
     func launch(input: Data? = nil, onStdout: (@Sendable (Data) -> Void)? = nil) throws {
         let stdin = input.map { _ in Pipe() }
         let stdout = Pipe()
@@ -83,7 +81,6 @@ final class ChildProcess: Sendable {
         }
     }
 
-    /// Sends SIGINT. A child that is not running is left alone.
     func interrupt() {
         if process.isRunning { process.interrupt() }
     }

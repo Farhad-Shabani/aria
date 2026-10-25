@@ -69,7 +69,6 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     }
 }
 
-/// The items created on one calendar day.
 struct HistoryDay: Equatable {
     let start: Date
     let items: [HistoryItem]
