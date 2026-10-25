@@ -21,6 +21,7 @@ pub(crate) enum Strategy {
     Streaming,
 }
 
+#[derive(Clone)]
 pub(crate) struct Start {
     pub engine: String,
     pub language: Language,

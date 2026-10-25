@@ -7,13 +7,13 @@ use aria_kit::cancel::{CancelToken, Deadline};
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use crate::audio::{RecordingReader, WakeWordMonitor};
 use crate::config::{
-    ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig,
+    ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
 };
 use crate::dictation::subscribers::DictationSubscribers;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, MAX_DICTATION_TIMEOUT, RecordingId,
-    StopMode,
+    StopMode, Transcribed,
 };
 use crate::event::EventEmitter;
 use crate::history::{HistoryEntry, HistoryError, RetryOptions};
@@ -21,14 +21,14 @@ use crate::microphone::Gate;
 use crate::preferences::{PreferenceStore, PreferenceStoreError};
 use crate::primitives::lazy::Lazy;
 use crate::rpc::RpcErrorCode;
-use crate::transcription::{Language, Transcript};
+use crate::transcription::Language;
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
 use super::super::transcripts::{History, TranscriptStore};
 use super::assembly::{
-    BuiltDictation, DictationInitializationError, ModelLoading, Retried, RetryTarget,
-    RuntimeExecutor, build_dictation, transcribe_retry,
+    BuiltDictation, DictationInitializationError, ModelLoading, RetryTarget, RuntimeExecutor,
+    build_dictation, transcribe_retry,
 };
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -325,7 +325,7 @@ impl DictationRuntime {
         recording: &mut RecordingReader,
         settings: &DictationSettings,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationRuntimeError> {
+    ) -> Result<Transcribed, DictationRuntimeError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled.into());
         }
@@ -396,14 +396,10 @@ impl DictationRuntime {
         recording: &mut RecordingReader,
         settings: &DictationSettings,
         cancel: &CancelToken,
-    ) -> Result<Retried, HistoryError> {
-        if let Some(ready) = self.ready().filter(|ready| ready.engine == requested) {
+    ) -> Result<Transcribed, HistoryError> {
+        if self.ready().is_some_and(|ready| ready.engine == requested) {
             return self
                 .transcribe(recording, settings, cancel)
-                .map(|transcript| Retried {
-                    transcript,
-                    engine: ready.engine,
-                })
                 .map_err(|_| HistoryError::Transcription);
         }
         let setup = self.retry.get().map_err(|_| HistoryError::Transcription)?;
@@ -465,12 +461,13 @@ impl DictationRuntime {
     }
 }
 
-/// The deferred placeholder name asks for whatever is configured.
+/// A placeholder name asks for whatever is configured: the deferred one, or
+/// the server's before it named its engine.
 fn retry_target<'a>(
     setup: &RetrySetup,
     requested: &'a str,
 ) -> Result<RetryTarget<'a>, HistoryError> {
-    let named = (requested != DEFERRED_ENGINE).then_some(requested);
+    let named = (requested != DEFERRED_ENGINE && requested != backend::SERVER).then_some(requested);
     match (&setup.dictation.transcription, named) {
         (TranscriptionBackend::Server { endpoint }, engine) => Ok(RetryTarget::Server {
             endpoint: endpoint.clone(),
@@ -738,7 +735,7 @@ mod history_tests {
             own_voice_only: bool,
             project: Option<&crate::vocabulary::Directory>,
             _: &CancelToken,
-        ) -> Result<Transcript, DictationError> {
+        ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());
             assert!(project.is_none());
             self.seen
@@ -749,7 +746,10 @@ mod history_tests {
                 cancel.cancel();
                 return Err(DictationError::Cancelled);
             }
-            Ok(Transcript::new("recovered words").unwrap())
+            Ok(Transcribed {
+                transcript: crate::transcription::Transcript::new("recovered words").unwrap(),
+                engine: "test",
+            })
         }
     }
 
@@ -939,7 +939,7 @@ mod history_tests {
     }
 
     #[tokio::test]
-    async fn remote_history_retry_routes_ready_and_alternate_engines_and_preserves_context() {
+    async fn remote_history_retry_records_the_engine_the_server_ran() {
         use std::sync::atomic::Ordering;
         let server = crate::daemon::inference::host::tests::Fixture::start().await;
         let mut fixture = Fixture::new(None);
@@ -959,7 +959,7 @@ mod history_tests {
             let project = home.join("original-project");
             std::fs::create_dir(&project).unwrap();
             let mut original = entry();
-            original.engine = "whisper".into();
+            original.engine = backend::SERVER.into();
             original.own_voice_only = false;
             original.project = Some(project.clone());
             let original = fixture
@@ -1010,7 +1010,7 @@ mod history_tests {
                 Arc::clone(&fixture.runtime.microphone),
             )
             .unwrap();
-            assert_eq!(built.engine, "whisper");
+            assert_eq!(built.engine, backend::SERVER);
             fixture.runtime.coordinator = CoordinatorState::Ready(ReadyDictation {
                 coordinator: built.coordinator,
                 engine: built.engine,
@@ -1023,16 +1023,13 @@ mod history_tests {
                     home: home.clone(),
                 })
             });
-            for ready_engine in ["whisper", "local"] {
-                if let CoordinatorState::Ready(ready) = &mut fixture.runtime.coordinator {
-                    ready.engine = ready_engine;
-                }
+            for named in [None, Some("whisper")] {
                 let result = fixture
                     .runtime
                     .retry_history(
                         original.id,
                         RetryOptions {
-                            engine: Some("whisper".into()),
+                            engine: named.map(Into::into),
                             language: None,
                         },
                         CancelToken::never(),
@@ -1046,7 +1043,7 @@ mod history_tests {
                 assert_eq!(result.audio, original.audio);
                 assert_eq!(result.status, HistoryStatus::Recovered);
                 assert!(!result.retrying);
-                if ready_engine == "whisper" {
+                if named.is_none() {
                     assert!(result.text.starts_with("native words"));
                     assert_eq!(observed.native.load(Ordering::SeqCst), 1);
                     assert_eq!(observed.calls.load(Ordering::SeqCst), 0);
@@ -1056,6 +1053,17 @@ mod history_tests {
                     assert_eq!(*observed.languages.lock().unwrap(), ["fr"]);
                 }
             }
+            assert!(matches!(
+                fixture.runtime.retry_history(
+                    original.id,
+                    RetryOptions {
+                        engine: Some("parakeet".into()),
+                        language: None,
+                    },
+                    CancelToken::never(),
+                ),
+                Err(HistoryError::Transcription)
+            ));
         })
         .await
         .unwrap();

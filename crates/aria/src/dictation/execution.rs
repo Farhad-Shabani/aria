@@ -19,6 +19,12 @@ use super::{
     MAX_DICTATION_TIMEOUT, RecordingId, StopMode,
 };
 
+/// What a recording said, and the engine that heard it.
+pub(crate) struct Transcribed {
+    pub(crate) transcript: Transcript,
+    pub(crate) engine: &'static str,
+}
+
 pub(crate) trait DictationExecutor: Send + Sync + 'static {
     fn execute(
         &self,
@@ -39,7 +45,7 @@ pub(crate) trait DictationExecutor: Send + Sync + 'static {
         own_voice_only: bool,
         project: Option<&crate::vocabulary::Directory>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationError>;
+    ) -> Result<Transcribed, DictationError>;
 }
 
 impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
@@ -59,7 +65,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         own_voice_only: bool,
         project: Option<&crate::vocabulary::Directory>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationError> {
+    ) -> Result<Transcribed, DictationError> {
         (**self).transcribe(recording, language, own_voice_only, project, cancel)
     }
 }
@@ -556,7 +562,7 @@ where
         own_voice_only: bool,
         project: Option<&crate::vocabulary::Directory>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationError> {
+    ) -> Result<Transcribed, DictationError> {
         self.executor
             .transcribe(recording, language, own_voice_only, project, cancel)
     }
@@ -938,7 +944,7 @@ mod tests {
                 _: bool,
                 _: Option<&crate::vocabulary::Directory>,
                 _: &CancelToken,
-            ) -> Result<Transcript, DictationError> {
+            ) -> Result<Transcribed, DictationError> {
                 panic!("this test executes local recording");
             }
         }

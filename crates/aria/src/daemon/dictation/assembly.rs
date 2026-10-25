@@ -22,11 +22,11 @@ use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
     CleanupError, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
     DictationExecutor, DictationPipeline, DictationPolicy, DictationPolicyError, DictationResult,
-    DictationSettings, ExecutionControl, LlmCleanup,
+    DictationSettings, ExecutionControl, LlmCleanup, Transcribed,
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
-    Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcript, Transcription,
+    Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcription,
     TranscriptionError, Whole,
 };
 use crate::vocabulary::{Directory, Vocabulary};
@@ -55,6 +55,7 @@ type Sinks = (History, Cursor<PlatformTextDelivery>);
 type CompletionLayers = Layered<Option<LlmCleanup>, ()>;
 
 struct EngineExecution<T: Transcriber, M: Mode> {
+    engine: &'static str,
     pipeline:
         DictationPipeline<Arc<CaptureBackend>, T, M, WeSpeaker, SileroVad, Sinks, CompletionLayers>,
     wake: Option<WakeWordControl>,
@@ -114,8 +115,8 @@ where
         own_voice_only: bool,
         project: Option<&Directory>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, DictationError> {
-        self.prepared(project, |vocabulary| {
+    ) -> Result<Transcribed, DictationError> {
+        let (transcript, served_by) = self.prepared(project, |vocabulary| {
             self.pipeline.transcribe(
                 recording,
                 language,
@@ -123,6 +124,10 @@ where
                 Some(vocabulary),
                 cancel,
             )
+        })?;
+        Ok(Transcribed {
+            transcript,
+            engine: served_by.unwrap_or(self.engine),
         })
     }
 }
@@ -240,19 +245,18 @@ fn select_engine(
     }
 }
 
-/// Asks the server what it runs, so an unreachable server fails the build.
+/// Each operation names the engine the server ran, so the executor's own
+/// name only labels a dictation that failed before reaching the server.
 fn select_remote(
     home: &Path,
     endpoint: &ServerEndpoint,
 ) -> Result<SelectedEngine, DictationInitializationError> {
-    let remote = RemoteTranscriber::connect(home, endpoint, &CancelToken::never())
+    let remote = RemoteTranscriber::new(home, endpoint)
         .map_err(DictationInitializationError::Transcription)?;
-    let engine = remote.engine_name();
-    Ok(if remote.supports_streaming() {
-        SelectedEngine::new(engine, Transcription::<_, Streaming>::delegated(remote))
-    } else {
-        SelectedEngine::new(engine, Transcription::<_, Whole>::delegated(remote))
-    })
+    Ok(SelectedEngine::new(
+        crate::config::backend::SERVER,
+        Transcription::<_, Streaming>::delegated(remote),
+    ))
 }
 
 fn select_local(
@@ -347,6 +351,7 @@ impl ExecutionParts {
         M: Mode,
     {
         Box::new(EngineExecution::<T, M> {
+            engine,
             pipeline: DictationPipeline::new(
                 self.capture,
                 transcription,
@@ -445,18 +450,13 @@ pub(super) enum RetryTarget<'a> {
     },
 }
 
-pub(super) struct Retried {
-    pub(super) transcript: Transcript,
-    pub(super) engine: &'static str,
-}
-
 pub(super) fn transcribe_retry(
     setup: &super::runtime::RetrySetup,
     target: RetryTarget<'_>,
     recording: &mut RecordingReader,
     settings: &DictationSettings,
     cancel: &CancelToken,
-) -> Result<Retried, DictationError> {
+) -> Result<Transcribed, DictationError> {
     let config = &setup.dictation;
     let cleanup_llm = config
         .cleanup_layer(&setup.home)
@@ -469,14 +469,17 @@ pub(super) fn transcribe_retry(
         .hearing_speech(speaker::speech_gate())
         .with(cleanup_llm);
     pipeline.refresh_enrolled(speaker::enrolled(&setup.speaker));
-    let transcript = pipeline.transcribe(
+    let (transcript, served_by) = pipeline.transcribe(
         recording,
         &settings.recognition_language,
         settings.own_voice_only,
         Some(snapshot.matcher.as_ref()),
         cancel,
     )?;
-    Ok(Retried { transcript, engine })
+    Ok(Transcribed {
+        transcript,
+        engine: served_by.unwrap_or(engine),
+    })
 }
 
 /// A retry decodes the stored recording once, so every engine runs whole.
@@ -489,13 +492,15 @@ fn retry_transcription(
 ) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
     match target {
         RetryTarget::Server { endpoint, engine } => {
-            let mut remote = RemoteTranscriber::connect(home, &endpoint, cancel)?;
+            let mut remote = RemoteTranscriber::new(home, &endpoint)?;
             if let Some(engine) = engine {
                 remote = remote.require_engine(engine)?;
             }
-            let engine = remote.engine_name();
             let remote: Box<dyn Transcriber> = Box::new(remote);
-            Ok((Transcription::delegated(remote), engine))
+            Ok((
+                Transcription::delegated(remote),
+                crate::config::backend::SERVER,
+            ))
         }
         RetryTarget::Local(config) => {
             let name = config.backend_name();
@@ -516,14 +521,15 @@ mod tests {
     use crate::config::{CaptureConfig, WakeConfig};
 
     #[tokio::test]
-    async fn server_dictation_transcribes_replayed_audio_without_local_stt_models() {
+    async fn server_dictation_builds_without_local_models_or_a_reachable_server() {
         let server = crate::daemon::inference::host::tests::Fixture::start().await;
         let home = tempfile::tempdir().unwrap();
         server.pair_home(home.path().to_owned()).await;
         let endpoint = server.endpoint().to_owned();
-        tokio::task::spawn_blocking(move || {
-            let environment = crate::config::Environment::in_home(home.path().to_owned());
-            let audio = home.path().join("speech.wav");
+        let root = home.path().to_owned();
+        let dictate = Arc::new(move || {
+            let environment = crate::config::Environment::in_home(root.clone());
+            let audio = root.join("speech.wav");
             std::fs::copy(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../aria-wake/tests/fixtures/negative.wav"),
@@ -531,7 +537,7 @@ mod tests {
             )
             .unwrap();
             let (vocabulary, _worker) = VocabularyRuntime::new(
-                home.path().join("vocabulary"),
+                root.join("vocabulary"),
                 None,
                 false,
                 crate::vocabulary::discover::LocalCollector::new(
@@ -539,7 +545,9 @@ mod tests {
                 ),
             );
             let mut dictation = DictationConfig::load(&environment).unwrap();
-            dictation.transcription = TranscriptionBackend::Server { endpoint };
+            dictation.transcription = TranscriptionBackend::Server {
+                endpoint: endpoint.clone(),
+            };
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,
@@ -548,17 +556,17 @@ mod tests {
                 DictationSetup {
                     dictation,
                     speaker: SpeakerConfig::load(&environment).unwrap(),
-                    vocabulary: Arc::clone(&vocabulary),
+                    vocabulary,
                     wake: WakeConfig::Disabled,
                 },
-                home.path(),
-                home.path(),
+                &root,
+                &root,
                 Arc::new(TranscriptStore::new()),
                 ModelLoading::Eager,
                 Gate::new(),
             )
             .unwrap();
-            assert_eq!(built.engine, crate::config::backend::WHISPER);
+            assert_eq!(built.engine, crate::config::backend::SERVER);
             let mut settings = crate::preferences::UserPreferences::default().resolve_dictation(
                 crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
                 None,
@@ -566,29 +574,36 @@ mod tests {
             settings.own_voice_only = false;
             settings.transcript_only = true;
             settings.delivery_mode = crate::dictation::DeliveryMode::Complete;
-            let outcome = built
-                .coordinator
-                .execute(
-                    settings,
-                    CancelToken::never(),
-                    &DictationEventEmitter::unsubscribed(),
-                )
-                .unwrap();
-            let crate::dictation::DictationOutcome::Completed(result) = outcome else {
-                panic!("{outcome:?}");
-            };
-            assert!(result.text.contains("native words"), "{}", result.text);
-            assert!(
-                result
-                    .text
-                    .split_whitespace()
-                    .all(|word| matches!(word, "native" | "words"))
-            );
-            assert!(!home.path().join(".aria/models").exists());
-        })
-        .await
-        .unwrap();
+            built.coordinator.execute(
+                settings,
+                CancelToken::never(),
+                &DictationEventEmitter::unsubscribed(),
+            )
+        });
+        let reachable = Arc::clone(&dictate);
+        let outcome = tokio::task::spawn_blocking(move || reachable())
+            .await
+            .unwrap()
+            .unwrap();
+        let crate::dictation::DictationOutcome::Completed(result) = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert!(result.text.contains("native words"), "{}", result.text);
+        assert!(
+            result
+                .text
+                .split_whitespace()
+                .all(|word| matches!(word, "native" | "words"))
+        );
+        assert!(!home.path().join(".aria/models").exists());
         server.stop().await;
+        let unreachable = tokio::task::spawn_blocking(move || dictate())
+            .await
+            .unwrap();
+        assert!(
+            matches!(unreachable, Err(DictationError::Transcription(_))),
+            "{unreachable:?}"
+        );
     }
 
     #[test]

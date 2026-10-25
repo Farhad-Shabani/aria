@@ -83,6 +83,11 @@ pub enum RemoteClientError {
 #[derive(Clone)]
 pub(crate) struct RemoteTranscriber {
     connection: Arc<Connection>,
+    required: Option<&'static str>,
+}
+
+/// What the server runs, as one operation found it.
+struct Binding {
     engine: &'static str,
     strategy: Strategy,
 }
@@ -125,65 +130,59 @@ impl Drop for RemoteRuntime {
 }
 
 impl RemoteTranscriber {
-    /// Opens the pinned channel and asks the server what it runs. An engine
-    /// this build does not know is refused.
-    pub(crate) fn connect(
-        home: &Path,
-        endpoint: &ServerEndpoint,
-        cancel: &CancelToken,
-    ) -> Result<Self, TranscriptionError> {
-        Self::open(home, endpoint, cancel).map_err(transcription_error)
-    }
-
-    fn open(
-        home: &Path,
-        endpoint: &ServerEndpoint,
-        cancel: &CancelToken,
-    ) -> Result<Self, RemoteClientError> {
+    /// Builds without the network. Each operation asks the server what it
+    /// runs, so a server that is down or changed fails only that operation.
+    pub(crate) fn new(home: &Path, endpoint: &ServerEndpoint) -> Result<Self, TranscriptionError> {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
-            .map_err(identity_error)?;
-        let server = identity.pinned_server(endpoint).map_err(identity_error)?;
-        let endpoint = tls::endpoint(&identity, server).map_err(|_| RemoteClientError::Identity)?;
-        let runtime = RemoteRuntime::new()?;
-        let (channel, info) = runtime
-            .handle
-            .block_on(bounded(cancel, ADMIN_TIMEOUT, async {
-                let channel = endpoint
-                    .connect()
-                    .await
-                    .map_err(|_| RemoteClientError::Connection)?;
-                let response = inference_client(channel.clone())
-                    .get_info(wire::InferenceInfoRequest {})
-                    .await
-                    .map_err(rpc_error)?;
-                let info = Info::try_from(response.into_inner())
-                    .map_err(|_| RemoteClientError::Response)?;
-                Ok((channel, info))
-            }))?;
-        let engine =
-            crate::config::backend::local(&info.engine).ok_or(RemoteClientError::Unsupported)?;
+            .map_err(|error| transcription_error(identity_error(error)))?;
+        let server = identity
+            .pinned_server(endpoint)
+            .map_err(|error| transcription_error(identity_error(error)))?;
+        let endpoint = tls::endpoint(&identity, server)
+            .map_err(|_| transcription_error(RemoteClientError::Identity))?;
+        let runtime = RemoteRuntime::new().map_err(transcription_error)?;
+        let channel = {
+            let _runtime = runtime.handle.enter();
+            endpoint.connect_lazy()
+        };
         Ok(Self {
             connection: Arc::new(Connection { channel, runtime }),
-            engine,
-            strategy: info.strategy,
+            required: None,
         })
     }
 
-    /// Refuses a server that runs anything but `engine`.
+    /// Refuses operations on a server that runs anything but `engine`.
     pub(crate) fn require_engine(self, engine: &str) -> Result<Self, TranscriptionError> {
-        if self.engine == engine {
-            Ok(self)
-        } else {
-            Err(transcription_error(RemoteClientError::Unsupported))
+        let engine = crate::config::backend::local(engine)
+            .ok_or_else(|| transcription_error(RemoteClientError::Unsupported))?;
+        Ok(Self {
+            required: Some(engine),
+            ..self
+        })
+    }
+
+    fn bind(&self, cancel: &CancelToken) -> Result<Binding, RemoteClientError> {
+        let channel = self.connection.channel.clone();
+        let info =
+            self.connection
+                .runtime
+                .handle
+                .block_on(bounded(cancel, ADMIN_TIMEOUT, async {
+                    let response = inference_client(channel)
+                        .get_info(wire::InferenceInfoRequest {})
+                        .await
+                        .map_err(rpc_error)?;
+                    Info::try_from(response.into_inner()).map_err(|_| RemoteClientError::Response)
+                }))?;
+        let engine =
+            crate::config::backend::local(&info.engine).ok_or(RemoteClientError::Unsupported)?;
+        if self.required.is_some_and(|required| required != engine) {
+            return Err(RemoteClientError::Unsupported);
         }
-    }
-
-    pub(crate) fn engine_name(&self) -> &'static str {
-        self.engine
-    }
-
-    pub(crate) fn supports_streaming(&self) -> bool {
-        self.strategy == Strategy::Streaming
+        Ok(Binding {
+            engine,
+            strategy: info.strategy,
+        })
     }
 }
 
@@ -448,22 +447,17 @@ struct Session {
 
 impl Session {
     fn start(
-        remote: &RemoteTranscriber,
+        connection: &Connection,
+        start: Start,
         recording: RecordingReader,
-        language: Language,
         cancel: CancelToken,
     ) -> Self {
         let (output, events) = mpsc::sync_channel(QUEUE_CAPACITY);
         let (finished, result) = mpsc::sync_channel(1);
         let stop = CancelToken::new();
         let stopped = stop.clone();
-        let channel = remote.connection.channel.clone();
-        let start = Start {
-            engine: remote.engine.to_owned(),
-            language,
-            strategy: remote.strategy,
-        };
-        remote.connection.runtime.handle.spawn(async move {
+        let channel = connection.channel.clone();
+        connection.runtime.handle.spawn(async move {
             let cancel =
                 CancelToken::from_fn(move || cancel.is_cancelled() || stopped.is_cancelled());
             let result = bounded(
@@ -599,29 +593,34 @@ impl Transcriber for RemoteTranscriber {
         incremental: bool,
         cancel: &CancelToken,
     ) -> Result<Option<OperationSource>, TranscriptionError> {
-        let remote = Self {
+        let binding = self.bind(cancel).map_err(transcription_error)?;
+        let start = Start {
+            engine: binding.engine.to_owned(),
+            language: language.clone(),
             strategy: if incremental {
-                self.strategy
+                binding.strategy
             } else {
                 Strategy::Whole
             },
-            ..self.clone()
         };
-        let language = language.clone();
+        let connection = Arc::clone(&self.connection);
         let cancel = cancel.clone();
         let mut session = None;
-        Ok(Some(OperationSource::new(move |recording, previews| {
-            session
-                .get_or_insert_with(|| {
-                    Session::start(
-                        &remote,
-                        recording.fork_window(),
-                        language.clone(),
-                        cancel.clone(),
-                    )
-                })
-                .step(recording, previews, &cancel)
-        })))
+        Ok(Some(OperationSource::new(
+            binding.engine,
+            move |recording, previews| {
+                session
+                    .get_or_insert_with(|| {
+                        Session::start(
+                            &connection,
+                            start.clone(),
+                            recording.fork_window(),
+                            cancel.clone(),
+                        )
+                    })
+                    .step(recording, previews, &cancel)
+            },
+        )))
     }
 }
 
@@ -891,11 +890,9 @@ mod tests {
         writer.push(&[0.5; 320]);
         let (first, received) = tokio::sync::oneshot::channel();
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.connect();
-            assert_eq!(remote.engine_name(), "whisper");
-            assert!(remote.supports_streaming());
-            let transcription = Transcription::<_, Streaming>::delegated(remote);
+            let transcription = Transcription::<_, Streaming>::delegated(client.transcriber());
             let mut operation = transcription.start(&Language::Automatic).unwrap();
+            assert_eq!(operation.served_by(), Some("whisper"));
             let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
             assert!(!recording.reached_end());
             assert!(segment.span().is_some());
@@ -925,7 +922,7 @@ mod tests {
         let server = Fixture::start().await;
         let client = server.paired_client().await;
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.connect();
+            let remote = client.transcriber();
             let transcription = Transcription::<_, Streaming>::delegated(remote);
             let mut recording = RecordingReader::from_samples(&[0.5; 32_000]);
             let mut operation = transcription.start(&Language::Automatic).unwrap();
@@ -1009,7 +1006,7 @@ mod tests {
         let running = Arc::clone(&control);
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.connect();
+            let remote = client.transcriber();
             let reader = SegmentReader::<aria_speaker::wespeaker::WeSpeaker>::new(
                 SegmentLabeler::new(None, None),
             );
@@ -1064,11 +1061,73 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.text, "hello world");
-        assert!(
-            delivered
-                .entries()
-                .contains(&"completed:hello world".to_owned())
-        );
+        let entries = delivered.entries();
+        assert!(entries.contains(&"engine:whisper".to_owned()));
+        assert!(entries.contains(&"completed:hello world".to_owned()));
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_whole_only_server_serves_streaming_dictation_under_its_own_engine() {
+        use std::sync::Mutex;
+
+        use crate::dictation::testing::{CallLog, Loud, settings};
+        use crate::dictation::{
+            DeliveryMode, DictationEventEmitter, DictationPipeline, ExecutionControl, OutputMode,
+            StopMode,
+        };
+        use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
+        use aria_kit::speaker::{SegmentLabeler, SegmentReader};
+
+        struct Capture(Mutex<Option<RecordingReader>>);
+        impl AudioCapture for Capture {
+            fn start(
+                &self,
+                _: RecordingMode,
+                _: StopSignal,
+            ) -> Result<RecordingReader, CaptureError> {
+                Ok(self.0.lock().unwrap().take().unwrap())
+            }
+        }
+
+        let server = Fixture::with_model(
+            "parakeet",
+            AudioInputKind::Samples,
+            None,
+            Box::new(Agreement),
+            Arc::new(Observed::default()),
+        )
+        .await;
+        let client = server.paired_client().await;
+        let (recording, mut writer) = Recording::open();
+        writer.push(&[0.5; 1600]);
+        writer.finish();
+        let log = CallLog::default();
+        let delivered = log.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            DictationPipeline::new(
+                Capture(Mutex::new(Some(recording))),
+                Transcription::<_, Streaming>::delegated(client.transcriber()),
+                SegmentReader::<aria_speaker::wespeaker::WeSpeaker>::new(SegmentLabeler::new(
+                    None, None,
+                )),
+                (log.history(), log.cursor()),
+            )
+            .hearing_speech(Some(Loud))
+            .execute(
+                settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &DictationEventEmitter::unsubscribed(),
+                None,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.text, "hello world");
+        let entries = delivered.entries();
+        assert!(entries.contains(&"engine:parakeet".to_owned()));
+        assert!(entries.contains(&"deliver:hello world".to_owned()));
         server.stop().await;
     }
 
@@ -1189,7 +1248,7 @@ mod tests {
             let log = CallLog::default();
             let delivered = log.clone();
             let task = tokio::task::spawn_blocking(move || {
-                let remote = client.connect();
+                let remote = client.transcriber();
                 let reader = SegmentReader::<aria_speaker::wespeaker::WeSpeaker>::new(
                     SegmentLabeler::new(None, None),
                 );
@@ -1239,7 +1298,7 @@ mod tests {
         let cancel = CancelToken::new();
         let worker_cancel = cancel.clone();
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.connect();
+            let remote = client.transcriber();
             let transcription = Transcription::<_, Streaming>::delegated(remote);
             let mut operation = transcription
                 .start_with(&Language::Automatic, &worker_cancel)
@@ -1532,7 +1591,7 @@ mod tests {
                     None,
                     Some(Diarizer::new(Voice(voice), enrolled)),
                 ));
-                let remote = client.connect();
+                let remote = client.transcriber();
                 let pipeline = DictationPipeline::new(
                     (),
                     Transcription::<_, Whole>::delegated(remote),
@@ -1549,7 +1608,7 @@ mod tests {
                     &CancelToken::never(),
                 );
                 if accepted {
-                    assert_eq!(result.unwrap().as_str(), "ProjectOnly");
+                    assert_eq!(result.unwrap().0.as_str(), "ProjectOnly");
                     assert_eq!(
                         observed.samples.lock().unwrap().as_slice(),
                         std::slice::from_ref(&samples)
@@ -1671,16 +1730,15 @@ mod tests {
     }
 
     #[test]
-    fn connecting_unpaired_creates_no_credentials() {
+    fn an_unpaired_home_builds_nothing_and_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
-        assert!(matches!(
-            RemoteTranscriber::open(
+        assert!(
+            RemoteTranscriber::new(
                 home.path(),
                 &ServerEndpoint::parse("https://server.example").unwrap(),
-                &CancelToken::never()
-            ),
-            Err(RemoteClientError::Identity)
-        ));
+            )
+            .is_err()
+        );
         assert!(!home.path().join(".aria/inference/client.json").exists());
     }
 }

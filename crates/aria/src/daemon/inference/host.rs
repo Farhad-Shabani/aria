@@ -561,13 +561,8 @@ pub(in crate::daemon) mod tests {
     }
 
     impl PairedClient {
-        pub(in crate::daemon) fn connect(&self) -> super::super::client::RemoteTranscriber {
-            super::super::client::RemoteTranscriber::connect(
-                self.home.path(),
-                &self.endpoint,
-                &CancelToken::never(),
-            )
-            .unwrap()
+        pub(in crate::daemon) fn transcriber(&self) -> super::super::client::RemoteTranscriber {
+            super::super::client::RemoteTranscriber::new(self.home.path(), &self.endpoint).unwrap()
         }
     }
 
@@ -971,7 +966,7 @@ pub(in crate::daemon) mod tests {
                 .transcribe_with(&mut recording, &Language::Automatic, &CancelToken::never())
                 .unwrap();
             let local_time = began.elapsed();
-            let client = RemoteTranscriber::connect(&home, &endpoint, &CancelToken::never())
+            let client = RemoteTranscriber::new(&home, &endpoint)
                 .unwrap()
                 .require_engine(name)
                 .unwrap();

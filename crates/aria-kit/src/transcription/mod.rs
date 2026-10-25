@@ -441,6 +441,7 @@ type OperationCallback =
     dyn FnMut(&mut RecordingReader, bool) -> Result<OperationStep, TranscriptionError> + Send;
 
 pub struct OperationSource {
+    served_by: &'static str,
     next: Box<OperationCallback>,
     retained_from: u64,
     read_to: u64,
@@ -449,14 +450,17 @@ pub struct OperationSource {
 }
 
 impl OperationSource {
+    /// `served_by` names the engine that runs the operation.
     /// `next(reader, previews)` must fill `reader` through each `read_to`,
     /// and fully before `Complete`.
     pub fn new(
+        served_by: &'static str,
         next: impl FnMut(&mut RecordingReader, bool) -> Result<OperationStep, TranscriptionError>
         + Send
         + 'static,
     ) -> Self {
         Self {
+            served_by,
             next: Box::new(next),
             retained_from: 0,
             read_to: 0,
@@ -775,6 +779,14 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
     /// one reports where the transcriber read to.
     pub fn read_to(&self) -> u64 {
         self.read_to
+    }
+
+    /// The engine a delegated operation runs on. Local plans name none.
+    pub fn served_by(&self) -> Option<&'static str> {
+        match &self.strategy {
+            Strategy::Delegated(source) => Some(source.served_by),
+            Strategy::WholeRecording(_) | Strategy::Agreement(_) | Strategy::Native(_) => None,
+        }
     }
 
     /// The earliest stream position this operation may still read. A caller
@@ -1264,6 +1276,7 @@ mod operation_source_tests {
 
     use super::*;
 
+    #[derive(Clone)]
     struct Delegated {
         openings: Arc<Mutex<Vec<bool>>>,
     }
@@ -1315,7 +1328,7 @@ mod operation_source_tests {
                     read_to: 40,
                 },
             ]);
-            Ok(Some(OperationSource::new(move |recording, _| {
+            Ok(Some(OperationSource::new("remote", move |recording, _| {
                 recording.fill().map_err(TranscriptionError::Capture)?;
                 Ok(steps.pop_front().expect("completion stops polling"))
             })))
@@ -1406,12 +1419,14 @@ mod operation_source_tests {
         let delegating = Delegated {
             openings: Arc::clone(&openings),
         };
-        assert!(
-            Transcription::agreement(Cadence::from_millis(10, 20), delegating)
-                .start(&Language::Automatic)
-                .is_ok()
-        );
+        let local = Transcription::agreement(Cadence::from_millis(10, 20), delegating.clone());
+        assert_eq!(local.start(&Language::Automatic).unwrap().served_by(), None);
         assert!(openings.lock().unwrap().is_empty());
+        let delegated = Transcription::<_, Whole>::delegated(delegating);
+        assert_eq!(
+            delegated.start(&Language::Automatic).unwrap().served_by(),
+            Some("remote")
+        );
         assert!(matches!(
             Transcription::<_, Whole>::delegated(Local).start(&Language::Automatic),
             Err(TranscriptionError::NoDelegatedOperation)
@@ -1422,7 +1437,7 @@ mod operation_source_tests {
     fn cancellation_during_a_delegated_step_discards_its_result() {
         let cancel = CancelToken::new();
         let trigger = cancel.clone();
-        let mut source = OperationSource::new(move |_, _| {
+        let mut source = OperationSource::new("remote", move |_, _| {
             trigger.cancel();
             Ok(OperationStep::Complete {
                 transcript: Transcript::new("must not escape")?,

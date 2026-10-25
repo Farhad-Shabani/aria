@@ -12,8 +12,8 @@ use crate::transcription::{Language, Transcript};
 
 use super::{
     Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
-    DictationResult, DictationSettings, ExecutionControl, RecordingId, StopMode, TranscriptSink,
-    Utterance,
+    DictationResult, DictationSettings, ExecutionControl, RecordingId, StopMode, Transcribed,
+    TranscriptSink, Utterance,
 };
 
 /// One ordered record of what every spy built from it saw, so a test can
@@ -49,7 +49,8 @@ impl CallLog {
     }
 }
 
-/// Logs `segment:` and `completed:` for each utterance history receives.
+/// Logs `engine:` for the serving engine, and `segment:` and `completed:`
+/// for each utterance history receives.
 pub(crate) struct RecordingSink {
     log: CallLog,
 }
@@ -65,6 +66,10 @@ impl TranscriptSink for RecordingSink {
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
         self.log.push(format!("completed:{}", utterance.text));
         Ok(())
+    }
+
+    fn serving_engine(&mut self, engine: &'static str) {
+        self.log.push(format!("engine:{engine}"));
     }
 }
 
@@ -269,8 +274,11 @@ impl DictationExecutor for RecordsUntilStopped {
         _own_voice_only: bool,
         _project: Option<&crate::vocabulary::Directory>,
         _cancel: &CancelToken,
-    ) -> Result<Transcript, DictationError> {
-        Transcript::new(HEARD).map_err(DictationError::Transcription)
+    ) -> Result<Transcribed, DictationError> {
+        Ok(Transcribed {
+            transcript: Transcript::new(HEARD).map_err(DictationError::Transcription)?,
+            engine: "test",
+        })
     }
 }
 

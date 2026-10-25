@@ -191,6 +191,12 @@ impl TranscriptSink for History {
         Ok(())
     }
 
+    fn serving_engine(&mut self, engine: &'static str) {
+        if let Some(entry) = &mut self.live {
+            entry.engine = engine.to_owned();
+        }
+    }
+
     fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
         if let Some(entry) = &mut self.live
             && !entry.complete
@@ -447,16 +453,19 @@ mod tests {
     }
 
     #[test]
-    fn relay_uses_the_same_terminal_history_store() {
+    fn relay_entries_share_the_store_and_name_the_serving_engine() {
         let directory = tempfile::tempdir().unwrap();
         let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "test");
+        let mut sink = History::new(Arc::clone(&saved), "server");
         let mut recording =
             RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
         sink.start(&settings(), HistorySource::Relay);
+        sink.serving_engine("parakeet");
         sink.completed(Utterance::anonymous("from relay")).unwrap();
         sink.recording_finished(&mut recording, Ok(()));
-        assert_eq!(entries(&saved)[0].source, HistorySource::Relay);
+        let entry = &entries(&saved)[0];
+        assert_eq!(entry.source, HistorySource::Relay);
+        assert_eq!(entry.engine, "parakeet");
     }
 
     #[test]

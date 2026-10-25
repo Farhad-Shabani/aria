@@ -67,6 +67,9 @@ pub(crate) trait TranscriptSink {
 
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), Self::Error>;
 
+    /// The engine serving this dictation, once its operation names one.
+    fn serving_engine(&mut self, _engine: &'static str) {}
+
     /// Where the text went, once any did. A sink that types nothing says so.
     fn delivered(&self) -> Option<DeliveryOutcome> {
         None
