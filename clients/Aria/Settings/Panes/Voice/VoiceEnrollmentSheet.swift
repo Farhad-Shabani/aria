@@ -21,7 +21,7 @@ struct VoiceEnrollmentSheet: View {
             case .recording(let taken, let listening): recording(taken: taken, listening: listening)
             }
         }
-        .padding(24)
+        .padding(SettingsMetrics.sheetPadding)
         .frame(width: Self.width)
     }
 

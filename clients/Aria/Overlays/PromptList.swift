@@ -121,7 +121,7 @@ private struct PromptListView: View {
                 }
             }
         }
-        .font(OverlayStyle.font)
+        .font(OverlayStyle.labelFont)
         .monospacedDigit()
         .foregroundStyle(.white)
         .padding(12)

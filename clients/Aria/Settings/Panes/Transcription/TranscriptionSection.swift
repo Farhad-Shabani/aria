@@ -139,7 +139,7 @@ private struct PairServerSheet: View {
                 }
             }
         }
-        .padding(24)
+        .padding(SettingsMetrics.sheetPadding)
         .frame(width: Self.width)
     }
 
