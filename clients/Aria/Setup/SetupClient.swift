@@ -125,6 +125,44 @@ enum SetupClient {
         }
     }
 
+    /// Without a service, the app runs its own daemon, which holds the socket
+    /// the service needs. It stops first and returns if apply fails.
+    @MainActor static func handingOffDaemon<Result>(
+        _ inspection: Aria_Setup_V1_Inspection,
+        stop: () async -> Void,
+        start: () async -> Void,
+        apply: () async throws -> Result
+    ) async throws -> Result {
+        let stopsDaemon = inspection.service.job == .absent
+        if stopsDaemon { await stop() }
+        do {
+            return try await apply()
+        } catch {
+            if stopsDaemon { await start() }
+            throw error
+        }
+    }
+
+    static func stopDaemonBeforeApply() async {
+        do {
+            try await DaemonClient().stop()
+        } catch {
+            log.error("Daemon not stopped before apply: \(String(describing: error), privacy: .private)")
+            return
+        }
+        await awaitDaemonSocketClosed()
+    }
+
+    static func startDaemonAfterFailedApply() async {
+        do {
+            // A new Task, so a cancelled apply cannot cut short the
+            // agent-load wait inside `start`.
+            try await Task { try await DaemonClient().start() }.value
+        } catch {
+            log.error("Daemon not restarted after apply: \(String(describing: error), privacy: .private)")
+        }
+    }
+
     private static func failure(status: Int32, stderr: Data) -> String {
         let message = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "aria setup exited with \(status)" : message
@@ -136,24 +174,8 @@ extension SetupState.Effects {
         .init(
             inspect: { try await SetupClient.inspect() },
             apply: { request, onEvent in try await SetupClient.apply(request, onEvent: onEvent) },
-            stopDaemon: {
-                do {
-                    try await DaemonClient().stop()
-                } catch {
-                    log.error("Daemon not stopped before apply: \(String(describing: error), privacy: .private)")
-                    return
-                }
-                await SetupClient.awaitDaemonSocketClosed()
-            },
-            startDaemon: {
-                do {
-                    // A new Task, so a cancelled apply cannot cut short the
-                    // agent-load wait inside `start`.
-                    try await Task { try await DaemonClient().start() }.value
-                } catch {
-                    log.error("Daemon not restarted after apply: \(String(describing: error), privacy: .private)")
-                }
-            },
+            stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
+            startDaemon: { await SetupClient.startDaemonAfterFailedApply() },
             hotkeyArmed: { await HealthClient.serving(HealthClient.hotkeyService) },
             openAccessibility: {
                 let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"

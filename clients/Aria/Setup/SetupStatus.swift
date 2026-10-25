@@ -3,20 +3,24 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupStatus")
 
-/// The setup steps dictation cannot work without. Optional ones never
-/// raise the Settings badge.
+/// The last setup inspection, as Settings shows it. Only steps dictation
+/// needs raise the badge.
 @MainActor
 final class SetupStatus: ObservableObject {
     @Published private(set) var required: [Aria_Setup_V1_Missing] = []
     /// Optimistic until inspected: a failed inspection should not lock out
     /// voice setup, and enrolling reports a missing model itself.
     @Published private(set) var speakerModelOnDisk = true
+    @Published private(set) var server: Aria_Setup_V1_PairedServer?
+    @Published private(set) var transcription = TranscriptionLocation.thisMac
 
     var reason: String? { required.first.map(Self.explanation) }
 
     func show(_ inspection: Aria_Setup_V1_Inspection) {
         required = Self.required(in: inspection)
         speakerModelOnDisk = Self.speakerModelOnDisk(in: inspection)
+        server = inspection.hasServer ? inspection.server : nil
+        transcription = inspection.defaults.stt == Self.serverEngine ? .server : .thisMac
     }
 
     func refresh() async {
@@ -37,6 +41,8 @@ final class SetupStatus: ObservableObject {
             }
         }
     }
+
+    static let serverEngine = "server"
 
     /// Setup's name for the embedding model an enrollment needs.
     static let speakerModel = "speaker"

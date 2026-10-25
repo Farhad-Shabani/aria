@@ -340,7 +340,11 @@ impl ClientIdentity {
         Ok(fingerprint(&certificate))
     }
 
-    pub(crate) fn pinned_server(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
+    pub(super) fn paired_endpoint(&self) -> Option<&ServerEndpoint> {
+        self.stored.server.as_ref().map(|server| &server.endpoint)
+    }
+
+    pub(super) fn pinned_server(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
         self.stored
             .server
             .as_ref()

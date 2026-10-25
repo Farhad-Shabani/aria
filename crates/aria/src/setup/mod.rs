@@ -14,12 +14,15 @@
 
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::config::{self, ConfigError, FileConfig};
-use crate::daemon::{DaemonSession, EnrollmentRequest, SpeakerName, StopMode, guided};
+use crate::config::{self, ConfigError, FileConfig, ServerEndpoint};
+use crate::daemon::{
+    DaemonSession, EnrollmentRequest, InferencePaths, PairedServer, SpeakerName, StopMode, guided,
+};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
@@ -86,8 +89,17 @@ pub struct Inspection {
     pub grant: Grant,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
+    pairing: Pairing,
+    configured_server: Option<String>,
     home: PathBuf,
     exe: PathBuf,
+}
+
+enum Pairing {
+    Unpaired,
+    Paired(PairedServer),
+    /// The pin file can't be read; pairing again needs it removed.
+    Unusable,
 }
 
 /// One model setup can fetch, and whether it already is on disk.
@@ -237,6 +249,14 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     let config_path = config_path()?;
     let host = Host::probe();
     let file = config_file::read(&config_path)?;
+    let pairing = match crate::daemon::paired_server(&home) {
+        Ok(Some(paired)) => Pairing::Paired(paired),
+        Ok(None) => Pairing::Unpaired,
+        Err(error) => {
+            tracing::warn!(error = %error_chain(&error), "inference pairing is unusable");
+            Pairing::Unusable
+        }
+    };
     let existing = Existing::of(&file);
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.status())
@@ -249,7 +269,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     Ok(Inspection {
         config_path,
         macos: host.macos,
-        stt: stt_choices(&file, &home, &host),
+        stt: stt_choices(&file, matches!(pairing, Pairing::Paired(_)), &host),
         tts: choices::<Tts>(existing.tts.as_deref(), &host),
         chat: choices::<Chat>(existing.chat.as_deref(), &host),
         models: model_states(&home, &file),
@@ -257,6 +277,8 @@ pub fn inspect() -> Result<Inspection, SetupError> {
             .iter()
             .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
+        pairing,
+        configured_server: file.transcription.server.clone(),
         existing,
         service,
         grant,
@@ -286,6 +308,34 @@ impl Inspection {
         })
     }
 
+    /// `aria remote pair` replaces the pin but not the config's copy of its
+    /// address.
+    fn server_address_is_stale(&self) -> bool {
+        let Pairing::Paired(paired) = &self.pairing else {
+            return false;
+        };
+        self.existing.stt.as_deref() == Some(config::backend::SERVER)
+            && self.configured_server != Some(paired.endpoint.to_string())
+    }
+
+    /// `None` for a local engine.
+    fn server_endpoint(
+        &self,
+        selections: &Selections,
+    ) -> Result<Option<&ServerEndpoint>, SetupError> {
+        let wants_server = selections.stt == config::backend::SERVER;
+        if !wants_server {
+            return Ok(None);
+        }
+        match &self.pairing {
+            Pairing::Paired(paired) => Ok(Some(&paired.endpoint)),
+            Pairing::Unpaired => Err(SetupError::ServerNotPaired),
+            Pairing::Unusable => Err(SetupError::PairingUnusable {
+                path: InferencePaths::in_home(&self.home).client_identity(),
+            }),
+        }
+    }
+
     /// What a run still has to put in place; empty once setup is done.
     /// A daemon that is down or still loading says nothing about the
     /// grant, so only a serving one can be missing it.
@@ -297,7 +347,7 @@ impl Inspection {
             && existing.chat.is_some()
             && existing.wake.is_some()
             && existing.hotkey.is_some();
-        if !configured {
+        if !configured || self.server_address_is_stale() {
             missing.push(Missing::Config);
         }
         if self.wakeword_bundled && !self.wakeword_installed {
@@ -414,12 +464,14 @@ pub fn apply(
             name: unknown.clone(),
         });
     }
+    let endpoint = inspection.server_endpoint(selections)?;
+    let _lock = lock_setup(&inspection.config_path)?;
 
     observe(SetupEvent::Started(Step::Config))?;
     // Staged here so a bad config fails before any download. Staged again
     // after the models, from a fresh read, so a failed download leaves the
     // config untouched and the write keeps edits made meanwhile.
-    selections.prepare(&inspection.config_path)?;
+    selections.prepare(&inspection.config_path, endpoint)?;
 
     let models_dir = config::models_dir(&inspection.home);
     observe(SetupEvent::Started(Step::Wakeword))?;
@@ -450,7 +502,9 @@ pub fn apply(
         };
         models.push((model.name, outcome));
     }
-    let config = selections.prepare(&inspection.config_path)?.commit()?;
+    let config = selections
+        .prepare(&inspection.config_path, endpoint)?
+        .commit()?;
 
     observe(SetupEvent::Started(Step::Service))?;
     let legacy_agent =
@@ -501,6 +555,8 @@ pub fn run(
     } else {
         ask_selections(&mut prompts, &inspection)?
     };
+    // Checked before the download questions, so none are asked for nothing.
+    inspection.server_endpoint(&selections)?;
 
     let mut downloads = Vec::new();
     if !options.skip_models {
@@ -726,6 +782,31 @@ pub fn hotkey_grant(socket: &Path, wait: Duration) -> Grant {
 /// none ship beside the binary. A file already there is left alone: the
 /// classifier path is the one a user retrains, and a rerun of setup must
 /// not overwrite their model.
+/// Two runs would race on the config and the service.
+fn lock_setup(config_path: &Path) -> Result<fs::File, SetupError> {
+    let path = config_path.with_file_name("setup.lock");
+    let io_error = |source| SetupError::Io {
+        action: "lock",
+        path: path.clone(),
+        source,
+    };
+    if let Some(directory) = path.parent() {
+        fs::create_dir_all(directory).map_err(io_error)?;
+    }
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(io_error)?;
+    lock.try_lock().map_err(|error| match error {
+        fs::TryLockError::WouldBlock => SetupError::Busy,
+        fs::TryLockError::Error(source) => io_error(source),
+    })?;
+    Ok(lock)
+}
+
 fn install_wakeword(exe: &Path, dest: &Path) -> Result<Option<PathBuf>, SetupError> {
     let Some(source) = bundled_wakeword_dir(exe) else {
         return Ok(None);
@@ -787,6 +868,15 @@ pub enum SetupError {
 
     #[error("setup knows no model named {name}")]
     UnknownModel { name: String },
+
+    #[error("no inference server is paired; run `aria remote pair` first")]
+    ServerNotPaired,
+
+    #[error("the inference pairing in {} is unusable; remove it, then pair again", path.display())]
+    PairingUnusable { path: PathBuf },
+
+    #[error("another setup is already running")]
+    Busy,
 
     #[error("{name} is in use by `{section}` in config.yaml; change that section first")]
     ModelInUse {
@@ -1030,6 +1120,8 @@ mod tests {
             models: model_states(&home, &FileConfig::default()),
             wakeword_installed: false,
             wakeword_bundled: true,
+            pairing: Pairing::Unpaired,
+            configured_server: None,
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
@@ -1318,6 +1410,66 @@ mod tests {
 
         assert!(refused("gpt"));
         assert!(refused("qwen"), "wanted only by an engine nobody chose");
+    }
+
+    #[test]
+    fn apply_refuses_the_server_until_one_is_usably_paired() {
+        let home = tempfile::tempdir().unwrap();
+        let mut inspection = writable_inspection(home.path());
+        let mut selections = Selections::defaults(&inspection);
+        selections.stt = "server".to_owned();
+
+        let result = apply(&selections, &no_downloads(), &inspection, &mut |_| Ok(()));
+        assert!(matches!(result, Err(SetupError::ServerNotPaired)));
+
+        inspection.pairing = Pairing::Unusable;
+        let result = apply(&selections, &no_downloads(), &inspection, &mut |_| Ok(()));
+        assert!(matches!(result, Err(SetupError::PairingUnusable { .. })));
+
+        inspection.pairing = paired("https://box.test:9851");
+        let mut steps = Vec::new();
+        let _ = apply(&selections, &no_downloads(), &inspection, &mut |event| {
+            steps.push(event);
+            Err(SetupError::Invalid("stop after the config check"))
+        });
+        assert_eq!(steps, [SetupEvent::Started(Step::Config)]);
+    }
+
+    #[test]
+    fn a_second_apply_is_refused_while_one_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let inspection = writable_inspection(home.path());
+        let _running = lock_setup(&inspection.config_path).unwrap();
+
+        let result = apply(
+            &Selections::defaults(&inspection),
+            &no_downloads(),
+            &inspection,
+            &mut |_| Ok(()),
+        );
+        assert!(matches!(result, Err(SetupError::Busy)));
+    }
+
+    #[test]
+    fn a_config_naming_another_server_than_the_pin_needs_writing() {
+        let mut inspection = inspection(Existing {
+            stt: Some("server".to_owned()),
+            ..configured()
+        });
+        inspection.pairing = paired("https://new.test:9851");
+
+        inspection.configured_server = Some("https://old.test:9851".to_owned());
+        assert!(inspection.missing().contains(&Missing::Config));
+
+        inspection.configured_server = Some("https://new.test:9851".to_owned());
+        assert!(!inspection.missing().contains(&Missing::Config));
+    }
+
+    fn paired(endpoint: &str) -> Pairing {
+        Pairing::Paired(PairedServer {
+            endpoint: ServerEndpoint::parse(endpoint).unwrap(),
+            client_fingerprint: "ab".to_owned(),
+        })
     }
 
     /// The observer is the app watching; when it is gone, the run stops

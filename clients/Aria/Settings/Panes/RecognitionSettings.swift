@@ -3,10 +3,12 @@ import SwiftUI
 struct RecognitionSettings: View {
     let preferences: DaemonPreferences
     @ObservedObject var voices: VoiceProfiles
+    let serverTranscription: ServerTranscription
     let setup: SetupStatus
 
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
+            TranscriptionSection(server: serverTranscription, setup: setup)
             Section {
                 language(editor)
             }

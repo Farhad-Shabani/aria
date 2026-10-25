@@ -495,11 +495,37 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
     set {_uniqueStorage()._missing = newValue}
   }
 
+  /// Unset when nothing is paired.
+  public var server: Aria_Setup_V1_PairedServer {
+    get {_storage._server ?? Aria_Setup_V1_PairedServer()}
+    set {_uniqueStorage()._server = newValue}
+  }
+  /// Returns true if `server` has been explicitly set.
+  public var hasServer: Bool {_storage._server != nil}
+  /// Clears the value of `server`. Subsequent reads from it will return its default value.
+  public mutating func clearServer() {_uniqueStorage()._server = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+/// Choosing the server engine writes this endpoint to the config.
+public nonisolated struct Aria_Setup_V1_PairedServer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var endpoint: String = String()
+
+  /// Hex, the form `aria remote revoke` takes on the server.
+  public var clientFingerprint: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 public nonisolated struct Aria_Setup_V1_Engine: Sendable {
@@ -871,7 +897,7 @@ nonisolated extension Aria_Setup_V1_DaemonState: SwiftProtobuf._ProtoNameProvidi
 
 nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Inspection"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{1}macos\0\u{1}defaults\0\u{1}stt\0\u{1}tts\0\u{1}chat\0\u{1}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{1}macos\0\u{1}defaults\0\u{1}stt\0\u{1}tts\0\u{1}chat\0\u{1}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0")
 
   fileprivate class _StorageClass {
     var _configPath: String = String()
@@ -885,6 +911,7 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
     var _service: Aria_Setup_V1_ServiceStatus? = nil
     var _grant: Aria_Setup_V1_Grant = .unspecified
     var _missing: [Aria_Setup_V1_Missing] = []
+    var _server: Aria_Setup_V1_PairedServer? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -906,6 +933,7 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       _service = source._service
       _grant = source._grant
       _missing = source._missing
+      _server = source._server
     }
   }
 
@@ -935,6 +963,7 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._service) }()
         case 10: try { try decoder.decodeSingularEnumField(value: &_storage._grant) }()
         case 11: try { try decoder.decodeRepeatedMessageField(value: &_storage._missing) }()
+        case 12: try { try decoder.decodeSingularMessageField(value: &_storage._server) }()
         default: break
         }
       }
@@ -980,6 +1009,9 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       if !_storage._missing.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._missing, fieldNumber: 11)
       }
+      try { if let v = _storage._server {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1000,10 +1032,46 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         if _storage._service != rhs_storage._service {return false}
         if _storage._grant != rhs_storage._grant {return false}
         if _storage._missing != rhs_storage._missing {return false}
+        if _storage._server != rhs_storage._server {return false}
         return true
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Setup_V1_PairedServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PairedServer"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}endpoint\0\u{3}client_fingerprint\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.endpoint) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.clientFingerprint) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.endpoint.isEmpty {
+      try visitor.visitSingularStringField(value: self.endpoint, fieldNumber: 1)
+    }
+    if !self.clientFingerprint.isEmpty {
+      try visitor.visitSingularStringField(value: self.clientFingerprint, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Setup_V1_PairedServer, rhs: Aria_Setup_V1_PairedServer) -> Bool {
+    if lhs.endpoint != rhs.endpoint {return false}
+    if lhs.clientFingerprint != rhs.clientFingerprint {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

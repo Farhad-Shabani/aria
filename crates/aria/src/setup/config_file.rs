@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
 
-use crate::config::{self, FileConfig};
+use crate::config::{self, FileConfig, ServerEndpoint, backend};
 
 use super::SetupError;
 
@@ -69,13 +69,17 @@ pub(super) struct PreparedConfig {
 }
 
 impl Selections {
-    pub(super) fn prepare(&self, path: &Path) -> Result<PreparedConfig, SetupError> {
-        prepare_rewrite(path, |file| self.apply_to(file))
+    pub(super) fn prepare(
+        &self,
+        path: &Path,
+        paired_server: Option<&ServerEndpoint>,
+    ) -> Result<PreparedConfig, SetupError> {
+        prepare_rewrite(path, |file| self.apply_to(file, paired_server))
     }
 
     /// Writes the answers into `file`. Switching a section's engine clears its
     /// engine-specific keys, so the new engine never gets the old model path.
-    pub(super) fn apply_to(&self, file: &mut FileConfig) {
+    pub(super) fn apply_to(&self, file: &mut FileConfig, paired_server: Option<&ServerEndpoint>) {
         if config::transcription_engine(file) != self.stt {
             file.transcription.model = None;
             file.transcription.device = None;
@@ -86,6 +90,11 @@ impl Selections {
             file.tts.model = None;
             file.tts.voices = None;
             file.tts.tokenizer = None;
+        }
+        if self.stt == backend::SERVER
+            && let Some(endpoint) = paired_server
+        {
+            file.transcription.server = Some(endpoint.to_string());
         }
         file.transcription.backend = Some(self.stt.clone());
         file.tts.backend = Some(self.tts.clone());
@@ -215,7 +224,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".aria/config.yaml");
 
-        let first = selections().prepare(&path).unwrap().commit().unwrap();
+        let first = selections().prepare(&path, None).unwrap().commit().unwrap();
         let read = Existing::of(&read(&path).unwrap());
 
         assert_eq!(first, ConfigWrite::Written { backup: None });
@@ -232,20 +241,21 @@ mod tests {
     }
 
     #[test]
-    fn server_selection_keeps_its_endpoint_and_local_selection_clears_it() {
+    fn server_selection_takes_the_paired_endpoint_and_local_selection_clears_it() {
         let mut file: FileConfig = serde_saphyr::from_str(
             "transcription: {backend: server, server: https://example.test:9851}",
         )
         .unwrap();
         let mut chosen = selections();
         chosen.stt = "server".to_owned();
-        chosen.apply_to(&mut file);
+        let paired = ServerEndpoint::parse("https://paired.test:9851").unwrap();
+        chosen.apply_to(&mut file, Some(&paired));
         assert_eq!(
             file.transcription.server.as_deref(),
-            Some("https://example.test:9851")
+            Some("https://paired.test:9851")
         );
         chosen.stt = "parakeet".to_owned();
-        chosen.apply_to(&mut file);
+        chosen.apply_to(&mut file, Some(&paired));
         assert_eq!(file.transcription.server, None);
     }
 
@@ -260,7 +270,7 @@ mod tests {
         )
         .unwrap();
 
-        selections().prepare(&path).unwrap().commit().unwrap();
+        selections().prepare(&path, None).unwrap().commit().unwrap();
         let file = read(&path).unwrap();
 
         assert_eq!(file.transcription.model, None, "parakeet replaced whisper");
@@ -278,7 +288,11 @@ mod tests {
             stt: config::backend::DEFAULT.to_owned(),
             ..selections()
         };
-        default_engine.prepare(&path).unwrap().commit().unwrap();
+        default_engine
+            .prepare(&path, None)
+            .unwrap()
+            .commit()
+            .unwrap();
 
         assert_eq!(
             read(&path).unwrap().transcription.model.as_deref(),
@@ -290,10 +304,10 @@ mod tests {
     fn an_unchanged_rerun_touches_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        selections().prepare(&path).unwrap().commit().unwrap();
+        selections().prepare(&path, None).unwrap().commit().unwrap();
         let written = fs::metadata(&path).unwrap().modified().unwrap();
 
-        let again = selections().prepare(&path).unwrap().commit().unwrap();
+        let again = selections().prepare(&path, None).unwrap().commit().unwrap();
 
         assert_eq!(again, ConfigWrite::Unchanged);
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), written);
@@ -307,7 +321,7 @@ mod tests {
         let hand_written = "tts:\n  backend: system\n  rate: 1.5\n";
         fs::write(&path, hand_written).unwrap();
 
-        let write = selections().prepare(&path).unwrap().commit().unwrap();
+        let write = selections().prepare(&path, None).unwrap().commit().unwrap();
 
         // The reported path is the resolved one, which on macOS means
         // /private/var rather than the /var symlink a tempdir hands out.
@@ -331,11 +345,11 @@ mod tests {
         let path = dir.path().join("config.yaml");
         let hand_written = "# mine\ntts:\n  backend: system\n";
         fs::write(&path, hand_written).unwrap();
-        selections().prepare(&path).unwrap().commit().unwrap();
+        selections().prepare(&path, None).unwrap().commit().unwrap();
 
         let mut second = selections();
         second.wake = false;
-        second.prepare(&path).unwrap().commit().unwrap();
+        second.prepare(&path, None).unwrap().commit().unwrap();
 
         assert_eq!(
             fs::read_to_string(path.with_extension("yaml.bak")).unwrap(),
@@ -371,7 +385,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
 
-        selections().prepare(&path).unwrap().commit().unwrap();
+        selections().prepare(&path, None).unwrap().commit().unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, CONFIG_FILE_MODE, "{mode:o}");
@@ -386,7 +400,7 @@ mod tests {
         let link = dir.path().join("config.yaml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        selections().prepare(&link).unwrap().commit().unwrap();
+        selections().prepare(&link, None).unwrap().commit().unwrap();
 
         assert!(link.symlink_metadata().unwrap().is_symlink(), "link stands");
         assert!(

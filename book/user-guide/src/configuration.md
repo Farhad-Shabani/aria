@@ -14,7 +14,8 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   and captions. It also reopens setup.
 - **Dictation** sets output, delivery, muting while recording, and the
   silence that ends dictation.
-- **Recognition** sets the language, voice filtering, and project vocabulary.
+- **Recognition** sets where transcription runs, the language, voice
+  filtering, and project vocabulary.
 - **Shortcuts** chooses right Option or Fn for the dictation hotkey, and sets
   the Ask shortcut.
 - **Prompts** lists Markdown files that say what to make of what you say,
@@ -61,28 +62,27 @@ aria remote invite \
   --endpoint https://your-server:9851
 ```
 
-Keep the invitation private; it expires after 60 seconds and works once.
-On your device, run `aria remote pair`, paste it, then press Ctrl-D.
+Keep the invitation private; it works once, within 60 seconds. Copy it,
+then pair:
 
-Replace the `transcription` section in your device's `~/.aria/config.yaml`:
+- **On a Mac:** in **Settings → Recognition**, click **Pair…**, then
+  **Paste and Pair**. Set **Runs on** to **My server**.
+- **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
+  Then run `aria setup` and choose **Paired inference server**.
 
-```yaml
-transcription:
-  backend: server
-  server: https://your-server:9851
-```
-
-[Restart the device's service](#apply-changes). Dictation, recorded questions,
-phone relay and history retries use the server. Streaming and previews depend
-on its engine; connection failures stop the request without switching locally.
+Either way, Aria restarts its service to apply the change. Dictation, recorded
+questions, phone relay and history retries then use the server. Streaming and
+previews depend on its engine. If the connection fails, the request stops
+rather than switching to a local engine.
 
 Speech output, wake words and voice profiles stay on the device. System-audio
-listening needs a separate local `listen.backend`. To return to local
-transcription, select a local backend and remove `transcription.server`.
+listening needs its own local `listen.backend`. To go back, set **Runs on** to
+**This Mac**, or choose a local engine in `aria setup`.
 
-To block a device, run `aria remote revoke FINGERPRINT` on the server,
-using the fingerprint shown after pairing. If it reports a storage error,
-fix it and revoke again before restarting the server.
+To block a device, run `aria remote revoke FINGERPRINT` on the server.
+`aria remote pair` prints the fingerprint; in Settings, Control-click the
+**This Mac:** line and choose **Copy Fingerprint**. If revoking reports a
+storage error, fix it and revoke again before restarting the server.
 
 ## Apply changes
 
