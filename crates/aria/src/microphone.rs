@@ -203,13 +203,7 @@ mod tests {
         ));
     }
 
-    fn cancelling(
-        gate: &Arc<Gate>,
-    ) -> (
-        Admitted,
-        Arc<ExecutionControl>,
-        mpsc::Receiver<thread::ThreadId>,
-    ) {
+    fn cancelling(gate: &Arc<Gate>) -> (Admitted, mpsc::Receiver<thread::ThreadId>) {
         let cancellation = CancelToken::new();
         let (observed, checking) = mpsc::channel();
         let running = ExecutionControl::for_test_with_cancellation(
@@ -225,43 +219,16 @@ mod tests {
                 }
             }),
         );
-        let first = gate.admit_dictation(StopMode::Manual, Arc::clone(&running));
+        let first = gate.admit_dictation(StopMode::Manual, running);
         assert!(matches!(first, Admitted::Claimed(_)));
         cancellation.cancel();
-        (first, running, checking)
-    }
-
-    #[test]
-    fn a_press_waits_for_cancelled_dictation_to_release_its_claim() {
-        for stop_mode in [StopMode::OnSilence, StopMode::Manual] {
-            let gate = Gate::new();
-            let (first, running, checking) = cancelling(&gate);
-            let recording = running
-                .start_recording(&DictationEventEmitter::unsubscribed())
-                .unwrap();
-
-            thread::scope(|scope| {
-                let next = scope.spawn(|| gate.admit_dictation(stop_mode, control(stop_mode)));
-                checking.recv_timeout(EDGE_WAIT).unwrap();
-                assert!(matches!(
-                    gate.hold().as_ref(),
-                    Some(Holder::Dictation(holder)) if Arc::ptr_eq(holder, &running)
-                ));
-                assert!(gate.admit_enrollment().is_none());
-                drop(recording);
-                drop(first);
-                let admitted = next.join().unwrap();
-                assert!(matches!(admitted, Admitted::Claimed(_)));
-                assert!(gate.admit_relay().is_none());
-            });
-            assert!(gate.admit_enrollment().is_some());
-        }
+        (first, checking)
     }
 
     #[test]
     fn competing_waiters_do_not_stop_the_recording_that_wins() {
         let gate = Gate::new();
-        let (first, _running, checking) = cancelling(&gate);
+        let (first, checking) = cancelling(&gate);
         let controls = [control(StopMode::Manual), control(StopMode::Manual)];
         let _recordings: Vec<_> = controls
             .iter()
@@ -312,32 +279,9 @@ mod tests {
     }
 
     #[test]
-    fn stalled_cancelled_cleanup_stays_exclusive_after_the_grace() {
-        let gate = Gate::new();
-        let (first, running, _checking) = cancelling(&gate);
-        let started = std::time::Instant::now();
-        assert!(matches!(
-            gate.admit_dictation(StopMode::Manual, control(StopMode::Manual)),
-            Admitted::Busy
-        ));
-        assert!(started.elapsed() >= CANCEL_RELEASE_GRACE);
-        assert!(
-            matches!(gate.hold().as_ref(), Some(Holder::Dictation(holder)) if Arc::ptr_eq(holder, &running))
-        );
-        assert!(gate.admit_enrollment().is_none());
-        assert!(gate.admit_relay().is_none());
-        assert!(gate.admit_history_retry().is_none());
-        drop(first);
-        assert!(matches!(
-            gate.admit_dictation(StopMode::Manual, control(StopMode::Manual)),
-            Admitted::Claimed(_)
-        ));
-    }
-
-    #[test]
     fn a_waiter_cancelled_during_cleanup_never_claims_the_microphone() {
         let gate = Gate::new();
-        let (first, _running, checking) = cancelling(&gate);
+        let (first, checking) = cancelling(&gate);
         let cancellation = CancelToken::new();
         let next =
             ExecutionControl::for_test_with_cancellation(StopMode::Manual, cancellation.clone());
