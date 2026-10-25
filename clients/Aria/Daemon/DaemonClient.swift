@@ -27,8 +27,7 @@ enum DaemonClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .ariaBinaryMissing(let path): return "aria binary not found at \(path)"
-        case .agentDisabled:
-            return "Aria is off in the background. Turn it on in System Settings → General → Login Items."
+        case .agentDisabled: return "the Login Items background item is off"
         case .commandFailed(let message): return message
         }
     }
@@ -118,8 +117,8 @@ struct DaemonClient: DaemonControlling {
         return bin
     }
 
-    static func setPhonePairing(_ enabled: Bool) throws {
-        try run(try ariaBinary(), ["phone", enabled ? "enable" : "disable"])
+    static func setPhonePairing(_ enabled: Bool) async throws {
+        try await run(try ariaBinary(), ["phone", enabled ? "enable" : "disable"])
     }
 
     /// Removes the service older setups installed, once, since it shares the
@@ -130,7 +129,7 @@ struct DaemonClient: DaemonControlling {
         guard Self.daemonBinaryOverride() == nil, !defaults.bool(forKey: Self.legacyRetiredKey) else { return }
         if FileManager.default.fileExists(atPath: Self.legacyServicePlistURL.path) {
             // The helper's `service uninstall` boots the job out and deletes its plist.
-            try Self.run(try Self.ariaBinary(), ["service", "uninstall"])
+            try await Self.run(try Self.ariaBinary(), ["service", "uninstall"])
         }
         defaults.set(true, forKey: Self.legacyRetiredKey)
     }
@@ -152,13 +151,13 @@ struct DaemonClient: DaemonControlling {
     func start() async throws {
         let method = try Self.startMethod(
             agentStatus: Self.agent.status,
-            jobLoaded: Self.agentLoaded(),
+            jobLoaded: await Self.agentLoaded(),
             override: Self.daemonBinaryOverride()
         )
         switch method {
         case .kickstart:
             log.notice("Starting the daemon: kickstart")
-            try Self.kickstartAgent()
+            try await Self.kickstartAgent()
         case .register:
             log.notice("Starting the daemon: register")
             do {
@@ -169,7 +168,7 @@ struct DaemonClient: DaemonControlling {
                 )
             }
             await Self.awaitAgentLoaded()
-            try Self.kickstartAgent()
+            try await Self.kickstartAgent()
         case .spawn(let bin):
             log.notice("Starting the daemon: spawn")
             guard FileManager.default.isExecutableFile(atPath: bin.path) else {
@@ -181,8 +180,8 @@ struct DaemonClient: DaemonControlling {
 
     /// A no-op for a job that already has its process, so a launch race with
     /// the agent costs nothing.
-    private static func kickstartAgent() throws {
-        try run(launchctl, ["kickstart", agentTarget])
+    private static func kickstartAgent() async throws {
+        try await run(launchctl, ["kickstart", agentTarget])
     }
 
     /// `register()` returns before launchd loads the job, and a kickstart
@@ -190,40 +189,35 @@ struct DaemonClient: DaemonControlling {
     /// the kickstart to report.
     private static func awaitAgentLoaded() async {
         for _ in 0..<agentLoadProbes {
-            if agentLoaded() { return }
+            if await agentLoaded() { return }
             try? await Task.sleep(for: agentLoadPoll)
         }
     }
 
-    private static func agentLoaded() -> Bool {
-        (try? run(launchctl, ["print", agentTarget])) != nil
+    private static func agentLoaded() async -> Bool {
+        (try? await run(launchctl, ["print", agentTarget])) != nil
     }
 
-    private static func run(_ executable: URL, _ arguments: [String]) throws {
+    private static func run(_ executable: URL, _ arguments: [String]) async throws {
         let name = ([executable.lastPathComponent] + arguments.prefix(1)).joined(separator: " ")
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        let stderr = Pipe()
-        process.standardError = stderr
+        let output: ChildProcess.Output
         do {
-            try process.run()
+            output = try await ChildProcess.run(executable, arguments)
         } catch {
-            throw DaemonClientError.commandFailed(
-                "\(name) failed to launch: \(error.localizedDescription)"
-            )
+            throw launchFailed(name, error)
         }
-        let output = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let message = String(decoding: output, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw DaemonClientError.commandFailed(
-                "\(name) exited with \(process.terminationStatus): \(message)"
-            )
+        guard output.status == 0 else {
+            throw exitFailed(name, status: output.status, stderr: output.stderr)
         }
+    }
+
+    private static func launchFailed(_ name: String, _ error: any Error) -> DaemonClientError {
+        .commandFailed("\(name) failed to launch: \(error.localizedDescription)")
+    }
+
+    private static func exitFailed(_ name: String, status: Int32, stderr: Data) -> DaemonClientError {
+        let message = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return .commandFailed("\(name) exited with \(status): \(message)")
     }
 
     private static func spawnDaemon(at bin: URL) throws {
@@ -237,32 +231,70 @@ struct DaemonClient: DaemonControlling {
         do {
             try process.run()
         } catch {
-            throw DaemonClientError.commandFailed(
-                "aria daemon failed to launch: \(error.localizedDescription)"
-            )
+            throw launchFailed("aria daemon", error)
         }
     }
 
-    /// The lock-file fallback checks the lock and executable before signaling.
-    /// These checks reduce stale-PID risk but do not make signaling atomic.
     func stop() async throws {
-        try Self.signalStop()
-    }
-
-    /// Synchronous so the app can call it while terminating, when no task
-    /// gets to resume.
-    static func signalStop() throws {
-        // The agent's daemon reads the login shell's PATH before it takes
-        // its lock; launchd reaches it then too. A job with no process
-        // fails here and falls to the lock, which reports why.
-        if daemonBinaryOverride() == nil {
+        if Self.stopsThroughAgent {
             do {
-                try run(launchctl, ["kill", "SIGTERM", agentTarget])
+                try await Self.run(Self.launchctl, Self.killAgentArguments)
                 return
             } catch {
-                log.notice("launchctl kill failed, trying the lock: \(error.localizedDescription, privacy: .private)")
+                Self.logKillFallback(error)
             }
         }
+        try Self.signalLockHolder()
+    }
+
+    /// `stop()` that blocks the calling thread, for the one caller that
+    /// cannot await: `applicationWillTerminate`, where no task gets to resume.
+    static func signalStop() throws {
+        if stopsThroughAgent {
+            do {
+                try killAgentBlocking()
+                return
+            } catch {
+                logKillFallback(error)
+            }
+        }
+        try signalLockHolder()
+    }
+
+    /// The agent's daemon reads the login shell's PATH before it takes its
+    /// lock; launchd reaches it then too. A job with no process fails the
+    /// kill and falls to the lock, which reports why.
+    private static var stopsThroughAgent: Bool { daemonBinaryOverride() == nil }
+
+    private static func logKillFallback(_ error: any Error) {
+        log.notice("launchctl kill failed, trying the lock: \(error.localizedDescription, privacy: .private)")
+    }
+
+    private static var killAgentArguments: [String] { ["kill", "SIGTERM", agentTarget] }
+
+    private static func killAgentBlocking() throws {
+        let process = Process()
+        process.executableURL = launchctl
+        process.arguments = killAgentArguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        let stderr = Pipe()
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            throw launchFailed("launchctl kill", error)
+        }
+        let errors = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw exitFailed("launchctl kill", status: process.terminationStatus, stderr: errors)
+        }
+    }
+
+    /// Checks the lock and executable before signaling. These checks reduce
+    /// stale-PID risk but do not make signaling atomic.
+    private static func signalLockHolder() throws {
         let lock = RuntimeFiles.daemonLockURL
         let pid = try Self.heldLockPid(lock)
         guard Self.isAriaProcess(pid) else {

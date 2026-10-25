@@ -8,10 +8,7 @@ final class PhonePairingTests: XCTestCase {
     func test_status_tellsRelayOffFromDaemonOffFromTheRest() {
         XCTAssertEqual(PhonePairing.status(for: RPCError(code: .unimplemented, message: "")), .relayOff)
         XCTAssertEqual(PhonePairing.status(for: RPCError(code: .unavailable, message: "")), .daemonOff)
-        struct Boom: LocalizedError {
-            var errorDescription: String? { "boom" }
-        }
-        XCTAssertEqual(PhonePairing.status(for: Boom()), .failed("boom"))
+        XCTAssertEqual(PhonePairing.status(for: RPCError(code: .internalError, message: "raw detail")), .failed)
     }
 
     func test_nextPoll_waitsForExpiryWhenSooner_andNeverSpins() {
@@ -65,7 +62,7 @@ final class PhonePairingTests: XCTestCase {
 
         await pairing.turn(on: true)
 
-        XCTAssertEqual(pairing.actionError, "Phone pairing could not be turned on: read-only")
+        XCTAssertEqual(pairing.actionError, "Phone pairing could not be turned on.")
         XCTAssertFalse(pairing.isOn)
         XCTAssertEqual(pairing.status, .daemonOff)
     }

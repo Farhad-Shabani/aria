@@ -55,6 +55,8 @@ final class DaemonPreferences: ObservableObject {
                 await push()
             }
         } catch {
+            // Closing the window cancels its sync; the next one reports the daemon.
+            guard !Task.isCancelled else { return }
             log.error("Sync failed: \(String(describing: error), privacy: .private)")
             lastError = error
         }

@@ -25,31 +25,17 @@ enum SetupClientError: LocalizedError, Equatable {
 /// service it installs and the Accessibility grant name one executable.
 enum SetupClient {
     static func inspect() async throws -> Aria_Setup_V1_Inspection {
-        let bin = try DaemonClient.ariaBinary()
-        return try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = bin
-            process.arguments = ["setup", "inspect"]
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = stdout
-            process.standardError = stderr
-            try process.run()
-            let output = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errors = stderr.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw SetupClientError.failed(failure(status: process.terminationStatus, stderr: errors))
-            }
-            var reader = SetupFrames.Reader()
-            let frames = try reader.push(output)
-            try reader.finish()
-            guard let frame = frames.first else {
-                throw SetupClientError.failed(failure(status: process.terminationStatus, stderr: errors))
-            }
-            return try Aria_Setup_V1_Inspection(serializedBytes: frame)
-        }.value
+        let output = try await ChildProcess.run(try DaemonClient.ariaBinary(), ["setup", "inspect"])
+        guard output.status == 0 else {
+            throw SetupClientError.failed(failure(status: output.status, stderr: output.stderr))
+        }
+        var reader = SetupFrames.Reader()
+        let frames = try reader.push(output.stdout)
+        try reader.finish()
+        guard let frame = frames.first else {
+            throw SetupClientError.failed(failure(status: output.status, stderr: output.stderr))
+        }
+        return try Aria_Setup_V1_Inspection(serializedBytes: frame)
     }
 
     /// Runs `aria setup apply`, handing each event over as it arrives.
@@ -59,55 +45,33 @@ enum SetupClient {
         _ request: Aria_Setup_V1_ApplyRequest,
         onEvent: @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
     ) async throws -> Aria_Setup_V1_Summary {
-        let bin = try DaemonClient.ariaBinary()
         let frame = try SetupFrames.encode(request)
-        let child = Mutex(Child())
-        let run = Task.detached(priority: .userInitiated) { () throws -> Run in
-            let process = Process()
-            process.executableURL = bin
-            process.arguments = ["setup", "apply"]
-            let stdin = Pipe()
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardInput = stdin
-            process.standardOutput = stdout
-            process.standardError = stderr
-            try process.run()
-            defer {
-                // A frame that cannot be read leaves nothing to drive the
-                // child; it must not finish setup on its own.
-                if process.isRunning {
-                    process.interrupt()
-                    process.waitUntilExit()
-                }
-                child.withLock { state in state.pid = 0 }
-            }
-            let interruptNow = child.withLock { state in
-                state.pid = process.processIdentifier
-                return state.interrupted
-            }
-            if interruptNow { process.interrupt() }
-            // A child that died before reading would otherwise take the
-            // app down with SIGPIPE instead of failing the write.
-            let request = stdin.fileHandleForWriting
-            _ = fcntl(request.fileDescriptor, F_SETNOSIGPIPE, 1)
-            try request.write(contentsOf: frame)
-            try request.close()
+        let child = ChildProcess(try DaemonClient.ariaBinary(), ["setup", "apply"])
+        let frames = Mutex(ApplyFrames())
+        try child.launch(input: frame) { chunk in
+            let readable = frames.withLock { $0.push(chunk, onEvent: onEvent) }
+            // A frame that cannot be read leaves nothing to drive the
+            // child; it must not finish setup on its own.
+            if !readable { child.interrupt() }
+        }
+        let output = await withTaskCancellationHandler {
+            await child.exit()
+        } onCancel: {
+            child.interrupt()
+        }
+        let finished = try frames.withLock { try $0.run(output) }
+        return try outcome(finished, cancelled: Task.isCancelled).get()
+    }
 
-            var reader = SetupFrames.Reader()
-            var summary: Aria_Setup_V1_Summary?
-            var frameError: SetupFrames.FrameError?
-            let output = stdout.fileHandleForReading
-            while summary == nil {
-                let chunk = output.availableData
-                if chunk.isEmpty {
-                    do throws(SetupFrames.FrameError) {
-                        try reader.finish()
-                    } catch {
-                        frameError = error
-                    }
-                    break
-                }
+    private struct ApplyFrames {
+        var reader = SetupFrames.Reader()
+        var summary: Aria_Setup_V1_Summary?
+        var unreadable: (any Error)?
+
+        /// False on the push that finds an unreadable frame.
+        mutating func push(_ chunk: Data, onEvent: (Aria_Setup_V1_SetupEvent) -> Void) -> Bool {
+            guard summary == nil, unreadable == nil else { return true }
+            do {
                 for bytes in try reader.push(chunk) {
                     switch try Aria_Setup_V1_ApplyResponse(serializedBytes: bytes).body {
                     case .event(let event): onEvent(event)
@@ -115,20 +79,24 @@ enum SetupClient {
                     case nil: break
                     }
                 }
+            } catch {
+                unreadable = error
             }
-            let errors = stderr.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return Run(summary: summary, status: process.terminationStatus, stderr: errors, frameError: frameError)
+            return unreadable == nil
         }
-        let finished = try await withTaskCancellationHandler {
-            try await run.value
-        } onCancel: {
-            child.withLock { state in
-                state.interrupted = true
-                if state.pid != 0 { kill(state.pid, SIGINT) }
+
+        mutating func run(_ output: ChildProcess.Output) throws -> Run {
+            if let unreadable { throw unreadable }
+            var frameError: SetupFrames.FrameError?
+            if summary == nil {
+                do throws(SetupFrames.FrameError) {
+                    try reader.finish()
+                } catch {
+                    frameError = error
+                }
             }
+            return Run(summary: summary, status: output.status, stderr: output.stderr, frameError: frameError)
         }
-        return try outcome(finished, cancelled: Task.isCancelled).get()
     }
 
     struct Run: Sendable {
@@ -145,11 +113,6 @@ enum SetupClient {
         if cancelled { return .failure(.cancelled) }
         if run.status == 0, let error = run.frameError { return .failure(.invalidOutput(error)) }
         return .failure(.failed(failure(status: run.status, stderr: run.stderr)))
-    }
-
-    private struct Child {
-        var pid: pid_t = 0
-        var interrupted = false
     }
 
     /// Waits for a signalled daemon to let go of the socket. One that will
@@ -175,7 +138,7 @@ extension SetupState.Effects {
             apply: { request, onEvent in try await SetupClient.apply(request, onEvent: onEvent) },
             stopDaemon: {
                 do {
-                    try DaemonClient.signalStop()
+                    try await DaemonClient().stop()
                 } catch {
                     log.error("Daemon not stopped before apply: \(String(describing: error), privacy: .private)")
                     return

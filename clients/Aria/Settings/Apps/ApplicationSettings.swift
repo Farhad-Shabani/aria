@@ -9,7 +9,7 @@ struct ApplicationSettings: View {
         PreferencesForm(preferences: preferences) { editor in
             let apps = editor.snapshot.applicationOverrides
             if let overrides = ApplicationOverrideEdits.overrides(for: bundleID, in: apps) {
-                let app = InstalledApp(bundleID: bundleID)
+                let app = InstalledApp.lookUp(bundleID)
                 let excluded = ApplicationOverrideEdits.isExcluded(bundleID, in: apps)
                 ItemPage(title: app.name) {
                     Image(nsImage: app.icon)

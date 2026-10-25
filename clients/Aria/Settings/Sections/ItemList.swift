@@ -66,6 +66,7 @@ struct ItemList<Item, Row: View>: View {
             Button("Remove \(noun)", role: .destructive) { remove(itemID) }
         }
         .listRowBackground(target == itemID ? Color.accentColor.opacity(0.15) : nil)
+        .accessibilityAddTraits(target == itemID ? .isSelected : [])
     }
 
     private func barButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {

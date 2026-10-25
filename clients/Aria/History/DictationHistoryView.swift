@@ -7,12 +7,6 @@ struct DictationHistoryView: View {
     @State private var confirmingClear = false
     @State private var visible = false
 
-    private var groups: [(Date, [HistoryItem])] {
-        Dictionary(grouping: state.items) { Calendar.current.startOfDay(for: $0.created) }
-            .sorted { $0.key > $1.key }
-            .map { ($0.key, $0.value) }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -130,9 +124,9 @@ struct DictationHistoryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List(selection: Binding(get: { state.selectedID }, set: { state.select($0) })) {
-                ForEach(groups, id: \.0) { day, entries in
-                    Section(dayTitle(day)) {
-                        ForEach(entries) { entry in
+                ForEach(state.days, id: \.start) { day in
+                    Section(dayTitle(day.start)) {
+                        ForEach(day.items) { entry in
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(entry.preview).lineLimit(2)
                                 if entry.status != .success && entry.status != .recovered {

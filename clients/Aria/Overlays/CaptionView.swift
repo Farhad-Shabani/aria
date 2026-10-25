@@ -14,7 +14,7 @@ struct CaptionView: View {
     }
 
     var body: some View {
-        let tail = Text(provisional).italic().foregroundColor(.white.opacity(0.85))
+        let tail = Text(provisional).italic().foregroundStyle(.white.opacity(0.85))
         Text("\(committed)\(separator)\(tail)")
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.white)

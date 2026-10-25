@@ -61,11 +61,6 @@ struct Ribbon: View {
     private func draw(_ outline: Path) -> some View {
         outline
             .fill(state.tint)
-            .overlay(
-                outline.stroke(
-                    state.tint,
-                    style: StrokeStyle(lineWidth: RibbonTuning.lineWidth, lineJoin: .round)
-                )
-            )
+            .stroke(state.tint, style: StrokeStyle(lineWidth: RibbonTuning.lineWidth, lineJoin: .round))
     }
 }

@@ -24,21 +24,7 @@ struct AppsSettings: View {
                 },
                 open: open
             ) { entry in
-                row(entry)
-            }
-        }
-    }
-
-    private func row(_ entry: Aria_Daemon_V1_ApplicationOverride) -> some View {
-        let app = InstalledApp(bundleID: entry.applicationID)
-        return HStack {
-            Image(nsImage: app.icon)
-                .resizable()
-                .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
-            Text(app.name)
-            if entry.excluded {
-                Spacer()
-                Text("Off").foregroundStyle(.secondary)
+                AppRow(bundleID: entry.applicationID, excluded: entry.excluded)
             }
         }
     }
@@ -49,5 +35,24 @@ struct AppsSettings: View {
             ApplicationOverrideEdits.add(bundleID, to: &$0)
         }
         open(bundleID)
+    }
+}
+
+private struct AppRow: View {
+    let bundleID: String
+    let excluded: Bool
+
+    var body: some View {
+        let app = InstalledApp.lookUp(bundleID)
+        HStack {
+            Image(nsImage: app.icon)
+                .resizable()
+                .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
+            Text(app.name)
+            if excluded {
+                Spacer()
+                Text("Off").foregroundStyle(.secondary)
+            }
+        }
     }
 }

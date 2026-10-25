@@ -450,12 +450,12 @@ private struct Mark: View {
     }
 }
 
-/// One bar in the ribbon's slot, filling left to right while text goes in,
-/// segment by segment.
+/// One bar in the ribbon's slot, filling left to right while text goes in.
 private struct Bar: View {
     let tint: Color
 
     @State private var running = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Capsule()
@@ -465,11 +465,11 @@ private struct Bar: View {
                 Capsule()
                     .fill(tint)
                     .frame(width: markWidth, height: 3)
-                    .scaleEffect(x: running ? 1 : 0.001, anchor: .leading)
+                    .scaleEffect(x: running || reduceMotion ? 1 : 0.001, anchor: .leading)
             }
             .clipShape(Capsule())
             .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: running)
-            .onAppear { running = true }
+            .onAppear { running = !reduceMotion }
     }
 }
 
@@ -489,11 +489,12 @@ private struct Breathing: ViewModifier {
     let motion: Motion
 
     @State private var swelling = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
             .scaleEffect(swelling ? motion.scale : 1)
             .animation(motion.animation, value: swelling)
-            .onAppear { swelling = motion != .still }
+            .onAppear { swelling = motion != .still && !reduceMotion }
     }
 }

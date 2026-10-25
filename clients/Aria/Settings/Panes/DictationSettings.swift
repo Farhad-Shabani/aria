@@ -52,7 +52,7 @@ struct DictationSettings: View {
                     editor.set(\.silenceDurationMs, to: DictationEdits.silenceMilliseconds(seconds: silenceSeconds))
                 }
                 .frame(maxWidth: 160)
-                Text(String(format: "%.1f s of silence", silenceSeconds))
+                Text("\(silenceSeconds, format: .number.precision(.fractionLength(1))) s of silence")
                     .monospacedDigit()
             }
         } label: {

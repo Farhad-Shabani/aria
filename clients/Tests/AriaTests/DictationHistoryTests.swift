@@ -73,6 +73,30 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
+    func test_days_groupNewestFirstAndKeepOrderWithinADay() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = .gmt
+        let day: TimeInterval = 86_400
+        func entry(_ id: UInt64, at seconds: TimeInterval) -> HistoryItem {
+            HistoryItem(id: id, text: "", created: Date(timeIntervalSince1970: seconds), status: .success)
+        }
+        let items = [entry(3, at: day + 50), entry(2, at: 20), entry(1, at: 10)]
+
+        let days = HistoryDay.grouping(items, calendar: utc)
+
+        XCTAssertEqual(days.map(\.start), [Date(timeIntervalSince1970: day), Date(timeIntervalSince1970: 0)])
+        XCTAssertEqual(days.map { $0.items.map(\.id) }, [[3], [2, 1]])
+    }
+
+    func test_days_followTheListedItems() async {
+        let harness = Harness()
+        let state = DictationHistoryState(effects: harness.effects)
+        state.refresh()
+        await waitUntil { !state.items.isEmpty }
+        XCTAssertEqual(state.days, HistoryDay.grouping(state.items))
+        state.close()
+    }
+
     func test_supersededSearch_cannotReplaceNewResults() async {
         let harness = Harness()
         var continuations: [CheckedContinuation<HistoryPage, Error>] = []

@@ -25,7 +25,7 @@ extension PairingDaemon {
             }
         },
         setPairing: { enabled in
-            try await Task.detached { try DaemonClient.setPhonePairing(enabled) }.value
+            try await DaemonClient.setPhonePairing(enabled)
         },
         removePairingFile: { try PairingFile.remove() }
     )
