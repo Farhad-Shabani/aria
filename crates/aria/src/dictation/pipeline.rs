@@ -394,7 +394,7 @@ where
             .start_with(&settings.recognition_language, &cancel)
             .map_err(started)?;
         if let Some(engine) = operation.served_by() {
-            sinks.serving_engine(engine);
+            sinks.served_by(engine);
         }
         // Complete delivery filters audio before decoding. Streaming instead
         // checks the predicted voice for each finalized segment.
@@ -831,9 +831,9 @@ where
         self.1.completed(utterance).map_err(Into::into)
     }
 
-    fn serving_engine(&mut self, engine: &'static str) {
-        self.0.serving_engine(engine);
-        self.1.serving_engine(engine);
+    fn served_by(&mut self, engine: &'static str) {
+        self.0.served_by(engine);
+        self.1.served_by(engine);
     }
 
     fn delivered(&self) -> Option<DeliveryOutcome> {

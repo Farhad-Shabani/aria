@@ -388,8 +388,9 @@ impl DictationRuntime {
         }
     }
 
-    /// The live coordinator serves a retry for its own engine. Anything else
-    /// builds a one-off pipeline, so a retry never initializes capture.
+    /// The live coordinator serves a retry for its own engine, or for any
+    /// engine its server runs. Anything else builds a one-off pipeline, so a
+    /// retry never initializes capture.
     fn retry_on(
         &self,
         requested: &str,
@@ -397,10 +398,17 @@ impl DictationRuntime {
         settings: &DictationSettings,
         cancel: &CancelToken,
     ) -> Result<Transcribed, HistoryError> {
-        if self.ready().is_some_and(|ready| ready.engine == requested) {
-            return self
+        if self
+            .ready()
+            .is_some_and(|ready| ready.engine == requested || ready.engine == backend::SERVER)
+        {
+            let transcribed = self
                 .transcribe(recording, settings, cancel)
-                .map_err(|_| HistoryError::Transcription);
+                .map_err(|_| HistoryError::Transcription)?;
+            if names_an_engine(requested) && transcribed.engine != requested {
+                return Err(HistoryError::Transcription);
+            }
+            return Ok(transcribed);
         }
         let setup = self.retry.get().map_err(|_| HistoryError::Transcription)?;
         let target = retry_target(setup, requested)?;
@@ -461,13 +469,17 @@ impl DictationRuntime {
     }
 }
 
-/// A placeholder name asks for whatever is configured: the deferred one, or
-/// the server's before it named its engine.
+/// `DEFERRED_ENGINE` and `backend::SERVER` label a dictation, not an engine,
+/// so a retry of either runs on whatever is configured.
+fn names_an_engine(label: &str) -> bool {
+    label != DEFERRED_ENGINE && label != backend::SERVER
+}
+
 fn retry_target<'a>(
     setup: &RetrySetup,
     requested: &'a str,
 ) -> Result<RetryTarget<'a>, HistoryError> {
-    let named = (requested != DEFERRED_ENGINE && requested != backend::SERVER).then_some(requested);
+    let named = names_an_engine(requested).then_some(requested);
     match (&setup.dictation.transcription, named) {
         (TranscriptionBackend::Server { endpoint }, engine) => Ok(RetryTarget::Server {
             endpoint: endpoint.clone(),
@@ -1043,16 +1055,10 @@ mod history_tests {
                 assert_eq!(result.audio, original.audio);
                 assert_eq!(result.status, HistoryStatus::Recovered);
                 assert!(!result.retrying);
-                if named.is_none() {
-                    assert!(result.text.starts_with("native words"));
-                    assert_eq!(observed.native.load(Ordering::SeqCst), 1);
-                    assert_eq!(observed.calls.load(Ordering::SeqCst), 0);
-                } else {
-                    assert_eq!(result.text, "raw model words");
-                    assert_eq!(observed.calls.load(Ordering::SeqCst), 1);
-                    assert_eq!(*observed.languages.lock().unwrap(), ["fr"]);
-                }
+                assert!(result.text.starts_with("native words"));
             }
+            assert_eq!(observed.native.load(Ordering::SeqCst), 2);
+            assert_eq!(observed.calls.load(Ordering::SeqCst), 0);
             assert!(matches!(
                 fixture.runtime.retry_history(
                     original.id,

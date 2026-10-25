@@ -246,12 +246,12 @@ fn select_engine(
 }
 
 /// Each operation names the engine the server ran, so the executor's own
-/// name only labels a dictation that failed before reaching the server.
+/// name only labels a dictation whose engine was never reported.
 fn select_remote(
     home: &Path,
     endpoint: &ServerEndpoint,
 ) -> Result<SelectedEngine, DictationInitializationError> {
-    let remote = RemoteTranscriber::new(home, endpoint)
+    let remote = RemoteTranscriber::open(home, endpoint)
         .map_err(DictationInitializationError::Transcription)?;
     Ok(SelectedEngine::new(
         crate::config::backend::SERVER,
@@ -492,7 +492,7 @@ fn retry_transcription(
 ) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
     match target {
         RetryTarget::Server { endpoint, engine } => {
-            let mut remote = RemoteTranscriber::new(home, &endpoint)?;
+            let mut remote = RemoteTranscriber::open(home, &endpoint)?;
             if let Some(engine) = engine {
                 remote = remote.require_engine(engine)?;
             }
@@ -521,13 +521,13 @@ mod tests {
     use crate::config::{CaptureConfig, WakeConfig};
 
     #[tokio::test]
-    async fn server_dictation_builds_without_local_models_or_a_reachable_server() {
+    async fn one_server_build_dictates_and_fails_only_the_press_the_server_misses() {
         let server = crate::daemon::inference::host::tests::Fixture::start().await;
         let home = tempfile::tempdir().unwrap();
         server.pair_home(home.path().to_owned()).await;
         let endpoint = server.endpoint().to_owned();
         let root = home.path().to_owned();
-        let dictate = Arc::new(move || {
+        let (built, _vocabulary) = tokio::task::spawn_blocking(move || {
             let environment = crate::config::Environment::in_home(root.clone());
             let audio = root.join("speech.wav");
             std::fs::copy(
@@ -536,7 +536,7 @@ mod tests {
                 &audio,
             )
             .unwrap();
-            let (vocabulary, _worker) = VocabularyRuntime::new(
+            let vocabulary = VocabularyRuntime::new(
                 root.join("vocabulary"),
                 None,
                 false,
@@ -545,9 +545,7 @@ mod tests {
                 ),
             );
             let mut dictation = DictationConfig::load(&environment).unwrap();
-            dictation.transcription = TranscriptionBackend::Server {
-                endpoint: endpoint.clone(),
-            };
+            dictation.transcription = TranscriptionBackend::Server { endpoint };
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,
@@ -556,7 +554,7 @@ mod tests {
                 DictationSetup {
                     dictation,
                     speaker: SpeakerConfig::load(&environment).unwrap(),
-                    vocabulary,
+                    vocabulary: Arc::clone(&vocabulary.0),
                     wake: WakeConfig::Disabled,
                 },
                 &root,
@@ -566,7 +564,13 @@ mod tests {
                 Gate::new(),
             )
             .unwrap();
-            assert_eq!(built.engine, crate::config::backend::SERVER);
+            (built, vocabulary)
+        })
+        .await
+        .unwrap();
+        assert_eq!(built.engine, crate::config::backend::SERVER);
+        let coordinator = Arc::new(built.coordinator);
+        let dictate = move || {
             let mut settings = crate::preferences::UserPreferences::default().resolve_dictation(
                 crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
                 None,
@@ -574,17 +578,16 @@ mod tests {
             settings.own_voice_only = false;
             settings.transcript_only = true;
             settings.delivery_mode = crate::dictation::DeliveryMode::Complete;
-            built.coordinator.execute(
-                settings,
-                CancelToken::never(),
-                &DictationEventEmitter::unsubscribed(),
-            )
-        });
-        let reachable = Arc::clone(&dictate);
-        let outcome = tokio::task::spawn_blocking(move || reachable())
-            .await
-            .unwrap()
-            .unwrap();
+            let coordinator = Arc::clone(&coordinator);
+            tokio::task::spawn_blocking(move || {
+                coordinator.execute(
+                    settings,
+                    CancelToken::never(),
+                    &DictationEventEmitter::unsubscribed(),
+                )
+            })
+        };
+        let outcome = dictate().await.unwrap().unwrap();
         let crate::dictation::DictationOutcome::Completed(result) = outcome else {
             panic!("{outcome:?}");
         };
@@ -597,12 +600,10 @@ mod tests {
         );
         assert!(!home.path().join(".aria/models").exists());
         server.stop().await;
-        let unreachable = tokio::task::spawn_blocking(move || dictate())
-            .await
-            .unwrap();
+        let missed = dictate().await.unwrap();
         assert!(
-            matches!(unreachable, Err(DictationError::Transcription(_))),
-            "{unreachable:?}"
+            matches!(missed, Err(DictationError::Transcription(_))),
+            "{missed:?}"
         );
     }
 

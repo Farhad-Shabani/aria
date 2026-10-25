@@ -83,7 +83,7 @@ pub enum RemoteClientError {
 #[derive(Clone)]
 pub(crate) struct RemoteTranscriber {
     connection: Arc<Connection>,
-    required: Option<&'static str>,
+    required_engine: Option<&'static str>,
 }
 
 /// What the server runs, as one operation found it.
@@ -92,8 +92,8 @@ struct Binding {
     strategy: Strategy,
 }
 
-/// Shared by every operation on a transcriber, so a press costs one RPC, not
-/// a handshake.
+/// Shared by every operation on a transcriber, so a press reuses one
+/// handshake.
 struct Connection {
     channel: Channel,
     runtime: RemoteRuntime,
@@ -130,24 +130,25 @@ impl Drop for RemoteRuntime {
 }
 
 impl RemoteTranscriber {
-    /// Builds without the network. Each operation asks the server what it
+    /// Opens without the network. Each operation asks the server what it
     /// runs, so a server that is down or changed fails only that operation.
-    pub(crate) fn new(home: &Path, endpoint: &ServerEndpoint) -> Result<Self, TranscriptionError> {
+    pub(crate) fn open(home: &Path, endpoint: &ServerEndpoint) -> Result<Self, TranscriptionError> {
+        Self::open_pinned(home, endpoint).map_err(transcription_error)
+    }
+
+    fn open_pinned(home: &Path, endpoint: &ServerEndpoint) -> Result<Self, RemoteClientError> {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
-            .map_err(|error| transcription_error(identity_error(error)))?;
-        let server = identity
-            .pinned_server(endpoint)
-            .map_err(|error| transcription_error(identity_error(error)))?;
-        let endpoint = tls::endpoint(&identity, server)
-            .map_err(|_| transcription_error(RemoteClientError::Identity))?;
-        let runtime = RemoteRuntime::new().map_err(transcription_error)?;
+            .map_err(identity_error)?;
+        let server = identity.pinned_server(endpoint).map_err(identity_error)?;
+        let endpoint = tls::endpoint(&identity, server).map_err(|_| RemoteClientError::Identity)?;
+        let runtime = RemoteRuntime::new()?;
         let channel = {
             let _runtime = runtime.handle.enter();
             endpoint.connect_lazy()
         };
         Ok(Self {
             connection: Arc::new(Connection { channel, runtime }),
-            required: None,
+            required_engine: None,
         })
     }
 
@@ -156,7 +157,7 @@ impl RemoteTranscriber {
         let engine = crate::config::backend::local(engine)
             .ok_or_else(|| transcription_error(RemoteClientError::Unsupported))?;
         Ok(Self {
-            required: Some(engine),
+            required_engine: Some(engine),
             ..self
         })
     }
@@ -176,7 +177,10 @@ impl RemoteTranscriber {
                 }))?;
         let engine =
             crate::config::backend::local(&info.engine).ok_or(RemoteClientError::Unsupported)?;
-        if self.required.is_some_and(|required| required != engine) {
+        if self
+            .required_engine
+            .is_some_and(|required| required != engine)
+        {
             return Err(RemoteClientError::Unsupported);
         }
         Ok(Binding {
@@ -1732,13 +1736,13 @@ mod tests {
     #[test]
     fn an_unpaired_home_builds_nothing_and_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
-        assert!(
-            RemoteTranscriber::new(
+        assert!(matches!(
+            RemoteTranscriber::open_pinned(
                 home.path(),
                 &ServerEndpoint::parse("https://server.example").unwrap(),
-            )
-            .is_err()
-        );
+            ),
+            Err(RemoteClientError::Identity)
+        ));
         assert!(!home.path().join(".aria/inference/client.json").exists());
     }
 }

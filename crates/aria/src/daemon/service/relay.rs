@@ -247,7 +247,7 @@ fn hear(
 
     let text = match dictation.transcribe(&mut recording, &settings, cancel) {
         Ok(transcribed) => {
-            history.serving_engine(transcribed.engine);
+            history.served_by(transcribed.engine);
             transcribed.transcript.into_text()
         }
         Err(error) if is_silence(&error) => return Ok(None),

@@ -68,7 +68,7 @@ impl TranscriptSink for RecordingSink {
         Ok(())
     }
 
-    fn serving_engine(&mut self, engine: &'static str) {
+    fn served_by(&mut self, engine: &'static str) {
         self.log.push(format!("engine:{engine}"));
     }
 }
