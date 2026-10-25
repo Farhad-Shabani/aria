@@ -1,9 +1,5 @@
 import SwiftUI
 
-let captionWidth: CGFloat = 720
-/// High enough to clear the status pill, so both can show at once.
-let captionBottomMargin: CGFloat = 90
-
 /// Bottom-centre caption strip, in the shape of a video-call caption.
 struct CaptionView: View {
     let committed: String
@@ -24,6 +20,6 @@ struct CaptionView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
-            .frame(maxWidth: captionWidth)
+            .frame(maxWidth: OverlayStyle.captionWidth)
     }
 }

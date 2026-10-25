@@ -136,8 +136,9 @@ final class PillStateTests: XCTestCase {
     }
 
     func test_aLongNameEndsInAnEllipsis() {
-        XCTAssertEqual("Polish".shortenedForPill, "Polish")
-        XCTAssertEqual("Formal email to the leadership team".shortenedForPill, "Formal email to the…")
+        let recording = PillState.recording(since: epoch)
+        XCTAssertEqual(recording.label(prompt: "Polish"), "Polish")
+        XCTAssertEqual(recording.label(prompt: "Formal email to the leadership team"), "Formal email to the…")
     }
 
     func test_theRingFollowsTheLastEnrolledVoiceOfThePress() {

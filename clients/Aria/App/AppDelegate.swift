@@ -21,7 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let setupOfferedKey = "setupOffered"
 
     private let events = DaemonEvents()
-    private let panel = FloatingPanel(width: captionWidth, bottomMargin: captionBottomMargin)
+    private let panel = FloatingPanel(
+        width: OverlayStyle.captionWidth, bottomMargin: OverlayStyle.captionBottomMargin)
     let status: StatusController
     private let ghost: GhostController
     let askHotkey: PressController
