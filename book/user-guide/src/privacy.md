@@ -25,8 +25,8 @@ the text. Pairing alone sends nothing; uploads start only when you switch
 transcription to the server.
 
 Your voice profile and corrections never leave your computer. **Only type my
-own voice** checks the speaker before upload when you deliver **After
-recording stops** and when you retry from history. With **While speaking**,
+voice** checks the speaker before upload when you deliver **After recording
+stops** and when you retry from history. With **While speaking**,
 audio leaves before Aria knows who spoke. The check helps recognition; it
 cannot promise that other voices are left out.
 
