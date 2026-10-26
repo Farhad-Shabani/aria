@@ -6,7 +6,7 @@ sidecar_tests := "crates/aria-stt/tests/test_parakeet_mlx_sidecar.py"
 # Everyday
 
 # Run Rust and supporting-tool checks
-check: rust-native support-check
+check: proto-check rust-native support-check
 
 # Run workspace tests
 test: rust-test-all
@@ -199,6 +199,11 @@ app profile="dist": swift-project
 swift_resolved := "clients/Aria.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 swift_plugins := "clients/build/protoc-plugins"
 
+# Check schema formatting and conventions (Buf 1.75.0)
+proto-check:
+    buf format --diff --exit-code
+    buf lint
+
 # Generate Swift client stubs from the daemon protocol
 proto-swift: (_swift-stubs "clients/Generated")
 
@@ -218,10 +223,17 @@ _swift-stubs out: _swift-plugins
         --swift_opt=Visibility=Public,FileNaming=DropPath \
         --grpc-swift-2_out={{ out }}/Rpc \
         --grpc-swift-2_opt=Visibility=Public,Client=true,Server=false,FileNaming=DropPath \
-        proto/aria/daemon/v1/daemon.proto \
+        proto/aria/daemon/v1/chat.proto \
+        proto/aria/daemon/v1/dictation.proto \
         proto/aria/daemon/v1/errors.proto \
+        proto/aria/daemon/v1/events.proto \
+        proto/aria/daemon/v1/history.proto \
+        proto/aria/daemon/v1/listen.proto \
+        proto/aria/daemon/v1/preferences.proto \
         proto/aria/daemon/v1/relay.proto \
+        proto/aria/daemon/v1/speaker.proto \
         proto/aria/daemon/v1/speech.proto \
+        proto/aria/daemon/v1/vocabulary.proto \
         proto/aria/setup/v1/setup.proto \
         proto/grpc/health/v1/health.proto
 

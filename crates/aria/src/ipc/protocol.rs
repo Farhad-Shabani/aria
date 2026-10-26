@@ -457,7 +457,7 @@ impl From<ChatRequest> for wire::AskRequest {
                 .map(|mode| wire::OutputMode::from(mode) as i32),
             assistant_id: wire::AssistantId::from(request.assistant_id) as i32,
             model_id: request.model_id.unwrap_or_default(),
-            session: request.session.unwrap_or_default(),
+            session_name: request.session.unwrap_or_default(),
             own_voice: request.own_voice,
         }
     }
@@ -486,7 +486,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             workdir: request.workdir.into(),
             assistant_id,
             model_id: Some(request.model_id).filter(|model_id| !model_id.is_empty()),
-            session: Some(request.session).filter(|session| !session.is_empty()),
+            session: Some(request.session_name).filter(|session| !session.is_empty()),
             new: request.new_conversation,
             output_mode,
             own_voice: request.own_voice,
@@ -720,32 +720,32 @@ impl From<ListenStage> for wire::ListenEvent {
             } => Self {
                 stage: wire::ListenStage::SegmentTranscribed as i32,
                 text: text.to_string(),
-                label: label.map(|label| label.to_string()).unwrap_or_default(),
-                merged_from: String::new(),
+                speaker_label: label.map(|label| label.to_string()).unwrap_or_default(),
+                merged_from_label: String::new(),
                 offset_seconds: at_seconds,
                 error_code: 0,
             },
             ListenStage::SpeakerMerged { from, into } => Self {
                 stage: wire::ListenStage::SpeakerMerged as i32,
                 text: String::new(),
-                label: into.to_string(),
-                merged_from: from.to_string(),
+                speaker_label: into.to_string(),
+                merged_from_label: from.to_string(),
                 offset_seconds: 0,
                 error_code: 0,
             },
             ListenStage::Stopped => Self {
                 stage: wire::ListenStage::Stopped as i32,
                 text: String::new(),
-                label: String::new(),
-                merged_from: String::new(),
+                speaker_label: String::new(),
+                merged_from_label: String::new(),
                 offset_seconds: 0,
                 error_code: 0,
             },
             ListenStage::Failed(code) => Self {
                 stage: wire::ListenStage::Failed as i32,
                 text: String::new(),
-                label: String::new(),
-                merged_from: String::new(),
+                speaker_label: String::new(),
+                merged_from_label: String::new(),
                 offset_seconds: 0,
                 error_code: code.into(),
             },
@@ -760,12 +760,13 @@ impl TryFrom<&wire::ListenEvent> for ListenStage {
         match wire::ListenStage::try_from(event.stage) {
             Ok(wire::ListenStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
                 text: Arc::from(event.text.as_str()),
-                label: (!event.label.is_empty()).then(|| Arc::from(event.label.as_str())),
+                label: (!event.speaker_label.is_empty())
+                    .then(|| Arc::from(event.speaker_label.as_str())),
                 at_seconds: event.offset_seconds,
             }),
             Ok(wire::ListenStage::SpeakerMerged) => Ok(Self::SpeakerMerged {
-                from: Arc::from(event.merged_from.as_str()),
-                into: Arc::from(event.label.as_str()),
+                from: Arc::from(event.merged_from_label.as_str()),
+                into: Arc::from(event.speaker_label.as_str()),
             }),
             Ok(wire::ListenStage::Stopped) => Ok(Self::Stopped),
             Ok(wire::ListenStage::Failed) => {
@@ -1026,7 +1027,7 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
     fn try_from(request: wire::RegenerateHistoryRequest) -> Result<Self, Self::Error> {
         let id = history_id(request.id)?;
         if request
-            .engine
+            .engine_id
             .as_deref()
             .is_some_and(|engine| crate::config::backend::local(engine).is_none())
         {
@@ -1035,7 +1036,7 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
         Ok((
             id,
             crate::history::RetryOptions {
-                engine: request.engine,
+                engine: request.engine_id,
                 language: request.language.as_deref().map(str::parse).transpose()?,
             },
         ))
@@ -1063,11 +1064,11 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
             _ => return Err(ProtocolError::InvalidHistory("status")),
         };
         if entry.audio_expires_at_ms.is_some()
-            && entry.audio != wire::HistoryAudioAvailability::Available as i32
+            && entry.audio_availability != wire::HistoryAudioAvailability::Available as i32
         {
             return Err(ProtocolError::InvalidHistory("audio expiry"));
         }
-        let audio = match wire::HistoryAudioAvailability::try_from(entry.audio) {
+        let audio = match wire::HistoryAudioAvailability::try_from(entry.audio_availability) {
             Ok(wire::HistoryAudioAvailability::Unavailable) => AudioAvailability::Unavailable,
             Ok(wire::HistoryAudioAvailability::Expired) => AudioAvailability::Expired,
             Ok(wire::HistoryAudioAvailability::Available) => AudioAvailability::Available {
@@ -1094,7 +1095,7 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
             retrying: entry.regenerating,
             deletion_pending: entry.deletion_pending,
             language: entry.language,
-            engine: entry.engine,
+            engine: entry.engine_id,
             own_voice_only: false,
             project: None,
             warning: entry.warning,
@@ -1159,12 +1160,12 @@ impl From<crate::history::HistoryEntry> for wire::HistoryEntry {
                 HistoryStatus::Recovered => wire::HistoryStatus::Recovered,
             } as i32,
             error: entry.error.map(Into::into),
-            audio: audio as i32,
+            audio_availability: audio as i32,
             audio_expires_at_ms,
             regenerating: entry.retrying,
             deletion_pending: entry.deletion_pending,
             language: entry.language,
-            engine: entry.engine,
+            engine_id: entry.engine,
             warning: entry.warning,
         }
     }
@@ -1739,7 +1740,7 @@ impl TryFrom<wire::Prompt> for Prompt {
             PromptId::new(prompt.id)?,
             prompt.name,
             decode_enum::<wire::PromptKind>(prompt.kind, "prompt kind")?,
-            prompt.file.into(),
+            prompt.instructions_path.into(),
             prompt.enabled,
             chord,
         )?)
@@ -1752,7 +1753,7 @@ impl From<&Prompt> for wire::Prompt {
             id: prompt.id().as_str().to_owned(),
             name: prompt.name().to_owned(),
             kind: wire::PromptKind::from(prompt.kind()) as i32,
-            file: prompt.file().to_string_lossy().into_owned(),
+            instructions_path: prompt.file().to_string_lossy().into_owned(),
             enabled: prompt.enabled(),
             chord: prompt.chord().map(wire::Chord::from),
         }
@@ -1852,7 +1853,7 @@ impl From<DictationStage> for wire::DictationEvent {
             recording_id: recording,
             outcome: outcome as i32,
             word_count: words,
-            speaker,
+            speaker_name: speaker,
         }
     }
 }
@@ -1869,7 +1870,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             Ok(wire::DictationStage::Delivering) => Ok(Self::Delivering),
             Ok(wire::DictationStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
                 text: Arc::from(event.text.as_str()),
-                speaker: match event.speaker.as_str() {
+                speaker: match event.speaker_name.as_str() {
                     "" => None,
                     name => Some(speaker_name(name)?),
                 },
@@ -2907,7 +2908,7 @@ mod tests {
         assert_eq!(decoded, prompts);
 
         let mut wire = wire::Prompts::from(&prompts);
-        wire.entries[0].file = "relative.md".to_owned();
+        wire.entries[0].instructions_path = "relative.md".to_owned();
         assert!(matches!(
             Prompts::try_from(wire),
             Err(ProtocolError::InvalidPrompt(_))
@@ -3087,7 +3088,7 @@ mod history_tests {
     fn history_retry_options_are_validated_and_successful_audio_is_retryable() {
         let request = wire::RegenerateHistoryRequest {
             id: 42,
-            engine: Some("whisper".into()),
+            engine_id: Some("whisper".into()),
             language: Some("auto".into()),
         };
         let (id, options) = <(u64, crate::history::RetryOptions)>::try_from(request).unwrap();
@@ -3098,7 +3099,7 @@ mod history_tests {
             assert!(
                 <(u64, crate::history::RetryOptions)>::try_from(wire::RegenerateHistoryRequest {
                     id: 42,
-                    engine: engine.map(str::to_owned),
+                    engine_id: engine.map(str::to_owned),
                     language: language.map(str::to_owned),
                 })
                 .is_err()
@@ -3121,7 +3122,7 @@ mod history_tests {
             wire::HistoryAudioAvailability::Expired,
         ] {
             let mut unexpected_expiry = encoded.clone();
-            unexpected_expiry.audio = audio as i32;
+            unexpected_expiry.audio_availability = audio as i32;
             assert!(HistoryEntry::try_from(unexpected_expiry).is_err());
         }
         let mut missing_expiry = encoded;

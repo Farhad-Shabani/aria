@@ -457,7 +457,7 @@ final class DictationHistoryTests: XCTestCase {
         wire.id = 1
         wire.source = .relay
         wire.status = .transcriptionFailed
-        wire.audio = .unavailable
+        wire.audioAvailability = .unavailable
         let item = try DictationHistoryClient.item(wire)
         XCTAssertEqual(item.metadata.map(\.0), ["Source", "Status", "Created", "Audio"])
         XCTAssertEqual(item.source, "Relayed dictation")
@@ -469,7 +469,7 @@ final class DictationHistoryTests: XCTestCase {
         wire.id = 1
         wire.source = .local
         wire.status = .transcriptionFailed
-        wire.audio = .unavailable
+        wire.audioAvailability = .unavailable
         wire.error.code = .transcriptionFailed
         XCTAssertEqual(
             try DictationHistoryClient.item(wire).message, "Aria could not finish transcribing this recording.")
@@ -485,7 +485,7 @@ final class DictationHistoryTests: XCTestCase {
         wire.id = 1
         wire.source = .local
         wire.status = .transcriptionFailed
-        wire.audio = .available
+        wire.audioAvailability = .available
         XCTAssertThrowsError(try DictationHistoryClient.item(wire))
         wire.audioExpiresAtMs = 1_000
         let expiry = Date(timeIntervalSince1970: 1)
@@ -502,7 +502,7 @@ final class DictationHistoryTests: XCTestCase {
             (.expired, .expired, "Expired"),
         ]
         for (audio, expected, description) in cases {
-            wire.audio = audio
+            wire.audioAvailability = audio
             XCTAssertThrowsError(try DictationHistoryClient.item(wire))
             wire.clearAudioExpiresAtMs()
             let item = try DictationHistoryClient.item(wire)
@@ -512,7 +512,7 @@ final class DictationHistoryTests: XCTestCase {
         }
         wire.clearAudioExpiresAtMs()
         for audio in [Aria_Daemon_V1_HistoryAudioAvailability.unspecified, .UNRECOGNIZED(12345)] {
-            wire.audio = audio
+            wire.audioAvailability = audio
             XCTAssertThrowsError(try DictationHistoryClient.item(wire))
         }
     }

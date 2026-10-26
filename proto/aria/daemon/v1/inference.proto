@@ -25,7 +25,7 @@ service InferenceAdminService {
 message InferenceInfoRequest {}
 
 message InferenceInfoResponse {
-  string engine = 1;
+  string engine_id = 1;
   repeated RecognitionStrategy strategies = 2;
 }
 
@@ -45,7 +45,7 @@ message InferenceRequest {
 }
 
 message InferenceStart {
-  string engine = 1;
+  string engine_id = 1;
   // "auto" or a supported language code.
   string language = 2;
   RecognitionStrategy strategy = 3;
@@ -61,7 +61,11 @@ message InferenceResponse {
 }
 
 message InferenceUpdate {
-  uint64 retained_from = 1;
+  uint64 retained_from_sample = 1;
+  // Exclusive sample position read into the model's audio buffer.
+  // Required even when zero.
+  optional uint64 read_to_sample = 5;
+
   oneof body {
     string provisional = 2;
     InferenceSegment finalized = 3;
@@ -69,9 +73,6 @@ message InferenceUpdate {
   // Present when this update completes recognition. The client waits for
   // Complete and clean response EOF before exposing this update.
   InferenceComplete completed = 4;
-  // Exclusive sample position read into the model's audio buffer.
-  // Required even when zero.
-  optional uint64 read_to = 5;
 }
 
 message InferenceSegment {
@@ -80,13 +81,13 @@ message InferenceSegment {
 }
 
 message InferenceSpan {
-  uint64 start = 1;
-  uint64 end = 2;
+  uint64 start_sample = 1;
+  uint64 end_sample = 2;
 }
 
 message InferenceComplete {
   string text = 1;
-  string engine = 2;
+  string engine_id = 2;
 }
 
 message InferenceInviteRequest {

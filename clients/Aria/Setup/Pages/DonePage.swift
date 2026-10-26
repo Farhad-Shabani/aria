@@ -26,8 +26,8 @@ struct DonePage: View {
             }
             if let summary = state.summary {
                 Section {
-                    ForEach(summary.models, id: \.model) { model in
-                        LabeledContent(state.title(ofModel: model.model), value: Self.outcome(model.outcome))
+                    ForEach(summary.models, id: \.modelID) { model in
+                        LabeledContent(state.title(ofModel: model.modelID), value: Self.outcome(model.outcome))
                     }
                     LabeledContent("Background service", value: "Registered")
                     if let heard = state.heard {

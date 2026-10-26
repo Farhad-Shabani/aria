@@ -4,11 +4,18 @@ use std::path::PathBuf;
 use prost::Message;
 
 const PROTOS: &[&str] = &[
-    "../../proto/aria/daemon/v1/daemon.proto",
+    "../../proto/aria/daemon/v1/chat.proto",
+    "../../proto/aria/daemon/v1/dictation.proto",
     "../../proto/aria/daemon/v1/errors.proto",
+    "../../proto/aria/daemon/v1/events.proto",
+    "../../proto/aria/daemon/v1/history.proto",
     "../../proto/aria/daemon/v1/inference.proto",
+    "../../proto/aria/daemon/v1/listen.proto",
+    "../../proto/aria/daemon/v1/preferences.proto",
     "../../proto/aria/daemon/v1/relay.proto",
+    "../../proto/aria/daemon/v1/speaker.proto",
     "../../proto/aria/daemon/v1/speech.proto",
+    "../../proto/aria/daemon/v1/vocabulary.proto",
 ];
 /// Spoken over stdio by `aria setup`, not by the daemon, so it stays out
 /// of the reflection descriptor.

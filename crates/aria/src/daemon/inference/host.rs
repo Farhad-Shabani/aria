@@ -603,7 +603,7 @@ pub(in crate::daemon) mod tests {
     fn start(strategy: wire::RecognitionStrategy) -> wire::InferenceRequest {
         wire::InferenceRequest {
             body: Some(wire::inference_request::Body::Start(wire::InferenceStart {
-                engine: "whisper".into(),
+                engine_id: "whisper".into(),
                 language: "auto".into(),
                 strategy: strategy as i32,
             })),
@@ -723,7 +723,7 @@ pub(in crate::daemon) mod tests {
                 .unwrap_err();
         assert_eq!(replay.code(), tonic::Code::Unauthenticated);
         assert_eq!(
-            info(fixture.channel.clone()).await.unwrap().engine,
+            info(fixture.channel.clone()).await.unwrap().engine_id,
             "whisper"
         );
         for _ in 0..2 {
@@ -731,7 +731,7 @@ pub(in crate::daemon) mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.text, "raw model words");
-            assert_eq!(response.engine, "whisper");
+            assert_eq!(response.engine_id, "whisper");
         }
         let response = transcribe(
             fixture.channel.clone(),

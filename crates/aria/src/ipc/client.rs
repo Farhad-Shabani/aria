@@ -499,7 +499,7 @@ impl DaemonClient {
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let request = wire::RegenerateHistoryRequest {
             id,
-            engine: options.engine,
+            engine_id: options.engine,
             language: options
                 .language
                 .map(|language| language.as_str().to_owned()),

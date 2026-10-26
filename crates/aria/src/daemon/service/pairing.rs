@@ -125,7 +125,7 @@ impl wire::invite_service_server::InviteService for InviteRpc {
         // The Mac app polls this while its pairing pane is open.
         tracing::debug!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::IssueInviteResponse {
-            instance: self.instance.clone(),
+            instance_name: self.instance.clone(),
             code: code.raw().to_owned(),
             fingerprint: self.fingerprint.to_vec(),
             expires_in_ms,
@@ -161,7 +161,7 @@ mod tests {
             .into_inner();
         let (live, _) = codes.issue(Instant::now()).unwrap();
 
-        assert_eq!(issued.instance, "Aria (test)");
+        assert_eq!(issued.instance_name, "Aria (test)");
         assert_eq!(issued.code, live.raw());
         assert_eq!(issued.fingerprint, pairing.certificate_fingerprint);
         assert!(issued.expires_in_ms <= 60_000);

@@ -18,7 +18,7 @@ extension PairingDaemon {
                 return try await invites.issueInvite(Aria_Daemon_V1_IssueInviteRequest()) { response in
                     let issued = try response.message
                     let invite = PairingInvite(
-                        instanceName: issued.instance, code: issued.code,
+                        instanceName: issued.instanceName, code: issued.code,
                         fingerprint: issued.fingerprint)
                     return (invite, Date.now.addingTimeInterval(TimeInterval(issued.expiresInMs) / 1000))
                 }

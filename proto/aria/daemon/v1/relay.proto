@@ -59,7 +59,7 @@ message IssueInviteRequest {}
 
 message IssueInviteResponse {
   // The Mac's display name. The phone identifies the Mac by `fingerprint`.
-  string instance = 1;
+  string instance_name = 1;
   string code = 2;
   // SHA-256 of the relay certificate's DER bytes; the phone pins it.
   bytes fingerprint = 3;

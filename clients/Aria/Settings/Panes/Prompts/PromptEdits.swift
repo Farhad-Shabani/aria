@@ -18,7 +18,7 @@ enum PromptEdits {
         entry.id = id.uuidString
         entry.name = file.deletingPathExtension().lastPathComponent
         entry.kind = .rewrite
-        entry.file = file.standardizedFileURL.path
+        entry.instructionsPath = file.standardizedFileURL.path
         entry.enabled = true
         return entry
     }

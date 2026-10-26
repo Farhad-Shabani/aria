@@ -55,7 +55,8 @@ enum DictationHistoryClient {
         try item(
             await withClient { client in
                 try await client.regenerate(
-                    request: ClientRequest(message: Aria_Daemon_V1_RegenerateHistoryRequest.with { $0.id = id }),
+                    request: ClientRequest(
+                        message: Aria_Daemon_V1_RegenerateHistoryRequest.with { $0.id = id }),
                     options: options(seconds: 330)
                 ) {
                     try $0.message
@@ -97,11 +98,11 @@ enum DictationHistoryClient {
     }
 
     static func item(_ wire: Aria_Daemon_V1_HistoryEntry) throws -> HistoryItem {
-        guard wire.hasAudioExpiresAtMs == (wire.audio == .available),
+        guard wire.hasAudioExpiresAtMs == (wire.audioAvailability == .available),
             !wire.hasError || wire.error.code != .unspecified
         else { throw HistoryFailure.failed }
         let audio: HistoryItem.Audio
-        switch wire.audio {
+        switch wire.audioAvailability {
         case .available:
             audio = .available(until: Date(timeIntervalSince1970: Double(wire.audioExpiresAtMs) / 1_000))
         case .unavailable: audio = .unavailable

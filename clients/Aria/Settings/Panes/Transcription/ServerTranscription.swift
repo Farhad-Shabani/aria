@@ -63,8 +63,8 @@ final class ServerTranscription: ObservableObject {
             switch location {
             case .server:
                 engine = SetupStatus.serverEngine
-                if inspection.defaults.stt != SetupStatus.serverEngine {
-                    effects.rememberLocalEngine(inspection.defaults.stt)
+                if inspection.defaults.transcriptionEngineID != SetupStatus.serverEngine {
+                    effects.rememberLocalEngine(inspection.defaults.transcriptionEngineID)
                 }
             case .thisMac:
                 guard let local = Self.localEngine(in: inspection, preferring: effects.lastLocalEngine()) else {
@@ -142,7 +142,7 @@ final class ServerTranscription: ObservableObject {
         }
         do {
             let inspection = try await effects.inspect()
-            if inspection.defaults.stt == SetupStatus.serverEngine {
+            if inspection.defaults.transcriptionEngineID == SetupStatus.serverEngine {
                 try await apply(SetupStatus.serverEngine, from: inspection)
             } else {
                 setup.show(inspection)
@@ -154,17 +154,17 @@ final class ServerTranscription: ObservableObject {
     }
 
     static func localEngine(in inspection: Aria_Setup_V1_Inspection, preferring previous: String?) -> String? {
-        let ready = inspection.stt.filter { hasModelOnDisk($0, in: inspection) }
-        return ready.first { $0.key == previous }?.key ?? ready.first?.key
+        let ready = inspection.transcriptionChoices.filter { hasModelOnDisk($0, in: inspection) }
+        return ready.first { $0.id == previous }?.id ?? ready.first?.id
     }
 
-    private static func hasModelOnDisk(_ engine: Aria_Setup_V1_Engine, in inspection: Aria_Setup_V1_Inspection) -> Bool
+    private static func hasModelOnDisk(_ engine: Aria_Setup_V1_Choice, in inspection: Aria_Setup_V1_Inspection) -> Bool
     {
         guard engine.availability == .ready else { return false }
-        switch engine.model {
+        switch engine.modelSource {
         case .builtIn: return true
         case .downloads:
-            let models = inspection.models.filter { $0.engine == engine.key }
+            let models = inspection.models.filter { $0.engineID == engine.id }
             return !models.isEmpty && models.allSatisfy { $0.onDisk == .complete || $0.external }
         case .fetchedOnFirstUse, .remote, .unspecified, .UNRECOGNIZED: return false
         }
@@ -173,7 +173,7 @@ final class ServerTranscription: ObservableObject {
     private func apply(_ engine: String, from inspection: Aria_Setup_V1_Inspection) async throws {
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = inspection.defaults
-        request.selections.stt = engine
+        request.selections.transcriptionEngineID = engine
         try await SetupClient.handingOffDaemon(inspection, stop: effects.stopDaemon, start: effects.startDaemon) {
             try await effects.apply(request)
         }

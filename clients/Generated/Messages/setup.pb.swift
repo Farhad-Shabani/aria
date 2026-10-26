@@ -10,6 +10,15 @@
 
 // SPDX-License-Identifier: Apache-2.0
 
+/// Setup as `aria::setup` exposes it: look at what the machine has, then
+/// put the chosen pieces in place. Aria.app speaks it over the stdio of
+/// the hidden `aria setup inspect` and `aria setup apply`, one message per
+/// length-delimited frame.
+///
+/// Recording a voice and the test press are not here: they are ordinary
+/// daemon RPCs (SpeakerService, DictationService, SpeechService), and the
+/// Accessibility grant shows as the `aria.hotkey` health service.
+
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -449,19 +458,19 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   /// Clears the value of `defaults`. Subsequent reads from it will return its default value.
   public mutating func clearDefaults() {_uniqueStorage()._defaults = nil}
 
-  public var stt: [Aria_Setup_V1_Engine] {
-    get {_storage._stt}
-    set {_uniqueStorage()._stt = newValue}
+  public var transcriptionChoices: [Aria_Setup_V1_Choice] {
+    get {_storage._transcriptionChoices}
+    set {_uniqueStorage()._transcriptionChoices = newValue}
   }
 
-  public var tts: [Aria_Setup_V1_Engine] {
-    get {_storage._tts}
-    set {_uniqueStorage()._tts = newValue}
+  public var synthesisChoices: [Aria_Setup_V1_Choice] {
+    get {_storage._synthesisChoices}
+    set {_uniqueStorage()._synthesisChoices = newValue}
   }
 
-  public var chat: [Aria_Setup_V1_Engine] {
-    get {_storage._chat}
-    set {_uniqueStorage()._chat = newValue}
+  public var assistantChoices: [Aria_Setup_V1_Choice] {
+    get {_storage._assistantChoices}
+    set {_uniqueStorage()._assistantChoices = newValue}
   }
 
   /// In the order setup offers them.
@@ -528,25 +537,25 @@ public nonisolated struct Aria_Setup_V1_PairedServer: Sendable {
   public init() {}
 }
 
-public nonisolated struct Aria_Setup_V1_Engine: Sendable {
+public nonisolated struct Aria_Setup_V1_Choice: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   /// What config.yaml calls it.
-  public var key: String = String()
+  public var id: String = String()
 
   public var label: String = String()
 
   public var availability: Aria_Setup_V1_Availability = .unspecified
 
   /// The fix for MISSING, or why for UNSUPPORTED; empty when READY.
-  public var note: String = String()
+  public var availabilityDetail: String = String()
 
   /// Exactly one per family: the configured one, else the first that runs.
   public var `default`: Bool = false
 
-  public var model: Aria_Setup_V1_ModelSource = .unspecified
+  public var modelSource: Aria_Setup_V1_ModelSource = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -558,18 +567,18 @@ public nonisolated struct Aria_Setup_V1_Model: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var name: String = String()
+  public var id: String = String()
 
   public var title: String = String()
 
-  /// The engine key that wants it; empty for one every install wants.
-  public var engine: String = String()
+  /// The engine ID that wants it; empty for one every install wants.
+  public var engineID: String = String()
 
   /// What the transfer moves.
-  public var bytes: UInt64 = 0
+  public var sizeBytes: UInt64 = 0
 
   /// Whether it is fetched when nobody answers.
-  public var `default`: Bool = false
+  public var downloadByDefault: Bool = false
 
   public var onDisk: Aria_Setup_V1_OnDisk = .unspecified
 
@@ -590,8 +599,8 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
 
   public var kind: Aria_Setup_V1_Missing.Kind = .unspecified
 
-  /// The model's name when kind is KIND_MODEL.
-  public var model: String = String()
+  /// The model ID when kind is KIND_MODEL.
+  public var modelID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -602,6 +611,9 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
     case wakeword // = 2
     case model // = 3
     case service // = 4
+
+    /// Reported only when a serving daemon's hotkey listener has not armed.
+    /// A stopped daemon reports no grant state.
     case grant // = 5
     case UNRECOGNIZED(Int)
 
@@ -654,11 +666,11 @@ public nonisolated struct Aria_Setup_V1_Selections: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var stt: String = String()
+  public var transcriptionEngineID: String = String()
 
-  public var tts: String = String()
+  public var synthesisEngineID: String = String()
 
-  public var chat: String = String()
+  public var assistantID: String = String()
 
   public var wake: Bool = false
 
@@ -683,7 +695,7 @@ public nonisolated struct Aria_Setup_V1_ApplyRequest: Sendable {
   /// Clears the value of `selections`. Subsequent reads from it will return its default value.
   public mutating func clearSelections() {self._selections = nil}
 
-  /// Models to fetch, by name; any other wanted one is skipped.
+  /// Models to fetch, by ID; any other wanted one is skipped.
   public var downloads: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -767,11 +779,11 @@ public nonisolated struct Aria_Setup_V1_DownloadProgress: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var model: String = String()
+  public var modelID: String = String()
 
-  public var received: UInt64 = 0
+  public var receivedBytes: UInt64 = 0
 
-  public var total: UInt64 = 0
+  public var totalBytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -786,7 +798,7 @@ public nonisolated struct Aria_Setup_V1_Summary: Sendable {
   public var config: Aria_Setup_V1_ConfigWrite = .unspecified
 
   /// Where the hand-written config was kept; empty when there was none.
-  public var configBackup: String = String()
+  public var configBackupPath: String = String()
 
   /// Where the wake-word models went; empty when none ship beside the binary.
   public var wakewordDir: String = String()
@@ -794,7 +806,7 @@ public nonisolated struct Aria_Setup_V1_Summary: Sendable {
   public var models: [Aria_Setup_V1_ModelOutcome] = []
 
   /// The removed Python-era wake agent; empty when there was none.
-  public var legacyAgent: String = String()
+  public var legacyAgentPath: String = String()
 
   public var service: Aria_Setup_V1_ServiceStatus {
     get {_service ?? Aria_Setup_V1_ServiceStatus()}
@@ -822,7 +834,7 @@ public nonisolated struct Aria_Setup_V1_ModelOutcome: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var model: String = String()
+  public var modelID: String = String()
 
   public var outcome: Aria_Setup_V1_Outcome = .unspecified
 
@@ -836,14 +848,14 @@ public nonisolated struct Aria_Setup_V1_ServiceStatus: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var unit: String = String()
+  public var unitPath: String = String()
 
   public var job: Aria_Setup_V1_Job = .unspecified
 
   /// Set when job is JOB_RUNNING.
   public var jobPid: UInt32 = 0
 
-  public var socket: String = String()
+  public var socketPath: String = String()
 
   public var daemon: Aria_Setup_V1_DaemonState = .unspecified
 
@@ -897,15 +909,15 @@ nonisolated extension Aria_Setup_V1_DaemonState: SwiftProtobuf._ProtoNameProvidi
 
 nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Inspection"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{1}macos\0\u{1}defaults\0\u{1}stt\0\u{1}tts\0\u{1}chat\0\u{1}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{1}macos\0\u{1}defaults\0\u{3}transcription_choices\0\u{3}synthesis_choices\0\u{3}assistant_choices\0\u{1}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0")
 
   fileprivate class _StorageClass {
     var _configPath: String = String()
     var _macos: Bool = false
     var _defaults: Aria_Setup_V1_Selections? = nil
-    var _stt: [Aria_Setup_V1_Engine] = []
-    var _tts: [Aria_Setup_V1_Engine] = []
-    var _chat: [Aria_Setup_V1_Engine] = []
+    var _transcriptionChoices: [Aria_Setup_V1_Choice] = []
+    var _synthesisChoices: [Aria_Setup_V1_Choice] = []
+    var _assistantChoices: [Aria_Setup_V1_Choice] = []
     var _models: [Aria_Setup_V1_Model] = []
     var _wakewordInstalled: Bool = false
     var _service: Aria_Setup_V1_ServiceStatus? = nil
@@ -925,9 +937,9 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       _configPath = source._configPath
       _macos = source._macos
       _defaults = source._defaults
-      _stt = source._stt
-      _tts = source._tts
-      _chat = source._chat
+      _transcriptionChoices = source._transcriptionChoices
+      _synthesisChoices = source._synthesisChoices
+      _assistantChoices = source._assistantChoices
       _models = source._models
       _wakewordInstalled = source._wakewordInstalled
       _service = source._service
@@ -955,9 +967,9 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         case 1: try { try decoder.decodeSingularStringField(value: &_storage._configPath) }()
         case 2: try { try decoder.decodeSingularBoolField(value: &_storage._macos) }()
         case 3: try { try decoder.decodeSingularMessageField(value: &_storage._defaults) }()
-        case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._stt) }()
-        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._tts) }()
-        case 6: try { try decoder.decodeRepeatedMessageField(value: &_storage._chat) }()
+        case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._transcriptionChoices) }()
+        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._synthesisChoices) }()
+        case 6: try { try decoder.decodeRepeatedMessageField(value: &_storage._assistantChoices) }()
         case 7: try { try decoder.decodeRepeatedMessageField(value: &_storage._models) }()
         case 8: try { try decoder.decodeSingularBoolField(value: &_storage._wakewordInstalled) }()
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._service) }()
@@ -985,14 +997,14 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       try { if let v = _storage._defaults {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
       } }()
-      if !_storage._stt.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._stt, fieldNumber: 4)
+      if !_storage._transcriptionChoices.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._transcriptionChoices, fieldNumber: 4)
       }
-      if !_storage._tts.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._tts, fieldNumber: 5)
+      if !_storage._synthesisChoices.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._synthesisChoices, fieldNumber: 5)
       }
-      if !_storage._chat.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._chat, fieldNumber: 6)
+      if !_storage._assistantChoices.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._assistantChoices, fieldNumber: 6)
       }
       if !_storage._models.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._models, fieldNumber: 7)
@@ -1024,9 +1036,9 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         if _storage._configPath != rhs_storage._configPath {return false}
         if _storage._macos != rhs_storage._macos {return false}
         if _storage._defaults != rhs_storage._defaults {return false}
-        if _storage._stt != rhs_storage._stt {return false}
-        if _storage._tts != rhs_storage._tts {return false}
-        if _storage._chat != rhs_storage._chat {return false}
+        if _storage._transcriptionChoices != rhs_storage._transcriptionChoices {return false}
+        if _storage._synthesisChoices != rhs_storage._synthesisChoices {return false}
+        if _storage._assistantChoices != rhs_storage._assistantChoices {return false}
         if _storage._models != rhs_storage._models {return false}
         if _storage._wakewordInstalled != rhs_storage._wakewordInstalled {return false}
         if _storage._service != rhs_storage._service {return false}
@@ -1077,9 +1089,9 @@ nonisolated extension Aria_Setup_V1_PairedServer: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".Engine"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}key\0\u{1}label\0\u{1}availability\0\u{1}note\0\u{1}default\0\u{1}model\0")
+nonisolated extension Aria_Setup_V1_Choice: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Choice"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}label\0\u{1}availability\0\u{3}availability_detail\0\u{1}default\0\u{3}model_source\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1087,20 +1099,20 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.key) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.label) }()
       case 3: try { try decoder.decodeSingularEnumField(value: &self.availability) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.note) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.availabilityDetail) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.`default`) }()
-      case 6: try { try decoder.decodeSingularEnumField(value: &self.model) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.modelSource) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.key.isEmpty {
-      try visitor.visitSingularStringField(value: self.key, fieldNumber: 1)
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
     if !self.label.isEmpty {
       try visitor.visitSingularStringField(value: self.label, fieldNumber: 2)
@@ -1108,25 +1120,25 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
     if self.availability != .unspecified {
       try visitor.visitSingularEnumField(value: self.availability, fieldNumber: 3)
     }
-    if !self.note.isEmpty {
-      try visitor.visitSingularStringField(value: self.note, fieldNumber: 4)
+    if !self.availabilityDetail.isEmpty {
+      try visitor.visitSingularStringField(value: self.availabilityDetail, fieldNumber: 4)
     }
     if self.`default` != false {
       try visitor.visitSingularBoolField(value: self.`default`, fieldNumber: 5)
     }
-    if self.model != .unspecified {
-      try visitor.visitSingularEnumField(value: self.model, fieldNumber: 6)
+    if self.modelSource != .unspecified {
+      try visitor.visitSingularEnumField(value: self.modelSource, fieldNumber: 6)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_Engine, rhs: Aria_Setup_V1_Engine) -> Bool {
-    if lhs.key != rhs.key {return false}
+  public static func ==(lhs: Aria_Setup_V1_Choice, rhs: Aria_Setup_V1_Choice) -> Bool {
+    if lhs.id != rhs.id {return false}
     if lhs.label != rhs.label {return false}
     if lhs.availability != rhs.availability {return false}
-    if lhs.note != rhs.note {return false}
+    if lhs.availabilityDetail != rhs.availabilityDetail {return false}
     if lhs.`default` != rhs.`default` {return false}
-    if lhs.model != rhs.model {return false}
+    if lhs.modelSource != rhs.modelSource {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1134,7 +1146,7 @@ nonisolated extension Aria_Setup_V1_Engine: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Model"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}engine\0\u{1}bytes\0\u{1}default\0\u{3}on_disk\0\u{1}external\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{3}engine_id\0\u{3}size_bytes\0\u{3}download_by_default\0\u{3}on_disk\0\u{1}external\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1142,11 +1154,11 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.title) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.engine) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.bytes) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.`default`) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.engineID) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.sizeBytes) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.downloadByDefault) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.onDisk) }()
       case 7: try { try decoder.decodeSingularBoolField(value: &self.external) }()
       default: break
@@ -1155,20 +1167,20 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.name.isEmpty {
-      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
     if !self.title.isEmpty {
       try visitor.visitSingularStringField(value: self.title, fieldNumber: 2)
     }
-    if !self.engine.isEmpty {
-      try visitor.visitSingularStringField(value: self.engine, fieldNumber: 3)
+    if !self.engineID.isEmpty {
+      try visitor.visitSingularStringField(value: self.engineID, fieldNumber: 3)
     }
-    if self.bytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.bytes, fieldNumber: 4)
+    if self.sizeBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.sizeBytes, fieldNumber: 4)
     }
-    if self.`default` != false {
-      try visitor.visitSingularBoolField(value: self.`default`, fieldNumber: 5)
+    if self.downloadByDefault != false {
+      try visitor.visitSingularBoolField(value: self.downloadByDefault, fieldNumber: 5)
     }
     if self.onDisk != .unspecified {
       try visitor.visitSingularEnumField(value: self.onDisk, fieldNumber: 6)
@@ -1180,11 +1192,11 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
   }
 
   public static func ==(lhs: Aria_Setup_V1_Model, rhs: Aria_Setup_V1_Model) -> Bool {
-    if lhs.name != rhs.name {return false}
+    if lhs.id != rhs.id {return false}
     if lhs.title != rhs.title {return false}
-    if lhs.engine != rhs.engine {return false}
-    if lhs.bytes != rhs.bytes {return false}
-    if lhs.`default` != rhs.`default` {return false}
+    if lhs.engineID != rhs.engineID {return false}
+    if lhs.sizeBytes != rhs.sizeBytes {return false}
+    if lhs.downloadByDefault != rhs.downloadByDefault {return false}
     if lhs.onDisk != rhs.onDisk {return false}
     if lhs.external != rhs.external {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
@@ -1194,7 +1206,7 @@ nonisolated extension Aria_Setup_V1_Model: SwiftProtobuf.Message, SwiftProtobuf.
 
 nonisolated extension Aria_Setup_V1_Missing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Missing"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}model\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{3}model_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1203,7 +1215,7 @@ nonisolated extension Aria_Setup_V1_Missing: SwiftProtobuf.Message, SwiftProtobu
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
       default: break
       }
     }
@@ -1213,15 +1225,15 @@ nonisolated extension Aria_Setup_V1_Missing: SwiftProtobuf.Message, SwiftProtobu
     if self.kind != .unspecified {
       try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 1)
     }
-    if !self.model.isEmpty {
-      try visitor.visitSingularStringField(value: self.model, fieldNumber: 2)
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 2)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Setup_V1_Missing, rhs: Aria_Setup_V1_Missing) -> Bool {
     if lhs.kind != rhs.kind {return false}
-    if lhs.model != rhs.model {return false}
+    if lhs.modelID != rhs.modelID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1233,7 +1245,7 @@ nonisolated extension Aria_Setup_V1_Missing.Kind: SwiftProtobuf._ProtoNameProvid
 
 nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Selections"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stt\0\u{1}tts\0\u{1}chat\0\u{1}wake\0\u{1}hotkey\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transcription_engine_id\0\u{3}synthesis_engine_id\0\u{3}assistant_id\0\u{1}wake\0\u{1}hotkey\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1241,9 +1253,9 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.stt) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.tts) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.chat) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.transcriptionEngineID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.synthesisEngineID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.assistantID) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.wake) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.hotkey) }()
       default: break
@@ -1252,14 +1264,14 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.stt.isEmpty {
-      try visitor.visitSingularStringField(value: self.stt, fieldNumber: 1)
+    if !self.transcriptionEngineID.isEmpty {
+      try visitor.visitSingularStringField(value: self.transcriptionEngineID, fieldNumber: 1)
     }
-    if !self.tts.isEmpty {
-      try visitor.visitSingularStringField(value: self.tts, fieldNumber: 2)
+    if !self.synthesisEngineID.isEmpty {
+      try visitor.visitSingularStringField(value: self.synthesisEngineID, fieldNumber: 2)
     }
-    if !self.chat.isEmpty {
-      try visitor.visitSingularStringField(value: self.chat, fieldNumber: 3)
+    if !self.assistantID.isEmpty {
+      try visitor.visitSingularStringField(value: self.assistantID, fieldNumber: 3)
     }
     if self.wake != false {
       try visitor.visitSingularBoolField(value: self.wake, fieldNumber: 4)
@@ -1271,9 +1283,9 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
   }
 
   public static func ==(lhs: Aria_Setup_V1_Selections, rhs: Aria_Setup_V1_Selections) -> Bool {
-    if lhs.stt != rhs.stt {return false}
-    if lhs.tts != rhs.tts {return false}
-    if lhs.chat != rhs.chat {return false}
+    if lhs.transcriptionEngineID != rhs.transcriptionEngineID {return false}
+    if lhs.synthesisEngineID != rhs.synthesisEngineID {return false}
+    if lhs.assistantID != rhs.assistantID {return false}
     if lhs.wake != rhs.wake {return false}
     if lhs.hotkey != rhs.hotkey {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
@@ -1451,7 +1463,7 @@ nonisolated extension Aria_Setup_V1_SetupEvent: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Aria_Setup_V1_DownloadProgress: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DownloadProgress"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}received\0\u{1}total\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}received_bytes\0\u{3}total_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1459,31 +1471,31 @@ nonisolated extension Aria_Setup_V1_DownloadProgress: SwiftProtobuf.Message, Swi
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.model) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.received) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.total) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.receivedBytes) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.model.isEmpty {
-      try visitor.visitSingularStringField(value: self.model, fieldNumber: 1)
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
     }
-    if self.received != 0 {
-      try visitor.visitSingularUInt64Field(value: self.received, fieldNumber: 2)
+    if self.receivedBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.receivedBytes, fieldNumber: 2)
     }
-    if self.total != 0 {
-      try visitor.visitSingularUInt64Field(value: self.total, fieldNumber: 3)
+    if self.totalBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.totalBytes, fieldNumber: 3)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Setup_V1_DownloadProgress, rhs: Aria_Setup_V1_DownloadProgress) -> Bool {
-    if lhs.model != rhs.model {return false}
-    if lhs.received != rhs.received {return false}
-    if lhs.total != rhs.total {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.receivedBytes != rhs.receivedBytes {return false}
+    if lhs.totalBytes != rhs.totalBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1491,7 +1503,7 @@ nonisolated extension Aria_Setup_V1_DownloadProgress: SwiftProtobuf.Message, Swi
 
 nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Summary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}config\0\u{3}config_backup\0\u{3}wakeword_dir\0\u{1}models\0\u{3}legacy_agent\0\u{1}service\0\u{1}grant\0\u{3}voice_model_present\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}config\0\u{3}config_backup_path\0\u{3}wakeword_dir\0\u{1}models\0\u{3}legacy_agent_path\0\u{1}service\0\u{1}grant\0\u{3}voice_model_present\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1500,10 +1512,10 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.config) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.configBackup) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.configBackupPath) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.wakewordDir) }()
       case 4: try { try decoder.decodeRepeatedMessageField(value: &self.models) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.legacyAgent) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.legacyAgentPath) }()
       case 6: try { try decoder.decodeSingularMessageField(value: &self._service) }()
       case 7: try { try decoder.decodeSingularEnumField(value: &self.grant) }()
       case 8: try { try decoder.decodeSingularBoolField(value: &self.voiceModelPresent) }()
@@ -1520,8 +1532,8 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
     if self.config != .unspecified {
       try visitor.visitSingularEnumField(value: self.config, fieldNumber: 1)
     }
-    if !self.configBackup.isEmpty {
-      try visitor.visitSingularStringField(value: self.configBackup, fieldNumber: 2)
+    if !self.configBackupPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.configBackupPath, fieldNumber: 2)
     }
     if !self.wakewordDir.isEmpty {
       try visitor.visitSingularStringField(value: self.wakewordDir, fieldNumber: 3)
@@ -1529,8 +1541,8 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
     if !self.models.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.models, fieldNumber: 4)
     }
-    if !self.legacyAgent.isEmpty {
-      try visitor.visitSingularStringField(value: self.legacyAgent, fieldNumber: 5)
+    if !self.legacyAgentPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.legacyAgentPath, fieldNumber: 5)
     }
     try { if let v = self._service {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
@@ -1546,10 +1558,10 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
 
   public static func ==(lhs: Aria_Setup_V1_Summary, rhs: Aria_Setup_V1_Summary) -> Bool {
     if lhs.config != rhs.config {return false}
-    if lhs.configBackup != rhs.configBackup {return false}
+    if lhs.configBackupPath != rhs.configBackupPath {return false}
     if lhs.wakewordDir != rhs.wakewordDir {return false}
     if lhs.models != rhs.models {return false}
-    if lhs.legacyAgent != rhs.legacyAgent {return false}
+    if lhs.legacyAgentPath != rhs.legacyAgentPath {return false}
     if lhs._service != rhs._service {return false}
     if lhs.grant != rhs.grant {return false}
     if lhs.voiceModelPresent != rhs.voiceModelPresent {return false}
@@ -1560,7 +1572,7 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Aria_Setup_V1_ModelOutcome: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelOutcome"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}outcome\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}outcome\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1568,7 +1580,7 @@ nonisolated extension Aria_Setup_V1_ModelOutcome: SwiftProtobuf.Message, SwiftPr
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.outcome) }()
       default: break
       }
@@ -1576,8 +1588,8 @@ nonisolated extension Aria_Setup_V1_ModelOutcome: SwiftProtobuf.Message, SwiftPr
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.model.isEmpty {
-      try visitor.visitSingularStringField(value: self.model, fieldNumber: 1)
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
     }
     if self.outcome != .unspecified {
       try visitor.visitSingularEnumField(value: self.outcome, fieldNumber: 2)
@@ -1586,7 +1598,7 @@ nonisolated extension Aria_Setup_V1_ModelOutcome: SwiftProtobuf.Message, SwiftPr
   }
 
   public static func ==(lhs: Aria_Setup_V1_ModelOutcome, rhs: Aria_Setup_V1_ModelOutcome) -> Bool {
-    if lhs.model != rhs.model {return false}
+    if lhs.modelID != rhs.modelID {return false}
     if lhs.outcome != rhs.outcome {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -1595,7 +1607,7 @@ nonisolated extension Aria_Setup_V1_ModelOutcome: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Aria_Setup_V1_ServiceStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServiceStatus"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}unit\0\u{1}job\0\u{3}job_pid\0\u{1}socket\0\u{1}daemon\0\u{3}daemon_pid\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}unit_path\0\u{1}job\0\u{3}job_pid\0\u{3}socket_path\0\u{1}daemon\0\u{3}daemon_pid\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1603,10 +1615,10 @@ nonisolated extension Aria_Setup_V1_ServiceStatus: SwiftProtobuf.Message, SwiftP
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.unit) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.unitPath) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.job) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.jobPid) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.socket) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.socketPath) }()
       case 5: try { try decoder.decodeSingularEnumField(value: &self.daemon) }()
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.daemonPid) }()
       default: break
@@ -1615,8 +1627,8 @@ nonisolated extension Aria_Setup_V1_ServiceStatus: SwiftProtobuf.Message, SwiftP
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.unit.isEmpty {
-      try visitor.visitSingularStringField(value: self.unit, fieldNumber: 1)
+    if !self.unitPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.unitPath, fieldNumber: 1)
     }
     if self.job != .unspecified {
       try visitor.visitSingularEnumField(value: self.job, fieldNumber: 2)
@@ -1624,8 +1636,8 @@ nonisolated extension Aria_Setup_V1_ServiceStatus: SwiftProtobuf.Message, SwiftP
     if self.jobPid != 0 {
       try visitor.visitSingularUInt32Field(value: self.jobPid, fieldNumber: 3)
     }
-    if !self.socket.isEmpty {
-      try visitor.visitSingularStringField(value: self.socket, fieldNumber: 4)
+    if !self.socketPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.socketPath, fieldNumber: 4)
     }
     if self.daemon != .unspecified {
       try visitor.visitSingularEnumField(value: self.daemon, fieldNumber: 5)
@@ -1637,10 +1649,10 @@ nonisolated extension Aria_Setup_V1_ServiceStatus: SwiftProtobuf.Message, SwiftP
   }
 
   public static func ==(lhs: Aria_Setup_V1_ServiceStatus, rhs: Aria_Setup_V1_ServiceStatus) -> Bool {
-    if lhs.unit != rhs.unit {return false}
+    if lhs.unitPath != rhs.unitPath {return false}
     if lhs.job != rhs.job {return false}
     if lhs.jobPid != rhs.jobPid {return false}
-    if lhs.socket != rhs.socket {return false}
+    if lhs.socketPath != rhs.socketPath {return false}
     if lhs.daemon != rhs.daemon {return false}
     if lhs.daemonPid != rhs.daemonPid {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

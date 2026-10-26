@@ -11,7 +11,7 @@ final class ServerTranscriptionTests: XCTestCase {
     private final class Spy {
         var inspection: Aria_Setup_V1_Inspection
         var requests: [Aria_Setup_V1_ApplyRequest] = []
-        var applied: [String] { requests.map(\.selections.stt) }
+        var applied: [String] { requests.map(\.selections.transcriptionEngineID) }
         var lastLocal: String?
         var paired: [String] = []
         var daemon: [String] = []
@@ -43,7 +43,7 @@ final class ServerTranscriptionTests: XCTestCase {
                 apply: { request in
                     self.requests.append(request)
                     if self.applyFails { throw Refused() }
-                    self.inspection.defaults.stt = request.selections.stt
+                    self.inspection.defaults.transcriptionEngineID = request.selections.transcriptionEngineID
                 },
                 stopDaemon: { self.daemon.append("stop") },
                 startDaemon: { self.daemon.append("start") },
@@ -55,18 +55,18 @@ final class ServerTranscriptionTests: XCTestCase {
 
     private static func engine(
         _ key: String, availability: Aria_Setup_V1_Availability = .ready, model: Aria_Setup_V1_ModelSource = .downloads
-    ) -> Aria_Setup_V1_Engine {
-        var engine = Aria_Setup_V1_Engine()
-        engine.key = key
+    ) -> Aria_Setup_V1_Choice {
+        var engine = Aria_Setup_V1_Choice()
+        engine.id = key
         engine.availability = availability
-        engine.model = model
+        engine.modelSource = model
         return engine
     }
 
     private static func model(_ engine: String, onDisk: Aria_Setup_V1_OnDisk) -> Aria_Setup_V1_Model {
         var model = Aria_Setup_V1_Model()
-        model.name = engine
-        model.engine = engine
+        model.id = engine
+        model.engineID = engine
         model.onDisk = onDisk
         return model
     }
@@ -75,15 +75,15 @@ final class ServerTranscriptionTests: XCTestCase {
     /// fetch one; Whisper's is on disk.
     private static func mac(runningOn stt: String) -> Aria_Setup_V1_Inspection {
         var inspection = Aria_Setup_V1_Inspection()
-        inspection.stt = [
+        inspection.transcriptionChoices = [
             engine("parakeet"),
             engine("parakeet-mlx", model: .fetchedOnFirstUse),
             engine("whisper"),
             engine("server", model: .remote),
         ]
         inspection.models = [model("parakeet", onDisk: .absent), model("whisper", onDisk: .complete)]
-        inspection.defaults.stt = stt
-        inspection.defaults.tts = "system"
+        inspection.defaults.transcriptionEngineID = stt
+        inspection.defaults.synthesisEngineID = "system"
         inspection.server.endpoint = "https://box:9851"
         inspection.service.job = .idle
         return inspection
@@ -91,7 +91,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
     func testThisMacPrefersThePreviousEngineThenTheFirstWithItsModelOnDisk() {
         var mac = Self.mac(runningOn: "server")
-        mac.stt.append(Self.engine("moonshine"))
+        mac.transcriptionChoices.append(Self.engine("moonshine"))
         mac.models.append(Self.model("moonshine", onDisk: .complete))
         XCTAssertEqual(ServerTranscription.localEngine(in: mac, preferring: nil), "whisper")
         XCTAssertEqual(ServerTranscription.localEngine(in: mac, preferring: "moonshine"), "moonshine")
@@ -113,7 +113,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
         setup.show(unpaired)
         XCTAssertFalse(server.canChooseLocation)
-        unpaired.defaults.stt = "server"
+        unpaired.defaults.transcriptionEngineID = "server"
         setup.show(unpaired)
         XCTAssertTrue(server.canChooseLocation)
         setup.show(Self.mac(runningOn: "whisper"))
@@ -128,7 +128,7 @@ final class ServerTranscriptionTests: XCTestCase {
         await server.use(.server)
         XCTAssertEqual(setup.transcription, .server)
         XCTAssertEqual(setup.server?.endpoint, "https://box:9851")
-        XCTAssertEqual(spy.requests.first?.selections.tts, "system")
+        XCTAssertEqual(spy.requests.first?.selections.synthesisEngineID, "system")
         XCTAssertEqual(spy.requests.first?.downloads, [])
         XCTAssertEqual(spy.lastLocal, "whisper")
 

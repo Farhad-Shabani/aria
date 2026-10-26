@@ -6,8 +6,8 @@ struct EnginesPage: View {
     var body: some View {
         Form {
             Section {
-                picker("Speech to text", state.inspection.stt, $state.selections.stt)
-                picker("Text to speech", state.inspection.tts, $state.selections.tts)
+                picker("Speech to text", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID)
+                picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)
             }
             Section {
                 Toggle("Listen for the wake word", isOn: $state.selections.wake)
@@ -22,16 +22,16 @@ struct EnginesPage: View {
         }
     }
 
-    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Engine], _ key: Binding<String>)
+    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Choice], _ key: Binding<String>)
         -> some View
     {
-        let chosen = engines.first { $0.key == key.wrappedValue }
+        let chosen = engines.first { $0.id == key.wrappedValue }
         return Picker(selection: key) {
-            ForEach(engines, id: \.key) { engine in
+            ForEach(engines, id: \.id) { engine in
                 let download = SetupState.download(of: engine, in: state.inspection)
                 Text("\(engine.label)   \(Text(download.brief).foregroundStyle(.secondary))")
                     .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
-                    .tag(engine.key)
+                    .tag(engine.id)
             }
             // config.yaml may name an engine setup does not offer; the
             // picker still needs a row for it.
@@ -40,8 +40,8 @@ struct EnginesPage: View {
             }
         } label: {
             Text(title)
-            if let chosen, !chosen.note.isEmpty {
-                Text(chosen.note)
+            if let chosen, !chosen.availabilityDetail.isEmpty {
+                Text(chosen.availabilityDetail)
                     .foregroundStyle(chosen.availability == .unsupported ? Color.failure : Color.secondary)
             }
         }
@@ -54,7 +54,7 @@ private struct DownloadsSection: View {
 
     var body: some View {
         Section {
-            ForEach(SetupState.wanted(state.inspection, state.selections), id: \.name) { model in
+            ForEach(SetupState.wanted(state.inspection, state.selections), id: \.id) { model in
                 row(model)
             }
         } header: {
@@ -69,7 +69,7 @@ private struct DownloadsSection: View {
     private func row(_ model: Aria_Setup_V1_Model) -> some View {
         let downloaded = model.onDisk == .complete
         let fixed = downloaded || model.external
-        return Toggle(isOn: fixed ? .constant(downloaded) : toggle(model.name)) {
+        return Toggle(isOn: fixed ? .constant(downloaded) : toggle(model.id)) {
             Text(model.title)
             Text(Self.status(model)).monospacedDigit()
             if model.onDisk == .partial && !model.external {
@@ -85,11 +85,11 @@ private struct DownloadsSection: View {
         return SetupState.downloadSize(of: [model])
     }
 
-    private func toggle(_ name: String) -> Binding<Bool> {
+    private func toggle(_ id: String) -> Binding<Bool> {
         Binding(
-            get: { state.downloads.contains(name) },
+            get: { state.downloads.contains(id) },
             set: { on in
-                if on { state.downloads.insert(name) } else { state.downloads.remove(name) }
+                if on { state.downloads.insert(id) } else { state.downloads.remove(id) }
             }
         )
     }

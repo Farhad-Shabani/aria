@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/chat.proto";
+import "aria/daemon/v1/dictation.proto";
+import "aria/daemon/v1/listen.proto";
+import "aria/daemon/v1/speaker.proto";
+import "aria/daemon/v1/speech.proto";
+
+service EventsService {
+  // Live events only, with no replay. Subscribe before starting an operation
+  // whose result arrives here. At most 64 subscribers, each with a 16-event
+  // queue. A full queue drops microphone levels; other events close the stream.
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+}
+
+message SubscribeRequest {}
+
+// An unknown payload decodes as empty: skip it, never end the stream.
+message Event {
+  oneof payload {
+    DictationEvent dictation = 1;
+    ChatEvent chat = 2;
+    SpeechEvent speech = 3;
+    ListenEvent listen = 4;
+    SpeakerEvent speaker = 5;
+    CaptionSnapshot caption = 6;
+    MicLevel level = 7;
+    GhostSnapshot ghost = 8;
+  }
+}

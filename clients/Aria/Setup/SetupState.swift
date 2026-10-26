@@ -99,7 +99,8 @@ final class SetupState: ObservableObject {
         -> [Aria_Setup_V1_Model]
     {
         inspection.models.filter { model in
-            model.engine.isEmpty || model.engine == selections.stt || model.engine == selections.tts
+            model.engineID.isEmpty || model.engineID == selections.transcriptionEngineID
+                || model.engineID == selections.synthesisEngineID
         }
     }
 
@@ -113,7 +114,7 @@ final class SetupState: ObservableObject {
     static func expressPlan(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
         -> [Aria_Setup_V1_Model]
     {
-        plan(inspection, selections).filter(\.default)
+        plan(inspection, selections).filter(\.downloadByDefault)
     }
 
     static func total(_ models: [Aria_Setup_V1_Model]) -> String {
@@ -123,21 +124,21 @@ final class SetupState: ObservableObject {
     /// Says "up to" when a download resumes: only the transfer knows how
     /// much is left.
     static func downloadSize(of models: [Aria_Setup_V1_Model]) -> String {
-        let size = size(models.reduce(0) { $0 + $1.bytes })
+        let size = size(models.reduce(0) { $0 + $1.sizeBytes })
         return models.contains { $0.onDisk == .partial } ? "up to \(size)" : size
     }
 
     /// What picking `engine` downloads, for comparing engines before one
     /// is chosen.
-    static func download(of engine: Aria_Setup_V1_Engine, in inspection: Aria_Setup_V1_Inspection) -> EngineDownload {
-        switch engine.model {
+    static func download(of engine: Aria_Setup_V1_Choice, in inspection: Aria_Setup_V1_Inspection) -> EngineDownload {
+        switch engine.modelSource {
         case .downloads: break
         case .fetchedOnFirstUse: return .status("Fetched on first use")
         case .builtIn: return .status("Built in")
         case .remote: return .status("On the server")
         case .unspecified, .UNRECOGNIZED: return .status("Size unknown")
         }
-        let models = inspection.models.filter { $0.engine == engine.key }
+        let models = inspection.models.filter { $0.engineID == engine.id }
         if models.contains(where: \.external) { return .status("Custom model") }
         let missing = models.filter { $0.onDisk != .complete }
         if missing.isEmpty { return .status("Downloaded") }
@@ -149,11 +150,13 @@ final class SetupState: ObservableObject {
         -> String?
     {
         let chosen = [
-            (selections.stt, inspection.stt), (selections.tts, inspection.tts), (selections.chat, inspection.chat),
+            (selections.transcriptionEngineID, inspection.transcriptionChoices),
+            (selections.synthesisEngineID, inspection.synthesisChoices),
+            (selections.assistantID, inspection.assistantChoices),
         ]
         for (key, engines) in chosen {
-            guard let engine = engines.first(where: { $0.key == key }) else { continue }
-            if engine.availability == .unsupported { return "\(engine.label): \(engine.note)" }
+            guard let engine = engines.first(where: { $0.id == key }) else { continue }
+            if engine.availability == .unsupported { return "\(engine.label): \(engine.availabilityDetail)" }
         }
         return nil
     }
@@ -192,16 +195,19 @@ final class SetupState: ObservableObject {
 
     var downloadTotal: String {
         let plan = Self.plan(inspection, selections)
-        let chosen = plan.filter { downloads.contains($0.name) }
+        let chosen = plan.filter { downloads.contains($0.id) }
         return chosen.isEmpty && !plan.isEmpty ? "Nothing selected." : Self.total(chosen)
     }
 
     /// One note per chosen engine that downloads its own model, which
     /// setup cannot size.
     var selfFetchingNotes: [String] {
-        let chosen = [(selections.stt, inspection.stt), (selections.tts, inspection.tts)]
+        let chosen = [
+            (selections.transcriptionEngineID, inspection.transcriptionChoices),
+            (selections.synthesisEngineID, inspection.synthesisChoices),
+        ]
         return chosen.compactMap { key, engines in
-            engines.first { $0.key == key && $0.model == .fetchedOnFirstUse }
+            engines.first { $0.id == key && $0.modelSource == .fetchedOnFirstUse }
                 .map { "\($0.label) downloads its model on first use." }
         }
     }
@@ -219,8 +225,8 @@ final class SetupState: ObservableObject {
         }
     }
 
-    func title(ofModel name: String) -> String {
-        inspection.models.first { $0.name == name }?.title ?? name
+    func title(ofModel id: String) -> String {
+        inspection.models.first { $0.id == id }?.title ?? id
     }
 
     static func size(_ bytes: UInt64) -> String {
@@ -283,7 +289,7 @@ final class SetupState: ObservableObject {
     }
 
     private var defaultDownloads: Set<String> {
-        Set(Self.expressPlan(inspection, selections).map(\.name))
+        Set(Self.expressPlan(inspection, selections).map(\.id))
     }
 
     func cancel() {
@@ -365,7 +371,7 @@ final class SetupState: ObservableObject {
         downloadProgress = [:]
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = selections
-        request.downloads = Self.plan(inspection, selections).map(\.name).filter(downloads.contains)
+        request.downloads = Self.plan(inspection, selections).map(\.id).filter(downloads.contains)
         applyTask = Task {
             do {
                 let summary = try await SetupClient.handingOffDaemon(
@@ -387,7 +393,7 @@ final class SetupState: ObservableObject {
     private func absorb(_ event: Aria_Setup_V1_SetupEvent) {
         switch event.event {
         case .started(let step): applying = step
-        case .download(let download): downloadProgress[download.model] = download
+        case .download(let download): downloadProgress[download.modelID] = download
         case nil: break
         }
     }

@@ -149,7 +149,7 @@ public nonisolated struct Aria_Daemon_V1_IssueInviteResponse: Sendable {
   // methods supported on all messages.
 
   /// The Mac's display name. The phone identifies the Mac by `fingerprint`.
-  public var instance: String = String()
+  public var instanceName: String = String()
 
   public var code: String = String()
 
@@ -339,7 +339,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteRequest: SwiftProtobuf.Message, 
 
 nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".IssueInviteResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}instance\0\u{1}code\0\u{1}fingerprint\0\u{3}expires_in_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}instance_name\0\u{1}code\0\u{1}fingerprint\0\u{3}expires_in_ms\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -347,7 +347,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.instance) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.instanceName) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.code) }()
       case 3: try { try decoder.decodeSingularBytesField(value: &self.fingerprint) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.expiresInMs) }()
@@ -357,8 +357,8 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.instance.isEmpty {
-      try visitor.visitSingularStringField(value: self.instance, fieldNumber: 1)
+    if !self.instanceName.isEmpty {
+      try visitor.visitSingularStringField(value: self.instanceName, fieldNumber: 1)
     }
     if !self.code.isEmpty {
       try visitor.visitSingularStringField(value: self.code, fieldNumber: 2)
@@ -373,7 +373,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
   }
 
   public static func ==(lhs: Aria_Daemon_V1_IssueInviteResponse, rhs: Aria_Daemon_V1_IssueInviteResponse) -> Bool {
-    if lhs.instance != rhs.instance {return false}
+    if lhs.instanceName != rhs.instanceName {return false}
     if lhs.code != rhs.code {return false}
     if lhs.fingerprint != rhs.fingerprint {return false}
     if lhs.expiresInMs != rhs.expiresInMs {return false}

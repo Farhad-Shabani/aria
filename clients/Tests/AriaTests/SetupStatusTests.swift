@@ -7,7 +7,7 @@ final class SetupStatusTests: XCTestCase {
     private static func missing(_ kind: Aria_Setup_V1_Missing.Kind, model: String = "") -> Aria_Setup_V1_Missing {
         var missing = Aria_Setup_V1_Missing()
         missing.kind = kind
-        missing.model = model
+        missing.modelID = model
         return missing
     }
 
@@ -33,7 +33,7 @@ final class SetupStatusTests: XCTestCase {
             var inspection = SetupStateTests.freshMac()
             inspection.models = inspection.models.map { model in
                 var model = model
-                if model.name == SetupStatus.speakerModel { change(&model) }
+                if model.id == SetupStatus.speakerModel { change(&model) }
                 return model
             }
             return inspection

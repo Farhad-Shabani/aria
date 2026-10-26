@@ -17,7 +17,8 @@ change, open an issue first and agree on the scope.
   `just swift-check` on macOS.
 - Build the guides with `just book`, using mdBook 0.5.4. Update
   `book/sitemap.xml` when adding, removing, or renaming a chapter.
-- The checks need [just](https://just.systems), [Taplo](https://taplo.tamasfe.dev),
+- The checks need [just](https://just.systems), [Buf](https://buf.build/docs/),
+  [Taplo](https://taplo.tamasfe.dev),
   [cargo-shear](https://github.com/Boshen/cargo-shear),
   [cargo-deny](https://github.com/EmbarkStudios/cargo-deny), and
   [uv](https://docs.astral.sh/uv/). The app checks need Xcode,

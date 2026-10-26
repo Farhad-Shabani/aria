@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/dictation.proto";
+import "aria/daemon/v1/errors.proto";
+
+service ChatService {
+  rpc ListAssistants(ListAssistantsRequest) returns (ListAssistantsResponse);
+  rpc ListModels(ListAssistantModelsRequest) returns (ListAssistantModelsResponse);
+  // Hand one prompt to an assistant. Answers with a ticket as soon as the ask
+  // is taken; the reply follows as a `ChatEvent` under that ticket. Asks
+  // run side by side, except that asks on one conversation (assistant and
+  // session) take turns. Served only by a persistent daemon; an on-demand
+  // daemon refuses with UNSUPPORTED.
+  rpc Ask(AskRequest) returns (AskResponse);
+  // Stop an ask that is running or still waiting its turn. Its assistant is
+  // killed and the ask ends as a FAILED event with CANCELLED; the
+  // conversation stays resumable.
+  rpc Cancel(CancelAskRequest) returns (CancelAskResponse);
+  // Where an ask goes, for a client with no working directory of its own.
+  // Answers with the focused project, else the configured one.
+  rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
+  // Run a stored prompt on a transcript and type the result into the app the
+  // request names, else the one in front. One fresh assistant run with no
+  // conversation, memory, or tools. Progress and the outcome arrive as
+  // `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+  rpc RunPrompt(RunPromptRequest) returns (AskResponse);
+}
+
+message ListAssistantsRequest {}
+
+message ListAssistantsResponse {
+  repeated Assistant assistants = 1;
+}
+
+message ListAssistantModelsRequest {
+  AssistantID assistant_id = 1;
+}
+
+message ListAssistantModelsResponse {
+  repeated AssistantModel models = 1;
+}
+
+message AskRequest {
+  AssistantID assistant_id = 1;
+  // A CLI model ID; empty uses the saved preference, then the assistant's default.
+  string model_id = 2;
+
+  // The directory the assistant works in.
+  string workdir = 3;
+  // Names the conversation to continue; empty means the directory's.
+  string session_name = 4;
+  // Forget the running conversation and start another.
+  bool new_conversation = 5;
+
+  string text = 6;
+  // The text came from a recording the own-voice gate judged as the
+  // owner's; see DictationResult.own_voice.
+  bool own_voice = 7;
+
+  // Deliver the reply like a transcript instead of only announcing it.
+  optional OutputMode output_mode = 8;
+}
+
+message AskResponse {
+  uint64 ticket = 1;
+}
+
+message RunPromptRequest {
+  string text = 1;
+  // A stored, enabled Prompt's ID.
+  string prompt_id = 2;
+  // The bundle ID of the app in front when the chord was first pressed. The
+  // result is typed only there. Empty when unknown.
+  string application_id = 3;
+}
+
+message CancelAskRequest {
+  uint64 ticket = 1;
+}
+
+message CancelAskResponse {
+  // False when the ticket was unknown or already done.
+  bool was_pending = 1;
+}
+
+message ResolveAskRequest {}
+
+message ResolveAskResponse {
+  // Both are what `Ask` wants: it takes no empty workdir and no
+  // unspecified assistant.
+  string workdir = 1;
+  AssistantID assistant_id = 2;
+}
+
+message ChatEvent {
+  uint64 ticket = 1;
+  // The assistant serving this ticket.
+  AssistantID assistant_id = 2;
+  ChatStage stage = 3;
+  // What the assistant is doing; only on WORKING.
+  ChatStep step = 4;
+  // The skill being loaded; only when step is SKILL.
+  string skill = 5;
+  // The reply; only on REPLIED.
+  string text = 6;
+  // On REPLIED: the reply went to the clipboard instead of being typed.
+  bool copied = 7;
+  // On REPLIED, why the reply was not delivered (UNSPECIFIED when it was,
+  // or delivery was not asked for). On FAILED, what went wrong.
+  ErrorCode error_code = 8;
+  // The failure, in words; only on FAILED.
+  string error_message = 9;
+}
+
+message Assistant {
+  AssistantID id = 1;
+  string name = 2;
+}
+
+message AssistantModel {
+  string id = 1;
+  string name = 2;
+}
+
+enum AssistantID {
+  ASSISTANT_ID_UNSPECIFIED = 0;
+  ASSISTANT_ID_CLAUDE_CODE = 1;
+  ASSISTANT_ID_CODEX = 2;
+}
+
+enum ChatStage {
+  CHAT_STAGE_UNSPECIFIED = 0;
+  // The assistant is at work; `step` says on what. Sent again on each change.
+  CHAT_STAGE_WORKING = 1;
+  CHAT_STAGE_REPLIED = 2;
+  CHAT_STAGE_FAILED = 3;
+}
+
+// Each value's word is the one every client shows: "thinking", "reading",
+// "searching", "running", `skill: <name>`; a value a client does not know
+// shows as "unknown".
+enum ChatStep {
+  CHAT_STEP_UNSPECIFIED = 0;
+  CHAT_STEP_THINKING = 1;
+  CHAT_STEP_READING = 2;
+  CHAT_STEP_SEARCHING = 3;
+  CHAT_STEP_RUNNING = 4;
+  CHAT_STEP_SKILL = 5;
+}

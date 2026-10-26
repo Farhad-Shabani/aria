@@ -757,7 +757,7 @@ mod tests {
                     history
                         .regenerate(wire::RegenerateHistoryRequest {
                             id: 1,
-                            engine: engine.map(str::to_owned),
+                            engine_id: engine.map(str::to_owned),
                             language: language.map(str::to_owned),
                         })
                         .await
