@@ -14,6 +14,6 @@ preference writes are restricted to relay settings; other daemon services
 stay local. The inference host has a separate TLS service and local admin
 socket, described in `inference.proto`.
 
-Run `just proto-check` for formatting and lint, `just proto-breaking` to
-compare with `origin/main`, and `just proto-swift` to regenerate Swift clients.
+Run `just proto-check` for formatting and lint, and `just proto-swift` to
+regenerate Swift clients.
 Rust generates its bindings during the build.

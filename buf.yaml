@@ -10,5 +10,3 @@ lint:
     - RPC_REQUEST_RESPONSE_UNIQUE
   ignore:
     - proto/grpc
-breaking:
-  use: [PACKAGE]

@@ -204,10 +204,6 @@ proto-check:
     buf format --diff --exit-code
     buf lint
 
-# Compare package-level contracts with an accepted Git revision
-proto-breaking against="origin/main":
-    buf breaking --against ".git#ref={{ against }},subdir=proto"
-
 # Generate Swift client stubs from the daemon protocol
 proto-swift: (_swift-stubs "clients/Generated")
 

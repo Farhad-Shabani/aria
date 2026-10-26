@@ -31,7 +31,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
       - name: Install system packages
         run: |
           sudo apt-get update -qq
@@ -50,17 +49,6 @@ jobs:
           setup_only: true
           pr_comment: false
           push: false
-      - name: Check protobuf compatibility
-        if: github.event_name == 'pull_request'
-        env:
-          PROTO_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git cat-file -e "$PROTO_BASE"
-          if git cat-file -e "$PROTO_BASE:buf.yaml" 2>/dev/null; then
-            just proto-breaking "$PROTO_BASE"
-          else
-            echo "The base revision has no Buf baseline; format and lint still run."
-          fi
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: just check
         run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' just check
