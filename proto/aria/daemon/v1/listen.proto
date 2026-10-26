@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/errors.proto";
+
+service ListenService {
+  // Capture the machine's own audio output and transcribe it to a file
+  // until Stop. Served only by a persistent daemon; an on-demand daemon
+  // refuses with UNSUPPORTED. A Start while listening answers the running
+  // session with `already_listening`.
+  rpc Start(StartListenRequest) returns (StartListenResponse);
+  rpc Stop(StopListenRequest) returns (StopListenResponse);
+  rpc GetStatus(GetListenStatusRequest) returns (GetListenStatusResponse);
+}
+
+message StartListenRequest {
+  // Absolute file path for the transcript. Absent: a timestamped file in
+  // the configured transcripts directory.
+  optional string transcript_path = 1;
+}
+
+message StartListenResponse {
+  bool already_listening = 1;
+  string transcript_path = 2;
+}
+
+message StopListenRequest {}
+
+message StopListenResponse {
+  bool was_listening = 1;
+  string transcript_path = 2;
+}
+
+message GetListenStatusRequest {}
+
+message GetListenStatusResponse {
+  bool listening = 1;
+  string transcript_path = 2;
+  // How the last session ended, when it failed after Start returned — a
+  // denied recording permission surfaces here. Empty otherwise.
+  string error_message = 3;
+}
+
+message ListenEvent {
+  ListenStage stage = 1;
+  // The segment just transcribed; only for SEGMENT_TRANSCRIBED.
+  string text = 2;
+  // The tentative live speaker label; empty when unknown.
+  string speaker_label = 3;
+  // Meaningful only when stage is LISTEN_STAGE_FAILED.
+  ErrorCode error_code = 4;
+  // Seconds into the recording, so a follower's clock matches the
+  // transcript file's however late it attached.
+  uint64 offset_seconds = 5;
+  // For SPEAKER_MERGED: `merged_from_label` becomes `speaker_label` in the
+  // transcript file and subsequent events.
+  string merged_from_label = 6;
+}
+
+enum ListenStage {
+  LISTEN_STAGE_UNSPECIFIED = 0;
+  LISTEN_STAGE_SEGMENT_TRANSCRIBED = 1;
+  LISTEN_STAGE_STOPPED = 2;
+  LISTEN_STAGE_FAILED = 3;
+  LISTEN_STAGE_SPEAKER_MERGED = 4;
+}

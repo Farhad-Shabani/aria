@@ -449,7 +449,7 @@ impl DaemonClient {
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let request = wire::ListHistoryRequest {
             query: query.query,
-            before_history_entry_id: query.before_id,
+            before_id: query.before_id,
             limit: u32::try_from(query.limit).map_err(|_| ClientError::Rpc {
                 code: RpcErrorCode::InvalidRequest,
                 message: "invalid history limit".to_owned(),
@@ -498,9 +498,9 @@ impl DaemonClient {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let request = wire::RegenerateHistoryRequest {
-            history_entry_id: id,
-            transcription_engine_id: options.engine,
-            recognition_language: options
+            id,
+            engine_id: options.engine,
+            language: options
                 .language
                 .map(|language| language.as_str().to_owned()),
         };
@@ -932,8 +932,8 @@ mod tests {
         let event = wire::Event {
             payload: Some(wire::event::Payload::Caption(wire::CaptionSnapshot {
                 recording_id: 42,
-                committed_text: "hello".to_owned(),
-                provisional_text: "world".to_owned(),
+                committed: "hello".to_owned(),
+                provisional: "world".to_owned(),
                 ended: false,
             })),
         };

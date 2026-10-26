@@ -41,7 +41,7 @@ impl TryFrom<wire::InferenceStart> for Start {
         Ok(Self {
             engine: value.engine_id,
             language: value
-                .recognition_language
+                .language
                 .parse()
                 .map_err(|_| ProtocolError::InvalidInference)?,
             strategy: value.strategy.try_into()?,
@@ -53,7 +53,7 @@ impl From<Start> for wire::InferenceStart {
     fn from(value: Start) -> Self {
         Self {
             engine_id: value.engine,
-            recognition_language: value.language.as_str().to_owned(),
+            language: value.language.as_str().to_owned(),
             strategy: value.strategy.into(),
         }
     }
@@ -222,7 +222,7 @@ mod tests {
         assert!(
             Start::try_from(wire::InferenceStart {
                 engine_id: "whisper".into(),
-                recognition_language: "not a language".into(),
+                language: "not a language".into(),
                 strategy: Strategy::Whole.into(),
             })
             .is_err()

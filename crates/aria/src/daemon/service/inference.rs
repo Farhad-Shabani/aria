@@ -356,7 +356,7 @@ impl wire::pairing_service_server::PairingService for InferencePairingRpc {
         request: Request<wire::PairRequest>,
     ) -> Result<Response<wire::PairResponse>, Status> {
         let peer = presented(&request).ok_or_else(unauthenticated)?;
-        let code = request.into_inner().pairing_code;
+        let code = request.into_inner().code;
         let access = Arc::clone(&self.access);
         self.jobs
             .spawn_blocking(move || access.pair(peer, &code))

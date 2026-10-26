@@ -14,7 +14,7 @@ enum DictationHistoryClient {
         var request = Aria_Daemon_V1_ListHistoryRequest()
         request.query = query
         request.limit = 50
-        if let before { request.beforeHistoryEntryID = before }
+        if let before { request.beforeID = before }
         let sent = request
         let response = try await withClient { client in
             try await client.list(request: ClientRequest(message: sent), options: options(seconds: 10)) {
@@ -23,7 +23,7 @@ enum DictationHistoryClient {
         }
         return try HistoryPage(
             items: response.entries.map(item),
-            next: response.hasNextBeforeHistoryEntryID ? response.nextBeforeHistoryEntryID : nil,
+            next: response.hasNextBeforeID ? response.nextBeforeID : nil,
             warning: response.hasWarning ? response.warning : nil
         )
     }
@@ -32,7 +32,7 @@ enum DictationHistoryClient {
         try item(
             await withClient { client in
                 try await client.get(
-                    request: ClientRequest(message: Aria_Daemon_V1_GetHistoryRequest.with { $0.historyEntryID = id }),
+                    request: ClientRequest(message: Aria_Daemon_V1_GetHistoryRequest.with { $0.id = id }),
                     options: options(seconds: 10)
                 ) {
                     try $0.message
@@ -43,7 +43,7 @@ enum DictationHistoryClient {
     private static func delete(_ id: UInt64) async throws {
         _ = try await withClient { client in
             try await client.delete(
-                request: ClientRequest(message: Aria_Daemon_V1_DeleteHistoryRequest.with { $0.historyEntryID = id }),
+                request: ClientRequest(message: Aria_Daemon_V1_DeleteHistoryRequest.with { $0.id = id }),
                 options: options(seconds: 10)
             ) {
                 try $0.message
@@ -56,7 +56,7 @@ enum DictationHistoryClient {
             await withClient { client in
                 try await client.regenerate(
                     request: ClientRequest(
-                        message: Aria_Daemon_V1_RegenerateHistoryRequest.with { $0.historyEntryID = id }),
+                        message: Aria_Daemon_V1_RegenerateHistoryRequest.with { $0.id = id }),
                     options: options(seconds: 330)
                 ) {
                     try $0.message
@@ -98,19 +98,19 @@ enum DictationHistoryClient {
     }
 
     static func item(_ wire: Aria_Daemon_V1_HistoryEntry) throws -> HistoryItem {
-        guard wire.hasAudioExpiresAtUnixMs == (wire.audioAvailability == .available),
+        guard wire.hasAudioExpiresAtMs == (wire.audioAvailability == .available),
             !wire.hasError || wire.error.code != .unspecified
         else { throw HistoryFailure.failed }
         let audio: HistoryItem.Audio
         switch wire.audioAvailability {
         case .available:
-            audio = .available(until: Date(timeIntervalSince1970: Double(wire.audioExpiresAtUnixMs) / 1_000))
+            audio = .available(until: Date(timeIntervalSince1970: Double(wire.audioExpiresAtMs) / 1_000))
         case .unavailable: audio = .unavailable
         case .expired: audio = .expired
         default: throw HistoryFailure.failed
         }
         let status: HistoryItem.Status
-        switch wire.outcome {
+        switch wire.status {
         case .success: status = .success
         case .transcriptionFailed: status = .transcriptionFailed
         case .deliveryFailed: status = .deliveryFailed
@@ -126,7 +126,7 @@ enum DictationHistoryClient {
         return HistoryItem(
             id: wire.id,
             text: wire.text,
-            created: Date(timeIntervalSince1970: Double(wire.createdAtUnixMs) / 1_000),
+            created: Date(timeIntervalSince1970: Double(wire.createdAtMs) / 1_000),
             status: wire.deletionPending ? .deletionPending : status,
             source: source,
             application: wire.hasApplication && !wire.application.name.isEmpty ? wire.application.name : nil,

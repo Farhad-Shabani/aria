@@ -81,7 +81,7 @@ final class SetupProtocolTests: XCTestCase {
 
     func testFramesEncodeALengthLongerThanOneByte() throws {
         var request = Aria_Setup_V1_ApplyRequest()
-        request.modelIds = Array(repeating: "a-model-name", count: 40)
+        request.downloads = Array(repeating: "a-model-name", count: 40)
         let frame = try SetupFrames.encode(request)
 
         var reader = SetupFrames.Reader()

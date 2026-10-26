@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/errors.proto";
+
+service SpeakerService {
+  // Record several utterances and store the voice they agree on. Holds the
+  // microphone for the whole call, so a press meanwhile is refused with
+  // BUSY. Served only by a persistent daemon; an on-demand daemon refuses
+  // with UNSUPPORTED. Progress arrives as SpeakerEvent on the event stream.
+  rpc Enroll(EnrollSpeakerRequest) returns (EnrollSpeakerResponse);
+  // Every enrolled voice, whatever model measured it.
+  rpc List(ListSpeakersRequest) returns (ListSpeakersResponse);
+  // Forget one voice. NOT_ENROLLED when there was nobody by that name.
+  rpc Remove(RemoveSpeakerRequest) returns (RemoveSpeakerResponse);
+}
+
+message EnrollSpeakerRequest {
+  // The person's name, which is also their profile's filename.
+  string name = 1;
+  // Unset takes the role that fits: the first voice on a machine owns it,
+  // every voice after is a guest.
+  SpeakerRole role = 2;
+  // How many utterances to record, 2 to 10.
+  uint32 samples = 3;
+  // Whether a profile of this name may be replaced.
+  bool replace = 4;
+}
+
+message EnrollSpeakerResponse {
+  SpeakerRole role = 1;
+  // How strongly the samples agreed, 0.0 to 1.0.
+  float consistency = 2;
+}
+
+message ListSpeakersRequest {}
+
+message ListSpeakersResponse {
+  repeated EnrolledSpeaker speakers = 1;
+}
+
+message EnrolledSpeaker {
+  string name = 1;
+  SpeakerRole role = 2;
+  // Seconds since the Unix epoch.
+  uint64 enrolled_at_seconds = 3;
+}
+
+message RemoveSpeakerRequest {
+  string name = 1;
+}
+
+message RemoveSpeakerResponse {}
+
+message SpeakerEvent {
+  SpeakerStage stage = 1;
+  // Which sample this is, counting from one, and how many were asked for.
+  // Both zero outside RECORDING and SAMPLE_TAKEN.
+  uint32 index = 2;
+  uint32 samples = 3;
+  // Meaningful only when stage is SPEAKER_STAGE_FAILED.
+  ErrorCode error_code = 4;
+}
+
+// Only an owner's voice answers "was that you?"; a guest is recognized by
+// name without turning on dictation meant for the machine's owner.
+enum SpeakerRole {
+  SPEAKER_ROLE_UNSPECIFIED = 0;
+  SPEAKER_ROLE_OWNER = 1;
+  SPEAKER_ROLE_GUEST = 2;
+}
+
+enum SpeakerStage {
+  SPEAKER_STAGE_UNSPECIFIED = 0;
+  // Audio is actually flowing for this sample. Say something now.
+  SPEAKER_STAGE_RECORDING = 1;
+  // That sample was heard and measured.
+  SPEAKER_STAGE_SAMPLE_TAKEN = 2;
+  SPEAKER_STAGE_ENROLLED = 3;
+  SPEAKER_STAGE_CANCELLED = 4;
+  SPEAKER_STAGE_FAILED = 5;
+}

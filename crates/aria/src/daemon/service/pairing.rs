@@ -32,7 +32,7 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
     ) -> Result<Response<wire::PairResponse>, Status> {
         const METHOD: &str = "PairingService/Pair";
         let phone = presented(&request);
-        let code = request.into_inner().pairing_code;
+        let code = request.into_inner().code;
         let Some(phone) = phone.filter(|_| self.codes.redeem(&code, Instant::now())) else {
             let failure = RpcFailure::new(
                 RpcErrorCode::Unauthenticated,
@@ -126,7 +126,7 @@ impl wire::invite_service_server::InviteService for InviteRpc {
         tracing::debug!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::IssueInviteResponse {
             instance_name: self.instance.clone(),
-            pairing_code: code.raw().to_owned(),
+            code: code.raw().to_owned(),
             fingerprint: self.fingerprint.to_vec(),
             expires_in_ms,
         }))
@@ -162,7 +162,7 @@ mod tests {
         let (live, _) = codes.issue(Instant::now()).unwrap();
 
         assert_eq!(issued.instance_name, "Aria (test)");
-        assert_eq!(issued.pairing_code, live.raw());
+        assert_eq!(issued.code, live.raw());
         assert_eq!(issued.fingerprint, pairing.certificate_fingerprint);
         assert!(issued.expires_in_ms <= 60_000);
     }

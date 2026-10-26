@@ -23,7 +23,7 @@ struct WelcomePage: View {
         let plan = SetupState.expressPlan(state.inspection, state.selections)
         return Section {
             ForEach(plan, id: \.id) { model in
-                LabeledContent(model.name) {
+                LabeledContent(model.title) {
                     Text(SetupState.downloadSize(of: [model])).monospacedDigit()
                 }
             }

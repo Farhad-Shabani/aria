@@ -502,7 +502,7 @@ pub(in crate::daemon) mod tests {
         async fn pair(&mut self) {
             wire::pairing_service_client::PairingServiceClient::new(self.channel.clone())
                 .pair(wire::PairRequest {
-                    pairing_code: self.invite.code.clone(),
+                    code: self.invite.code.clone(),
                 })
                 .await
                 .unwrap();
@@ -604,7 +604,7 @@ pub(in crate::daemon) mod tests {
         wire::InferenceRequest {
             body: Some(wire::inference_request::Body::Start(wire::InferenceStart {
                 engine_id: "whisper".into(),
-                recognition_language: "auto".into(),
+                language: "auto".into(),
                 strategy: strategy as i32,
             })),
         }
@@ -717,7 +717,7 @@ pub(in crate::daemon) mod tests {
         let replay =
             wire::pairing_service_client::PairingServiceClient::new(fixture.channel.clone())
                 .pair(wire::PairRequest {
-                    pairing_code: fixture.invite.code.clone(),
+                    code: fixture.invite.code.clone(),
                 })
                 .await
                 .unwrap_err();

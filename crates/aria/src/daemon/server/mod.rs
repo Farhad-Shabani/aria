@@ -735,9 +735,7 @@ mod tests {
             assert!(!cleared.audio_cleanup_pending);
             assert_eq!(
                 history
-                    .get(wire::GetHistoryRequest {
-                        history_entry_id: 1
-                    })
+                    .get(wire::GetHistoryRequest { id: 1 })
                     .await
                     .unwrap_err()
                     .code(),
@@ -746,7 +744,7 @@ mod tests {
             assert_eq!(
                 history
                     .regenerate(wire::RegenerateHistoryRequest {
-                        history_entry_id: 1,
+                        id: 1,
                         ..Default::default()
                     })
                     .await
@@ -758,9 +756,9 @@ mod tests {
                 assert_eq!(
                     history
                         .regenerate(wire::RegenerateHistoryRequest {
-                            history_entry_id: 1,
-                            transcription_engine_id: engine.map(str::to_owned),
-                            recognition_language: language.map(str::to_owned),
+                            id: 1,
+                            engine_id: engine.map(str::to_owned),
+                            language: language.map(str::to_owned),
                         })
                         .await
                         .unwrap_err()
@@ -769,9 +767,7 @@ mod tests {
                 );
             }
             history
-                .delete(wire::DeleteHistoryRequest {
-                    history_entry_id: 1,
-                })
+                .delete(wire::DeleteHistoryRequest { id: 1 })
                 .await
                 .unwrap();
         });

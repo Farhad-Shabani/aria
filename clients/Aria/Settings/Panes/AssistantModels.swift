@@ -9,17 +9,17 @@ final class AssistantModels: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var failure: String?
 
-    private let list: @MainActor (Aria_Daemon_V1_AssistantId) async throws -> [Aria_Daemon_V1_AssistantModel]
+    private let list: @MainActor (Aria_Daemon_V1_AssistantID) async throws -> [Aria_Daemon_V1_AssistantModel]
     private var loadID: UUID?
 
     init(
-        list: @escaping @MainActor (Aria_Daemon_V1_AssistantId) async throws -> [Aria_Daemon_V1_AssistantModel] =
+        list: @escaping @MainActor (Aria_Daemon_V1_AssistantID) async throws -> [Aria_Daemon_V1_AssistantModel] =
             AssistantClient.models
     ) {
         self.list = list
     }
 
-    func load(_ assistantID: Aria_Daemon_V1_AssistantId) async {
+    func load(_ assistantID: Aria_Daemon_V1_AssistantID) async {
         let loadID = UUID()
         self.loadID = loadID
         choices = []

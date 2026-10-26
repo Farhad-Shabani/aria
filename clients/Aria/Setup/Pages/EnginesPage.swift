@@ -10,9 +10,9 @@ struct EnginesPage: View {
                 picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)
             }
             Section {
-                Toggle("Listen for the wake word", isOn: $state.selections.wakeEnabled)
-                if state.inspection.isMacos {
-                    Toggle(isOn: $state.selections.hotkeyEnabled) {
+                Toggle("Listen for the wake word", isOn: $state.selections.wake)
+                if state.inspection.macos {
+                    Toggle(isOn: $state.selections.hotkey) {
                         Text("Start dictation with a hotkey")
                         Text("Needs Accessibility access. Setup asks for it next.")
                     }
@@ -29,8 +29,8 @@ struct EnginesPage: View {
         return Picker(selection: key) {
             ForEach(engines, id: \.id) { engine in
                 let download = SetupState.download(of: engine, in: state.inspection)
-                Text("\(engine.name)   \(Text(download.brief).foregroundStyle(.secondary))")
-                    .accessibilityLabel("\(engine.name), \(download.note ?? download.brief)")
+                Text("\(engine.label)   \(Text(download.brief).foregroundStyle(.secondary))")
+                    .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
                     .tag(engine.id)
             }
             // config.yaml may name an engine setup does not offer; the
@@ -70,7 +70,7 @@ private struct DownloadsSection: View {
         let downloaded = model.onDisk == .complete
         let fixed = downloaded || model.external
         return Toggle(isOn: fixed ? .constant(downloaded) : toggle(model.id)) {
-            Text(model.name)
+            Text(model.title)
             Text(Self.status(model)).monospacedDigit()
             if model.onDisk == .partial && !model.external {
                 Text("Partly downloaded. Resumes where it stopped.")

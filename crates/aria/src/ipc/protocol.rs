@@ -235,8 +235,8 @@ impl From<CaptionSnapshot> for wire::CaptionSnapshot {
     fn from(caption: CaptionSnapshot) -> Self {
         Self {
             recording_id: caption.recording.0,
-            committed_text: caption.committed.to_string(),
-            provisional_text: caption.provisional.to_string(),
+            committed: caption.committed.to_string(),
+            provisional: caption.provisional.to_string(),
             ended: caption.ended,
         }
     }
@@ -450,8 +450,8 @@ impl From<ChatRequest> for wire::AskRequest {
     fn from(request: ChatRequest) -> Self {
         Self {
             text: request.text,
-            working_directory: request.workdir.to_string_lossy().into_owned(),
-            start_new_session: request.new,
+            workdir: request.workdir.to_string_lossy().into_owned(),
+            new_conversation: request.new,
             output_mode: request
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
@@ -470,7 +470,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
         if request.text.trim().is_empty() {
             return Err(ProtocolError::EmptyPrompt);
         }
-        if request.working_directory.is_empty() {
+        if request.workdir.is_empty() {
             return Err(ProtocolError::MissingBody("assistant working directory"));
         }
         let output_mode = request
@@ -483,11 +483,11 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
         }
         Ok(Self {
             text: request.text,
-            workdir: request.working_directory.into(),
+            workdir: request.workdir.into(),
             assistant_id,
             model_id: Some(request.model_id).filter(|model_id| !model_id.is_empty()),
             session: Some(request.session_name).filter(|session| !session.is_empty()),
-            new: request.start_new_session,
+            new: request.new_conversation,
             output_mode,
             own_voice: request.own_voice,
         })
@@ -549,8 +549,8 @@ impl From<EnrollmentStage> for wire::SpeakerEvent {
     fn from(stage: EnrollmentStage) -> Self {
         let counted = |code: wire::SpeakerStage, index: u32, samples: u32| Self {
             stage: code as i32,
-            sample_index: index,
-            sample_count: samples,
+            index,
+            samples,
             error_code: 0,
         };
         match stage {
@@ -564,8 +564,8 @@ impl From<EnrollmentStage> for wire::SpeakerEvent {
             EnrollmentStage::Cancelled => counted(wire::SpeakerStage::Cancelled, 0, 0),
             EnrollmentStage::Failed(code) => Self {
                 stage: wire::SpeakerStage::Failed as i32,
-                sample_index: 0,
-                sample_count: 0,
+                index: 0,
+                samples: 0,
                 error_code: code.into(),
             },
         }
@@ -578,12 +578,12 @@ impl TryFrom<&wire::SpeakerEvent> for EnrollmentStage {
     fn try_from(event: &wire::SpeakerEvent) -> Result<Self, Self::Error> {
         match wire::SpeakerStage::try_from(event.stage) {
             Ok(wire::SpeakerStage::Recording) => Ok(Self::Recording {
-                index: event.sample_index,
-                of: event.sample_count,
+                index: event.index,
+                of: event.samples,
             }),
             Ok(wire::SpeakerStage::SampleTaken) => Ok(Self::SampleTaken {
-                index: event.sample_index,
-                of: event.sample_count,
+                index: event.index,
+                of: event.samples,
             }),
             Ok(wire::SpeakerStage::Enrolled) => Ok(Self::Enrolled),
             Ok(wire::SpeakerStage::Cancelled) => Ok(Self::Cancelled),
@@ -612,7 +612,7 @@ impl From<&EnrolledSpeaker> for wire::EnrolledSpeaker {
         Self {
             name: speaker.name.to_string(),
             role: wire::SpeakerRole::from(speaker.role) as i32,
-            enrolled_at_unix_seconds: speaker.enrolled_at,
+            enrolled_at_seconds: speaker.enrolled_at,
         }
     }
 }
@@ -627,7 +627,7 @@ impl TryFrom<&wire::EnrolledSpeaker> for EnrolledSpeaker {
                 field: "role",
                 value: speaker.role,
             })?,
-            enrolled_at: speaker.enrolled_at_unix_seconds,
+            enrolled_at: speaker.enrolled_at_seconds,
         })
     }
 }
@@ -639,7 +639,7 @@ impl From<EnrollmentRequest> for wire::EnrollSpeakerRequest {
             role: request
                 .role
                 .map_or(0, |role| wire::SpeakerRole::from(role) as i32),
-            sample_count: request.samples,
+            samples: request.samples,
             replace: request.replace,
         }
     }
@@ -652,7 +652,7 @@ impl TryFrom<wire::EnrollSpeakerRequest> for EnrollmentRequest {
         Ok(Self {
             name: speaker_name(&request.name)?,
             role: decode_role(request.role)?,
-            samples: request.sample_count,
+            samples: request.samples,
             replace: request.replace,
         })
     }
@@ -1001,14 +1001,14 @@ impl TryFrom<wire::ListHistoryRequest> for crate::history::HistoryQuery {
         if request.query.len() > 256
             || !(1..=100).contains(&request.limit)
             || request
-                .before_history_entry_id
+                .before_id
                 .is_some_and(|id| id == 0 || id > i64::MAX as u64)
         {
             return Err(ProtocolError::InvalidHistory("query"));
         }
         Ok(Self {
             query: request.query,
-            before_id: request.before_history_entry_id,
+            before_id: request.before_id,
             limit: request.limit as usize,
         })
     }
@@ -1025,9 +1025,9 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
     type Error = ProtocolError;
 
     fn try_from(request: wire::RegenerateHistoryRequest) -> Result<Self, Self::Error> {
-        let id = history_id(request.history_entry_id)?;
+        let id = history_id(request.id)?;
         if request
-            .transcription_engine_id
+            .engine_id
             .as_deref()
             .is_some_and(|engine| crate::config::backend::local(engine).is_none())
         {
@@ -1036,12 +1036,8 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
         Ok((
             id,
             crate::history::RetryOptions {
-                engine: request.transcription_engine_id,
-                language: request
-                    .recognition_language
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()?,
+                engine: request.engine_id,
+                language: request.language.as_deref().map(str::parse).transpose()?,
             },
         ))
     }
@@ -1060,14 +1056,14 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
             Ok(wire::HistorySource::Relay) => HistorySource::Relay,
             _ => return Err(ProtocolError::InvalidHistory("source")),
         };
-        let status = match wire::HistoryOutcome::try_from(entry.outcome) {
-            Ok(wire::HistoryOutcome::Success) => HistoryStatus::Success,
-            Ok(wire::HistoryOutcome::TranscriptionFailed) => HistoryStatus::TranscriptionFailed,
-            Ok(wire::HistoryOutcome::DeliveryFailed) => HistoryStatus::DeliveryFailed,
-            Ok(wire::HistoryOutcome::Recovered) => HistoryStatus::Recovered,
+        let status = match wire::HistoryStatus::try_from(entry.status) {
+            Ok(wire::HistoryStatus::Success) => HistoryStatus::Success,
+            Ok(wire::HistoryStatus::TranscriptionFailed) => HistoryStatus::TranscriptionFailed,
+            Ok(wire::HistoryStatus::DeliveryFailed) => HistoryStatus::DeliveryFailed,
+            Ok(wire::HistoryStatus::Recovered) => HistoryStatus::Recovered,
             _ => return Err(ProtocolError::InvalidHistory("status")),
         };
-        if entry.audio_expires_at_unix_ms.is_some()
+        if entry.audio_expires_at_ms.is_some()
             && entry.audio_availability != wire::HistoryAudioAvailability::Available as i32
         {
             return Err(ProtocolError::InvalidHistory("audio expiry"));
@@ -1077,18 +1073,18 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
             Ok(wire::HistoryAudioAvailability::Expired) => AudioAvailability::Expired,
             Ok(wire::HistoryAudioAvailability::Available) => AudioAvailability::Available {
                 expires_at_ms: entry
-                    .audio_expires_at_unix_ms
+                    .audio_expires_at_ms
                     .ok_or(ProtocolError::InvalidHistory("audio expiry"))?,
             },
             _ => return Err(ProtocolError::InvalidHistory("audio")),
         };
         Ok(Self {
             id: entry.id,
-            created_at_ms: entry.created_at_unix_ms,
+            created_at_ms: entry.created_at_ms,
             source,
             application: entry.application.map(|app| Application {
                 name: app.name,
-                bundle_id: app.application_id,
+                bundle_id: app.bundle_id,
             }),
             duration_ms: entry.duration_ms,
             text: entry.text,
@@ -1098,8 +1094,8 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
             audio,
             retrying: entry.regenerating,
             deletion_pending: entry.deletion_pending,
-            language: entry.recognition_language,
-            engine: entry.transcription_engine_id,
+            language: entry.language,
+            engine: entry.engine_id,
             own_voice_only: false,
             project: None,
             warning: entry.warning,
@@ -1112,7 +1108,7 @@ impl TryFrom<wire::ListHistoryResponse> for crate::history::HistoryPage {
 
     fn try_from(page: wire::ListHistoryResponse) -> Result<Self, Self::Error> {
         if page
-            .next_before_history_entry_id
+            .next_before_id
             .is_some_and(|id| id == 0 || id > i64::MAX as u64)
         {
             return Err(ProtocolError::InvalidHistory("cursor"));
@@ -1123,7 +1119,7 @@ impl TryFrom<wire::ListHistoryResponse> for crate::history::HistoryPage {
                 .into_iter()
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
-            next_before_id: page.next_before_history_entry_id,
+            next_before_id: page.next_before_id,
             warning: page.warning,
         })
     }
@@ -1145,31 +1141,31 @@ impl From<crate::history::HistoryEntry> for wire::HistoryEntry {
                 && !entry.retrying
                 && !entry.deletion_pending,
             id: entry.id,
-            created_at_unix_ms: entry.created_at_ms,
+            created_at_ms: entry.created_at_ms,
             source: match entry.source {
                 HistorySource::Local => wire::HistorySource::Local,
                 HistorySource::Relay => wire::HistorySource::Relay,
             } as i32,
             application: entry.application.map(|app| wire::HistoryApplication {
                 name: app.name,
-                application_id: app.bundle_id,
+                bundle_id: app.bundle_id,
             }),
             duration_ms: entry.duration_ms,
             text: entry.text,
             transcription_complete: entry.complete,
-            outcome: match entry.status {
-                HistoryStatus::Success => wire::HistoryOutcome::Success,
-                HistoryStatus::TranscriptionFailed => wire::HistoryOutcome::TranscriptionFailed,
-                HistoryStatus::DeliveryFailed => wire::HistoryOutcome::DeliveryFailed,
-                HistoryStatus::Recovered => wire::HistoryOutcome::Recovered,
+            status: match entry.status {
+                HistoryStatus::Success => wire::HistoryStatus::Success,
+                HistoryStatus::TranscriptionFailed => wire::HistoryStatus::TranscriptionFailed,
+                HistoryStatus::DeliveryFailed => wire::HistoryStatus::DeliveryFailed,
+                HistoryStatus::Recovered => wire::HistoryStatus::Recovered,
             } as i32,
             error: entry.error.map(Into::into),
             audio_availability: audio as i32,
-            audio_expires_at_unix_ms: audio_expires_at_ms,
+            audio_expires_at_ms,
             regenerating: entry.retrying,
             deletion_pending: entry.deletion_pending,
-            recognition_language: entry.language,
-            transcription_engine_id: entry.engine,
+            language: entry.language,
+            engine_id: entry.engine,
             warning: entry.warning,
         }
     }
@@ -1191,7 +1187,7 @@ impl From<crate::history::HistoryPage> for wire::ListHistoryResponse {
                     entry
                 })
                 .collect(),
-            next_before_history_entry_id: page.next_before_id,
+            next_before_id: page.next_before_id,
             warning: page.warning,
         }
     }
@@ -1647,7 +1643,7 @@ impl TryFrom<wire::DictationOverrides> for DictationOverrides {
 impl From<AskTarget> for wire::ResolveAskResponse {
     fn from(target: AskTarget) -> Self {
         Self {
-            working_directory: target.workdir.to_string_lossy().into_owned(),
+            workdir: target.workdir.to_string_lossy().into_owned(),
             assistant_id: wire::AssistantId::from(target.assistant_id) as i32,
         }
     }
@@ -1657,11 +1653,11 @@ impl TryFrom<wire::ResolveAskResponse> for AskTarget {
     type Error = ProtocolError;
 
     fn try_from(response: wire::ResolveAskResponse) -> Result<Self, Self::Error> {
-        if response.working_directory.is_empty() {
+        if response.workdir.is_empty() {
             return Err(ProtocolError::MissingBody("assistant working directory"));
         }
         Ok(Self {
-            workdir: response.working_directory.into(),
+            workdir: response.workdir.into(),
             assistant_id: decode_enum::<wire::AssistantId>(response.assistant_id, "assistant_id")?,
         })
     }
@@ -2291,8 +2287,8 @@ mod tests {
                 panic!("caption must not become a stage");
             };
             assert_eq!(snapshot.recording_id, 42);
-            assert_eq!(snapshot.committed_text, "private committed words");
-            assert_eq!(snapshot.provisional_text, "private provisional words");
+            assert_eq!(snapshot.committed, "private committed words");
+            assert_eq!(snapshot.provisional, "private provisional words");
             assert_eq!(snapshot.ended, ended);
         }
     }
@@ -2816,7 +2812,7 @@ mod tests {
         let request = wire::EnrollSpeakerRequest {
             name: "../escape".to_owned(),
             role: 0,
-            sample_count: 5,
+            samples: 5,
             replace: false,
         };
 
@@ -3020,7 +3016,7 @@ mod tests {
         assert_eq!(decoded, target);
         assert!(
             AskTarget::try_from(wire::ResolveAskResponse {
-                working_directory: String::new(),
+                workdir: String::new(),
                 assistant_id: wire::AssistantId::ClaudeCode as i32,
             })
             .is_err()
@@ -3070,7 +3066,7 @@ mod history_tests {
             assert!(
                 HistoryQuery::try_from(wire::ListHistoryRequest {
                     query,
-                    before_history_entry_id: before_id,
+                    before_id,
                     limit
                 })
                 .is_err()
@@ -3079,7 +3075,7 @@ mod history_tests {
         assert!(
             HistoryQuery::try_from(wire::ListHistoryRequest {
                 query: "a_%".to_owned(),
-                before_history_entry_id: Some(2),
+                before_id: Some(2),
                 limit: 100
             })
             .is_ok()
@@ -3091,9 +3087,9 @@ mod history_tests {
     #[test]
     fn history_retry_options_are_validated_and_successful_audio_is_retryable() {
         let request = wire::RegenerateHistoryRequest {
-            history_entry_id: 42,
-            transcription_engine_id: Some("whisper".into()),
-            recognition_language: Some("auto".into()),
+            id: 42,
+            engine_id: Some("whisper".into()),
+            language: Some("auto".into()),
         };
         let (id, options) = <(u64, crate::history::RetryOptions)>::try_from(request).unwrap();
         assert_eq!(id, 42);
@@ -3102,9 +3098,9 @@ mod history_tests {
         for (engine, language) in [(Some("unknown"), None), (Some(""), None), (None, Some(""))] {
             assert!(
                 <(u64, crate::history::RetryOptions)>::try_from(wire::RegenerateHistoryRequest {
-                    history_entry_id: 42,
-                    transcription_engine_id: engine.map(str::to_owned),
-                    recognition_language: language.map(str::to_owned),
+                    id: 42,
+                    engine_id: engine.map(str::to_owned),
+                    language: language.map(str::to_owned),
                 })
                 .is_err()
             );
@@ -3130,7 +3126,7 @@ mod history_tests {
             assert!(HistoryEntry::try_from(unexpected_expiry).is_err());
         }
         let mut missing_expiry = encoded;
-        missing_expiry.audio_expires_at_unix_ms = None;
+        missing_expiry.audio_expires_at_ms = None;
         assert!(HistoryEntry::try_from(missing_expiry).is_err());
     }
 

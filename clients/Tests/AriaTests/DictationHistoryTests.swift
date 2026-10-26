@@ -456,7 +456,7 @@ final class DictationHistoryTests: XCTestCase {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .relay
-        wire.outcome = .transcriptionFailed
+        wire.status = .transcriptionFailed
         wire.audioAvailability = .unavailable
         let item = try DictationHistoryClient.item(wire)
         XCTAssertEqual(item.metadata.map(\.0), ["Source", "Status", "Created", "Audio"])
@@ -468,7 +468,7 @@ final class DictationHistoryTests: XCTestCase {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .local
-        wire.outcome = .transcriptionFailed
+        wire.status = .transcriptionFailed
         wire.audioAvailability = .unavailable
         wire.error.code = .transcriptionFailed
         XCTAssertEqual(
@@ -484,10 +484,10 @@ final class DictationHistoryTests: XCTestCase {
         var wire = Aria_Daemon_V1_HistoryEntry()
         wire.id = 1
         wire.source = .local
-        wire.outcome = .transcriptionFailed
+        wire.status = .transcriptionFailed
         wire.audioAvailability = .available
         XCTAssertThrowsError(try DictationHistoryClient.item(wire))
-        wire.audioExpiresAtUnixMs = 1_000
+        wire.audioExpiresAtMs = 1_000
         let expiry = Date(timeIntervalSince1970: 1)
         let available = try DictationHistoryClient.item(wire)
         XCTAssertEqual(available.audio, .available(until: expiry))
@@ -504,13 +504,13 @@ final class DictationHistoryTests: XCTestCase {
         for (audio, expected, description) in cases {
             wire.audioAvailability = audio
             XCTAssertThrowsError(try DictationHistoryClient.item(wire))
-            wire.clearAudioExpiresAtUnixMs()
+            wire.clearAudioExpiresAtMs()
             let item = try DictationHistoryClient.item(wire)
             XCTAssertEqual(item.audio, expected)
             XCTAssertEqual(item.metadata.first { $0.0 == "Audio" }?.1, description)
-            wire.audioExpiresAtUnixMs = 1_000
+            wire.audioExpiresAtMs = 1_000
         }
-        wire.clearAudioExpiresAtUnixMs()
+        wire.clearAudioExpiresAtMs()
         for audio in [Aria_Daemon_V1_HistoryAudioAvailability.unspecified, .UNRECOGNIZED(12345)] {
             wire.audioAvailability = audio
             XCTAssertThrowsError(try DictationHistoryClient.item(wire))

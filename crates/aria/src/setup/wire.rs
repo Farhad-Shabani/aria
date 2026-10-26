@@ -74,18 +74,18 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
         .iter()
         .any(|key| key.is_empty())
         {
-            return Err(SetupError::Invalid("an engine key is empty"));
+            return Err(SetupError::Invalid("a required selection is empty"));
         }
         Ok((
             Selections {
                 stt: selections.transcription_engine_id,
                 tts: selections.synthesis_engine_id,
                 chat: selections.assistant_id,
-                wake: selections.wake_enabled,
-                hotkey: selections.hotkey_enabled,
+                wake: selections.wake,
+                hotkey: selections.hotkey,
             },
             ApplyOptions {
-                downloads: request.model_ids,
+                downloads: request.downloads,
                 transfer_meter: false,
             },
         ))
@@ -96,7 +96,7 @@ impl From<&Inspection> for generated::Inspection {
     fn from(inspection: &Inspection) -> Self {
         Self {
             config_path: inspection.config_path.display().to_string(),
-            is_macos: inspection.macos,
+            macos: inspection.macos,
             defaults: Some(generated::Selections::from(&Selections::defaults(
                 inspection,
             ))),
@@ -107,11 +107,11 @@ impl From<&Inspection> for generated::Inspection {
             wakeword_installed: inspection.wakeword_installed,
             service: Some((&inspection.service).into()),
             grant: generated::Grant::from(inspection.grant) as i32,
+            missing: inspection.missing().iter().map(Into::into).collect(),
             server: match &inspection.pairing {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
-            missing: inspection.missing().iter().map(Into::into).collect(),
         }
     }
 }
@@ -131,8 +131,8 @@ impl From<&Selections> for generated::Selections {
             transcription_engine_id: selections.stt.clone(),
             synthesis_engine_id: selections.tts.clone(),
             assistant_id: selections.chat.clone(),
-            wake_enabled: selections.wake,
-            hotkey_enabled: selections.hotkey,
+            wake: selections.wake,
+            hotkey: selections.hotkey,
         }
     }
 }
@@ -148,10 +148,10 @@ impl From<&Choice> for generated::Choice {
         };
         Self {
             id: choice.key.to_owned(),
-            name: choice.label.to_owned(),
+            label: choice.label.to_owned(),
             availability: availability as i32,
             availability_detail: note,
-            is_default: choice.default,
+            default: choice.default,
             model_source: generated::ModelSource::from(choice.model) as i32,
         }
     }
@@ -161,7 +161,7 @@ impl From<&ModelState> for generated::Model {
     fn from(model: &ModelState) -> Self {
         Self {
             id: model.name.to_owned(),
-            name: model.title.to_owned(),
+            title: model.title.to_owned(),
             engine_id: model.engine.unwrap_or_default().to_owned(),
             size_bytes: model.bytes,
             download_by_default: model.default,
@@ -285,14 +285,14 @@ impl From<&Summary> for generated::Summary {
             ),
         };
         Self {
-            config_write: config as i32,
+            config: config as i32,
             config_backup_path: config_backup,
-            wakeword_directory: summary
+            wakeword_dir: summary
                 .wakeword
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
-            model_outcomes: summary
+            models: summary
                 .models
                 .iter()
                 .map(|(model, outcome)| generated::ModelOutcome {
@@ -331,7 +331,7 @@ mod tests {
     fn request(selections: Option<generated::Selections>) -> generated::ApplyRequest {
         generated::ApplyRequest {
             selections,
-            model_ids: vec!["whisper".to_owned()],
+            downloads: vec!["whisper".to_owned()],
         }
     }
 
@@ -344,8 +344,8 @@ mod tests {
             transcription_engine_id: String::new(),
             synthesis_engine_id: "system".to_owned(),
             assistant_id: "codex".to_owned(),
-            wake_enabled: false,
-            hotkey_enabled: true,
+            wake: false,
+            hotkey: true,
         };
         let error = <(Selections, ApplyOptions)>::try_from(request(Some(empty))).unwrap_err();
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
@@ -357,8 +357,8 @@ mod tests {
             transcription_engine_id: "whisper".to_owned(),
             synthesis_engine_id: "system".to_owned(),
             assistant_id: "codex".to_owned(),
-            wake_enabled: false,
-            hotkey_enabled: true,
+            wake: false,
+            hotkey: true,
         };
 
         let (selections, options) =

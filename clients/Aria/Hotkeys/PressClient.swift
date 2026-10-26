@@ -83,7 +83,7 @@ enum PressClient {
     ) async -> UInt64? {
         var request = Aria_Daemon_V1_AskRequest()
         request.text = heard.text
-        request.workingDirectory = target.workingDirectory
+        request.workdir = target.workdir
         request.assistantID = target.assistantID
         // The reply is typed where the user is looking, or copied when the
         // app in front refuses insertion.

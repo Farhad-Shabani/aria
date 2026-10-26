@@ -32,7 +32,7 @@ enum SpeakerClient {
             var request = Aria_Daemon_V1_EnrollSpeakerRequest()
             request.name = name
             request.role = role
-            request.sampleCount = samples
+            request.samples = samples
             request.replace = replace
             var options = CallOptions.defaults
             options.timeout = .seconds(180)

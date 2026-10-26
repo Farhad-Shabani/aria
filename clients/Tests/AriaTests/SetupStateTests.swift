@@ -64,8 +64,8 @@ final class SetupStateTests: XCTestCase {
     ) -> Aria_Setup_V1_Choice {
         var engine = Aria_Setup_V1_Choice()
         engine.id = key
-        engine.name = key.capitalized
-        engine.isDefault = isDefault
+        engine.label = key.capitalized
+        engine.default = isDefault
         engine.modelSource = model
         if let unsupported {
             engine.availability = .unsupported
@@ -83,7 +83,7 @@ final class SetupStateTests: XCTestCase {
     {
         var model = Aria_Setup_V1_Model()
         model.id = name
-        model.name = name.capitalized
+        model.title = name.capitalized
         model.sizeBytes = 10
         model.engineID = engine
         model.onDisk = present ? .complete : .absent
@@ -94,7 +94,7 @@ final class SetupStateTests: XCTestCase {
     /// Nothing configured, nothing on disk, no service.
     static func freshMac() -> Aria_Setup_V1_Inspection {
         var inspection = Aria_Setup_V1_Inspection()
-        inspection.isMacos = true
+        inspection.macos = true
         inspection.transcriptionChoices = [
             engine("parakeet", default: true), engine("parakeet-mlx", unsupported: "needs MLX"),
         ]
@@ -103,7 +103,7 @@ final class SetupStateTests: XCTestCase {
         inspection.defaults.transcriptionEngineID = "parakeet"
         inspection.defaults.synthesisEngineID = "system"
         inspection.defaults.assistantID = "claude-code"
-        inspection.defaults.hotkeyEnabled = true
+        inspection.defaults.hotkey = true
         inspection.models = [
             model("parakeet", engine: "parakeet"),
             model("kokoro", engine: "kokoro"),
@@ -164,7 +164,7 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { harness.applyContinuation != nil }
         XCTAssertEqual(state.step, .applying)
         XCTAssertEqual(harness.applied?.selections, harness.inspection.defaults)
-        XCTAssertEqual(harness.applied?.modelIds, ["parakeet", "segmentation"])
+        XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"])
 
         state.cancel()
         harness.applyContinuation?.resume(throwing: SetupClientError.cancelled)
@@ -247,9 +247,9 @@ final class SetupStateTests: XCTestCase {
 
         XCTAssertEqual(state.selections.transcriptionEngineID, "parakeet")
         XCTAssertEqual(state.selections.synthesisEngineID, "system")
-        XCTAssertTrue(state.selections.hotkeyEnabled)
-        XCTAssertFalse(state.selections.wakeEnabled)
-        XCTAssertEqual(harness.applied?.modelIds, ["parakeet", "segmentation"], "the speaker model is off by default")
+        XCTAssertTrue(state.selections.hotkey)
+        XCTAssertFalse(state.selections.wake)
+        XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"], "the speaker model is off by default")
         XCTAssertEqual(harness.stoppedDaemon, 1, "a spawned daemon must give the socket to the service")
 
         harness.applyContinuation?.resume(returning: harness.summary)
@@ -427,7 +427,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(SetupState.total(preview), "Total download: 10 bytes")
         state.express()
         await waitUntil { harness.applyContinuation != nil }
-        XCTAssertEqual(harness.applied?.modelIds, preview.map(\.id))
+        XCTAssertEqual(harness.applied?.downloads, preview.map(\.id))
     }
 
     func testTotalNeverClaimsAnExactSizeForAResumedDownload() {

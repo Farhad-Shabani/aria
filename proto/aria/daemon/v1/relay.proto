@@ -33,18 +33,45 @@ service RelayService {
   rpc Relay(stream RelayRequest) returns (stream RelayEvent);
 }
 
+// Pins the certificate the phone presented on this connection, in exchange
+// for the pairing code on the Mac's screen. The only LAN call an unpaired
+// phone may make: the code is the credential. A code lives 60 seconds and
+// works once.
+//   UNAUTHENTICATED - the code is wrong, used, or expired
+//   PERMISSION_DENIED - the Mac already pairs as many phones as it allows
+service PairingService {
+  rpc Pair(PairRequest) returns (PairResponse);
+}
+
+// The invite the Mac app draws as a QR. Served on the unix socket only.
+service InviteService {
+  // Returns the live code while it is unused and unexpired, else a new one.
+  rpc IssueInvite(IssueInviteRequest) returns (IssueInviteResponse);
+}
+
+message PairRequest {
+  string code = 1;
+}
+
+message PairResponse {}
+
+message IssueInviteRequest {}
+
+message IssueInviteResponse {
+  // The Mac's display name. The phone identifies the Mac by `fingerprint`.
+  string instance_name = 1;
+  string code = 2;
+  // SHA-256 of the relay certificate's DER bytes; the phone pins it.
+  bytes fingerprint = 3;
+  uint32 expires_in_ms = 4;
+}
+
 message RelayRequest {
   oneof body {
     RelayStart start = 1;
     RelayAudio audio = 2;
     RelayStop stop = 3;
   }
-}
-
-message RelayEvent {
-  RelayStage stage = 1;
-  // The transcript; only on COMPLETED.
-  string text = 2;
 }
 
 // The opening message of a stream. Any other opening message is refused.
@@ -58,6 +85,12 @@ message RelayAudio {
 
 // Ends the recording. A half-closed stream ends it too.
 message RelayStop {}
+
+message RelayEvent {
+  RelayStage stage = 1;
+  // The transcript; only on COMPLETED.
+  string text = 2;
+}
 
 enum RelayStage {
   RELAY_STAGE_UNSPECIFIED = 0;
@@ -73,37 +106,4 @@ enum AudioFormat {
   AUDIO_FORMAT_UNSPECIFIED = 0;
   // Raw mono signed 16-bit little-endian PCM at 16 kHz, without a file header.
   AUDIO_FORMAT_PCM_S16LE = 1;
-}
-
-// Pins the certificate the phone presented on this connection, in exchange
-// for the pairing code on the Mac's screen. The only LAN call an unpaired
-// phone may make: the code is the credential. A code lives 60 seconds and
-// works once.
-//   UNAUTHENTICATED - the code is wrong, used, or expired
-//   PERMISSION_DENIED - the Mac already pairs as many phones as it allows
-service PairingService {
-  rpc Pair(PairRequest) returns (PairResponse);
-}
-
-message PairRequest {
-  string pairing_code = 1;
-}
-
-message PairResponse {}
-
-// The invite the Mac app draws as a QR. Served on the unix socket only.
-service InviteService {
-  // Returns the live code while it is unused and unexpired, else a new one.
-  rpc IssueInvite(IssueInviteRequest) returns (IssueInviteResponse);
-}
-
-message IssueInviteRequest {}
-
-message IssueInviteResponse {
-  // The Mac's display name. The phone identifies the Mac by `fingerprint`.
-  string instance_name = 1;
-  string pairing_code = 2;
-  // SHA-256 of the relay certificate's DER bytes; the phone pins it.
-  bytes fingerprint = 3;
-  uint32 expires_in_ms = 4;
 }

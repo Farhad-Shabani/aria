@@ -156,7 +156,7 @@ final class SetupState: ObservableObject {
         ]
         for (key, engines) in chosen {
             guard let engine = engines.first(where: { $0.id == key }) else { continue }
-            if engine.availability == .unsupported { return "\(engine.name): \(engine.availabilityDetail)" }
+            if engine.availability == .unsupported { return "\(engine.label): \(engine.availabilityDetail)" }
         }
         return nil
     }
@@ -208,7 +208,7 @@ final class SetupState: ObservableObject {
         ]
         return chosen.compactMap { key, engines in
             engines.first { $0.id == key && $0.modelSource == .fetchedOnFirstUse }
-                .map { "\($0.name) downloads its model on first use." }
+                .map { "\($0.label) downloads its model on first use." }
         }
     }
 
@@ -226,7 +226,7 @@ final class SetupState: ObservableObject {
     }
 
     func title(ofModel id: String) -> String {
-        inspection.models.first { $0.id == id }?.name ?? id
+        inspection.models.first { $0.id == id }?.title ?? id
     }
 
     static func size(_ bytes: UInt64) -> String {
@@ -329,8 +329,8 @@ final class SetupState: ObservableObject {
     func speakerEvent(_ event: Aria_Daemon_V1_SpeakerEvent) {
         guard step == .voice, isBusy else { return }
         switch event.stage {
-        case .recording: voicePrompt = "Say something (\(event.sampleIndex)/\(event.sampleCount))…"
-        case .sampleTaken: voicePrompt = "Heard (\(event.sampleIndex)/\(event.sampleCount))"
+        case .recording: voicePrompt = "Say something (\(event.index)/\(event.samples))…"
+        case .sampleTaken: voicePrompt = "Heard (\(event.index)/\(event.samples))"
         default: break
         }
     }
@@ -371,7 +371,7 @@ final class SetupState: ObservableObject {
         downloadProgress = [:]
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = selections
-        request.modelIds = Self.plan(inspection, selections).map(\.id).filter(downloads.contains)
+        request.downloads = Self.plan(inspection, selections).map(\.id).filter(downloads.contains)
         applyTask = Task {
             do {
                 let summary = try await SetupClient.handingOffDaemon(
@@ -400,8 +400,8 @@ final class SetupState: ObservableObject {
 
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
-        isHotkeyReady = selections.hotkeyEnabled && summary.grant == .armed
-        if selections.hotkeyEnabled && summary.grant != .armed {
+        isHotkeyReady = selections.hotkey && summary.grant == .armed
+        if selections.hotkey && summary.grant != .armed {
             step = .grant
             watchGrant()
         } else {

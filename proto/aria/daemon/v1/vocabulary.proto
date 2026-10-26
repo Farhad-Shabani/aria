@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+service VocabularyService {
+  rpc Refresh(VocabularyRequest) returns (VocabularyStatus);
+  rpc GetStatus(VocabularyRequest) returns (VocabularyStatus);
+  rpc Forget(VocabularyRequest) returns (VocabularyStatus);
+}
+
+message VocabularyRequest {
+  // Absent: the selected vocabulary directory.
+  optional string directory = 1;
+}
+
+message VocabularyStatus {
+  VocabularyState state = 1;
+  uint64 catalog_revision = 2;
+  uint64 runtime_revision = 3;
+  uint64 term_count = 4;
+  // A safe error category, without paths or source content.
+  string error_category = 5;
+}
+
+enum VocabularyState {
+  VOCABULARY_STATE_UNSPECIFIED = 0;
+  VOCABULARY_STATE_READY = 1;
+  VOCABULARY_STATE_REFRESHING = 2;
+  VOCABULARY_STATE_STALE = 3;
+  VOCABULARY_STATE_UNAVAILABLE = 4;
+  VOCABULARY_STATE_TOO_LARGE = 5;
+  VOCABULARY_STATE_DISABLED = 6;
+}

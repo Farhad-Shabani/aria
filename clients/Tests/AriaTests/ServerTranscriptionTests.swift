@@ -129,7 +129,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(setup.transcription, .server)
         XCTAssertEqual(setup.server?.endpoint, "https://box:9851")
         XCTAssertEqual(spy.requests.first?.selections.synthesisEngineID, "system")
-        XCTAssertEqual(spy.requests.first?.modelIds, [])
+        XCTAssertEqual(spy.requests.first?.downloads, [])
         XCTAssertEqual(spy.lastLocal, "whisper")
 
         await server.use(.thisMac)

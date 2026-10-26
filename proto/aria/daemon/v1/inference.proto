@@ -16,11 +16,24 @@ service InferenceService {
   rpc Transcribe(stream InferenceRequest) returns (stream InferenceResponse);
 }
 
+// Same-user Unix socket only. Never registered on the TLS listener.
+service InferenceAdminService {
+  rpc IssueInvite(InferenceInviteRequest) returns (InferenceInviteResponse);
+  rpc Revoke(InferenceRevokeRequest) returns (InferenceRevokeResponse);
+}
+
 message InferenceInfoRequest {}
 
 message InferenceInfoResponse {
   string engine_id = 1;
   repeated RecognitionStrategy strategies = 2;
+}
+
+enum RecognitionStrategy {
+  RECOGNITION_STRATEGY_UNSPECIFIED = 0;
+  RECOGNITION_STRATEGY_WHOLE = 1;
+  // Updates as audio arrives, by the streaming strategy the host's engine uses.
+  RECOGNITION_STRATEGY_STREAMING = 2;
 }
 
 message InferenceRequest {
@@ -31,28 +44,21 @@ message InferenceRequest {
   }
 }
 
+message InferenceStart {
+  string engine_id = 1;
+  // "auto" or a supported language code.
+  string language = 2;
+  RecognitionStrategy strategy = 3;
+}
+
+message InferenceStop {}
+
 message InferenceResponse {
   oneof body {
     InferenceUpdate update = 1;
     InferenceComplete complete = 2;
   }
 }
-
-enum RecognitionStrategy {
-  RECOGNITION_STRATEGY_UNSPECIFIED = 0;
-  RECOGNITION_STRATEGY_WHOLE = 1;
-  // Updates as audio arrives, by the streaming strategy the host's engine uses.
-  RECOGNITION_STRATEGY_STREAMING = 2;
-}
-
-message InferenceStart {
-  string engine_id = 1;
-  // "auto" or a supported language code.
-  string recognition_language = 2;
-  RecognitionStrategy strategy = 3;
-}
-
-message InferenceStop {}
 
 message InferenceUpdate {
   uint64 retained_from_sample = 1;
@@ -82,12 +88,6 @@ message InferenceSpan {
 message InferenceComplete {
   string text = 1;
   string engine_id = 2;
-}
-
-// Same-user Unix socket only. Never registered on the TLS listener.
-service InferenceAdminService {
-  rpc IssueInvite(InferenceInviteRequest) returns (InferenceInviteResponse);
-  rpc Revoke(InferenceRevokeRequest) returns (InferenceRevokeResponse);
 }
 
 message InferenceInviteRequest {

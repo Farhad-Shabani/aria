@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/errors.proto";
+
+service HistoryService {
+  rpc List(ListHistoryRequest) returns (ListHistoryResponse);
+  rpc Get(GetHistoryRequest) returns (HistoryEntry);
+  // Missing entries succeed. Active regeneration refuses deletion with BUSY.
+  // Audio cleanup may remain pending; List reports cleanup warnings.
+  rpc Delete(DeleteHistoryRequest) returns (DeleteHistoryResponse);
+  // Delete all rows, then remove their audio and orphaned recordings. Any
+  // active regeneration refuses the whole operation with BUSY. Later saves
+  // survive; preferences and active dictation are unchanged. Do not retry
+  // automatically after a timeout or disconnect: the result is uncertain.
+  rpc Clear(ClearHistoryRequest) returns (ClearHistoryResponse);
+  // Re-transcribe retained audio and replace saved text; never deliver it.
+  // Defaults to the original engine and language. Failure preserves saved text.
+  rpc Regenerate(RegenerateHistoryRequest) returns (HistoryEntry);
+}
+
+message ListHistoryRequest {
+  // Literal text search, at most 256 UTF-8 bytes; empty matches all entries.
+  string query = 1;
+  // Exclusive cursor in descending ID order. Absent starts at the newest.
+  optional uint64 before_id = 2;
+  // Required range: 1 to 100. Zero is invalid.
+  uint32 limit = 3;
+}
+
+message ListHistoryResponse {
+  // Each entry's `text` is a preview of at most 512 UTF-8 bytes; Get supplies
+  // the full text.
+  repeated HistoryEntry entries = 1;
+  optional uint64 next_before_id = 2;
+  optional string warning = 3;
+}
+
+message GetHistoryRequest {
+  uint64 id = 1;
+}
+
+message DeleteHistoryRequest {
+  uint64 id = 1;
+}
+
+message DeleteHistoryResponse {}
+
+message ClearHistoryRequest {}
+
+message ClearHistoryResponse {
+  uint64 deleted_entry_count = 1;
+  // Rows are deleted, but some audio remains for background cleanup.
+  bool audio_cleanup_pending = 2;
+}
+
+message RegenerateHistoryRequest {
+  uint64 id = 1;
+  optional string engine_id = 2;
+  optional string language = 3;
+}
+
+message HistoryEntry {
+  uint64 id = 1;
+  // Unix epoch milliseconds.
+  uint64 created_at_ms = 2;
+  HistorySource source = 3;
+  HistoryApplication application = 4;
+  optional uint64 duration_ms = 5;
+  string engine_id = 6;
+  string language = 7;
+  string text = 8;
+  // Whether transcription finished; List may still return a text preview.
+  bool transcription_complete = 9;
+  HistoryStatus status = 10;
+  RpcError error = 11;
+  HistoryAudioAvailability audio_availability = 12;
+  // Present exactly when audio is AVAILABLE; Unix epoch milliseconds.
+  optional uint64 audio_expires_at_ms = 13;
+  bool regenerating = 14;
+  bool deletion_pending = 15;
+  // Audio is available and neither regeneration nor deletion is pending.
+  bool can_regenerate = 16;
+  optional string warning = 17;
+}
+
+message HistoryApplication {
+  string name = 1;
+  optional string bundle_id = 2;
+}
+
+enum HistorySource {
+  HISTORY_SOURCE_UNSPECIFIED = 0;
+  HISTORY_SOURCE_LOCAL = 1;
+  HISTORY_SOURCE_RELAY = 2;
+}
+
+enum HistoryStatus {
+  HISTORY_STATUS_UNSPECIFIED = 0;
+  HISTORY_STATUS_SUCCESS = 1;
+  HISTORY_STATUS_TRANSCRIPTION_FAILED = 2;
+  HISTORY_STATUS_DELIVERY_FAILED = 3;
+  HISTORY_STATUS_RECOVERED = 4;
+}
+
+enum HistoryAudioAvailability {
+  HISTORY_AUDIO_AVAILABILITY_UNSPECIFIED = 0;
+  HISTORY_AUDIO_AVAILABILITY_UNAVAILABLE = 1;
+  HISTORY_AUDIO_AVAILABILITY_AVAILABLE = 2;
+  HISTORY_AUDIO_AVAILABILITY_EXPIRED = 3;
+}

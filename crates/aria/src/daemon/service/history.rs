@@ -185,7 +185,7 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         mut request: Request<wire::GetHistoryRequest>,
     ) -> Result<Response<wire::HistoryEntry>, Status> {
         let activity = ActivityGuard::take(&mut request);
-        let id = protocol::history_id(request.into_inner().history_entry_id)
+        let id = protocol::history_id(request.into_inner().id)
             .map_err(|error| super::invalid_request("HistoryService/Get", &error))?;
         let (command, pending) = cancellable_call(|_, reply| Command::Get(id, reply, activity));
         self.submit(command, pending)
@@ -198,7 +198,7 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         mut request: Request<wire::DeleteHistoryRequest>,
     ) -> Result<Response<wire::DeleteHistoryResponse>, Status> {
         let activity = ActivityGuard::take(&mut request);
-        let id = protocol::history_id(request.into_inner().history_entry_id)
+        let id = protocol::history_id(request.into_inner().id)
             .map_err(|error| super::invalid_request("HistoryService/Delete", &error))?;
         let (command, pending) = cancellable_call(|_, reply| Command::Delete(id, reply, activity));
         self.submit(command, pending).await?;

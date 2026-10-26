@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/errors.proto";
+
+service DictationService {
+  // Record one utterance, transcribe, deliver. Progress arrives as it
+  // happens, best-effort; one `result` or `stop_accepted` ends the press,
+  // and progress may still trail it. Read to the outcome. A Manual-mode
+  // `Start` during a Manual-mode dictation stops it, answered with
+  // `stop_accepted`; any other overlap is refused as RESOURCE_EXHAUSTED.
+  // Cancel by cancelling the RPC or disconnecting.
+  rpc Start(StartDictationRequest) returns (stream StartDictationResponse);
+  // End one recording, whatever stop mode started it: the utterance so far
+  // is transcribed and delivered, and its open `Start` answers with the
+  // result. Answers false when that recording is not the one running, or
+  // is already stopping.
+  // Unlike a `Start` that doubles as a stop, this never begins one.
+  rpc Stop(StopDictationRequest) returns (StopDictationResponse);
+}
+
+message StartDictationRequest {
+  // Absent mode overrides use stored preferences; explicit UNSPECIFIED is invalid.
+  optional OutputMode output_mode = 1;
+  // Required: no stored preference applies, so UNSPECIFIED is invalid.
+  StopMode stop_mode = 2;
+  optional DeliveryMode delivery_mode = 3;
+  // Hand the transcript back without delivering it anywhere.
+  bool transcript_only = 4;
+  // Absent uses the daemon-selected project vocabulary.
+  oneof project {
+    string project_directory = 5;
+    ProjectVocabularyDisabled project_vocabulary_disabled = 6;
+  }
+}
+
+message ProjectVocabularyDisabled {}
+
+message StartDictationResponse {
+  oneof body {
+    DictationResult result = 1;
+    DictationStopAccepted stop_accepted = 2;
+    // Progress, best-effort. Read to `result` or `stop_accepted`.
+    DictationEvent progress = 3;
+  }
+}
+
+message DictationResult {
+  string text = 1;
+  // The own-voice gate judged the recording as the owner's: a speaker
+  // model with an enrolled owner kept every other voice out.
+  bool own_voice = 2;
+}
+
+message DictationStopAccepted {}
+
+message StopDictationRequest {
+  // From the RECORDING event of the press to end. Zero is refused.
+  uint64 recording_id = 1;
+}
+
+message StopDictationResponse {
+  bool was_recording = 1;
+}
+
+message DictationEvent {
+  // Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
+  uint64 recording_id = 4;
+  DictationStage stage = 1;
+  // The segment just transcribed, and only then. A live caption joins
+  // these; the press ends at delivered, cancelled, or failed.
+  string text = 2;
+  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
+  // is speaking. Empty until a voice is recognized.
+  string speaker_name = 7;
+  // Set on DICTATION_STAGE_DELIVERED. Unspecified for a press that
+  // asked only for its transcript.
+  DeliveryOutcome outcome = 5;
+  // Set on DICTATION_STAGE_DELIVERED: how many words landed.
+  uint32 word_count = 6;
+  // Meaningful only when stage is DICTATION_STAGE_FAILED.
+  ErrorCode error_code = 3;
+}
+
+message CaptionSnapshot {
+  uint64 recording_id = 1;
+  string committed = 2;
+  string provisional = 3;
+  bool ended = 4;
+}
+
+// Words streaming has heard but not typed yet, sent with each changed decode
+// preview. Empty once a segment is typed or fails to type. A full subscriber
+// queue drops one without closing the subscription; the next replaces it.
+message GhostSnapshot {
+  uint64 recording_id = 1;
+  string text = 2;
+  // Unset when the caret's position is unknown.
+  Placement placement = 3;
+}
+
+// The caret of the field being typed into. Rects are screen points measured
+// from the primary display's top-left corner.
+message Placement {
+  Rect caret = 1;
+  // Unset when the app reports no frame for the field.
+  Rect field = 2;
+  // Empty when the app reports no font.
+  string font_name = 3;
+  double font_size = 4;
+}
+
+message Rect {
+  double x = 1;
+  double y = 2;
+  double width = 3;
+  double height = 4;
+}
+
+// How loud the microphone is while a press records. A full subscriber
+// queue drops the level without closing the subscription.
+message MicLevel {
+  uint64 recording_id = 1;
+  // 0 at the noise floor, 1 at loud speech.
+  float level = 2;
+}
+
+enum DictationStage {
+  DICTATION_STAGE_UNSPECIFIED = 0;
+  DICTATION_STAGE_RECORDING = 1;
+  DICTATION_STAGE_TRANSCRIBING = 2;
+  DICTATION_STAGE_DELIVERING = 3;
+  DICTATION_STAGE_DELIVERED = 4;
+  DICTATION_STAGE_CANCELLED = 5;
+  DICTATION_STAGE_FAILED = 6;
+  // A streamed segment, a different axis from the press.
+  DICTATION_STAGE_SEGMENT_TRANSCRIBED = 7;
+  DICTATION_STAGE_SEGMENT_DELIVERED = 8;
+}
+
+// Where a delivered transcript went.
+enum DeliveryOutcome {
+  DELIVERY_OUTCOME_UNSPECIFIED = 0;
+  DELIVERY_OUTCOME_INSERTED = 1;
+  DELIVERY_OUTCOME_COPIED = 2;
+}
+
+enum OutputMode {
+  OUTPUT_MODE_UNSPECIFIED = 0;
+  OUTPUT_MODE_INSERT = 1;
+  OUTPUT_MODE_COPY = 2;
+  OUTPUT_MODE_INSERT_OR_COPY = 3;
+  OUTPUT_MODE_INSERT_AND_SUBMIT = 4;
+}
+
+enum StopMode {
+  STOP_MODE_UNSPECIFIED = 0;
+  STOP_MODE_ON_SILENCE = 1;
+  STOP_MODE_MANUAL = 2;
+}
+
+enum DeliveryMode {
+  DELIVERY_MODE_UNSPECIFIED = 0;
+  DELIVERY_MODE_COMPLETE = 1;
+  DELIVERY_MODE_STREAMING = 2;
+}
