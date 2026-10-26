@@ -66,7 +66,7 @@ pub use crate::chat::{
     Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
     Focus, Project, ProjectsError, Step, Ticket,
 };
-pub use crate::config::ChatAgent;
+pub use crate::config::AssistantId;
 pub use crate::dictation::{
     DeliveryMode, DictationOutcome, DictationRequest, DictationResult, DictationStage, OutputMode,
     RecordingId, StopMode,

@@ -87,7 +87,7 @@ impl Keys {
                     let keys = &buffer[..count];
                     if keys.contains(&CTRL_C) {
                         // The work outlives this process, so leaving it
-                        // running would strand a recording or an agent.
+                        // running would strand a recording or an assistant.
                         quitting = true;
                         break;
                     }

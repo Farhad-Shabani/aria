@@ -79,9 +79,9 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::SpeakerInconsistentSamples
         | RpcErrorCode::SpeakerProfileWriteFailed
         | RpcErrorCode::SpeakerNoSpeech
-        | RpcErrorCode::AgentUnavailable
-        | RpcErrorCode::AgentFailed
-        | RpcErrorCode::AgentTimeout
+        | RpcErrorCode::AssistantUnavailable
+        | RpcErrorCode::AssistantFailed
+        | RpcErrorCode::AssistantTimeout
         | RpcErrorCode::Unauthenticated
         | RpcErrorCode::PermissionDenied
         | RpcErrorCode::Unsupported

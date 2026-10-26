@@ -6,9 +6,8 @@ struct EnginesPage: View {
     var body: some View {
         Form {
             Section {
-                picker("Speech to text", state.inspection.stt, $state.selections.stt, sized: true)
-                picker("Text to speech", state.inspection.tts, $state.selections.tts, sized: true)
-                picker("Chat agent", state.inspection.chat, $state.selections.chat, sized: false)
+                picker("Speech to text", state.inspection.stt, $state.selections.stt)
+                picker("Text to speech", state.inspection.tts, $state.selections.tts)
             }
             Section {
                 Toggle("Listen for the wake word", isOn: $state.selections.wake)
@@ -23,22 +22,16 @@ struct EnginesPage: View {
         }
     }
 
-    /// With `sized`, each row shows its download size for comparing. The
-    /// chosen engine's note sits under the title, where a long path fits.
-    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Engine], _ key: Binding<String>, sized: Bool)
+    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Engine], _ key: Binding<String>)
         -> some View
     {
         let chosen = engines.first { $0.key == key.wrappedValue }
         return Picker(selection: key) {
             ForEach(engines, id: \.key) { engine in
-                if sized {
-                    let download = SetupState.download(of: engine, in: state.inspection)
-                    Text("\(engine.label)   \(Text(download.brief).foregroundStyle(.secondary))")
-                        .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
-                        .tag(engine.key)
-                } else {
-                    Text(engine.label).tag(engine.key)
-                }
+                let download = SetupState.download(of: engine, in: state.inspection)
+                Text("\(engine.label)   \(Text(download.brief).foregroundStyle(.secondary))")
+                    .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
+                    .tag(engine.key)
             }
             // config.yaml may name an engine setup does not offer; the
             // picker still needs a row for it.

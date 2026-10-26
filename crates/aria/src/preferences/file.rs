@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use super::{
 };
 use crate::audio::SilenceDuration;
 use crate::chat::PromptKind;
+use crate::config::AssistantId;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
 use crate::hotkey::HotkeyKey;
@@ -115,6 +117,13 @@ impl StoredDocument {
                     source,
                 })?;
         let preferences = UserPreferences {
+            assistant_id: self.preferences.assistant_id.map(Into::into),
+            assistant_models: self
+                .preferences
+                .assistant_models
+                .into_iter()
+                .map(|(assistant_id, model_id)| (assistant_id.into(), model_id))
+                .collect(),
             dictation_history: self.preferences.dictation_history,
             history_audio_retention: self.preferences.history_audio_retention,
             mute_output: self.preferences.mute_output,
@@ -151,6 +160,7 @@ impl StoredDocument {
             })?,
             prompts,
         };
+        preferences.validate_assistant_models()?;
         if preferences.shares_a_chord() {
             return Err(PreferenceStoreError::SharedChord {
                 path: path.to_path_buf(),
@@ -168,6 +178,13 @@ impl From<&PreferenceSnapshot> for StoredDocument {
         Self {
             revision: snapshot.revision,
             preferences: StoredPreferences {
+                assistant_id: snapshot.preferences.assistant_id.map(Into::into),
+                assistant_models: snapshot
+                    .preferences
+                    .assistant_models
+                    .iter()
+                    .map(|(assistant_id, model_id)| ((*assistant_id).into(), model_id.clone()))
+                    .collect(),
                 dictation_history: snapshot.preferences.dictation_history,
                 history_audio_retention: snapshot.preferences.history_audio_retention,
                 mute_output: snapshot.preferences.mute_output,
@@ -210,6 +227,10 @@ impl From<&PreferenceSnapshot> for StoredDocument {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredPreferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    assistant_id: Option<StoredAssistantId>,
+    #[serde(default)]
+    assistant_models: BTreeMap<StoredAssistantId, String>,
     #[serde(default = "history_enabled")]
     dictation_history: bool,
     #[serde(default)]
@@ -238,6 +259,31 @@ struct StoredPreferences {
     application_overrides: Vec<StoredApplicationOverride>,
     #[serde(default)]
     prompts: Vec<StoredPrompt>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum StoredAssistantId {
+    ClaudeCode,
+    Codex,
+}
+
+impl From<AssistantId> for StoredAssistantId {
+    fn from(assistant_id: AssistantId) -> Self {
+        match assistant_id {
+            AssistantId::ClaudeCode => Self::ClaudeCode,
+            AssistantId::Codex => Self::Codex,
+        }
+    }
+}
+
+impl From<StoredAssistantId> for AssistantId {
+    fn from(assistant_id: StoredAssistantId) -> Self {
+        match assistant_id {
+            StoredAssistantId::ClaudeCode => Self::ClaudeCode,
+            StoredAssistantId::Codex => Self::Codex,
+        }
+    }
 }
 
 fn history_enabled() -> bool {

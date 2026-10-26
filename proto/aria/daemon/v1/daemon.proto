@@ -196,44 +196,57 @@ message PreferenceConflict {
   PreferenceSnapshot current = 1;
 }
 
-// Grouped as the Settings window shows them.
-message UserPreferences {
-  // Dictation
+message AssistantModelPreference {
+  AssistantID assistant_id = 1;
+  string model_id = 2;
+}
 
-  OutputMode output_mode = 1;
-  DeliveryMode delivery_mode = 2;
+message UserPreferences {
+  // Recording
+
   // Whole milliseconds, 100 to 10000 inclusive.
-  uint64 silence_duration_ms = 3;
-  bool mute_output = 4;
+  uint64 silence_duration_ms = 1;
+  bool mute_output = 2;
 
   // Recognition
 
   // A language code such as "en" or "en-us", or "auto" to detect.
-  string recognition_language = 5;
-  bool own_voice_only = 6;
-  bool project_vocabulary = 7;
-  optional string vocabulary_directory = 8;
+  string recognition_language = 3;
+  bool own_voice_only = 4;
+  bool project_vocabulary = 5;
+  optional string vocabulary_directory = 6;
+
+  // Assistant
+
+  optional AssistantID assistant_id = 7;
+  // Each assistant ID appears at most once.
+  repeated AssistantModelPreference assistant_models = 8;
+
+  // Delivery
+
+  OutputMode output_mode = 9;
+  DeliveryMode delivery_mode = 10;
 
   // Shortcuts
 
-  HotkeyKey dictation_hotkey = 9;
+  HotkeyKey dictation_hotkey = 11;
   // Press to record, again to send, again to cancel.
-  Hotkey ask_hotkey = 10;
+  Hotkey ask_hotkey = 12;
   // Lists the prompts that are on, so one runs without its own chord.
-  Hotkey prompt_list_hotkey = 11;
+  Hotkey prompt_list_hotkey = 13;
 
   // Prompts
 
-  Prompts prompts = 12;
+  Prompts prompts = 14;
 
-  // Apps
+  // App overrides
 
-  ApplicationOverrides application_overrides = 13;
+  ApplicationOverrides application_overrides = 15;
 
-  // Privacy
+  // History
 
-  bool dictation_history = 14;
-  bool history_audio_retention = 15;
+  bool dictation_history = 16;
+  bool history_audio_retention = 17;
 }
 
 // A Markdown file that says what to make of a recording, and the chord
@@ -253,7 +266,7 @@ message Prompt {
 }
 
 // What a prompt makes of what was said. Either way the transcript is
-// material for the agent, never instructions to it.
+// material for the assistant, never instructions to it.
 enum PromptKind {
   PROMPT_KIND_UNSPECIFIED = 0;
   // The same words and meaning, cleaned up or restyled.
@@ -295,44 +308,53 @@ message ApplicationOverrides {
 // Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
 // Numbered as `UserPreferences`.
 message PreferencePatch {
-  // Dictation
+  // Recording
 
-  optional OutputMode output_mode = 1;
-  optional DeliveryMode delivery_mode = 2;
   // Whole milliseconds, 100 to 10000 inclusive.
-  optional uint64 silence_duration_ms = 3;
-  optional bool mute_output = 4;
+  optional uint64 silence_duration_ms = 1;
+  optional bool mute_output = 2;
 
   // Recognition
 
   // A language code such as "en" or "en-us", or "auto" to detect.
-  optional string recognition_language = 5;
+  optional string recognition_language = 3;
   // Filter for enrolled owner voices when a speaker model and owner exist.
-  optional bool own_voice_only = 6;
-  optional bool project_vocabulary = 7;
+  optional bool own_voice_only = 4;
+  optional bool project_vocabulary = 5;
   // Empty clears the selected directory; absent leaves it unchanged.
-  optional string vocabulary_directory = 8;
+  optional string vocabulary_directory = 6;
+
+  // Assistant
+
+  optional AssistantID assistant_id = 7;
+  // Only listed assistants change; an empty model_id resets to the default.
+  repeated AssistantModelPreference assistant_models = 8;
+
+  // Delivery
+
+  optional OutputMode output_mode = 9;
+  optional DeliveryMode delivery_mode = 10;
 
   // Shortcuts
 
-  optional HotkeyKey dictation_hotkey = 9;
-  Hotkey ask_hotkey = 10;
-  Hotkey prompt_list_hotkey = 11;
+  optional HotkeyKey dictation_hotkey = 11;
+  Hotkey ask_hotkey = 12;
+  Hotkey prompt_list_hotkey = 13;
 
   // Prompts
 
   // Replaces every entry.
-  Prompts prompts = 12;
+  Prompts prompts = 14;
 
-  // Apps
+  // App overrides
 
   // Replaces every entry.
-  ApplicationOverrides application_overrides = 13;
+  ApplicationOverrides application_overrides = 15;
 
-  // Privacy
+  // History
 
-  optional bool dictation_history = 14;
-  optional bool history_audio_retention = 15;
+  optional bool dictation_history = 16;
+  optional bool history_audio_retention = 17;
 }
 
 enum OutputMode {
@@ -523,13 +545,15 @@ enum VocabularyState {
 // ---------- chat ----------
 
 service ChatService {
-  // Hand one prompt to an agent. Answers with a ticket as soon as the ask
+  rpc ListAssistants(ListAssistantsRequest) returns (ListAssistantsResponse);
+  rpc ListModels(ListAssistantModelsRequest) returns (ListAssistantModelsResponse);
+  // Hand one prompt to an assistant. Answers with a ticket as soon as the ask
   // is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-  // run side by side, except that asks on one conversation (agent and
+  // run side by side, except that asks on one conversation (assistant and
   // session) take turns. Served only by a persistent daemon; an on-demand
   // daemon refuses with UNSUPPORTED.
   rpc Ask(AskRequest) returns (AskResponse);
-  // Stop an ask that is running or still waiting its turn. Its agent is
+  // Stop an ask that is running or still waiting its turn. Its assistant is
   // killed and the ask ends as a FAILED event with CANCELLED; the
   // conversation stays resumable.
   rpc Cancel(CancelAskRequest) returns (CancelAskResponse);
@@ -537,28 +561,45 @@ service ChatService {
   // Answers with the focused project, else the configured one.
   rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
   // Run a stored prompt on a transcript and type the result into the app the
-  // request names, else the one in front. One fresh agent run with no
+  // request names, else the one in front. One fresh assistant run with no
   // conversation, memory, or tools. Progress and the outcome arrive as
   // `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
   rpc RunPrompt(RunPromptRequest) returns (AskResponse);
 }
 
+message ListAssistantsRequest {}
+
+message ListAssistantsResponse {
+  repeated Assistant assistants = 1;
+}
+
+message ListAssistantModelsRequest {
+  AssistantID assistant_id = 1;
+}
+
+message ListAssistantModelsResponse {
+  repeated AssistantModel models = 1;
+}
+
 message AskRequest {
-  string text = 1;
-  // The directory the agent works in.
-  string workdir = 2;
-  // Forget the running conversation and start another.
-  bool new_conversation = 3;
-  // Deliver the reply like a transcript instead of only announcing it.
-  optional OutputMode output_mode = 4;
-  ChatAgent agent = 5;
-  // A model name the agent's CLI accepts; empty is the agent's default.
-  string model = 6;
+  AssistantID assistant_id = 1;
+  // A CLI model ID; empty uses the saved preference, then the assistant's default.
+  string model_id = 2;
+
+  // The directory the assistant works in.
+  string workdir = 3;
   // Names the conversation to continue; empty means the directory's.
-  string session = 7;
+  string session = 4;
+  // Forget the running conversation and start another.
+  bool new_conversation = 5;
+
+  string text = 6;
   // The text came from a recording the own-voice gate judged as the
   // owner's; see DictationResult.own_voice.
-  bool own_voice = 8;
+  bool own_voice = 7;
+
+  // Deliver the reply like a transcript instead of only announcing it.
+  optional OutputMode output_mode = 8;
 }
 
 message AskResponse {
@@ -587,40 +628,50 @@ message ResolveAskRequest {}
 
 message ResolveAskResponse {
   // Both are what `Ask` wants: it takes no empty workdir and no
-  // unspecified agent.
+  // unspecified assistant.
   string workdir = 1;
-  ChatAgent agent = 2;
+  AssistantID assistant_id = 2;
 }
 
 message ChatEvent {
-  ChatStage stage = 1;
+  uint64 ticket = 1;
+  // The assistant serving this ticket.
+  AssistantID assistant_id = 2;
+  ChatStage stage = 3;
+  // What the assistant is doing; only on WORKING.
+  ChatStep step = 4;
+  // The skill being loaded; only when step is SKILL.
+  string skill = 5;
+  // The reply; only on REPLIED.
+  string text = 6;
+  // On REPLIED: the reply went to the clipboard instead of being typed.
+  bool copied = 7;
   // On REPLIED, why the reply was not delivered (UNSPECIFIED when it was,
   // or delivery was not asked for). On FAILED, what went wrong.
-  ErrorCode error_code = 2;
-  uint64 ticket = 3;
-  // The reply; only on REPLIED.
-  string text = 4;
+  ErrorCode error_code = 8;
   // The failure, in words; only on FAILED.
-  string error_message = 5;
-  // The agent serving this ticket.
-  ChatAgent agent = 6;
-  // What the agent is doing; only on WORKING.
-  ChatStep step = 7;
-  // The skill being loaded; only when step is SKILL.
-  string skill = 8;
-  // On REPLIED: the reply went to the clipboard instead of being typed.
-  bool copied = 9;
+  string error_message = 9;
 }
 
-enum ChatAgent {
-  CHAT_AGENT_UNSPECIFIED = 0;
-  CHAT_AGENT_CLAUDE_CODE = 1;
-  CHAT_AGENT_CODEX = 2;
+message Assistant {
+  AssistantID id = 1;
+  string name = 2;
+}
+
+message AssistantModel {
+  string id = 1;
+  string name = 2;
+}
+
+enum AssistantID {
+  ASSISTANT_ID_UNSPECIFIED = 0;
+  ASSISTANT_ID_CLAUDE_CODE = 1;
+  ASSISTANT_ID_CODEX = 2;
 }
 
 enum ChatStage {
   CHAT_STAGE_UNSPECIFIED = 0;
-  // The agent is at work; `step` says on what. Sent again on each change.
+  // The assistant is at work; `step` says on what. Sent again on each change.
   CHAT_STAGE_WORKING = 1;
   CHAT_STAGE_REPLIED = 2;
   CHAT_STAGE_FAILED = 3;

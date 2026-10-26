@@ -130,24 +130,25 @@ transcription:
 #   segmentation_model: ~/.aria/models/pyannote/segmentation-3.0.onnx
 #   speakers_dir: ~/.aria/speakers
 
-# `aria ask` hands a spoken or typed prompt to a coding agent and prints the
-# reply; it needs the persistent daemon (`aria daemon`). `agent` is the
-# CLI's default for `--agent` (`claude-code` or `codex`, found on PATH);
-# `workdir` pins where the agent works (default: the caller's directory);
+# `aria ask` hands a spoken or typed prompt to an assistant and prints the
+# reply; it needs the persistent daemon (`aria daemon`). `assistant` supplies
+# the fallback until selected in Settings or with `aria assistant`.
+# `--assistant` overrides the choice for one question.
+# `workdir` pins where the assistant works (default: the caller's directory);
 # `project_roots` lists directories whose git repos an ask may name, so
 # "in writ, why does the build fail?" runs in `<root>/Writ` and later asks
 # stay there; `timeout` is seconds per reply, at most 570. Asks run side by
-# side; asks on one conversation (agent and `--session`, default the
+# side; asks on one conversation (assistant and `--session`, default the
 # directory) take turns.
-# ARIA_CHAT_AGENT and ARIA_CHAT_TIMEOUT override.
+# ARIA_CHAT_ASSISTANT and ARIA_CHAT_TIMEOUT override.
 # chat:
-#   agent: claude-code   # or codex
+#   assistant: claude-code   # or codex
 #   workdir: ~/src
 #   project_roots: ["~", "~/Projects"]
 #   timeout: 300.0
 
 # Memory: facts the user states while asking, extracted by `claude` after
-# the fact and shown to the agent on later asks. Off by default; even on,
+# the fact and shown to the assistant on later asks. Off by default; even on,
 # only spoken asks with `own_voice_only` and an enrolled owner feed it.
 # `dir` also holds `lexicon.txt`, the terms that fix misheard words in
 # every transcript whenever that file exists.

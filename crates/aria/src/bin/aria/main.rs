@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use aria::daemon::guided::DEFAULT_SAMPLES;
 use aria::daemon::{
-    AskError, ChatAgent, ChatRequest, ChatStage, ChatStageKind, Clarify, Daemon, DaemonEvent,
+    AskError, AssistantId, ChatRequest, ChatStage, ChatStageKind, Clarify, Daemon, DaemonEvent,
     DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, DictationStage,
     EnrollmentRequest, EnrollmentStage, ListenStage, OutputMode, Role, Routing, SpeakerName,
     SpeechOutcome, SpeechRequest, SpeechStage, StopMode, Ticket, WakeWordStatus, guided,
@@ -124,19 +124,27 @@ enum Command {
         #[arg(long)]
         no_project: bool,
     },
-    /// Ask a coding agent a question and print its reply
+    /// Show or choose the shared assistant for Ask and Prompts
+    #[command(args_conflicts_with_subcommands = true)]
+    Assistant {
+        #[arg(value_parser = assistant_parser(), value_name = "ASSISTANT")]
+        assistant_id: Option<AssistantId>,
+        #[command(subcommand)]
+        command: Option<AssistantCommand>,
+    },
+    /// Ask an assistant a question and print its reply
     Ask {
         /// The question. Omit it to record one, or pipe it on stdin
         text: Option<String>,
-        /// Bind recording vocabulary and the answering agent to this directory
+        /// Bind recording vocabulary and the answering assistant to this directory
         #[arg(long)]
         project: Option<PathBuf>,
-        /// Which agent answers; defaults to `chat.agent`
-        #[arg(long, value_enum)]
-        agent: Option<CliAgent>,
-        /// A model name the agent's CLI accepts; defaults to the agent's own
-        #[arg(long)]
-        model: Option<String>,
+        /// Override the shared assistant for this question
+        #[arg(long = "assistant", value_parser = assistant_parser(), value_name = "ASSISTANT")]
+        assistant_id: Option<AssistantId>,
+        /// Override the shared model choice for this question
+        #[arg(long = "model", value_name = "MODEL_ID")]
+        model_id: Option<String>,
         /// The conversation to continue, by name; defaults to this directory's
         #[arg(long)]
         session: Option<String>,
@@ -156,7 +164,7 @@ enum Command {
         #[arg(
             long,
             value_name = "TICKET",
-            conflicts_with_all = ["text", "agent", "model", "session", "new", "detach", "mode", "toggle", "project"]
+            conflicts_with_all = ["text", "assistant_id", "model_id", "session", "new", "detach", "mode", "toggle", "project"]
         )]
         cancel: Option<Ticket>,
     },
@@ -185,6 +193,27 @@ enum Command {
         /// Stop the utterance playing instead of speaking one
         #[arg(long)]
         stop: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AssistantCommand {
+    /// Show or choose the model used by Ask and Prompts
+    Model {
+        /// The model ID; omit it to show the saved choice
+        model_id: Option<String>,
+        /// Which assistant's preference to use; defaults to the selected assistant
+        #[arg(long = "assistant", value_parser = assistant_parser(), value_name = "ASSISTANT")]
+        assistant_id: Option<AssistantId>,
+        /// Use the assistant's default model
+        #[arg(long = "default", conflicts_with_all = ["model_id", "list"])]
+        use_default: bool,
+        /// List models offered by the installed assistant
+        #[arg(long, conflicts_with = "model_id")]
+        list: bool,
+        /// Print the model list as JSON
+        #[arg(long, requires = "list")]
+        json: bool,
     },
 }
 
@@ -402,19 +431,11 @@ enum CliOutputMode {
     Copy,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum CliAgent {
-    ClaudeCode,
-    Codex,
-}
+fn assistant_parser() -> impl clap::builder::TypedValueParser<Value = AssistantId> {
+    use clap::builder::{PossibleValuesParser, TypedValueParser};
 
-impl From<CliAgent> for ChatAgent {
-    fn from(agent: CliAgent) -> Self {
-        match agent {
-            CliAgent::ClaudeCode => Self::ClaudeCode,
-            CliAgent::Codex => Self::Codex,
-        }
-    }
+    PossibleValuesParser::new(AssistantId::ALL.iter().map(|id| id.name()))
+        .try_map(|name| name.parse::<AssistantId>())
 }
 
 impl From<CliOutputMode> for OutputMode {
@@ -490,11 +511,26 @@ fn main() -> anyhow::Result<()> {
             stream,
             no_project,
         } => run_dictate(mode, toggle, stream, no_project),
+        Command::Assistant {
+            assistant_id,
+            command: None,
+        } => run_assistant(assistant_id),
+        Command::Assistant {
+            command:
+                Some(AssistantCommand::Model {
+                    model_id,
+                    assistant_id,
+                    use_default,
+                    list,
+                    json,
+                }),
+            ..
+        } => run_model(model_id, assistant_id, use_default, list, json),
         Command::Ask {
             text,
             project,
-            agent,
-            model,
+            assistant_id,
+            model_id,
             session,
             new,
             detach,
@@ -504,8 +540,8 @@ fn main() -> anyhow::Result<()> {
         } => run_ask(AskArgs {
             text,
             project,
-            agent,
-            model,
+            assistant_id,
+            model_id,
             session,
             new,
             detach,
@@ -1189,7 +1225,7 @@ fn run_daemon() -> anyhow::Result<()> {
     if let Err(error) = login_path {
         tracing::warn!(
             error = %error_chain(error.as_ref()),
-            "kept the inherited PATH; agents and tools outside it will not start"
+            "kept the inherited PATH; assistants and tools outside it will not start"
         );
     }
 
@@ -1233,25 +1269,25 @@ fn run_events() -> anyhow::Result<()> {
             DaemonEvent::Dictation(stage) => writeln!(stdout, "{}", stage.label()),
             DaemonEvent::Chat(ChatStage {
                 ticket,
-                agent,
+                assistant_id,
                 kind,
             }) => {
-                let agent = agent.name();
+                let assistant_name = assistant_id.name();
                 match kind {
                     ChatStageKind::Working(step) => {
-                        writeln!(stdout, "chat {ticket} {agent} {step}")
+                        writeln!(stdout, "chat {ticket} {assistant_name} {step}")
                     }
                     ChatStageKind::Replied(reply) => {
                         writeln!(
                             stdout,
-                            "chat {ticket} {agent} replied {}",
+                            "chat {ticket} {assistant_name} replied {}",
                             reply.text.lines().next().unwrap_or("")
                         )
                     }
                     ChatStageKind::Failed { code, message } => {
                         writeln!(
                             stdout,
-                            "chat {ticket} {agent} failed {}: {message}",
+                            "chat {ticket} {assistant_name} failed {}: {message}",
                             code.label()
                         )
                     }
@@ -1600,11 +1636,93 @@ fn run_dictate(
     Ok(())
 }
 
+fn run_assistant(assistant_id: Option<AssistantId>) -> anyhow::Result<()> {
+    use aria::preferences::{PreferencePatch, UpdateResult};
+
+    let paths = PreparedRuntimePaths::for_current_user()?;
+    let session = DaemonSession::connect_at(&paths)?;
+    let snapshot = session.get_preferences()?;
+    let snapshot = if let Some(assistant_id) = assistant_id {
+        let patch = PreferencePatch {
+            assistant_id: Some(assistant_id),
+            ..PreferencePatch::default()
+        };
+        match session.update_preferences(snapshot.revision, patch)? {
+            UpdateResult::Updated(snapshot) => snapshot,
+            UpdateResult::Conflict(_) => anyhow::bail!("preferences changed; retry the command"),
+        }
+    } else {
+        snapshot
+    };
+    let assistant_id = snapshot
+        .preferences
+        .assistant_id
+        .context("no assistant is selected; use aria assistant --help for choices, or check chat.assistant and ARIA_CHAT_ASSISTANT")?;
+    println!("{}", assistant_id.name());
+    Ok(())
+}
+
+fn run_model(
+    model_id: Option<String>,
+    assistant_id: Option<AssistantId>,
+    use_default: bool,
+    list: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    use aria::preferences::{PreferencePatch, UpdateResult};
+
+    let paths = PreparedRuntimePaths::for_current_user()?;
+    let session = DaemonSession::connect_at(&paths)?;
+    let snapshot = session.get_preferences()?;
+    let assistant_id = match assistant_id {
+        Some(assistant_id) => assistant_id,
+        None => snapshot
+            .preferences
+            .assistant_id
+            .context("choose an assistant with aria assistant first")?,
+    };
+    if list {
+        let models = session.list_assistant_models(assistant_id)?;
+        if json {
+            println!("{}", serde_json::to_string(&models)?);
+        } else {
+            println!("Default (--default)");
+            for model in models {
+                println!("{}\t{}", model.id, model.name);
+            }
+        }
+        return Ok(());
+    }
+    let model_id = if use_default {
+        Some(String::new())
+    } else {
+        model_id
+    };
+    let snapshot = if let Some(model_id) = model_id {
+        let mut patch = PreferencePatch::default();
+        patch.assistant_models.insert(assistant_id, model_id);
+        match session.update_preferences(snapshot.revision, patch)? {
+            UpdateResult::Updated(snapshot) => snapshot,
+            UpdateResult::Conflict(_) => anyhow::bail!("preferences changed; retry the command"),
+        }
+    } else {
+        snapshot
+    };
+    println!(
+        "{}",
+        snapshot
+            .preferences
+            .model_id(assistant_id)
+            .unwrap_or("default")
+    );
+    Ok(())
+}
+
 struct AskArgs {
     text: Option<String>,
     project: Option<PathBuf>,
-    agent: Option<CliAgent>,
-    model: Option<String>,
+    assistant_id: Option<AssistantId>,
+    model_id: Option<String>,
     session: Option<String>,
     new: bool,
     detach: bool,
@@ -1625,6 +1743,14 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    let assistant_id = match args.assistant_id {
+        Some(assistant_id) => assistant_id,
+        None => session
+            .get_preferences()?
+            .preferences
+            .assistant_id
+            .context("no assistant is selected; use aria assistant --help for choices, or check chat.assistant and ARIA_CHAT_ASSISTANT")?,
+    };
     let project = args
         .project
         .map(|path| {
@@ -1657,7 +1783,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
                 let context = if let Some(project) = &project {
                     aria::vocabulary::Context::Directory(project.clone())
                 } else if session.get_preferences()?.preferences.project_vocabulary {
-                    match session.route(String::new(), Clarify::Refuse)? {
+                    match session.route(String::new(), Clarify::Refuse, assistant_id)? {
                         Routing::Ready { request, .. } => aria::vocabulary::Context::Directory(
                             vocabulary_directory(request.workdir)?,
                         ),
@@ -1689,11 +1815,11 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     let (configured, focus) = if let Some(project) = project {
         let request = ChatRequest {
             workdir: project.as_path().to_owned(),
-            ..ChatRequest::configured(text.clone())?
+            ..ChatRequest::configured(text.clone(), assistant_id)?
         };
         (request, None)
     } else {
-        match session.route(text.clone(), clarify) {
+        match session.route(text.clone(), clarify, assistant_id) {
             Ok(Routing::Ready { request, focus }) => (request, focus),
             Ok(Routing::Stopped) => return Ok(()),
             // What was said is not lost with the routing that failed.
@@ -1705,15 +1831,15 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
         }
     };
     let request = ChatRequest {
-        agent: args.agent.map_or(configured.agent, Into::into),
-        model: args.model,
+        assistant_id,
+        model_id: args.model_id,
         session: args.session,
         new: args.new,
         output_mode: args.mode.map(Into::into),
         own_voice: spoken.unwrap_or(false),
         ..configured
     };
-    let agent = request.agent.name();
+    let assistant_name = request.assistant_id.name();
     let workdir = request.workdir.display().to_string();
     let pending = match session.ask(request) {
         Ok(pending) => pending,
@@ -1728,7 +1854,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     if let Some(error) = focus.and_then(|focus| focus.store().err()) {
         eprintln!("the project was not remembered: {error:#}");
     }
-    eprintln!("asked {pending_ticket} {agent} in {workdir}");
+    eprintln!("asked {pending_ticket} {assistant_name} in {workdir}");
     if args.detach {
         println!("ticket {pending_ticket}");
         return Ok(());
@@ -1740,7 +1866,9 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     let reply = pending.reply(|stage| {
         let ticket = stage.ticket;
         match &stage.kind {
-            ChatStageKind::Working(step) => working.show(format!("{ticket} {agent} · {step}")),
+            ChatStageKind::Working(step) => {
+                working.show(format!("{ticket} {assistant_name} · {step}"));
+            }
             ChatStageKind::Replied(..) => {
                 working.finish();
                 eprintln!("{ticket} replied in {}s", working.seconds());
@@ -2181,6 +2309,50 @@ mod tests {
             message: "a history retry is active".into(),
         });
         assert!(busy.to_string().contains("a history retry is active"));
+    }
+
+    #[test]
+    fn assistant_model_listing_rejects_conflicting_arguments() {
+        assert!(matches!(
+            Cli::try_parse_from(["aria", "assistant", "model", "--list", "--json"])
+                .unwrap()
+                .command,
+            Command::Assistant {
+                command: Some(AssistantCommand::Model {
+                    list: true,
+                    json: true,
+                    ..
+                }),
+                ..
+            }
+        ));
+        for args in [
+            vec!["aria", "assistant", "model", "example", "--default"],
+            vec!["aria", "assistant", "model", "example", "--list"],
+            vec!["aria", "assistant", "model", "--json"],
+            vec!["aria", "assistant", "model", "--list", "--default"],
+            vec!["aria", "assistant", "codex", "model"],
+            vec!["aria", "model"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn ask_accepts_each_assistant_and_selection_rejects_unknown_names() {
+        for assistant_id in AssistantId::ALL {
+            let name = assistant_id.name();
+            assert!(matches!(
+                Cli::try_parse_from(["aria", "ask", "--assistant", name, "hello"])
+                    .unwrap()
+                    .command,
+                Command::Ask {
+                    assistant_id: Some(_),
+                    ..
+                }
+            ));
+        }
+        assert!(Cli::try_parse_from(["aria", "assistant", "unknown"]).is_err());
     }
 
     #[test]

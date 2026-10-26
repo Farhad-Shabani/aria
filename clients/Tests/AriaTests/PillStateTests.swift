@@ -7,14 +7,14 @@ final class PillStateTests: XCTestCase {
 
     private func event(
         _ stage: Aria_Daemon_V1_ChatStage, ticket: UInt64,
-        agent: Aria_Daemon_V1_ChatAgent = .claudeCode,
+        assistantID: Aria_Daemon_V1_AssistantID = .claudeCode,
         step: Aria_Daemon_V1_ChatStep = .thinking,
         skill: String = ""
     ) -> Aria_Daemon_V1_ChatEvent {
         var event = Aria_Daemon_V1_ChatEvent()
         event.stage = stage
         event.ticket = ticket
-        event.agent = agent
+        event.assistantID = assistantID
         event.step = step
         event.skill = skill
         return event
@@ -24,7 +24,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState(asks: AsksInFlight()))
     }
 
-    func testOneAskNamesTheAgentAndItsStep() {
+    func testOneAskNamesTheAssistantAndItsStep() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 3), now: epoch)
         XCTAssertEqual(PillState(asks: asks), .asking("thinking", since: epoch))
@@ -41,7 +41,7 @@ final class PillStateTests: XCTestCase {
 
     func testSeveralAsksCountTheRestBehindTheOldest() {
         var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 5, agent: .codex, step: .running), now: epoch)
+        asks.apply(event(.working, ticket: 5, assistantID: .codex, step: .running), now: epoch)
         asks.apply(event(.working, ticket: 3, step: .reading), now: epoch + 1)
         XCTAssertEqual(PillState(asks: asks), .asking("reading · +1", since: epoch + 1))
     }
@@ -122,7 +122,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertNotNil(PillState.failed("No speech detected").life)
     }
 
-    func testAPromptsNameLeadsItsRunAndAnAskNamesNoAgent() {
+    func testAPromptsNameLeadsItsRunAndAnAskNamesNoAssistant() {
         let asking = PillState.asking("reading · +1", since: epoch)
         XCTAssertEqual(asking.label(), "reading · +1")
         XCTAssertEqual(PillState.noReply.label(), "no reply")

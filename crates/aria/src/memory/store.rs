@@ -85,7 +85,7 @@ pub struct DerivedPair {
     pub source: String,
 }
 
-/// One thing the owner said to the agent, through the own-voice gate.
+/// One thing the owner said to the assistant, through the own-voice gate.
 /// Nothing else is kept: only these feed extraction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Turn {

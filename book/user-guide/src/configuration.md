@@ -11,7 +11,8 @@ App preference changes apply immediately; file changes require a restart.
 Open **Settings…** from Aria's menu. The sidebar lists these pages:
 
 - **General** controls launch at login, the status pill, the inline preview,
-  and captions. It also reopens setup.
+  and captions. Open **Assistant** here to choose the app and model for Ask
+  and Prompts. **Aria Setup** reopens setup.
 - **Dictation** sets output, delivery, muting while recording, and the
   silence that ends dictation.
 - **Recognition** sets where transcription runs, the language, voice
@@ -26,6 +27,34 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 
 The language picker offers English, the default, and automatic detection.
 These choices still depend on the selected model's supported languages.
+
+## Assistant
+
+In **Settings → General → Assistant**, choose **App** (Claude Code or Codex)
+and **Model**. [Install and sign in](./voice-chat.md#before-you-start) first.
+Changes apply to the next Ask or Prompt in both the Mac app and terminal.
+
+Each assistant remembers its own model. **Default** lets the assistant choose;
+**Other…** accepts a model ID. An unavailable model causes an error, not a
+switch to another model.
+
+```sh
+aria assistant                     # show the assistant
+aria assistant codex               # choose codex or claude-code
+aria assistant model               # show its model
+aria assistant model --list        # list model IDs
+aria assistant model "MODEL_ID"     # choose a model from the list
+aria assistant model --default     # let the assistant choose
+```
+
+Add `--assistant codex` or `--assistant claude-code` to a model command to
+change the other assistant's model. For a single question, use
+[Ask's options](./voice-chat.md#use-a-different-assistant-or-model).
+
+Without a saved choice, the service uses `ARIA_CHAT_ASSISTANT` from its
+environment, then `chat.assistant` in `~/.aria/config.yaml`, then Claude Code.
+`aria assistant` shows the resulting choice; `aria config show` only shows
+file and environment settings.
 
 ## Voice speed
 

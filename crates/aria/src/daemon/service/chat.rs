@@ -1,11 +1,14 @@
-//! The chat service: one prompt to an agent, answered with a ticket; the
+//! The chat service: one prompt to an assistant, answered with a ticket; the
 //! reply follows on the event stream.
 
 use std::sync::Arc;
 
+use aria_kit::cancel::CancelToken;
+use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
-use crate::chat::{AgentError, ChatRequest, PromptCall, Ticket};
+use crate::chat::{AssistantError, ChatError, ChatRequest, PromptCall, Ticket};
+use crate::config::AssistantId;
 use crate::ipc::wire;
 use crate::primitives::error_chain;
 use crate::rpc::{RpcErrorCode, RpcFailure};
@@ -17,10 +20,11 @@ use super::invalid_request;
 
 pub(in crate::daemon) struct ChatRpc {
     chat: ChatHandle,
-    /// Resolving reads the disk and starts no agent, so it answers here
+    /// Resolving reads the disk and starts no assistant, so it answers here
     /// rather than queueing behind a running ask.
     runtime: Arc<ChatRuntime>,
     lifetime: DaemonLifetime,
+    shutdown: CancellationToken,
 }
 
 impl ChatRpc {
@@ -28,17 +32,70 @@ impl ChatRpc {
         chat: ChatHandle,
         runtime: Arc<ChatRuntime>,
         lifetime: DaemonLifetime,
+        shutdown: CancellationToken,
     ) -> Self {
         Self {
             chat,
             runtime,
             lifetime,
+            shutdown,
         }
     }
 }
 
 #[tonic::async_trait]
 impl wire::chat_service_server::ChatService for ChatRpc {
+    async fn list_assistants(
+        &self,
+        _request: Request<wire::ListAssistantsRequest>,
+    ) -> Result<Response<wire::ListAssistantsResponse>, Status> {
+        Ok(Response::new(wire::ListAssistantsResponse {
+            assistants: AssistantId::ALL
+                .iter()
+                .copied()
+                .map(wire::Assistant::from)
+                .collect(),
+        }))
+    }
+
+    async fn list_models(
+        &self,
+        request: Request<wire::ListAssistantModelsRequest>,
+    ) -> Result<Response<wire::ListAssistantModelsResponse>, Status> {
+        const METHOD: &str = "ChatService/ListModels";
+        let assistant_id = AssistantId::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let runtime = Arc::clone(&self.runtime);
+        let cancellation = self.shutdown.child_token();
+        let _cancel_on_drop = cancellation.clone().drop_guard();
+        let cancel = CancelToken::from_fn(move || cancellation.is_cancelled());
+        let models = tokio::task::spawn_blocking(move || runtime.models(assistant_id, &cancel))
+            .await
+            .map_err(|_panicked| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new(RpcErrorCode::Internal, "reading assistant models failed"),
+                )
+            })?
+            .map_err(|error| {
+                let error = ChatError::Assistant(error);
+                super::failed(
+                    METHOD,
+                    RpcFailure::new((&error).into(), error_chain(&error)),
+                )
+            })?;
+        tracing::info!(method = METHOD, status = "ok", "request served");
+        Ok(Response::new(wire::ListAssistantModelsResponse {
+            models: models
+                .into_iter()
+                .map(|model| wire::AssistantModel {
+                    id: model.id,
+                    name: model.name,
+                })
+                .collect(),
+        }))
+    }
+
     async fn ask(
         &self,
         request: Request<wire::AskRequest>,
@@ -50,10 +107,28 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         if !request.workdir.is_dir() {
             return Err(invalid_request(
                 METHOD,
-                &AgentError::NoWorkdir(request.workdir),
+                &AssistantError::NoWorkdir(request.workdir),
             ));
         }
 
+        let runtime = Arc::clone(&self.runtime);
+        let request = tokio::task::spawn_blocking(move || runtime.prepare_ask(request))
+            .await
+            .map_err(|_panicked| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new(
+                        RpcErrorCode::Internal,
+                        "reading assistant preferences failed",
+                    ),
+                )
+            })?
+            .map_err(|error| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new((&error).into(), error_chain(&error)),
+                )
+            })?;
         match self.chat.ask(request).await {
             Ok(ticket) => {
                 tracing::info!(method = METHOD, status = "ok", %ticket, "request served");

@@ -4,7 +4,7 @@
 
 Wake-word monitoring starts dictation when a local model detects its trained
 phrase. The recording stops on silence and delivers one complete transcript
-using your output preference. It does not ask an agent a question.
+using your output preference. It does not ask an assistant a question.
 
 This keeps microphone monitoring active while the daemon runs. Wake-triggered
 dictation follows the same [history preference](./history.md)

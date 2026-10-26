@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::config::{self, ConfigError, FileConfig, ServerEndpoint};
+use crate::config::{self, AssistantId, ConfigError, FileConfig, ServerEndpoint};
 use crate::daemon::{
     DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
     StopMode, guided,
@@ -44,7 +44,7 @@ pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
 pub use backends::{Availability, Choice};
-use backends::{Backend, Chat, Host, Stt, Tts, choices, stt_choices};
+use backends::{Backend, Host, Stt, Tts, choices, stt_choices};
 pub use config_file::{ConfigWrite, Existing, Selections};
 use models::OnDisk;
 use prompt::Prompts;
@@ -311,7 +311,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
         macos: host.macos,
         stt: stt_choices(&file, matches!(pairing, Pairing::Paired(_)), &host),
         tts: choices::<Tts>(existing.tts.as_deref(), &host),
-        chat: choices::<Chat>(existing.chat.as_deref(), &host),
+        chat: choices::<AssistantId>(existing.chat.as_deref(), &host),
         models: model_states(&home, &file),
         wakeword_installed: WAKEWORD_FILES
             .iter()
@@ -638,7 +638,7 @@ fn ask_selections(
     Ok(Selections {
         stt: prompts.pick(Stt::TITLE, &inspection.stt)?.key.to_owned(),
         tts: prompts.pick(Tts::TITLE, &inspection.tts)?.key.to_owned(),
-        chat: prompts.pick(Chat::TITLE, &inspection.chat)?.key.to_owned(),
+        chat: Selections::defaults(inspection).chat,
         // With no model to load, a yes would leave the daemon unable to start
         // dictation. A hand-written choice stays as it is.
         wake: if inspection.wakeword_bundled || inspection.wakeword_installed {
@@ -1154,7 +1154,7 @@ mod tests {
             macos: true,
             stt: choices::<Stt>(existing.stt.as_deref(), &host),
             tts: choices::<Tts>(existing.tts.as_deref(), &host),
-            chat: choices::<Chat>(existing.chat.as_deref(), &host),
+            chat: choices::<AssistantId>(existing.chat.as_deref(), &host),
             models: model_states(&home, &FileConfig::default()),
             wakeword_installed: false,
             wakeword_bundled: true,
@@ -1377,9 +1377,29 @@ mod tests {
     }
 
     #[test]
+    fn setup_preserves_the_assistant_without_offering_a_second_picker() {
+        let inspection = inspection(Existing {
+            chat: Some("codex".to_owned()),
+            ..Existing::default()
+        });
+        let mut input = &b"\n\nn\nn\n"[..];
+        let mut output = Vec::new();
+        let mut prompts = Prompts::new(&mut input, &mut output, false, true, false);
+        let selections = ask_selections(&mut prompts, &inspection).unwrap();
+
+        assert_eq!(selections.chat, "codex");
+        assert!(!selections.wake);
+        assert!(!selections.hotkey);
+        assert!(
+            !String::from_utf8(output)
+                .unwrap()
+                .contains(AssistantId::TITLE)
+        );
+    }
+
+    #[test]
     fn the_wake_word_is_offered_only_with_a_model() {
-        // Enter keeps the three engines, then two yeses.
-        let answers = b"\n\n\ny\ny\n";
+        let answers = b"\n\ny\ny\n";
         let ask = |inspection: &Inspection| {
             let (mut input, mut output) = (&answers[..], Vec::new());
             let mut prompts = Prompts::new(&mut input, &mut output, false, true, false);

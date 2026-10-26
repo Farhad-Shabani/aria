@@ -66,7 +66,7 @@ struct Router {
     /// so that the press after it ends the wait.
     ends_process: Arc<AtomicBool>,
     /// Set once a cancel went out, so the failure that follows is read as
-    /// this one rather than the agent's.
+    /// this one rather than the assistant's.
     cancelled: AtomicBool,
     failure: Mutex<Option<anyhow::Error>>,
 }
@@ -171,7 +171,7 @@ impl Interrupt {
         phase
     }
 
-    /// Esc cancels this ask. The line stays empty until the agent reports
+    /// Esc cancels this ask. The line stays empty until the assistant reports
     /// a step.
     pub(crate) fn asking(&mut self, ticket: Ticket) -> Phase<'_> {
         self.arm(Some(Interruption::Cancel(ticket)), "cancel", Keyboard::Ours)

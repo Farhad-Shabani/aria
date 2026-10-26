@@ -1804,6 +1804,32 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
     public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService")
     /// Namespace for method metadata.
     public enum Method: Sendable {
+        /// Namespace for "ListAssistants" metadata.
+        public enum ListAssistants: Sendable {
+            /// Request type for "ListAssistants".
+            public typealias Input = Aria_Daemon_V1_ListAssistantsRequest
+            /// Response type for "ListAssistants".
+            public typealias Output = Aria_Daemon_V1_ListAssistantsResponse
+            /// Descriptor for "ListAssistants".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "ListAssistants",
+                type: .unary
+            )
+        }
+        /// Namespace for "ListModels" metadata.
+        public enum ListModels: Sendable {
+            /// Request type for "ListModels".
+            public typealias Input = Aria_Daemon_V1_ListAssistantModelsRequest
+            /// Response type for "ListModels".
+            public typealias Output = Aria_Daemon_V1_ListAssistantModelsResponse
+            /// Descriptor for "ListModels".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "ListModels",
+                type: .unary
+            )
+        }
         /// Namespace for "Ask" metadata.
         public enum Ask: Sendable {
             /// Request type for "Ask".
@@ -1858,6 +1884,8 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
         }
         /// Descriptors for all methods in the "aria.daemon.v1.ChatService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            ListAssistants.descriptor,
+            ListModels.descriptor,
             Ask.descriptor,
             Cancel.descriptor,
             Resolve.descriptor,
@@ -1881,13 +1909,51 @@ extension Aria_Daemon_V1_ChatService {
     /// You don't need to implement this protocol directly, use the generated
     /// implementation, ``Client``.
     public protocol ClientProtocol: Sendable {
+        /// Call the "ListAssistants" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListAssistantsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListAssistantsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListAssistantsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listAssistants<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListAssistantsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListAssistantsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ListModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListAssistantModelsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListAssistantModelsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListAssistantModelsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listModels<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantModelsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListAssistantModelsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListAssistantModelsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantModelsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "Ask" method.
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Hand one prompt to an agent. Answers with a ticket as soon as the ask
+        /// > Hand one prompt to an assistant. Answers with a ticket as soon as the ask
         /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-        /// > run side by side, except that asks on one conversation (agent and
+        /// > run side by side, except that asks on one conversation (assistant and
         /// > session) take turns. Served only by a persistent daemon; an on-demand
         /// > daemon refuses with UNSUPPORTED.
         ///
@@ -1912,7 +1978,7 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Stop an ask that is running or still waiting its turn. Its agent is
+        /// > Stop an ask that is running or still waiting its turn. Its assistant is
         /// > killed and the ask ends as a FAILED event with CANCELLED; the
         /// > conversation stays resumable.
         ///
@@ -1962,7 +2028,7 @@ extension Aria_Daemon_V1_ChatService {
         /// > Source IDL Documentation:
         /// >
         /// > Run a stored prompt on a transcript and type the result into the app the
-        /// > request names, else the one in front. One fresh agent run with no
+        /// > request names, else the one in front. One fresh assistant run with no
         /// > conversation, memory, or tools. Progress and the outcome arrive as
         /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
         ///
@@ -2000,13 +2066,73 @@ extension Aria_Daemon_V1_ChatService {
             self.client = client
         }
 
+        /// Call the "ListAssistants" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListAssistantsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListAssistantsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListAssistantsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listAssistants<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListAssistantsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListAssistantsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.ListAssistants.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "ListModels" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListAssistantModelsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListAssistantModelsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListAssistantModelsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listModels<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantModelsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListAssistantModelsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListAssistantModelsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantModelsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.ListModels.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "Ask" method.
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Hand one prompt to an agent. Answers with a ticket as soon as the ask
+        /// > Hand one prompt to an assistant. Answers with a ticket as soon as the ask
         /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-        /// > run side by side, except that asks on one conversation (agent and
+        /// > run side by side, except that asks on one conversation (assistant and
         /// > session) take turns. Served only by a persistent daemon; an on-demand
         /// > daemon refuses with UNSUPPORTED.
         ///
@@ -2042,7 +2168,7 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Stop an ask that is running or still waiting its turn. Its agent is
+        /// > Stop an ask that is running or still waiting its turn. Its assistant is
         /// > killed and the ask ends as a FAILED event with CANCELLED; the
         /// > conversation stays resumable.
         ///
@@ -2114,7 +2240,7 @@ extension Aria_Daemon_V1_ChatService {
         /// > Source IDL Documentation:
         /// >
         /// > Run a stored prompt on a transcript and type the result into the app the
-        /// > request names, else the one in front. One fresh agent run with no
+        /// > request names, else the one in front. One fresh assistant run with no
         /// > conversation, memory, or tools. Progress and the outcome arrive as
         /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
         ///
@@ -2151,13 +2277,63 @@ extension Aria_Daemon_V1_ChatService {
 // Helpers providing default arguments to 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_ChatService.ClientProtocol {
+    /// Call the "ListAssistants" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ListAssistantsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listAssistants<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listAssistants(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListAssistantsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListAssistantsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListModels" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ListAssistantModelsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listModels<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantModelsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantModelsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listModels(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListAssistantModelsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListAssistantModelsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Ask" method.
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Hand one prompt to an agent. Answers with a ticket as soon as the ask
+    /// > Hand one prompt to an assistant. Answers with a ticket as soon as the ask
     /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-    /// > run side by side, except that asks on one conversation (agent and
+    /// > run side by side, except that asks on one conversation (assistant and
     /// > session) take turns. Served only by a persistent daemon; an on-demand
     /// > daemon refuses with UNSUPPORTED.
     ///
@@ -2188,7 +2364,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Stop an ask that is running or still waiting its turn. Its agent is
+    /// > Stop an ask that is running or still waiting its turn. Its assistant is
     /// > killed and the ask ends as a FAILED event with CANCELLED; the
     /// > conversation stays resumable.
     ///
@@ -2250,7 +2426,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Run a stored prompt on a transcript and type the result into the app the
-    /// > request names, else the one in front. One fresh agent run with no
+    /// > request names, else the one in front. One fresh assistant run with no
     /// > conversation, memory, or tools. Progress and the outcome arrive as
     /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
     ///
@@ -2281,13 +2457,71 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_ChatService.ClientProtocol {
+    /// Call the "ListAssistants" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listAssistants<Result>(
+        _ message: Aria_Daemon_V1_ListAssistantsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listAssistants(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListModels" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listModels<Result>(
+        _ message: Aria_Daemon_V1_ListAssistantModelsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantModelsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListAssistantModelsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listModels(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Ask" method.
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Hand one prompt to an agent. Answers with a ticket as soon as the ask
+    /// > Hand one prompt to an assistant. Answers with a ticket as soon as the ask
     /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-    /// > run side by side, except that asks on one conversation (agent and
+    /// > run side by side, except that asks on one conversation (assistant and
     /// > session) take turns. Served only by a persistent daemon; an on-demand
     /// > daemon refuses with UNSUPPORTED.
     ///
@@ -2322,7 +2556,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Stop an ask that is running or still waiting its turn. Its agent is
+    /// > Stop an ask that is running or still waiting its turn. Its assistant is
     /// > killed and the ask ends as a FAILED event with CANCELLED; the
     /// > conversation stays resumable.
     ///
@@ -2392,7 +2626,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Run a stored prompt on a transcript and type the result into the app the
-    /// > request names, else the one in front. One fresh agent run with no
+    /// > request names, else the one in front. One fresh assistant run with no
     /// > conversation, memory, or tools. Progress and the outcome arrive as
     /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
     ///

@@ -135,7 +135,7 @@ pub(crate) struct FileMemory {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileChat {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) agent: Option<String>,
+    pub(crate) assistant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) workdir: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

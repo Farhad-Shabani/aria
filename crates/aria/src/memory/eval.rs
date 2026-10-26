@@ -14,7 +14,7 @@ use super::consolidate::consolidate_backlog;
 use super::extract::{ClaudeExtractor, Extractor, build_system_prompt};
 use super::store::Fact;
 use super::{DB_FILE, LEXICON_FILE, Lexicon, Store, load_profile_block};
-use crate::chat::AgentError;
+use crate::chat::AssistantError;
 use crate::primitives::error_chain;
 
 const CORPUS: &str = include_str!("eval_cases.json");
@@ -169,7 +169,7 @@ struct MeasuredExtractor {
 }
 
 impl Extractor for MeasuredExtractor {
-    fn extract(&self, message: &str, cancel: &CancelToken) -> Result<String, AgentError> {
+    fn extract(&self, message: &str, cancel: &CancelToken) -> Result<String, AssistantError> {
         let started = Instant::now();
         let result = self.inner.extract(message, cancel);
         self.calls.borrow_mut().push(json!({

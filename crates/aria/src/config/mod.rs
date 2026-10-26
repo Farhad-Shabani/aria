@@ -259,12 +259,12 @@ impl TranscriptionBackend {
     }
 }
 
-/// The agent `aria ask` talks to. Loaded per ask, never at daemon startup,
+/// The assistant `aria ask` talks to. Loaded per ask, never at daemon startup,
 /// so a broken chat section blocks nothing else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChatConfig {
-    pub(crate) agent: ChatAgent,
-    /// Pins the agent's working directory; otherwise the caller's.
+    pub(crate) assistant_id: AssistantId,
+    /// Pins the assistant's working directory; otherwise the caller's.
     pub(crate) workdir: Option<PathBuf>,
     /// Directories whose git repos an ask may name; empty turns routing off.
     pub(crate) project_roots: Vec<PathBuf>,
@@ -274,32 +274,55 @@ pub(crate) struct ChatConfig {
 }
 
 impl ChatConfig {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_chat(environment)
+    pub(crate) fn load(
+        environment: &Environment,
+        assistant_id: AssistantId,
+    ) -> Result<Self, ConfigError> {
+        let mut environment = environment.clone();
+        environment.assistant_id = Some(assistant_id.name().to_owned());
+        load::load_chat(&environment)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChatAgent {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AssistantId {
     ClaudeCode,
     Codex,
 }
 
-impl ChatAgent {
-    pub fn name(self) -> &'static str {
+impl AssistantId {
+    pub const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex];
+    pub const DEFAULT: Self = Self::ClaudeCode;
+
+    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
+        load::load_assistant_id(environment)
+    }
+
+    pub const fn name(self) -> &'static str {
         match self {
-            Self::ClaudeCode => chat_agent::CLAUDE_CODE,
-            Self::Codex => chat_agent::CODEX,
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Claude Code",
+            Self::Codex => "Codex",
         }
     }
 }
 
-/// Names an agent under `chat.agent`, and labels it in the conversation
-/// record so a switch starts a fresh one.
-pub mod chat_agent {
-    pub const CLAUDE_CODE: &str = "claude-code";
-    pub const CODEX: &str = "codex";
-    pub const DEFAULT: &str = CLAUDE_CODE;
+impl std::str::FromStr for AssistantId {
+    type Err = ConfigError;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|id| id.name() == name)
+            .ok_or_else(|| ConfigError::UnknownAssistant(name.to_owned()))
+    }
 }
 
 /// Listen mode: system-audio capture transcribed to a file. Loaded per Start,
@@ -511,6 +534,9 @@ pub(crate) struct DictationTimeouts {
 // field, so the message points at what to edit.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error("unknown assistant {0:?}; use aria assistant --help to list choices")]
+    UnknownAssistant(String),
+
     #[error("transcription.server must be an HTTPS origin without credentials, query or fragment")]
     InvalidServerEndpoint,
 

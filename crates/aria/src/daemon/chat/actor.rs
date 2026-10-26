@@ -209,7 +209,7 @@ impl ChatActor {
         }
         match self.take_waiting(ticket) {
             Some(job) => {
-                self.runtime.cancel_unstarted(ticket, job.agent());
+                self.runtime.cancel_unstarted(ticket, job.assistant_id());
                 reply.answer(true);
             }
             None => reply.answer(false),
@@ -292,7 +292,7 @@ mod tests {
     use crate::chat::ChatStageKind;
     use crate::rpc::RpcErrorCode;
 
-    use super::super::runtime::tests::{ParkedAgent, request, runtime_with};
+    use super::super::runtime::tests::{ParkedAssistant, request, runtime_with};
     use super::*;
 
     const PATIENCE: Duration = Duration::from_secs(5);
@@ -310,15 +310,10 @@ mod tests {
         let (started, started_receiver) = std_channel();
         let (release, release_receiver) = std_channel();
         let release_receiver = Arc::new(Mutex::new(release_receiver));
-        let (runtime, events) = runtime_with(
-            directory,
-            Box::new(move |_agent| {
-                Box::new(ParkedAgent {
-                    started: started.clone(),
-                    release: Arc::clone(&release_receiver),
-                })
-            }),
-        );
+        let (runtime, events) = runtime_with(directory, move |_assistant_id| ParkedAssistant {
+            started: started.clone(),
+            release: Arc::clone(&release_receiver),
+        });
         let (handle, actor) = channel(Arc::new(runtime));
         let shutdown = CancellationToken::new();
         let actor = tokio::spawn(actor.run(shutdown.clone()));
@@ -520,7 +515,8 @@ mod tests {
                 text: "hi".to_owned(),
                 kind: crate::chat::PromptKind::Rewrite,
                 file: "/p.md".into(),
-                agent: crate::config::ChatAgent::ClaudeCode,
+                assistant_id: crate::config::AssistantId::ClaudeCode,
+                model_id: None,
                 application: None,
             })
         };

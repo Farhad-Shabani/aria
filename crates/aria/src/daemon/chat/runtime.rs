@@ -1,8 +1,7 @@
-//! One ask, start to finish: the agent named by the request, the
+//! One ask, start to finish: the assistant named by the request, the
 //! conversation it continues, and the reply's optional delivery. Ordering
 //! between asks is the actor's job; here only the record file is shared.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use std::time::Duration;
@@ -11,12 +10,12 @@ use tokio::sync::mpsc;
 use aria_kit::cancel::CancelToken;
 
 use crate::chat::{
-    Agent, AgentError, AskTarget, CLAUDE_BINARY, CODEX_BINARY, ChatError, ChatEventEmitter,
-    ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers, ClaudeCodeAgent, CodexAgent,
-    Projects, PromptCall, PromptRequest, PromptRun, ResolveError, SessionSpec, SessionStore, Step,
-    Ticket, TurnSink, read_instructions,
+    AskTarget, Assistant, AssistantError, AssistantModel, CLAUDE_BINARY, CODEX_BINARY, ChatError,
+    ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers,
+    ClaudeCodeAssistant, CodexAssistant, Projects, PromptCall, PromptRequest, PromptRun,
+    ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink, read_instructions,
 };
-use crate::config::{ChatAgent, ChatConfig, Environment, MemoryConfig, SpeakerConfig};
+use crate::config::{AssistantId, ChatConfig, Environment, MemoryConfig, SpeakerConfig};
 use crate::delivery::{
     DeliveryError, DeliveryOutcome, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
 };
@@ -29,10 +28,8 @@ use crate::speaker::{ProfileStore, Role};
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
 
-/// Resume ids outlive the daemon and a reboot, like the agents' own history.
+/// Resume ids outlive the daemon and a reboot, like the assistants' own history.
 const SESSION_FILE: &str = "chat-session.json";
-
-type AgentFactory = Box<dyn Fn(ChatAgent) -> Box<dyn Agent> + Send + Sync>;
 
 pub(in crate::daemon) enum ChatJob {
     Ask(ChatRequest),
@@ -40,10 +37,10 @@ pub(in crate::daemon) enum ChatJob {
 }
 
 impl ChatJob {
-    pub(in crate::daemon) fn agent(&self) -> ChatAgent {
+    pub(in crate::daemon) fn assistant_id(&self) -> AssistantId {
         match self {
-            Self::Ask(request) => request.agent,
-            Self::Prompt(request) => request.agent,
+            Self::Ask(request) => request.assistant_id,
+            Self::Prompt(request) => request.assistant_id,
         }
     }
 }
@@ -52,7 +49,8 @@ pub(in crate::daemon) struct ChatRuntime {
     emitter: ChatEventEmitter,
     config_environment: Environment,
     sessions: SessionStore,
-    agents: AgentFactory,
+    #[cfg(test)]
+    assistant_overrides: Option<tests::AssistantOverrides>,
     /// Read per ask, so a reply never types into an app with Aria off.
     preferences: Arc<PreferenceStore>,
     /// Nudges the memory backlog after a turn worth remembering. `None`
@@ -69,32 +67,51 @@ impl ChatRuntime {
         preferences: Arc<PreferenceStore>,
         memory_wake: Option<mpsc::Sender<()>>,
     ) -> Self {
-        Self::with_agents(
-            context.config_environment.clone(),
-            context.preferences_path.with_file_name(SESSION_FILE),
-            event_emitter(context, subscriptions),
-            build_agents(context.config_environment.codex_home()),
+        Self {
+            emitter: event_emitter(context, subscriptions),
+            config_environment: context.config_environment.clone(),
+            sessions: SessionStore::open(context.preferences_path.with_file_name(SESSION_FILE)),
             preferences,
             memory_wake,
-        )
+            #[cfg(test)]
+            assistant_overrides: None,
+        }
     }
 
-    fn with_agents(
-        config_environment: Environment,
-        session_path: PathBuf,
-        emitter: ChatEventEmitter,
-        agents: AgentFactory,
-        preferences: Arc<PreferenceStore>,
-        memory_wake: Option<mpsc::Sender<()>>,
-    ) -> Self {
-        Self {
-            emitter,
-            config_environment,
-            sessions: SessionStore::open(session_path),
-            agents,
-            preferences,
-            memory_wake,
+    pub(in crate::daemon) fn models(
+        &self,
+        assistant_id: AssistantId,
+        cancel: &CancelToken,
+    ) -> Result<Vec<AssistantModel>, AssistantError> {
+        #[cfg(test)]
+        if let Some(overrides) = &self.assistant_overrides {
+            return (overrides.models)(assistant_id, cancel);
         }
+        match assistant_id {
+            AssistantId::ClaudeCode => {
+                ClaudeCodeAssistant::new(CLAUDE_BINARY.into()).models(cancel)
+            }
+            AssistantId::Codex => {
+                CodexAssistant::new(CODEX_BINARY.into(), self.config_environment.codex_home())
+                    .models(cancel)
+            }
+        }
+    }
+
+    pub(in crate::daemon) fn prepare_ask(
+        &self,
+        mut request: ChatRequest,
+    ) -> Result<ChatRequest, ChatError> {
+        if request.model_id.is_none() {
+            request.model_id = self
+                .preferences
+                .snapshot()
+                .map_err(ChatError::Preferences)?
+                .preferences
+                .model_id(request.assistant_id)
+                .map(str::to_owned);
+        }
+        Ok(request)
     }
 
     /// Runs one job to its end. Everything a caller learns arrives as an
@@ -105,16 +122,44 @@ impl ChatRuntime {
         job: ChatJob,
         cancellation: CancelToken,
     ) {
-        let agent = job.agent();
-        if cancellation.is_cancelled() {
-            self.cancel_unstarted(ticket, agent);
+        #[cfg(test)]
+        if let Some(overrides) = &self.assistant_overrides {
+            (overrides.execute)(self, ticket, job, cancellation);
             return;
         }
-        let mut recorder = TurnRecorder::new(&self.emitter, ticket, agent);
+        match job.assistant_id() {
+            AssistantId::ClaudeCode => self.execute_with(
+                &ClaudeCodeAssistant::new(CLAUDE_BINARY.into()),
+                ticket,
+                job,
+                cancellation,
+            ),
+            AssistantId::Codex => self.execute_with(
+                &CodexAssistant::new(CODEX_BINARY.into(), self.config_environment.codex_home()),
+                ticket,
+                job,
+                cancellation,
+            ),
+        }
+    }
+
+    fn execute_with<A: Assistant>(
+        &self,
+        assistant: &A,
+        ticket: Ticket,
+        job: ChatJob,
+        cancellation: CancelToken,
+    ) {
+        let assistant_id = job.assistant_id();
+        if cancellation.is_cancelled() {
+            self.cancel_unstarted(ticket, assistant_id);
+            return;
+        }
+        let mut recorder = TurnRecorder::new(&self.emitter, ticket, assistant_id);
         recorder.step(Step::Thinking);
         let outcome = match job {
-            ChatJob::Ask(request) => self.ask(&mut recorder, request, &cancellation),
-            ChatJob::Prompt(request) => self.run_prompt(request, &cancellation),
+            ChatJob::Ask(request) => self.ask(assistant, &mut recorder, request, &cancellation),
+            ChatJob::Prompt(request) => self.run_prompt(assistant, request, &cancellation),
         };
         let kind = match outcome {
             Ok(kind) => kind,
@@ -122,12 +167,12 @@ impl ChatRuntime {
         };
         self.emitter.emit(ChatStage {
             ticket,
-            agent,
+            assistant_id,
             kind,
         });
     }
 
-    /// The prompt and agent as stored now; a later edit applies to the
+    /// The prompt and assistant as stored now; a later edit applies to the
     /// next run.
     pub(in crate::daemon) fn prompt_request(
         &self,
@@ -145,22 +190,29 @@ impl ChatRuntime {
         if !prompt.enabled() {
             return Err(ChatError::PromptOff);
         }
-        let config = ChatConfig::load(&self.config_environment).map_err(ChatError::Config)?;
+        let assistant_id = snapshot
+            .preferences
+            .resolve_assistant_id(&self.config_environment)
+            .map_err(ChatError::Config)?;
         Ok(PromptRequest {
             text: call.text,
             kind: prompt.kind(),
             file: prompt.file().to_path_buf(),
-            agent: config.agent,
+            assistant_id,
+            model_id: snapshot
+                .preferences
+                .model_id(assistant_id)
+                .map(str::to_owned),
             application: call.application,
         })
     }
 
     /// Ends an ask that never ran, the way a cancelled run ends.
-    pub(in crate::daemon) fn cancel_unstarted(&self, ticket: Ticket, agent: ChatAgent) {
+    pub(in crate::daemon) fn cancel_unstarted(&self, ticket: Ticket, assistant_id: AssistantId) {
         self.emitter.emit(ChatStage {
             ticket,
-            agent,
-            kind: failed(&ChatError::Agent(AgentError::Cancelled)),
+            assistant_id,
+            kind: failed(&ChatError::Assistant(AssistantError::Cancelled)),
         });
     }
 
@@ -169,7 +221,16 @@ impl ChatRuntime {
     /// file and scanning the roots touches the disk, so callers run it off
     /// the reactor.
     pub(in crate::daemon) fn resolve_target(&self) -> Result<AskTarget, ResolveError> {
-        let config = ChatConfig::load(&self.config_environment).map_err(ResolveError::Config)?;
+        let snapshot = self
+            .preferences
+            .snapshot()
+            .map_err(ResolveError::Preferences)?;
+        let assistant_id = snapshot
+            .preferences
+            .resolve_assistant_id(&self.config_environment)
+            .map_err(ResolveError::Config)?;
+        let config = ChatConfig::load(&self.config_environment, assistant_id)
+            .map_err(ResolveError::Config)?;
         let projects = Projects::load_with(&self.config_environment, &config)
             .map_err(ResolveError::Projects)?;
         let workdir = match projects.focused() {
@@ -184,26 +245,30 @@ impl ChatRuntime {
         {
             return Err(ResolveError::Directory(std::io::Error::new(
                 std::io::ErrorKind::NotADirectory,
-                "the agent's working directory is not a directory",
+                "the assistant's working directory is not a directory",
             )));
         }
         Ok(AskTarget {
             workdir,
-            agent: config.agent,
+            assistant_id: config.assistant_id,
         })
     }
 
-    fn ask(
+    fn ask<A: Assistant>(
         &self,
+        assistant: &A,
         recorder: &mut TurnRecorder<'_>,
         request: ChatRequest,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
-        let config = ChatConfig::load(&self.config_environment).map_err(ChatError::Config)?;
+        let config = ChatConfig::load(&self.config_environment, request.assistant_id)
+            .map_err(ChatError::Config)?;
         if !request.workdir.is_dir() {
-            return Err(ChatError::Agent(AgentError::NoWorkdir(request.workdir)));
+            return Err(ChatError::Assistant(AssistantError::NoWorkdir(
+                request.workdir,
+            )));
         }
-        // The target is bound before the agent runs, so a refusal costs
+        // The target is bound before the assistant runs, so a refusal costs
         // nothing and a window switch during the run is caught at delivery.
         let (delivery, refused) = match request.output_mode {
             None => (None, None),
@@ -232,7 +297,14 @@ impl ChatRuntime {
             Some(block) => format!("{block}\n\n{}", request.text),
             None => request.text.clone(),
         };
-        let text = self.turn(recorder, &request, &prompt, config.timeout, cancel)?;
+        let text = self.turn(
+            assistant,
+            recorder,
+            &request,
+            &prompt,
+            config.timeout,
+            cancel,
+        )?;
         if let Some(memory) = &memory
             && request.own_voice
         {
@@ -248,44 +320,46 @@ impl ChatRuntime {
     }
 
     /// No memory, conversation, or project: the transcript and the user's
-    /// instructions are all the agent sees. The target is bound before the
-    /// agent runs, so speech meant for an app with Aria off, or for an app
+    /// instructions are all the assistant sees. The target is bound before the
+    /// assistant runs, so speech meant for an app with Aria off, or for an app
     /// the user has since left, is never sent.
-    fn run_prompt(
+    fn run_prompt<A: Assistant>(
         &self,
+        assistant: &A,
         request: PromptRequest,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
-        let config = ChatConfig::load(&self.config_environment).map_err(ChatError::Config)?;
+        let config = ChatConfig::load(&self.config_environment, request.assistant_id)
+            .map_err(ChatError::Config)?;
         let delivery = Delivery::prepare(
             OutputMode::InsertOrCopy,
             self.target_policy(request.application.as_ref())?,
             config.delivery_timeout,
             cancel,
         )?;
-        let text = self.prompt_answer(&request, config.timeout, cancel)?;
+        let text = self.prompt_answer(assistant, &request, config.timeout, cancel)?;
         if cancel.is_cancelled() {
-            return Err(ChatError::Agent(AgentError::Cancelled));
+            return Err(ChatError::Assistant(AssistantError::Cancelled));
         }
         let delivered = delivery.deliver(&text, cancel);
         Ok(replied(text, Some(delivered)))
     }
 
-    fn prompt_answer(
+    fn prompt_answer<A: Assistant>(
         &self,
+        assistant: &A,
         request: &PromptRequest,
         timeout: Duration,
         cancel: &CancelToken,
     ) -> Result<String, ChatError> {
         let instructions = read_instructions(&request.file)?;
         let run = PromptRun {
+            model_id: request.model_id.as_deref(),
             kind: request.kind,
             instructions: &instructions,
             transcript: &request.text,
         };
-        Ok(self
-            .agent(request.agent)
-            .run_prompt(&run, cancel, timeout)?)
+        Ok(assistant.run_prompt(&run, cancel, timeout)?)
     }
 
     /// Refuses an app with Aria off and, when given, any app but `application`.
@@ -306,9 +380,10 @@ impl ChatRuntime {
     }
 
     /// One turn on the request's conversation: continues or restarts it,
-    /// prompts the agent, and records what continues it next time.
-    fn turn(
+    /// prompts the assistant, and records what continues it next time.
+    fn turn<A: Assistant>(
         &self,
+        assistant: &A,
         recorder: &mut TurnRecorder<'_>,
         request: &ChatRequest,
         prompt: &str,
@@ -325,15 +400,15 @@ impl ChatRuntime {
             self.sessions.recall(&key)?
         };
 
-        let mut session = self.agent(request.agent).open(SessionSpec {
+        let mut session = assistant.open(SessionSpec {
             workdir: &request.workdir,
-            model: request.model.as_deref(),
+            model_id: request.model_id.as_deref(),
             resume: resume.as_deref(),
         });
         let prompted = session.prompt(prompt, recorder, cancel, timeout);
-        // The agent may have deleted the session it was asked to resume.
+        // The assistant may have deleted the session it was asked to resume.
         // Kept, its id would fail every later ask on this key.
-        if resume.is_some() && matches!(prompted, Err(AgentError::Failed(_))) {
+        if resume.is_some() && matches!(prompted, Err(AssistantError::Failed(_))) {
             self.sessions.forget(&key)?;
         }
         prompted?;
@@ -341,10 +416,6 @@ impl ChatRuntime {
             self.sessions.record(key, resume)?;
         }
         Ok(std::mem::take(&mut recorder.text))
-    }
-
-    fn agent(&self, kind: ChatAgent) -> Box<dyn Agent> {
-        (self.agents)(kind)
     }
 
     /// The memory section when it is on. One that does not resolve costs
@@ -405,17 +476,17 @@ struct TurnRecorder<'a> {
     last: Option<Step>,
     emitter: &'a ChatEventEmitter,
     ticket: Ticket,
-    agent: ChatAgent,
+    assistant_id: AssistantId,
 }
 
 impl<'a> TurnRecorder<'a> {
-    fn new(emitter: &'a ChatEventEmitter, ticket: Ticket, agent: ChatAgent) -> Self {
+    fn new(emitter: &'a ChatEventEmitter, ticket: Ticket, assistant_id: AssistantId) -> Self {
         Self {
             text: String::new(),
             last: None,
             emitter,
             ticket,
-            agent,
+            assistant_id,
         }
     }
 }
@@ -431,7 +502,7 @@ impl TurnSink for TurnRecorder<'_> {
         }
         self.emitter.emit(ChatStage {
             ticket: self.ticket,
-            agent: self.agent,
+            assistant_id: self.assistant_id,
             kind: ChatStageKind::Working(step.clone()),
         });
         self.last = Some(step);
@@ -445,14 +516,7 @@ fn failed(error: &ChatError) -> ChatStageKind {
     }
 }
 
-fn build_agents(codex_home: PathBuf) -> AgentFactory {
-    Box::new(move |agent| match agent {
-        ChatAgent::ClaudeCode => Box::new(ClaudeCodeAgent::new(CLAUDE_BINARY.into())),
-        ChatAgent::Codex => Box::new(CodexAgent::new(CODEX_BINARY.into(), codex_home.clone())),
-    })
-}
-
-/// A reply's delivery, bound to its target before the agent runs.
+/// A reply's delivery, bound to its target before the assistant runs.
 struct Delivery {
     policy: TargetPolicy,
     platform: PlatformTextDelivery,
@@ -530,14 +594,23 @@ fn event_emitter(context: &Context<'_>, subscriptions: Arc<Subscriptions>) -> Ch
 
 #[cfg(test)]
 pub(super) mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::sync::mpsc::{Sender, channel};
 
     use crate::chat::PromptKind;
-    use crate::chat::Session;
 
     use super::*;
+
+    type ExecuteAssistant = dyn Fn(&ChatRuntime, Ticket, ChatJob, CancelToken) + Send + Sync;
+    type DiscoverModels = dyn Fn(AssistantId, &CancelToken) -> Result<Vec<AssistantModel>, AssistantError>
+        + Send
+        + Sync;
+
+    pub(super) struct AssistantOverrides {
+        pub(super) execute: Box<ExecuteAssistant>,
+        pub(super) models: Box<DiscoverModels>,
+    }
 
     /// Records what it was asked and answers with a fresh id each turn.
     #[derive(Default)]
@@ -546,14 +619,20 @@ pub(super) mod tests {
         pub(in crate::daemon::chat) prompts: Vec<String>,
     }
 
-    pub(in crate::daemon::chat) struct FakeAgent(pub(in crate::daemon::chat) Arc<Mutex<Log>>);
+    pub(in crate::daemon::chat) struct FakeAssistant(pub(in crate::daemon::chat) Arc<Mutex<Log>>);
 
-    impl Agent for FakeAgent {
-        fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session> {
-            Box::new(FakeSession {
+    impl Assistant for FakeAssistant {
+        type Session = FakeSession;
+
+        fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
+            Ok(Vec::new())
+        }
+
+        fn open(&self, spec: SessionSpec<'_>) -> Self::Session {
+            FakeSession {
                 log: Arc::clone(&self.0),
                 resume: spec.resume.map(str::to_owned),
-            })
+            }
         }
 
         fn run_prompt(
@@ -561,14 +640,64 @@ pub(super) mod tests {
             request: &PromptRun<'_>,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<String, AgentError> {
+        ) -> Result<String, AssistantError> {
             let mut log = self.0.lock().expect("the log is not poisoned");
             log.prompts.push(request.prompt());
             Ok("Polished.".to_owned())
         }
     }
 
-    struct FakeSession {
+    #[tokio::test]
+    async fn request_drop_and_shutdown_cancel_model_discovery() {
+        use crate::daemon::host::DaemonLifetime;
+        use crate::daemon::service::ChatRpc;
+        use crate::ipc::wire::{self, chat_service_server::ChatService};
+
+        for disconnect in [true, false] {
+            let directory = tempfile::tempdir().expect("test directory");
+            let (started, mut observed) = tokio::sync::mpsc::unbounded_channel();
+            let log = Arc::new(Mutex::new(Log::default()));
+            let (mut runtime, _events) = runtime_with(directory.path(), logging_assistants(&log));
+            runtime.assistant_overrides.as_mut().unwrap().models = Box::new(move |_, cancel| {
+                started.send(cancel.clone()).expect("discovery started");
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while !cancel.is_cancelled() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(AssistantError::Cancelled)
+            });
+            let runtime = Arc::new(runtime);
+            let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
+            let shutdown = tokio_util::sync::CancellationToken::new();
+            let rpc = ChatRpc::new(
+                handle,
+                runtime,
+                DaemonLifetime::Persistent,
+                shutdown.clone(),
+            );
+            let request = tokio::spawn(async move {
+                rpc.list_models(tonic::Request::new(wire::ListAssistantModelsRequest {
+                    assistant_id: wire::AssistantId::Codex.into(),
+                }))
+                .await
+            });
+            let cancel = tokio::time::timeout(Duration::from_secs(1), observed.recv())
+                .await
+                .expect("discovery starts")
+                .expect("discovery token");
+            if disconnect {
+                request.abort();
+                assert!(request.await.expect_err("request aborted").is_cancelled());
+            } else {
+                shutdown.cancel();
+                assert!(cancel.is_cancelled());
+                assert!(request.await.expect("request finishes").is_err());
+            }
+            assert!(cancel.is_cancelled());
+        }
+    }
+
+    pub(in crate::daemon::chat) struct FakeSession {
         log: Arc<Mutex<Log>>,
         resume: Option<String>,
     }
@@ -580,7 +709,7 @@ pub(super) mod tests {
             sink: &mut dyn TurnSink,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<(), AgentError> {
+        ) -> Result<(), AssistantError> {
             let mut log = self.log.lock().expect("the log is not poisoned");
             log.sessions.push(self.resume.clone());
             log.prompts.push(text.to_owned());
@@ -599,17 +728,17 @@ pub(super) mod tests {
         }
     }
 
-    pub(in crate::daemon::chat) fn runtime_with(
+    pub(in crate::daemon::chat) fn runtime_with<A: Assistant + 'static>(
         directory: &Path,
-        agents: AgentFactory,
+        assistant_factory: impl Fn(AssistantId) -> A + Send + Sync + 'static,
     ) -> (ChatRuntime, std::sync::mpsc::Receiver<ChatStage>) {
-        let (runtime, received, _wake) = runtime_waking(directory, agents);
+        let (runtime, received, _wake) = runtime_waking(directory, assistant_factory);
         (runtime, received)
     }
 
-    fn runtime_waking(
+    fn runtime_waking<A: Assistant + 'static>(
         directory: &Path,
-        agents: AgentFactory,
+        assistant_factory: impl Fn(AssistantId) -> A + Send + Sync + 'static,
     ) -> (
         ChatRuntime,
         std::sync::mpsc::Receiver<ChatStage>,
@@ -617,19 +746,28 @@ pub(super) mod tests {
     ) {
         let (events, received) = channel();
         let (wake, woken) = mpsc::channel(1);
-        let runtime = ChatRuntime::with_agents(
-            Environment::in_home(directory.to_path_buf()),
-            directory.join(SESSION_FILE),
-            ChatEventEmitter::subscribed_by("aria-test-chat-events", move |stage| {
+        let assistant_factory = Arc::new(assistant_factory);
+        let for_execution = Arc::clone(&assistant_factory);
+        let runtime = ChatRuntime {
+            config_environment: Environment::in_home(directory.to_path_buf()),
+            sessions: SessionStore::open(directory.join(SESSION_FILE)),
+            emitter: ChatEventEmitter::subscribed_by("aria-test-chat-events", move |stage| {
                 let _ = events.send(stage);
             }),
-            agents,
-            Arc::new(
+            assistant_overrides: Some(AssistantOverrides {
+                execute: Box::new(move |runtime, ticket, job, cancel| {
+                    runtime.execute_with(&for_execution(job.assistant_id()), ticket, job, cancel);
+                }),
+                models: Box::new(move |assistant_id, cancel| {
+                    assistant_factory(assistant_id).models(cancel)
+                }),
+            }),
+            preferences: Arc::new(
                 PreferenceStore::open(directory.join("preferences.json"))
                     .expect("test preferences"),
             ),
-            Some(wake),
-        );
+            memory_wake: Some(wake),
+        };
         (runtime, received, woken)
     }
 
@@ -674,9 +812,139 @@ pub(super) mod tests {
             text: "um send it friday".to_owned(),
             kind: PromptKind::Rewrite,
             file,
-            agent: ChatAgent::ClaudeCode,
+            assistant_id: AssistantId::ClaudeCode,
+            model_id: None,
             application: None,
         }
+    }
+
+    #[test]
+    fn ask_models_are_bound_at_admission_and_request_overrides_win() {
+        use crate::preferences::PreferencePatch;
+        let home = tempfile::tempdir().unwrap();
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        runtime
+            .preferences
+            .update(
+                0,
+                PreferencePatch {
+                    assistant_models: [
+                        (AssistantId::ClaudeCode, "claude-first".to_owned()),
+                        (AssistantId::Codex, "codex-first".to_owned()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let admitted = runtime
+            .prepare_ask(request("hello", home.path(), false))
+            .unwrap();
+        runtime
+            .preferences
+            .update(
+                1,
+                PreferencePatch {
+                    assistant_models: [(AssistantId::ClaudeCode, "claude-later".to_owned())].into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(admitted.model_id.as_deref(), Some("claude-first"));
+        let explicit = runtime
+            .prepare_ask(ChatRequest {
+                assistant_id: AssistantId::Codex,
+                model_id: Some("request-model".to_owned()),
+                ..request("hello", home.path(), false)
+            })
+            .unwrap();
+        assert_eq!(explicit.model_id.as_deref(), Some("request-model"));
+        let codex = runtime
+            .prepare_ask(ChatRequest {
+                assistant_id: AssistantId::Codex,
+                ..request("hello", home.path(), false)
+            })
+            .unwrap();
+        assert_eq!(codex.model_id.as_deref(), Some("codex-first"));
+        assert_eq!(runtime.preferences.snapshot().unwrap().revision, 2);
+    }
+
+    #[test]
+    fn prompts_and_ask_targets_share_the_saved_assistant() {
+        use crate::preferences::{PreferencePatch, Prompt, PromptId, Prompts};
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".aria")).unwrap();
+        std::fs::write(
+            home.path().join(".aria/config.yaml"),
+            "chat:\n  assistant: invalid\n  workdir: '~'\n",
+        )
+        .unwrap();
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let prompt = Prompt::new(
+            PromptId::new("polish").unwrap(),
+            "Polish".to_owned(),
+            PromptKind::Rewrite,
+            home.path().join("polish.md"),
+            true,
+            None,
+        )
+        .unwrap();
+        runtime
+            .preferences
+            .update(
+                0,
+                PreferencePatch {
+                    assistant_id: Some(AssistantId::Codex),
+                    assistant_models: [
+                        (AssistantId::ClaudeCode, "claude-choice".to_owned()),
+                        (AssistantId::Codex, "codex-choice".to_owned()),
+                    ]
+                    .into(),
+                    prompts: Some(Prompts::new(vec![prompt]).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let call = || PromptCall {
+            text: "hi".to_owned(),
+            prompt: PromptId::new("polish").unwrap(),
+            application: None,
+        };
+        assert_eq!(
+            runtime.prompt_request(call()).unwrap().assistant_id,
+            AssistantId::Codex
+        );
+        assert_eq!(
+            runtime.resolve_target().unwrap().assistant_id,
+            AssistantId::Codex
+        );
+        let admitted = runtime.prompt_request(call()).unwrap();
+        assert_eq!(admitted.model_id.as_deref(), Some("codex-choice"));
+        runtime
+            .preferences
+            .update(
+                1,
+                PreferencePatch {
+                    assistant_id: Some(AssistantId::ClaudeCode),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.prompt_request(call()).unwrap().assistant_id,
+            AssistantId::ClaudeCode
+        );
+        assert_eq!(
+            runtime.resolve_target().unwrap().assistant_id,
+            AssistantId::ClaudeCode
+        );
+        assert_eq!(admitted.assistant_id, AssistantId::Codex);
+        assert_eq!(admitted.model_id.as_deref(), Some("codex-choice"));
+        assert_eq!(
+            runtime.prompt_request(call()).unwrap().model_id.as_deref(),
+            Some("claude-choice")
+        );
     }
 
     #[test]
@@ -684,7 +952,7 @@ pub(super) mod tests {
         use crate::preferences::{PreferencePatch, Prompt, PromptId, Prompts};
 
         let home = tempfile::tempdir().expect("a temp home");
-        let (runtime, _events) = runtime_with(home.path(), logging_agents(&Arc::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         let prompt = |id: &str, enabled| {
             Prompt::new(
                 PromptId::new(id).expect("id"),
@@ -729,19 +997,23 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_prompt_run_for_an_app_no_longer_in_front_never_reaches_the_agent() {
+    fn a_prompt_run_for_an_app_no_longer_in_front_never_reaches_the_assistant() {
         let home = tempfile::tempdir().expect("a temp home");
         let file = home.path().join("polish.md");
         std::fs::write(&file, "Fix grammar.").expect("the prompt file");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, _events) = runtime_with(home.path(), logging_agents(&log));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
         let request = PromptRequest {
             application: Some(ApplicationId::new("com.example.left-behind").expect("id")),
             ..prompt_request(file)
         };
 
         let error = runtime
-            .run_prompt(request, &CancelToken::never())
+            .run_prompt(
+                &FakeAssistant(Arc::clone(&log)),
+                request,
+                &CancelToken::never(),
+            )
             .expect_err("the app the chord was pressed in is not in front");
 
         assert!(matches!(
@@ -757,10 +1029,11 @@ pub(super) mod tests {
         let instructions = home.path().join("polish.md");
         std::fs::write(&instructions, "Fix grammar.").expect("the prompt file");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, _events) = runtime_with(home.path(), logging_agents(&log));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
 
         let text = runtime
             .prompt_answer(
+                &FakeAssistant(Arc::clone(&log)),
                 &prompt_request(instructions),
                 Duration::from_secs(5),
                 &CancelToken::never(),
@@ -779,13 +1052,14 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_prompt_run_without_its_file_never_reaches_the_agent() {
+    fn a_prompt_run_without_its_file_never_reaches_the_assistant() {
         let home = tempfile::tempdir().expect("a temp home");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, _events) = runtime_with(home.path(), logging_agents(&log));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
 
         let error = runtime
             .prompt_answer(
+                &FakeAssistant(Arc::clone(&log)),
                 &prompt_request(home.path().join("moved.md")),
                 Duration::from_secs(5),
                 &CancelToken::never(),
@@ -801,7 +1075,7 @@ pub(super) mod tests {
     fn memory_off_records_nothing_and_changes_no_prompt() {
         let home = tempfile::tempdir().expect("a temp home");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(home.path(), logging_agents(&log));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
 
         run(&runtime, &events, 1, request("hello", home.path(), false));
 
@@ -814,7 +1088,7 @@ pub(super) mod tests {
         let home = home_with_memory();
         enroll_owner(home.path());
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_agents(&log));
+        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
         let typed = request("hello", home.path(), false);
 
         run(&runtime, &events, 1, typed.clone());
@@ -832,7 +1106,7 @@ pub(super) mod tests {
         let home = home_with_memory();
         enroll_owner(home.path());
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_agents(&log));
+        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
         let heard = ChatRequest {
             own_voice: true,
             ..request("hello", home.path(), false)
@@ -851,7 +1125,7 @@ pub(super) mod tests {
     fn without_an_enrolled_owner_nothing_is_kept() {
         let home = home_with_memory();
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_agents(&log));
+        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
         let heard = ChatRequest {
             own_voice: true,
             ..request("hello", home.path(), false)
@@ -867,8 +1141,7 @@ pub(super) mod tests {
     fn a_failed_turn_is_not_kept() {
         let home = home_with_memory();
         enroll_owner(home.path());
-        let (runtime, events) =
-            runtime_with(home.path(), Box::new(|_agent| Box::new(FailingAgent)));
+        let (runtime, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant);
         let heard = ChatRequest {
             own_voice: true,
             ..request("hello", home.path(), false)
@@ -880,11 +1153,17 @@ pub(super) mod tests {
         assert!(turns(home.path(), &heard).is_empty());
     }
 
-    struct FailingAgent;
+    struct FailingAssistant;
 
-    impl Agent for FailingAgent {
-        fn open(&self, _spec: SessionSpec<'_>) -> Box<dyn Session> {
-            Box::new(FailingSession)
+    impl Assistant for FailingAssistant {
+        type Session = FailingSession;
+
+        fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
+            Err(AssistantError::Failed("down".to_owned()))
+        }
+
+        fn open(&self, _spec: SessionSpec<'_>) -> Self::Session {
+            FailingSession
         }
 
         fn run_prompt(
@@ -892,8 +1171,8 @@ pub(super) mod tests {
             _request: &PromptRun<'_>,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<String, AgentError> {
-            Err(AgentError::Failed("down".to_owned()))
+        ) -> Result<String, AssistantError> {
+            Err(AssistantError::Failed("down".to_owned()))
         }
     }
 
@@ -906,8 +1185,8 @@ pub(super) mod tests {
             _sink: &mut dyn TurnSink,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<(), AgentError> {
-            Err(AgentError::Failed("down".to_owned()))
+        ) -> Result<(), AssistantError> {
+            Err(AssistantError::Failed("down".to_owned()))
         }
 
         fn resume_id(&self) -> Option<&str> {
@@ -915,17 +1194,19 @@ pub(super) mod tests {
         }
     }
 
-    pub(in crate::daemon::chat) fn logging_agents(log: &Arc<Mutex<Log>>) -> AgentFactory {
+    pub(in crate::daemon::chat) fn logging_assistants(
+        log: &Arc<Mutex<Log>>,
+    ) -> impl Fn(AssistantId) -> FakeAssistant + Send + Sync + 'static {
         let log = Arc::clone(log);
-        Box::new(move |_agent| Box::new(FakeAgent(Arc::clone(&log))))
+        move |_assistant_id| FakeAssistant(Arc::clone(&log))
     }
 
     pub(in crate::daemon::chat) fn request(text: &str, workdir: &Path, new: bool) -> ChatRequest {
         ChatRequest {
             text: text.to_owned(),
             workdir: workdir.to_path_buf(),
-            agent: ChatAgent::ClaudeCode,
-            model: None,
+            assistant_id: AssistantId::ClaudeCode,
+            model_id: None,
             session: None,
             new,
             output_mode: None,
@@ -939,13 +1220,13 @@ pub(super) mod tests {
         ticket: u64,
         request: ChatRequest,
     ) -> ChatStageKind {
-        let agent = request.agent;
+        let assistant_id = request.assistant_id;
         runtime.execute(Ticket(ticket), ChatJob::Ask(request), CancelToken::never());
         let mut steps = Vec::new();
         loop {
             let stage = events.recv().expect("a stage arrives");
             assert_eq!(stage.ticket, Ticket(ticket));
-            assert_eq!(stage.agent, agent);
+            assert_eq!(stage.assistant_id, assistant_id);
             match stage.kind {
                 ChatStageKind::Working(step) => steps.push(step),
                 ended => {
@@ -968,21 +1249,50 @@ pub(super) mod tests {
         }
     }
 
-    fn recorded(directory: &Path) -> String {
-        std::fs::read_to_string(directory.join(SESSION_FILE)).expect("a record exists")
+    #[test]
+    fn an_explicit_ask_assistant_does_not_change_the_shared_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let assistant_factory = move |assistant_id| {
+            assert_eq!(assistant_id, AssistantId::ClaudeCode);
+            FakeAssistant(Arc::clone(&log))
+        };
+        let (runtime, events) = runtime_with(directory.path(), assistant_factory);
+        runtime
+            .preferences
+            .update(
+                0,
+                crate::preferences::PreferencePatch {
+                    assistant_id: Some(AssistantId::Codex),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let reply = run(
+            &runtime,
+            &events,
+            1,
+            request("hello", directory.path(), false),
+        );
+
+        assert_eq!(replied(reply), "reply 1");
+        let snapshot = runtime.preferences.snapshot().unwrap();
+        assert_eq!(snapshot.preferences.assistant_id, Some(AssistantId::Codex));
+        assert_eq!(snapshot.revision, 1);
     }
 
     #[test]
     fn an_unstarted_ask_ends_as_cancelled_under_its_ticket() {
         let directory = tempfile::tempdir().expect("test directory");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(directory.path(), logging_agents(&log));
+        let (runtime, events) = runtime_with(directory.path(), logging_assistants(&log));
 
-        runtime.cancel_unstarted(Ticket(9), ChatAgent::Codex);
+        runtime.cancel_unstarted(Ticket(9), AssistantId::Codex);
 
         let stage = events.recv().expect("the refusal arrives");
         assert_eq!(stage.ticket, Ticket(9));
-        assert_eq!(stage.agent, ChatAgent::Codex);
+        assert_eq!(stage.assistant_id, AssistantId::Codex);
         assert!(matches!(
             stage.kind,
             ChatStageKind::Failed {
@@ -997,7 +1307,7 @@ pub(super) mod tests {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(work, logging_agents(&log));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
 
         let first = run(&runtime, &events, 1, request("one", work, false));
         run(&runtime, &events, 2, request("two", work, false));
@@ -1012,12 +1322,12 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn conversations_are_kept_per_agent_and_directory() {
+    fn conversations_are_kept_per_assistant_and_directory() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let elsewhere = tempfile::tempdir().expect("another directory");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(work, logging_agents(&log));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
 
         run(&runtime, &events, 1, request("one", work, false));
         run(
@@ -1027,7 +1337,7 @@ pub(super) mod tests {
             request("two", elsewhere.path(), false),
         );
         let mut codex = request("three", work, false);
-        codex.agent = ChatAgent::Codex;
+        codex.assistant_id = AssistantId::Codex;
         run(&runtime, &events, 3, codex);
         run(&runtime, &events, 4, request("four", work, false));
         run(
@@ -1056,7 +1366,7 @@ pub(super) mod tests {
         let work = directory.path();
         let elsewhere = tempfile::tempdir().expect("another directory");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(work, logging_agents(&log));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
         run(&runtime, &events, 1, request("one", work, false));
         run(
             &runtime,
@@ -1064,10 +1374,9 @@ pub(super) mod tests {
             2,
             request("two", elsewhere.path(), false),
         );
-        let (failing, failing_events) = runtime_with(
-            work,
-            Box::new(|_agent| Box::new(ClaudeCodeAgent::new("/nonexistent/claude".into()))),
-        );
+        let (failing, failing_events) = runtime_with(work, |_assistant_id| {
+            ClaudeCodeAssistant::new("/nonexistent/claude".into())
+        });
 
         let outcome = run(&failing, &failing_events, 3, request("three", work, true));
 
@@ -1075,7 +1384,7 @@ pub(super) mod tests {
             matches!(outcome, ChatStageKind::Failed { .. }),
             "{outcome:?}"
         );
-        let record = recorded(work);
+        let record = std::fs::read_to_string(work.join(SESSION_FILE)).expect("a record exists");
         assert!(!record.contains("session-1"), "{record}");
         assert!(record.contains("session-2"), "{record}");
     }
@@ -1085,7 +1394,7 @@ pub(super) mod tests {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(work, logging_agents(&log));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
         let cancel = CancelToken::new();
         cancel.cancel();
 
@@ -1138,7 +1447,7 @@ pub(super) mod tests {
         let (home, repo) = home_with_project(true);
         let (runtime, _events) = runtime_with(
             home.path(),
-            logging_agents(&Arc::new(Mutex::new(Log::default()))),
+            logging_assistants(&Arc::new(Mutex::new(Log::default()))),
         );
 
         let target = runtime.resolve_target().expect("the focus resolves");
@@ -1159,7 +1468,7 @@ pub(super) mod tests {
         .expect("the config file");
         let (runtime, _events) = runtime_with(
             home.path(),
-            logging_agents(&Arc::new(Mutex::new(Log::default()))),
+            logging_assistants(&Arc::new(Mutex::new(Log::default()))),
         );
 
         let target = runtime
@@ -1179,7 +1488,7 @@ pub(super) mod tests {
         .unwrap();
         let (runtime, _events) = runtime_with(
             home.path(),
-            logging_agents(&Arc::new(Mutex::new(Log::default()))),
+            logging_assistants(&Arc::new(Mutex::new(Log::default()))),
         );
 
         let target = runtime.resolve_target().unwrap();
@@ -1201,7 +1510,7 @@ pub(super) mod tests {
         .unwrap();
         let (runtime, _events) = runtime_with(
             home.path(),
-            logging_agents(&Arc::new(Mutex::new(Log::default()))),
+            logging_assistants(&Arc::new(Mutex::new(Log::default()))),
         );
 
         let error = runtime.resolve_target().unwrap_err();
@@ -1216,7 +1525,7 @@ pub(super) mod tests {
         std::fs::create_dir(home.path().join(".aria")).expect("the aria directory");
         let (runtime, _events) = runtime_with(
             home.path(),
-            logging_agents(&Arc::new(Mutex::new(Log::default()))),
+            logging_assistants(&Arc::new(Mutex::new(Log::default()))),
         );
 
         let error = runtime
@@ -1230,7 +1539,7 @@ pub(super) mod tests {
     fn a_missing_directory_is_not_a_missing_binary() {
         let directory = tempfile::tempdir().expect("test directory");
         let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events) = runtime_with(directory.path(), logging_agents(&log));
+        let (runtime, events) = runtime_with(directory.path(), logging_assistants(&log));
 
         let outcome = run(
             &runtime,
@@ -1255,36 +1564,43 @@ pub(super) mod tests {
     fn a_missing_binary_is_reported_as_unavailable_with_its_reason() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
-        let (runtime, events) = runtime_with(
-            work,
-            Box::new(|_agent| Box::new(ClaudeCodeAgent::new("/nonexistent/claude".into()))),
-        );
+        let (runtime, events) = runtime_with(work, |_assistant_id| {
+            ClaudeCodeAssistant::new("/nonexistent/claude".into())
+        });
 
         let outcome = run(&runtime, &events, 1, request("hi", work, false));
 
         match outcome {
             ChatStageKind::Failed { code, message } => {
-                assert_eq!(code, RpcErrorCode::AgentUnavailable);
+                assert_eq!(code, RpcErrorCode::AssistantUnavailable);
                 assert!(message.contains("/nonexistent/claude"), "{message}");
             }
             other => panic!("unexpected {other:?}"),
         }
     }
 
-    /// An agent that answers only when told to, so a test can hold an ask
+    /// An assistant that answers only when told to, so a test can hold an ask
     /// open and watch what the actor does with the next one.
-    pub(in crate::daemon::chat) struct ParkedAgent {
+    pub(in crate::daemon::chat) struct ParkedAssistant {
         pub(in crate::daemon::chat) started: Sender<u64>,
         pub(in crate::daemon::chat) release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
     }
 
-    impl Agent for ParkedAgent {
-        fn open(&self, _spec: SessionSpec<'_>) -> Box<dyn Session> {
-            Box::new(ParkedSession {
+    impl Assistant for ParkedAssistant {
+        type Session = ParkedSession;
+
+        fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
+            Err(AssistantError::Failed(
+                "a parked assistant only takes turns".to_owned(),
+            ))
+        }
+
+        fn open(&self, _spec: SessionSpec<'_>) -> Self::Session {
+            ParkedSession {
                 started: self.started.clone(),
                 release: Arc::clone(&self.release),
                 resume: None,
-            })
+            }
         }
 
         fn run_prompt(
@@ -1292,14 +1608,14 @@ pub(super) mod tests {
             _request: &PromptRun<'_>,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<String, AgentError> {
-            Err(AgentError::Failed(
-                "a parked agent only takes turns".to_owned(),
+        ) -> Result<String, AssistantError> {
+            Err(AssistantError::Failed(
+                "a parked assistant only takes turns".to_owned(),
             ))
         }
     }
 
-    struct ParkedSession {
+    pub(in crate::daemon::chat) struct ParkedSession {
         started: Sender<u64>,
         release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
         resume: Option<String>,
@@ -1312,13 +1628,13 @@ pub(super) mod tests {
             sink: &mut dyn TurnSink,
             cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<(), AgentError> {
+        ) -> Result<(), AssistantError> {
             let turn: u64 = text.parse().expect("prompts are turn numbers");
             let _ = self.started.send(turn);
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             loop {
                 if cancel.is_cancelled() {
-                    return Err(AgentError::Cancelled);
+                    return Err(AssistantError::Cancelled);
                 }
                 let released = self
                     .release

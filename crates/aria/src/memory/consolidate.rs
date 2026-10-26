@@ -13,7 +13,7 @@ use super::lexicon::load_terms;
 use super::profile::write_profile;
 use super::store::{Store, StoreError};
 use super::{DB_FILE, LEXICON_FILE, MemoryError};
-use crate::chat::AgentError;
+use crate::chat::AssistantError;
 use crate::config::{Environment, MemoryConfig};
 use crate::primitives::error_chain;
 
@@ -48,7 +48,7 @@ pub(crate) fn consolidate_backlog(
         );
         match outcome {
             Ok(Some(result)) => report.results.push(result),
-            Ok(None) | Err(ConsolidateError::Extract(AgentError::Cancelled)) => {}
+            Ok(None) | Err(ConsolidateError::Extract(AssistantError::Cancelled)) => {}
             Err(error) => {
                 report.failed += 1;
                 tracing::warn!(session, error = %error_chain(&error), "memory session not consolidated");
@@ -148,12 +148,12 @@ mod tests {
     use crate::memory::PROFILE_FILE;
 
     struct Scripted {
-        replies: Mutex<Vec<Result<String, AgentError>>>,
+        replies: Mutex<Vec<Result<String, AssistantError>>>,
         calls: Mutex<u32>,
     }
 
     impl Scripted {
-        fn new(replies: Vec<Result<String, AgentError>>) -> Self {
+        fn new(replies: Vec<Result<String, AssistantError>>) -> Self {
             Self {
                 replies: Mutex::new(replies),
                 calls: Mutex::new(0),
@@ -166,7 +166,7 @@ mod tests {
     }
 
     impl Extractor for Scripted {
-        fn extract(&self, _message: &str, _cancel: &CancelToken) -> Result<String, AgentError> {
+        fn extract(&self, _message: &str, _cancel: &CancelToken) -> Result<String, AssistantError> {
             *self.calls.lock().expect("lock") += 1;
             let mut replies = self.replies.lock().expect("lock");
             match replies.is_empty() {
@@ -232,7 +232,7 @@ mod tests {
     fn a_failed_extraction_gives_the_window_back() {
         let (dir, store) = fixture();
         speak(&store, "a", "hi");
-        let extractor = Scripted::new(vec![Err(AgentError::Failed("down".to_owned()))]);
+        let extractor = Scripted::new(vec![Err(AssistantError::Failed("down".to_owned()))]);
 
         let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
             .expect("runs");
@@ -247,7 +247,7 @@ mod tests {
         speak(&store, "a", "hi");
         speak(&store, "b", "hello");
         let extractor = Scripted::new(vec![
-            Err(AgentError::Failed("down".to_owned())),
+            Err(AssistantError::Failed("down".to_owned())),
             Ok(ONE_FACT.to_owned()),
         ]);
 

@@ -64,6 +64,11 @@ extension Aria_Daemon_V1_DeliveryMode {
 
 extension Aria_Daemon_V1_PreferencePatch {
     func apply(to patch: inout Aria_Daemon_V1_PreferencePatch) {
+        if hasAssistantID { patch.assistantID = assistantID }
+        for entry in assistantModels {
+            patch.assistantModels.removeAll { $0.assistantID == entry.assistantID }
+            patch.assistantModels.append(entry)
+        }
         if hasRecognitionLanguage { patch.recognitionLanguage = recognitionLanguage }
         if hasOutputMode { patch.outputMode = outputMode }
         if hasDeliveryMode { patch.deliveryMode = deliveryMode }
@@ -82,6 +87,11 @@ extension Aria_Daemon_V1_PreferencePatch {
     }
 
     func apply(to preferences: inout Aria_Daemon_V1_UserPreferences) {
+        if hasAssistantID { preferences.assistantID = assistantID }
+        for entry in assistantModels {
+            preferences.assistantModels.removeAll { $0.assistantID == entry.assistantID }
+            if !entry.modelID.isEmpty { preferences.assistantModels.append(entry) }
+        }
         if hasRecognitionLanguage { preferences.recognitionLanguage = recognitionLanguage }
         if hasOutputMode { preferences.outputMode = outputMode }
         if hasDeliveryMode { preferences.deliveryMode = deliveryMode }

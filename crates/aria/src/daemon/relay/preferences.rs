@@ -52,6 +52,8 @@ impl wire::preferences_service_server::PreferencesService for LanPreferences {
 /// app would have sent alongside.
 pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePatch, Status> {
     let wire::PreferencePatch {
+        assistant_id,
+        assistant_models,
         recognition_language,
         output_mode,
         delivery_mode,
@@ -69,6 +71,8 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         prompts,
     } = patch;
     let mac_only = [
+        ("assistant_id", assistant_id.is_some()),
+        ("assistant_models", !assistant_models.is_empty()),
         ("delivery_mode", delivery_mode.is_some()),
         ("silence_duration_ms", silence_duration_ms.is_some()),
         ("dictation_hotkey", dictation_hotkey.is_some()),
@@ -144,6 +148,24 @@ mod tests {
     #[test]
     fn mac_only_fields_are_refused() {
         let cases = [
+            wire::PreferencePatch {
+                assistant_id: Some(wire::AssistantId::Codex as i32),
+                ..Default::default()
+            },
+            wire::PreferencePatch {
+                assistant_models: vec![wire::AssistantModelPreference {
+                    assistant_id: wire::AssistantId::ClaudeCode as i32,
+                    model_id: "opus".to_owned(),
+                }],
+                ..Default::default()
+            },
+            wire::PreferencePatch {
+                assistant_models: vec![wire::AssistantModelPreference {
+                    assistant_id: wire::AssistantId::Codex as i32,
+                    model_id: String::new(),
+                }],
+                ..Default::default()
+            },
             wire::PreferencePatch {
                 delivery_mode: Some(wire::DeliveryMode::Streaming as i32),
                 ..Default::default()

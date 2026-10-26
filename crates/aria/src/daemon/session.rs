@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::chat::{
-    Ambiguous, AskTarget, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind,
-    Focus, Mention, Project, Projects, ProjectsError, Ticket,
+    Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
+    ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
 use crate::delivery::{PlatformTextDelivery, TextDelivery};
 use crate::dictation::{
@@ -27,7 +27,7 @@ use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use tonic_health::pb::health_check_response::ServingStatus;
 
-use crate::config::WakeWordOverride;
+use crate::config::{AssistantId, ChatConfig, Environment, WakeWordOverride};
 
 use super::assembly::DaemonError;
 use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
@@ -136,6 +136,13 @@ impl DaemonSession {
         self.client.stop_dictation(recording)
     }
 
+    pub fn list_assistant_models(
+        &self,
+        assistant_id: AssistantId,
+    ) -> Result<Vec<AssistantModel>, ClientError> {
+        self.client.list_assistant_models(assistant_id)
+    }
+
     /// Where an ask goes when the caller has no working directory.
     pub fn resolve_ask(&self) -> Result<AskTarget, ClientError> {
         self.client.resolve_ask()
@@ -182,11 +189,16 @@ impl DaemonSession {
         })
     }
 
-    /// Routes an ask to the project its text names, else the last one,
-    /// else where `configured` puts it. Two names are settled as `clarify` says.
-    pub fn route(&self, text: String, clarify: Clarify) -> Result<Routing, RouteError> {
-        let projects = Projects::load()?;
-        let request = ChatRequest::configured(text)?;
+    pub fn route(
+        &self,
+        text: String,
+        clarify: Clarify,
+        assistant_id: AssistantId,
+    ) -> Result<Routing, RouteError> {
+        let environment = Environment::capture().map_err(ProjectsError::Config)?;
+        let config = ChatConfig::load(&environment, assistant_id).map_err(ProjectsError::Config)?;
+        let projects = Projects::load_with(&environment, &config)?;
+        let request = ChatRequest::from_config(text, config)?;
         let project = match projects.mentioned(&request.text) {
             Mention::None => {
                 let request = match projects.focused() {
@@ -717,7 +729,7 @@ fn probe_error(paths: &PreparedRuntimePaths, error: ProbeError) -> StartupError 
 #[cfg(test)]
 mod tests {
     use crate::chat::Step;
-    use crate::config::ChatAgent;
+    use crate::config::AssistantId;
     use crate::daemon::Daemon;
     use crate::runtime::RuntimePaths;
     use crate::speech::SpeechStage;
@@ -761,7 +773,7 @@ mod tests {
     fn chat(ticket: u64, kind: ChatStageKind) -> Result<DaemonEvent, ClientError> {
         Ok(DaemonEvent::Chat(ChatStage {
             ticket: Ticket(ticket),
-            agent: ChatAgent::Codex,
+            assistant_id: AssistantId::Codex,
             kind,
         }))
     }
