@@ -46,6 +46,11 @@ struct ItemList<Item, Row: View>: View {
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                     .frame(maxHeight: contentHeight)
+                    .accessibilityActions {
+                        if selected != nil {
+                            Button("Clear Selection") { selected = nil }
+                        }
+                    }
                 }
             }
             .background(.quaternary.opacity(0.3))
