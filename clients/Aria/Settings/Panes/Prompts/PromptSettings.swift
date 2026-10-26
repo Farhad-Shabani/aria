@@ -48,17 +48,17 @@ struct PromptSettings: View {
                 HStack {
                     Button("Choose…") {
                         guard let file = PromptFile.choose() else { return }
-                        editor.editPrompt(id) { $0.file = file.standardizedFileURL.path }
+                        editor.editPrompt(id) { $0.instructionsPath = file.standardizedFileURL.path }
                     }
                     Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.file)])
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.instructionsPath)])
                     }
                     .disabled(!PromptFile.exists(entry))
                 }
             } label: {
                 Text("File")
                 if PromptFile.exists(entry) {
-                    Text((entry.file as NSString).abbreviatingWithTildeInPath)
+                    Text((entry.instructionsPath as NSString).abbreviatingWithTildeInPath)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {

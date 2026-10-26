@@ -61,15 +61,15 @@ final class SetupStateTests: XCTestCase {
     private static func engine(
         _ key: String, default isDefault: Bool = false, unsupported: String? = nil,
         model: Aria_Setup_V1_ModelSource = .downloads
-    ) -> Aria_Setup_V1_Engine {
-        var engine = Aria_Setup_V1_Engine()
-        engine.key = key
-        engine.label = key.capitalized
-        engine.default = isDefault
-        engine.model = model
+    ) -> Aria_Setup_V1_Choice {
+        var engine = Aria_Setup_V1_Choice()
+        engine.id = key
+        engine.name = key.capitalized
+        engine.isDefault = isDefault
+        engine.modelSource = model
         if let unsupported {
             engine.availability = .unsupported
-            engine.note = unsupported
+            engine.availabilityDetail = unsupported
         } else {
             engine.availability = .ready
         }
@@ -82,26 +82,28 @@ final class SetupStateTests: XCTestCase {
         -> Aria_Setup_V1_Model
     {
         var model = Aria_Setup_V1_Model()
-        model.name = name
-        model.title = name.capitalized
-        model.bytes = 10
-        model.engine = engine
+        model.id = name
+        model.name = name.capitalized
+        model.sizeBytes = 10
+        model.engineID = engine
         model.onDisk = present ? .complete : .absent
-        model.default = isDefault
+        model.downloadByDefault = isDefault
         return model
     }
 
     /// Nothing configured, nothing on disk, no service.
     static func freshMac() -> Aria_Setup_V1_Inspection {
         var inspection = Aria_Setup_V1_Inspection()
-        inspection.macos = true
-        inspection.stt = [engine("parakeet", default: true), engine("parakeet-mlx", unsupported: "needs MLX")]
-        inspection.tts = [engine("system", default: true), engine("kokoro")]
-        inspection.chat = [engine("claude-code", default: true)]
-        inspection.defaults.stt = "parakeet"
-        inspection.defaults.tts = "system"
-        inspection.defaults.chat = "claude-code"
-        inspection.defaults.hotkey = true
+        inspection.isMacos = true
+        inspection.transcriptionChoices = [
+            engine("parakeet", default: true), engine("parakeet-mlx", unsupported: "needs MLX"),
+        ]
+        inspection.synthesisChoices = [engine("system", default: true), engine("kokoro")]
+        inspection.assistantChoices = [engine("claude-code", default: true)]
+        inspection.defaults.transcriptionEngineID = "parakeet"
+        inspection.defaults.synthesisEngineID = "system"
+        inspection.defaults.assistantID = "claude-code"
+        inspection.defaults.hotkeyEnabled = true
         inspection.models = [
             model("parakeet", engine: "parakeet"),
             model("kokoro", engine: "kokoro"),
@@ -162,7 +164,7 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { harness.applyContinuation != nil }
         XCTAssertEqual(state.step, .applying)
         XCTAssertEqual(harness.applied?.selections, harness.inspection.defaults)
-        XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"])
+        XCTAssertEqual(harness.applied?.modelIds, ["parakeet", "segmentation"])
 
         state.cancel()
         harness.applyContinuation?.resume(throwing: SetupClientError.cancelled)
@@ -187,7 +189,7 @@ final class SetupStateTests: XCTestCase {
         state.next()
         state.downloads = []
 
-        state.selections.tts = "kokoro"
+        state.selections.synthesisEngineID = "kokoro"
 
         XCTAssertEqual(state.downloads, ["parakeet", "kokoro", "segmentation"])
     }
@@ -243,11 +245,11 @@ final class SetupStateTests: XCTestCase {
         harness.commandLineToolProblem = "The aria command was not installed."
         let state = await walkToApplying(harness)
 
-        XCTAssertEqual(state.selections.stt, "parakeet")
-        XCTAssertEqual(state.selections.tts, "system")
-        XCTAssertTrue(state.selections.hotkey)
-        XCTAssertFalse(state.selections.wake)
-        XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"], "the speaker model is off by default")
+        XCTAssertEqual(state.selections.transcriptionEngineID, "parakeet")
+        XCTAssertEqual(state.selections.synthesisEngineID, "system")
+        XCTAssertTrue(state.selections.hotkeyEnabled)
+        XCTAssertFalse(state.selections.wakeEnabled)
+        XCTAssertEqual(harness.applied?.modelIds, ["parakeet", "segmentation"], "the speaker model is off by default")
         XCTAssertEqual(harness.stoppedDaemon, 1, "a spawned daemon must give the socket to the service")
 
         harness.applyContinuation?.resume(returning: harness.summary)
@@ -276,16 +278,16 @@ final class SetupStateTests: XCTestCase {
         var started = Aria_Setup_V1_SetupEvent()
         started.started = .models
         var download = Aria_Setup_V1_SetupEvent()
-        download.download.model = "parakeet"
-        download.download.received = 5
-        download.download.total = 10
+        download.download.modelID = "parakeet"
+        download.download.receivedBytes = 5
+        download.download.totalBytes = 10
 
         harness.onEvent?(started)
         harness.onEvent?(download)
         await waitUntil { state.downloadProgress["parakeet"] != nil }
 
         XCTAssertEqual(state.applying, .models)
-        XCTAssertEqual(state.downloadProgress["parakeet"]?.received, 5)
+        XCTAssertEqual(state.downloadProgress["parakeet"]?.receivedBytes, 5)
     }
 
     func testContinueAnywayLeavesTheGrantPage() async {
@@ -366,9 +368,9 @@ final class SetupStateTests: XCTestCase {
     /// know passes through.
     func testConfiguredMacStartsFromItsAnswersAndHasNothingToDownload() async {
         var inspection = Self.freshMac()
-        inspection.defaults.stt = "parakeet-mlx"
-        inspection.defaults.tts = "kokoro"
-        inspection.defaults.chat = "codex"
+        inspection.defaults.transcriptionEngineID = "parakeet-mlx"
+        inspection.defaults.synthesisEngineID = "kokoro"
+        inspection.defaults.assistantID = "codex"
         inspection.models = inspection.models.map { model in
             var model = model
             model.onDisk = .complete
@@ -398,10 +400,10 @@ final class SetupStateTests: XCTestCase {
     func testPlanFollowsTheChosenEngines() {
         let inspection = Self.freshMac()
         var selections = inspection.defaults
-        selections.tts = "kokoro"
+        selections.synthesisEngineID = "kokoro"
 
         XCTAssertEqual(
-            SetupState.plan(inspection, selections).map(\.name),
+            SetupState.plan(inspection, selections).map(\.id),
             ["parakeet", "kokoro", "speaker", "segmentation"]
         )
     }
@@ -410,7 +412,7 @@ final class SetupStateTests: XCTestCase {
         var inspection = Self.freshMac()
         inspection.models[0].external = true
 
-        XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.name).contains("parakeet"))
+        XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.id).contains("parakeet"))
     }
 
     func testExpressPreviewMatchesTheDownloadRequest() async {
@@ -421,11 +423,11 @@ final class SetupStateTests: XCTestCase {
         let state = await welcome(harness)
         let preview = SetupState.expressPlan(state.inspection, state.selections)
 
-        XCTAssertEqual(preview.map(\.name), ["parakeet"], "the installed and the optional are left out")
+        XCTAssertEqual(preview.map(\.id), ["parakeet"], "the installed and the optional are left out")
         XCTAssertEqual(SetupState.total(preview), "Total download: 10 bytes")
         state.express()
         await waitUntil { harness.applyContinuation != nil }
-        XCTAssertEqual(harness.applied?.downloads, preview.map(\.name))
+        XCTAssertEqual(harness.applied?.modelIds, preview.map(\.id))
     }
 
     func testTotalNeverClaimsAnExactSizeForAResumedDownload() {
@@ -462,15 +464,15 @@ final class SetupStateTests: XCTestCase {
 
     func testSelfFetchingEngineIsNotedOutsideTheTotal() async {
         var inspection = Self.freshMac()
-        inspection.stt[1].availability = .missing
-        inspection.stt[1].model = .fetchedOnFirstUse
-        inspection.defaults.stt = "parakeet-mlx"
+        inspection.transcriptionChoices[1].availability = .missing
+        inspection.transcriptionChoices[1].modelSource = .fetchedOnFirstUse
+        inspection.defaults.transcriptionEngineID = "parakeet-mlx"
         let harness = Harness()
         harness.inspection = inspection
         let state = await welcome(harness)
 
         XCTAssertEqual(state.selfFetchingNotes, ["Parakeet-Mlx downloads its model on first use."])
-        XCTAssertEqual(SetupState.expressPlan(state.inspection, state.selections).map(\.name), ["segmentation"])
+        XCTAssertEqual(SetupState.expressPlan(state.inspection, state.selections).map(\.id), ["segmentation"])
     }
 
     func testWizardIsOfferedOnce() {

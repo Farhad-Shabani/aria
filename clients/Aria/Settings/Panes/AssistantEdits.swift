@@ -11,7 +11,7 @@ enum AssistantEdits {
     }
 
     static func setModelID(
-        _ modelID: String, for assistantID: Aria_Daemon_V1_AssistantID, in patch: inout Aria_Daemon_V1_PreferencePatch
+        _ modelID: String, for assistantID: Aria_Daemon_V1_AssistantId, in patch: inout Aria_Daemon_V1_PreferencePatch
     ) {
         var entry = Aria_Daemon_V1_AssistantModelPreference()
         entry.assistantID = assistantID

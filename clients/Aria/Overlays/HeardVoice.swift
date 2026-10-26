@@ -14,7 +14,7 @@ struct HeardVoice {
         }
         switch event.stage {
         case .recording: name = nil
-        case .segmentTranscribed where !event.speaker.isEmpty: name = event.speaker
+        case .segmentTranscribed where !event.speakerName.isEmpty: name = event.speakerName
         case .delivered, .cancelled, .failed: hasEnded = true
         default: break
         }

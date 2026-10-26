@@ -8,8 +8,8 @@ final class CaptionStateTests: XCTestCase {
     ) -> Aria_Daemon_V1_CaptionSnapshot {
         var snapshot = Aria_Daemon_V1_CaptionSnapshot()
         snapshot.recordingID = recording
-        snapshot.committed = committed
-        snapshot.provisional = provisional
+        snapshot.committedText = committed
+        snapshot.provisionalText = provisional
         snapshot.ended = ended
         return snapshot
     }

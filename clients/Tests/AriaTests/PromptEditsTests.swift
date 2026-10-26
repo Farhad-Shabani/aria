@@ -10,7 +10,7 @@ final class PromptEditsTests: XCTestCase {
 
         XCTAssertEqual(entry.id, id.uuidString)
         XCTAssertEqual(entry.name, "Email reply")
-        XCTAssertEqual(entry.file, "/prompts/Email reply.md")
+        XCTAssertEqual(entry.instructionsPath, "/prompts/Email reply.md")
         XCTAssertEqual(entry.kind, .rewrite)
         XCTAssertTrue(entry.enabled)
         XCTAssertNil(entry.storedChord)

@@ -43,8 +43,8 @@ final class VoiceProfilesTests: XCTestCase {
     private static func event(_ stage: Aria_Daemon_V1_SpeakerStage, index: UInt32) -> Aria_Daemon_V1_SpeakerEvent {
         var event = Aria_Daemon_V1_SpeakerEvent()
         event.stage = stage
-        event.index = index
-        event.samples = 5
+        event.sampleIndex = index
+        event.sampleCount = 5
         return event
     }
 

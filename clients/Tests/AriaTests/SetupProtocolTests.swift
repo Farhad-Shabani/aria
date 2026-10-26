@@ -58,9 +58,9 @@ final class SetupProtocolTests: XCTestCase {
     /// whole and in order regardless of where the chunks cut.
     func testFramesSurviveBeingSplitAcrossReads() throws {
         var download = Aria_Setup_V1_DownloadProgress()
-        download.model = "whisper"
-        download.received = 10
-        download.total = 20
+        download.modelID = "whisper"
+        download.receivedBytes = 10
+        download.totalBytes = 20
         var event = Aria_Setup_V1_ApplyResponse()
         event.event.download = download
         var summary = Aria_Setup_V1_ApplyResponse()
@@ -81,7 +81,7 @@ final class SetupProtocolTests: XCTestCase {
 
     func testFramesEncodeALengthLongerThanOneByte() throws {
         var request = Aria_Setup_V1_ApplyRequest()
-        request.downloads = Array(repeating: "a-model-name", count: 40)
+        request.modelIds = Array(repeating: "a-model-name", count: 40)
         let frame = try SetupFrames.encode(request)
 
         var reader = SetupFrames.Reader()

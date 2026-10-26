@@ -35,13 +35,13 @@ impl TryFrom<wire::InferenceStart> for Start {
     type Error = ProtocolError;
 
     fn try_from(value: wire::InferenceStart) -> Result<Self, Self::Error> {
-        if !valid_engine(&value.engine) {
+        if !valid_engine(&value.engine_id) {
             return Err(ProtocolError::InvalidInference);
         }
         Ok(Self {
-            engine: value.engine,
+            engine: value.engine_id,
             language: value
-                .language
+                .recognition_language
                 .parse()
                 .map_err(|_| ProtocolError::InvalidInference)?,
             strategy: value.strategy.try_into()?,
@@ -52,8 +52,8 @@ impl TryFrom<wire::InferenceStart> for Start {
 impl From<Start> for wire::InferenceStart {
     fn from(value: Start) -> Self {
         Self {
-            engine: value.engine,
-            language: value.language.as_str().to_owned(),
+            engine_id: value.engine,
+            recognition_language: value.language.as_str().to_owned(),
             strategy: value.strategy.into(),
         }
     }
@@ -66,7 +66,7 @@ impl From<Info> for wire::InferenceInfoResponse {
             Strategy::Streaming => vec![Strategy::Whole.into(), Strategy::Streaming.into()],
         };
         Self {
-            engine: value.engine,
+            engine_id: value.engine,
             strategies,
         }
     }
@@ -76,7 +76,7 @@ impl TryFrom<wire::InferenceInfoResponse> for Info {
     type Error = ProtocolError;
 
     fn try_from(value: wire::InferenceInfoResponse) -> Result<Self, Self::Error> {
-        if !valid_engine(&value.engine) || value.strategies.len() > 2 {
+        if !valid_engine(&value.engine_id) || value.strategies.len() > 2 {
             return Err(ProtocolError::InvalidInference);
         }
         let strategies = value
@@ -88,7 +88,7 @@ impl TryFrom<wire::InferenceInfoResponse> for Info {
             return Err(ProtocolError::InvalidInference);
         }
         Ok(Self {
-            engine: value.engine,
+            engine: value.engine_id,
             strategy: if strategies.contains(&Strategy::Streaming) {
                 Strategy::Streaming
             } else {
@@ -102,7 +102,7 @@ impl From<Completion> for wire::InferenceComplete {
     fn from(value: Completion) -> Self {
         Self {
             text: value.text,
-            engine: value.engine,
+            engine_id: value.engine,
         }
     }
 }
@@ -111,12 +111,12 @@ impl TryFrom<wire::InferenceComplete> for Completion {
     type Error = ProtocolError;
 
     fn try_from(value: wire::InferenceComplete) -> Result<Self, Self::Error> {
-        if value.text.len() > MAX_TEXT_BYTES || !valid_engine(&value.engine) {
+        if value.text.len() > MAX_TEXT_BYTES || !valid_engine(&value.engine_id) {
             return Err(ProtocolError::InvalidInference);
         }
         Ok(Self {
             text: value.text,
-            engine: value.engine,
+            engine: value.engine_id,
         })
     }
 }
@@ -139,16 +139,16 @@ impl From<Event> for wire::InferenceResponse {
                     TranscriptUpdate::Finalized(segment) => {
                         wire::inference_update::Body::Finalized(wire::InferenceSegment {
                             span: segment.span().map(|span| wire::InferenceSpan {
-                                start: span.start,
-                                end: span.end,
+                                start_sample: span.start,
+                                end_sample: span.end,
                             }),
                             text: segment.into_text(),
                         })
                     }
                 };
                 Body::Update(wire::InferenceUpdate {
-                    retained_from,
-                    read_to: Some(read_to),
+                    retained_from_sample: retained_from,
+                    read_to_sample: Some(read_to),
                     body: Some(body),
                     completed: completed.map(Into::into),
                 })
@@ -167,8 +167,10 @@ impl TryFrom<wire::InferenceResponse> for Event {
                 Ok(Self::Complete(value.try_into()?))
             }
             wire::inference_response::Body::Update(value) => {
-                let read_to = value.read_to.ok_or(ProtocolError::InvalidInference)?;
-                if read_to > MAX_AUDIO_SAMPLES || value.retained_from > read_to {
+                let read_to = value
+                    .read_to_sample
+                    .ok_or(ProtocolError::InvalidInference)?;
+                if read_to > MAX_AUDIO_SAMPLES || value.retained_from_sample > read_to {
                     return Err(ProtocolError::InvalidInference);
                 }
                 let update = match value.body.ok_or(ProtocolError::InvalidInference)? {
@@ -180,14 +182,13 @@ impl TryFrom<wire::InferenceResponse> for Event {
                     }
                     wire::inference_update::Body::Finalized(segment) => {
                         if segment.text.len() > MAX_TEXT_BYTES
-                            || segment
-                                .span
-                                .as_ref()
-                                .is_some_and(|span| span.start > span.end || span.end > read_to)
+                            || segment.span.as_ref().is_some_and(|span| {
+                                span.start_sample > span.end_sample || span.end_sample > read_to
+                            })
                         {
                             return Err(ProtocolError::InvalidInference);
                         }
-                        let span = segment.span.map(|span| span.start..span.end);
+                        let span = segment.span.map(|span| span.start_sample..span.end_sample);
                         TranscriptUpdate::Finalized(
                             TranscriptSegment::new(segment.text, span)
                                 .map_err(|_| ProtocolError::InvalidInference)?,
@@ -196,7 +197,7 @@ impl TryFrom<wire::InferenceResponse> for Event {
                 };
                 Ok(Self::Update {
                     update,
-                    retained_from: value.retained_from,
+                    retained_from: value.retained_from_sample,
                     read_to,
                     completed: value.completed.map(TryInto::try_into).transpose()?,
                 })
@@ -220,8 +221,8 @@ mod tests {
         }
         assert!(
             Start::try_from(wire::InferenceStart {
-                engine: "whisper".into(),
-                language: "not a language".into(),
+                engine_id: "whisper".into(),
+                recognition_language: "not a language".into(),
                 strategy: Strategy::Whole.into(),
             })
             .is_err()
@@ -264,14 +265,14 @@ mod tests {
     fn inference_updates_reject_missing_fields_and_impossible_positions() {
         assert!(Event::try_from(wire::InferenceResponse { body: None }).is_err());
         let update = |retained_from, read_to, span: (u64, u64)| wire::InferenceUpdate {
-            retained_from,
-            read_to,
+            retained_from_sample: retained_from,
+            read_to_sample: read_to,
             body: Some(wire::inference_update::Body::Finalized(
                 wire::InferenceSegment {
                     text: "private words".into(),
                     span: Some(wire::InferenceSpan {
-                        start: span.0,
-                        end: span.1,
+                        start_sample: span.0,
+                        end_sample: span.1,
                     }),
                 },
             )),

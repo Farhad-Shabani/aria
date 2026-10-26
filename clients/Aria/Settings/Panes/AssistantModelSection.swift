@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AssistantModelSection: View {
-    let assistantID: Aria_Daemon_V1_AssistantID
+    let assistantID: Aria_Daemon_V1_AssistantId
     @Binding var modelID: String
     @StateObject private var models = AssistantModels()
     @State private var isChoosingCustomModel = false

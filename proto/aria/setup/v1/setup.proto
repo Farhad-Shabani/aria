@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-syntax = "proto3";
-
 // Setup as `aria::setup` exposes it: look at what the machine has, then
 // put the chosen pieces in place. Aria.app speaks it over the stdio of
 // the hidden `aria setup inspect` and `aria setup apply`, one message per
@@ -10,46 +8,80 @@ syntax = "proto3";
 // Recording a voice and the test press are not here: they are ordinary
 // daemon RPCs (SpeakerService, DictationService, SpeechService), and the
 // Accessibility grant shows as the `aria.hotkey` health service.
+
+syntax = "proto3";
+
 package aria.setup.v1;
 
 // What the machine has before anything is asked or changed.
 message Inspection {
   string config_path = 1;
-  bool macos = 2;
+  bool is_macos = 2;
+
   // What `aria setup --yes` would answer: a configured value verbatim,
   // even one setup does not know, else the default engine.
   Selections defaults = 3;
-  repeated Engine stt = 4;
-  repeated Engine tts = 5;
-  repeated Engine chat = 6;
+  repeated Choice transcription_choices = 4;
+  repeated Choice synthesis_choices = 5;
+  repeated Choice assistant_choices = 6;
+
   // In the order setup offers them.
   repeated Model models = 7;
   bool wakeword_installed = 8;
+
   ServiceStatus service = 9;
   Grant grant = 10;
-  // What a run still has to put in place; empty once setup is done.
-  repeated Missing missing = 11;
   // Unset when nothing is paired.
   PairedServer server = 12;
+
+  // What a run still has to put in place; empty once setup is done.
+  repeated Missing missing = 11;
 }
 
-// Choosing the server engine writes this endpoint to the config.
-message PairedServer {
-  string endpoint = 1;
-  // Hex, the form `aria remote revoke` takes on the server.
-  string client_fingerprint = 2;
+message ApplyRequest {
+  Selections selections = 1;
+  // Models to fetch, by ID; any other wanted one is skipped.
+  repeated string model_ids = 2;
 }
 
-message Engine {
+// Events until the run ends, then exactly one summary.
+message ApplyResponse {
+  oneof body {
+    SetupEvent event = 1;
+    Summary summary = 2;
+  }
+}
+
+// The five answers, as config.yaml spells them.
+message Selections {
+  string transcription_engine_id = 1;
+  string synthesis_engine_id = 2;
+  string assistant_id = 3;
+  bool wake_enabled = 4;
+  bool hotkey_enabled = 5;
+}
+
+message Choice {
   // What config.yaml calls it.
-  string key = 1;
-  string label = 2;
+  string id = 1;
+  string name = 2;
+
   Availability availability = 3;
   // The fix for MISSING, or why for UNSUPPORTED; empty when READY.
-  string note = 4;
+  string availability_detail = 4;
+
   // Exactly one per family: the configured one, else the first that runs.
-  bool default = 5;
-  ModelSource model = 6;
+  bool is_default = 5;
+  ModelSource model_source = 6;
+}
+
+enum Availability {
+  AVAILABILITY_UNSPECIFIED = 0;
+  AVAILABILITY_READY = 1;
+  // Pickable, but setup cannot make it work by itself.
+  AVAILABILITY_MISSING = 2;
+  // Not pickable on this host.
+  AVAILABILITY_UNSUPPORTED = 3;
 }
 
 // Where an engine's model comes from.
@@ -64,24 +96,16 @@ enum ModelSource {
   MODEL_SOURCE_REMOTE = 4;
 }
 
-enum Availability {
-  AVAILABILITY_UNSPECIFIED = 0;
-  AVAILABILITY_READY = 1;
-  // Pickable, but setup cannot make it work by itself.
-  AVAILABILITY_MISSING = 2;
-  // Not pickable on this host.
-  AVAILABILITY_UNSUPPORTED = 3;
-}
-
 message Model {
-  string name = 1;
-  string title = 2;
-  // The engine key that wants it; empty for one every install wants.
-  string engine = 3;
+  string id = 1;
+  string name = 2;
+  // The engine ID that wants it; empty for one every install wants.
+  string engine_id = 3;
+
   // What the transfer moves.
-  uint64 bytes = 4;
+  uint64 size_bytes = 4;
   // Whether it is fetched when nobody answers.
-  bool default = 5;
+  bool download_by_default = 5;
   OnDisk on_disk = 6;
   // Config points its engine at files elsewhere, so setup has nothing to
   // fetch.
@@ -97,6 +121,49 @@ enum OnDisk {
   ON_DISK_ABSENT = 3;
 }
 
+message ServiceStatus {
+  string unit_path = 1;
+  Job job = 2;
+  // Set when job is JOB_RUNNING.
+  uint32 job_pid = 3;
+
+  string socket_path = 4;
+  DaemonState daemon = 5;
+  // Set when the socket owner recorded its pid.
+  uint32 daemon_pid = 6;
+}
+
+enum Job {
+  JOB_UNSPECIFIED = 0;
+  JOB_ABSENT = 1;
+  JOB_IDLE = 2;
+  JOB_RUNNING = 3;
+}
+
+enum DaemonState {
+  DAEMON_STATE_UNSPECIFIED = 0;
+  DAEMON_STATE_READY = 1;
+  DAEMON_STATE_STARTING = 2;
+  DAEMON_STATE_NOT_RUNNING = 3;
+}
+
+// Whether the daemon's hotkey listener armed, which needs the macOS
+// Accessibility grant.
+enum Grant {
+  GRANT_UNSPECIFIED = 0;
+  GRANT_NOT_NEEDED = 1;
+  GRANT_ARMED = 2;
+  // The daemon runs but the listener has not armed; the grant is owed.
+  GRANT_WAITING = 3;
+}
+
+// Choosing the server engine writes this endpoint to the config.
+message PairedServer {
+  string endpoint = 1;
+  // Hex, the form `aria remote revoke` takes on the server.
+  string client_fingerprint = 2;
+}
+
 // One thing a run still has to put in place.
 message Missing {
   enum Kind {
@@ -105,36 +172,13 @@ message Missing {
     KIND_WAKEWORD = 2;
     KIND_MODEL = 3;
     KIND_SERVICE = 4;
+    // Reported only when a serving daemon's hotkey listener has not armed.
+    // A stopped daemon reports no grant state.
     KIND_GRANT = 5;
   }
   Kind kind = 1;
-  // The model's name when kind is KIND_MODEL.
-  string model = 2;
-}
-// KIND_GRANT is reported only by a serving daemon whose hotkey listener
-// has not armed; a daemon that is down says nothing about the grant.
-
-// The five answers, as config.yaml spells them.
-message Selections {
-  string stt = 1;
-  string tts = 2;
-  string chat = 3;
-  bool wake = 4;
-  bool hotkey = 5;
-}
-
-message ApplyRequest {
-  Selections selections = 1;
-  // Models to fetch, by name; any other wanted one is skipped.
-  repeated string downloads = 2;
-}
-
-// Events until the run ends, then exactly one summary.
-message ApplyResponse {
-  oneof body {
-    SetupEvent event = 1;
-    Summary summary = 2;
-  }
+  // The model ID when kind is KIND_MODEL.
+  string model_id = 2;
 }
 
 message SetupEvent {
@@ -153,29 +197,28 @@ enum Step {
 }
 
 message DownloadProgress {
-  string model = 1;
-  uint64 received = 2;
-  uint64 total = 3;
+  string model_id = 1;
+  uint64 received_bytes = 2;
+  uint64 total_bytes = 3;
 }
 
 message Summary {
-  ConfigWrite config = 1;
+  ConfigWrite config_write = 1;
   // Where the hand-written config was kept; empty when there was none.
-  string config_backup = 2;
+  string config_backup_path = 2;
+
   // Where the wake-word models went; empty when none ship beside the binary.
-  string wakeword_dir = 3;
-  repeated ModelOutcome models = 4;
+  string wakeword_directory = 3;
+
+  repeated ModelOutcome model_outcomes = 4;
+
   // The removed Python-era wake agent; empty when there was none.
-  string legacy_agent = 5;
+  string legacy_agent_path = 5;
+
   ServiceStatus service = 6;
   Grant grant = 7;
   // Whether the model a voice is recorded against is on disk.
   bool voice_model_present = 8;
-}
-
-message ModelOutcome {
-  string model = 1;
-  Outcome outcome = 2;
 }
 
 enum ConfigWrite {
@@ -184,44 +227,14 @@ enum ConfigWrite {
   CONFIG_WRITE_WRITTEN = 2;
 }
 
+message ModelOutcome {
+  string model_id = 1;
+  Outcome outcome = 2;
+}
+
 enum Outcome {
   OUTCOME_UNSPECIFIED = 0;
   OUTCOME_DOWNLOADED = 1;
   OUTCOME_PRESENT = 2;
   OUTCOME_SKIPPED = 3;
-}
-
-// Whether the daemon's hotkey listener armed, which needs the macOS
-// Accessibility grant.
-enum Grant {
-  GRANT_UNSPECIFIED = 0;
-  GRANT_NOT_NEEDED = 1;
-  GRANT_ARMED = 2;
-  // The daemon runs but the listener has not armed; the grant is owed.
-  GRANT_WAITING = 3;
-}
-
-message ServiceStatus {
-  string unit = 1;
-  Job job = 2;
-  // Set when job is JOB_RUNNING.
-  uint32 job_pid = 3;
-  string socket = 4;
-  DaemonState daemon = 5;
-  // Set when the socket owner recorded its pid.
-  uint32 daemon_pid = 6;
-}
-
-enum Job {
-  JOB_UNSPECIFIED = 0;
-  JOB_ABSENT = 1;
-  JOB_IDLE = 2;
-  JOB_RUNNING = 3;
-}
-
-enum DaemonState {
-  DAEMON_STATE_UNSPECIFIED = 0;
-  DAEMON_STATE_READY = 1;
-  DAEMON_STATE_STARTING = 2;
-  DAEMON_STATE_NOT_RUNNING = 3;
 }

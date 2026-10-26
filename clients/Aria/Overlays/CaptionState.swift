@@ -33,8 +33,8 @@ struct CaptionState {
             clearText()
             return
         }
-        committed = String(String.UnicodeScalarView(snapshot.committed.unicodeScalars.suffix(2048)))
-        provisional = String(String.UnicodeScalarView(snapshot.provisional.unicodeScalars.suffix(2048)))
+        committed = String(String.UnicodeScalarView(snapshot.committedText.unicodeScalars.suffix(2048)))
+        provisional = String(String.UnicodeScalarView(snapshot.provisionalText.unicodeScalars.suffix(2048)))
         updatedAt = now
     }
 

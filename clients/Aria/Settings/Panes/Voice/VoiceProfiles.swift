@@ -121,8 +121,8 @@ final class VoiceProfiles: ObservableObject {
     func speakerEvent(_ event: Aria_Daemon_V1_SpeakerEvent) {
         guard case .recording = enrollment?.phase else { return }
         switch event.stage {
-        case .recording: enrollment?.phase = .recording(taken: Int(event.index) - 1, listening: true)
-        case .sampleTaken: enrollment?.phase = .recording(taken: Int(event.index), listening: false)
+        case .recording: enrollment?.phase = .recording(taken: Int(event.sampleIndex) - 1, listening: true)
+        case .sampleTaken: enrollment?.phase = .recording(taken: Int(event.sampleIndex), listening: false)
         case .unspecified, .enrolled, .cancelled, .failed, .UNRECOGNIZED: break
         }
     }

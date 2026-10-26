@@ -102,7 +102,7 @@ final class PressController {
 
     private func ask() async -> UInt64? {
         guard let target = await PressClient.resolve(), !Task.isCancelled,
-            let heard = await record(projectDirectory: target.workdir)
+            let heard = await record(projectDirectory: target.workingDirectory)
         else { return nil }
         return await PressClient.ask(heard: heard, target: target)
     }

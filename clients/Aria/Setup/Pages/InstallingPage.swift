@@ -44,10 +44,10 @@ struct InstallingPage: View {
     }
 
     private func bar(_ model: String, _ progress: Aria_Setup_V1_DownloadProgress) -> some View {
-        let received = min(progress.received, progress.total)
+        let received = min(progress.receivedBytes, progress.totalBytes)
         let title = state.title(ofModel: model)
-        return ProgressView(value: Double(received), total: Double(max(progress.total, 1))) {
-            Text("\(title) · \(SetupState.size(received)) of \(SetupState.size(progress.total))")
+        return ProgressView(value: Double(received), total: Double(max(progress.totalBytes, 1))) {
+            Text("\(title) · \(SetupState.size(received)) of \(SetupState.size(progress.totalBytes))")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

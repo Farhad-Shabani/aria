@@ -66,22 +66,26 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
         let selections = request
             .selections
             .ok_or(SetupError::Invalid("no selections"))?;
-        if [&selections.stt, &selections.tts, &selections.chat]
-            .iter()
-            .any(|key| key.is_empty())
+        if [
+            &selections.transcription_engine_id,
+            &selections.synthesis_engine_id,
+            &selections.assistant_id,
+        ]
+        .iter()
+        .any(|key| key.is_empty())
         {
             return Err(SetupError::Invalid("an engine key is empty"));
         }
         Ok((
             Selections {
-                stt: selections.stt,
-                tts: selections.tts,
-                chat: selections.chat,
-                wake: selections.wake,
-                hotkey: selections.hotkey,
+                stt: selections.transcription_engine_id,
+                tts: selections.synthesis_engine_id,
+                chat: selections.assistant_id,
+                wake: selections.wake_enabled,
+                hotkey: selections.hotkey_enabled,
             },
             ApplyOptions {
-                downloads: request.downloads,
+                downloads: request.model_ids,
                 transfer_meter: false,
             },
         ))
@@ -92,22 +96,22 @@ impl From<&Inspection> for generated::Inspection {
     fn from(inspection: &Inspection) -> Self {
         Self {
             config_path: inspection.config_path.display().to_string(),
-            macos: inspection.macos,
+            is_macos: inspection.macos,
             defaults: Some(generated::Selections::from(&Selections::defaults(
                 inspection,
             ))),
-            stt: inspection.stt.iter().map(Into::into).collect(),
-            tts: inspection.tts.iter().map(Into::into).collect(),
-            chat: inspection.chat.iter().map(Into::into).collect(),
+            transcription_choices: inspection.stt.iter().map(Into::into).collect(),
+            synthesis_choices: inspection.tts.iter().map(Into::into).collect(),
+            assistant_choices: inspection.chat.iter().map(Into::into).collect(),
             models: inspection.models.iter().map(Into::into).collect(),
             wakeword_installed: inspection.wakeword_installed,
             service: Some((&inspection.service).into()),
             grant: generated::Grant::from(inspection.grant) as i32,
-            missing: inspection.missing().iter().map(Into::into).collect(),
             server: match &inspection.pairing {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
+            missing: inspection.missing().iter().map(Into::into).collect(),
         }
     }
 }
@@ -124,16 +128,16 @@ impl From<&PairedServer> for generated::PairedServer {
 impl From<&Selections> for generated::Selections {
     fn from(selections: &Selections) -> Self {
         Self {
-            stt: selections.stt.clone(),
-            tts: selections.tts.clone(),
-            chat: selections.chat.clone(),
-            wake: selections.wake,
-            hotkey: selections.hotkey,
+            transcription_engine_id: selections.stt.clone(),
+            synthesis_engine_id: selections.tts.clone(),
+            assistant_id: selections.chat.clone(),
+            wake_enabled: selections.wake,
+            hotkey_enabled: selections.hotkey,
         }
     }
 }
 
-impl From<&Choice> for generated::Engine {
+impl From<&Choice> for generated::Choice {
     fn from(choice: &Choice) -> Self {
         let (availability, note) = match &choice.availability {
             Availability::Ready => (generated::Availability::Ready, String::new()),
@@ -143,12 +147,12 @@ impl From<&Choice> for generated::Engine {
             }
         };
         Self {
-            key: choice.key.to_owned(),
-            label: choice.label.to_owned(),
+            id: choice.key.to_owned(),
+            name: choice.label.to_owned(),
             availability: availability as i32,
-            note,
-            default: choice.default,
-            model: generated::ModelSource::from(choice.model) as i32,
+            availability_detail: note,
+            is_default: choice.default,
+            model_source: generated::ModelSource::from(choice.model) as i32,
         }
     }
 }
@@ -156,11 +160,11 @@ impl From<&Choice> for generated::Engine {
 impl From<&ModelState> for generated::Model {
     fn from(model: &ModelState) -> Self {
         Self {
-            name: model.name.to_owned(),
-            title: model.title.to_owned(),
-            engine: model.engine.unwrap_or_default().to_owned(),
-            bytes: model.bytes,
-            default: model.default,
+            id: model.name.to_owned(),
+            name: model.title.to_owned(),
+            engine_id: model.engine.unwrap_or_default().to_owned(),
+            size_bytes: model.bytes,
+            download_by_default: model.default,
             on_disk: generated::OnDisk::from(model.on_disk) as i32,
             external: model.external,
         }
@@ -179,7 +183,7 @@ impl From<&Missing> for generated::Missing {
         };
         Self {
             kind: kind as i32,
-            model: model.to_owned(),
+            model_id: model.to_owned(),
         }
     }
 }
@@ -197,10 +201,10 @@ impl From<&Status> for generated::ServiceStatus {
             DaemonState::NotRunning => (generated::DaemonState::NotRunning, None),
         };
         Self {
-            unit: status.unit.display().to_string(),
+            unit_path: status.unit.display().to_string(),
             job: job as i32,
             job_pid,
-            socket: status.socket.display().to_string(),
+            socket_path: status.socket.display().to_string(),
             daemon: daemon as i32,
             daemon_pid: daemon_pid.unwrap_or(0),
         }
@@ -259,9 +263,9 @@ impl From<SetupEvent> for generated::SetupEvent {
                 received,
                 total,
             } => Event::Download(generated::DownloadProgress {
-                model: model.to_owned(),
-                received,
-                total,
+                model_id: model.to_owned(),
+                received_bytes: received,
+                total_bytes: total,
             }),
         };
         Self { event: Some(event) }
@@ -281,22 +285,22 @@ impl From<&Summary> for generated::Summary {
             ),
         };
         Self {
-            config: config as i32,
-            config_backup,
-            wakeword_dir: summary
+            config_write: config as i32,
+            config_backup_path: config_backup,
+            wakeword_directory: summary
                 .wakeword
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
-            models: summary
+            model_outcomes: summary
                 .models
                 .iter()
                 .map(|(model, outcome)| generated::ModelOutcome {
-                    model: (*model).to_owned(),
+                    model_id: (*model).to_owned(),
                     outcome: generated::Outcome::from(*outcome) as i32,
                 })
                 .collect(),
-            legacy_agent: summary
+            legacy_agent_path: summary
                 .legacy_agent
                 .as_ref()
                 .map(|path| path.display().to_string())
@@ -327,7 +331,7 @@ mod tests {
     fn request(selections: Option<generated::Selections>) -> generated::ApplyRequest {
         generated::ApplyRequest {
             selections,
-            downloads: vec!["whisper".to_owned()],
+            model_ids: vec!["whisper".to_owned()],
         }
     }
 
@@ -337,11 +341,11 @@ mod tests {
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
 
         let empty = generated::Selections {
-            stt: String::new(),
-            tts: "system".to_owned(),
-            chat: "codex".to_owned(),
-            wake: false,
-            hotkey: true,
+            transcription_engine_id: String::new(),
+            synthesis_engine_id: "system".to_owned(),
+            assistant_id: "codex".to_owned(),
+            wake_enabled: false,
+            hotkey_enabled: true,
         };
         let error = <(Selections, ApplyOptions)>::try_from(request(Some(empty))).unwrap_err();
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
@@ -350,11 +354,11 @@ mod tests {
     #[test]
     fn a_request_carries_the_answers_and_the_downloads() {
         let selections = generated::Selections {
-            stt: "whisper".to_owned(),
-            tts: "system".to_owned(),
-            chat: "codex".to_owned(),
-            wake: false,
-            hotkey: true,
+            transcription_engine_id: "whisper".to_owned(),
+            synthesis_engine_id: "system".to_owned(),
+            assistant_id: "codex".to_owned(),
+            wake_enabled: false,
+            hotkey_enabled: true,
         };
 
         let (selections, options) =

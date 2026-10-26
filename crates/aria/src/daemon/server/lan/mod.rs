@@ -510,7 +510,7 @@ mod tests {
     async fn pair(channel: &Channel, code: &str) -> Result<(), Status> {
         wire::pairing_service_client::PairingServiceClient::new(channel.clone())
             .pair(wire::PairRequest {
-                code: code.to_owned(),
+                pairing_code: code.to_owned(),
             })
             .await
             .map(drop)
@@ -673,7 +673,7 @@ mod tests {
         let history = wire::history_service_client::HistoryServiceClient::new(channel.clone())
             .list(wire::ListHistoryRequest {
                 query: String::new(),
-                before_id: None,
+                before_history_entry_id: None,
                 limit: 10,
             })
             .await

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-syntax = "proto3";
-
 // The Aria daemon client protocol, version 1.
 //
 // Served as gRPC over a unix stream socket in the per-user runtime
@@ -14,12 +12,15 @@ syntax = "proto3";
 // trades a one-time code for that pin. The Unix socket uses filesystem
 // permissions. LAN preference writes are restricted to relay settings; other
 // services stay local.
+
+syntax = "proto3";
+
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";
 import "aria/daemon/v1/speech.proto";
 
-// ---------- dictation ----------
+// Dictation
 
 service DictationService {
   // Record one utterance, transcribe, deliver. Progress arrives as it
@@ -38,6 +39,12 @@ service DictationService {
 }
 
 message StartDictationRequest {
+  // Absent uses the daemon-selected project vocabulary.
+  oneof project {
+    string project_directory = 5;
+    ProjectVocabularyDisabled project_vocabulary_disabled = 6;
+  }
+
   // Absent mode overrides use stored preferences; explicit UNSPECIFIED is invalid.
   optional OutputMode output_mode = 1;
   // Required: no stored preference applies, so UNSPECIFIED is invalid.
@@ -45,14 +52,7 @@ message StartDictationRequest {
   optional DeliveryMode delivery_mode = 3;
   // Hand the transcript back without delivering it anywhere.
   bool transcript_only = 4;
-  // Absent uses the daemon-selected project vocabulary.
-  oneof project {
-    string project_directory = 5;
-    ProjectVocabularyDisabled project_vocabulary_disabled = 6;
-  }
 }
-
-message ProjectVocabularyDisabled {}
 
 message StartDictationResponse {
   oneof body {
@@ -63,15 +63,6 @@ message StartDictationResponse {
   }
 }
 
-message DictationResult {
-  string text = 1;
-  // The own-voice gate judged the recording as the owner's: a speaker
-  // model with an enrolled owner kept every other voice out.
-  bool own_voice = 2;
-}
-
-message DictationStopAccepted {}
-
 message StopDictationRequest {
   // From the RECORDING event of the press to end. Zero is refused.
   uint64 recording_id = 1;
@@ -81,29 +72,40 @@ message StopDictationResponse {
   bool was_recording = 1;
 }
 
+message ProjectVocabularyDisabled {}
+
+message DictationResult {
+  string text = 1;
+  // The own-voice gate judged the recording as the owner's: a speaker
+  // model with an enrolled owner kept every other voice out.
+  bool own_voice = 2;
+}
+
+message DictationStopAccepted {}
+
 message DictationEvent {
+  // Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
+  uint64 recording_id = 4;
   DictationStage stage = 1;
   // The segment just transcribed, and only then. A live caption joins
   // these; the press ends at delivered, cancelled, or failed.
   string text = 2;
-  // Meaningful only when stage is DICTATION_STAGE_FAILED.
-  ErrorCode error_code = 3;
-  // Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
-  uint64 recording_id = 4;
+  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
+  // is speaking. Empty until a voice is recognized.
+  string speaker_name = 7;
   // Set on DICTATION_STAGE_DELIVERED. Unspecified for a press that
   // asked only for its transcript.
   DeliveryOutcome outcome = 5;
   // Set on DICTATION_STAGE_DELIVERED: how many words landed.
   uint32 word_count = 6;
-  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
-  // is speaking. Empty until a voice is recognized.
-  string speaker = 7;
+  // Meaningful only when stage is DICTATION_STAGE_FAILED.
+  ErrorCode error_code = 3;
 }
 
 message CaptionSnapshot {
   uint64 recording_id = 1;
-  string committed = 2;
-  string provisional = 3;
+  string committed_text = 2;
+  string provisional_text = 3;
   bool ended = 4;
 }
 
@@ -163,7 +165,7 @@ enum DeliveryOutcome {
   DELIVERY_OUTCOME_COPIED = 2;
 }
 
-// ---------- preferences ----------
+// Preferences
 
 service PreferencesService {
   rpc Get(GetPreferencesRequest) returns (PreferenceSnapshot);
@@ -173,6 +175,11 @@ service PreferencesService {
 }
 
 message GetPreferencesRequest {}
+
+message PreferenceSnapshot {
+  uint64 revision = 1;
+  UserPreferences preferences = 2;
+}
 
 message UpdatePreferencesRequest {
   // The revision the client last saw.
@@ -187,17 +194,12 @@ message UpdatePreferencesResponse {
   }
 }
 
-message PreferenceSnapshot {
-  uint64 revision = 1;
-  UserPreferences preferences = 2;
-}
-
 message PreferenceConflict {
   PreferenceSnapshot current = 1;
 }
 
 message AssistantModelPreference {
-  AssistantID assistant_id = 1;
+  AssistantId assistant_id = 1;
   string model_id = 2;
 }
 
@@ -218,7 +220,7 @@ message UserPreferences {
 
   // Assistant
 
-  optional AssistantID assistant_id = 7;
+  optional AssistantId assistant_id = 7;
   // Each assistant ID appears at most once.
   repeated AssistantModelPreference assistant_models = 8;
 
@@ -249,6 +251,58 @@ message UserPreferences {
   bool history_audio_retention = 17;
 }
 
+// Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
+// Numbered as `UserPreferences`.
+message PreferencePatch {
+  // Recording
+
+  // Whole milliseconds, 100 to 10000 inclusive.
+  optional uint64 silence_duration_ms = 1;
+  optional bool mute_output = 2;
+
+  // Recognition
+
+  // A language code such as "en" or "en-us", or "auto" to detect.
+  optional string recognition_language = 3;
+  // Filter for enrolled owner voices when a speaker model and owner exist.
+  optional bool own_voice_only = 4;
+  optional bool project_vocabulary = 5;
+  // Empty clears the selected directory; absent leaves it unchanged.
+  optional string vocabulary_directory = 6;
+
+  // Assistant
+
+  optional AssistantId assistant_id = 7;
+  // Only listed assistants change; an empty model_id resets to the default.
+  repeated AssistantModelPreference assistant_models = 8;
+
+  // Delivery
+
+  optional OutputMode output_mode = 9;
+  optional DeliveryMode delivery_mode = 10;
+
+  // Shortcuts
+
+  optional HotkeyKey dictation_hotkey = 11;
+  Hotkey ask_hotkey = 12;
+  Hotkey prompt_list_hotkey = 13;
+
+  // Prompts
+
+  // Replaces every entry.
+  Prompts prompts = 14;
+
+  // App overrides
+
+  // Replaces every entry.
+  ApplicationOverrides application_overrides = 15;
+
+  // History
+
+  optional bool dictation_history = 16;
+  optional bool history_audio_retention = 17;
+}
+
 // A Markdown file that says what to make of a recording, and the chord
 // that runs it the way the ask hotkey runs an ask.
 message Prompt {
@@ -258,7 +312,7 @@ message Prompt {
   // UNSPECIFIED is invalid.
   PromptKind kind = 3;
   // An absolute path to the Markdown instructions, read on each run.
-  string file = 4;
+  string instructions_path = 4;
   // Off, it runs neither from the prompt list nor from its chord.
   bool enabled = 5;
   // Absent for a prompt run only from the prompt list.
@@ -305,58 +359,6 @@ message ApplicationOverrides {
   repeated ApplicationOverride entries = 1;
 }
 
-// Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
-// Numbered as `UserPreferences`.
-message PreferencePatch {
-  // Recording
-
-  // Whole milliseconds, 100 to 10000 inclusive.
-  optional uint64 silence_duration_ms = 1;
-  optional bool mute_output = 2;
-
-  // Recognition
-
-  // A language code such as "en" or "en-us", or "auto" to detect.
-  optional string recognition_language = 3;
-  // Filter for enrolled owner voices when a speaker model and owner exist.
-  optional bool own_voice_only = 4;
-  optional bool project_vocabulary = 5;
-  // Empty clears the selected directory; absent leaves it unchanged.
-  optional string vocabulary_directory = 6;
-
-  // Assistant
-
-  optional AssistantID assistant_id = 7;
-  // Only listed assistants change; an empty model_id resets to the default.
-  repeated AssistantModelPreference assistant_models = 8;
-
-  // Delivery
-
-  optional OutputMode output_mode = 9;
-  optional DeliveryMode delivery_mode = 10;
-
-  // Shortcuts
-
-  optional HotkeyKey dictation_hotkey = 11;
-  Hotkey ask_hotkey = 12;
-  Hotkey prompt_list_hotkey = 13;
-
-  // Prompts
-
-  // Replaces every entry.
-  Prompts prompts = 14;
-
-  // App overrides
-
-  // Replaces every entry.
-  ApplicationOverrides application_overrides = 15;
-
-  // History
-
-  optional bool dictation_history = 16;
-  optional bool history_audio_retention = 17;
-}
-
 enum OutputMode {
   OUTPUT_MODE_UNSPECIFIED = 0;
   OUTPUT_MODE_INSERT = 1;
@@ -401,11 +403,14 @@ message Hotkey {
   Chord chord = 1;
 }
 
-// ---------- history ----------
+// History
 
 service HistoryService {
   rpc List(ListHistoryRequest) returns (ListHistoryResponse);
   rpc Get(GetHistoryRequest) returns (HistoryEntry);
+  // Re-transcribe retained audio and replace saved text; never deliver it.
+  // Defaults to the original engine and language. Failure preserves saved text.
+  rpc Regenerate(RegenerateHistoryRequest) returns (HistoryEntry);
   // Missing entries succeed. Active regeneration refuses deletion with BUSY.
   // Audio cleanup may remain pending; List reports cleanup warnings.
   rpc Delete(DeleteHistoryRequest) returns (DeleteHistoryResponse);
@@ -414,16 +419,13 @@ service HistoryService {
   // survive; preferences and active dictation are unchanged. Do not retry
   // automatically after a timeout or disconnect: the result is uncertain.
   rpc Clear(ClearHistoryRequest) returns (ClearHistoryResponse);
-  // Re-transcribe retained audio and replace saved text; never deliver it.
-  // Defaults to the original engine and language. Failure preserves saved text.
-  rpc Regenerate(RegenerateHistoryRequest) returns (HistoryEntry);
 }
 
 message ListHistoryRequest {
   // Literal text search, at most 256 UTF-8 bytes; empty matches all entries.
   string query = 1;
   // Exclusive cursor in descending ID order. Absent starts at the newest.
-  optional uint64 before_id = 2;
+  optional uint64 before_history_entry_id = 2;
   // Required range: 1 to 100. Zero is invalid.
   uint32 limit = 3;
 }
@@ -432,16 +434,22 @@ message ListHistoryResponse {
   // Each entry's `text` is a preview of at most 512 UTF-8 bytes; Get supplies
   // the full text.
   repeated HistoryEntry entries = 1;
-  optional uint64 next_before_id = 2;
+  optional uint64 next_before_history_entry_id = 2;
   optional string warning = 3;
 }
 
 message GetHistoryRequest {
-  uint64 id = 1;
+  uint64 history_entry_id = 1;
+}
+
+message RegenerateHistoryRequest {
+  uint64 history_entry_id = 1;
+  optional string transcription_engine_id = 2;
+  optional string recognition_language = 3;
 }
 
 message DeleteHistoryRequest {
-  uint64 id = 1;
+  uint64 history_entry_id = 1;
 }
 
 message DeleteHistoryResponse {}
@@ -454,39 +462,36 @@ message ClearHistoryResponse {
   bool audio_cleanup_pending = 2;
 }
 
-message RegenerateHistoryRequest {
-  uint64 id = 1;
-  optional string engine = 2;
-  optional string language = 3;
-}
-
 message HistoryEntry {
   uint64 id = 1;
   // Unix epoch milliseconds.
-  uint64 created_at_ms = 2;
+  uint64 created_at_unix_ms = 2;
   HistorySource source = 3;
   HistoryApplication application = 4;
+
   optional uint64 duration_ms = 5;
-  string engine = 6;
-  string language = 7;
+  string transcription_engine_id = 6;
+  string recognition_language = 7;
   string text = 8;
   // Whether transcription finished; List may still return a text preview.
   bool transcription_complete = 9;
-  HistoryStatus status = 10;
+  HistoryOutcome outcome = 10;
   RpcError error = 11;
-  HistoryAudioAvailability audio = 12;
+
+  HistoryAudioAvailability audio_availability = 12;
   // Present exactly when audio is AVAILABLE; Unix epoch milliseconds.
-  optional uint64 audio_expires_at_ms = 13;
+  optional uint64 audio_expires_at_unix_ms = 13;
   bool regenerating = 14;
   bool deletion_pending = 15;
   // Audio is available and neither regeneration nor deletion is pending.
   bool can_regenerate = 16;
+
   optional string warning = 17;
 }
 
 message HistoryApplication {
   string name = 1;
-  optional string bundle_id = 2;
+  optional string application_id = 2;
 }
 
 enum HistorySource {
@@ -495,12 +500,12 @@ enum HistorySource {
   HISTORY_SOURCE_RELAY = 2;
 }
 
-enum HistoryStatus {
-  HISTORY_STATUS_UNSPECIFIED = 0;
-  HISTORY_STATUS_SUCCESS = 1;
-  HISTORY_STATUS_TRANSCRIPTION_FAILED = 2;
-  HISTORY_STATUS_DELIVERY_FAILED = 3;
-  HISTORY_STATUS_RECOVERED = 4;
+enum HistoryOutcome {
+  HISTORY_OUTCOME_UNSPECIFIED = 0;
+  HISTORY_OUTCOME_SUCCESS = 1;
+  HISTORY_OUTCOME_TRANSCRIPTION_FAILED = 2;
+  HISTORY_OUTCOME_DELIVERY_FAILED = 3;
+  HISTORY_OUTCOME_RECOVERED = 4;
 }
 
 enum HistoryAudioAvailability {
@@ -510,11 +515,11 @@ enum HistoryAudioAvailability {
   HISTORY_AUDIO_AVAILABILITY_EXPIRED = 3;
 }
 
-// ---------- vocabulary ----------
+// Vocabulary
 
 service VocabularyService {
-  rpc Refresh(VocabularyRequest) returns (VocabularyStatus);
   rpc GetStatus(VocabularyRequest) returns (VocabularyStatus);
+  rpc Refresh(VocabularyRequest) returns (VocabularyStatus);
   rpc Forget(VocabularyRequest) returns (VocabularyStatus);
 }
 
@@ -542,29 +547,29 @@ enum VocabularyState {
   VOCABULARY_STATE_DISABLED = 6;
 }
 
-// ---------- chat ----------
+// Chat
 
 service ChatService {
   rpc ListAssistants(ListAssistantsRequest) returns (ListAssistantsResponse);
   rpc ListModels(ListAssistantModelsRequest) returns (ListAssistantModelsResponse);
+  // Where an ask goes, for a client with no working directory of its own.
+  // Answers with the focused project, else the configured one.
+  rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
   // Hand one prompt to an assistant. Answers with a ticket as soon as the ask
   // is taken; the reply follows as a `ChatEvent` under that ticket. Asks
   // run side by side, except that asks on one conversation (assistant and
   // session) take turns. Served only by a persistent daemon; an on-demand
   // daemon refuses with UNSUPPORTED.
   rpc Ask(AskRequest) returns (AskResponse);
-  // Stop an ask that is running or still waiting its turn. Its assistant is
-  // killed and the ask ends as a FAILED event with CANCELLED; the
-  // conversation stays resumable.
-  rpc Cancel(CancelAskRequest) returns (CancelAskResponse);
-  // Where an ask goes, for a client with no working directory of its own.
-  // Answers with the focused project, else the configured one.
-  rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
   // Run a stored prompt on a transcript and type the result into the app the
   // request names, else the one in front. One fresh assistant run with no
   // conversation, memory, or tools. Progress and the outcome arrive as
   // `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
   rpc RunPrompt(RunPromptRequest) returns (AskResponse);
+  // Stop an ask that is running or still waiting its turn. Its assistant is
+  // killed and the ask ends as a FAILED event with CANCELLED; the
+  // conversation stays resumable.
+  rpc Cancel(CancelAskRequest) returns (CancelAskResponse);
 }
 
 message ListAssistantsRequest {}
@@ -574,24 +579,33 @@ message ListAssistantsResponse {
 }
 
 message ListAssistantModelsRequest {
-  AssistantID assistant_id = 1;
+  AssistantId assistant_id = 1;
 }
 
 message ListAssistantModelsResponse {
   repeated AssistantModel models = 1;
 }
 
+message ResolveAskRequest {}
+
+message ResolveAskResponse {
+  // Both are what `Ask` wants: it takes no empty working directory and no
+  // unspecified assistant.
+  AssistantId assistant_id = 2;
+  string working_directory = 1;
+}
+
 message AskRequest {
-  AssistantID assistant_id = 1;
+  AssistantId assistant_id = 1;
   // A CLI model ID; empty uses the saved preference, then the assistant's default.
   string model_id = 2;
 
   // The directory the assistant works in.
-  string workdir = 3;
+  string working_directory = 3;
   // Names the conversation to continue; empty means the directory's.
-  string session = 4;
+  string session_name = 4;
   // Forget the running conversation and start another.
-  bool new_conversation = 5;
+  bool start_new_session = 5;
 
   string text = 6;
   // The text came from a recording the own-voice gate judged as the
@@ -607,12 +621,13 @@ message AskResponse {
 }
 
 message RunPromptRequest {
-  string text = 1;
   // A stored, enabled Prompt's ID.
   string prompt_id = 2;
   // The bundle ID of the app in front when the chord was first pressed. The
   // result is typed only there. Empty when unknown.
   string application_id = 3;
+
+  string text = 1;
 }
 
 message CancelAskRequest {
@@ -624,19 +639,10 @@ message CancelAskResponse {
   bool was_pending = 1;
 }
 
-message ResolveAskRequest {}
-
-message ResolveAskResponse {
-  // Both are what `Ask` wants: it takes no empty workdir and no
-  // unspecified assistant.
-  string workdir = 1;
-  AssistantID assistant_id = 2;
-}
-
 message ChatEvent {
   uint64 ticket = 1;
   // The assistant serving this ticket.
-  AssistantID assistant_id = 2;
+  AssistantId assistant_id = 2;
   ChatStage stage = 3;
   // What the assistant is doing; only on WORKING.
   ChatStep step = 4;
@@ -654,7 +660,7 @@ message ChatEvent {
 }
 
 message Assistant {
-  AssistantID id = 1;
+  AssistantId id = 1;
   string name = 2;
 }
 
@@ -663,7 +669,7 @@ message AssistantModel {
   string name = 2;
 }
 
-enum AssistantID {
+enum AssistantId {
   ASSISTANT_ID_UNSPECIFIED = 0;
   ASSISTANT_ID_CLAUDE_CODE = 1;
   ASSISTANT_ID_CODEX = 2;
@@ -689,16 +695,26 @@ enum ChatStep {
   CHAT_STEP_SKILL = 5;
 }
 
-// ---------- listen ----------
+// Listen
 
 service ListenService {
+  rpc GetStatus(GetListenStatusRequest) returns (GetListenStatusResponse);
   // Capture the machine's own audio output and transcribe it to a file
   // until Stop. Served only by a persistent daemon; an on-demand daemon
   // refuses with UNSUPPORTED. A Start while listening answers the running
   // session with `already_listening`.
   rpc Start(StartListenRequest) returns (StartListenResponse);
   rpc Stop(StopListenRequest) returns (StopListenResponse);
-  rpc GetStatus(GetListenStatusRequest) returns (GetListenStatusResponse);
+}
+
+message GetListenStatusRequest {}
+
+message GetListenStatusResponse {
+  bool listening = 1;
+  string transcript_path = 2;
+  // How the last session ended, when it failed after Start returned — a
+  // denied recording permission surfaces here. Empty otherwise.
+  string error_message = 3;
 }
 
 message StartListenRequest {
@@ -719,30 +735,20 @@ message StopListenResponse {
   string transcript_path = 2;
 }
 
-message GetListenStatusRequest {}
-
-message GetListenStatusResponse {
-  bool listening = 1;
-  string transcript_path = 2;
-  // How the last session ended, when it failed after Start returned — a
-  // denied recording permission surfaces here. Empty otherwise.
-  string error_message = 3;
-}
-
 message ListenEvent {
   ListenStage stage = 1;
   // The segment just transcribed; only for SEGMENT_TRANSCRIBED.
   string text = 2;
   // The tentative live speaker label; empty when unknown.
-  string label = 3;
+  string speaker_label = 3;
   // Meaningful only when stage is LISTEN_STAGE_FAILED.
   ErrorCode error_code = 4;
   // Seconds into the recording, so a follower's clock matches the
   // transcript file's however late it attached.
   uint64 offset_seconds = 5;
-  // For SPEAKER_MERGED: the voice that turned out to be `label`. Everything
-  // named this is now named `label`, in the file and from here on.
-  string merged_from = 6;
+  // For SPEAKER_MERGED: `merged_from_label` becomes `speaker_label` in the
+  // transcript file and subsequent events.
+  string merged_from_label = 6;
 }
 
 enum ListenStage {
@@ -753,18 +759,24 @@ enum ListenStage {
   LISTEN_STAGE_SPEAKER_MERGED = 4;
 }
 
-// ---------- speaker ----------
+// Speaker
 
 service SpeakerService {
+  // Every enrolled voice, whatever model measured it.
+  rpc List(ListSpeakersRequest) returns (ListSpeakersResponse);
   // Record several utterances and store the voice they agree on. Holds the
   // microphone for the whole call, so a press meanwhile is refused with
   // BUSY. Served only by a persistent daemon; an on-demand daemon refuses
   // with UNSUPPORTED. Progress arrives as SpeakerEvent on the event stream.
   rpc Enroll(EnrollSpeakerRequest) returns (EnrollSpeakerResponse);
-  // Every enrolled voice, whatever model measured it.
-  rpc List(ListSpeakersRequest) returns (ListSpeakersResponse);
   // Forget one voice. NOT_ENROLLED when there was nobody by that name.
   rpc Remove(RemoveSpeakerRequest) returns (RemoveSpeakerResponse);
+}
+
+message ListSpeakersRequest {}
+
+message ListSpeakersResponse {
+  repeated EnrolledSpeaker speakers = 1;
 }
 
 message EnrollSpeakerRequest {
@@ -774,7 +786,7 @@ message EnrollSpeakerRequest {
   // every voice after is a guest.
   SpeakerRole role = 2;
   // How many utterances to record, 2 to 10.
-  uint32 samples = 3;
+  uint32 sample_count = 3;
   // Whether a profile of this name may be replaced.
   bool replace = 4;
 }
@@ -785,31 +797,25 @@ message EnrollSpeakerResponse {
   float consistency = 2;
 }
 
-message ListSpeakersRequest {}
-
-message ListSpeakersResponse {
-  repeated EnrolledSpeaker speakers = 1;
-}
-
-message EnrolledSpeaker {
-  string name = 1;
-  SpeakerRole role = 2;
-  // Seconds since the Unix epoch.
-  uint64 enrolled_at_seconds = 3;
-}
-
 message RemoveSpeakerRequest {
   string name = 1;
 }
 
 message RemoveSpeakerResponse {}
 
+message EnrolledSpeaker {
+  string name = 1;
+  SpeakerRole role = 2;
+  // Seconds since the Unix epoch.
+  uint64 enrolled_at_unix_seconds = 3;
+}
+
 message SpeakerEvent {
   SpeakerStage stage = 1;
   // Which sample this is, counting from one, and how many were asked for.
   // Both zero outside RECORDING and SAMPLE_TAKEN.
-  uint32 index = 2;
-  uint32 samples = 3;
+  uint32 sample_index = 2;
+  uint32 sample_count = 3;
   // Meaningful only when stage is SPEAKER_STAGE_FAILED.
   ErrorCode error_code = 4;
 }
@@ -833,7 +839,7 @@ enum SpeakerStage {
   SPEAKER_STAGE_FAILED = 5;
 }
 
-// ---------- events ----------
+// Events
 
 service EventsService {
   // Live events only, with no replay. Subscribe before starting an operation

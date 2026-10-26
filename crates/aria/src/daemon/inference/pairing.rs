@@ -61,7 +61,7 @@ pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteCli
         wire::pairing_service_client::PairingServiceClient::new(channel)
             .max_decoding_message_size(1024)
             .pair(wire::PairRequest {
-                code: invitation.code.clone(),
+                pairing_code: invitation.code.clone(),
             })
             .await
             .map_err(rpc_error)?;

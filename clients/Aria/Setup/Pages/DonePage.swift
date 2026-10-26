@@ -7,16 +7,16 @@ struct DonePage: View {
 
     var body: some View {
         Form {
-            if state.selections.hotkey || state.selections.wake || askHotkey != nil {
+            if state.selections.hotkeyEnabled || state.selections.wakeEnabled || askHotkey != nil {
                 Section("How to use Aria") {
-                    if state.selections.hotkey {
+                    if state.selections.hotkeyEnabled {
                         LabeledContent(
                             "Dictate",
                             value: state.isHotkeyReady
                                 ? "Tap \(dictationKey.title)" : "Works once Accessibility access is given"
                         )
                     }
-                    if state.selections.wake {
+                    if state.selections.wakeEnabled {
                         LabeledContent("Dictate hands-free", value: "Say the wake word")
                     }
                     if let askHotkey {
@@ -26,8 +26,8 @@ struct DonePage: View {
             }
             if let summary = state.summary {
                 Section {
-                    ForEach(summary.models, id: \.model) { model in
-                        LabeledContent(state.title(ofModel: model.model), value: Self.outcome(model.outcome))
+                    ForEach(summary.modelOutcomes, id: \.modelID) { model in
+                        LabeledContent(state.title(ofModel: model.modelID), value: Self.outcome(model.outcome))
                     }
                     LabeledContent("Background service", value: "Registered")
                     if let heard = state.heard {

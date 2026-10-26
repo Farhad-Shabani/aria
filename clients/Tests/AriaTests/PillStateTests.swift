@@ -7,7 +7,7 @@ final class PillStateTests: XCTestCase {
 
     private func event(
         _ stage: Aria_Daemon_V1_ChatStage, ticket: UInt64,
-        assistantID: Aria_Daemon_V1_AssistantID = .claudeCode,
+        assistantID: Aria_Daemon_V1_AssistantId = .claudeCode,
         step: Aria_Daemon_V1_ChatStep = .thinking,
         skill: String = ""
     ) -> Aria_Daemon_V1_ChatEvent {
@@ -145,7 +145,7 @@ final class PillStateTests: XCTestCase {
         func event(_ stage: Aria_Daemon_V1_DictationStage, speaker: String = "") -> Aria_Daemon_V1_DictationEvent {
             var event = Aria_Daemon_V1_DictationEvent()
             event.stage = stage
-            event.speaker = speaker
+            event.speakerName = speaker
             return event
         }
         var heard = HeardVoice()

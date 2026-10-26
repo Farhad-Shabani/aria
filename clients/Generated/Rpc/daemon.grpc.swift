@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// The Aria daemon client protocol, version 1.
+//
+// Served as gRPC over a unix stream socket in the per-user runtime
+// directory. Alongside these services the daemon serves grpc.health.v1
+// (readiness) and server reflection (v1 and v1alpha).
+//
+// Paired phones reach RelayService, PreferencesService, and health on a
+// separate LAN TCP port, over TLS with a client certificate the Mac pinned.
+// PairingService.Pair is the one LAN call an unpaired phone may make: it
+// trades a one-time code for that pin. The Unix socket uses filesystem
+// permissions. LAN preference writes are restricted to relay settings; other
+// services stay local.
+
 // DO NOT EDIT.
 // swift-format-ignore-file
 // swiftlint:disable all
@@ -712,6 +725,19 @@ public enum Aria_Daemon_V1_HistoryService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Regenerate" metadata.
+        public enum Regenerate: Sendable {
+            /// Request type for "Regenerate".
+            public typealias Input = Aria_Daemon_V1_RegenerateHistoryRequest
+            /// Response type for "Regenerate".
+            public typealias Output = Aria_Daemon_V1_HistoryEntry
+            /// Descriptor for "Regenerate".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.HistoryService"),
+                method: "Regenerate",
+                type: .unary
+            )
+        }
         /// Namespace for "Delete" metadata.
         public enum Delete: Sendable {
             /// Request type for "Delete".
@@ -738,26 +764,13 @@ public enum Aria_Daemon_V1_HistoryService: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "Regenerate" metadata.
-        public enum Regenerate: Sendable {
-            /// Request type for "Regenerate".
-            public typealias Input = Aria_Daemon_V1_RegenerateHistoryRequest
-            /// Response type for "Regenerate".
-            public typealias Output = Aria_Daemon_V1_HistoryEntry
-            /// Descriptor for "Regenerate".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.HistoryService"),
-                method: "Regenerate",
-                type: .unary
-            )
-        }
         /// Descriptors for all methods in the "aria.daemon.v1.HistoryService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             List.descriptor,
             Get.descriptor,
+            Regenerate.descriptor,
             Delete.descriptor,
-            Clear.descriptor,
-            Regenerate.descriptor
+            Clear.descriptor
         ]
     }
 }
@@ -815,6 +828,30 @@ extension Aria_Daemon_V1_HistoryService {
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
+        /// Call the "Regenerate" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Re-transcribe retained audio and replace saved text; never deliver it.
+        /// > Defaults to the original engine and language. Failure preserves saved text.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RegenerateHistoryRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RegenerateHistoryRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_HistoryEntry` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func regenerate<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryEntry>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "Delete" method.
         ///
         /// > Source IDL Documentation:
@@ -863,30 +900,6 @@ extension Aria_Daemon_V1_HistoryService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ClearHistoryResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ClearHistoryResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "Regenerate" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Re-transcribe retained audio and replace saved text; never deliver it.
-        /// > Defaults to the original engine and language. Failure preserves saved text.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_RegenerateHistoryRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_RegenerateHistoryRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_HistoryEntry` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func regenerate<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryEntry>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -966,6 +979,41 @@ extension Aria_Daemon_V1_HistoryService {
             )
         }
 
+        /// Call the "Regenerate" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Re-transcribe retained audio and replace saved text; never deliver it.
+        /// > Defaults to the original engine and language. Failure preserves saved text.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RegenerateHistoryRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RegenerateHistoryRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_HistoryEntry` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func regenerate<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryEntry>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_HistoryService.Method.Regenerate.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "Delete" method.
         ///
         /// > Source IDL Documentation:
@@ -1037,41 +1085,6 @@ extension Aria_Daemon_V1_HistoryService {
                 onResponse: handleResponse
             )
         }
-
-        /// Call the "Regenerate" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Re-transcribe retained audio and replace saved text; never deliver it.
-        /// > Defaults to the original engine and language. Failure preserves saved text.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_RegenerateHistoryRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_RegenerateHistoryRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_HistoryEntry` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func regenerate<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryEntry>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_HistoryService.Method.Regenerate.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
     }
 }
 
@@ -1122,6 +1135,36 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
         try await self.get(
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetHistoryRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_HistoryEntry>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Regenerate" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Re-transcribe retained audio and replace saved text; never deliver it.
+    /// > Defaults to the original engine and language. Failure preserves saved text.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_RegenerateHistoryRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func regenerate<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.regenerate(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_HistoryEntry>(),
             options: options,
             onResponse: handleResponse
@@ -1189,36 +1232,6 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             onResponse: handleResponse
         )
     }
-
-    /// Call the "Regenerate" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Re-transcribe retained audio and replace saved text; never deliver it.
-    /// > Defaults to the original engine and language. Failure preserves saved text.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_RegenerateHistoryRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func regenerate<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.regenerate(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_HistoryEntry>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
 }
 
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
@@ -1276,6 +1289,40 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             metadata: metadata
         )
         return try await self.get(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Regenerate" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Re-transcribe retained audio and replace saved text; never deliver it.
+    /// > Defaults to the original engine and language. Failure preserves saved text.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func regenerate<Result>(
+        _ message: Aria_Daemon_V1_RegenerateHistoryRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.regenerate(
             request: request,
             options: options,
             onResponse: handleResponse
@@ -1351,40 +1398,6 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             onResponse: handleResponse
         )
     }
-
-    /// Call the "Regenerate" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Re-transcribe retained audio and replace saved text; never deliver it.
-    /// > Defaults to the original engine and language. Failure preserves saved text.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func regenerate<Result>(
-        _ message: Aria_Daemon_V1_RegenerateHistoryRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RegenerateHistoryRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.regenerate(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
 }
 
 // MARK: - aria.daemon.v1.VocabularyService
@@ -1396,19 +1409,6 @@ public enum Aria_Daemon_V1_VocabularyService: Sendable {
     public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.VocabularyService")
     /// Namespace for method metadata.
     public enum Method: Sendable {
-        /// Namespace for "Refresh" metadata.
-        public enum Refresh: Sendable {
-            /// Request type for "Refresh".
-            public typealias Input = Aria_Daemon_V1_VocabularyRequest
-            /// Response type for "Refresh".
-            public typealias Output = Aria_Daemon_V1_VocabularyStatus
-            /// Descriptor for "Refresh".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.VocabularyService"),
-                method: "Refresh",
-                type: .unary
-            )
-        }
         /// Namespace for "GetStatus" metadata.
         public enum GetStatus: Sendable {
             /// Request type for "GetStatus".
@@ -1419,6 +1419,19 @@ public enum Aria_Daemon_V1_VocabularyService: Sendable {
             public static let descriptor = GRPCCore.MethodDescriptor(
                 service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.VocabularyService"),
                 method: "GetStatus",
+                type: .unary
+            )
+        }
+        /// Namespace for "Refresh" metadata.
+        public enum Refresh: Sendable {
+            /// Request type for "Refresh".
+            public typealias Input = Aria_Daemon_V1_VocabularyRequest
+            /// Response type for "Refresh".
+            public typealias Output = Aria_Daemon_V1_VocabularyStatus
+            /// Descriptor for "Refresh".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.VocabularyService"),
+                method: "Refresh",
                 type: .unary
             )
         }
@@ -1437,8 +1450,8 @@ public enum Aria_Daemon_V1_VocabularyService: Sendable {
         }
         /// Descriptors for all methods in the "aria.daemon.v1.VocabularyService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
-            Refresh.descriptor,
             GetStatus.descriptor,
+            Refresh.descriptor,
             Forget.descriptor
         ]
     }
@@ -1459,25 +1472,6 @@ extension Aria_Daemon_V1_VocabularyService {
     /// You don't need to implement this protocol directly, use the generated
     /// implementation, ``Client``.
     public protocol ClientProtocol: Sendable {
-        /// Call the "Refresh" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_VocabularyRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_VocabularyRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_VocabularyStatus` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func refresh<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_VocabularyRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_VocabularyStatus>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
         /// Call the "GetStatus" method.
         ///
         /// - Parameters:
@@ -1490,6 +1484,25 @@ extension Aria_Daemon_V1_VocabularyService {
         ///       already finished.
         /// - Returns: The result of `handleResponse`.
         func getStatus<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_VocabularyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_VocabularyStatus>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Refresh" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_VocabularyRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_VocabularyRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_VocabularyStatus` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func refresh<Result>(
             request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
             serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_VocabularyRequest>,
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_VocabularyStatus>,
@@ -1533,36 +1546,6 @@ extension Aria_Daemon_V1_VocabularyService {
             self.client = client
         }
 
-        /// Call the "Refresh" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_VocabularyRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_VocabularyRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_VocabularyStatus` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func refresh<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_VocabularyRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_VocabularyStatus>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_VocabularyService.Method.Refresh.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
         /// Call the "GetStatus" method.
         ///
         /// - Parameters:
@@ -1586,6 +1569,36 @@ extension Aria_Daemon_V1_VocabularyService {
             try await self.client.unary(
                 request: request,
                 descriptor: Aria_Daemon_V1_VocabularyService.Method.GetStatus.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Refresh" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_VocabularyRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_VocabularyRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_VocabularyStatus` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func refresh<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_VocabularyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_VocabularyStatus>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_VocabularyService.Method.Refresh.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -1628,31 +1641,6 @@ extension Aria_Daemon_V1_VocabularyService {
 // Helpers providing default arguments to 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_VocabularyService.ClientProtocol {
-    /// Call the "Refresh" method.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_VocabularyRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func refresh<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.refresh(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_VocabularyRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_VocabularyStatus>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
     /// Call the "GetStatus" method.
     ///
     /// - Parameters:
@@ -1670,6 +1658,31 @@ extension Aria_Daemon_V1_VocabularyService.ClientProtocol {
         }
     ) async throws -> Result where Result: Sendable {
         try await self.getStatus(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_VocabularyRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_VocabularyStatus>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Refresh" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_VocabularyRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func refresh<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.refresh(
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_VocabularyRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_VocabularyStatus>(),
@@ -1707,35 +1720,6 @@ extension Aria_Daemon_V1_VocabularyService.ClientProtocol {
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_VocabularyService.ClientProtocol {
-    /// Call the "Refresh" method.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func refresh<Result>(
-        _ message: Aria_Daemon_V1_VocabularyRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.refresh(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
     /// Call the "GetStatus" method.
     ///
     /// - Parameters:
@@ -1759,6 +1743,35 @@ extension Aria_Daemon_V1_VocabularyService.ClientProtocol {
             metadata: metadata
         )
         return try await self.getStatus(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Refresh" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func refresh<Result>(
+        _ message: Aria_Daemon_V1_VocabularyRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_VocabularyStatus>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_VocabularyRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.refresh(
             request: request,
             options: options,
             onResponse: handleResponse
@@ -1830,32 +1843,6 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "Ask" metadata.
-        public enum Ask: Sendable {
-            /// Request type for "Ask".
-            public typealias Input = Aria_Daemon_V1_AskRequest
-            /// Response type for "Ask".
-            public typealias Output = Aria_Daemon_V1_AskResponse
-            /// Descriptor for "Ask".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
-                method: "Ask",
-                type: .unary
-            )
-        }
-        /// Namespace for "Cancel" metadata.
-        public enum Cancel: Sendable {
-            /// Request type for "Cancel".
-            public typealias Input = Aria_Daemon_V1_CancelAskRequest
-            /// Response type for "Cancel".
-            public typealias Output = Aria_Daemon_V1_CancelAskResponse
-            /// Descriptor for "Cancel".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
-                method: "Cancel",
-                type: .unary
-            )
-        }
         /// Namespace for "Resolve" metadata.
         public enum Resolve: Sendable {
             /// Request type for "Resolve".
@@ -1866,6 +1853,19 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
             public static let descriptor = GRPCCore.MethodDescriptor(
                 service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
                 method: "Resolve",
+                type: .unary
+            )
+        }
+        /// Namespace for "Ask" metadata.
+        public enum Ask: Sendable {
+            /// Request type for "Ask".
+            public typealias Input = Aria_Daemon_V1_AskRequest
+            /// Response type for "Ask".
+            public typealias Output = Aria_Daemon_V1_AskResponse
+            /// Descriptor for "Ask".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "Ask",
                 type: .unary
             )
         }
@@ -1882,14 +1882,27 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Cancel" metadata.
+        public enum Cancel: Sendable {
+            /// Request type for "Cancel".
+            public typealias Input = Aria_Daemon_V1_CancelAskRequest
+            /// Response type for "Cancel".
+            public typealias Output = Aria_Daemon_V1_CancelAskResponse
+            /// Descriptor for "Cancel".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "Cancel",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.ChatService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             ListAssistants.descriptor,
             ListModels.descriptor,
-            Ask.descriptor,
-            Cancel.descriptor,
             Resolve.descriptor,
-            RunPrompt.descriptor
+            Ask.descriptor,
+            RunPrompt.descriptor,
+            Cancel.descriptor
         ]
     }
 }
@@ -1947,6 +1960,30 @@ extension Aria_Daemon_V1_ChatService {
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListAssistantModelsResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
+        /// Call the "Resolve" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Where an ask goes, for a client with no working directory of its own.
+        /// > Answers with the focused project, else the configured one.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ResolveAskRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ResolveAskRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ResolveAskResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func resolve<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ResolveAskRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ResolveAskResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "Ask" method.
         ///
         /// > Source IDL Documentation:
@@ -1969,6 +2006,32 @@ extension Aria_Daemon_V1_ChatService {
         func ask<Result>(
             request: GRPCCore.ClientRequest<Aria_Daemon_V1_AskRequest>,
             serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_AskRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_AskResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RunPrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Run a stored prompt on a transcript and type the result into the app the
+        /// > request names, else the one in front. One fresh assistant run with no
+        /// > conversation, memory, or tools. Progress and the outcome arrive as
+        /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RunPromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_AskResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func runPrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RunPromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RunPromptRequest>,
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_AskResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result
@@ -1997,56 +2060,6 @@ extension Aria_Daemon_V1_ChatService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelAskResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "Resolve" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Where an ask goes, for a client with no working directory of its own.
-        /// > Answers with the focused project, else the configured one.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_ResolveAskRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_ResolveAskRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ResolveAskResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func resolve<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ResolveAskRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ResolveAskResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "RunPrompt" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Run a stored prompt on a transcript and type the result into the app the
-        /// > request names, else the one in front. One fresh assistant run with no
-        /// > conversation, memory, or tools. Progress and the outcome arrive as
-        /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_RunPromptRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_AskResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func runPrompt<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RunPromptRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RunPromptRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_AskResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -2126,6 +2139,41 @@ extension Aria_Daemon_V1_ChatService {
             )
         }
 
+        /// Call the "Resolve" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Where an ask goes, for a client with no working directory of its own.
+        /// > Answers with the focused project, else the configured one.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ResolveAskRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ResolveAskRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ResolveAskResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func resolve<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ResolveAskRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ResolveAskResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.Resolve.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "Ask" method.
         ///
         /// > Source IDL Documentation:
@@ -2164,77 +2212,6 @@ extension Aria_Daemon_V1_ChatService {
             )
         }
 
-        /// Call the "Cancel" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Stop an ask that is running or still waiting its turn. Its assistant is
-        /// > killed and the ask ends as a FAILED event with CANCELLED; the
-        /// > conversation stays resumable.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_CancelAskRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CancelAskResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func cancel<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelAskRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CancelAskRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelAskResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_ChatService.Method.Cancel.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
-        /// Call the "Resolve" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Where an ask goes, for a client with no working directory of its own.
-        /// > Answers with the focused project, else the configured one.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_ResolveAskRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_ResolveAskRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ResolveAskResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func resolve<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ResolveAskRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ResolveAskResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_ChatService.Method.Resolve.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
         /// Call the "RunPrompt" method.
         ///
         /// > Source IDL Documentation:
@@ -2265,6 +2242,42 @@ extension Aria_Daemon_V1_ChatService {
             try await self.client.unary(
                 request: request,
                 descriptor: Aria_Daemon_V1_ChatService.Method.RunPrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Cancel" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Stop an ask that is running or still waiting its turn. Its assistant is
+        /// > killed and the ask ends as a FAILED event with CANCELLED; the
+        /// > conversation stays resumable.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_CancelAskRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CancelAskResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func cancel<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelAskRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CancelAskRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelAskResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.Cancel.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -2327,6 +2340,36 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
         )
     }
 
+    /// Call the "Resolve" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Where an ask goes, for a client with no working directory of its own.
+    /// > Answers with the focused project, else the configured one.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ResolveAskRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func resolve<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.resolve(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ResolveAskRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ResolveAskResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Ask" method.
     ///
     /// > Source IDL Documentation:
@@ -2360,67 +2403,6 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
         )
     }
 
-    /// Call the "Cancel" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Stop an ask that is running or still waiting its turn. Its assistant is
-    /// > killed and the ask ends as a FAILED event with CANCELLED; the
-    /// > conversation stays resumable.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func cancel<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelAskRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.cancel(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_CancelAskRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_CancelAskResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Resolve" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Where an ask goes, for a client with no working directory of its own.
-    /// > Answers with the focused project, else the configured one.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_ResolveAskRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func resolve<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.resolve(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ResolveAskRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ResolveAskResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
     /// Call the "RunPrompt" method.
     ///
     /// > Source IDL Documentation:
@@ -2448,6 +2430,37 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RunPromptRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_AskResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Cancel" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Stop an ask that is running or still waiting its turn. Its assistant is
+    /// > killed and the ask ends as a FAILED event with CANCELLED; the
+    /// > conversation stays resumable.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func cancel<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelAskRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.cancel(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_CancelAskRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_CancelAskResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -2515,6 +2528,40 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
         )
     }
 
+    /// Call the "Resolve" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Where an ask goes, for a client with no working directory of its own.
+    /// > Answers with the focused project, else the configured one.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func resolve<Result>(
+        _ message: Aria_Daemon_V1_ResolveAskRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.resolve(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Ask" method.
     ///
     /// > Source IDL Documentation:
@@ -2546,75 +2593,6 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             metadata: metadata
         )
         return try await self.ask(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Cancel" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Stop an ask that is running or still waiting its turn. Its assistant is
-    /// > killed and the ask ends as a FAILED event with CANCELLED; the
-    /// > conversation stays resumable.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func cancel<Result>(
-        _ message: Aria_Daemon_V1_CancelAskRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_CancelAskRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.cancel(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Resolve" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Where an ask goes, for a client with no working directory of its own.
-    /// > Answers with the focused project, else the configured one.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func resolve<Result>(
-        _ message: Aria_Daemon_V1_ResolveAskRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ResolveAskResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ResolveAskRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.resolve(
             request: request,
             options: options,
             onResponse: handleResponse
@@ -2656,6 +2634,41 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             onResponse: handleResponse
         )
     }
+
+    /// Call the "Cancel" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Stop an ask that is running or still waiting its turn. Its assistant is
+    /// > killed and the ask ends as a FAILED event with CANCELLED; the
+    /// > conversation stays resumable.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func cancel<Result>(
+        _ message: Aria_Daemon_V1_CancelAskRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_CancelAskRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.cancel(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
 }
 
 // MARK: - aria.daemon.v1.ListenService
@@ -2667,6 +2680,19 @@ public enum Aria_Daemon_V1_ListenService: Sendable {
     public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ListenService")
     /// Namespace for method metadata.
     public enum Method: Sendable {
+        /// Namespace for "GetStatus" metadata.
+        public enum GetStatus: Sendable {
+            /// Request type for "GetStatus".
+            public typealias Input = Aria_Daemon_V1_GetListenStatusRequest
+            /// Response type for "GetStatus".
+            public typealias Output = Aria_Daemon_V1_GetListenStatusResponse
+            /// Descriptor for "GetStatus".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ListenService"),
+                method: "GetStatus",
+                type: .unary
+            )
+        }
         /// Namespace for "Start" metadata.
         public enum Start: Sendable {
             /// Request type for "Start".
@@ -2693,24 +2719,11 @@ public enum Aria_Daemon_V1_ListenService: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "GetStatus" metadata.
-        public enum GetStatus: Sendable {
-            /// Request type for "GetStatus".
-            public typealias Input = Aria_Daemon_V1_GetListenStatusRequest
-            /// Response type for "GetStatus".
-            public typealias Output = Aria_Daemon_V1_GetListenStatusResponse
-            /// Descriptor for "GetStatus".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ListenService"),
-                method: "GetStatus",
-                type: .unary
-            )
-        }
         /// Descriptors for all methods in the "aria.daemon.v1.ListenService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            GetStatus.descriptor,
             Start.descriptor,
-            Stop.descriptor,
-            GetStatus.descriptor
+            Stop.descriptor
         ]
     }
 }
@@ -2730,6 +2743,25 @@ extension Aria_Daemon_V1_ListenService {
     /// You don't need to implement this protocol directly, use the generated
     /// implementation, ``Client``.
     public protocol ClientProtocol: Sendable {
+        /// Call the "GetStatus" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetListenStatusRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetListenStatusRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetListenStatusResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getStatus<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetListenStatusRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetListenStatusResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "Start" method.
         ///
         /// > Source IDL Documentation:
@@ -2774,25 +2806,6 @@ extension Aria_Daemon_V1_ListenService {
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StopListenResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
-
-        /// Call the "GetStatus" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_GetListenStatusRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_GetListenStatusRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetListenStatusResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func getStatus<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetListenStatusRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetListenStatusResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
     }
 
     /// Generated client for the "aria.daemon.v1.ListenService" service.
@@ -2809,6 +2822,36 @@ extension Aria_Daemon_V1_ListenService {
         ///   - client: A `GRPCCore.GRPCClient` providing a communication channel to the service.
         public init(wrapping client: GRPCCore.GRPCClient<Transport>) {
             self.client = client
+        }
+
+        /// Call the "GetStatus" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetListenStatusRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetListenStatusRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetListenStatusResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getStatus<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetListenStatusRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetListenStatusResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ListenService.Method.GetStatus.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
         }
 
         /// Call the "Start" method.
@@ -2877,42 +2920,37 @@ extension Aria_Daemon_V1_ListenService {
                 onResponse: handleResponse
             )
         }
-
-        /// Call the "GetStatus" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_GetListenStatusRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_GetListenStatusRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetListenStatusResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func getStatus<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetListenStatusRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetListenStatusResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_ListenService.Method.GetStatus.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
     }
 }
 
 // Helpers providing default arguments to 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_ListenService.ClientProtocol {
+    /// Call the "GetStatus" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_GetListenStatusRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getStatus<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getStatus(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetListenStatusRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_GetListenStatusResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Start" method.
     ///
     /// > Source IDL Documentation:
@@ -2969,36 +3007,40 @@ extension Aria_Daemon_V1_ListenService.ClientProtocol {
             onResponse: handleResponse
         )
     }
-
-    /// Call the "GetStatus" method.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_GetListenStatusRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func getStatus<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.getStatus(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetListenStatusRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_GetListenStatusResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
 }
 
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_ListenService.ClientProtocol {
+    /// Call the "GetStatus" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getStatus<Result>(
+        _ message: Aria_Daemon_V1_GetListenStatusRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getStatus(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Start" method.
     ///
     /// > Source IDL Documentation:
@@ -3063,35 +3105,6 @@ extension Aria_Daemon_V1_ListenService.ClientProtocol {
             onResponse: handleResponse
         )
     }
-
-    /// Call the "GetStatus" method.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func getStatus<Result>(
-        _ message: Aria_Daemon_V1_GetListenStatusRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetListenStatusResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_GetListenStatusRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.getStatus(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
 }
 
 // MARK: - aria.daemon.v1.SpeakerService
@@ -3103,19 +3116,6 @@ public enum Aria_Daemon_V1_SpeakerService: Sendable {
     public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SpeakerService")
     /// Namespace for method metadata.
     public enum Method: Sendable {
-        /// Namespace for "Enroll" metadata.
-        public enum Enroll: Sendable {
-            /// Request type for "Enroll".
-            public typealias Input = Aria_Daemon_V1_EnrollSpeakerRequest
-            /// Response type for "Enroll".
-            public typealias Output = Aria_Daemon_V1_EnrollSpeakerResponse
-            /// Descriptor for "Enroll".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SpeakerService"),
-                method: "Enroll",
-                type: .unary
-            )
-        }
         /// Namespace for "List" metadata.
         public enum List: Sendable {
             /// Request type for "List".
@@ -3126,6 +3126,19 @@ public enum Aria_Daemon_V1_SpeakerService: Sendable {
             public static let descriptor = GRPCCore.MethodDescriptor(
                 service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SpeakerService"),
                 method: "List",
+                type: .unary
+            )
+        }
+        /// Namespace for "Enroll" metadata.
+        public enum Enroll: Sendable {
+            /// Request type for "Enroll".
+            public typealias Input = Aria_Daemon_V1_EnrollSpeakerRequest
+            /// Response type for "Enroll".
+            public typealias Output = Aria_Daemon_V1_EnrollSpeakerResponse
+            /// Descriptor for "Enroll".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SpeakerService"),
+                method: "Enroll",
                 type: .unary
             )
         }
@@ -3144,8 +3157,8 @@ public enum Aria_Daemon_V1_SpeakerService: Sendable {
         }
         /// Descriptors for all methods in the "aria.daemon.v1.SpeakerService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
-            Enroll.descriptor,
             List.descriptor,
+            Enroll.descriptor,
             Remove.descriptor
         ]
     }
@@ -3166,6 +3179,29 @@ extension Aria_Daemon_V1_SpeakerService {
     /// You don't need to implement this protocol directly, use the generated
     /// implementation, ``Client``.
     public protocol ClientProtocol: Sendable {
+        /// Call the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Every enrolled voice, whatever model measured it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListSpeakersRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListSpeakersRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListSpeakersResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func list<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListSpeakersRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListSpeakersResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "Enroll" method.
         ///
         /// > Source IDL Documentation:
@@ -3190,29 +3226,6 @@ extension Aria_Daemon_V1_SpeakerService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_EnrollSpeakerResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_EnrollSpeakerResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "List" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Every enrolled voice, whatever model measured it.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_ListSpeakersRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_ListSpeakersRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListSpeakersResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func list<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListSpeakersRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListSpeakersResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "Remove" method.
@@ -3255,6 +3268,40 @@ extension Aria_Daemon_V1_SpeakerService {
             self.client = client
         }
 
+        /// Call the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Every enrolled voice, whatever model measured it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListSpeakersRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListSpeakersRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListSpeakersResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func list<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListSpeakersRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListSpeakersResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_SpeakerService.Method.List.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "Enroll" method.
         ///
         /// > Source IDL Documentation:
@@ -3285,40 +3332,6 @@ extension Aria_Daemon_V1_SpeakerService {
             try await self.client.unary(
                 request: request,
                 descriptor: Aria_Daemon_V1_SpeakerService.Method.Enroll.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
-        /// Call the "List" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Every enrolled voice, whatever model measured it.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_ListSpeakersRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_ListSpeakersRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListSpeakersResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func list<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListSpeakersRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListSpeakersResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_SpeakerService.Method.List.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -3365,6 +3378,35 @@ extension Aria_Daemon_V1_SpeakerService {
 // Helpers providing default arguments to 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_SpeakerService.ClientProtocol {
+    /// Call the "List" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Every enrolled voice, whatever model measured it.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ListSpeakersRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func list<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.list(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListSpeakersRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListSpeakersResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Enroll" method.
     ///
     /// > Source IDL Documentation:
@@ -3392,35 +3434,6 @@ extension Aria_Daemon_V1_SpeakerService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_EnrollSpeakerRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_EnrollSpeakerResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "List" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Every enrolled voice, whatever model measured it.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_ListSpeakersRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func list<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.list(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListSpeakersRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListSpeakersResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -3459,6 +3472,39 @@ extension Aria_Daemon_V1_SpeakerService.ClientProtocol {
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension Aria_Daemon_V1_SpeakerService.ClientProtocol {
+    /// Call the "List" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Every enrolled voice, whatever model measured it.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func list<Result>(
+        _ message: Aria_Daemon_V1_ListSpeakersRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.list(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Enroll" method.
     ///
     /// > Source IDL Documentation:
@@ -3489,39 +3535,6 @@ extension Aria_Daemon_V1_SpeakerService.ClientProtocol {
             metadata: metadata
         )
         return try await self.enroll(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "List" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Every enrolled voice, whatever model measured it.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func list<Result>(
-        _ message: Aria_Daemon_V1_ListSpeakersRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListSpeakersResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListSpeakersRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.list(
             request: request,
             options: options,
             onResponse: handleResponse

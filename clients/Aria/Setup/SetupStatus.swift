@@ -20,7 +20,7 @@ final class SetupStatus: ObservableObject {
         required = Self.required(in: inspection)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
-        transcription = inspection.defaults.stt == Self.serverEngine ? .server : .thisMac
+        transcription = inspection.defaults.transcriptionEngineID == Self.serverEngine ? .server : .thisMac
     }
 
     func refresh() async {
@@ -32,11 +32,12 @@ final class SetupStatus: ObservableObject {
     }
 
     static func required(in inspection: Aria_Setup_V1_Inspection) -> [Aria_Setup_V1_Missing] {
-        let recognition = Set(inspection.models.filter { $0.engine == inspection.defaults.stt }.map(\.name))
+        let recognition = Set(
+            inspection.models.filter { $0.engineID == inspection.defaults.transcriptionEngineID }.map(\.id))
         return inspection.missing.filter { missing in
             switch missing.kind {
             case .grant: true
-            case .model: recognition.contains(missing.model)
+            case .model: recognition.contains(missing.modelID)
             case .config, .wakeword, .service, .unspecified, .UNRECOGNIZED: false
             }
         }
@@ -48,7 +49,7 @@ final class SetupStatus: ObservableObject {
     static let speakerModel = "speaker"
 
     static func hasSpeakerModelOnDisk(in inspection: Aria_Setup_V1_Inspection) -> Bool {
-        inspection.models.contains { $0.name == speakerModel && ($0.onDisk == .complete || $0.external) }
+        inspection.models.contains { $0.id == speakerModel && ($0.onDisk == .complete || $0.external) }
     }
 
     private static func explanation(_ missing: Aria_Setup_V1_Missing) -> String {
