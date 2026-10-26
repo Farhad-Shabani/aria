@@ -1,5 +1,6 @@
 //! Translation between generated wire messages and domain types.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use crate::chat::{
     AskTarget, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, PromptKind, Step,
     Ticket,
 };
-use crate::config::ChatAgent;
+use crate::config::AssistantId;
 use crate::delivery::{DeliveryOutcome, Placement, Rect};
 use crate::dictation::{
     CaptionSnapshot, DeliveryMode, DictationEvent, DictationOutcome, DictationRequest,
@@ -94,7 +95,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::RecordingTimeout
         | RpcErrorCode::DeliveryTimeout
         | RpcErrorCode::SpeechTimeout
-        | RpcErrorCode::AgentTimeout => tonic::Code::DeadlineExceeded,
+        | RpcErrorCode::AssistantTimeout => tonic::Code::DeadlineExceeded,
         RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryProjectUnavailable
         | RpcErrorCode::NoSpeech
@@ -102,7 +103,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::SpeakerModelMissing
         | RpcErrorCode::SpeakerInconsistentSamples
         | RpcErrorCode::ListenUnsupportedOs
-        | RpcErrorCode::AgentUnavailable
+        | RpcErrorCode::AssistantUnavailable
         | RpcErrorCode::ApplicationExcluded => tonic::Code::FailedPrecondition,
         RpcErrorCode::SpeakerAlreadyEnrolled => tonic::Code::AlreadyExists,
         RpcErrorCode::HistoryMissing
@@ -120,7 +121,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::DeliveryFailed
         | RpcErrorCode::SynthesisFailed
         | RpcErrorCode::PlaybackFailed
-        | RpcErrorCode::AgentFailed
+        | RpcErrorCode::AssistantFailed
         | RpcErrorCode::ListenCaptureFailed
         | RpcErrorCode::SpeakerProfileWriteFailed
         | RpcErrorCode::DurabilityUnconfirmed => tonic::Code::Internal,
@@ -304,7 +305,7 @@ impl From<ChatStage> for wire::Event {
 impl From<ChatStage> for wire::ChatEvent {
     fn from(stage: ChatStage) -> Self {
         let ticket = stage.ticket.0;
-        let agent = wire::ChatAgent::from(stage.agent) as i32;
+        let assistant_id = wire::AssistantId::from(stage.assistant_id) as i32;
         match stage.kind {
             ChatStageKind::Working(step) => {
                 let skill = match &step {
@@ -317,7 +318,7 @@ impl From<ChatStage> for wire::ChatEvent {
                     ticket,
                     text: String::new(),
                     error_message: String::new(),
-                    agent,
+                    assistant_id,
                     step: i32::from(step),
                     skill,
                     copied: false,
@@ -333,7 +334,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 ticket,
                 text,
                 error_message: String::new(),
-                agent,
+                assistant_id,
                 step: 0,
                 skill: String::new(),
                 copied,
@@ -344,7 +345,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 ticket,
                 text: String::new(),
                 error_message: message,
-                agent,
+                assistant_id,
                 step: 0,
                 skill: String::new(),
                 copied: false,
@@ -382,17 +383,17 @@ impl TryFrom<&wire::ChatEvent> for ChatStage {
         };
         Ok(Self {
             ticket: Ticket(event.ticket),
-            agent: decode_enum::<wire::ChatAgent>(event.agent, "agent")?,
+            assistant_id: decode_enum::<wire::AssistantId>(event.assistant_id, "assistant_id")?,
             kind,
         })
     }
 }
 
-impl From<ChatAgent> for wire::ChatAgent {
-    fn from(agent: ChatAgent) -> Self {
-        match agent {
-            ChatAgent::ClaudeCode => Self::ClaudeCode,
-            ChatAgent::Codex => Self::Codex,
+impl From<AssistantId> for wire::AssistantId {
+    fn from(assistant_id: AssistantId) -> Self {
+        match assistant_id {
+            AssistantId::ClaudeCode => Self::ClaudeCode,
+            AssistantId::Codex => Self::Codex,
         }
     }
 }
@@ -433,13 +434,13 @@ impl Step {
     }
 }
 
-impl WireEnum for wire::ChatAgent {
-    type Domain = ChatAgent;
+impl WireEnum for wire::AssistantId {
+    type Domain = AssistantId;
 
     fn into_domain(self) -> Option<Self::Domain> {
         match self {
-            Self::ClaudeCode => Some(ChatAgent::ClaudeCode),
-            Self::Codex => Some(ChatAgent::Codex),
+            Self::ClaudeCode => Some(AssistantId::ClaudeCode),
+            Self::Codex => Some(AssistantId::Codex),
             Self::Unspecified => None,
         }
     }
@@ -454,8 +455,8 @@ impl From<ChatRequest> for wire::AskRequest {
             output_mode: request
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
-            agent: wire::ChatAgent::from(request.agent) as i32,
-            model: request.model.unwrap_or_default(),
+            assistant_id: wire::AssistantId::from(request.assistant_id) as i32,
+            model_id: request.model_id.unwrap_or_default(),
             session: request.session.unwrap_or_default(),
             own_voice: request.own_voice,
         }
@@ -470,18 +471,20 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             return Err(ProtocolError::EmptyPrompt);
         }
         if request.workdir.is_empty() {
-            return Err(ProtocolError::MissingBody("agent working directory"));
+            return Err(ProtocolError::MissingBody("assistant working directory"));
         }
         let output_mode = request
             .output_mode
             .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
             .transpose()?;
-        let agent = decode_enum::<wire::ChatAgent>(request.agent, "agent")?;
+        let assistant_id = decode_enum::<wire::AssistantId>(request.assistant_id, "assistant_id")?;
+        crate::preferences::validate_model_id(&request.model_id)
+            .map_err(|_| ProtocolError::InvalidModelId)?;
         Ok(Self {
             text: request.text,
             workdir: request.workdir.into(),
-            agent,
-            model: Some(request.model).filter(|model| !model.is_empty()),
+            assistant_id,
+            model_id: Some(request.model_id).filter(|model_id| !model_id.is_empty()),
             session: Some(request.session).filter(|session| !session.is_empty()),
             new: request.new_conversation,
             output_mode,
@@ -1290,6 +1293,33 @@ impl TryFrom<wire::UpdatePreferencesRequest> for (u64, PreferencePatch) {
     }
 }
 
+fn decode_assistant_models(
+    entries: Vec<wire::AssistantModelPreference>,
+) -> Result<BTreeMap<AssistantId, String>, ProtocolError> {
+    let mut models = BTreeMap::new();
+    for entry in entries {
+        let assistant_id = decode_enum::<wire::AssistantId>(entry.assistant_id, "assistant_id")?;
+        crate::preferences::validate_model_id(&entry.model_id)
+            .map_err(|_| ProtocolError::InvalidModelId)?;
+        if models.insert(assistant_id, entry.model_id).is_some() {
+            return Err(ProtocolError::DuplicateAssistantModel);
+        }
+    }
+    Ok(models)
+}
+
+fn encode_assistant_models(
+    models: &BTreeMap<AssistantId, String>,
+) -> Vec<wire::AssistantModelPreference> {
+    models
+        .iter()
+        .map(|(assistant_id, model_id)| wire::AssistantModelPreference {
+            assistant_id: wire::AssistantId::from(*assistant_id) as i32,
+            model_id: model_id.clone(),
+        })
+        .collect()
+}
+
 impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
     type Error = ProtocolError;
 
@@ -1300,6 +1330,11 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
         Ok(Self {
             revision: snapshot.revision,
             preferences: UserPreferences {
+                assistant_models: decode_assistant_models(preferences.assistant_models)?,
+                assistant_id: preferences
+                    .assistant_id
+                    .map(|value| decode_enum::<wire::AssistantId>(value, "assistant_id"))
+                    .transpose()?,
                 recognition_language: preferences.recognition_language.parse()?,
                 output_mode: decode_enum::<wire::OutputMode>(
                     preferences.output_mode,
@@ -1348,9 +1383,30 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
     }
 }
 
+impl From<AssistantId> for wire::Assistant {
+    fn from(id: AssistantId) -> Self {
+        Self {
+            id: wire::AssistantId::from(id) as i32,
+            name: id.display_name().to_owned(),
+        }
+    }
+}
+
+impl TryFrom<wire::ListAssistantModelsRequest> for AssistantId {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::ListAssistantModelsRequest) -> Result<Self, Self::Error> {
+        decode_enum::<wire::AssistantId>(request.assistant_id, "assistant_id")
+    }
+}
+
 impl From<PreferencePatch> for wire::PreferencePatch {
     fn from(patch: PreferencePatch) -> Self {
         Self {
+            assistant_models: encode_assistant_models(&patch.assistant_models),
+            assistant_id: patch
+                .assistant_id
+                .map(|assistant_id| wire::AssistantId::from(assistant_id) as i32),
             recognition_language: patch
                 .recognition_language
                 .map(|language| language.as_str().to_owned()),
@@ -1390,6 +1446,11 @@ impl From<&PreferenceSnapshot> for wire::PreferenceSnapshot {
         Self {
             revision: snapshot.revision,
             preferences: Some(wire::UserPreferences {
+                assistant_models: encode_assistant_models(&snapshot.preferences.assistant_models),
+                assistant_id: snapshot
+                    .preferences
+                    .assistant_id
+                    .map(|assistant_id| wire::AssistantId::from(assistant_id) as i32),
                 recognition_language: snapshot
                     .preferences
                     .recognition_language
@@ -1445,6 +1506,11 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
 
     fn try_from(patch: wire::PreferencePatch) -> Result<Self, Self::Error> {
         Ok(Self {
+            assistant_models: decode_assistant_models(patch.assistant_models)?,
+            assistant_id: patch
+                .assistant_id
+                .map(|value| decode_enum::<wire::AssistantId>(value, "assistant_id"))
+                .transpose()?,
             recognition_language: patch
                 .recognition_language
                 .as_deref()
@@ -1575,7 +1641,7 @@ impl From<AskTarget> for wire::ResolveAskResponse {
     fn from(target: AskTarget) -> Self {
         Self {
             workdir: target.workdir.to_string_lossy().into_owned(),
-            agent: wire::ChatAgent::from(target.agent) as i32,
+            assistant_id: wire::AssistantId::from(target.assistant_id) as i32,
         }
     }
 }
@@ -1585,11 +1651,11 @@ impl TryFrom<wire::ResolveAskResponse> for AskTarget {
 
     fn try_from(response: wire::ResolveAskResponse) -> Result<Self, Self::Error> {
         if response.workdir.is_empty() {
-            return Err(ProtocolError::MissingBody("agent working directory"));
+            return Err(ProtocolError::MissingBody("assistant working directory"));
         }
         Ok(Self {
             workdir: response.workdir.into(),
-            agent: decode_enum::<wire::ChatAgent>(response.agent, "agent")?,
+            assistant_id: decode_enum::<wire::AssistantId>(response.assistant_id, "assistant_id")?,
         })
     }
 }
@@ -1853,9 +1919,9 @@ impl From<RpcErrorCode> for i32 {
             RpcErrorCode::PlaybackFailed => wire::ErrorCode::PlaybackFailed,
             RpcErrorCode::SpeechTimeout => wire::ErrorCode::SpeechTimeout,
             RpcErrorCode::VoiceUnavailable => wire::ErrorCode::VoiceUnavailable,
-            RpcErrorCode::AgentUnavailable => wire::ErrorCode::AgentUnavailable,
-            RpcErrorCode::AgentFailed => wire::ErrorCode::AgentFailed,
-            RpcErrorCode::AgentTimeout => wire::ErrorCode::AgentTimeout,
+            RpcErrorCode::AssistantUnavailable => wire::ErrorCode::AssistantUnavailable,
+            RpcErrorCode::AssistantFailed => wire::ErrorCode::AssistantFailed,
+            RpcErrorCode::AssistantTimeout => wire::ErrorCode::AssistantTimeout,
             RpcErrorCode::SpeakerModelMissing => wire::ErrorCode::SpeakerModelMissing,
             RpcErrorCode::SpeakerAlreadyEnrolled => wire::ErrorCode::SpeakerAlreadyEnrolled,
             RpcErrorCode::SpeakerNotEnrolled => wire::ErrorCode::SpeakerNotEnrolled,
@@ -1904,9 +1970,9 @@ impl TryFrom<i32> for RpcErrorCode {
             Ok(wire::ErrorCode::PlaybackFailed) => Self::PlaybackFailed,
             Ok(wire::ErrorCode::SpeechTimeout) => Self::SpeechTimeout,
             Ok(wire::ErrorCode::VoiceUnavailable) => Self::VoiceUnavailable,
-            Ok(wire::ErrorCode::AgentUnavailable) => Self::AgentUnavailable,
-            Ok(wire::ErrorCode::AgentFailed) => Self::AgentFailed,
-            Ok(wire::ErrorCode::AgentTimeout) => Self::AgentTimeout,
+            Ok(wire::ErrorCode::AssistantUnavailable) => Self::AssistantUnavailable,
+            Ok(wire::ErrorCode::AssistantFailed) => Self::AssistantFailed,
+            Ok(wire::ErrorCode::AssistantTimeout) => Self::AssistantTimeout,
             Ok(wire::ErrorCode::SpeakerModelMissing) => Self::SpeakerModelMissing,
             Ok(wire::ErrorCode::SpeakerAlreadyEnrolled) => Self::SpeakerAlreadyEnrolled,
             Ok(wire::ErrorCode::SpeakerNotEnrolled) => Self::SpeakerNotEnrolled,
@@ -1934,6 +2000,10 @@ impl TryFrom<i32> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
+    #[error("invalid assistant model ID")]
+    InvalidModelId,
+    #[error("duplicate assistant model preference")]
+    DuplicateAssistantModel,
     #[error("invalid inference message")]
     InvalidInference,
     #[error("invalid history {0}")]
@@ -1999,6 +2069,129 @@ mod tests {
     use crate::dictation::DictationError;
 
     use super::*;
+
+    #[test]
+    fn model_list_requires_a_known_assistant() {
+        assert_eq!(
+            AssistantId::try_from(wire::ListAssistantModelsRequest {
+                assistant_id: wire::AssistantId::Codex as i32
+            })
+            .unwrap(),
+            AssistantId::Codex
+        );
+        for assistant_id in [0, 99] {
+            assert!(
+                AssistantId::try_from(wire::ListAssistantModelsRequest { assistant_id }).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn assistant_models_preserve_resets_and_reject_invalid_wire_values() {
+        for model_id in [
+            None,
+            Some(String::new()),
+            Some("provider/model:revision".to_owned()),
+        ] {
+            let patch = PreferencePatch {
+                assistant_models: model_id
+                    .map(|id| (AssistantId::Codex, id))
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            };
+            assert_eq!(
+                PreferencePatch::try_from(wire::PreferencePatch::from(patch.clone())).unwrap(),
+                patch
+            );
+        }
+        let snapshot = PreferenceSnapshot {
+            preferences: UserPreferences {
+                assistant_models: [
+                    (AssistantId::ClaudeCode, "claude-example".to_owned()),
+                    (AssistantId::Codex, "codex-example".to_owned()),
+                ]
+                .into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            PreferenceSnapshot::try_from(wire::PreferenceSnapshot::from(&snapshot)).unwrap(),
+            snapshot
+        );
+        let valid = wire::AssistantModelPreference {
+            assistant_id: wire::AssistantId::Codex as i32,
+            model_id: "example".to_owned(),
+        };
+        for entries in [
+            vec![wire::AssistantModelPreference {
+                model_id: "--bad".to_owned(),
+                ..valid.clone()
+            }],
+            vec![wire::AssistantModelPreference {
+                assistant_id: 0,
+                ..valid.clone()
+            }],
+            vec![wire::AssistantModelPreference {
+                assistant_id: 99,
+                ..valid.clone()
+            }],
+            vec![valid.clone(), valid],
+        ] {
+            assert!(
+                PreferencePatch::try_from(wire::PreferencePatch {
+                    assistant_models: entries.clone(),
+                    ..Default::default()
+                })
+                .is_err()
+            );
+            let mut wire = wire::PreferenceSnapshot::from(&snapshot);
+            wire.preferences.as_mut().unwrap().assistant_models = entries;
+            assert!(PreferenceSnapshot::try_from(wire).is_err());
+        }
+    }
+
+    #[test]
+    fn chat_assistant_preferences_preserve_presence_and_reject_unknown_values() {
+        for assistant_id in [
+            None,
+            Some(AssistantId::ClaudeCode),
+            Some(AssistantId::Codex),
+        ] {
+            let patch = PreferencePatch {
+                assistant_id,
+                ..Default::default()
+            };
+            assert_eq!(
+                PreferencePatch::try_from(wire::PreferencePatch::from(patch.clone())).unwrap(),
+                patch
+            );
+            let snapshot = PreferenceSnapshot {
+                preferences: UserPreferences {
+                    assistant_id,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert_eq!(
+                PreferenceSnapshot::try_from(wire::PreferenceSnapshot::from(&snapshot)).unwrap(),
+                snapshot
+            );
+        }
+        for value in [0, 99] {
+            assert!(
+                PreferencePatch::try_from(wire::PreferencePatch {
+                    assistant_id: Some(value),
+                    ..Default::default()
+                })
+                .is_err()
+            );
+            let mut snapshot = wire::PreferenceSnapshot::from(&PreferenceSnapshot::default());
+            snapshot.preferences.as_mut().unwrap().assistant_id = Some(value);
+            assert!(PreferenceSnapshot::try_from(snapshot).is_err());
+        }
+    }
 
     #[test]
     fn output_modes_keep_their_wire_numbers() {
@@ -2226,7 +2419,7 @@ mod tests {
                 copied: false,
             }),
             ChatStageKind::Failed {
-                code: RpcErrorCode::AgentUnavailable,
+                code: RpcErrorCode::AssistantUnavailable,
                 message: "claude is missing".to_owned(),
             },
             ChatStageKind::Failed {
@@ -2238,7 +2431,7 @@ mod tests {
         for kind in kinds {
             let stage = ChatStage {
                 ticket: Ticket(7),
-                agent: ChatAgent::Codex,
+                assistant_id: AssistantId::Codex,
                 kind,
             };
             let sent = wire::ChatEvent::from(stage.clone());
@@ -2248,14 +2441,20 @@ mod tests {
                 stage
             );
             assert!(matches!(
-                ChatStage::try_from(&wire::ChatEvent { agent: 0, ..sent }),
-                Err(ProtocolError::InvalidEnum { field: "agent", .. })
+                ChatStage::try_from(&wire::ChatEvent {
+                    assistant_id: 0,
+                    ..sent
+                }),
+                Err(ProtocolError::InvalidEnum {
+                    field: "assistant_id",
+                    ..
+                })
             ));
         }
         // An older daemon's THINKING carried no step at all.
         let stale = wire::ChatEvent {
             stage: wire::ChatStage::Working as i32,
-            agent: wire::ChatAgent::Codex as i32,
+            assistant_id: wire::AssistantId::Codex as i32,
             ticket: 7,
             ..Default::default()
         };
@@ -2270,8 +2469,8 @@ mod tests {
         let request = ChatRequest {
             text: "say hi".to_owned(),
             workdir: "/tmp".into(),
-            agent: ChatAgent::Codex,
-            model: Some("mini".to_owned()),
+            assistant_id: AssistantId::Codex,
+            model_id: Some("mini".to_owned()),
             session: Some("planning".to_owned()),
             new: true,
             output_mode: Some(OutputMode::Copy),
@@ -2285,14 +2484,25 @@ mod tests {
         );
 
         let bare = wire::AskRequest::from(ChatRequest {
-            model: None,
+            model_id: None,
             session: None,
             ..request
         });
         assert_eq!(
-            ChatRequest::try_from(bare.clone()).expect("decodes").model,
+            ChatRequest::try_from(bare.clone())
+                .expect("decodes")
+                .model_id,
             None
         );
+        for model_id in ["bad\0id", "two words", "--option", &"x".repeat(201)] {
+            assert!(matches!(
+                ChatRequest::try_from(wire::AskRequest {
+                    model_id: model_id.to_owned(),
+                    ..bare.clone()
+                }),
+                Err(ProtocolError::InvalidModelId)
+            ));
+        }
         assert!(matches!(
             ChatRequest::try_from(wire::AskRequest {
                 text: "  ".to_owned(),
@@ -2301,8 +2511,14 @@ mod tests {
             Err(ProtocolError::EmptyPrompt)
         ));
         assert!(matches!(
-            ChatRequest::try_from(wire::AskRequest { agent: 0, ..bare }),
-            Err(ProtocolError::InvalidEnum { field: "agent", .. })
+            ChatRequest::try_from(wire::AskRequest {
+                assistant_id: 0,
+                ..bare
+            }),
+            Err(ProtocolError::InvalidEnum {
+                field: "assistant_id",
+                ..
+            })
         ));
     }
 
@@ -2788,7 +3004,7 @@ mod tests {
     fn an_ask_target_round_trips_and_an_empty_one_is_refused() {
         let target = AskTarget {
             workdir: "/tmp".into(),
-            agent: ChatAgent::ClaudeCode,
+            assistant_id: AssistantId::ClaudeCode,
         };
 
         let decoded = AskTarget::try_from(wire::ResolveAskResponse::from(target.clone()))
@@ -2798,7 +3014,7 @@ mod tests {
         assert!(
             AskTarget::try_from(wire::ResolveAskResponse {
                 workdir: String::new(),
-                agent: wire::ChatAgent::ClaudeCode as i32,
+                assistant_id: wire::AssistantId::ClaudeCode as i32,
             })
             .is_err()
         );

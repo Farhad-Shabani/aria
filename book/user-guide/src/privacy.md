@@ -52,20 +52,23 @@ these characters.
 
 ## Questions
 
-[Ask](./voice-chat.md) uses Claude Code or Codex. The agent may send the question
-and project content to cloud services and retain its own conversations. Aria's
-read-only agent settings restrict edits; they do not make the agent offline.
+[Ask](./voice-chat.md) sends your question to Claude Code or Codex. That
+assistant may send the question and project content to cloud services. It
+also keeps its own conversation records. Aria uses read-only settings to
+limit file changes, but those settings do not prevent network access.
 
 Starting a fresh Ask conversation does not delete earlier records. Clearing
-Aria's dictation history does not delete agent conversations.
+Aria's dictation history does not delete assistant conversations.
 
 ## Prompts
 
-[A prompt](./prompts.md) sends what you said and the prompt file's text to
-Claude Code or Codex, which may send them to cloud services. Each run is
-fresh: no project, conversation, or memory, and none of your agent's own
-instructions, settings, or tools. Aria keeps no prompt recording in dictation
-history.
+[Prompts](./prompts.md) send your spoken words as text, along with the prompt
+file's instructions, to Claude Code or Codex. The assistant may send that
+text to cloud services.
+
+Each run starts without a project, earlier conversation, or Aria memory.
+Aria also disables the assistant's tools and leaves out its saved instructions
+and settings. Prompt recordings are not kept in dictation history.
 
 ## Updates
 

@@ -1,0 +1,42 @@
+name: the CLI reads the inherited assistant and persists a shared choice
+config: |
+  transcription:
+    backend: whisper
+    model: ${WHISPER_MODEL}
+  capture:
+    backend: wav-file
+    path: ${FIXTURES}/silence.wav
+  chat:
+    assistant: codex
+expect:
+  daemon:
+    startup: success
+  client:
+    - run: [assistant]
+      stdout_contains: [codex]
+    - run: [assistant, claude-code]
+      stdout_contains: [claude-code]
+    - run: [assistant]
+      stdout_contains: [claude-code]
+    - run: [history, retain-audio, "true"]
+      stdout_contains: ["history audio retention: on"]
+    - run: [assistant]
+      stdout_contains: [claude-code]
+    - run: [assistant, codex]
+      stdout_contains: [codex]
+    - run: [assistant, model]
+      stdout_contains: [default]
+    - run: [assistant, model, codex-choice]
+      stdout_contains: [codex-choice]
+    - run: [assistant, model, claude-choice, --assistant, claude-code]
+      stdout_contains: [claude-choice]
+    - run: [assistant, model]
+      stdout_contains: [codex-choice]
+    - run: [assistant, claude-code]
+      stdout_contains: [claude-code]
+    - run: [assistant, model]
+      stdout_contains: [claude-choice]
+    - run: [assistant, model, --default]
+      stdout_contains: [default]
+    - run: [assistant, model, --assistant, codex]
+      stdout_contains: [codex-choice]

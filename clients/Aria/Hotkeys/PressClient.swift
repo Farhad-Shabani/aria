@@ -84,7 +84,7 @@ enum PressClient {
         var request = Aria_Daemon_V1_AskRequest()
         request.text = heard.text
         request.workdir = target.workdir
-        request.agent = target.agent
+        request.assistantID = target.assistantID
         // The reply is typed where the user is looking, or copied when the
         // app in front refuses insertion.
         request.outputMode = .insertOrCopy

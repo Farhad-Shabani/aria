@@ -6,9 +6,11 @@ mod overrides;
 mod prompts;
 mod store;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::audio::{SilenceDuration, SilenceDurationError};
+use crate::config::{AssistantId, ConfigError, Environment};
 use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
 use crate::dictation::{DeliveryMode, DictationRequest, DictationSettings};
 use crate::history::Application;
@@ -26,6 +28,8 @@ pub use store::{PreferencePatch, PreferenceSnapshot, UpdateResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserPreferences {
+    pub assistant_id: Option<AssistantId>,
+    pub assistant_models: BTreeMap<AssistantId, String>,
     pub dictation_history: bool,
     pub history_audio_retention: bool,
     pub mute_output: bool,
@@ -45,7 +49,44 @@ pub struct UserPreferences {
     pub prompts: Prompts,
 }
 
+pub(crate) fn validate_model_id(model_id: &str) -> Result<(), PreferenceStoreError> {
+    const MAX_MODEL_ID_BYTES: usize = 200;
+    if model_id.len() > MAX_MODEL_ID_BYTES
+        || model_id.starts_with('-')
+        || model_id
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(PreferenceStoreError::InvalidModelId);
+    }
+    Ok(())
+}
+
 impl UserPreferences {
+    pub fn model_id(&self, assistant_id: AssistantId) -> Option<&str> {
+        self.assistant_models
+            .get(&assistant_id)
+            .map(String::as_str)
+            .filter(|id| !id.is_empty())
+    }
+
+    pub(crate) fn validate_assistant_models(&self) -> Result<(), PreferenceStoreError> {
+        for model_id in self.assistant_models.values() {
+            validate_model_id(model_id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn resolve_assistant_id(
+        &self,
+        environment: &Environment,
+    ) -> Result<AssistantId, ConfigError> {
+        match self.assistant_id {
+            Some(assistant_id) => Ok(assistant_id),
+            None => AssistantId::load(environment),
+        }
+    }
+
     /// One chord can run only one thing: the ask, the prompt list, or a
     /// prompt.
     pub(super) fn shares_a_chord(&self) -> bool {
@@ -64,6 +105,8 @@ impl UserPreferences {
 impl Default for UserPreferences {
     fn default() -> Self {
         Self {
+            assistant_id: None,
+            assistant_models: BTreeMap::new(),
             dictation_history: true,
             history_audio_retention: false,
             mute_output: false,
@@ -152,6 +195,11 @@ impl UserPreferences {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PreferenceStoreError {
+    #[error(
+        "model IDs must be at most 200 bytes, contain no whitespace or control characters, and not start with a dash"
+    )]
+    InvalidModelId,
+
     #[error("preference file {} is not usable", path.display())]
     Document {
         path: PathBuf,

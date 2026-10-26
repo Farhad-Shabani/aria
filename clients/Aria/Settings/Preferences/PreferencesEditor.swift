@@ -43,7 +43,7 @@ struct PreferencesEditor {
     }
 
     /// Builds the patch here, so the edit closure never crosses into the task.
-    private func set<Value>(_ value: Value, edit: (Value, inout Aria_Daemon_V1_PreferencePatch) -> Void) {
+    func set<Value>(_ value: Value, edit: (Value, inout Aria_Daemon_V1_PreferencePatch) -> Void) {
         var patch = Aria_Daemon_V1_PreferencePatch()
         edit(value, &patch)
         let preferences = preferences

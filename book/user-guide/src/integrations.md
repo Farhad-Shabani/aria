@@ -23,8 +23,9 @@ these commands:
   Copy output. Run the command again to stop. For copying, use the next command.
 - **Aria Dictate to Clipboard** copies the completed transcript. It stops on
   silence.
-- **Aria Ask** opens Terminal, records a question, and prints the reply. It
-  requires an authenticated agent as described in [Ask](./voice-chat.md).
+- **Aria Ask** opens Terminal, records a question, and prints the reply.
+  First, install and sign in to Claude Code or Codex as described in
+  [Ask](./voice-chat.md#before-you-start).
 
 For insertion, keep an editable field focused in the intended app when
 opening Raycast and grant [Accessibility access](./macos.md#permissions).

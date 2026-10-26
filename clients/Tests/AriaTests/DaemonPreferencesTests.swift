@@ -27,6 +27,69 @@ final class DaemonPreferencesTests: XCTestCase {
         return response
     }
 
+    func testModelResetSurvivesConflictWithoutOverwritingTheOtherAssistant() async {
+        var models = Aria_Daemon_V1_PreferencePatch()
+        AssistantEdits.setModelID("claude-choice", for: .claudeCode, in: &models)
+        AssistantEdits.setModelID("codex-choice", for: .codex, in: &models)
+        var initial = snapshot(revision: 3)
+        initial.preferences.assistantID = .codex
+        models.apply(to: &initial.preferences)
+        var changed = initial
+        changed.revision = 4
+        AssistantEdits.setModelID("claude-updated", for: .claudeCode, in: &models)
+        models.apply(to: &changed.preferences)
+        var saved = changed
+        saved.revision = 5
+        AssistantEdits.setModelID("", for: .codex, in: &models)
+        models.apply(to: &saved.preferences)
+        let transport = FakePreferencesTransport()
+        transport.snapshots = [initial]
+        transport.updates = [conflict(changed), accepted(saved)]
+        let preferences = DaemonPreferences(transport: transport)
+        await preferences.sync()
+        transport.duringUpdate = {
+            XCTAssertEqual(preferences.snapshot.flatMap { AssistantEdits.modelID(in: $0) }, "")
+        }
+
+        await preferences.set { AssistantEdits.setModelID("", for: .codex, in: &$0) }
+
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
+        XCTAssertEqual(transport.sentUpdates.map { $0.patch.assistantModels.count }, [1, 1])
+        for update in transport.sentUpdates {
+            XCTAssertEqual(update.patch.assistantModels.first?.assistantID, .codex)
+            XCTAssertEqual(update.patch.assistantModels.first?.modelID, "")
+        }
+        XCTAssertEqual(preferences.snapshot.flatMap { AssistantEdits.modelID(in: $0) }, "")
+        XCTAssertEqual(
+            preferences.snapshot?.assistantModels.first { $0.assistantID == .claudeCode }?.modelID, "claude-updated")
+        XCTAssertNil(preferences.lastError)
+    }
+
+    func testAssistantEditStaysVisibleAndSurvivesARevisionConflict() async {
+        var initial = snapshot(revision: 3)
+        initial.preferences.assistantID = .claudeCode
+        var changedElsewhere = snapshot(revision: 4, language: "auto")
+        changedElsewhere.preferences.assistantID = .claudeCode
+        var saved = snapshot(revision: 5, language: "auto")
+        saved.preferences.assistantID = .codex
+        let transport = FakePreferencesTransport()
+        transport.snapshots = [initial]
+        transport.updates = [conflict(changedElsewhere), accepted(saved)]
+        let preferences = DaemonPreferences(transport: transport)
+        await preferences.sync()
+        transport.duringUpdate = {
+            XCTAssertEqual(preferences.snapshot?.assistantID, .codex)
+        }
+
+        await preferences.set { $0.assistantID = .codex }
+
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
+        XCTAssertEqual(transport.sentUpdates.map(\.patch.assistantID), [.codex, .codex])
+        XCTAssertEqual(preferences.snapshot?.assistantID, .codex)
+        XCTAssertEqual(preferences.snapshot?.recognitionLanguage, "auto")
+        XCTAssertNil(preferences.lastError)
+    }
+
     func testSyncUsesHistoryBooleanWithoutPresenceFallback() async {
         let transport = FakePreferencesTransport()
         transport.snapshots = [snapshot(revision: 3)]
@@ -56,23 +119,6 @@ final class DaemonPreferencesTests: XCTestCase {
         XCTAssertEqual(transport.sentUpdates[0].patch.muteOutput, true)
         XCTAssertEqual(preferences.snapshot?.muteOutput, true)
         XCTAssertNil(preferences.lastError)
-    }
-
-    func testConflictAdoptsTheDaemonRevisionAndRetriesOnce() async {
-        let transport = FakePreferencesTransport()
-        transport.snapshots = [snapshot(revision: 3)]
-        transport.updates = [
-            conflict(snapshot(revision: 7, language: "auto")),
-            accepted(snapshot(revision: 8, mute: true, language: "auto")),
-        ]
-        let preferences = DaemonPreferences(transport: transport)
-        await preferences.sync()
-
-        await preferences.set { $0.muteOutput = true }
-
-        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 7])
-        XCTAssertEqual(preferences.snapshot?.recognitionLanguage, "auto")
-        XCTAssertEqual(preferences.snapshot?.muteOutput, true)
     }
 
     func testSyncAdoptsTheSnapshotAndIgnoresOlderRevisions() async {

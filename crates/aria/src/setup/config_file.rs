@@ -54,7 +54,7 @@ impl Existing {
         Self {
             stt: file.transcription.backend.clone(),
             tts: file.tts.backend.clone(),
-            chat: file.chat.agent.clone(),
+            chat: file.chat.assistant.clone(),
             wake: file.wake.enabled,
             hotkey: file.hotkey.enabled,
         }
@@ -98,7 +98,7 @@ impl Selections {
         }
         file.transcription.backend = Some(self.stt.clone());
         file.tts.backend = Some(self.tts.clone());
-        file.chat.agent = Some(self.chat.clone());
+        file.chat.assistant = Some(self.chat.clone());
         file.wake.enabled = Some(self.wake);
         file.hotkey.enabled = Some(self.hotkey);
     }

@@ -53,7 +53,7 @@ mod tests {
             copied: false,
         });
         let failed = ChatStageKind::Failed {
-            code: RpcErrorCode::AgentFailed,
+            code: RpcErrorCode::AssistantFailed,
             message: String::new(),
         };
 

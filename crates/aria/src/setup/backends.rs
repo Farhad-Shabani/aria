@@ -2,7 +2,7 @@
 
 use std::env;
 
-use crate::config::{FileConfig, backend, chat_agent, tts_backend};
+use crate::config::{AssistantId, FileConfig, backend, tts_backend};
 use crate::primitives::file_inspection::InspectedFile;
 
 use super::assets::{self, Asset};
@@ -272,29 +272,17 @@ impl Backend for Tts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Chat {
-    ClaudeCode,
-    Codex,
-}
-
-impl Backend for Chat {
-    const TITLE: &'static str = "Chat agent (for `aria ask`)";
-    const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex];
-    const DEFAULT: &'static str = chat_agent::DEFAULT;
+impl Backend for AssistantId {
+    const TITLE: &'static str = "Assistant (for Ask and Prompts)";
+    const ALL: &'static [Self] = Self::ALL;
+    const DEFAULT: &'static str = Self::DEFAULT.name();
 
     fn key(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => chat_agent::CLAUDE_CODE,
-            Self::Codex => chat_agent::CODEX,
-        }
+        self.name()
     }
 
     fn label(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::Codex => "Codex",
-        }
+        self.display_name()
     }
 
     fn availability(self, host: &Host) -> Availability {

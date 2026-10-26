@@ -1,4 +1,4 @@
-//! One agent run: spawn, feed the prompt on stdin, collect what came back.
+//! One assistant run: spawn, feed the prompt on stdin, collect what came back.
 
 use std::process::{Command, ExitStatus};
 use std::time::Duration;
@@ -6,7 +6,7 @@ use std::time::Duration;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{self, Bounds, Capture, RunError};
 
-use super::AgentError;
+use super::AssistantError;
 
 /// How much of a failed run's stderr `failure` quotes. Raw stdout is never
 /// quoted: it may hold the reply.
@@ -19,7 +19,7 @@ const STDERR_KEEP_BYTES: usize = 64 * 1024;
 /// Caps retained stdout; exceeding it requests termination of the child.
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
-/// The status is the agent's; whether the output counts as a reply is for
+/// The status is the assistant's; whether the output counts as a reply is for
 /// its parser to say.
 #[derive(Debug)]
 pub(crate) struct Output {
@@ -31,22 +31,22 @@ pub(crate) struct Output {
 impl Output {
     /// A run that died before writing its reply explains itself on stderr;
     /// one that wrote it is explained by what it wrote.
-    pub(crate) fn reply<T>(&self, parsed: Result<T, AgentError>) -> Result<T, AgentError> {
+    pub(crate) fn reply<T>(&self, parsed: Result<T, AssistantError>) -> Result<T, AssistantError> {
         match parsed {
-            Err(AgentError::Malformed(_)) if !self.status.success() => Err(self.failure()),
+            Err(AssistantError::Malformed(_)) if !self.status.success() => Err(self.failure()),
             parsed => parsed,
         }
     }
 
     /// The failure a run reports when its output holds no better reason.
-    fn failure(&self) -> AgentError {
+    fn failure(&self) -> AssistantError {
         let stderr = self.stderr.trim();
         let start = stderr.len().saturating_sub(STDERR_QUOTE_BYTES);
         let quoted = match stderr.get(start..) {
             Some(tail) if !tail.is_empty() => tail,
             _ => "no diagnostics",
         };
-        AgentError::Failed(format!("exited with {}: {quoted}", self.status))
+        AssistantError::Failed(format!("exited with {}: {quoted}", self.status))
     }
 }
 
@@ -58,7 +58,7 @@ pub(crate) fn run_cli(
     on_line: impl FnMut(&str) + Send,
     cancel: &CancelToken,
     timeout: Duration,
-) -> Result<Output, AgentError> {
+) -> Result<Output, AssistantError> {
     let binary = command.get_program().to_owned();
     let bounds = Bounds {
         timeout,
@@ -75,17 +75,17 @@ pub(crate) fn run_cli(
         })
         .map_err(|error| match error {
             RunError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                AgentError::Missing {
+                AssistantError::Missing {
                     binary: binary.into(),
                 }
             }
-            RunError::Spawn(source) => AgentError::Spawn(source),
-            RunError::Write(source) => AgentError::Input(source),
-            RunError::Read(source) => AgentError::Io(source),
-            RunError::Wait(source) => AgentError::Wait(source),
-            RunError::TimedOut(timeout) => AgentError::Timeout(timeout),
-            RunError::Cancelled => AgentError::Cancelled,
-            RunError::OutputTooLarge { limit, .. } => AgentError::OutputTooLarge(limit),
+            RunError::Spawn(source) => AssistantError::Spawn(source),
+            RunError::Write(source) => AssistantError::Input(source),
+            RunError::Read(source) => AssistantError::Io(source),
+            RunError::Wait(source) => AssistantError::Wait(source),
+            RunError::TimedOut(timeout) => AssistantError::Timeout(timeout),
+            RunError::Cancelled => AssistantError::Cancelled,
+            RunError::OutputTooLarge { limit, .. } => AssistantError::OutputTooLarge(limit),
         })?;
     lines.finish();
     Ok(Output {
@@ -142,11 +142,11 @@ mod tests {
 
     #[test]
     fn a_missing_binary_is_named() {
-        let mut command = Command::new("/nonexistent/aria-agent");
+        let mut command = Command::new("/nonexistent/aria-assistant");
         let error = run_cli(&mut command, "hi", |_| {}, &CancelToken::never(), PATIENCE)
             .expect_err("the spawn should fail");
 
-        assert!(matches!(error, AgentError::Missing { .. }), "{error:?}");
+        assert!(matches!(error, AssistantError::Missing { .. }), "{error:?}");
     }
 
     #[test]
@@ -178,7 +178,10 @@ mod tests {
         let error = run_cli(&mut command, "", |_| {}, &CancelToken::never(), PATIENCE)
             .expect_err("the output is too large");
 
-        assert!(matches!(error, AgentError::OutputTooLarge(_)), "{error:?}");
+        assert!(
+            matches!(error, AssistantError::OutputTooLarge(_)),
+            "{error:?}"
+        );
         assert!(started.elapsed() < PATIENCE);
     }
 
@@ -198,7 +201,10 @@ mod tests {
         )
         .expect_err("the output is too large");
 
-        assert!(matches!(error, AgentError::OutputTooLarge(_)), "{error:?}");
+        assert!(
+            matches!(error, AssistantError::OutputTooLarge(_)),
+            "{error:?}"
+        );
         assert_eq!(lines, 0);
     }
 
@@ -262,7 +268,7 @@ mod tests {
         )
         .expect_err("the child should time out");
 
-        assert!(matches!(error, AgentError::Timeout(_)), "{error:?}");
+        assert!(matches!(error, AssistantError::Timeout(_)), "{error:?}");
         assert!(started.elapsed() < PATIENCE);
     }
 
@@ -284,7 +290,7 @@ mod tests {
             run_cli(&mut command, "", |_| {}, &cancel, PATIENCE).expect_err("the run is cancelled");
 
         canceller.join().expect("the canceller finishes");
-        assert!(matches!(error, AgentError::Cancelled), "{error:?}");
+        assert!(matches!(error, AssistantError::Cancelled), "{error:?}");
         assert!(started.elapsed() < PATIENCE);
     }
 }

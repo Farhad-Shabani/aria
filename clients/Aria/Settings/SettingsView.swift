@@ -12,6 +12,7 @@ struct SettingsView: View {
     @ObservedObject var setupStatus: SetupStatus
     let voices: VoiceProfiles
     let serverTranscription: ServerTranscription
+    @StateObject private var assistantCatalog = AssistantCatalog()
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
     )
@@ -40,10 +41,12 @@ struct SettingsView: View {
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
         }
         .task { await preferences.sync() }
+        .task { await assistantCatalog.load() }
         // Returning from System Settings or closing the setup window both
         // make this window key, and either may have finished a step.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             Task {
+                await preferences.sync()
                 await setupStatus.refresh()
                 await voices.refresh()
             }
@@ -54,6 +57,7 @@ struct SettingsView: View {
     private var page: some View {
         switch history.current {
         case .pane(let pane): page(pane)
+        case .assistant: AssistantSettings(preferences: preferences, catalog: assistantCatalog)
         case .item(let pane, let id): item(id, in: pane)
         }
     }
@@ -79,7 +83,10 @@ struct SettingsView: View {
     private func page(_ pane: SettingsPane) -> some View {
         let openPrompt = { history.open(.item(.prompts, id: $0)) }
         switch pane {
-        case .general: GeneralSettings(setup: setupStatus)
+        case .general:
+            GeneralSettings(setup: setupStatus, preferences: preferences, catalog: assistantCatalog) {
+                history.open(.assistant)
+            }
         case .dictation: DictationSettings(preferences: preferences)
         case .recognition:
             RecognitionSettings(

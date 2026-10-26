@@ -1,5 +1,5 @@
 //! What the assistant remembers across sessions: facts the user stated,
-//! extracted from their asks after the fact and shown to the agent on the
+//! extracted from their asks after the fact and shown to the assistant on the
 //! next one; and the lexicon that fixes the words a transcriber gets wrong.
 //! Everything lives under the memory directory: `memory.db`, `profile.md`,
 //! and the user's own `lexicon.txt`.

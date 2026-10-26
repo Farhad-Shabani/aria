@@ -183,7 +183,10 @@ fn compose(
     let (speech, speech_actor) = speech::channel(speech);
     let (chat, chat_actor) = chat::channel(chat);
     let dictation_hotkey = preference_store.dictation_hotkey();
-    let (preferences, preferences_actor) = preferences::channel(Arc::clone(&preference_store));
+    let (preferences, preferences_actor) = preferences::channel(
+        Arc::clone(&preference_store),
+        context.config_environment.clone(),
+    );
     let (speaker, speaker_actor) = speaker::channel(speaker_runtime);
     // The router rebuilds the serving half from this reporter's shared state.
     let (health, _) = tonic_health::server::health_reporter();
@@ -234,7 +237,7 @@ fn compose(
         history,
         dictation: DictationRpc::new(dictation, dictation_runtime),
         speech: SpeechRpc::new(speech),
-        chat: ChatRpc::new(chat, chat_runtime, context.lifetime),
+        chat: ChatRpc::new(chat, chat_runtime, context.lifetime, tasks.cancellation()),
         listen: ListenRpc::new(Arc::new(ListenState::new(
             context.lifetime,
             context.config_environment.clone(),

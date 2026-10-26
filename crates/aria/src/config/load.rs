@@ -13,13 +13,13 @@ use aria_kit::synthesis::{SpeakingRate, Voice};
 
 use super::WakeWordOverride;
 use super::file::{self, FileConfig};
+use super::{AssistantId, ChatConfig};
 use super::{
     CaptureConfig, ConfigError, DaemonConfig, DictationConfig, DictationTimeouts, HotkeyConfig,
     ListenConfig, ListenTranscription, MemoryConfig, RelayConfig, SpeakerConfig,
     TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig,
     TtsFallback, TtsModel, WakeBackend, WakeConfig, backend, tts_backend, wake_backend,
 };
-use super::{ChatAgent, ChatConfig, chat_agent};
 
 pub(super) const DEFAULT_CONFIG_RELATIVE_PATH: &str = ".aria/config.yaml";
 /// Where setup downloads models, relative to home. The default model paths
@@ -52,7 +52,7 @@ const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(320);
 pub(super) const DEFAULT_CAPTURE_BACKEND: &str = "microphone";
 pub(super) const WAV_FILE_CAPTURE_BACKEND: &str = "wav-file";
 
-/// Long enough for an agent to read a repo and think.
+/// Long enough for an assistant to read a repo and think.
 const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
 
 const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = "~/.aria/transcripts";
@@ -93,7 +93,7 @@ pub(super) const TTS_TOKENIZER_ENV: &str = "ARIA_TTS_TOKENIZER";
 pub(super) const TTS_VOICE_ENV: &str = "ARIA_TTS_VOICE";
 pub(super) const TTS_RATE_ENV: &str = "ARIA_TTS_RATE";
 pub(super) const TTS_FALLBACK_ENV: &str = "ARIA_TTS_FALLBACK";
-pub(super) const CHAT_AGENT_ENV: &str = "ARIA_CHAT_AGENT";
+pub(super) const CHAT_ASSISTANT_ENV: &str = "ARIA_CHAT_ASSISTANT";
 pub(super) const CHAT_TIMEOUT_ENV: &str = "ARIA_CHAT_TIMEOUT";
 pub(super) const RECORDING_TIMEOUT_ENV: &str = "ARIA_DICTATION_RECORDING_TIMEOUT";
 pub(super) const DELIVERY_TIMEOUT_ENV: &str = "ARIA_DICTATION_DELIVERY_TIMEOUT";
@@ -131,7 +131,7 @@ pub(crate) struct Environment {
     pub(super) tts_voice: Option<String>,
     pub(super) tts_rate: Option<String>,
     pub(super) tts_fallback: Option<String>,
-    pub(super) chat_agent: Option<String>,
+    pub(super) assistant_id: Option<String>,
     pub(super) chat_timeout: Option<String>,
     pub(super) wake_enabled: Option<String>,
     pub(super) wake_backend: Option<String>,
@@ -176,7 +176,7 @@ impl Environment {
             tts_voice: environment(TTS_VOICE_ENV)?,
             tts_rate: environment(TTS_RATE_ENV)?,
             tts_fallback: environment(TTS_FALLBACK_ENV)?,
-            chat_agent: environment(CHAT_AGENT_ENV)?,
+            assistant_id: environment(CHAT_ASSISTANT_ENV)?,
             chat_timeout: environment(CHAT_TIMEOUT_ENV)?,
             wake_enabled: environment(WAKE_ENABLED_ENV)?,
             wake_backend: environment(WAKE_BACKEND_ENV)?,
@@ -222,7 +222,7 @@ impl Environment {
             tts_voice: None,
             tts_rate: None,
             tts_fallback: None,
-            chat_agent: None,
+            assistant_id: None,
             chat_timeout: None,
             wake_enabled: None,
             wake_backend: None,
@@ -498,6 +498,23 @@ pub(super) fn memory(
     })
 }
 
+pub(super) fn load_assistant_id(environment: &Environment) -> Result<AssistantId, ConfigError> {
+    let file = file::read(&environment.home.join(DEFAULT_CONFIG_RELATIVE_PATH))?;
+    configured_assistant_id(&file, environment)
+}
+
+fn configured_assistant_id(
+    file: &FileConfig,
+    environment: &Environment,
+) -> Result<AssistantId, ConfigError> {
+    let assistant_id = string_value(
+        environment.assistant_id.as_deref(),
+        file.chat.assistant.as_deref(),
+        AssistantId::DEFAULT.name(),
+    );
+    assistant_id.parse()
+}
+
 pub(super) fn load_chat(environment: &Environment) -> Result<ChatConfig, ConfigError> {
     let file_config = file::read(&environment.home.join(DEFAULT_CONFIG_RELATIVE_PATH))?;
     chat(&file_config, environment)
@@ -507,22 +524,7 @@ pub(super) fn chat(
     file: &FileConfig,
     environment: &Environment,
 ) -> Result<ChatConfig, ConfigError> {
-    let agent = string_value(
-        environment.chat_agent.as_deref(),
-        file.chat.agent.as_deref(),
-        chat_agent::DEFAULT,
-    );
-    let agent = match agent.as_str() {
-        chat_agent::CLAUDE_CODE => ChatAgent::ClaudeCode,
-        chat_agent::CODEX => ChatAgent::Codex,
-        _ => {
-            return Err(ConfigError::UnsupportedValue {
-                field: "chat.agent",
-                value: agent,
-                supported: "claude-code and codex",
-            });
-        }
-    };
+    let assistant_id = configured_assistant_id(file, environment)?;
     let workdir = file
         .chat
         .workdir
@@ -552,7 +554,7 @@ pub(super) fn chat(
         });
     }
     Ok(ChatConfig {
-        agent,
+        assistant_id,
         workdir,
         project_roots,
         timeout,
@@ -1380,6 +1382,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_saved_assistant_overrides_config_and_environment_without_loading_other_settings() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".aria")).unwrap();
+        std::fs::write(
+            home.path().join(".aria/config.yaml"),
+            "chat:\n  assistant: codex\n  timeout: -1\n",
+        )
+        .unwrap();
+        let mut environment = Environment::in_home(home.path().to_path_buf());
+        let mut preferences = crate::preferences::UserPreferences::default();
+        assert_eq!(
+            preferences.resolve_assistant_id(&environment).unwrap(),
+            AssistantId::Codex
+        );
+        environment.assistant_id = Some("claude-code".to_owned());
+        assert_eq!(
+            preferences.resolve_assistant_id(&environment).unwrap(),
+            AssistantId::ClaudeCode
+        );
+        environment.assistant_id = Some("invalid".to_owned());
+        assert!(preferences.resolve_assistant_id(&environment).is_err());
+        preferences.assistant_id = Some(AssistantId::Codex);
+        assert_eq!(
+            preferences.resolve_assistant_id(&environment).unwrap(),
+            AssistantId::Codex
+        );
+
+        std::fs::write(
+            home.path().join(".aria/config.yaml"),
+            "chat:\n  assistant: invalid\n",
+        )
+        .unwrap();
+        assert_eq!(
+            ChatConfig::load(&environment, AssistantId::Codex)
+                .unwrap()
+                .assistant_id,
+            AssistantId::Codex
+        );
+    }
+
+    #[test]
     fn server_requires_an_explicit_https_origin_without_credentials() {
         assert!(matches!(
             settings(backend::SERVER).resolve(Path::new("/missing-home")),
@@ -1992,7 +2035,7 @@ mod tests {
         assert_eq!(
             chat,
             ChatConfig {
-                agent: ChatAgent::ClaudeCode,
+                assistant_id: AssistantId::ClaudeCode,
                 workdir: None,
                 project_roots: Vec::new(),
                 timeout: DEFAULT_CHAT_TIMEOUT,
@@ -2004,7 +2047,7 @@ mod tests {
     #[test]
     fn chat_resolves_codex_with_its_workdir_and_timeouts() {
         let mut file = FileConfig::default();
-        file.chat.agent = Some("codex".to_owned());
+        file.chat.assistant = Some("codex".to_owned());
         file.chat.workdir = Some("~/src".to_owned());
         file.chat.project_roots = vec!["~".to_owned(), "/srv/code".to_owned()];
         file.chat.timeout = Some(30.0);
@@ -2013,7 +2056,7 @@ mod tests {
 
         let chat = chat(&file, &environment).expect("codex resolves");
 
-        assert_eq!(chat.agent, ChatAgent::Codex);
+        assert_eq!(chat.assistant_id, AssistantId::Codex);
         assert_eq!(chat.workdir, Some(environment.home.join("src")));
         assert_eq!(
             chat.project_roots,
@@ -2035,22 +2078,19 @@ mod tests {
     }
 
     #[test]
-    fn the_chat_agent_environment_override_wins_and_unknown_agents_are_refused() {
+    fn the_assistant_environment_override_wins_and_unknown_assistants_are_refused() {
         let mut file = FileConfig::default();
-        file.chat.agent = Some("codex".to_owned());
+        file.chat.assistant = Some("codex".to_owned());
         let mut environment = empty_environment();
-        environment.chat_agent = Some("claude-code".to_owned());
+        environment.assistant_id = Some("claude-code".to_owned());
 
         let resolved = chat(&file, &environment).expect("the override resolves");
-        assert_eq!(resolved.agent.name(), "claude-code");
+        assert_eq!(resolved.assistant_id.name(), "claude-code");
 
-        environment.chat_agent = Some("gemini".to_owned());
+        environment.assistant_id = Some("gemini".to_owned());
         assert!(matches!(
             chat(&file, &environment),
-            Err(ConfigError::UnsupportedValue {
-                field: "chat.agent",
-                ..
-            })
+            Err(ConfigError::UnknownAssistant(_))
         ));
     }
 

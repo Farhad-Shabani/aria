@@ -10,15 +10,17 @@ the result where you were. For example:
 Each prompt is a Markdown file of instructions you write.
 
 **What you say and the prompt file go to Claude Code or Codex, which may send
-them to cloud services.** Aria transcribes your speech on your Mac first.
+them to cloud services.** Aria transcribes your speech before sending the text.
 Read [Privacy](./privacy.md#prompts) before using a prompt.
 
 ## Before you start
 
-- Set up Claude Code or Codex as in
-  [Ask a question](./voice-chat.md#before-you-start). Aria uses the agent
-  that `chat.agent` names.
-- Keep Aria.app running. Prompt shortcuts work only while it runs.
+Set up Claude Code or Codex by following
+[Ask a question](./voice-chat.md#before-you-start). Prompts use the same
+assistant and model as Ask. You can change both in
+[Assistant settings](./configuration.md#assistant).
+
+Keep Aria.app running while you use prompt shortcuts.
 
 ## Add a prompt
 
@@ -58,9 +60,9 @@ To cancel while Aria works, press the shortcut a third time.
 Aria types only into the app you were in when you started. Nothing is typed
 in these cases:
 
-- You switched apps before stopping. Aria sends nothing to the agent.
-- You switched apps while the agent worked. Aria drops the result.
-- You said nothing. Aria sends nothing to the agent.
+- You switched apps before stopping. Aria sends nothing to the assistant.
+- You switched apps while the assistant worked. Aria drops the result.
+- You said nothing. Aria sends nothing to the assistant.
 - Aria is switched off for the app in **Settings → Apps**.
 
 Some apps don't accept typed text. Then the result goes to the clipboard,
@@ -90,20 +92,22 @@ While the list shows, the number keys and Esc go to the list, not to the app.
 
 ## What a prompt can't do
 
-Aria tells the agent to treat what you said as text to work on. Your words
-are never instructions to the agent. The agent's tools are off during a run,
-so a prompt can't read files, search the web, or run commands. For that, use
-[Ask](./voice-chat.md).
+The prompt file supplies the instructions. Aria asks the assistant to treat
+your spoken words as the text to rewrite or build on.
+
+Aria turns off the assistant's tools for Prompts, so a prompt can't read files,
+search the web, or run commands. Use [Ask](./voice-chat.md) for questions
+about a project.
 
 ## When it fails
 
-On a failure, Aria types nothing, not even your raw words. The status overlay
-says the agent failed. Common causes:
+If a prompt fails, the status overlay shows an error and Aria types nothing.
+Common causes:
 
 - The prompt file moved. Its row in Settings shows **File not found**. Choose
   the file again.
 - The prompt file is empty, larger than 16 KB, or not text.
-- The agent isn't installed or signed in. Check it with a typed
+- The assistant isn't installed or signed in. Check it with a typed
   [Ask](./voice-chat.md#try-a-typed-question).
 
 Dictation history doesn't keep failed runs, so say it again.

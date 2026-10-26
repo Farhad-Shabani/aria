@@ -1,4 +1,4 @@
-//! The conversation record: which agent session continues each key.
+//! The conversation record: which assistant session continues each key.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::SessionKey;
 
 /// Resume ids on disk. They outlive the daemon and a reboot, like the
-/// agents' own history.
+/// assistants' own history.
 pub(crate) struct SessionStore {
     path: PathBuf,
     /// Asks on different records run side by side; the file is the one

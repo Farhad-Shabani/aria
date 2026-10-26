@@ -9,7 +9,7 @@ use aria_kit::cancel::CancelToken;
 use serde_json::{Map, Value};
 
 use super::store::{KINDS, STATUS_ACTIVE, STATUS_PENDING, Store, StoreError, Turn};
-use crate::chat::{AgentError, claude_command, parse_claude, run_cli};
+use crate::chat::{AssistantError, claude_command, parse_claude, run_cli};
 
 /// At or above this a fact goes straight into the profile.
 const AUTO_CONFIDENCE: f64 = 0.85;
@@ -40,7 +40,7 @@ Return [] if nothing qualifies.";
 
 pub(crate) trait Extractor {
     /// The model's raw reply to one extraction message.
-    fn extract(&self, message: &str, cancel: &CancelToken) -> Result<String, AgentError>;
+    fn extract(&self, message: &str, cancel: &CancelToken) -> Result<String, AssistantError>;
 }
 
 /// `claude -p` with no tools at all: a transcript is untrusted text, and a
@@ -73,7 +73,7 @@ impl ClaudeExtractor {
 }
 
 impl Extractor for ClaudeExtractor {
-    fn extract(&self, message: &str, cancel: &CancelToken) -> Result<String, AgentError> {
+    fn extract(&self, message: &str, cancel: &CancelToken) -> Result<String, AssistantError> {
         let output = run_cli(
             &mut self.command(),
             message,
@@ -197,7 +197,7 @@ pub(crate) enum ConsolidateError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("memory extraction failed")]
-    Extract(#[from] AgentError),
+    Extract(#[from] AssistantError),
     /// The model's reply was not the array the contract asks for; the
     /// window is left for the next run.
     #[error("memory extraction returned output that could not be read")]
@@ -370,7 +370,7 @@ mod tests {
     }
 
     impl Extractor for Scripted {
-        fn extract(&self, message: &str, _cancel: &CancelToken) -> Result<String, AgentError> {
+        fn extract(&self, message: &str, _cancel: &CancelToken) -> Result<String, AssistantError> {
             self.asked.lock().expect("lock").push(message.to_owned());
             Ok(self.reply.clone())
         }

@@ -89,7 +89,10 @@ fn failure(operation: &'static str, error: PreferencesCallError) -> RpcFailure {
 }
 
 pub(super) fn store_error(operation: &'static str, error: PreferenceStoreError) -> RpcFailure {
-    if matches!(error, PreferenceStoreError::ChordInUse) {
+    if matches!(
+        error,
+        PreferenceStoreError::ChordInUse | PreferenceStoreError::InvalidModelId
+    ) {
         return RpcFailure::new(RpcErrorCode::InvalidRequest, error.to_string());
     }
     let durability_unconfirmed =

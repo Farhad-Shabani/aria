@@ -1,10 +1,10 @@
-//! Agents backed by one non-interactive CLI run per turn. The CLI keeps
+//! Assistants backed by one non-interactive CLI run per turn. The CLI keeps
 //! the conversation on disk; the session keeps only the id that continues it.
 //!
 //! Both run read-only, and Claude ignores the checkout's own settings,
 //! hooks, and MCP servers: a turn may land in a repo nobody has vetted.
 //! Skills are the one thing it may take from that checkout, and a skill is
-//! only text the agent reads with the same tools it already has.
+//! only text the assistant reads with the same tools it already has.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use super::process::run_cli;
 use super::prompt_run::{self, PromptRun};
-use super::{Agent, AgentError, Session, SessionSpec, Step, TurnSink};
+use super::{Assistant, AssistantError, AssistantModel, Session, SessionSpec, Step, TurnSink};
 
 pub(crate) const CLAUDE_BINARY: &str = "claude";
 pub(crate) const CODEX_BINARY: &str = "codex";
@@ -62,19 +62,36 @@ pub(crate) fn claude_command() -> Command {
 /// and the session id to `--resume` from. `--restricted` drops the
 /// command-running tools and ignores user, project and local settings;
 /// `--tools` leaves reading the repo and loading a skill.
-pub(crate) struct ClaudeCodeAgent {
+pub(crate) struct ClaudeCodeAssistant {
     binary: PathBuf,
 }
 
-impl ClaudeCodeAgent {
+impl ClaudeCodeAssistant {
     pub(crate) fn new(binary: PathBuf) -> Self {
         Self { binary }
     }
 }
 
-impl Agent for ClaudeCodeAgent {
-    fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session> {
-        Box::new(CliSession::new(Cli::Claude, self.binary.clone(), spec))
+impl Assistant for ClaudeCodeAssistant {
+    type Session = CliSession;
+
+    fn models(&self, cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
+        let mut command = Cli::Claude.command(&self.binary);
+        command
+            .args(["-p", "--restricted", "--strict-mcp-config", "--tools", ""])
+            .args(["--no-session-persistence", "--input-format", "stream-json"])
+            .args(["--output-format", "stream-json", "--verbose"])
+            .env_remove("CLAUDE_CODE_ENTRYPOINT");
+        super::models::discover(
+            command,
+            "{\"type\":\"control_request\",\"request_id\":\"aria-model-list\",\"request\":{\"subtype\":\"initialize\",\"hooks\":{}}}\n",
+            super::models::parse_claude,
+            cancel,
+        )
+    }
+
+    fn open(&self, spec: SessionSpec<'_>) -> Self::Session {
+        CliSession::new(Cli::Claude, self.binary.clone(), spec)
     }
 
     fn run_prompt(
@@ -82,9 +99,9 @@ impl Agent for ClaudeCodeAgent {
         request: &PromptRun<'_>,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<String, AgentError> {
+    ) -> Result<String, AssistantError> {
         let run = run_directory()?;
-        let mut command = claude_prompt_command(&self.binary, run.path());
+        let mut command = claude_prompt_command(&self.binary, run.path(), request.model_id);
         let output = run_cli(&mut command, &request.prompt(), |_| {}, cancel, timeout)?;
         output.reply(parse_claude_prompt(&output.stdout))
     }
@@ -95,21 +112,29 @@ impl Agent for ClaudeCodeAgent {
 /// `codex exec resume` continues. The sandbox is pinned on every turn: a
 /// resumed thread takes whatever the user's config says, not what it
 /// started with.
-pub(crate) struct CodexAgent {
+pub(crate) struct CodexAssistant {
     binary: PathBuf,
     /// The user's own Codex home, whose login a prompt run borrows.
     user_home: PathBuf,
 }
 
-impl CodexAgent {
+impl CodexAssistant {
     pub(crate) fn new(binary: PathBuf, user_home: PathBuf) -> Self {
         Self { binary, user_home }
     }
 }
 
-impl Agent for CodexAgent {
-    fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session> {
-        Box::new(CliSession::new(Cli::Codex, self.binary.clone(), spec))
+impl Assistant for CodexAssistant {
+    type Session = CliSession;
+
+    fn models(&self, cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
+        let mut command = Cli::Codex.command(&self.binary);
+        command.args(["debug", "models"]);
+        super::models::discover(command, "", super::models::parse_codex, cancel)
+    }
+
+    fn open(&self, spec: SessionSpec<'_>) -> Self::Session {
+        CliSession::new(Cli::Codex, self.binary.clone(), spec)
     }
 
     /// Codex reads its output schema from a file, so the run directory
@@ -119,44 +144,45 @@ impl Agent for CodexAgent {
         request: &PromptRun<'_>,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<String, AgentError> {
+    ) -> Result<String, AssistantError> {
         let run = run_directory()?;
         let schema = run.path().join("schema.json");
-        std::fs::write(&schema, prompt_run::SCHEMA).map_err(AgentError::RunDirectory)?;
+        std::fs::write(&schema, prompt_run::SCHEMA).map_err(AssistantError::RunDirectory)?;
         let home = codex_home_for(run.path(), &self.user_home)?;
-        let mut command = codex_prompt_command(&self.binary, run.path(), &home, &schema);
+        let mut command =
+            codex_prompt_command(&self.binary, run.path(), &home, &schema, request.model_id);
         let output = run_cli(&mut command, &request.prompt(), |_| {}, cancel, timeout)?;
         output.reply(parse_codex_prompt(&output.stdout))
     }
 }
 
 /// An empty directory of Aria's own for one prompt run, so no checkout's
-/// instructions or settings reach the agent. Removed when dropped.
-fn run_directory() -> Result<tempfile::TempDir, AgentError> {
+/// instructions or settings reach the assistant. Removed when dropped.
+fn run_directory() -> Result<tempfile::TempDir, AssistantError> {
     tempfile::Builder::new()
         .prefix("aria-prompt-")
         .tempdir()
-        .map_err(AgentError::RunDirectory)
+        .map_err(AssistantError::RunDirectory)
 }
 
 /// Codex reads the user's instructions (AGENTS.md), hooks and skills from
 /// its home. A home holding only a link to the login keeps them out.
-fn codex_home_for(run: &Path, user_home: &Path) -> Result<PathBuf, AgentError> {
+fn codex_home_for(run: &Path, user_home: &Path) -> Result<PathBuf, AssistantError> {
     let home = run.join("codex-home");
-    std::fs::create_dir(&home).map_err(AgentError::RunDirectory)?;
+    std::fs::create_dir(&home).map_err(AssistantError::RunDirectory)?;
     let login = user_home.join("auth.json");
     // No login file means an API key in the environment, or no login at all,
     // which the CLI reports itself.
     if login.is_file() {
         std::os::unix::fs::symlink(login, home.join("auth.json"))
-            .map_err(AgentError::RunDirectory)?;
+            .map_err(AssistantError::RunDirectory)?;
     }
     Ok(home)
 }
 
 /// `--tools ""` leaves no tool at all, and `--restricted` ignores user,
 /// project and local settings. `structured_output` carries the answer.
-fn claude_prompt_command(binary: &Path, workdir: &Path) -> Command {
+fn claude_prompt_command(binary: &Path, workdir: &Path, model_id: Option<&str>) -> Command {
     let mut command = Cli::Claude.command(binary);
     command
         .args(["-p", "--output-format", "json"])
@@ -165,13 +191,22 @@ fn claude_prompt_command(binary: &Path, workdir: &Path) -> Command {
         .args(["--restricted", "--tools", ""])
         .arg("--strict-mcp-config")
         .current_dir(workdir);
+    if let Some(model_id) = model_id {
+        command.args(["--model", model_id]);
+    }
     command
 }
 
 /// Codex has no single switch for "no tools". Its own home drops the
 /// user's config, MCP servers, instructions and hooks; the tool features
 /// left on by default are turned off one by one.
-fn codex_prompt_command(binary: &Path, workdir: &Path, home: &Path, schema: &Path) -> Command {
+fn codex_prompt_command(
+    binary: &Path,
+    workdir: &Path,
+    home: &Path,
+    schema: &Path,
+    model_id: Option<&str>,
+) -> Command {
     let mut command = Cli::Codex.command(binary);
     command
         .env("CODEX_HOME", home)
@@ -181,6 +216,9 @@ fn codex_prompt_command(binary: &Path, workdir: &Path, home: &Path, schema: &Pat
         .args(["--skip-git-repo-check", "--sandbox", "read-only"]);
     for setting in CODEX_PROMPT_SETTINGS {
         command.args(["--config", setting]);
+    }
+    if let Some(model_id) = model_id {
+        command.args(["--model", model_id]);
     }
     command
         .arg("--output-schema")
@@ -223,11 +261,11 @@ impl Cli {
 
 /// A conversation carried by one CLI run per turn; `resume` is all that
 /// connects them.
-struct CliSession {
+pub(crate) struct CliSession {
     cli: Cli,
     binary: PathBuf,
     workdir: PathBuf,
-    model: Option<String>,
+    model_id: Option<String>,
     resume: Option<String>,
 }
 
@@ -237,7 +275,7 @@ impl CliSession {
             cli,
             binary,
             workdir: spec.workdir.to_path_buf(),
-            model: spec.model.map(str::to_owned),
+            model_id: spec.model_id.map(str::to_owned),
             resume: spec.resume.map(str::to_owned),
         }
     }
@@ -250,8 +288,8 @@ impl CliSession {
                     .args(["-p", "--output-format", "stream-json", "--verbose"])
                     .args(["--restricted", "--tools", "Read,Glob,Grep,Skill"])
                     .arg("--strict-mcp-config");
-                if let Some(model) = &self.model {
-                    command.args(["--model", model]);
+                if let Some(model_id) = &self.model_id {
+                    command.args(["--model", model_id]);
                 }
                 if let Some(resume) = &self.resume {
                     command.args(["--resume", resume]);
@@ -265,8 +303,8 @@ impl CliSession {
                     Some(resume) => command.args(["resume", resume]),
                     None => command.arg("--cd").arg(&self.workdir),
                 };
-                if let Some(model) = &self.model {
-                    command.args(["--model", model]);
+                if let Some(model_id) = &self.model_id {
+                    command.args(["--model", model_id]);
                 }
                 command
                     .args(["--config", "sandbox_mode=\"read-only\""])
@@ -285,7 +323,7 @@ impl Session for CliSession {
         sink: &mut dyn TurnSink,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<(), AgentError> {
+    ) -> Result<(), AssistantError> {
         let cli = self.cli;
         let mut warned = false;
         let output = run_cli(
@@ -297,7 +335,7 @@ impl Session for CliSession {
                 // per line of output, and never a failed ask.
                 Err(error) if !warned => {
                     warned = true;
-                    tracing::warn!(%error, agent = ?cli, "an agent line was not understood");
+                    tracing::warn!(%error, assistant = ?cli, "an assistant line was not understood");
                 }
                 Ok(None) | Err(_) => {}
             },
@@ -342,25 +380,27 @@ enum ClaudeEnvelope {
 
 /// The stream ends with the envelope; everything before it was a step. A
 /// stream with no envelope died early, whatever its last line says.
-pub(crate) fn parse_claude(stdout: &str) -> Result<Reply, AgentError> {
+pub(crate) fn parse_claude(stdout: &str) -> Result<Reply, AssistantError> {
     let last = stdout
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())
         .unwrap_or_default();
     let envelope: ClaudeEnvelope =
-        serde_json::from_str(last).map_err(|error| AgentError::Malformed(error.to_string()))?;
+        serde_json::from_str(last).map_err(|error| AssistantError::Malformed(error.to_string()))?;
     let ClaudeEnvelope::Result {
         is_error,
         result,
         session_id,
     } = envelope
     else {
-        return Err(AgentError::Malformed("the stream has no result".to_owned()));
+        return Err(AssistantError::Malformed(
+            "the stream has no result".to_owned(),
+        ));
     };
     if is_error {
         // On an error the result field is the reason, not a reply.
-        return Err(AgentError::Failed(result));
+        return Err(AssistantError::Failed(result));
     }
     Ok(Reply {
         text: result,
@@ -385,22 +425,25 @@ enum ClaudePromptEnvelope {
 
 /// `--output-format json` writes one envelope. The answer is its
 /// `structured_output`; `result` holds the same object as a string.
-fn parse_claude_prompt(stdout: &str) -> Result<String, AgentError> {
+fn parse_claude_prompt(stdout: &str) -> Result<String, AssistantError> {
     let envelope: ClaudePromptEnvelope = serde_json::from_str(stdout.trim())
-        .map_err(|error| AgentError::Malformed(error.to_string()))?;
+        .map_err(|error| AssistantError::Malformed(error.to_string()))?;
     let ClaudePromptEnvelope::Result {
         is_error,
         result,
         structured_output,
     } = envelope
     else {
-        return Err(AgentError::Malformed("the output has no result".to_owned()));
+        return Err(AssistantError::Malformed(
+            "the output has no result".to_owned(),
+        ));
     };
     if is_error {
-        return Err(AgentError::Failed(result));
+        return Err(AssistantError::Failed(result));
     }
-    let answer = structured_output
-        .ok_or_else(|| AgentError::Malformed("the result has no structured output".to_owned()))?;
+    let answer = structured_output.ok_or_else(|| {
+        AssistantError::Malformed("the result has no structured output".to_owned())
+    })?;
     prompt_run::answer_text(answer)
 }
 
@@ -452,7 +495,7 @@ struct CodexError {
     message: String,
 }
 
-fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AgentError> {
+fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AssistantError> {
     let mut thread_id = resumed.map(str::to_owned);
     let mut text = None;
     for event in codex_events(stdout) {
@@ -461,8 +504,8 @@ fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AgentError>
             CodexEvent::ItemCompleted {
                 item: CodexItem::AgentMessage { text: message },
             } => text = Some(message),
-            CodexEvent::TurnFailed { error } => return Err(AgentError::Failed(error.message)),
-            CodexEvent::Error { message } => return Err(AgentError::Failed(message)),
+            CodexEvent::TurnFailed { error } => return Err(AssistantError::Failed(error.message)),
+            CodexEvent::Error { message } => return Err(AssistantError::Failed(message)),
             CodexEvent::ItemStarted { .. }
             | CodexEvent::ItemCompleted { .. }
             | CodexEvent::TurnCompleted
@@ -470,14 +513,15 @@ fn parse_codex(stdout: &str, resumed: Option<&str>) -> Result<Reply, AgentError>
         }
     }
     Ok(Reply {
-        text: text.ok_or_else(|| AgentError::Malformed("no agent message".to_owned()))?,
-        session_id: thread_id.ok_or_else(|| AgentError::Malformed("no thread id".to_owned()))?,
+        text: text.ok_or_else(|| AssistantError::Malformed("no assistant reply".to_owned()))?,
+        session_id: thread_id
+            .ok_or_else(|| AssistantError::Malformed("no thread id".to_owned()))?,
     })
 }
 
-/// The answer is the last agent message of a completed turn; earlier ones
-/// may be the agent narrating what it is about to do.
-fn parse_codex_prompt(stdout: &str) -> Result<String, AgentError> {
+/// The answer is the last assistant message of a completed turn; earlier ones
+/// may be the assistant narrating what it is about to do.
+fn parse_codex_prompt(stdout: &str) -> Result<String, AssistantError> {
     let mut last_message = None;
     let mut completed = false;
     for event in codex_events(stdout) {
@@ -486,8 +530,8 @@ fn parse_codex_prompt(stdout: &str) -> Result<String, AgentError> {
                 item: CodexItem::AgentMessage { text },
             } => last_message = Some(text),
             CodexEvent::TurnCompleted => completed = true,
-            CodexEvent::TurnFailed { error } => return Err(AgentError::Failed(error.message)),
-            CodexEvent::Error { message } => return Err(AgentError::Failed(message)),
+            CodexEvent::TurnFailed { error } => return Err(AssistantError::Failed(error.message)),
+            CodexEvent::Error { message } => return Err(AssistantError::Failed(message)),
             CodexEvent::ThreadStarted { .. }
             | CodexEvent::ItemStarted { .. }
             | CodexEvent::ItemCompleted { .. }
@@ -495,19 +539,19 @@ fn parse_codex_prompt(stdout: &str) -> Result<String, AgentError> {
         }
     }
     if !completed {
-        return Err(AgentError::Malformed(
+        return Err(AssistantError::Malformed(
             "the turn did not complete".to_owned(),
         ));
     }
     let message =
-        last_message.ok_or_else(|| AgentError::Malformed("no agent message".to_owned()))?;
+        last_message.ok_or_else(|| AssistantError::Malformed("no assistant reply".to_owned()))?;
     let answer = serde_json::from_str(&message).map_err(|error| {
-        AgentError::Malformed(format!("the last agent message is not JSON: {error}"))
+        AssistantError::Malformed(format!("the assistant reply is not JSON: {error}"))
     })?;
     prompt_run::answer_text(answer)
 }
 
-fn codex_events(stdout: &str) -> impl Iterator<Item = Result<CodexEvent, AgentError>> + '_ {
+fn codex_events(stdout: &str) -> impl Iterator<Item = Result<CodexEvent, AssistantError>> + '_ {
     stdout
         .lines()
         .enumerate()
@@ -515,12 +559,15 @@ fn codex_events(stdout: &str) -> impl Iterator<Item = Result<CodexEvent, AgentEr
         .map(|(index, line)| {
             // The line itself stays out of the message: it may be the reply.
             serde_json::from_str(line).map_err(|error| {
-                AgentError::Malformed(format!("line {} is not a codex event: {error}", index + 1))
+                AssistantError::Malformed(format!(
+                    "line {} is not a codex event: {error}",
+                    index + 1
+                ))
             })
         })
 }
 
-/// What one line of the stream says the agent moved on to, if anything.
+/// What one line of the stream says the assistant moved on to, if anything.
 /// A line that is not an event is an error for the caller to log.
 fn step(cli: Cli, line: &str) -> Result<Option<Step>, serde_json::Error> {
     if line.trim().is_empty() {
@@ -603,6 +650,22 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn model_discovery_uses_each_assistants_configured_binary() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("missing-assistant");
+        let cancel = CancelToken::never();
+        let results = [
+            ClaudeCodeAssistant::new(binary.clone()).models(&cancel),
+            CodexAssistant::new(binary.clone(), directory.path().into()).models(&cancel),
+        ];
+        for result in results {
+            assert!(
+                matches!(result, Err(AssistantError::Missing { binary: path }) if path == binary)
+            );
+        }
+    }
+
     fn argv(command: &Command) -> Vec<String> {
         command
             .get_args()
@@ -610,13 +673,13 @@ mod tests {
             .collect()
     }
 
-    fn session(cli: Cli, resume: Option<&str>, model: Option<&str>) -> CliSession {
+    fn session(cli: Cli, resume: Option<&str>, model_id: Option<&str>) -> CliSession {
         CliSession::new(
             cli,
-            PathBuf::from("agent"),
+            PathBuf::from("assistant"),
             SessionSpec {
                 workdir: Path::new("/work"),
-                model,
+                model_id,
                 resume,
             },
         )
@@ -681,21 +744,11 @@ mod tests {
     }
 
     #[test]
-    fn a_claude_envelope_yields_the_reply_and_its_session() {
-        let stdout = r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"result":"hi there","session_id":"abc-123","total_cost_usd":0.0}"#;
-
-        let reply = parse_claude(stdout).expect("the envelope should parse");
-
-        assert_eq!(reply.text, "hi there");
-        assert_eq!(reply.session_id, "abc-123");
-    }
-
-    #[test]
     fn a_claude_error_envelope_is_a_failure_with_its_reason() {
         let stdout = r#"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in","session_id":"abc-123"}"#;
 
         match parse_claude(stdout).expect_err("the envelope should fail") {
-            AgentError::Failed(reason) => assert_eq!(reason, "Not logged in"),
+            AssistantError::Failed(reason) => assert_eq!(reason, "Not logged in"),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -711,7 +764,7 @@ mod tests {
 
         assert!(matches!(
             parse_claude(stdout),
-            Err(AgentError::Malformed(reason)) if reason.contains("no result")
+            Err(AssistantError::Malformed(reason)) if reason.contains("no result")
         ));
     }
 
@@ -719,7 +772,7 @@ mod tests {
     fn claude_output_that_is_not_an_envelope_is_malformed() {
         assert!(matches!(
             parse_claude("Welcome to Claude"),
-            Err(AgentError::Malformed(_))
+            Err(AssistantError::Malformed(_))
         ));
     }
 
@@ -857,7 +910,7 @@ mod tests {
         );
 
         match parse_codex(stdout, None).expect_err("the turn should fail") {
-            AgentError::Failed(reason) => assert_eq!(reason, "quota"),
+            AssistantError::Failed(reason) => assert_eq!(reason, "quota"),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -867,7 +920,7 @@ mod tests {
         let stdout = "the user's secret reply\n";
 
         match parse_codex(stdout, None).expect_err("prose is not an event") {
-            AgentError::Malformed(message) => {
+            AssistantError::Malformed(message) => {
                 assert!(message.starts_with("line 1"), "{message}");
                 assert!(!message.contains("secret"), "{message}");
             }
@@ -881,8 +934,33 @@ mod tests {
 
         assert!(matches!(
             parse_codex(stdout, None),
-            Err(AgentError::Malformed(_))
+            Err(AssistantError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn prompt_commands_forward_only_explicit_models() {
+        for model_id in [None, Some("provider/model:revision")] {
+            let commands = [
+                claude_prompt_command(Path::new("claude"), Path::new("/run"), model_id),
+                codex_prompt_command(
+                    Path::new("codex"),
+                    Path::new("/run"),
+                    Path::new("/home"),
+                    Path::new("/schema"),
+                    model_id,
+                ),
+            ];
+            for command in commands {
+                let args = argv(&command);
+                let models: Vec<_> = args
+                    .windows(2)
+                    .filter(|pair| pair[0] == "--model")
+                    .map(|pair| pair[1].as_str())
+                    .collect();
+                assert_eq!(models, model_id.into_iter().collect::<Vec<_>>());
+            }
+        }
     }
 
     #[test]
@@ -890,6 +968,7 @@ mod tests {
         let args = argv(&claude_prompt_command(
             Path::new("claude"),
             Path::new("/run"),
+            None,
         ));
 
         for expected in [
@@ -916,6 +995,7 @@ mod tests {
             Path::new("/run"),
             Path::new("/run/codex-home"),
             Path::new("/run/schema.json"),
+            None,
         );
         let args = argv(&command);
 
@@ -958,7 +1038,7 @@ mod tests {
     fn a_claude_prompt_run_without_an_answer_fails() {
         let failed = r#"{"type":"result","is_error":true,"result":"not logged in"}"#;
         match parse_claude_prompt(failed).expect_err("is_error") {
-            AgentError::Failed(reason) => assert_eq!(reason, "not logged in"),
+            AssistantError::Failed(reason) => assert_eq!(reason, "not logged in"),
             other => panic!("unexpected {other:?}"),
         }
 
@@ -969,7 +1049,10 @@ mod tests {
             "",
         ] {
             assert!(
-                matches!(parse_claude_prompt(stdout), Err(AgentError::Malformed(_))),
+                matches!(
+                    parse_claude_prompt(stdout),
+                    Err(AssistantError::Malformed(_))
+                ),
                 "{stdout}"
             );
         }
@@ -1007,15 +1090,15 @@ mod tests {
 
         assert!(matches!(
             parse_codex_prompt(&unfinished),
-            Err(AgentError::Malformed(_))
+            Err(AssistantError::Malformed(_))
         ));
         assert!(matches!(
             parse_codex_prompt(&failed),
-            Err(AgentError::Failed(reason)) if reason == "quota"
+            Err(AssistantError::Failed(reason)) if reason == "quota"
         ));
         assert!(matches!(
             parse_codex_prompt(&prose),
-            Err(AgentError::Malformed(_))
+            Err(AssistantError::Malformed(_))
         ));
     }
 }

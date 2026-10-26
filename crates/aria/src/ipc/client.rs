@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use tonic::transport::{Channel, Endpoint};
 
-use crate::chat::{AskTarget, ChatRequest, ChatStage, Ticket};
+use crate::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
+use crate::config::AssistantId;
 use crate::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage};
 use crate::listen::ListenStage;
@@ -29,6 +30,7 @@ const SPEECH_BASE_TIMEOUT: Duration = Duration::from_secs(45);
 const SPEECH_TIMEOUT_BYTES_PER_SECOND: u64 = 10;
 /// For everything that answers immediately: preferences, subscriptions.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const MODEL_LIST_TIMEOUT: Duration = Duration::from_secs(40);
 /// Stop waits for the listen session's final decode to drain.
 const LISTEN_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 /// One enrollment sample waits out the daemon's no-speech timeout and then
@@ -330,6 +332,46 @@ impl DaemonClient {
             .map_err(status_error)?;
 
         Ok(response.into_inner().was_recording)
+    }
+
+    pub(crate) fn list_assistant_models(
+        &self,
+        assistant_id: AssistantId,
+    ) -> Result<Vec<AssistantModel>, ClientError> {
+        let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
+        let response = self
+            .runtime
+            .block_on(with_deadline(
+                MODEL_LIST_TIMEOUT,
+                chat.list_models(request_with_timeout(
+                    wire::ListAssistantModelsRequest {
+                        assistant_id: wire::AssistantId::from(assistant_id) as i32,
+                    },
+                    MODEL_LIST_TIMEOUT,
+                )),
+            ))?
+            .map_err(status_error)?;
+        response
+            .into_inner()
+            .models
+            .into_iter()
+            .map(|model| {
+                if model.id.is_empty()
+                    || crate::preferences::validate_model_id(&model.id).is_err()
+                    || model.name.is_empty()
+                    || model.name.len() > 200
+                    || model.name.chars().any(char::is_control)
+                {
+                    return Err(ClientError::MalformedResponse(
+                        "invalid assistant model".to_owned(),
+                    ));
+                }
+                Ok(AssistantModel {
+                    id: model.id,
+                    name: model.name,
+                })
+            })
+            .collect()
     }
 
     /// Where an ask goes when the caller has no working directory.
@@ -802,7 +844,7 @@ pub enum DaemonEvent {
 }
 
 /// A newer daemon's event kinds must not end the stream. An older daemon's
-/// chat event must: without its agent, the ask it answers would wait forever.
+/// chat event must: without its assistant, the ask it answers would wait forever.
 fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> {
     match event.payload {
         Some(
@@ -821,7 +863,7 @@ fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> 
             Ok(stage) => Some(Ok(DaemonEvent::Chat(stage))),
             Err(
                 error @ protocol::ProtocolError::InvalidEnum {
-                    field: "agent" | "step",
+                    field: "assistant_id" | "step",
                     ..
                 },
             ) => Some(Err(ClientError::MalformedResponse(format!(
@@ -938,10 +980,9 @@ mod tests {
         ));
     }
 
-    // A daemon older than this build sends chat events without an agent;
-    // skipping those would leave `aria ask` waiting for a reply forever.
+    // Skipping an invalid chat event would leave its ask waiting forever.
     #[test]
-    fn a_chat_event_without_an_agent_ends_the_stream_loudly() {
+    fn a_chat_event_without_an_assistant_ends_the_stream_loudly() {
         let stale = wire::Event {
             payload: Some(wire::event::Payload::Chat(wire::ChatEvent {
                 stage: wire::ChatStage::Working as i32,

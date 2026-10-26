@@ -32,16 +32,6 @@ pub struct Projects {
 }
 
 impl Projects {
-    /// Discovers the repos under `chat.project_roots` and reads the focus
-    /// file. A focus that no longer names a known repo is dropped.
-    pub fn load() -> Result<Self, ProjectsError> {
-        let environment = Environment::capture()?;
-        let config = ChatConfig::load(&environment)?;
-        Self::load_with(&environment, &config)
-    }
-
-    /// The same for a caller that already read the environment and the
-    /// configuration, so an ask reads neither of them twice.
     pub(crate) fn load_with(
         environment: &Environment,
         config: &ChatConfig,

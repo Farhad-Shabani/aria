@@ -1,10 +1,12 @@
-//! Domain types for talking to coding agents.
+//! Domain types for talking to coding assistants.
 //!
-//! The daemon owns conversations keyed by agent and session name. Each ask
+//! The daemon owns conversations keyed by assistant and session name. Each ask
 //! returns a [`Ticket`]; its reply arrives through [`ChatStage`] events.
-//! A [`Step`] describes the agent's activity while the ask is running.
+//! A [`Step`] describes the assistant's activity while the ask is running.
 
-mod agents;
+mod assistants;
+mod models;
+pub use models::AssistantModel;
 mod process;
 mod projects;
 mod prompt_run;
@@ -20,13 +22,13 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ChatAgent, ChatConfig, ConfigError, Environment};
+use crate::config::{AssistantId, ChatConfig, ConfigError, Environment};
 use crate::delivery::{DeliveryError, OutputMode};
 use crate::event::EventEmitter;
 use crate::rpc::RpcErrorCode;
 
-pub(crate) use agents::{
-    CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAgent, CodexAgent, claude_command, parse_claude,
+pub(crate) use assistants::{
+    CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant, claude_command, parse_claude,
 };
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
@@ -63,9 +65,9 @@ impl FromStr for Ticket {
 pub struct ChatRequest {
     pub text: String,
     pub workdir: PathBuf,
-    pub agent: ChatAgent,
-    /// A model name the agent's CLI accepts; `None` is the agent's default.
-    pub model: Option<String>,
+    pub assistant_id: AssistantId,
+    /// A model ID the assistant's CLI accepts; `None` uses the shared preference.
+    pub model_id: Option<String>,
     /// Names the conversation to continue; `None` means the directory's.
     pub session: Option<String>,
     /// Forget the running conversation and start another.
@@ -78,10 +80,12 @@ pub struct ChatRequest {
 }
 
 impl ChatRequest {
-    /// A request for the configured agent, working where `chat.workdir`
-    /// says or else in the current directory.
-    pub fn configured(text: String) -> Result<Self, ChatRequestError> {
-        let config = ChatConfig::load(&Environment::capture()?)?;
+    pub fn configured(text: String, assistant_id: AssistantId) -> Result<Self, ChatRequestError> {
+        let config = ChatConfig::load(&Environment::capture()?, assistant_id)?;
+        Self::from_config(text, config)
+    }
+
+    pub(crate) fn from_config(text: String, config: ChatConfig) -> Result<Self, ChatRequestError> {
         let workdir = match config.workdir {
             Some(workdir) => workdir,
             None => std::env::current_dir().map_err(ChatRequestError::CurrentDir)?,
@@ -89,8 +93,8 @@ impl ChatRequest {
         Ok(Self {
             text,
             workdir,
-            agent: config.agent,
-            model: None,
+            assistant_id: config.assistant_id,
+            model_id: None,
             session: None,
             new: false,
             output_mode: None,
@@ -107,7 +111,7 @@ impl ChatRequest {
 
     pub(crate) fn key(&self) -> SessionKey {
         SessionKey {
-            agent: self.agent.name().to_owned(),
+            assistant_id: self.assistant_id.name().to_owned(),
             name: self
                 .session
                 .clone()
@@ -116,18 +120,18 @@ impl ChatRequest {
     }
 }
 
-/// How a session is addressed: its agent and its name, which is the
+/// How a session is addressed: its assistant and its name, which is the
 /// directory unless the request names one. Turns on one key run one after
 /// another; different keys run side by side.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct SessionKey {
-    pub(crate) agent: String,
+    pub(crate) assistant_id: String,
     pub(crate) name: String,
 }
 
 impl std::fmt::Display for SessionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.agent, self.name)
+        write!(f, "{}:{}", self.assistant_id, self.name)
     }
 }
 
@@ -141,14 +145,15 @@ pub(crate) struct PromptCall {
 }
 
 /// A prompt call resolved against the stored prompt and the configured
-/// agent. One fresh agent run; no conversation.
+/// assistant. One fresh assistant run; no conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PromptRequest {
     pub(crate) text: String,
     pub(crate) kind: PromptKind,
     /// The Markdown instructions, read when the run starts.
     pub(crate) file: PathBuf,
-    pub(crate) agent: ChatAgent,
+    pub(crate) assistant_id: AssistantId,
+    pub(crate) model_id: Option<String>,
     pub(crate) application: Option<crate::preferences::ApplicationId>,
 }
 
@@ -164,7 +169,7 @@ pub enum ChatRequestError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatStage {
     pub ticket: Ticket,
-    pub agent: ChatAgent,
+    pub assistant_id: AssistantId,
     pub kind: ChatStageKind,
 }
 
@@ -190,7 +195,7 @@ pub enum Step {
 const MAX_SKILL_NAME_CHARS: usize = 64;
 
 impl Step {
-    /// A skill named by the agent, and so by whatever it read. Control
+    /// A skill named by the assistant, and so by whatever it read. Control
     /// characters would reach a terminal as-is, so they do not survive.
     pub(crate) fn skill(name: &str) -> Self {
         Self::Skill(
@@ -238,13 +243,16 @@ pub(crate) type ChatEventEmitter = EventEmitter<ChatStage>;
 
 pub(crate) struct SessionSpec<'a> {
     pub(crate) workdir: &'a Path,
-    pub(crate) model: Option<&'a str>,
+    pub(crate) model_id: Option<&'a str>,
     pub(crate) resume: Option<&'a str>,
 }
 
-/// A kind of agent and how to reach it.
-pub(crate) trait Agent: Send + Sync {
-    fn open(&self, spec: SessionSpec<'_>) -> Box<dyn Session>;
+pub(crate) trait Assistant: Send + Sync {
+    type Session: Session;
+
+    fn models(&self, cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError>;
+
+    fn open(&self, spec: SessionSpec<'_>) -> Self::Session;
 
     /// One run outside any conversation or project, with no tools: the
     /// text to type, or why there is none.
@@ -253,10 +261,10 @@ pub(crate) trait Agent: Send + Sync {
         request: &PromptRun<'_>,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<String, AgentError>;
+    ) -> Result<String, AssistantError>;
 }
 
-/// One conversation with an agent, taking one turn at a time.
+/// One conversation with an assistant, taking one turn at a time.
 pub(crate) trait Session: Send {
     /// Sends one prompt and feeds its output to `sink` until the turn ends.
     fn prompt(
@@ -265,7 +273,7 @@ pub(crate) trait Session: Send {
         sink: &mut dyn TurnSink,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<(), AgentError>;
+    ) -> Result<(), AssistantError>;
 
     /// What continues this conversation next time; `None` before the
     /// first reply.
@@ -275,47 +283,46 @@ pub(crate) trait Session: Send {
 /// Where a turn's output goes.
 pub(crate) trait TurnSink: Send {
     fn text(&mut self, chunk: &str);
-    /// What the agent has moved on to. Repeats are the sink's to drop.
+    /// What the assistant has moved on to. Repeats are the sink's to drop.
     fn step(&mut self, step: Step);
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum AgentError {
+pub(crate) enum AssistantError {
     #[error(
-        "agent binary {} is not installed or not on PATH; install it, or pick another \
-         agent with --agent or chat.agent",
+        "assistant executable {} was not found; install its command-line app",
         binary.display()
     )]
     Missing { binary: PathBuf },
 
-    #[error("the agent's working directory {} does not exist", .0.display())]
+    #[error("the assistant's working directory {} does not exist", .0.display())]
     NoWorkdir(PathBuf),
 
-    #[error("failed to start the agent")]
+    #[error("failed to start the assistant")]
     Spawn(#[source] std::io::Error),
 
-    #[error("failed to write the prompt to the agent")]
+    #[error("failed to write the prompt to the assistant")]
     Input(#[source] std::io::Error),
 
-    #[error("failed to prepare the agent's run directory")]
+    #[error("failed to prepare the assistant's run directory")]
     RunDirectory(#[source] std::io::Error),
 
-    #[error("failed to read the agent's output")]
+    #[error("failed to read the assistant's output")]
     Io(#[source] std::io::Error),
 
-    #[error("failed to wait for the agent")]
+    #[error("failed to wait for the assistant")]
     Wait(#[source] ChildProcessError),
 
-    #[error("the agent failed: {0}")]
+    #[error("the assistant failed: {0}")]
     Failed(String),
 
-    #[error("the agent's output could not be understood: {0}")]
+    #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),
 
-    #[error("the agent wrote more than {0} bytes")]
+    #[error("the assistant wrote more than {0} bytes")]
     OutputTooLarge(usize),
 
-    #[error("the agent exceeded its deadline of {0:?}")]
+    #[error("the assistant exceeded its deadline of {0:?}")]
     Timeout(Duration),
 
     #[error("the ask was cancelled")]
@@ -326,18 +333,21 @@ pub(crate) enum AgentError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskTarget {
     pub workdir: PathBuf,
-    pub agent: ChatAgent,
+    pub assistant_id: AssistantId,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ResolveError {
+    #[error("failed to read preferences")]
+    Preferences(#[source] crate::preferences::PreferenceStoreError),
+
     #[error("failed to load chat configuration")]
     Config(#[source] ConfigError),
 
     #[error("failed to read the known projects")]
     Projects(#[source] ProjectsError),
 
-    #[error("failed to resolve the agent's working directory")]
+    #[error("failed to resolve the assistant's working directory")]
     Directory(#[source] std::io::Error),
 
     #[error(
@@ -350,7 +360,9 @@ pub(crate) enum ResolveError {
 impl From<&ResolveError> for RpcErrorCode {
     fn from(error: &ResolveError) -> Self {
         match error {
-            ResolveError::Config(_) | ResolveError::Projects(_) => Self::Internal,
+            ResolveError::Config(_) | ResolveError::Projects(_) | ResolveError::Preferences(_) => {
+                Self::Internal
+            }
             ResolveError::NoTarget | ResolveError::Directory(_) => Self::InvalidRequest,
         }
     }
@@ -362,7 +374,7 @@ pub(crate) enum ChatError {
     Config(#[source] ConfigError),
 
     #[error(transparent)]
-    Agent(#[from] AgentError),
+    Assistant(#[from] AssistantError),
 
     #[error("failed to deliver the reply")]
     Delivery(#[source] DeliveryError),
@@ -389,15 +401,15 @@ impl From<&ChatError> for RpcErrorCode {
             ChatError::Config(_) | ChatError::Session(_) | ChatError::Preferences(_) => {
                 Self::Internal
             }
-            ChatError::Agent(AgentError::Missing { .. }) => Self::AgentUnavailable,
-            ChatError::Agent(AgentError::NoWorkdir(_))
+            ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
+            ChatError::Assistant(AssistantError::NoWorkdir(_))
             | ChatError::UnknownPrompt
             | ChatError::PromptOff
             | ChatError::Instructions(_) => Self::InvalidRequest,
-            ChatError::Agent(AgentError::Timeout(_)) => Self::AgentTimeout,
-            ChatError::Agent(AgentError::Cancelled)
+            ChatError::Assistant(AssistantError::Timeout(_)) => Self::AssistantTimeout,
+            ChatError::Assistant(AssistantError::Cancelled)
             | ChatError::Delivery(DeliveryError::Cancelled) => Self::Cancelled,
-            ChatError::Agent(_) => Self::AgentFailed,
+            ChatError::Assistant(_) => Self::AssistantFailed,
             ChatError::Delivery(DeliveryError::Timeout(_)) => Self::DeliveryTimeout,
             ChatError::Delivery(DeliveryError::TargetChanged) => Self::DeliveryTargetChanged,
             ChatError::Delivery(DeliveryError::ApplicationExcluded) => Self::ApplicationExcluded,

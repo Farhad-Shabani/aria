@@ -1,5 +1,5 @@
 //! The profile block: every active fact rendered once to a file, so an ask
-//! pays one small read to show the agent what it knows.
+//! pays one small read to show the assistant what it knows.
 
 use std::io::Write;
 use std::path::Path;
@@ -16,7 +16,7 @@ const HEADERS: [(&str, &str); 3] = [
 ];
 
 /// Markdown grouped by kind, empty when there are no facts. The hedge in
-/// the header is what lets the agent ignore a memory that does not apply;
+/// the header is what lets the assistant ignore a memory that does not apply;
 /// over-personalization is how memory features go wrong.
 pub(crate) fn render_profile(facts: &[Fact]) -> String {
     if facts.is_empty() {

@@ -10,7 +10,7 @@ use crate::audio::ReplayPace;
 
 use super::file::{self, FileConfig};
 use super::load::{
-    self, BACKEND_ENV, CAPTURE_BACKEND_ENV, CAPTURE_FILE_ENV, CAPTURE_PACE_ENV, CHAT_AGENT_ENV,
+    self, BACKEND_ENV, CAPTURE_BACKEND_ENV, CAPTURE_FILE_ENV, CAPTURE_PACE_ENV, CHAT_ASSISTANT_ENV,
     CHAT_TIMEOUT_ENV, DEFAULT_CAPTURE_BACKEND, DEFAULT_CONFIG_RELATIVE_PATH, DELIVERY_TIMEOUT_ENV,
     DEVICE_ENV, DICTATION_BACKTRACK_ENV, DICTATION_CLEANUP_ENV, Environment, HOTKEY_ENABLED_ENV,
     INTERPRETER_ENV, LISTEN_BACKEND_ENV, LISTEN_DEVICE_ENV, LISTEN_MODEL_ENV,
@@ -518,12 +518,12 @@ fn chat(
     }
     let config = load::chat(file, environment)?;
     let mut rows = vec![row(
-        "chat.agent",
-        config.agent.name(),
+        "chat.assistant",
+        config.assistant_id.name(),
         Source::of(
-            environment.chat_agent.is_some(),
-            file.chat.agent.is_some(),
-            CHAT_AGENT_ENV,
+            environment.assistant_id.is_some(),
+            file.chat.assistant.is_some(),
+            CHAT_ASSISTANT_ENV,
         ),
     )];
     if let Some(workdir) = &config.workdir {
@@ -898,7 +898,7 @@ mod tests {
             tts_voice: _,
             tts_rate: _,
             tts_fallback: _,
-            chat_agent: _,
+            assistant_id: _,
             chat_timeout: _,
             wake_enabled: _,
             wake_backend: _,
@@ -975,7 +975,7 @@ mod tests {
                 },
             chat:
                 FileChat {
-                    agent: _,
+                    assistant: _,
                     workdir: _,
                     project_roots: _,
                     timeout: _,
@@ -1016,7 +1016,7 @@ mod tests {
         environment.tts_voice = set("af_heart");
         environment.tts_rate = set("1.2");
         environment.tts_fallback = set("system");
-        environment.chat_agent = set("codex");
+        environment.assistant_id = set("codex");
         environment.chat_timeout = set("30");
         environment.listen_backend = set("nemotron");
         environment.listen_model = set("~/l");
@@ -1051,7 +1051,7 @@ mod tests {
             ("tts.voice", TTS_VOICE_ENV),
             ("tts.rate", TTS_RATE_ENV),
             ("tts.fallback", TTS_FALLBACK_ENV),
-            ("chat.agent", CHAT_AGENT_ENV),
+            ("chat.assistant", CHAT_ASSISTANT_ENV),
             ("chat.timeout", CHAT_TIMEOUT_ENV),
             ("listen.backend", LISTEN_BACKEND_ENV),
             ("listen.model", LISTEN_MODEL_ENV),
@@ -1142,7 +1142,7 @@ mod tests {
              dictation_backtrack: true\n\
              dictation_cleanup_llm:\n  endpoint: http://127.0.0.1:8080/v1/chat/completions\n  model: local-model\n\
              tts:\n  backend: kokoro\n  model: ~/k\n  voices: ~/v\n  voice: af_heart\n  rate: 1.2\n  fallback: system\n\
-             chat:\n  agent: codex\n  workdir: ~/c\n  project_roots: [~/p]\n  timeout: 30\n\
+             chat:\n  assistant: codex\n  workdir: ~/c\n  project_roots: [~/p]\n  timeout: 30\n\
              memory:\n  enabled: true\n  extract_model: opus\n  max_facts_per_session: 3\n  dir: ~/mem\n",
         );
         let report = shown(home.path());
@@ -1173,7 +1173,7 @@ mod tests {
             "tts.voice",
             "tts.rate",
             "tts.fallback",
-            "chat.agent",
+            "chat.assistant",
             "chat.workdir",
             "chat.project_roots",
             "chat.timeout",

@@ -490,7 +490,7 @@ extension SetupState.Step {
 
     var caption: String? {
         switch self {
-        case .inspecting, .welcome: "Dictation stays on this Mac. Ask goes through Claude Code or Codex."
+        case .inspecting, .welcome: "Dictation stays on this Mac. Ask uses your selected assistant."
         case .choices: "Speech stays on this Mac. You can change these later."
         case .applying: "This takes a moment. Downloads can be cancelled."
         case .grant: "The dictation hotkey needs Aria's Accessibility grant."

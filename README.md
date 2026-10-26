@@ -1,6 +1,6 @@
 <h1 align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/aria-lockup-inline-animated-dark.svg"><img src="assets/brand/aria-lockup-inline-animated.svg" width="280" alt="Aria"></picture></h1>
 
-<p align="center"><b>Talk to your AI agents without sending them your audio.</b></p>
+<p align="center"><b>Talk to your AI assistants without sending them your audio.</b></p>
 
 <p align="center">
   <strong><a href="https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg" title="Download the macOS desktop app">Download</a></strong> |
@@ -18,14 +18,14 @@
 
 Aria hears you, writes what you say, and reads text aloud. It's a voice
 assistant for macOS and Linux, with speech processing local by default. It
-also talks to your AI agents and keeps the conversation going. They get your
-words, never your audio.
+also lets you talk to your AI assistants and continue the conversation.
+They receive your words as text, never your audio.
 
 The macOS app brings setup, settings, history, and keyboard shortcuts to your menu bar.
 
 ```sh
 aria dictate          # speak; type into a Mac app or copy the text
-aria ask              # speak a question; your agent answers
+aria ask              # speak a question; your assistant answers
 aria say "Done for today."
 aria listen start     # transcribe system audio, with speakers
 ```
@@ -33,7 +33,7 @@ aria listen start     # transcribe system audio, with speakers
 ## What it does
 
 - **Dictate** into any app on macOS, or to the clipboard on macOS and Linux.
-- **Ask** your AI agent by voice, and keep the conversation going.
+- **Ask** your AI assistant by voice, and keep the conversation going.
 - **Speak** text aloud.
 - **Wake** on a word you choose, with your own model.
 - **Listen** to system audio on macOS and transcribe it, labeled by speaker.

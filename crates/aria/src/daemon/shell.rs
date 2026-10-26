@@ -1,7 +1,7 @@
 //! The user's PATH, read from their login shell.
 //!
 //! Aria.app's login agent starts the daemon with launchd's bare PATH. The
-//! daemon runs coding agents and tools by name, and those usually live in
+//! daemon runs coding assistants and tools by name, and those usually live in
 //! directories the shell's rc files add.
 
 use std::ffi::{OsStr, OsString};

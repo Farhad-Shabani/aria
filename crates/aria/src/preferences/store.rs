@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -7,6 +8,7 @@ use super::{
     ApplicationOverrides, Chord, Language, PreferenceStoreError, Prompts, UserPreferences, file,
 };
 use crate::audio::SilenceDuration;
+use crate::config::AssistantId;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
 use crate::hotkey::HotkeyKey;
@@ -21,6 +23,8 @@ pub struct PreferenceSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PreferencePatch {
+    pub assistant_id: Option<AssistantId>,
+    pub assistant_models: BTreeMap<AssistantId, String>,
     pub dictation_history: Option<bool>,
     pub history_audio_retention: Option<bool>,
     pub mute_output: Option<bool>,
@@ -88,6 +92,7 @@ impl PreferenceStore {
         }
 
         let preferences = patch.apply_to(&current.preferences);
+        preferences.validate_assistant_models()?;
         if preferences.shares_a_chord() {
             return Err(PreferenceStoreError::ChordInUse);
         }
@@ -127,7 +132,12 @@ impl PreferencePatch {
     fn apply_to(self, current: &UserPreferences) -> UserPreferences {
         let output_mode = self.output_mode.unwrap_or(current.output_mode);
         let delivery_mode = self.delivery_mode.unwrap_or(current.delivery_mode);
+        let mut assistant_models = current.assistant_models.clone();
+        assistant_models.extend(self.assistant_models);
+        assistant_models.retain(|_, model_id| !model_id.is_empty());
         UserPreferences {
+            assistant_id: self.assistant_id.or(current.assistant_id),
+            assistant_models,
             dictation_history: self.dictation_history.unwrap_or(current.dictation_history),
             history_audio_retention: self
                 .history_audio_retention
@@ -163,6 +173,143 @@ impl PreferencePatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assistant_models_persist_independently_and_empty_resets_to_default() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        let original = store.snapshot().unwrap();
+        assert_eq!(original.preferences.model_id(AssistantId::ClaudeCode), None);
+        assert_eq!(original.preferences.model_id(AssistantId::Codex), None);
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    assistant_models: [
+                        (AssistantId::ClaudeCode, "claude-example".to_owned()),
+                        (AssistantId::Codex, "codex-example".to_owned()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let reopened = PreferenceStore::open(&path).unwrap();
+        reopened
+            .update(
+                1,
+                PreferencePatch {
+                    assistant_id: Some(AssistantId::Codex),
+                    assistant_models: [(AssistantId::ClaudeCode, String::new())].into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let preferences = PreferenceStore::open(&path)
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .preferences;
+        assert_eq!(preferences.model_id(AssistantId::ClaudeCode), None);
+        assert_eq!(
+            preferences.model_id(AssistantId::Codex),
+            Some("codex-example")
+        );
+        assert_eq!(preferences.assistant_id, Some(AssistantId::Codex));
+    }
+
+    #[test]
+    fn invalid_model_ids_leave_preferences_unchanged() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    mute_output: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for invalid in [
+            "two words".to_owned(),
+            "line\nbreak".to_owned(),
+            "--flag".to_owned(),
+            "x".repeat(201),
+        ] {
+            assert!(matches!(
+                store.update(
+                    1,
+                    PreferencePatch {
+                        assistant_models: [(AssistantId::Codex, invalid.clone())].into(),
+                        ..Default::default()
+                    }
+                ),
+                Err(PreferenceStoreError::InvalidModelId)
+            ));
+            assert_eq!(store.snapshot().unwrap().revision, 1);
+            stored["preferences"]["assistant_models"]["codex"] = serde_json::Value::String(invalid);
+            std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+            assert!(matches!(
+                PreferenceStore::open(&path),
+                Err(PreferenceStoreError::InvalidModelId)
+            ));
+        }
+    }
+
+    #[test]
+    fn the_assistant_stays_inherited_until_explicitly_selected() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("preferences.json");
+        let store = PreferenceStore::open(&path).unwrap();
+        assert_eq!(store.snapshot().unwrap().preferences.assistant_id, None);
+        store
+            .update(
+                0,
+                PreferencePatch {
+                    mute_output: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let reopened = PreferenceStore::open(&path).unwrap();
+        assert_eq!(reopened.snapshot().unwrap().preferences.assistant_id, None);
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(stored["preferences"].get("assistant_id").is_none());
+
+        reopened
+            .update(
+                1,
+                PreferencePatch {
+                    assistant_id: Some(AssistantId::Codex),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let reopened = PreferenceStore::open(&path).unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap().preferences.assistant_id,
+            Some(AssistantId::Codex)
+        );
+        reopened
+            .update(
+                2,
+                PreferencePatch {
+                    mute_output: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap().preferences.assistant_id,
+            Some(AssistantId::Codex)
+        );
+    }
 
     #[test]
     fn history_audio_retention_is_opt_in_and_snapshotted() {

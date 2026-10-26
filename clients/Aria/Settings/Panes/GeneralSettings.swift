@@ -3,6 +3,9 @@ import SwiftUI
 struct GeneralSettings: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var setup: SetupStatus
+    @ObservedObject var preferences: DaemonPreferences
+    @ObservedObject var catalog: AssistantCatalog
+    let openAssistant: () -> Void
     @StateObject private var loginItem = LoginItem()
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.isEnabledByDefault
@@ -18,6 +21,13 @@ struct GeneralSettings: View {
                     "Launch at login",
                     isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.set(enabled: $0) })
                 )
+            }
+            Section {
+                ItemLink(open: openAssistant) {
+                    Text("Assistant")
+                    Spacer()
+                    Text(assistantName).foregroundStyle(.secondary)
+                }
             }
             Section("On screen") {
                 Toggle("Show status pill", isOn: $statusPillEnabled)
@@ -50,5 +60,17 @@ struct GeneralSettings: View {
             }
         }
         .onAppear { loginItem.refresh() }
+    }
+
+    private var assistantName: String {
+        guard let snapshot = preferences.snapshot else {
+            return preferences.loadFailure == nil ? "Connecting…" : "Unavailable"
+        }
+        if let assistant = catalog.choices.first(where: { $0.id == snapshot.assistantID }) {
+            return assistant.name
+        }
+        if catalog.isLoading { return "Loading…" }
+        if catalog.failure != nil { return "Unavailable" }
+        return "Choose…"
     }
 }

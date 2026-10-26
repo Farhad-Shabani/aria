@@ -75,8 +75,12 @@ Parakeet (MLX) is the exception: it needs its own Python and downloads its
 model on first use.
 
 The system voice needs no model. You can leave optional features at their
-defaults. Choosing a chat agent does not contact it. You need an agent
-account only for [Ask](./voice-chat.md).
+defaults.
+
+You only need a Claude Code or Codex account if you want to use
+[Ask](./voice-chat.md) or [Prompts](./prompts.md). Choose your assistant later
+in **Settings → General → Assistant**, or from the
+[terminal](./configuration.md#assistant).
 
 Setup saves `~/.aria/config.yaml`, downloads the models you select, and starts
 Aria's background service. It backs up a hand-written configuration as
