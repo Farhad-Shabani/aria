@@ -1,6 +1,9 @@
 import SwiftUI
 
 private enum Layout {
+    // shortcut: mirrors grouped Form metrics; rendering tests catch changes to its insets.
+    static let rowInset: CGFloat = 10
+    static let groupCornerRadius: CGFloat = 12
     static let barButtonWidth: CGFloat = 26
     static let barButtonHeight: CGFloat = 22
     static let barDividerHeight: CGFloat = 14
@@ -55,7 +58,8 @@ struct ItemList<Item, Row: View>: View {
     }
 
     private func line(_ itemID: String, _ content: Row) -> some View {
-        HStack {
+        let isSelected = target == itemID
+        return HStack {
             Button {
                 selected = itemID
             } label: {
@@ -64,11 +68,15 @@ struct ItemList<Item, Row: View>: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityAddTraits(target == itemID ? .isSelected : [])
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
             Button("Open \(noun)", systemImage: "chevron.right") { open(itemID) }
                 .labelStyle(.iconOnly)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(
+                    isSelected
+                        ? Color(nsColor: .alternateSelectedControlTextColor)
+                        : Color(nsColor: .tertiaryLabelColor)
+                )
                 .frame(width: Layout.barButtonWidth, height: Layout.barButtonHeight)
                 .contentShape(Rectangle())
                 .buttonStyle(.plain)
@@ -79,11 +87,19 @@ struct ItemList<Item, Row: View>: View {
                 if selected == itemID { selected = nil }
             }
         }
+        .foregroundStyle(isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : .primary)
         .background {
-            if target == itemID {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.accentColor.opacity(0.24))
-                    .strokeBorder(Color.accentColor, lineWidth: 1)
+            if isSelected {
+                let topRadius = items.first?[keyPath: id] == itemID ? Layout.groupCornerRadius : 0
+                let bottomRadius = items.last?[keyPath: id] == itemID ? Layout.groupCornerRadius : 0
+                UnevenRoundedRectangle(
+                    topLeadingRadius: topRadius,
+                    bottomLeadingRadius: bottomRadius,
+                    bottomTrailingRadius: bottomRadius,
+                    topTrailingRadius: topRadius
+                )
+                .fill(Color(nsColor: .selectedContentBackgroundColor))
+                .padding(-Layout.rowInset)
             }
         }
     }

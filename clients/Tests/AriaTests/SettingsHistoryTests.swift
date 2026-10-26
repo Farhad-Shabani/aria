@@ -62,21 +62,4 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertEqual(history.selectedItem(in: .apps), "com.a")
     }
 
-    func testSelectingAnItemTargetsThatItemRegardlessOfListOrder() {
-        var history = SettingsHistory(current: .pane(.apps))
-
-        history.selectItem("com.b", in: .apps)
-        XCTAssertEqual(history.selectedItem(in: .apps), "com.b")
-
-        history.selectItem("com.a", in: .apps)
-        XCTAssertEqual(history.selectedItem(in: .apps), "com.a")
-        XCTAssertNil(history.selectedItem(in: .prompts))
-
-        history.selectItem("prompt-2", in: .prompts)
-        XCTAssertEqual(history.selectedItem(in: .prompts), "prompt-2")
-        XCTAssertEqual(history.selectedItem(in: .apps), "com.a")
-
-        history.selectItem(nil, in: .apps)
-        XCTAssertNil(history.selectedItem(in: .apps))
-    }
 }

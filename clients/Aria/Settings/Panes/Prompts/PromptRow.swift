@@ -3,6 +3,7 @@ import SwiftUI
 struct PromptRow: View {
     let entry: Aria_Daemon_V1_Prompt
     var flagsMissingFile = false
+    var isSelected = false
 
     var body: some View {
         HStack {
@@ -12,7 +13,7 @@ struct PromptRow: View {
                 if flagsMissingFile && !PromptFile.exists(entry) {
                     Text("File not found")
                         .font(.subheadline)
-                        .foregroundStyle(.failure)
+                        .foregroundStyle(isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : .failure)
                 }
             }
             Spacer()

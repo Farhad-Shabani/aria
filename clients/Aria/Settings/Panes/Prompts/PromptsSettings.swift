@@ -21,7 +21,7 @@ struct PromptsSettings: View {
                 },
                 open: open
             ) { entry in
-                PromptRow(entry: entry, flagsMissingFile: true)
+                PromptRow(entry: entry, flagsMissingFile: true, isSelected: selected == entry.id)
             }
         }
     }
