@@ -79,7 +79,13 @@ struct ItemList<Item, Row: View>: View {
                 if selected == itemID { selected = nil }
             }
         }
-        .listRowBackground(target == itemID ? Color.accentColor.opacity(0.15) : nil)
+        .background {
+            if target == itemID {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(0.24))
+                    .strokeBorder(Color.accentColor, lineWidth: 1)
+            }
+        }
     }
 
     private func barButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
