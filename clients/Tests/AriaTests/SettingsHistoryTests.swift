@@ -49,16 +49,17 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertEqual(history.current, .item(.apps, id: "com.tinyspeck.slackmacgap"))
     }
 
-    func testGoingBackFromAnItemMarksItInItsList() {
+    func testOpeningAnItemSelectsItInItsList() {
         var history = SettingsHistory(current: .pane(.apps))
         history.open(.item(.apps, id: "com.a"))
-        XCTAssertNil(history.lastItem(in: .apps))
+        XCTAssertEqual(history.selectedItem(in: .apps), "com.a")
 
         history.goBack()
 
-        XCTAssertEqual(history.lastItem(in: .apps), "com.a")
-        XCTAssertNil(history.lastItem(in: .privacy))
+        XCTAssertEqual(history.selectedItem(in: .apps), "com.a")
+        XCTAssertNil(history.selectedItem(in: .prompts))
         history.open(.pane(.privacy))
-        XCTAssertNil(history.lastItem(in: .apps))
+        XCTAssertEqual(history.selectedItem(in: .apps), "com.a")
     }
+
 }

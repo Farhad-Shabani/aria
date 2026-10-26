@@ -1,25 +1,21 @@
 import SwiftUI
 
 private enum Layout {
+    static let rowPadding: CGFloat = 10
+    static let cornerRadius: CGFloat = 12
     static let barButtonWidth: CGFloat = 26
     static let barButtonHeight: CGFloat = 22
     static let barDividerHeight: CGFloat = 14
-    /// Pulls the bar left by the + glyph's side margin, so the glyph lines up
-    /// with the rows' leading edge.
-    static let barOutdent: CGFloat = 8
 }
 
-/// A pane's list of items. A click opens the item's page; the buttons under
-/// the list add, and remove the item whose page Back just left, which the
-/// list marks. A row's context menu removes any item.
 struct ItemList<Item, Row: View>: View {
+    @State private var rowHeights: [String: CGFloat] = [:]
     let items: [Item]
     let id: KeyPath<Item, String>
     /// Names one item to assistive tech: "App" gives "Add App".
     let noun: String
     let empty: String
-    /// The item to mark and to remove with −.
-    let marked: String?
+    @Binding var selected: String?
     let canAdd: Bool
     let add: () -> Void
     let remove: (String) -> Void
@@ -27,46 +23,93 @@ struct ItemList<Item, Row: View>: View {
     @ViewBuilder let row: (Item) -> Row
 
     var body: some View {
-        Section {
-            if items.isEmpty {
-                Text(empty)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                if items.isEmpty {
+                    Text(empty)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: Layout.barButtonHeight)
+                        .padding(.vertical, Layout.rowPadding)
+                } else {
+                    List(selection: $selected) {
+                        ForEach(items, id: id) { item in
+                            line(item[keyPath: id], row(item))
+                                .onGeometryChange(for: CGFloat.self) {
+                                    $0.size.height
+                                } action: { height in
+                                    rowHeights[item[keyPath: id]] = height
+                                }
+                                .tag(item[keyPath: id])
+                                .listRowInsets(EdgeInsets())
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .frame(maxHeight: contentHeight)
+                    .accessibilityActions {
+                        if selected != nil {
+                            Button("Clear Selection") { selected = nil }
+                        }
+                    }
+                }
             }
-            ForEach(items, id: id) { item in
-                line(item[keyPath: id], row(item))
-            }
-        } footer: {
+            .background(.quaternary.opacity(0.3))
+            .clipShape(.rect(cornerRadius: Layout.cornerRadius))
             HStack(spacing: 0) {
                 barButton("Add \(noun)", symbol: "plus", action: add)
                     .disabled(!canAdd)
                 Divider().frame(height: Layout.barDividerHeight)
                 barButton("Remove \(noun)", symbol: "minus") {
-                    if let target { remove(target) }
+                    if let target {
+                        remove(target)
+                        selected = nil
+                    }
                 }
                 .disabled(target == nil)
             }
             .fixedSize()
-            .padding(.leading, -Layout.barOutdent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scenePadding()
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { selected = nil }
+        }
+        .onChange(of: items.map { $0[keyPath: id] }) { _, ids in
+            rowHeights = rowHeights.filter { ids.contains($0.key) }
         }
     }
 
-    /// A mark whose item is gone, removed here or elsewhere, is none.
+    private var contentHeight: CGFloat? {
+        let heights = items.compactMap { rowHeights[$0[keyPath: id]] }
+        return heights.count == items.count ? heights.reduce(0, +) : nil
+    }
+
     private var target: String? {
-        items.contains { $0[keyPath: id] == marked } ? marked : nil
+        items.contains { $0[keyPath: id] == selected } ? selected : nil
     }
 
     private func line(_ itemID: String, _ content: Row) -> some View {
-        ItemLink {
-            open(itemID)
-        } label: {
-            content
+        HStack {
+            content.frame(maxWidth: .infinity, alignment: .leading)
+            Button("Open \(noun)", systemImage: "chevron.right") { open(itemID) }
+                .labelStyle(.iconOnly)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .frame(width: Layout.barButtonWidth, height: Layout.barButtonHeight)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
         }
+        .padding(.vertical, Layout.rowPadding)
+        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+        .alignmentGuide(.listRowSeparatorTrailing) { $0[.trailing] }
         .contextMenu {
-            Button("Remove \(noun)", role: .destructive) { remove(itemID) }
+            Button("Remove \(noun)", role: .destructive) {
+                remove(itemID)
+                if selected == itemID { selected = nil }
+            }
         }
-        .listRowBackground(target == itemID ? Color.accentColor.opacity(0.15) : nil)
-        .accessibilityAddTraits(target == itemID ? .isSelected : [])
     }
 
     private func barButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {

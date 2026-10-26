@@ -2,19 +2,18 @@ import SwiftUI
 
 struct PromptsSettings: View {
     let preferences: DaemonPreferences
-    /// The prompt whose page Back just left.
-    let marked: String?
+    @Binding var selected: String?
     let open: (String) -> Void
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        PreferencesContent(preferences: preferences) { editor in
             let prompts = editor.snapshot.prompts
             ItemList(
                 items: prompts.entries,
                 id: \.id,
                 noun: "Prompt",
                 empty: "No Prompts",
-                marked: marked,
+                selected: $selected,
                 canAdd: prompts.entries.count < PromptEdits.maximumPrompts,
                 add: { add(editor) },
                 remove: { id in
@@ -22,7 +21,7 @@ struct PromptsSettings: View {
                 },
                 open: open
             ) { entry in
-                PromptRow(entry: entry, flagsMissingFile: true)
+                PromptRow(entry: entry, flagsMissingFile: true, isSelected: selected == entry.id)
             }
         }
     }

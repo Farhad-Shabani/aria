@@ -2,19 +2,18 @@ import SwiftUI
 
 struct AppsSettings: View {
     let preferences: DaemonPreferences
-    /// The app whose page Back just left.
-    let marked: String?
+    @Binding var selected: String?
     let open: (String) -> Void
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        PreferencesContent(preferences: preferences) { editor in
             let apps = editor.snapshot.applicationOverrides
             ItemList(
                 items: apps.entries,
                 id: \.applicationID,
                 noun: "App",
                 empty: "No Apps",
-                marked: marked,
+                selected: $selected,
                 canAdd: apps.entries.count < ApplicationOverrideEdits.maximumApps,
                 add: { add(editor) },
                 remove: { bundleID in
