@@ -7,6 +7,7 @@
 mod assistants;
 mod models;
 pub use models::AssistantModel;
+pub(crate) use models::is_valid_model_id;
 mod process;
 mod projects;
 mod prompt_run;

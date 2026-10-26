@@ -356,20 +356,16 @@ impl DaemonClient {
             .models
             .into_iter()
             .map(|model| {
-                if model.id.is_empty()
-                    || crate::preferences::validate_model_id(&model.id).is_err()
-                    || model.name.is_empty()
-                    || model.name.len() > 200
-                    || model.name.chars().any(char::is_control)
-                {
+                let model = AssistantModel {
+                    id: model.id,
+                    name: model.name,
+                };
+                if !model.is_valid() {
                     return Err(ClientError::MalformedResponse(
                         "invalid assistant model".to_owned(),
                     ));
                 }
-                Ok(AssistantModel {
-                    id: model.id,
-                    name: model.name,
-                })
+                Ok(model)
             })
             .collect()
     }

@@ -478,8 +478,9 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
             .transpose()?;
         let assistant_id = decode_enum::<wire::AssistantId>(request.assistant_id, "assistant_id")?;
-        crate::preferences::validate_model_id(&request.model_id)
-            .map_err(|_| ProtocolError::InvalidModelId)?;
+        if !crate::chat::is_valid_model_id(&request.model_id) {
+            return Err(ProtocolError::InvalidModelId);
+        }
         Ok(Self {
             text: request.text,
             workdir: request.workdir.into(),
@@ -1299,8 +1300,9 @@ fn decode_assistant_models(
     let mut models = BTreeMap::new();
     for entry in entries {
         let assistant_id = decode_enum::<wire::AssistantId>(entry.assistant_id, "assistant_id")?;
-        crate::preferences::validate_model_id(&entry.model_id)
-            .map_err(|_| ProtocolError::InvalidModelId)?;
+        if !crate::chat::is_valid_model_id(&entry.model_id) {
+            return Err(ProtocolError::InvalidModelId);
+        }
         if models.insert(assistant_id, entry.model_id).is_some() {
             return Err(ProtocolError::DuplicateAssistantModel);
         }

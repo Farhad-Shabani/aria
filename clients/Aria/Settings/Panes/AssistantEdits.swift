@@ -3,11 +3,6 @@ import Foundation
 enum AssistantEdits {
     private static let maximumModelIDBytes = 200
     private static let invalidModelCharacters = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
-    enum ModelSelection: Hashable {
-        case defaultModel
-        case model(String)
-        case custom
-    }
 
     static func modelID(in preferences: Aria_Daemon_V1_UserPreferences) -> String? {
         guard preferences.hasAssistantID, preferences.assistantID != .unspecified else { return nil }

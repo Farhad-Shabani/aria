@@ -16,6 +16,25 @@ pub struct AssistantModel {
     pub name: String,
 }
 
+impl AssistantModel {
+    pub(crate) fn is_valid(&self) -> bool {
+        !self.id.is_empty()
+            && is_valid_model_id(&self.id)
+            && !self.name.is_empty()
+            && self.name.len() <= 200
+            && !self.name.chars().any(char::is_control)
+    }
+}
+
+pub(crate) fn is_valid_model_id(model_id: &str) -> bool {
+    const MAX_MODEL_ID_BYTES: usize = 200;
+    model_id.len() <= MAX_MODEL_ID_BYTES
+        && !model_id.starts_with('-')
+        && !model_id
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+}
+
 pub(super) fn discover(
     mut command: Command,
     input: &str,
@@ -33,13 +52,7 @@ pub(super) fn discover(
     let models = parse(&output.stdout)?;
     let mut ids = HashSet::new();
     for model in &models {
-        if !ids.insert(&model.id)
-            || model.id.is_empty()
-            || crate::preferences::validate_model_id(&model.id).is_err()
-            || model.name.is_empty()
-            || model.name.len() > 200
-            || model.name.chars().any(char::is_control)
-        {
+        if !ids.insert(&model.id) || !model.is_valid() {
             return Err(AssistantError::Malformed(
                 "the model list contains an invalid entry".to_owned(),
             ));

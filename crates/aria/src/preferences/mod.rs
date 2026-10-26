@@ -49,19 +49,6 @@ pub struct UserPreferences {
     pub prompts: Prompts,
 }
 
-pub(crate) fn validate_model_id(model_id: &str) -> Result<(), PreferenceStoreError> {
-    const MAX_MODEL_ID_BYTES: usize = 200;
-    if model_id.len() > MAX_MODEL_ID_BYTES
-        || model_id.starts_with('-')
-        || model_id
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
-    {
-        return Err(PreferenceStoreError::InvalidModelId);
-    }
-    Ok(())
-}
-
 impl UserPreferences {
     pub fn model_id(&self, assistant_id: AssistantId) -> Option<&str> {
         self.assistant_models
@@ -72,7 +59,9 @@ impl UserPreferences {
 
     pub(crate) fn validate_assistant_models(&self) -> Result<(), PreferenceStoreError> {
         for model_id in self.assistant_models.values() {
-            validate_model_id(model_id)?;
+            if !crate::chat::is_valid_model_id(model_id) {
+                return Err(PreferenceStoreError::InvalidModelId);
+            }
         }
         Ok(())
     }
