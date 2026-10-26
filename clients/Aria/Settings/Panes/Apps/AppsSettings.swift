@@ -6,7 +6,7 @@ struct AppsSettings: View {
     let open: (String) -> Void
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        PreferencesContent(preferences: preferences) { editor in
             let apps = editor.snapshot.applicationOverrides
             ItemList(
                 items: apps.entries,

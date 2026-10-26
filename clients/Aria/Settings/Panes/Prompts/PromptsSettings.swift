@@ -6,7 +6,7 @@ struct PromptsSettings: View {
     let open: (String) -> Void
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        PreferencesContent(preferences: preferences) { editor in
             let prompts = editor.snapshot.prompts
             ItemList(
                 items: prompts.entries,

@@ -1,18 +1,15 @@
 import SwiftUI
 
 private enum Layout {
-    // shortcut: mirrors grouped Form metrics; rendering tests catch changes to its insets.
-    static let rowInset: CGFloat = 10
-    static let groupCornerRadius: CGFloat = 12
+    static let rowPadding: CGFloat = 10
+    static let cornerRadius: CGFloat = 12
     static let barButtonWidth: CGFloat = 26
     static let barButtonHeight: CGFloat = 22
     static let barDividerHeight: CGFloat = 14
-    /// Pulls the bar left by the + glyph's side margin, so the glyph lines up
-    /// with the rows' leading edge.
-    static let barOutdent: CGFloat = 8
 }
 
 struct ItemList<Item, Row: View>: View {
+    @State private var rowHeights: [String: CGFloat] = [:]
     let items: [Item]
     let id: KeyPath<Item, String>
     /// Names one item to assistive tech: "App" gives "Add App".
@@ -26,16 +23,33 @@ struct ItemList<Item, Row: View>: View {
     @ViewBuilder let row: (Item) -> Row
 
     var body: some View {
-        Section {
-            if items.isEmpty {
-                Text(empty)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                if items.isEmpty {
+                    Text(empty)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: Layout.barButtonHeight)
+                        .padding(.vertical, Layout.rowPadding)
+                } else {
+                    List(selection: $selected) {
+                        ForEach(items, id: id) { item in
+                            line(item[keyPath: id], row(item))
+                                .onGeometryChange(for: CGFloat.self) {
+                                    $0.size.height
+                                } action: { height in
+                                    rowHeights[item[keyPath: id]] = height
+                                }
+                                .tag(item[keyPath: id])
+                                .listRowInsets(EdgeInsets())
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .frame(maxHeight: contentHeight)
+                }
             }
-            ForEach(items, id: id) { item in
-                line(item[keyPath: id], row(item))
-            }
-        } footer: {
+            .background(.quaternary.opacity(0.3))
+            .clipShape(.rect(cornerRadius: Layout.cornerRadius))
             HStack(spacing: 0) {
                 barButton("Add \(noun)", symbol: "plus", action: add)
                     .disabled(!canAdd)
@@ -49,8 +63,22 @@ struct ItemList<Item, Row: View>: View {
                 .disabled(target == nil)
             }
             .fixedSize()
-            .padding(.leading, -Layout.barOutdent)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scenePadding()
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { selected = nil }
+        }
+        .onChange(of: items.map { $0[keyPath: id] }) { _, ids in
+            rowHeights = rowHeights.filter { ids.contains($0.key) }
+        }
+    }
+
+    private var contentHeight: CGFloat? {
+        let heights = items.compactMap { rowHeights[$0[keyPath: id]] }
+        return heights.count == items.count ? heights.reduce(0, +) : nil
     }
 
     private var target: String? {
@@ -58,48 +86,23 @@ struct ItemList<Item, Row: View>: View {
     }
 
     private func line(_ itemID: String, _ content: Row) -> some View {
-        let isSelected = target == itemID
-        return HStack {
-            Button {
-                selected = itemID
-            } label: {
-                content
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        HStack {
+            content.frame(maxWidth: .infinity, alignment: .leading)
             Button("Open \(noun)", systemImage: "chevron.right") { open(itemID) }
                 .labelStyle(.iconOnly)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(
-                    isSelected
-                        ? Color(nsColor: .alternateSelectedControlTextColor)
-                        : Color(nsColor: .tertiaryLabelColor)
-                )
+                .foregroundStyle(.tertiary)
                 .frame(width: Layout.barButtonWidth, height: Layout.barButtonHeight)
                 .contentShape(Rectangle())
                 .buttonStyle(.plain)
         }
+        .padding(.vertical, Layout.rowPadding)
+        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+        .alignmentGuide(.listRowSeparatorTrailing) { $0[.trailing] }
         .contextMenu {
             Button("Remove \(noun)", role: .destructive) {
                 remove(itemID)
                 if selected == itemID { selected = nil }
-            }
-        }
-        .foregroundStyle(isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : .primary)
-        .background {
-            if isSelected {
-                let topRadius = items.first?[keyPath: id] == itemID ? Layout.groupCornerRadius : 0
-                let bottomRadius = items.last?[keyPath: id] == itemID ? Layout.groupCornerRadius : 0
-                UnevenRoundedRectangle(
-                    topLeadingRadius: topRadius,
-                    bottomLeadingRadius: bottomRadius,
-                    bottomTrailingRadius: bottomRadius,
-                    topTrailingRadius: topRadius
-                )
-                .fill(Color(nsColor: .selectedContentBackgroundColor))
-                .padding(-Layout.rowInset)
             }
         }
     }
