@@ -2,6 +2,7 @@ struct SettingsHistory {
     private(set) var current: SettingsPage
     private var backward: [SettingsPage] = []
     private var forward: [SettingsPage] = []
+    private var selectedItems: [SettingsPane: String] = [:]
 
     init(current: SettingsPage) {
         self.current = current
@@ -10,14 +11,19 @@ struct SettingsHistory {
     var canGoBack: Bool { !backward.isEmpty }
     var canGoForward: Bool { !forward.isEmpty }
 
-    /// The item whose page Back just left, so its list can mark it.
-    func lastItem(in pane: SettingsPane) -> String? {
-        guard case .item(pane, let id) = forward.last else { return nil }
-        return id
+    func selectedItem(in pane: SettingsPane) -> String? {
+        selectedItems[pane]
+    }
+
+    mutating func selectItem(_ id: String?, in pane: SettingsPane) {
+        selectedItems[pane] = id
     }
 
     mutating func open(_ page: SettingsPage) {
         guard page != current else { return }
+        if case .item(let pane, let id) = page {
+            selectItem(id, in: pane)
+        }
         backward.append(current)
         forward.removeAll()
         current = page

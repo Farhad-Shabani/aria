@@ -100,14 +100,18 @@ struct SettingsView: View {
                 openPrompt: openPrompt
             )
         case .prompts:
-            PromptsSettings(preferences: preferences, marked: history.lastItem(in: .prompts), open: openPrompt)
+            PromptsSettings(preferences: preferences, selected: selection(for: .prompts), open: openPrompt)
         case .apps:
-            AppsSettings(preferences: preferences, marked: history.lastItem(in: .apps)) {
+            AppsSettings(preferences: preferences, selected: selection(for: .apps)) {
                 history.open(.item(.apps, id: $0))
             }
         case .privacy: PrivacySettings(preferences: preferences)
         case .phone: PhoneSettings(poller: poller)
         case .about: AboutSettings(updates: updates)
         }
+    }
+
+    private func selection(for pane: SettingsPane) -> Binding<String?> {
+        Binding(get: { history.selectedItem(in: pane) }, set: { history.selectItem($0, in: pane) })
     }
 }

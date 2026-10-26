@@ -2,8 +2,7 @@ import SwiftUI
 
 struct PromptsSettings: View {
     let preferences: DaemonPreferences
-    /// The prompt whose page Back just left.
-    let marked: String?
+    @Binding var selected: String?
     let open: (String) -> Void
 
     var body: some View {
@@ -14,7 +13,7 @@ struct PromptsSettings: View {
                 id: \.id,
                 noun: "Prompt",
                 empty: "No Prompts",
-                marked: marked,
+                selected: $selected,
                 canAdd: prompts.entries.count < PromptEdits.maximumPrompts,
                 add: { add(editor) },
                 remove: { id in

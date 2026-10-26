@@ -9,17 +9,13 @@ private enum Layout {
     static let barOutdent: CGFloat = 8
 }
 
-/// A pane's list of items. A click opens the item's page; the buttons under
-/// the list add, and remove the item whose page Back just left, which the
-/// list marks. A row's context menu removes any item.
 struct ItemList<Item, Row: View>: View {
     let items: [Item]
     let id: KeyPath<Item, String>
     /// Names one item to assistive tech: "App" gives "Add App".
     let noun: String
     let empty: String
-    /// The item to mark and to remove with −.
-    let marked: String?
+    @Binding var selected: String?
     let canAdd: Bool
     let add: () -> Void
     let remove: (String) -> Void
@@ -42,7 +38,10 @@ struct ItemList<Item, Row: View>: View {
                     .disabled(!canAdd)
                 Divider().frame(height: Layout.barDividerHeight)
                 barButton("Remove \(noun)", symbol: "minus") {
-                    if let target { remove(target) }
+                    if let target {
+                        remove(target)
+                        selected = nil
+                    }
                 }
                 .disabled(target == nil)
             }
@@ -51,22 +50,36 @@ struct ItemList<Item, Row: View>: View {
         }
     }
 
-    /// A mark whose item is gone, removed here or elsewhere, is none.
     private var target: String? {
-        items.contains { $0[keyPath: id] == marked } ? marked : nil
+        items.contains { $0[keyPath: id] == selected } ? selected : nil
     }
 
     private func line(_ itemID: String, _ content: Row) -> some View {
-        ItemLink {
-            open(itemID)
-        } label: {
-            content
+        HStack {
+            Button {
+                selected = itemID
+            } label: {
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(target == itemID ? .isSelected : [])
+            Button("Open \(noun)", systemImage: "chevron.right") { open(itemID) }
+                .labelStyle(.iconOnly)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .frame(width: Layout.barButtonWidth, height: Layout.barButtonHeight)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
         }
         .contextMenu {
-            Button("Remove \(noun)", role: .destructive) { remove(itemID) }
+            Button("Remove \(noun)", role: .destructive) {
+                remove(itemID)
+                if selected == itemID { selected = nil }
+            }
         }
         .listRowBackground(target == itemID ? Color.accentColor.opacity(0.15) : nil)
-        .accessibilityAddTraits(target == itemID ? .isSelected : [])
     }
 
     private func barButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
