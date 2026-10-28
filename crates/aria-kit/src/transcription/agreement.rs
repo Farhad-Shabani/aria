@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::cancel::CancelToken;
+use crate::primitives::error_chain;
 
 use super::{
     ChunkStep, Hypothesis, SILENCE_FLOOR, Transcript, TranscriptSegment, TranscriptUpdate,
@@ -262,7 +263,7 @@ impl AgreementState {
         let hypothesis = hypothesis?;
         check_cancelled(cancel)?;
         let loudness = Loudness::of(buffer);
-        let heard = self.hear(&hypothesis, &loudness)?;
+        let heard = self.hear(&hypothesis, &loudness);
         let heard_count = heard.len();
         let skipped = self.skipped_speech(&loudness, &heard);
         let (confirmed, settled) = self.agreement.agree(heard, skipped);
@@ -294,44 +295,47 @@ impl AgreementState {
     /// The decode's words at their stream positions, untimed when timings do
     /// not align. Empty when the buffer holds only the last pause, or when
     /// the words come too dense to be real.
-    fn hear(
-        &self,
-        hypothesis: &Hypothesis,
-        loudness: &Loudness,
-    ) -> Result<Vec<Word>, TranscriptionError> {
+    fn hear(&self, hypothesis: &Hypothesis, loudness: &Loudness) -> Vec<Word> {
         if self.opened_in_pause && loudness.silent() {
             tracing::debug!("buffer holds only the pause; decode ignored");
-            return Ok(Vec::new());
+            return Vec::new();
         }
-        let words = self.words_of(hypothesis)?;
+        let words = self.words_of(hypothesis);
         if crammed(&words) {
             tracing::debug!(words = words.len(), "decode invented words");
-            return Ok(Vec::new());
+            return Vec::new();
         }
-        Ok(words)
+        words
     }
 
-    fn words_of(&self, hypothesis: &Hypothesis) -> Result<Vec<Word>, TranscriptionError> {
+    fn words_of(&self, hypothesis: &Hypothesis) -> Vec<Word> {
         let texts: Vec<&str> = hypothesis.as_str().split_whitespace().collect();
-        let timed = hypothesis.words().len() == texts.len();
+        let mut spans = self.spans_of(hypothesis, texts.len()).map(Vec::into_iter);
         texts
             .iter()
-            .enumerate()
-            .map(|(index, text)| {
-                let span = timed
-                    .then(|| {
-                        super::bounded_span(
-                            hypothesis.words()[index].span_from(self.buffer_start)?,
-                            self.decoded_end,
-                        )
-                    })
-                    .transpose()?;
-                Ok(Word {
-                    text: (*text).to_owned(),
-                    span,
-                })
+            .map(|text| Word {
+                text: (*text).to_owned(),
+                span: spans.as_mut().and_then(Iterator::next),
             })
             .collect()
+    }
+
+    /// Where each word sits in the decoded audio. A decode with any
+    /// impossible timing counts as untimed: its text still agrees.
+    fn spans_of(&self, hypothesis: &Hypothesis, words: usize) -> Option<Vec<std::ops::Range<u64>>> {
+        if hypothesis.words().len() != words {
+            return None;
+        }
+        let spans: Result<Vec<_>, TranscriptionError> = hypothesis
+            .words()
+            .iter()
+            .map(|word| super::bounded_span(word.span_from(self.buffer_start)?, self.decoded_end))
+            .collect();
+        spans
+            .inspect_err(|error| {
+                tracing::debug!(error = %error_chain(error), "decode timings are impossible; heard untimed");
+            })
+            .ok()
     }
 
     fn commit(&mut self, segment: Option<TranscriptSegment>) -> Option<TranscriptSegment> {
@@ -525,7 +529,9 @@ impl Agreement {
         if self.dropped_window(&current) {
             return (None, false);
         }
-        let (start, emitted) = match self.placed(&current) {
+        let placement = self.placed(&current);
+        let recovered = placement.is_none();
+        let (start, emitted) = match placement {
             Some(placement) => placement,
             None => {
                 let Some(start) = self.after_delivered_audio(&current) else {
@@ -555,8 +561,11 @@ impl Agreement {
             None
         };
         self.emitted = deliverable.max(emitted);
-        let settled =
-            agreed == current.len() && current.len() == self.candidate.len() && skipped.is_none();
+        // A decode placed by timing alone has not agreed with anything yet.
+        let settled = !recovered
+            && agreed == current.len()
+            && current.len() == self.candidate.len()
+            && skipped.is_none();
         self.candidate = current;
         (confirmed, settled)
     }
@@ -651,12 +660,16 @@ impl Agreement {
         }
     }
 
+    /// How many opening words lie in delivered audio, going by timing alone.
+    /// A word that starts within `HEARD_MARGIN_FRAMES` of the delivered end
+    /// is new speech whose timing drifted, as in [`Self::opens_new_audio`].
     fn after_delivered_audio(&self, words: &[Word]) -> Option<usize> {
         let through = self.delivered_through?;
+        let margin = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64;
         let mut start = 0;
         for (index, word) in words.iter().enumerate() {
             let span = word.span.as_ref()?;
-            if span.start < through {
+            if span.start + margin < through {
                 start = index + 1;
             }
         }
@@ -1540,9 +1553,26 @@ mod tests {
             agreement.agree(opening, None);
             let mut revised = timed(&["different", "words", "replace", "the", "opening", "later"]);
             let through = agreement.delivered_through.unwrap();
-            revised[4].span = Some(through - 100..through + 100);
+            let early = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64 + 100;
+            revised[4].span = Some(through - early..through + 100);
             agreement.agree(revised, None);
             assert_eq!(text_of(agreement.take_tail(None)).as_deref(), Some("later"));
+        }
+
+        #[test]
+        fn a_recovered_word_that_drifted_early_is_still_new_speech() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let mut revised = timed(&["different", "words", "replace", "the", "opening", "later"]);
+            let through = agreement.delivered_through.unwrap();
+            revised[4].span = Some(through - 100..through + 100);
+            agreement.agree(revised, None);
+            assert_eq!(
+                text_of(agreement.take_tail(None)).as_deref(),
+                Some("opening later")
+            );
         }
 
         #[test]
@@ -1561,7 +1591,8 @@ mod tests {
                 "is",
                 "here",
             ]);
-            revised[3].span.as_mut().unwrap().start = agreement.delivered_through.unwrap() - 100;
+            let early = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64 + 100;
+            revised[3].span.as_mut().unwrap().start = agreement.delivered_through.unwrap() - early;
             assert!(agreement.agree(revised[4..].to_vec(), None).0.is_none());
             let (confirmed, _) = agreement.agree(revised.clone(), None);
             assert_eq!(text_of(confirmed).as_deref(), Some("new speech is here"));
@@ -2151,12 +2182,12 @@ mod tests {
         }
 
         #[test]
-        fn malformed_word_timings_are_rejected_before_agreement_output() {
+        fn a_decode_with_impossible_timings_is_heard_untimed() {
             let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
             let mut state = AgreementState::new(cadence(5_000));
 
-            assert!(matches!(
-                state.next_finalized_with(&mut recording, &CancelToken::never(), |_| {
+            let step = state
+                .next_finalized_with(&mut recording, &CancelToken::never(), |_| {
                     Ok(Hypothesis::with_words(
                         "hello",
                         vec![TimedWord {
@@ -2164,9 +2195,14 @@ mod tests {
                             end: 0.5,
                         }],
                     ))
-                }),
-                Err(TranscriptionError::InvalidSegment)
-            ));
+                })
+                .expect("an impossible timing does not fail the decode")
+                .expect("the tail is delivered");
+            let Some(TranscriptUpdate::Finalized(segment)) = step.update else {
+                panic!("the tail is delivered");
+            };
+            assert_eq!(segment.as_str(), "hello");
+            assert!(segment.word_spans().is_none());
         }
 
         #[test]

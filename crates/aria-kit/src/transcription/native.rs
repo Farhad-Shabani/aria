@@ -4,6 +4,7 @@
 
 use crate::audio::{RecordingReader, canonical_duration};
 use crate::cancel::CancelToken;
+use crate::primitives::error_chain;
 
 use super::{
     ChunkStep, ChunkStream, Emitted, Transcript, TranscriptSegment, TranscriptUpdate,
@@ -87,7 +88,7 @@ impl NativeState {
                 words = emitted.words.as_str().split_whitespace().count(),
                 "native decode step"
             );
-            let words = self.absorb(&emitted, at, chunk)?;
+            let words = self.absorb(&emitted, at, chunk);
             if let Some(segment) = segment(&words, self.fed) {
                 self.transcript.push(segment.as_str().to_owned());
                 return Ok(Some(ChunkStep {
@@ -122,32 +123,27 @@ impl NativeState {
     /// Takes in what a chunk let go of and returns the words now complete,
     /// pinned to the audio they came from. The chunk's last word stays
     /// held: the next chunk may open with the rest of it.
-    fn absorb(
-        &mut self,
-        emitted: &Emitted,
-        at: u64,
-        chunk: u64,
-    ) -> Result<Vec<Word>, TranscriptionError> {
+    fn absorb(&mut self, emitted: &Emitted, at: u64, chunk: u64) -> Vec<Word> {
         let heard = &emitted.words;
+        let mut windows = chunk_windows(heard, at, chunk).map(Vec::into_iter);
         let mut words: Vec<Word> = heard
             .as_str()
             .split_whitespace()
-            .enumerate()
-            .map(|(index, text)| {
-                let timing = heard.words().get(index);
-                let window = match timing {
-                    Some(timing) => super::bounded_span(timing.span_from(at)?, at + chunk)?,
-                    None => at..at + chunk,
-                };
-                Ok(Word {
+            .map(|text| match windows.as_mut().and_then(Iterator::next) {
+                Some(window) => Word {
                     text: text.to_owned(),
                     window,
-                    timed: timing.is_some(),
-                })
+                    timed: true,
+                },
+                None => Word {
+                    text: text.to_owned(),
+                    window: at..at + chunk,
+                    timed: false,
+                },
             })
-            .collect::<Result<_, TranscriptionError>>()?;
+            .collect();
         if words.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
 
         let mut complete = Vec::new();
@@ -171,7 +167,7 @@ impl NativeState {
         }
         self.held = words.pop();
         complete.extend(words);
-        Ok(complete)
+        complete
     }
 
     /// Feeds what is left of the audio, padded to a chunk, then silence,
@@ -191,14 +187,14 @@ impl NativeState {
             // A short chunk is dropped by the model, not decoded.
             tail.resize(chunk as usize, 0.0);
             let emitted = self.stream.feed(&tail)?;
-            parts.extend(self.absorb(&emitted, tail_start, chunk)?);
+            parts.extend(self.absorb(&emitted, tail_start, chunk));
         }
         if audio_end > 0 {
             let silence = vec![0.0; chunk as usize];
             for _ in 0..FLUSH_CHUNKS {
                 check_cancelled(cancel)?;
                 let emitted = self.stream.feed(&silence)?;
-                parts.extend(self.absorb(&emitted, audio_end, chunk)?);
+                parts.extend(self.absorb(&emitted, audio_end, chunk));
             }
         }
         parts.extend(self.held.take());
@@ -225,6 +221,28 @@ impl NativeState {
             transcript,
         }))
     }
+}
+
+/// Where each word of a chunk sits in the stream. A chunk with any
+/// impossible timing counts as untimed: its words still go out.
+fn chunk_windows(
+    heard: &super::Hypothesis,
+    at: u64,
+    chunk: u64,
+) -> Option<Vec<std::ops::Range<u64>>> {
+    if heard.words().is_empty() {
+        return None;
+    }
+    let windows: Result<Vec<_>, TranscriptionError> = heard
+        .words()
+        .iter()
+        .map(|timing| super::bounded_span(timing.span_from(at)?, at + chunk))
+        .collect();
+    windows
+        .inspect_err(|error| {
+            tracing::debug!(error = %error_chain(error), "chunk timings are impossible; heard untimed");
+        })
+        .ok()
 }
 
 fn segment(words: &[Word], audio_end: u64) -> Option<TranscriptSegment> {
@@ -396,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_word_timings_are_rejected_before_native_output() {
+    fn a_chunk_with_impossible_timings_is_heard_untimed() {
         let mut recording = RecordingReader::from_samples(&[0.5; CHUNK]);
         let mut state = state(Scripted::timed(vec![Hypothesis::with_words(
             "hello",
@@ -406,10 +424,20 @@ mod tests {
             }],
         )]));
 
-        assert!(matches!(
-            state.next_finalized_with(&mut recording, &CancelToken::never(), false),
-            Err(TranscriptionError::InvalidSegment)
-        ));
+        let mut finalized = Vec::new();
+        while let Some(step) = state
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
+            .expect("an impossible timing does not fail the chunk")
+        {
+            if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                finalized.push(segment);
+            }
+        }
+        let [segment] = finalized.as_slice() else {
+            panic!("one segment goes out: {finalized:?}");
+        };
+        assert_eq!(segment.as_str(), "hello");
+        assert!(segment.word_spans().is_none());
     }
 
     #[test]
@@ -540,7 +568,7 @@ mod tests {
                 ),
                 joins_previous: false,
             };
-            assert!(state.absorb(&first, 0, CHUNK as u64).unwrap().is_empty());
+            assert!(state.absorb(&first, 0, CHUNK as u64).is_empty());
             let second = Emitted {
                 words: Hypothesis::with_words(
                     format!("{suffix} next"),
@@ -558,7 +586,7 @@ mod tests {
                 joins_previous: true,
             };
             let joined = segment(
-                &state.absorb(&second, CHUNK as u64, CHUNK as u64).unwrap(),
+                &state.absorb(&second, CHUNK as u64, CHUNK as u64),
                 2 * CHUNK as u64,
             )
             .unwrap();
