@@ -10,6 +10,7 @@ mod silero;
 pub use endpointer::{Boundary, Endpointer};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 pub(crate) use map::Progress;
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
 pub use map::{SpeechDetector, SpeechMap};
 #[cfg(feature = "silero")]
 pub use silero::{SileroVad, Speech};
