@@ -14,7 +14,7 @@ final class StatusController: ObservableObject {
     private let events: DaemonEvents
     private let prompts: PromptHotkeys
     private let colors: VoiceColors
-    private var heard = HeardVoice()
+    private var heard = HeardSpeaker()
     private let panel = FloatingPanel(width: OverlayStyle.pillWidth, bottomMargin: OverlayStyle.pillBottomMargin)
     private var foregroundState: PillState?
     private var foregroundRun: RunID?
@@ -42,6 +42,8 @@ final class StatusController: ObservableObject {
         events.onDictation { [weak self] event in
             guard let self else { return }
             guard let event else {
+                self.heard.apply(nil)
+                self.lastRecording = nil
                 self.show(nil)
                 return
             }
@@ -104,19 +106,26 @@ final class StatusController: ObservableObject {
         let run = foregroundState == nil ? asks.oldest.map { RunID.ticket($0.ticket) } : foregroundRun
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         // Only a press is spoken; an agent's step has no voice to show.
-        let voice: VoiceColor? =
+        let ring: PillRing? =
             switch foregroundRun {
             case .ticket: nil
-            case .recording, nil: foregroundState == nil ? nil : heard.name.map(colors.assignColor(to:))
+            case .recording, nil: foregroundState == nil ? nil : heard.voice.map(ring(for:))
             }
         let wanted =
             enabled
-            ? live.map { Pill(state: $0, prompt: run.flatMap(prompts.runs.prompt(of:)), voice: voice) } : nil
+            ? live.map { Pill(state: $0, prompt: run.flatMap(prompts.runs.prompt(of:)), ring: ring) } : nil
         guard wanted != shown else { return }
         shown = wanted
         // A new press starts from silence rather than the last one's level.
         if case .recording = wanted?.state { level.value = 0 }
         draw(wanted)
+    }
+
+    private func ring(for voice: HeardSpeaker.Voice) -> PillRing {
+        switch voice {
+        case .named(let name): .voice(colors.assignColor(to: name))
+        case .keptOut: .keptOut
+        }
     }
 
     private func draw(_ pill: Pill?) {

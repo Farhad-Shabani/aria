@@ -155,6 +155,7 @@ pub(super) fn still_serving(
     match outcome {
         Ok(_)
         | Err(TranscriptionError::Processing(_))
+        | Err(TranscriptionError::SpeakerTracking)
         | Err(TranscriptionError::Inference {
             source: BackendError::Unusable(_),
             ..

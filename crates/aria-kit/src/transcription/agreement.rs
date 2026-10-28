@@ -106,8 +106,7 @@ pub struct AgreementState {
     /// A segment waiting for the next call, so a step carries one segment
     /// even when a trim or an ending produces two.
     pending_segment: Option<TranscriptSegment>,
-    pending_preview: Option<String>,
-    last_preview: String,
+    pending_preview: Option<(String, std::ops::Range<u64>)>,
     finished: bool,
 }
 
@@ -122,7 +121,6 @@ impl AgreementState {
             transcript: Vec::new(),
             pending_segment: None,
             pending_preview: None,
-            last_preview: String::new(),
             finished: false,
         }
     }
@@ -134,7 +132,7 @@ impl AgreementState {
         let pending = self
             .pending_segment
             .as_ref()
-            .and_then(|segment| segment.span())
+            .and_then(|segment| segment.source_window().or_else(|| segment.span()))
             .map(|span| span.start);
         match pending {
             Some(start) => start.min(self.buffer_start),
@@ -168,11 +166,14 @@ impl AgreementState {
                 transcript: None,
             }));
         }
-        if let Some(preview) = self.pending_preview.take()
+        if let Some((text, source_window)) = self.pending_preview.take()
             && previews
         {
             return Ok(Some(ChunkStep {
-                update: Some(TranscriptUpdate::Provisional(preview)),
+                update: Some(TranscriptUpdate::Provisional {
+                    text,
+                    source_window: Some(source_window),
+                }),
                 transcript: None,
             }));
         }
@@ -184,23 +185,26 @@ impl AgreementState {
                 Some(available) => self.step(recording, available, cancel, &mut decode)?,
                 None => self.finish_after(None)?,
             };
+            // Every stride's provisional text goes out, changed or not. The caller
+            // decides what is worth showing.
             if previews {
-                let preview = self.agreement.preview();
+                let text = self.agreement.preview();
+                let source_window = self.buffer_start..self.decoded_end;
                 let finalized = step.as_ref().is_some_and(|step| {
                     matches!(step.update, Some(TranscriptUpdate::Finalized(_)))
                 });
-                if preview != self.last_preview || (finalized && !preview.is_empty()) {
-                    self.last_preview.clone_from(&preview);
-                    if finalized {
-                        self.pending_preview = Some(preview);
-                    } else {
-                        let mut step = step.unwrap_or(ChunkStep {
-                            update: None,
-                            transcript: None,
-                        });
-                        step.update = Some(TranscriptUpdate::Provisional(preview));
-                        return Ok(Some(step));
-                    }
+                if finalized {
+                    self.pending_preview = Some((text, source_window));
+                } else {
+                    let mut step = step.unwrap_or(ChunkStep {
+                        update: None,
+                        transcript: None,
+                    });
+                    step.update = Some(TranscriptUpdate::Provisional {
+                        text,
+                        source_window: Some(source_window),
+                    });
+                    return Ok(Some(step));
                 }
             }
             if step.is_some() {
@@ -258,7 +262,7 @@ impl AgreementState {
         let hypothesis = hypothesis?;
         check_cancelled(cancel)?;
         let loudness = Loudness::of(buffer);
-        let heard = self.hear(&hypothesis, &loudness);
+        let heard = self.hear(&hypothesis, &loudness)?;
         let heard_count = heard.len();
         let skipped = self.skipped_speech(&loudness, &heard);
         let (confirmed, settled) = self.agreement.agree(heard, skipped);
@@ -290,34 +294,50 @@ impl AgreementState {
     /// The decode's words at their stream positions, untimed when timings do
     /// not align. Empty when the buffer holds only the last pause, or when
     /// the words come too dense to be real.
-    fn hear(&self, hypothesis: &Hypothesis, loudness: &Loudness) -> Vec<Word> {
+    fn hear(
+        &self,
+        hypothesis: &Hypothesis,
+        loudness: &Loudness,
+    ) -> Result<Vec<Word>, TranscriptionError> {
         if self.opened_in_pause && loudness.silent() {
             tracing::debug!("buffer holds only the pause; decode ignored");
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let words = self.words_of(hypothesis);
+        let words = self.words_of(hypothesis)?;
         if crammed(&words) {
             tracing::debug!(words = words.len(), "decode invented words");
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        words
+        Ok(words)
     }
 
-    fn words_of(&self, hypothesis: &Hypothesis) -> Vec<Word> {
+    fn words_of(&self, hypothesis: &Hypothesis) -> Result<Vec<Word>, TranscriptionError> {
         let texts: Vec<&str> = hypothesis.as_str().split_whitespace().collect();
         let timed = hypothesis.words().len() == texts.len();
         texts
             .iter()
             .enumerate()
-            .map(|(index, text)| Word {
-                text: (*text).to_owned(),
-                span: timed.then(|| hypothesis.words()[index].span_from(self.buffer_start)),
+            .map(|(index, text)| {
+                let span = timed
+                    .then(|| {
+                        super::bounded_span(
+                            hypothesis.words()[index].span_from(self.buffer_start)?,
+                            self.decoded_end,
+                        )
+                    })
+                    .transpose()?;
+                Ok(Word {
+                    text: (*text).to_owned(),
+                    span,
+                })
             })
             .collect()
     }
 
     fn commit(&mut self, segment: Option<TranscriptSegment>) -> Option<TranscriptSegment> {
-        if let Some(segment) = &segment {
+        let mut segment = segment;
+        if let Some(segment) = &mut segment {
+            segment.source_window = Some(self.buffer_start..self.decoded_end);
             self.transcript.push(segment.as_str().to_owned());
         }
         segment
@@ -451,8 +471,14 @@ impl AgreementState {
 struct Agreement {
     /// The latest hypothesis, including retained speech.
     candidate: Vec<Word>,
-    /// How many of `candidate` already left.
+    /// Prefix excluded from delivery, including words covering delivered audio.
     emitted: usize,
+    /// Set once a decode that no delivered text could place is placed by
+    /// its word timings alone, and kept for the rest of the buffer. From
+    /// then on the words before `emitted` are not known to repeat delivered
+    /// text, so a later decode's new words begin right after the last
+    /// delivered word, or else after the delivered audio.
+    timing_recovery: bool,
     /// The words delivered so far — the buffer's own, and the last few from
     /// before its cut — which a decode may hear again.
     delivered: Vec<Word>,
@@ -499,8 +525,15 @@ impl Agreement {
         if self.dropped_window(&current) {
             return (None, false);
         }
-        let Some((start, emitted)) = self.placed(&current) else {
-            return (None, false);
+        let (start, emitted) = match self.placed(&current) {
+            Some(placement) => placement,
+            None => {
+                let Some(start) = self.after_delivered_audio(&current) else {
+                    return (None, false);
+                };
+                self.timing_recovery = true;
+                (start, start)
+            }
         };
         // Retained words have only one model observation; they remain provisional.
         let agreed = start
@@ -563,29 +596,71 @@ impl Agreement {
     /// last one did is placed by [`Self::aligned`]. One that opens
     /// elsewhere is counted afresh by the delivered words it repeats.
     ///
-    /// `None` for a decode that cannot be placed — one that ends inside the
-    /// delivered words, or shows none of them once some are out. Like an
-    /// empty decode, it leaves the last good one in force.
+    /// `None` when no delivered text or anchored candidate locates the
+    /// decode. Its word timings may still locate undelivered audio.
     fn placed(&self, current: &[Word]) -> Option<(usize, usize)> {
         // Once words are out, a lone repeated word is too little to place a
         // decode by: a heavily revised decode shows one by chance.
         let least = if self.emitted > 0 { 2 } else { 1 };
-        let (start, emitted) = match self.aligned(current) {
-            Some(placed) if self.emitted > 0 => placed,
-            _ => {
-                let repeated = self.repeated(current, least)?;
-                (repeated, repeated)
-            }
+        let placement = match self.aligned(current) {
+            Some(placed) if self.emitted > 0 => Some(placed),
+            _ => self
+                .repeated(current, least)
+                .map(|repeated| (repeated, repeated)),
         };
-        if start == 0 && self.emitted > 0 {
-            tracing::debug!(
-                heard = self.candidate.len(),
-                current = current.len(),
-                "decode lost its place"
-            );
-            return None;
+        if let Some((start, emitted)) = placement
+            && (start > 0 || (self.emitted == 0 && !self.timing_recovery))
+        {
+            if self.timing_recovery && !self.anchored_at(current, start) {
+                let through = self.after_delivered_audio(current)?;
+                return Some((start.max(through), emitted.max(through)));
+            }
+            return Some((start, emitted));
         }
-        Some((start, emitted))
+        tracing::debug!(
+            heard = self.candidate.len(),
+            current = current.len(),
+            "decode lost its place"
+        );
+        None
+    }
+
+    fn anchored_at(&self, words: &[Word], end: usize) -> bool {
+        let Some((word, delivered)) = end
+            .checked_sub(1)
+            .and_then(|index| words.get(index))
+            .zip(self.delivered.last())
+        else {
+            return false;
+        };
+        if spoken(&word.text) != spoken(&delivered.text) {
+            return false;
+        }
+        match (&word.span, &delivered.span) {
+            (Some(word), Some(delivered)) => {
+                word == delivered || (word.start < delivered.end && delivered.start < word.end)
+            }
+            _ => {
+                end >= 2
+                    && self.delivered.len() >= 2
+                    && lcp(
+                        &self.delivered[self.delivered.len() - 2..],
+                        &words[end - 2..end],
+                    ) == 2
+            }
+        }
+    }
+
+    fn after_delivered_audio(&self, words: &[Word]) -> Option<usize> {
+        let through = self.delivered_through?;
+        let mut start = 0;
+        for (index, word) in words.iter().enumerate() {
+            let span = word.span.as_ref()?;
+            if span.start < through {
+                start = index + 1;
+            }
+        }
+        Some(start)
     }
 
     /// How many opening words of `words` were delivered already, going by
@@ -781,8 +856,15 @@ struct Word {
 }
 
 /// One segment for a run of words. Its span is `None` when either end
-/// lacks a timing.
+/// lacks a timing, and it keeps each word's timing when every word has one.
 fn segment_of(words: &[Word]) -> Option<TranscriptSegment> {
+    let timed: Option<Vec<(String, std::ops::Range<u64>)>> = words
+        .iter()
+        .map(|word| Some((word.text.clone(), word.span.clone()?)))
+        .collect();
+    if let Some(timed) = timed {
+        return TranscriptSegment::timed(&timed);
+    }
     let texts: Vec<String> = words.iter().map(|word| word.text.clone()).collect();
     let span = match (words.first(), words.last()) {
         (
@@ -1085,6 +1167,37 @@ mod tests {
     }
 
     #[test]
+    fn previews_preserve_the_decode_window_after_a_buffer_cut() {
+        let (_directory, mut recording, pace) = paced(vec![loud_batch(); 4]);
+        let mut state = AgreementState::new(cadence(200));
+        let mut decode = scripted(&["guest", "guest", "owner", "owner"]);
+        let mut previews = Vec::new();
+        while let Some(step) = state
+            .next_with(&mut recording, &CancelToken::never(), true, |samples| {
+                pace.advance();
+                Ok(decode(samples))
+            })
+            .unwrap()
+        {
+            if let Some(TranscriptUpdate::Provisional {
+                text,
+                source_window,
+            }) = step.update
+                && !text.is_empty()
+            {
+                previews.push((text, source_window));
+            }
+        }
+        assert_eq!(
+            previews,
+            [
+                ("guest".into(), Some(0..STRIDE as u64)),
+                ("owner".into(), Some(2 * STRIDE as u64..3 * STRIDE as u64)),
+            ]
+        );
+    }
+
+    #[test]
     fn previews_replace_the_accepted_tail_and_drain_after_final_segments() {
         let answers = ["turn lift", "turn left now", "", "turn left now"];
         let (_directory, mut recording, pace) = paced(vec![loud_batch(); answers.len()]);
@@ -1102,18 +1215,20 @@ mod tests {
                 Some(TranscriptUpdate::Finalized(segment)) => {
                     events.push(format!("final:{}", segment.as_str()));
                 }
-                Some(TranscriptUpdate::Provisional(preview)) => {
+                Some(TranscriptUpdate::Provisional { text: preview, .. }) => {
                     assert!(state.pending_segment.is_none());
                     events.push(format!("preview:{preview}"));
                 }
                 None => {}
             }
         }
+        // The third decode changes nothing, and its preview still goes out.
         assert_eq!(
             events,
             [
                 "preview:turn lift",
                 "final:turn",
+                "preview:left now",
                 "preview:left now",
                 "final:left now",
                 "preview:",
@@ -1162,7 +1277,7 @@ mod tests {
                 })
                 .expect("script succeeds")
             {
-                if matches!(step.update, Some(TranscriptUpdate::Provisional(_))) {
+                if matches!(step.update, Some(TranscriptUpdate::Provisional { .. })) {
                     assert!(state.pending_segment.is_none());
                 }
                 if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
@@ -1194,7 +1309,7 @@ mod tests {
                 .expect("update");
             updates.push(match step.update {
                 Some(TranscriptUpdate::Finalized(segment)) => (Some(segment.into_text()), None),
-                Some(TranscriptUpdate::Provisional(preview)) => (None, Some(preview)),
+                Some(TranscriptUpdate::Provisional { text: preview, .. }) => (None, Some(preview)),
                 None => (None, None),
             });
         }
@@ -1415,6 +1530,240 @@ mod tests {
 
             assert_eq!(text_of(first).as_deref(), Some("jumps over the the"));
             assert_eq!(text_of(second).as_deref(), Some("dog"));
+        }
+
+        #[test]
+        fn a_timed_revision_at_eof_drains_only_audio_past_the_delivered_end() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let mut revised = timed(&["different", "words", "replace", "the", "opening", "later"]);
+            let through = agreement.delivered_through.unwrap();
+            revised[4].span = Some(through - 100..through + 100);
+            agreement.agree(revised, None);
+            assert_eq!(text_of(agreement.take_tail(None)).as_deref(), Some("later"));
+        }
+
+        #[test]
+        fn a_timed_recovery_does_not_reopen_audio_when_the_prefix_returns() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let mut revised = timed(&[
+                "a",
+                "completely",
+                "different",
+                "opening",
+                "new",
+                "speech",
+                "is",
+                "here",
+            ]);
+            revised[3].span.as_mut().unwrap().start = agreement.delivered_through.unwrap() - 100;
+            assert!(agreement.agree(revised[4..].to_vec(), None).0.is_none());
+            let (confirmed, _) = agreement.agree(revised.clone(), None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("new speech is here"));
+            assert!(agreement.agree(revised, None).0.is_none());
+            assert!(agreement.take_tail(None).is_none());
+        }
+
+        #[test]
+        fn unplaceable_untimed_speech_does_not_repeat_delivered_audio() {
+            let mut agreement = Agreement::default();
+            let opening = heard(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let revised = heard(&["a", "completely", "different", "opening", "new", "speech"]);
+            for _ in 0..2 {
+                assert!(agreement.agree(revised.clone(), None).0.is_none());
+            }
+            assert!(agreement.take_tail(None).is_none());
+        }
+
+        #[test]
+        fn text_anchors_keep_a_new_word_whose_timing_drifts_before_the_frontier() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let mut continued = timed(&["one", "two", "three", "four", "five"]);
+            continued[4].span.as_mut().unwrap().start -= TRIM_FRAME_SAMPLES as u64;
+            agreement.agree(continued.clone(), None);
+            let (confirmed, _) = agreement.agree(continued, None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("five"));
+        }
+
+        #[test]
+        fn a_stable_delivered_prefix_survives_drift_beyond_the_timing_margin() {
+            for finish_at_eof in [false, true] {
+                let mut agreement = Agreement::default();
+                let opening = timed(&["one", "two", "three", "four"]);
+                agreement.agree(opening.clone(), None);
+                agreement.agree(opening, None);
+                let mut continued = timed(&["one", "two", "three", "four", "five"]);
+                continued[3].span.as_mut().unwrap().end = 18_432;
+                continued[4].span.as_mut().unwrap().start = 18_432;
+                agreement.agree(continued.clone(), None);
+                let confirmed = if finish_at_eof {
+                    agreement.take_tail(None)
+                } else {
+                    agreement.agree(continued, None).0
+                };
+                assert_eq!(text_of(confirmed).as_deref(), Some("five"));
+                assert!(agreement.take_tail(None).is_none());
+            }
+        }
+
+        #[test]
+        fn delivering_a_short_recovered_tail_does_not_reopen_the_discarded_prefix() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let revised = timed(&[
+                "new",
+                "completely",
+                "different",
+                "opening",
+                "new",
+                "speech",
+                "here",
+            ]);
+            agreement.agree(revised[4..].to_vec(), None);
+            let (confirmed, _) = agreement.agree(revised[4..].to_vec(), None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("new speech here"));
+            for _ in 0..2 {
+                assert!(agreement.agree(revised.clone(), None).0.is_none());
+            }
+            assert!(agreement.take_tail(None).is_none());
+        }
+
+        #[test]
+        fn a_short_timed_recovery_does_not_lower_the_delivered_audio_boundary() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four", "five", "six"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let revised = timed(&[
+                "a",
+                "different",
+                "revised",
+                "opening",
+                "five",
+                "six",
+                "seven",
+            ]);
+            for length in [4, 5, 6, 7] {
+                assert!(
+                    agreement
+                        .agree(revised[..length].to_vec(), None)
+                        .0
+                        .is_none()
+                );
+            }
+            let (confirmed, _) = agreement.agree(revised, None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("seven"));
+            assert!(agreement.take_tail(None).is_none());
+        }
+
+        #[test]
+        fn a_delivered_anchor_after_recovery_allows_timing_drift() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let revised = timed(&["a", "completely", "different", "opening", "new", "speech"]);
+            agreement.agree(revised.clone(), None);
+            agreement.agree(revised, None);
+            let mut continued = timed(&[
+                "a",
+                "completely",
+                "different",
+                "opening",
+                "new",
+                "speech",
+                "continues",
+            ]);
+            let drifted_end = agreement.delivered_through.unwrap() - 2_048;
+            continued[5].span.as_mut().unwrap().end = drifted_end;
+            continued[6].span.as_mut().unwrap().start = drifted_end;
+            agreement.agree(continued.clone(), None);
+            let (confirmed, _) = agreement.agree(continued, None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("continues"));
+            assert!(agreement.take_tail(None).is_none());
+        }
+
+        #[test]
+        fn a_recovered_delivered_anchor_survives_loss_and_return_of_timings() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            let revised = timed(&["a", "completely", "different", "opening", "new", "speech"]);
+            let (first, settled) = agreement.agree(revised.clone(), None);
+            assert!(first.is_none());
+            assert!(!settled);
+            assert_eq!(agreement.preview(), "new speech");
+            let (confirmed, _) = agreement.agree(revised, None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("new speech"));
+
+            let untimed = heard(&[
+                "a",
+                "completely",
+                "different",
+                "opening",
+                "new",
+                "speech",
+                "continues",
+            ]);
+            agreement.agree(untimed.clone(), None);
+            let (confirmed, _) = agreement.agree(untimed, None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("continues"));
+
+            let timed = timed(&[
+                "a",
+                "completely",
+                "different",
+                "opening",
+                "new",
+                "speech",
+                "continues",
+                "later",
+            ]);
+            agreement.agree(timed.clone(), None);
+            let (confirmed, _) = agreement.agree(timed, None);
+            assert_eq!(text_of(confirmed).as_deref(), Some("later"));
+            assert!(agreement.take_tail(None).is_none());
+        }
+
+        #[test]
+        fn an_untimed_candidate_cannot_anchor_a_discarded_prefix() {
+            let mut agreement = Agreement::default();
+            let opening = timed(&["one", "two", "three", "four"]);
+            agreement.agree(opening.clone(), None);
+            agreement.agree(opening, None);
+            agreement.agree(
+                timed(&["a", "completely", "different", "opening", "new", "speech"]),
+                None,
+            );
+            let untimed = heard(&[
+                "a",
+                "completely",
+                "different",
+                "opening",
+                "new",
+                "speech",
+                "continues",
+            ]);
+            for _ in 0..2 {
+                assert!(agreement.agree(untimed.clone(), None).0.is_none());
+            }
+            assert_eq!(
+                text_of(agreement.take_tail(None)).as_deref(),
+                Some("new speech")
+            );
         }
 
         #[test]
@@ -1727,6 +2076,26 @@ mod tests {
         }
 
         #[test]
+        fn an_untimed_cap_tail_keeps_the_decode_window_after_trim() {
+            let mut state = AgreementState::new(cadence(5_000));
+            state.buffer_start = STRIDE as u64;
+            state.decoded_end = 10 * STRIDE as u64;
+            let confirmed = state.commit(TranscriptSegment::spanned(&["owner".into()], None));
+            let tail = state.commit(TranscriptSegment::spanned(&["guest".into()], None));
+            let tail = state.trim(state.decoded_end, tail, false);
+            let first = state.one_at_a_time(confirmed, tail).unwrap();
+            assert_eq!(first.span(), None);
+            assert_eq!(
+                first.source_window(),
+                Some(STRIDE as u64..10 * STRIDE as u64)
+            );
+            assert_eq!(state.retained_from(), STRIDE as u64);
+            let pending = state.pending_segment.as_ref().unwrap();
+            assert_eq!(pending.source_window(), first.source_window());
+            assert_eq!(pending.span(), None);
+        }
+
+        #[test]
         fn a_decode_behind_its_producer_queues_no_backlog() {
             let whole = 2 * CANONICAL_SAMPLE_RATE as usize;
             let run = drive_whole(whole, 20_000, &["whole buffer"]);
@@ -1753,7 +2122,7 @@ mod tests {
 
         #[test]
         fn segments_carry_absolute_sample_spans_from_word_timings() {
-            let (_directory, mut recording) = recorded(&vec![0_i16; 2 * STRIDE]);
+            let (_directory, mut recording) = recorded(&vec![0_i16; 16_000]);
             let mut state = AgreementState::new(cadence(5_000));
             let cancel = CancelToken::new();
             let decode = |_window: &[f32]| {
@@ -1785,6 +2154,46 @@ mod tests {
             assert_eq!(span.start, 0);
             // 0.9 s at 16 kHz.
             assert_eq!(span.end, 14_400);
+        }
+
+        #[test]
+        fn malformed_word_timings_are_rejected_before_agreement_output() {
+            let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
+            let mut state = AgreementState::new(cadence(5_000));
+
+            assert!(matches!(
+                state.next_finalized_with(&mut recording, &CancelToken::never(), |_| {
+                    Ok(Hypothesis::with_words(
+                        "hello",
+                        vec![TimedWord {
+                            start: f32::NAN,
+                            end: 0.5,
+                        }],
+                    ))
+                }),
+                Err(TranscriptionError::InvalidSegment)
+            ));
+        }
+
+        #[test]
+        fn final_word_timings_stay_inside_the_decoded_audio() {
+            let timing = TimedWord {
+                start: 0.8,
+                end: 1.1,
+            };
+            let mut recording = RecordingReader::from_samples(&vec![0.5; 16_000]);
+            let mut state = AgreementState::new(cadence(5_000));
+            let step = state
+                .next_finalized_with(&mut recording, &CancelToken::never(), |_| {
+                    Ok(Hypothesis::with_words("tail", vec![timing]))
+                })
+                .unwrap()
+                .unwrap();
+            let Some(TranscriptUpdate::Finalized(segment)) = step.update else {
+                panic!("the tail is delivered");
+            };
+            let span = segment.word_spans().unwrap()[0].clone();
+            assert!(span.start < 16_000 && span.end <= 16_000, "{span:?}");
         }
 
         #[test]

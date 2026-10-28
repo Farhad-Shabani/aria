@@ -503,9 +503,10 @@ mod tests {
         for _ in 0..QUEUE_CAPACITY {
             events
                 .try_send(Event::Update {
-                    update: crate::transcription::TranscriptUpdate::Provisional(
-                        "private text".into(),
-                    ),
+                    update: crate::transcription::TranscriptUpdate::Provisional {
+                        text: "private text".into(),
+                        source_window: None,
+                    },
                     retained_from: 0,
                     read_to: 0,
                     completed: None,
@@ -542,7 +543,10 @@ mod tests {
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         events
             .try_send(Event::Update {
-                update: crate::transcription::TranscriptUpdate::Provisional("words".into()),
+                update: crate::transcription::TranscriptUpdate::Provisional {
+                    text: "words".into(),
+                    source_window: None,
+                },
                 retained_from: 0,
                 read_to: 0,
                 completed: None,
@@ -600,7 +604,10 @@ mod tests {
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         events
             .try_send(Event::Update {
-                update: crate::transcription::TranscriptUpdate::Provisional("private words".into()),
+                update: crate::transcription::TranscriptUpdate::Provisional {
+                    text: "private words".into(),
+                    source_window: None,
+                },
                 retained_from: 0,
                 read_to: 0,
                 completed: None,

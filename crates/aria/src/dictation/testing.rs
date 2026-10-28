@@ -4,11 +4,14 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
+use aria_kit::transcription::{OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
 
 use crate::audio::{RecordingReader, SilenceDuration};
 use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery};
-use crate::transcription::{Language, Transcript};
+use crate::transcription::{
+    Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
+};
 
 use super::{
     Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
@@ -86,6 +89,10 @@ impl TextDelivery for RecordingDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
     const OUTLIVES_PROCESS: bool = true;
 
+    fn frontmost(&self) -> Option<crate::history::Application> {
+        None
+    }
+
     fn prepare(
         &self,
         mode: OutputMode,
@@ -142,6 +149,10 @@ impl TextDelivery for PlacedDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
     const OUTLIVES_PROCESS: bool = true;
 
+    fn frontmost(&self) -> Option<crate::history::Application> {
+        None
+    }
+
     fn prepare(
         &self,
         _mode: OutputMode,
@@ -189,6 +200,70 @@ impl VoiceActivityDetector for Loud {
             0.0
         })
     }
+}
+
+/// An engine that decodes whole audio by calling its closure.
+pub(crate) struct Hypotheses<F>(pub(crate) F)
+where
+    F: Fn(TranscriptionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static;
+
+impl<F> Transcriber for Hypotheses<F>
+where
+    F: Fn(TranscriptionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static,
+{
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+        Ok(())
+    }
+
+    fn transcribe_with(
+        &self,
+        audio: TranscriptionAudio<'_>,
+        _: &Language,
+        _: &CancelToken,
+    ) -> Result<Hypothesis, TranscriptionError> {
+        (self.0)(audio)
+    }
+}
+
+/// An engine that hands every decode to the operation its closure opens.
+pub(crate) struct Operations<F>(pub(crate) F)
+where
+    F: Fn(&CancelToken) -> OperationSource + Send + Sync + 'static;
+
+impl<F> Transcriber for Operations<F>
+where
+    F: Fn(&CancelToken) -> OperationSource + Send + Sync + 'static,
+{
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+        Ok(())
+    }
+
+    fn transcribe_with(
+        &self,
+        _: TranscriptionAudio<'_>,
+        _: &Language,
+        _: &CancelToken,
+    ) -> Result<Hypothesis, TranscriptionError> {
+        panic!("the delegated operation owns decoding")
+    }
+
+    fn open_operation(
+        &self,
+        _: &Language,
+        _: bool,
+        cancel: &CancelToken,
+    ) -> Result<Option<OperationSource>, TranscriptionError> {
+        Ok(Some((self.0)(cancel)))
+    }
+}
+
+/// `text` with each word timed by one `(start, end)` pair, in seconds.
+pub(crate) fn timed(text: &str, words: &[(f32, f32)]) -> Hypothesis {
+    let words = words
+        .iter()
+        .map(|&(start, end)| TimedWord { start, end })
+        .collect();
+    Hypothesis::with_words(text, words)
 }
 
 /// A manual-stop press in automatic language with history on and every

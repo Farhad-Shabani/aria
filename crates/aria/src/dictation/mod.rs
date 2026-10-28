@@ -14,19 +14,19 @@ mod level;
 #[cfg(target_os = "macos")]
 mod output;
 mod pipeline;
-mod speech;
 pub(crate) mod subscribers;
 #[cfg(test)]
 pub(crate) mod testing;
+mod text_layers;
 mod transcripts;
 
 pub use crate::delivery::{DeliveryOutcome, OutputMode};
 pub use cleanup::{CleanupError, LlmCleanup};
 pub(crate) use cursor::Cursor;
-pub use event::DictationStage;
 pub(crate) use event::{
     CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD, GhostSnapshot,
 };
+pub use event::{DictationStage, HeardSpeaker};
 pub(crate) use execution::{
     DictationCoordinator, DictationError, DictationExecutor, DictationPolicy, DictationPolicyError,
     ExecutionControl, Transcribed,
@@ -34,6 +34,7 @@ pub(crate) use execution::{
 use level::Meter;
 pub(crate) use level::MicLevel;
 pub(crate) use pipeline::DictationPipeline;
+pub(crate) use text_layers::{ConfiguredLayers, TextLayers};
 pub(crate) use transcripts::{TranscriptSink, Utterance};
 
 pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(320);

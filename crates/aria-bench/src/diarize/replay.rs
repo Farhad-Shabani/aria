@@ -81,7 +81,7 @@ pub(crate) fn hear<T: Transcriber>(
             Err(source) => return Err(BenchError::Transcription { scenario, source }),
         };
         match heard.verdict {
-            Verdict::Drop | Verdict::Stranger => {
+            Verdict::Drop => {
                 dropped.segments += 1;
                 dropped.samples += heard
                     .span

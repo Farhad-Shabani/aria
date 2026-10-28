@@ -20,7 +20,7 @@ use crate::config::AssistantId;
 use crate::delivery::{DeliveryOutcome, Placement, Rect};
 use crate::dictation::{
     CaptionSnapshot, DeliveryMode, DictationEvent, DictationOutcome, DictationRequest,
-    DictationStage, GhostSnapshot, MicLevel, OutputMode, RecordingId, StopMode,
+    DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, OutputMode, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
 use crate::hotkey::HotkeyKey;
@@ -683,6 +683,18 @@ fn decode_role(role: i32) -> Result<Option<Role>, ProtocolError> {
 
 pub(crate) fn speaker_name(name: &str) -> Result<SpeakerName, ProtocolError> {
     SpeakerName::new(name).map_err(|source| ProtocolError::SpeakerName { source })
+}
+
+fn wire_speaker_name(name: Option<SpeakerName>) -> String {
+    name.map(|name| name.as_str().to_owned())
+        .unwrap_or_default()
+}
+
+fn optional_speaker_name(name: &str) -> Result<Option<SpeakerName>, ProtocolError> {
+    match name {
+        "" => Ok(None),
+        name => speaker_name(name).map(Some),
+    }
 }
 
 impl TryFrom<wire::StartListenRequest> for Option<std::path::PathBuf> {
@@ -1817,6 +1829,7 @@ impl From<DictationStage> for wire::DictationEvent {
         let mut outcome = wire::DeliveryOutcome::Unspecified;
         let mut words = 0;
         let mut speaker = String::new();
+        let mut heard = wire::HeardSpeaker::Unspecified;
         let (code, error) = match stage {
             DictationStage::Recording(id) => {
                 recording = id.0;
@@ -1839,12 +1852,21 @@ impl From<DictationStage> for wire::DictationEvent {
                 speaker: heard_in,
             } => {
                 text = segment.to_string();
-                speaker = heard_in
-                    .map(|name| name.as_str().to_owned())
-                    .unwrap_or_default();
+                speaker = wire_speaker_name(heard_in);
                 (wire::DictationStage::SegmentTranscribed, 0)
             }
             DictationStage::SegmentDelivered => (wire::DictationStage::SegmentDelivered, 0),
+            DictationStage::SpeakerChanged(voice) => {
+                heard = match voice {
+                    HeardSpeaker::Undecided => wire::HeardSpeaker::Undecided,
+                    HeardSpeaker::Typed(name) => {
+                        speaker = wire_speaker_name(name);
+                        wire::HeardSpeaker::Typed
+                    }
+                    HeardSpeaker::KeptOut => wire::HeardSpeaker::KeptOut,
+                };
+                (wire::DictationStage::SpeakerChanged, 0)
+            }
         };
         Self {
             stage: code as i32,
@@ -1854,6 +1876,7 @@ impl From<DictationStage> for wire::DictationEvent {
             outcome: outcome as i32,
             word_count: words,
             speaker_name: speaker,
+            heard: heard as i32,
         }
     }
 }
@@ -1870,12 +1893,28 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             Ok(wire::DictationStage::Delivering) => Ok(Self::Delivering),
             Ok(wire::DictationStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
                 text: Arc::from(event.text.as_str()),
-                speaker: match event.speaker_name.as_str() {
-                    "" => None,
-                    name => Some(speaker_name(name)?),
-                },
+                speaker: optional_speaker_name(&event.speaker_name)?,
             }),
             Ok(wire::DictationStage::SegmentDelivered) => Ok(Self::SegmentDelivered),
+            Ok(wire::DictationStage::SpeakerChanged) => {
+                match wire::HeardSpeaker::try_from(event.heard) {
+                    Ok(wire::HeardSpeaker::Undecided) => {
+                        Ok(Self::SpeakerChanged(HeardSpeaker::Undecided))
+                    }
+                    Ok(wire::HeardSpeaker::Typed) => Ok(Self::SpeakerChanged(HeardSpeaker::Typed(
+                        optional_speaker_name(&event.speaker_name)?,
+                    ))),
+                    Ok(wire::HeardSpeaker::KeptOut) => {
+                        Ok(Self::SpeakerChanged(HeardSpeaker::KeptOut))
+                    }
+                    Ok(wire::HeardSpeaker::Unspecified) | Err(..) => {
+                        Err(ProtocolError::InvalidEnum {
+                            field: "heard",
+                            value: event.heard,
+                        })
+                    }
+                }
+            }
             Ok(wire::DictationStage::Delivered) => Ok(Self::Delivered {
                 outcome: delivery_outcome(event.outcome),
                 words: event.word_count,
@@ -2356,6 +2395,12 @@ mod tests {
                 speaker: Some(SpeakerName::new("ada").expect("a valid name")),
             },
             DictationStage::SegmentDelivered,
+            DictationStage::SpeakerChanged(HeardSpeaker::Undecided),
+            DictationStage::SpeakerChanged(HeardSpeaker::Typed(None)),
+            DictationStage::SpeakerChanged(HeardSpeaker::Typed(Some(
+                SpeakerName::new("ada").expect("a valid name"),
+            ))),
+            DictationStage::SpeakerChanged(HeardSpeaker::KeptOut),
         ];
 
         for stage in stages {

@@ -15,7 +15,7 @@
 //!
 //! // ... the speaker talks ...
 //!
-//! let transcript = session.stop()?;
+//! let transcript = session.finish()?;
 //! # Ok(())
 //! # }
 //! ```

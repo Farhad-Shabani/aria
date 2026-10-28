@@ -141,6 +141,9 @@ pub(crate) enum DictationError {
     #[error("no speech was detected")]
     NoSpeech,
 
+    #[error("speaker processing failed: {0}")]
+    Speaker(#[source] crate::hearing::TrackingError),
+
     #[error("transcription failed: {0}")]
     Transcription(#[source] crate::transcription::TranscriptionError),
 
@@ -174,6 +177,15 @@ impl From<TranscriptionError> for DictationError {
     }
 }
 
+impl From<crate::hearing::TrackingError> for DictationError {
+    fn from(error: crate::hearing::TrackingError) -> Self {
+        match error {
+            crate::hearing::TrackingError::Cancelled => Self::Cancelled,
+            error => Self::Speaker(error),
+        }
+    }
+}
+
 impl From<CaptureError> for DictationError {
     fn from(error: CaptureError) -> Self {
         match error {
@@ -199,7 +211,9 @@ impl From<&DictationError> for RpcErrorCode {
             DictationError::ApplicationExcluded => Self::ApplicationExcluded,
             DictationError::Capture(_) => Self::CaptureFailed,
             DictationError::NoSpeech => Self::NoSpeech,
-            DictationError::Transcription(_) => Self::TranscriptionFailed,
+            DictationError::Transcription(_) | DictationError::Speaker(_) => {
+                Self::TranscriptionFailed
+            }
             DictationError::Delivery(_) => Self::DeliveryFailed,
         }
     }
@@ -706,6 +720,12 @@ mod tests {
             DictationError::from(TranscriptionError::NoNativeStream),
             DictationError::Transcription(TranscriptionError::NoNativeStream)
         ));
+        assert_eq!(
+            RpcErrorCode::from(&DictationError::Speaker(
+                crate::hearing::TrackingError::Failed
+            )),
+            RpcErrorCode::TranscriptionFailed
+        );
     }
 
     #[test]

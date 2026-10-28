@@ -10,6 +10,8 @@ enum OverlayStyle {
     static let captionFont = Font.system(size: 13, weight: .medium)
     static let glyphFont = Font.system(size: 10, weight: .bold)
     static let ringWidth: CGFloat = 1
+    /// A voice heard but not typed.
+    static let keptOutRing = Color(white: 0.55)
 
     /// Recording, and a press that ended without its result.
     static let alertTint = Color(red: 0.88, green: 0.42, blue: 0.45)

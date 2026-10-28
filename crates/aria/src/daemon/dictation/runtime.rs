@@ -263,7 +263,11 @@ impl DictationRuntime {
         sink: impl Fn(DictationStage) + Send + 'static,
     ) -> DictationEventEmitter {
         DictationEventEmitter::subscribed_by(CALL_EVENT_THREAD, move |event: DictationEvent| {
-            if let DictationEvent::Stage(stage) = event {
+            // Some callers reject unknown progress stages. Voice feedback
+            // uses the overlay subscription.
+            if let DictationEvent::Stage(stage) = event
+                && !matches!(stage, DictationStage::SpeakerChanged(_))
+            {
                 sink(stage);
             }
         })
@@ -563,20 +567,28 @@ fn event_emitter(
     let local = context
         .attended
         .then(|| DictationSubscribers::new(context.paths.status_path()));
-    EventEmitter::subscribed_by(
-        crate::dictation::EVENT_THREAD,
-        move |message: DaemonEvent| {
-            let event = message.event;
-            if let (Some(local), DictationEvent::Stage(stage)) = (&local, &event) {
-                local.observe(stage, message.suppress_cues);
-            }
-            if matches!(event, DictationEvent::Level(_) | DictationEvent::Ghost(_)) {
-                subscriptions.broadcast_lossy(event);
-            } else {
-                subscriptions.broadcast(event);
-            }
-        },
-    )
+    forward_events(subscriptions, move |message| {
+        if let (Some(local), DictationEvent::Stage(stage)) = (&local, &message.event) {
+            local.observe(stage, message.suppress_cues);
+        }
+    })
+}
+
+fn forward_events(
+    subscriptions: Arc<Subscriptions>,
+    local: impl Fn(DaemonEvent) + Send + 'static,
+) -> EventEmitter<DaemonEvent> {
+    let local = EventEmitter::subscribed_by(crate::dictation::EVENT_THREAD, local);
+    EventEmitter::forwarded_by(move |message: DaemonEvent| match &message.event {
+        DictationEvent::Level(_) | DictationEvent::Ghost(_) => {
+            subscriptions.broadcast_lossy(message.event);
+        }
+        DictationEvent::Stage(_) => {
+            subscriptions.broadcast(message.event.clone());
+            local.emit(message);
+        }
+        DictationEvent::Caption(_) => subscriptions.broadcast(message.event),
+    })
 }
 
 #[cfg(test)]
@@ -584,9 +596,91 @@ mod event_tests {
     use std::sync::mpsc::{RecvTimeoutError, channel};
     use std::time::Duration;
 
+    use crate::daemon::subscriptions::EVENT_BUFFER;
     use crate::preferences::PreferencePatch;
 
     use super::*;
+
+    fn uncued(event: impl Into<DictationEvent>) -> DaemonEvent {
+        DaemonEvent {
+            event: event.into(),
+            suppress_cues: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn stage_events_reach_subscribers_while_local_feedback_is_blocked() {
+        use tokio_stream::StreamExt;
+
+        let subscriptions = Arc::new(Subscriptions::new());
+        let mut stream = subscriptions.subscribe().unwrap();
+        let (entered, waiting) = channel();
+        let (release, blocked) = channel::<()>();
+        let emitter = forward_events(Arc::clone(&subscriptions), move |_| {
+            if entered.send(()).is_ok() {
+                let _ = blocked.recv();
+            }
+        });
+        emitter.emit(uncued(DictationStage::Recording(RecordingId(1))));
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        let voice = DictationStage::SpeakerChanged(crate::dictation::HeardSpeaker::KeptOut);
+        emitter.emit(uncued(voice.clone()));
+        let observed = tokio::time::timeout(Duration::from_millis(100), async {
+            stream.next().await.unwrap().unwrap();
+            stream.next().await.unwrap().unwrap()
+        })
+        .await;
+        drop(release);
+        assert_eq!(observed.unwrap(), crate::ipc::wire::Event::from(voice));
+    }
+
+    #[tokio::test]
+    async fn a_stage_event_closes_a_subscription_full_of_levels() {
+        use tokio_stream::StreamExt;
+
+        let subscriptions = Arc::new(Subscriptions::new());
+        let mut stream = subscriptions.subscribe().unwrap();
+        let emitter = forward_events(Arc::clone(&subscriptions), |_| {});
+        for _level in 0..EVENT_BUFFER {
+            emitter.emit(uncued(crate::dictation::MicLevel {
+                recording: RecordingId(1),
+                level: 0.5,
+            }));
+        }
+        emitter.emit(uncued(DictationStage::Transcribing));
+        let closed = tokio::time::timeout(Duration::from_millis(100), async {
+            while stream.next().await.is_some() {}
+        })
+        .await;
+        assert!(closed.is_ok(), "a full subscription outlived a stage event");
+    }
+
+    #[test]
+    fn voice_updates_reach_subscribers_without_changing_call_progress() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences =
+            Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
+        let mut runtime = DictationRuntime::detached(preferences);
+        let (broadcast, received) = channel();
+        runtime.emitter = EventEmitter::forwarded_by(move |message: DaemonEvent| {
+            broadcast.send(message.event).unwrap();
+        });
+        let (call, progress) = channel();
+        let events = runtime.emitter_for_call(move |stage| call.send(stage).unwrap());
+        let operation = runtime.operation_emitter(false, Some(&events));
+        let voice = DictationStage::SpeakerChanged(crate::dictation::HeardSpeaker::KeptOut);
+        operation.emit(voice.clone());
+        operation.emit(DictationStage::Transcribing);
+        assert_eq!(received.recv().unwrap(), DictationEvent::Stage(voice));
+        assert_eq!(
+            received.recv().unwrap(),
+            DictationEvent::Stage(DictationStage::Transcribing)
+        );
+        assert_eq!(
+            progress.recv_timeout(Duration::from_secs(2)).unwrap(),
+            DictationStage::Transcribing
+        );
+    }
 
     #[test]
     fn successive_operations_enqueue_before_returning_to_the_caller() {

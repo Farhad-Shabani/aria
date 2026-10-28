@@ -20,7 +20,7 @@
 //!     print!("{}", words.as_str());
 //! }
 //!
-//! let transcript = session.stop()?;
+//! let transcript = session.finish()?;
 //! # Ok(())
 //! # }
 //! ```

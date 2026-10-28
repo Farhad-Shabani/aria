@@ -54,6 +54,7 @@ pub struct Endpointer<V> {
     trailing_silence_samples: u64,
     frame: Vec<i16>,
     scored_samples: u64,
+    speech_samples: u64,
     speaking: bool,
     silence_since: Option<u64>,
 }
@@ -69,9 +70,33 @@ impl<V: VoiceActivityDetector> Endpointer<V> {
             trailing_silence_samples: canonical_samples(trailing_silence.get()),
             frame: Vec::with_capacity(V::FRAME_SAMPLES),
             scored_samples: 0,
+            speech_samples: 0,
             speaking: false,
             silence_since: None,
         }
+    }
+
+    /// Forgets the last stream: positions count from zero again.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(crate) fn restart(&mut self) {
+        self.vad.reset();
+        self.frame.clear();
+        self.scored_samples = 0;
+        self.speech_samples = 0;
+        self.speaking = false;
+        self.silence_since = None;
+    }
+
+    /// Where the open utterance's trailing silence began: `None` while
+    /// speech goes on, or outside an utterance.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(crate) fn silence_since(&self) -> Option<u64> {
+        self.silence_since
+    }
+
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(crate) fn speech_samples(&self) -> u64 {
+        self.speech_samples
     }
 
     /// A partial frame waits for the next push.
@@ -95,6 +120,9 @@ impl<V: VoiceActivityDetector> Endpointer<V> {
         // its positions.
         let frame_start = self.scored_samples;
         self.scored_samples += V::FRAME_SAMPLES as u64;
+        if probability >= SPEECH_THRESHOLD {
+            self.speech_samples += V::FRAME_SAMPLES as u64;
+        }
 
         if !self.speaking {
             self.speaking = probability >= SPEECH_THRESHOLD;

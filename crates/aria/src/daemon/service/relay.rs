@@ -282,9 +282,9 @@ fn deliver<D: TextDelivery>(
     cancel: &CancelToken,
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let should_cancel = || cancel.is_cancelled();
-    settings.target.confirm_front()?;
+    settings.target.confirm_front(delivery)?;
     let prepared = delivery.prepare(settings.output_mode, should_cancel)?;
-    settings.target.confirm_front()?;
+    settings.target.confirm_front(delivery)?;
     let text = delivery.caret(&prepared).insert(text);
     let outcome = delivery.deliver(&prepared, &text, should_cancel)?;
     if outcome == DeliveryOutcome::Inserted {
@@ -329,6 +329,10 @@ mod tests {
 
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
         const OUTLIVES_PROCESS: bool = true;
+
+        fn frontmost(&self) -> Option<crate::history::Application> {
+            None
+        }
 
         fn prepare(
             &self,

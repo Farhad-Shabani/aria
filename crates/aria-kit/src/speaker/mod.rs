@@ -5,10 +5,12 @@
 //! Two embeddings of one voice point the same way, so their cosine says
 //! whether two stretches of speech came from the same person. What to do
 //! with that number is policy, kept out of every engine: [`Diarizer`] groups
-//! voices and claims enrolled names, `SegmentReader` applies it to the
-//! segments a transcription session emits, and [`PyannoteVoices`] reads who
-//! spoke when from the audio itself, beside the transcriber.
+//! voices and claims enrolled names, `VoiceprintTracker` judges who holds each
+//! turn as a recording is heard, and [`PyannoteVoices`] settles who spoke
+//! when from the audio itself, afterwards.
 
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+mod changes;
 mod diarizer;
 #[cfg(not(target_family = "wasm"))]
 mod enrollment;
@@ -18,26 +20,37 @@ mod labeler;
 mod profile;
 #[cfg(not(target_family = "wasm"))]
 mod store;
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+mod turns;
 mod voices;
 
 use std::path::PathBuf;
 
 use crate::backend::{BackendError, ModelDownload, ModelError};
 
-pub use diarizer::{CLUSTER_THRESHOLD, Diarizer, ENROLLED_THRESHOLD, settle};
+#[cfg(all(
+    any(test, feature = "test-support"),
+    feature = "silero",
+    not(target_family = "wasm")
+))]
+pub use changes::LevelSegmenter;
+pub use diarizer::{CLUSTER_THRESHOLD, Diarizer, ENROLLED_THRESHOLD, OWN_VOICE_THRESHOLD, settle};
 #[cfg(not(target_family = "wasm"))]
 pub use enrollment::{Enrolled, Enrollment, EnrollmentError, MIN_SAMPLES, centroid, consistency};
 pub(crate) use label::AnonymousNumbering;
 pub use label::Label;
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-pub use labeler::{
-    Heard, HeardUpdate, OWN_VOICE_THRESHOLD, SegmentLabeler, SegmentReader, Verdict,
-};
+pub use labeler::{SegmentLabeler, SegmentReader, Verdict};
 #[cfg(any(test, feature = "test-support"))]
 pub use profile::enrolled_voice;
 pub use profile::{Profile, Role, SpeakerName, SpeakerNameError};
 #[cfg(not(target_family = "wasm"))]
 pub use store::{ProfileError, ProfileStore, Replace, StoredProfiles};
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+pub use turns::{
+    Admission, Decision, Gate, NoSegmenter, Released, Speaker, SpeakerTracker, Timeline, TurnFeed,
+    VoiceprintTracker,
+};
 pub use voices::{
     Chunk, Grouping, Merged, PyannoteVoices, Revision, Spoken, Standing, Voiceprint, Voices,
     attribute_spans,

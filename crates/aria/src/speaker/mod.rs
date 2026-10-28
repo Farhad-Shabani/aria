@@ -2,6 +2,9 @@
 //! listen share, and the voice track listen runs beside its transcriber. The
 //! policy itself lives in `aria_kit::speaker`.
 
+#[cfg(test)]
+pub(crate) mod testing;
+
 use std::time::Instant;
 
 use aria_kit::segmentation::Engine as SegmentationEngine;
@@ -18,7 +21,7 @@ pub use aria_kit::speaker::{
     Chunk, Diarizer, Enrolled, Enrollment, EnrollmentError, Grouping, Label, Merged, Profile,
     ProfileError, ProfileStore, PyannoteVoices, Replace, Revision, Role, SegmentLabeler,
     SegmentReader, SpeakerName, SpeakerNameError, Standing, StoredProfiles, Verdict, Voiceprint,
-    Voices, attribute_spans, normalized, settle,
+    VoiceprintTracker, Voices, attribute_spans, normalized, settle,
 };
 
 /// The voice track listen runs: the shipped segmentation net over the shipped
@@ -68,11 +71,23 @@ pub fn speech_gate() -> Option<SileroVad> {
         .ok()
 }
 
-/// The segment reader dictation and listen run. The speech gate marks
+/// The segment reader listen runs. The speech gate marks
 /// the pauses between speakers; the engines' word timings blur them.
 pub(crate) fn reader(config: &SpeakerConfig) -> SegmentReader<WeSpeaker> {
     let diarizer = embedder(config).map(|embedder| Diarizer::new(embedder, enrolled(config)));
     SegmentReader::new(SegmentLabeler::new(speech_gate(), diarizer))
+}
+
+pub(crate) fn turns(config: &SpeakerConfig) -> Option<VoiceprintTracker<WeSpeaker, Pyannote>> {
+    let voices = Diarizer::new(embedder(config)?, enrolled(config));
+    let turns = VoiceprintTracker::new(voices);
+    match segmenter(&config.segmentation_model) {
+        Some(segmenter) => turns
+            .with_segmenter(segmenter)
+            .inspect_err(|error| tracing::warn!(%error, "speaker tracking is unavailable"))
+            .ok(),
+        None => Some(turns),
+    }
 }
 
 /// The profiles the shipped embedder can compare against. One enrollment
@@ -115,11 +130,20 @@ pub fn voice_track(
     enrolled: Vec<Profile>,
     grouping: Grouping,
 ) -> Option<VoiceTrack> {
+    Some(PyannoteVoices::new(
+        segmenter(model)?,
+        embedder,
+        enrolled,
+        grouping,
+    ))
+}
+
+fn segmenter(model: &std::path::Path) -> Option<Pyannote> {
     let settings = pyannote::Config {
         model: model.to_path_buf(),
     };
     if let Err(error) = Pyannote::check_from(&settings) {
-        tracing::info!(%error, "no segmentation model; speakers stay as the live pass guessed");
+        tracing::info!(%error, "segmentation model is unavailable");
         return None;
     }
     let started = Instant::now();
@@ -130,12 +154,12 @@ pub fn voice_track(
                 load_ms = started.elapsed().as_millis(),
                 "segmentation model loaded"
             );
-            Some(PyannoteVoices::new(segmenter, embedder, enrolled, grouping))
+            Some(segmenter)
         }
         Err(error) => {
             tracing::warn!(
                 error = %error_chain(&error),
-                "segmentation model unusable; speakers stay as guessed"
+                "segmentation model is unusable"
             );
             None
         }

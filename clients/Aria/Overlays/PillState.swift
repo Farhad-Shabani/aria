@@ -35,9 +35,9 @@ enum PillState: Equatable {
             self = .interrupted
         case .failed where event.errorCode == .applicationExcluded: self = .excluded(frontApp())
         case .failed: self = .failed(event.errorCode.dictationMessage)
-        // A segment lands while the speaker is still talking, so it says
-        // nothing about the press.
-        case .segmentTranscribed, .segmentDelivered: return nil
+        // A segment or a voice arrives while the speaker is still talking,
+        // so it says nothing about the press.
+        case .segmentTranscribed, .segmentDelivered, .speakerChanged: return nil
         case .unspecified, .UNRECOGNIZED: return nil
         }
     }

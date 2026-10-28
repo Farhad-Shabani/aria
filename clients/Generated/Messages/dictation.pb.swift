@@ -22,6 +22,55 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+/// What a press does with the current speaker's words.
+public nonisolated enum Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// Too little is heard yet to tell who is speaking.
+  case undecided // = 1
+
+  /// Their words are typed.
+  case typed // = 2
+
+  /// Their words are not typed: the press types only the owner's.
+  case keptOut // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .undecided
+    case 2: self = .typed
+    case 3: self = .keptOut
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .undecided: return 1
+    case .typed: return 2
+    case .keptOut: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_HeardSpeaker] = [
+    .unspecified,
+    .undecided,
+    .typed,
+    .keptOut,
+  ]
+
+}
+
 public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -35,6 +84,10 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
   /// A streamed segment, a different axis from the press.
   case segmentTranscribed // = 7
   case segmentDelivered // = 8
+
+  /// Another speaker started, announced before any of their words are
+  /// typed.
+  case speakerChanged // = 9
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -52,6 +105,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case 6: self = .failed
     case 7: self = .segmentTranscribed
     case 8: self = .segmentDelivered
+    case 9: self = .speakerChanged
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -67,6 +121,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case .failed: return 6
     case .segmentTranscribed: return 7
     case .segmentDelivered: return 8
+    case .speakerChanged: return 9
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -82,6 +137,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     .failed,
     .segmentTranscribed,
     .segmentDelivered,
+    .speakerChanged,
   ]
 
 }
@@ -431,9 +487,14 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// these; the press ends at delivered, cancelled, or failed.
   public var text: String = String()
 
-  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
-  /// is speaking. Empty until a voice is recognized.
+  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED, and on
+  /// DICTATION_STAGE_SPEAKER_CHANGED when heard is HEARD_SPEAKER_TYPED: the
+  /// enrolled name of who is speaking. Empty until a speaker is recognized.
   public var speakerName: String = String()
+
+  /// Set on DICTATION_STAGE_SPEAKER_CHANGED: what the press does with that
+  /// speaker's words.
+  public var heard: Aria_Daemon_V1_HeardSpeaker = .unspecified
 
   /// Set on DICTATION_STAGE_DELIVERED. Unspecified for a press that
   /// asked only for its transcript.
@@ -575,8 +636,12 @@ public nonisolated struct Aria_Daemon_V1_MicLevel: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
+nonisolated extension Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HEARD_SPEAKER_UNSPECIFIED\0\u{1}HEARD_SPEAKER_UNDECIDED\0\u{1}HEARD_SPEAKER_TYPED\0\u{1}HEARD_SPEAKER_KEPT_OUT\0")
+}
+
 nonisolated extension Aria_Daemon_V1_DictationStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf._ProtoNameProviding {
@@ -896,7 +961,7 @@ nonisolated extension Aria_Daemon_V1_StopDictationResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DictationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -911,6 +976,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
       case 5: try { try decoder.decodeSingularEnumField(value: &self.outcome) }()
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.wordCount) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.speakerName) }()
+      case 8: try { try decoder.decodeSingularEnumField(value: &self.heard) }()
       default: break
       }
     }
@@ -938,6 +1004,9 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if !self.speakerName.isEmpty {
       try visitor.visitSingularStringField(value: self.speakerName, fieldNumber: 7)
     }
+    if self.heard != .unspecified {
+      try visitor.visitSingularEnumField(value: self.heard, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -946,6 +1015,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if lhs.stage != rhs.stage {return false}
     if lhs.text != rhs.text {return false}
     if lhs.speakerName != rhs.speakerName {return false}
+    if lhs.heard != rhs.heard {return false}
     if lhs.outcome != rhs.outcome {return false}
     if lhs.wordCount != rhs.wordCount {return false}
     if lhs.errorCode != rhs.errorCode {return false}

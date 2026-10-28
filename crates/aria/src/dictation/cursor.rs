@@ -42,7 +42,7 @@ impl<D: TextDelivery> Cursor<D> {
         if target.finished || target.mode != mode {
             return Ok(());
         }
-        if let Err(error) = target.policy.confirm_front() {
+        if let Err(error) = target.policy.confirm_front(&self.delivery) {
             target.finished = true;
             return Err(error);
         }
@@ -88,9 +88,9 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         } else {
             output
         };
-        settings.target.confirm_front()?;
+        settings.target.confirm_front(&self.delivery)?;
         let prepared = self.delivery.prepare(output, should_cancel(control))?;
-        settings.target.confirm_front()?;
+        settings.target.confirm_front(&self.delivery)?;
         self.target = Some(Target {
             policy: settings.target.clone(),
             mode: settings.delivery_mode,
@@ -251,6 +251,10 @@ mod tests {
             type Prepared = ();
             const DEFAULT_MODE: OutputMode = OutputMode::Copy;
             const OUTLIVES_PROCESS: bool = true;
+
+            fn frontmost(&self) -> Option<crate::history::Application> {
+                None
+            }
 
             fn prepare(
                 &self,
@@ -424,10 +428,11 @@ mod tests {
         );
     }
 
-    /// A field that reports `caret`.
+    /// A field that reports `caret`, in the application `front`.
     struct FieldWithText {
         delivery: RecordingDelivery,
         caret: Caret,
+        front: Option<crate::history::Application>,
     }
 
     impl TextDelivery for FieldWithText {
@@ -435,6 +440,10 @@ mod tests {
 
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
         const OUTLIVES_PROCESS: bool = true;
+
+        fn frontmost(&self) -> Option<crate::history::Application> {
+            self.front.clone()
+        }
 
         fn prepare(
             &self,
@@ -474,6 +483,7 @@ mod tests {
                 fail: false,
             },
             caret: Caret::between(before, after),
+            front: None,
         });
         let control = ExecutionControl::for_test(StopMode::Manual);
         cursor
@@ -486,6 +496,30 @@ mod tests {
             cursor.segment(Utterance::anonymous(segment)).unwrap();
         }
         log.entries()[1..].to_vec()
+    }
+
+    #[test]
+    fn nothing_is_typed_into_an_app_with_aria_off() {
+        let log = CallLog::default();
+        let mut cursor = Cursor::new(FieldWithText {
+            delivery: RecordingDelivery {
+                log: log.clone(),
+                fail: false,
+            },
+            caret: Caret::between("", ""),
+            front: Some(crate::history::Application {
+                name: "Vault".into(),
+                bundle_id: Some("com.secret".into()),
+            }),
+        });
+        let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        settings.target.excluded = vec!["com.secret".into()];
+
+        let started =
+            cursor.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual));
+
+        assert!(matches!(started, Err(DeliveryError::ApplicationExcluded)));
+        assert!(log.entries().is_empty());
     }
 
     #[test]

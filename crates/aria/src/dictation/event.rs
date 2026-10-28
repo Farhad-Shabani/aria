@@ -26,6 +26,9 @@ pub enum DictationStage {
     },
     Cancelled,
     Failed(RpcErrorCode),
+    /// Another speaker started, announced before any of their words are
+    /// typed.
+    SpeakerChanged(HeardSpeaker),
     /// A finalized segment, and the enrolled voice the press so far sounds
     /// like.
     SegmentTranscribed {
@@ -33,6 +36,17 @@ pub enum DictationStage {
         speaker: Option<SpeakerName>,
     },
     SegmentDelivered,
+}
+
+/// What a press does with the current speaker's words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeardSpeaker {
+    /// Too little is heard yet to tell who is speaking.
+    Undecided,
+    /// Their words are typed, named when the speaker is enrolled.
+    Typed(Option<SpeakerName>),
+    /// Their words are not typed: the press types only the owner's.
+    KeptOut,
 }
 
 impl DictationStage {
@@ -63,6 +77,7 @@ impl DictationStage {
             Self::Failed(..) => "failed",
             Self::SegmentTranscribed { .. } => "segment transcribed",
             Self::SegmentDelivered => "segment delivered",
+            Self::SpeakerChanged(..) => "voice heard",
         }
     }
 }

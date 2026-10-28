@@ -68,6 +68,10 @@ pub(crate) trait TextDelivery: Send + Sync + 'static {
         should_cancel: impl Fn() -> bool,
     ) -> Result<DeliveryOutcome, DeliveryError>;
 
+    /// The application keystrokes would reach now. `None` where the
+    /// platform cannot tell.
+    fn frontmost(&self) -> Option<crate::history::Application>;
+
     /// The text beside the caret where `deliver` would type. Unknown unless
     /// the destination shows it.
     fn caret(&self, _prepared: &Self::Prepared) -> Caret {
@@ -131,8 +135,9 @@ impl TargetPolicy {
             .is_some_and(|id| self.excluded.iter().any(|excluded| excluded == id))
     }
 
-    pub(crate) fn confirm_front(&self) -> Result<(), DeliveryError> {
-        self.confirm(frontmost_application().as_ref())
+    /// Checks the application `delivery` would type into now.
+    pub(crate) fn confirm_front(&self, delivery: &impl TextDelivery) -> Result<(), DeliveryError> {
+        self.confirm(delivery.frontmost().as_ref())
     }
 
     fn confirm(&self, front: Option<&crate::history::Application>) -> Result<(), DeliveryError> {

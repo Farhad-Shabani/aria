@@ -591,6 +591,21 @@ impl RecordingReader {
         state.ended.is_some()
     }
 
+    /// Waits up to `timeout` for audio this reader has not taken, or for
+    /// capture to end, reading nothing.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(crate) fn wait_for_audio(&self, timeout: Duration) {
+        let queue = self.queue;
+        let state = self.recording.lock();
+        let _ = self
+            .recording
+            .changed
+            .wait_timeout_while(state, timeout, |state| {
+                state.queue(queue).pending.is_empty() && state.ended.is_none()
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+
     /// When capture ended. Unlike [`RecordingReader::reached_end`], it does not wait
     /// for this reader to catch up.
     #[cfg(not(target_family = "wasm"))]

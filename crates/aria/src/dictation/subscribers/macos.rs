@@ -46,6 +46,7 @@ impl Cue {
             | DictationStage::Delivering
             | DictationStage::SegmentTranscribed { .. }
             | DictationStage::SegmentDelivered
+            | DictationStage::SpeakerChanged(..)
             | DictationStage::Cancelled => None,
         }
     }

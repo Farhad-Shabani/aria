@@ -344,7 +344,7 @@ impl ResponseValidator {
                 )?;
                 self.append(segment.as_str())?;
             }
-            TranscriptUpdate::Provisional(_) => {
+            TranscriptUpdate::Provisional { .. } => {
                 valid(self.claim.is_none() && completed.is_none())?;
             }
         }
@@ -511,7 +511,7 @@ impl Session {
         loop {
             match self.next(cancel).map_err(transcription_error)? {
                 Event::Update {
-                    update: TranscriptUpdate::Provisional(_),
+                    update: TranscriptUpdate::Provisional { .. },
                     ..
                 } if !previews => {}
                 Event::Update {
@@ -791,7 +791,9 @@ mod tests {
             assert_eq!(operation.served_by(), Some("whisper"));
             let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
             assert!(!recording.reached_end());
-            assert!(segment.span().is_some());
+            assert_eq!(segment.span(), None);
+            assert_eq!(segment.word_spans(), None);
+            assert_eq!(segment.source_window(), Some(0..160));
             first.send(segment.into_text()).unwrap();
             let transcript = operation.finish(&mut recording).unwrap();
             assert!(recording.reached_end());
@@ -876,7 +878,6 @@ mod tests {
             DeliveryMode, DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
             ExecutionControl, OutputMode, StopMode,
         };
-        use aria_kit::speaker::{SegmentLabeler, SegmentReader};
 
         let server = Fixture::with_model(
             "whisper",
@@ -903,13 +904,9 @@ mod tests {
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::task::spawn_blocking(move || {
             let remote = client.transcriber();
-            let reader = SegmentReader::<aria_speaker::wespeaker::WeSpeaker>::new(
-                SegmentLabeler::new(None, None),
-            );
             let pipeline = DictationPipeline::new(
                 capture,
                 Transcription::<_, Streaming>::delegated(remote),
-                reader,
                 (log.history(), log.cursor()),
             )
             .hearing_speech(Some(Loud));
@@ -973,7 +970,6 @@ mod tests {
             StopMode,
         };
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
-        use aria_kit::speaker::{SegmentLabeler, SegmentReader};
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {
@@ -1004,9 +1000,6 @@ mod tests {
             DictationPipeline::new(
                 Capture(Mutex::new(Some(recording))),
                 Transcription::<_, Streaming>::delegated(client.transcriber()),
-                SegmentReader::<aria_speaker::wespeaker::WeSpeaker>::new(SegmentLabeler::new(
-                    None, None,
-                )),
                 (log.history(), log.cursor()),
             )
             .hearing_speech(Some(Loud))
@@ -1037,7 +1030,6 @@ mod tests {
             StopMode,
         };
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
-        use aria_kit::speaker::{SegmentLabeler, SegmentReader};
         use aria_kit::transcription::{ChunkStream, Emitted};
 
         struct Capture(Mutex<Option<RecordingReader>>);
@@ -1145,13 +1137,9 @@ mod tests {
             let delivered = log.clone();
             let task = tokio::task::spawn_blocking(move || {
                 let remote = client.transcriber();
-                let reader = SegmentReader::<aria_speaker::wespeaker::WeSpeaker>::new(
-                    SegmentLabeler::new(None, None),
-                );
                 let pipeline = DictationPipeline::new(
                     Capture(Mutex::new(Some(recording))),
                     Transcription::<_, Streaming>::delegated(remote),
-                    reader,
                     (log.history(), log.cursor()),
                 )
                 .hearing_speech(Some(Loud));
@@ -1404,7 +1392,10 @@ mod tests {
             .unwrap();
         assert!(matches!(
             responses.update(
-                TranscriptUpdate::Provisional(String::new()),
+                TranscriptUpdate::Provisional {
+                    text: String::new(),
+                    source_window: None
+                },
                 0,
                 20,
                 None,
@@ -1450,9 +1441,10 @@ mod tests {
     #[tokio::test]
     async fn own_voice_rejection_precedes_upload_and_corrections_stay_on_device() {
         use crate::dictation::DictationPipeline;
+        use crate::dictation::testing::Loud;
         use crate::transcription::Transcription;
         use crate::vocabulary::{PersonalRules, Vocabulary};
-        use aria_kit::speaker::{Diarizer, Embedder, SegmentLabeler, SegmentReader, SpeakerError};
+        use aria_kit::speaker::{Diarizer, Embedder, SpeakerError, VoiceprintTracker};
 
         struct Voice([f32; 2]);
         impl Embedder for Voice {
@@ -1483,28 +1475,26 @@ mod tests {
                     crate::speaker::Role::Owner,
                     vec![1.0, 0.0],
                 )];
-                let reader = SegmentReader::new(SegmentLabeler::new(
-                    None,
-                    Some(Diarizer::new(Voice(voice), enrolled)),
-                ));
+                let turns = VoiceprintTracker::new(Diarizer::new(Voice(voice), enrolled))
+                    .with_segmenter(aria_kit::speaker::LevelSegmenter)
+                    .unwrap();
                 let remote = client.transcriber();
-                let pipeline = DictationPipeline::new(
-                    (),
-                    Transcription::<_, Whole>::delegated(remote),
-                    reader,
-                    (),
-                )
-                .cleaning(true);
+                let pipeline =
+                    DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
+                        .hearing_speech(Some(Loud))
+                        .tracking_voices(Some(turns))
+                        .editing(crate::dictation::TextLayers::new().removing_disfluencies(true));
                 let mut recording = crate::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(
                     &mut recording,
                     &Language::Automatic,
                     true,
                     Some(&matcher),
+                    "test",
                     &CancelToken::never(),
                 );
                 if accepted {
-                    assert_eq!(result.unwrap().0.as_str(), "ProjectOnly");
+                    assert_eq!(result.unwrap().transcript.as_str(), "ProjectOnly");
                     assert_eq!(
                         observed.samples.lock().unwrap().as_slice(),
                         std::slice::from_ref(&samples)

@@ -530,8 +530,10 @@ impl Delivery {
         timeout: Duration,
         cancel: &CancelToken,
     ) -> Result<Self, ChatError> {
-        policy.confirm_front().map_err(ChatError::Delivery)?;
         let platform = PlatformTextDelivery::new(timeout).map_err(ChatError::Delivery)?;
+        policy
+            .confirm_front(&platform)
+            .map_err(ChatError::Delivery)?;
         Ok(Self {
             target: platform
                 .prepare(mode, || cancel.is_cancelled())
@@ -547,7 +549,7 @@ impl Delivery {
         let text = self.platform.caret(&self.target).insert(text);
         match self
             .policy
-            .confirm_front()
+            .confirm_front(&self.platform)
             .and_then(|()| {
                 self.platform
                     .deliver(&self.target, &text, || cancel.is_cancelled())

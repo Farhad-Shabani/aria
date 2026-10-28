@@ -16,7 +16,7 @@ use crate::rpc::RpcErrorCode;
 /// `aria events`.
 const MAX_SUBSCRIBERS: usize = 64;
 /// Room for a full dictation's stages while the peer catches up.
-const EVENT_BUFFER: usize = 16;
+pub(in crate::daemon) const EVENT_BUFFER: usize = 16;
 
 pub(super) type EventStream = ReceiverStream<Result<wire::Event, Status>>;
 
