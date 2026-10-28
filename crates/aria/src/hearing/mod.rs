@@ -287,19 +287,19 @@ impl<'scope> Hearing<'scope> {
                 return Ok(None);
             }
             let wake = self.board.next_wake();
-            let heard = matches!(wake, Wake::Heard);
+            let published = matches!(wake, Wake::Snapshot);
             match wake {
                 Wake::Decoded(decoded) => {
                     self.take(decoded.update, decoded.read_to)?;
                     self.retained_from = decoded.retained_from;
                 }
-                Wake::Heard => {}
+                Wake::Snapshot => {}
                 Wake::DecoderDone => self.done = true,
             }
             let snapshot = self.turns.is_some().then(|| self.board.snapshot());
             // Queued ahead of what the gate releases, so whose voice it is
             // shows before their words do.
-            if heard
+            if published
                 && let Some(timeline) = snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.timeline.clone())

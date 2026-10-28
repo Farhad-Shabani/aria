@@ -37,7 +37,7 @@ struct Walk {
     bell: RecordingWaker,
     snapshot: Snapshot,
     /// Published since the caller last woke for it.
-    heard: bool,
+    unread: bool,
     ended: Option<Ending>,
     /// The caller needs only the rest of the speech, not voices.
     untracked: bool,
@@ -56,7 +56,7 @@ pub(super) struct Decoded {
 pub(super) enum Wake {
     Decoded(Decoded),
     /// The walk published a snapshot, or ended.
-    Heard,
+    Snapshot,
     DecoderDone,
 }
 
@@ -132,7 +132,7 @@ impl Board {
     pub(super) fn next_wake(&self) -> Wake {
         let mut state = self.wait_while(self.lock(), |state| {
             state.decoded.is_empty()
-                && !state.walk.as_ref().is_some_and(|walk| walk.heard)
+                && !state.walk.as_ref().is_some_and(|walk| walk.unread)
                 && !state.decoder_done
         });
         if let Some(decoded) = state.decoded.pop_front() {
@@ -141,9 +141,9 @@ impl Board {
             self.changed.notify_all();
             return Wake::Decoded(decoded);
         }
-        if let Some(walk) = state.walk.as_mut().filter(|walk| walk.heard) {
-            walk.heard = false;
-            return Wake::Heard;
+        if let Some(walk) = state.walk.as_mut().filter(|walk| walk.unread) {
+            walk.unread = false;
+            return Wake::Snapshot;
         }
         Wake::DecoderDone
     }
@@ -152,7 +152,7 @@ impl Board {
         self.lock().walk = Some(Walk {
             bell,
             snapshot,
-            heard: false,
+            unread: false,
             ended: None,
             untracked: false,
             decided_to: 0,
@@ -163,7 +163,7 @@ impl Board {
         let mut state = self.lock();
         let walk = walk_mut(&mut state);
         walk.snapshot = snapshot;
-        walk.heard = true;
+        walk.unread = true;
         self.notify(state);
     }
 
@@ -176,15 +176,15 @@ impl Board {
             walk.snapshot = walk.snapshot.broken();
         }
         walk.ended = Some(ending);
-        walk.heard = true;
+        walk.unread = true;
         self.notify(state);
     }
 
     /// The walk's next fresh snapshot, waiting for it. Its end counts as one.
     pub(super) fn next_snapshot(&self) -> Snapshot {
-        let mut state = self.wait_while(self.lock(), |state| !walk(state).heard);
+        let mut state = self.wait_while(self.lock(), |state| !walk(state).unread);
         let walk = walk_mut(&mut state);
-        walk.heard = false;
+        walk.unread = false;
         walk.snapshot.clone()
     }
 
@@ -216,18 +216,18 @@ impl Board {
         walk(&self.lock()).untracked
     }
 
-    /// The snapshot once `heard` holds for it, or as far as the walk got
+    /// The snapshot once `until` holds for it, or as far as the walk got
     /// before it ended.
     pub(super) fn wait_walk(
         &self,
-        heard: impl Fn(&Snapshot) -> bool,
+        until: impl Fn(&Snapshot) -> bool,
     ) -> Result<Snapshot, TrackingError> {
         let state = self.wait_while(self.lock(), |state| {
             let walk = walk(state);
-            walk.ended.is_none() && !heard(&walk.snapshot)
+            walk.ended.is_none() && !until(&walk.snapshot)
         });
         let walk = walk(&state);
-        if heard(&walk.snapshot) {
+        if until(&walk.snapshot) {
             return Ok(walk.snapshot.clone());
         }
         match walk.ended {
@@ -309,10 +309,10 @@ mod tests {
         board.publish(snapshot());
         board.decoder_done();
 
-        assert!(matches!(board.next_wake(), Wake::Heard));
+        assert!(matches!(board.next_wake(), Wake::Snapshot));
         assert!(matches!(board.next_wake(), Wake::DecoderDone));
         board.publish(snapshot());
-        assert!(matches!(board.next_wake(), Wake::Heard));
+        assert!(matches!(board.next_wake(), Wake::Snapshot));
     }
 
     #[test]

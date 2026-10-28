@@ -417,7 +417,7 @@ mod tests {
         std::thread::scope(|scope| {
             let walk = TurnThread::spawn(scope, feed, None, &CancelToken::never(), &board).unwrap();
             scope.spawn(|| {
-                while matches!(board.next_wake(), Wake::Heard) {
+                while matches!(board.next_wake(), Wake::Snapshot) {
                     if board.snapshot().tracking_failed() {
                         let _ = woken.send(());
                         return;
