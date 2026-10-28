@@ -3,6 +3,7 @@
 //! caller's thread whenever either moves, so a word is released as soon as
 //! its turn is judged rather than at the decoder's next step.
 
+mod board;
 mod decoder;
 mod speech;
 mod turns;
@@ -10,10 +11,7 @@ mod turns;
 use std::borrow::Borrow;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::Scope;
-use std::time::Duration;
 
 use aria_kit::audio::{RecordingReader, canonical_samples};
 use aria_kit::cancel::CancelToken;
@@ -22,27 +20,13 @@ use aria_kit::transcription::HeardUpdate;
 use aria_kit::voice_activity::{SpeechMap, VoiceActivityDetector};
 
 use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
+pub(crate) use board::Board;
+use board::Wake;
 use decoder::DecodeThread;
 
 use speech::held_speech;
 use turns::TurnThread;
 pub(crate) use turns::{Snapshot, TrackingError};
-
-/// Updates in flight before the decoder waits for the caller's thread.
-const WAKE_CAPACITY: usize = 64;
-
-/// How often hearing without a decoder checks cancellation and the timeline.
-const POLL: Duration = Duration::from_millis(100);
-
-enum Wake {
-    Decoded {
-        update: HeardUpdate,
-        read_to: u64,
-    },
-    DecoderDone,
-    /// The turn thread published a snapshot.
-    Heard,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HearingError {
@@ -71,6 +55,9 @@ impl HearingError {
 }
 
 pub(crate) enum Event {
+    /// The walk judged more of the recording. Only a hearing with a
+    /// tracker has one.
+    Timeline(Arc<Timeline>),
     Released(Released),
     /// The provisional text to show, empty to hide it.
     Preview(String),
@@ -78,6 +65,9 @@ pub(crate) enum Event {
 
 pub(crate) struct Ended {
     pub(crate) transcript: Transcript,
+    /// The walk's last timeline, which may land after the decoder's last
+    /// update. Only a hearing with a tracker has one.
+    pub(crate) timeline: Option<Arc<Timeline>>,
     /// What the gate let out once hearing ended.
     pub(crate) released: Vec<Released>,
     /// Every word typed was the owner's, judged on a whole recording.
@@ -93,25 +83,32 @@ pub(crate) struct Decoding<'scope, T> {
 /// Hears the whole of the recording `feed` reads on the turn thread while
 /// capture runs, with no decoder, for a press decoded only once it ends.
 /// Only the owner's words pass, so it returns the timeline to judge them by.
+/// `heard` sees each timeline as the walk publishes it.
 pub(crate) fn hear_to_end<V, K>(
     feed: TurnFeed<V, K>,
-    recording: &RecordingReader,
     cancel: &CancelToken,
-    progress: impl FnMut(&Snapshot) + Send,
+    mut heard: impl FnMut(&Timeline),
 ) -> Result<Arc<Timeline>, HearingError>
 where
     V: VoiceActivityDetector + Send,
     K: SpeakerTracker + Send,
 {
     std::thread::scope(|scope| {
-        let walk = TurnThread::spawn(scope, feed, cancel, progress, || {})
+        let board = Board::new();
+        let walk = TurnThread::spawn(scope, feed, cancel, &board)
             .map_err(|error| HearingError::Tracking(owner_walk_failed(error)))?;
-        while !recording.wait_for_end(POLL) {
-            if cancel.is_cancelled() {
-                return Err(HearingError::Tracking(TrackingError::Cancelled));
+        // The walk ends with capture. A tracker that fails once someone
+        // spoke ends the press early; before that, it may still be NoSpeech.
+        loop {
+            let snapshot = walk.next_snapshot();
+            if let Some(timeline) = &snapshot.timeline {
+                heard(timeline);
             }
-            if walk.snapshot().tracking_failed() {
+            if snapshot.tracking_failed() && held_speech(&snapshot.speech) {
                 return Err(HearingError::Tracking(TrackingError::Failed));
+            }
+            if walk.ended() {
+                break;
             }
         }
         let snapshot = walk.finish().map_err(HearingError::Tracking)?;
@@ -187,15 +184,10 @@ fn owner_walk_failed(error: std::io::Error) -> TrackingError {
 }
 
 pub(crate) struct Hearing<'scope> {
-    // Dropped first: a decoder blocked on a full queue sees the receiver
-    // gone and exits, so joining it cannot hang.
-    woken: Receiver<Wake>,
+    board: Arc<Board>,
     decoder: Option<DecodeThread<'scope>>,
     turns: Option<TurnThread<'scope>>,
     gate: Gate,
-    abandon: Abandon,
-    /// A turn-thread wake waits in the queue.
-    pending: Arc<AtomicBool>,
     events: VecDeque<Event>,
     /// Whether speech was heard by where the decoder has read. Words
     /// finalized before it were decoded from silence.
@@ -206,61 +198,29 @@ pub(crate) struct Hearing<'scope> {
     done: bool,
 }
 
-/// Stops a hearing's decoder when the hearing is dropped unfinished.
-pub(crate) struct Abandon {
-    abandoned: Arc<AtomicBool>,
-    token: CancelToken,
-}
-
-impl Abandon {
-    /// The token stops once the hearing is abandoned, or whenever `stop`
-    /// says so.
-    pub(crate) fn linked(stop: impl Fn() -> bool + Send + Sync + 'static) -> Self {
-        let abandoned = Arc::new(AtomicBool::new(false));
-        let token = {
-            let abandoned = Arc::clone(&abandoned);
-            CancelToken::from_fn(move || stop() || abandoned.load(Ordering::Relaxed))
-        };
-        Self { abandoned, token }
-    }
-
-    /// The token to start the decoder's operation with.
-    pub(crate) fn token(&self) -> &CancelToken {
-        &self.token
-    }
-}
-
 impl<'scope> Hearing<'scope> {
-    /// Starts both threads. `admission` decides which words the gate
-    /// releases. `abandon`'s token started the decoder's operation.
-    /// `progress` sees every snapshot the turn thread publishes.
+    /// Starts both threads on `board`. `admission` decides which words the
+    /// gate releases. `cancel` is the board's token the decoder's operation
+    /// started with.
     pub(crate) fn start<'env, T, V, K>(
         scope: &'scope Scope<'scope, 'env>,
         decoding: Decoding<'scope, T>,
         feed: Option<TurnFeed<V, K>>,
         admission: Admission,
-        abandon: Abandon,
-        progress: impl FnMut(&Snapshot) + Send + 'scope,
+        board: &Arc<Board>,
+        cancel: &CancelToken,
     ) -> Result<Self, HearingError>
     where
         T: Transcriber,
         V: VoiceActivityDetector + Send + 'scope,
         K: SpeakerTracker + Send + 'scope,
     {
-        let (wake, woken) = sync_channel(WAKE_CAPACITY);
-        let pending = Arc::new(AtomicBool::new(false));
         let from = feed
             .as_ref()
             .map_or(decoding.recording.held_from(), TurnFeed::held_from);
         let turns = match feed {
             Some(feed) => {
-                let heard = wake.clone();
-                let pending = Arc::clone(&pending);
-                let spawned =
-                    TurnThread::spawn(scope, feed, abandon.token(), progress, move || {
-                        wake_for(&heard, &pending);
-                    });
-                match spawned {
+                match TurnThread::spawn(scope, feed, cancel, board) {
                     Ok(turns) => Some(turns),
                     Err(error) if admission == Admission::OwnerOnly => {
                         return Err(HearingError::Tracking(owner_walk_failed(error)));
@@ -279,17 +239,15 @@ impl<'scope> Hearing<'scope> {
             decoding.operation,
             decoding.recording,
             decoding.previews,
-            wake,
+            Arc::clone(board),
         )
         .map_err(HearingError::DecoderSpawn)?;
         Ok(Self {
+            board: Arc::clone(board),
             decoder: Some(decoder),
             spoken: false,
             turns,
-            woken,
             gate: Gate::new(admission, from),
-            abandon,
-            pending,
             events: VecDeque::new(),
             unspoken: 0,
             trusted: Vec::new(),
@@ -307,14 +265,23 @@ impl<'scope> Hearing<'scope> {
             if self.done {
                 return Ok(None);
             }
-            match self.woken.recv().unwrap_or(Wake::DecoderDone) {
-                Wake::Decoded { update, read_to } => self.take(update, read_to)?,
-                // Cleared before the snapshot is read, so a later publish
-                // queues a fresh wake.
-                Wake::Heard => self.pending.store(false, Ordering::Release),
+            let wake = self.board.next_wake();
+            let heard = matches!(wake, Wake::Heard);
+            match wake {
+                Wake::Decoded(decoded) => self.take(decoded.update, decoded.read_to)?,
+                Wake::Heard => {}
                 Wake::DecoderDone => self.done = true,
             }
             let snapshot = self.turns.as_ref().map(TurnThread::snapshot);
+            // Queued ahead of what the gate releases, so whose voice it is
+            // shows before their words do.
+            if heard
+                && let Some(timeline) = snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.timeline.clone())
+            {
+                self.events.push_back(Event::Timeline(timeline));
+            }
             if self.gate.admission() == Admission::OwnerOnly
                 && snapshot.as_ref().is_some_and(Snapshot::tracking_failed)
             {
@@ -339,11 +306,12 @@ impl<'scope> Hearing<'scope> {
         }
         .transpose()
         .map_err(HearingError::Tracking)?;
+        let last = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.timeline.clone());
         let timeline = verdict(
             snapshot.as_ref().map(|snapshot| &*snapshot.speech),
-            snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.timeline.as_deref()),
+            last.as_deref(),
             admission,
         )?;
         let (released, own_voice) = match timeline {
@@ -364,6 +332,7 @@ impl<'scope> Hearing<'scope> {
         };
         Ok(Ended {
             transcript,
+            timeline: last,
             released,
             own_voice,
         })
@@ -428,31 +397,6 @@ impl<'scope> Hearing<'scope> {
     }
 }
 
-/// A hearing dropped unfinished stops its decoder; the turn thread stops
-/// itself when dropped.
-impl Drop for Hearing<'_> {
-    fn drop(&mut self) {
-        if self.decoder.is_some() {
-            self.abandon.abandoned.store(true, Ordering::Relaxed);
-        }
-    }
-}
-
-/// Queues at most one turn-thread wake: the caller's thread reads the
-/// latest snapshot whenever it wakes, and more would take the slots the
-/// decoder's updates need. A full queue already holds a wake.
-fn wake_for(wake: &SyncSender<Wake>, pending: &AtomicBool) {
-    if pending.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    match wake.try_send(Wake::Heard) {
-        Ok(()) => {}
-        Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
-            pending.store(false, Ordering::Release);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -511,10 +455,11 @@ mod tests {
         writer.push(&[0.5; 3 * SECOND as usize]);
         let speech = SpeechDetector::new(Loud, 0);
         let mut diarizer = diarizer(Voice(OWN));
-        let abandon = Abandon::linked(|| false);
+        let board = Board::new();
+        let cancel = board.token(|| false);
         let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         let operation = transcription
-            .start_with(&Language::Automatic, abandon.token())
+            .start_with(&Language::Automatic, &cancel)
             .unwrap();
 
         std::thread::scope(|scope| {
@@ -528,8 +473,8 @@ mod tests {
                 },
                 Some(feed),
                 Admission::OwnerOnly,
-                abandon,
-                |_: &Snapshot| {},
+                &board,
+                &cancel,
             )
             .unwrap();
             let unblock = scope.spawn(move || {
@@ -537,9 +482,15 @@ mod tests {
                 let _ = go_on.send(());
             });
 
-            let Some(Event::Released(released)) = hearing.next().unwrap() else {
-                panic!("the word is released");
+            let mut ring_first = false;
+            let released = loop {
+                match hearing.next().unwrap() {
+                    Some(Event::Timeline(_)) => ring_first = true,
+                    Some(Event::Released(released)) => break released,
+                    Some(Event::Preview(_)) | None => panic!("the word is released"),
+                }
             };
+            assert!(ring_first, "whose voice it is shows before the words");
             assert_eq!(released.heard.segment.as_str(), "hello");
             assert!(
                 started.elapsed() < Duration::from_secs(2),
@@ -575,9 +526,10 @@ mod tests {
             let speech = SpeechDetector::new(Loud, 0);
             let feed =
                 TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
-            let abandon = Abandon::linked(|| false);
+            let board = Board::new();
+            let cancel = board.token(|| false);
             let operation = transcription
-                .start_with(&Language::Automatic, abandon.token())
+                .start_with(&Language::Automatic, &cancel)
                 .unwrap();
 
             std::thread::scope(|scope| {
@@ -591,8 +543,8 @@ mod tests {
                     },
                     Some(feed),
                     Admission::Everyone,
-                    abandon,
-                    |_: &Snapshot| {},
+                    &board,
+                    &cancel,
                 )
                 .unwrap();
                 let capture = scope.spawn(move || {
@@ -620,6 +572,32 @@ mod tests {
     }
 
     #[test]
+    fn hearing_to_the_end_ends_when_cancelled_while_capture_runs() {
+        let (mut recording, mut writer) = Recording::open();
+        writer.push(&[0.5; SECOND as usize]);
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
+        let cancel = CancelToken::new();
+
+        let started = Instant::now();
+        let heard = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                cancel.cancel();
+            });
+            hear_to_end(feed, &cancel, |_: &Timeline| {})
+        });
+
+        assert!(matches!(
+            heard,
+            Err(HearingError::Tracking(TrackingError::Cancelled))
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(writer);
+    }
+
+    #[test]
     fn a_broken_timeline_fails_a_press_only_when_someone_spoke() {
         // The speech detector hears NaN as silence; the tracker cannot keep
         // it as evidence, so its timeline breaks before anyone speaks.
@@ -636,7 +614,7 @@ mod tests {
                 let heard = if saved {
                     hear_saved(feed, Admission::OwnerOnly, &cancel).map(drop)
                 } else {
-                    hear_to_end(feed, &recording, &cancel, |_: &Snapshot| {}).map(drop)
+                    hear_to_end(feed, &cancel, |_: &Timeline| {}).map(drop)
                 };
 
                 if spoke {
@@ -655,17 +633,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn turn_thread_wakes_never_queue_behind_each_other() {
-        let (wake, woken) = sync_channel(WAKE_CAPACITY);
-        let pending = AtomicBool::new(false);
-        for _ in 0..3 {
-            wake_for(&wake, &pending);
-        }
-
-        assert!(matches!(woken.try_recv(), Ok(Wake::Heard)));
-        assert!(woken.try_recv().is_err());
     }
 }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::{SpeakerTracker, Timeline};
-use crate::audio::{CaptureError, RecordingReader, canonical_samples};
+use crate::audio::{CaptureError, RecordingReader, RecordingWaker, canonical_samples};
 use crate::primitives::error_chain;
 use crate::voice_activity::{SpeechDetector, SpeechMap, VoiceActivityDetector};
 
@@ -20,7 +20,7 @@ pub struct TurnFeed<V, K> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ahead {
     Heard,
-    /// Nothing was left to hear, so it waited for more.
+    /// Nothing was left to hear: wait with [`TurnFeed::wait_for_audio`].
     Idle,
     /// Capture ended, and the detector and any tracker heard all of it.
     Ended,
@@ -90,8 +90,7 @@ impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
     }
 
     /// Paced by itself: the detector takes all the audio that has arrived,
-    /// the tracker at most `piece` of it. With nothing new to hear, waits up
-    /// to `piece` for more.
+    /// the tracker at most `piece` of it.
     pub fn hear_ahead(&mut self, piece: Duration) -> Ahead {
         let before = self.heard_to();
         let filled = self.audio.fill_available();
@@ -108,8 +107,19 @@ impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
         if self.audio.ended_at().is_some() {
             return Ahead::Ended;
         }
-        self.audio.wait_for_audio(piece);
         Ahead::Idle
+    }
+
+    /// Waits up to `timeout` for audio not heard yet, for capture to end,
+    /// or for `stopped`. A stop that rings [`Self::waker`] ends the wait at
+    /// once; one that is only polled is seen at the timeout.
+    pub fn wait_for_audio(&self, timeout: Duration, stopped: impl Fn() -> bool) {
+        self.audio.wait_for_audio(timeout, stopped);
+    }
+
+    /// Wakes a [`Self::wait_for_audio`] in progress.
+    pub fn waker(&self) -> RecordingWaker {
+        self.audio.waker()
     }
 
     /// Where the detector and the tracker will hear next.

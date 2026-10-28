@@ -1,36 +1,41 @@
-//! The decoder on a thread of its own, sending each update as it comes so
-//! the caller's thread can decide on it whenever anything moves.
+//! The decoder on a thread of its own, posting each update to the board as
+//! it comes so the caller's thread can decide on it whenever anything moves.
 
-use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 use std::thread::{Scope, ScopedJoinHandle};
 
 use aria_kit::audio::RecordingReader;
 use aria_kit::transcription::{HeardUpdate, next_heard, next_heard_update};
 
-use super::Wake;
+use super::board::{Board, Decoded};
 use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
 
 pub(super) struct DecodeThread<'scope> {
+    board: Arc<Board>,
     worker: Option<ScopedJoinHandle<'scope, Result<Transcript, TranscriptionError>>>,
 }
 
 impl<'scope> DecodeThread<'scope> {
-    /// Decodes `recording` to its end. Every update goes to `wake`, and
-    /// [`Wake::DecoderDone`] follows the last, however the decoder ends.
+    /// Decodes `recording` to its end. Every update goes on `board`, and the
+    /// decoder's end follows the last, however the decoder ends.
     pub(super) fn spawn<'env, T: Transcriber>(
         scope: &'scope Scope<'scope, 'env>,
         mut operation: Operation<'scope, T>,
         recording: &'scope mut RecordingReader,
         previews: bool,
-        wake: SyncSender<Wake>,
+        board: Arc<Board>,
     ) -> std::io::Result<Self> {
         let worker = std::thread::Builder::new()
             .name("aria-hearing-decoder".into())
-            .spawn_scoped(scope, move || {
-                let done = Done(wake);
-                decode(&mut operation, recording, previews, &done.0)
+            .spawn_scoped(scope, {
+                let board = Arc::clone(&board);
+                move || {
+                    let _done = Done(&board);
+                    decode(&mut operation, recording, previews, &board)
+                }
             })?;
         Ok(Self {
+            board,
             worker: Some(worker),
         })
     }
@@ -42,25 +47,24 @@ impl<'scope> DecodeThread<'scope> {
     }
 }
 
-/// A decoder dropped unfinished is joined here; the hearing's cancel token
-/// has already told it to stop.
+/// A decoder dropped unfinished is stopped, then joined.
 impl Drop for DecodeThread<'_> {
     fn drop(&mut self) {
-        if let Some(worker) = self.worker.take()
-            && worker.join().is_err()
-        {
-            tracing::error!("the decoder panicked");
+        if let Some(worker) = self.worker.take() {
+            self.board.abandon();
+            if worker.join().is_err() {
+                tracing::error!("the decoder panicked");
+            }
         }
     }
 }
 
-/// Sends [`Wake::DecoderDone`] when the decoder ends, a panic included:
-/// the turn thread holds a sender too, so the channel alone never closes.
-struct Done(SyncSender<Wake>);
+/// Marks the decoder done however it ends, a panic included.
+struct Done<'a>(&'a Board);
 
-impl Drop for Done {
+impl Drop for Done<'_> {
     fn drop(&mut self) {
-        let _ = self.0.send(Wake::DecoderDone);
+        self.0.decoder_done();
     }
 }
 
@@ -68,7 +72,7 @@ fn decode<T: Transcriber>(
     operation: &mut Operation<'_, T>,
     recording: &mut RecordingReader,
     previews: bool,
-    wake: &SyncSender<Wake>,
+    board: &Board,
 ) -> Result<Transcript, TranscriptionError> {
     loop {
         let update = if previews {
@@ -79,11 +83,11 @@ fn decode<T: Transcriber>(
         let Some(update) = update else {
             break;
         };
-        let decoded = Wake::Decoded {
+        let decoded = Decoded {
             update,
             read_to: operation.read_to(),
         };
-        if wake.send(decoded).is_err() {
+        if board.push_decoded(decoded).is_err() {
             // Nobody will read another update.
             return Err(TranscriptionError::Cancelled);
         }

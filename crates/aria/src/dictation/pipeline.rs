@@ -13,8 +13,7 @@ use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector}
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
 use crate::delivery::{DeliveryOutcome, Placement};
 use crate::hearing::{
-    Abandon, Decoding, Event, Hearing, HearingError, Snapshot, TrackingError, hear_saved,
-    hear_to_end,
+    Board, Decoding, Event, Hearing, HearingError, TrackingError, hear_saved, hear_to_end,
 };
 use crate::primitives::error_chain;
 use crate::speaker::{Diarizer, Profile, SpeakerName, VoiceprintTracker};
@@ -510,11 +509,11 @@ where
     ) -> Result<Dictated, DictationError> {
         let started_at = Instant::now();
         let started = |error| log_transcription_error(error, control, started_at);
-        let abandon = {
+        let board = Board::new();
+        let cancel = {
             let control = Arc::clone(control);
-            Abandon::linked(move || control.should_stop())
+            board.token(move || control.should_stop())
         };
-        let cancel = abandon.token().clone();
         let operation = self
             .transcription
             .start_with(&settings.recognition_language, &cancel)
@@ -547,20 +546,21 @@ where
         };
         let feed = speech.map(|speech| TurnFeed::start(recording, speech, tracker));
         let mut announced = Announced::default();
-        let ring = events.clone();
-        let progress = move |snapshot: &Snapshot| {
-            if let Some(timeline) = &snapshot.timeline {
-                announced.update(timeline, &ring);
-            }
-        };
         let mut published = Published::new(settings, control, events, started_at);
         if admission == Admission::OwnerOnly && !streaming {
             let Some(feed) = feed else {
                 return Err(DictationError::Speaker(TrackingError::Unavailable));
             };
             return self.hear_owner_complete(
-                settings, recording, feed, operation, published, sinks, vocabulary, &cancel,
-                progress,
+                settings,
+                recording,
+                feed,
+                operation,
+                published,
+                sinks,
+                vocabulary,
+                &cancel,
+                |timeline| announced.update(timeline, events),
             );
         }
         let previews = (published.caption.is_some() || published.streaming) && M::INCREMENTAL;
@@ -589,13 +589,14 @@ where
                 recording: &mut *recording,
                 previews,
             };
-            let mut hearing = Hearing::start(scope, decoding, feed, admission, abandon, progress)
+            let mut hearing = Hearing::start(scope, decoding, feed, admission, &board, &cancel)
                 .map_err(|error| failed(error, &mut published))?;
             while let Some(event) = hearing
                 .next()
                 .map_err(|error| failed(error, &mut published))?
             {
                 match event {
+                    Event::Timeline(timeline) => announced.update(&timeline, events),
                     Event::Preview(shown) => published.provisional(&shown, sinks),
                     Event::Released(released) => {
                         deliver(&mut published, sinks, released.heard, released.speaker)?;
@@ -605,6 +606,9 @@ where
             let mut ended = hearing
                 .finish()
                 .map_err(|error| failed(error, &mut published))?;
+            if let Some(timeline) = &ended.timeline {
+                announced.update(timeline, events);
+            }
             for released in std::mem::take(&mut ended.released) {
                 deliver(&mut published, sinks, released.heard, released.speaker)?;
             }
@@ -634,15 +638,14 @@ where
         sinks: &mut S,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
-        progress: impl FnMut(&Snapshot) + Send,
+        heard: impl FnMut(&Timeline),
     ) -> Result<Dictated, DictationError> {
         let (control, started_at) = (published.control, published.started_at);
         let started = |error| log_transcription_error(error, control, started_at);
-        let timeline =
-            hear_to_end(feed, recording, cancel, progress).map_err(|error| match error {
-                HearingError::Tracking(error) => map_tracking_error(error, control),
-                error => started(error.into_transcription("dictation")),
-            })?;
+        let timeline = hear_to_end(feed, cancel, heard).map_err(|error| match error {
+            HearingError::Tracking(error) => map_tracking_error(error, control),
+            error => started(error.into_transcription("dictation")),
+        })?;
         recording.fill().map_err(DictationError::Capture)?;
         let decoded = self
             .filtered_complete(
@@ -4164,11 +4167,16 @@ mod tests {
             matches!(result, Err(DictationError::NoSpeech)),
             "{result:?}"
         );
+        // The ring may skip a state the walk passed through, so only its
+        // last word before the failure is pinned.
+        let stages: Vec<_> = stages.iter().collect();
         assert_eq!(
-            stages.iter().collect::<Vec<_>>(),
+            stages.first(),
+            Some(&DictationStage::Recording(RecordingId(0)))
+        );
+        assert_eq!(
+            stages[stages.len().saturating_sub(2)..],
             [
-                DictationStage::Recording(RecordingId(0)),
-                DictationStage::SpeakerChanged(HeardSpeaker::Undecided),
                 DictationStage::SpeakerChanged(HeardSpeaker::KeptOut),
                 DictationStage::Failed(RpcErrorCode::NoSpeech),
             ]
