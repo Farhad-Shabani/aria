@@ -15,6 +15,9 @@ use super::board::{Board, Ending};
 /// The most audio the tracker takes in one step, and how often an idle walk
 /// checks the cancel token, which nothing rings.
 pub(super) const PIECE: Duration = Duration::from_millis(100);
+/// How far a tracker that only labels voices may fall behind the speech
+/// detector before it skips ahead.
+pub(super) const MAX_LABELING_LAG: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TrackingError {
@@ -63,11 +66,13 @@ pub(super) struct TurnThread<'scope> {
 
 impl<'scope> TurnThread<'scope> {
     /// Starts hearing the recording `feed` reads: its detector scores every
-    /// sample, and its tracker, when there is one, judges the turns. Each
-    /// snapshot goes on `board`.
+    /// sample, and its tracker, when there is one, judges the turns. A
+    /// tracker more than `max_lag` behind skips ahead. Each snapshot goes on
+    /// `board`.
     pub(super) fn spawn<'env, V, K>(
         scope: &'scope Scope<'scope, 'env>,
         feed: TurnFeed<V, K>,
+        max_lag: Option<Duration>,
         cancel: &CancelToken,
         board: &Arc<Board>,
     ) -> std::io::Result<Self>
@@ -92,7 +97,7 @@ impl<'scope> TurnThread<'scope> {
                         board: &board,
                         ending: Ending::Panicked,
                     };
-                    done.ending = walk(feed, &board, &cancel);
+                    done.ending = walk(feed, max_lag, &board, &cancel);
                 }
             });
         let worker = match spawned {
@@ -186,6 +191,7 @@ impl Drop for Done<'_> {
 
 fn walk<V: VoiceActivityDetector, K: SpeakerTracker>(
     mut feed: TurnFeed<V, K>,
+    max_lag: Option<Duration>,
     board: &Board,
     cancel: &CancelToken,
 ) -> Ending {
@@ -196,7 +202,7 @@ fn walk<V: VoiceActivityDetector, K: SpeakerTracker>(
         if board.untracked() {
             feed.drop_tracker();
         }
-        match feed.hear_ahead(PIECE) {
+        match feed.hear_ahead(PIECE, max_lag) {
             Ahead::Heard => {}
             Ahead::Idle => {
                 feed.wait_for_audio(PIECE, || board.abandoned() || cancel.is_cancelled());
@@ -204,6 +210,7 @@ fn walk<V: VoiceActivityDetector, K: SpeakerTracker>(
             }
             Ahead::Ended => break,
         }
+        feed.forget_before(board.decided_to());
         publish(board, &feed);
         if feed.timeline().is_some_and(Timeline::is_broken) {
             // Nothing more can be judged, but the speech map still decides
@@ -235,7 +242,7 @@ mod tests {
     use std::time::Instant;
 
     use aria_kit::audio::{Recording, RecordingReader};
-    use aria_kit::speaker::{Embedder, SpeakerError};
+    use aria_kit::speaker::{Embedder, SpeakerError, VoiceprintTracker};
     use aria_kit::voice_activity::SpeechDetector;
 
     use super::*;
@@ -295,7 +302,8 @@ mod tests {
 
             let timeline = std::thread::scope(|scope| {
                 let walk =
-                    TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
+                    TurnThread::spawn(scope, feed, None, &CancelToken::never(), &Board::new())
+                        .unwrap();
                 if let Some(mut writer) = writer {
                     for piece in audio.chunks(1_000) {
                         writer.push(piece);
@@ -322,6 +330,34 @@ mod tests {
     }
 
     #[test]
+    fn a_listen_walk_forgets_what_was_decided() {
+        let (mut recording, mut writer) = Recording::open();
+        let speech = SpeechDetector::new(Loud, 0);
+        let feed = TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
+
+        let board = Board::new();
+
+        let snapshot = std::thread::scope(|scope| {
+            let walk = TurnThread::spawn(scope, feed, None, &CancelToken::never(), &board).unwrap();
+            board.decided_before(2 * SECOND as u64);
+            for _ in 0..2 {
+                writer.push(&[0.5; SECOND]);
+                writer.push(&[0.0; SECOND]);
+            }
+            writer.finish();
+            walk.finish().unwrap()
+        });
+
+        assert_eq!(snapshot.speech.speech(&(0..SECOND as u64)), 0, "forgotten");
+        assert_eq!(
+            snapshot.speech.speech_before(snapshot.speech.reached()),
+            2 * SECOND as u64,
+            "the count of speech stays whole"
+        );
+        assert!(snapshot.speech.is_finished());
+    }
+
+    #[test]
     fn dropping_the_walk_stops_it_while_capture_runs() {
         let (mut recording, mut writer) = Recording::open();
         let speech = SpeechDetector::new(Loud, 0);
@@ -332,7 +368,7 @@ mod tests {
         let started = Instant::now();
         std::thread::scope(|scope| {
             let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
+                TurnThread::spawn(scope, feed, None, &CancelToken::never(), &Board::new()).unwrap();
             timeline_through(&walk, SECOND as u64);
             drop(walk);
         });
@@ -351,7 +387,8 @@ mod tests {
 
             std::thread::scope(|scope| {
                 let walk =
-                    TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
+                    TurnThread::spawn(scope, feed, None, &CancelToken::never(), &Board::new())
+                        .unwrap();
                 assert!(timeline_through(&walk, SECOND as u64).is_broken());
                 assert!(walk.speech_through(SECOND as u64).unwrap().is_broken());
                 if speech_only {
@@ -378,7 +415,7 @@ mod tests {
         let (woken, wakes) = channel();
 
         std::thread::scope(|scope| {
-            let walk = TurnThread::spawn(scope, feed, &CancelToken::never(), &board).unwrap();
+            let walk = TurnThread::spawn(scope, feed, None, &CancelToken::never(), &board).unwrap();
             scope.spawn(|| {
                 while matches!(board.next_wake(), Wake::Heard) {
                     if board.snapshot().tracking_failed() {
@@ -433,7 +470,7 @@ mod tests {
         let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         std::thread::scope(|scope| {
             let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
+                TurnThread::spawn(scope, feed, None, &CancelToken::never(), &Board::new()).unwrap();
             waiting.recv_timeout(Duration::from_secs(2)).unwrap();
             walk.board.abandon();
             resume.send(()).unwrap();
@@ -450,7 +487,7 @@ mod tests {
         let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         let cancel = CancelToken::new();
         std::thread::scope(|scope| {
-            let walk = TurnThread::spawn(scope, feed, &cancel, &Board::new()).unwrap();
+            let walk = TurnThread::spawn(scope, feed, None, &cancel, &Board::new()).unwrap();
             cancel.cancel();
             assert!(matches!(
                 walk.speech_through(SECOND as u64),
@@ -467,10 +504,11 @@ mod tests {
         let mut diarizer = diarizer(Voice(OWN));
         let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         std::thread::scope(|scope| {
-            let snapshot = TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new())
-                .unwrap()
-                .finish()
-                .unwrap();
+            let snapshot =
+                TurnThread::spawn(scope, feed, None, &CancelToken::never(), &Board::new())
+                    .unwrap()
+                    .finish()
+                    .unwrap();
             assert_eq!(snapshot.timeline.unwrap().reached(), 0);
             assert_eq!(snapshot.speech.reached(), 0);
         });

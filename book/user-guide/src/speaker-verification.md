@@ -75,9 +75,10 @@ aria speaker enroll partner \
   --role guest
 ```
 
-Voice profiles can supply speaker labels in system-audio transcripts. Labels
-may change as more audio arrives, so the saved transcript may differ from the
-first labels printed in the terminal.
+In system-audio transcripts, Listen names a voice with a profile once it
+is sure who is speaking. Other voices get numbers, such as Speaker 1.
+Labels can change as more audio arrives, so the saved transcript may differ
+from what the terminal printed first.
 
 ## Replace or remove
 

@@ -242,6 +242,7 @@ fn compose(
             context.lifetime,
             context.config_environment.clone(),
             listen_event_emitter(Arc::clone(&subscriptions)),
+            Arc::clone(&vocabulary),
         ))),
         preferences: preferences_rpc,
         vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary), preference_store),

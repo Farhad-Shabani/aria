@@ -8,7 +8,7 @@ use aria_bench::diarize::{
 };
 use aria_speaker::wespeaker::Config as SpeakerConfig;
 use aria_tts::kokoro::Kokoro;
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 
 use crate::flag_path::expand;
 
@@ -28,6 +28,7 @@ Examples:
 
 #[derive(Parser)]
 #[command(about = "Speaker-label accuracy on synthesized conversations", after_help = EXAMPLES)]
+#[command(group(ArgGroup::new("voiceprints").args(["by_voice", "segmented"])))]
 pub(crate) struct Cli {
     /// kokoro TTS ONNX model
     #[arg(long, default_value = model!("kokoro/kokoro.onnx"))]
@@ -100,8 +101,8 @@ pub(crate) struct Cli {
     /// Milliseconds each voiceprint window advances
     #[arg(long, requires = "by_voice", default_value_t = 750)]
     hop_ms: usize,
-    /// Also dump each segment's voiceprint here, to re-cluster offline
-    #[arg(long, requires = "audio")]
+    /// Also dump the voiceprints here, to re-cluster offline
+    #[arg(long, requires = "voiceprints")]
     embeddings: Option<String>,
 }
 
@@ -176,7 +177,13 @@ pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
                     hop_samples: cli.hop_ms * 16,
                 },
             )?,
-            false => label_recording(stt()?, speaker, &audio, timeline)?,
+            false => label_recording(
+                stt()?,
+                speaker,
+                &expand(&cli.segmentation_model)?,
+                &audio,
+                timeline,
+            )?,
         };
         return write(cli, &name, rttm, &heard);
     }
@@ -185,6 +192,7 @@ pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
             .context("loading kokoro")?,
         stt: stt()?,
         speaker,
+        segmentation: expand(&cli.segmentation_model)?,
     }
     .run()?;
     print(&report);
@@ -236,17 +244,16 @@ fn write(cli: &Cli, name: &str, rttm: &str, heard: &Labeled) -> anyhow::Result<(
 
 fn print(report: &Report) {
     println!(
-        "{:<10} {:>9} {:>8} {:>9} {:>7} {:>7} {:>8}",
-        "scenario", "segments", "dropped", "drop secs", "live", "final", "recall"
+        "{:<10} {:>9} {:>8} {:>9} {:>7} {:>8}",
+        "scenario", "segments", "dropped", "drop secs", "final", "recall"
     );
     for scenario in &report.scenarios {
         println!(
-            "{:<10} {:>9} {:>8} {:>9.1} {:>6.1}% {:>6.1}% {:>7.1}%",
+            "{:<10} {:>9} {:>8} {:>9.1} {:>6.1}% {:>7.1}%",
             scenario.name,
             scenario.segments,
             scenario.dropped,
             scenario.dropped_seconds,
-            scenario.live_accuracy * 100.0,
             scenario.final_accuracy * 100.0,
             scenario.word_recall * 100.0,
         );

@@ -8,7 +8,7 @@
 use std::ops::Range;
 
 use crate::segmentation::{Activity, ChunkShape, Segmenter};
-use crate::speaker::diarizer::enrolled_name;
+use crate::speaker::diarizer::name_at_enrolled_threshold;
 use crate::speaker::{AnonymousNumbering, Embedder, Label, Profile};
 
 use super::grid::FrameGrid;
@@ -244,7 +244,7 @@ impl<S: Segmenter, E: Embedder> PyannoteVoices<S, E> {
     /// `concurrent` excludes already placed voices from cluster matching.
     /// An enrolled-profile match takes precedence over this exclusion.
     fn place(&mut self, voiceprint: &[f32], concurrent: &[Label]) -> usize {
-        if let Some(name) = enrolled_name(&self.enrolled, voiceprint) {
+        if let Some(name) = name_at_enrolled_threshold(&self.enrolled, voiceprint) {
             let label = Label::Enrolled(name.clone());
             return match self.voices.iter().position(|voice| voice.label == label) {
                 Some(index) => self.absorb(index, voiceprint),

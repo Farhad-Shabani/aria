@@ -78,6 +78,7 @@ fn decode<T: Transcriber>(
         let decoded = Decoded {
             update,
             read_to: operation.read_to(),
+            retained_from: operation.retained_from(),
         };
         if board.push_decoded(decoded).is_err() {
             // Nobody will read another update.

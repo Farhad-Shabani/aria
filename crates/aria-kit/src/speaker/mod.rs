@@ -15,8 +15,6 @@ mod diarizer;
 #[cfg(not(target_family = "wasm"))]
 mod enrollment;
 mod label;
-#[cfg(all(feature = "silero", not(target_family = "wasm")))]
-mod labeler;
 mod profile;
 #[cfg(not(target_family = "wasm"))]
 mod store;
@@ -39,8 +37,6 @@ pub use diarizer::{CLUSTER_THRESHOLD, Diarizer, ENROLLED_THRESHOLD, OWN_VOICE_TH
 pub use enrollment::{Enrolled, Enrollment, EnrollmentError, MIN_SAMPLES, centroid, consistency};
 pub(crate) use label::AnonymousNumbering;
 pub use label::Label;
-#[cfg(all(feature = "silero", not(target_family = "wasm")))]
-pub use labeler::{SegmentLabeler, SegmentReader, Verdict};
 #[cfg(any(test, feature = "test-support"))]
 pub use profile::enrolled_voice;
 pub use profile::{Profile, Role, SpeakerName, SpeakerNameError};

@@ -41,11 +41,15 @@ struct Walk {
     ended: Option<Ending>,
     /// The caller needs only the rest of the speech, not voices.
     untracked: bool,
+    /// Nothing before this is asked about again, so the walk forgets it.
+    decided_to: u64,
 }
 
 pub(super) struct Decoded {
     pub(super) update: HeardUpdate,
     pub(super) read_to: u64,
+    /// The earliest audio a later segment can come from.
+    pub(super) retained_from: u64,
 }
 
 /// What the caller's thread woke for.
@@ -151,6 +155,7 @@ impl Board {
             heard: false,
             ended: None,
             untracked: false,
+            decided_to: 0,
         });
     }
 
@@ -189,6 +194,18 @@ impl Board {
 
     pub(super) fn walk_ending(&self) -> Option<Ending> {
         walk(&self.lock()).ended
+    }
+
+    /// Says nothing before `at` is asked about again, so the walk can
+    /// forget it.
+    pub(super) fn decided_before(&self, at: u64) {
+        let mut state = self.lock();
+        let walk = walk_mut(&mut state);
+        walk.decided_to = walk.decided_to.max(at);
+    }
+
+    pub(super) fn decided_to(&self) -> u64 {
+        walk(&self.lock()).decided_to
     }
 
     pub(super) fn untrack(&self) {
@@ -279,6 +296,7 @@ mod tests {
                 source_window: None,
             },
             read_to: 0,
+            retained_from: 0,
         }
     }
 

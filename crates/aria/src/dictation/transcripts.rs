@@ -9,12 +9,10 @@ use crate::speaker::Label;
 
 /// What the pipeline heard in one stretch of speech.
 ///
-/// `speaker` is absent when diarization is off, or when a voice after a pause
-/// could not be embedded. `embedding` is the voice it measured, which a sink
-/// keeps so a later pass can relabel what it already wrote.
+/// `speaker` is the voice heard in it, for a sink that writes labels.
 ///
 /// `at` and `span` are both the recording's clock and they answer different
-/// questions. `at` is where the decoder had reached, so a sink always has a
+/// questions. `at` is where the words' audio starts, so a sink always has a
 /// stamp. `span` is which audio these words are, and only an engine that
 /// times its words can say — without it a sink has text to write but nothing
 /// to attribute a voice by.
@@ -22,7 +20,6 @@ use crate::speaker::Label;
 pub(crate) struct Utterance<'a> {
     pub(crate) text: &'a str,
     pub(crate) speaker: Option<&'a Label>,
-    pub(crate) embedding: Option<&'a [f32]>,
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,
 }
@@ -34,7 +31,6 @@ impl<'a> Utterance<'a> {
         Self {
             text,
             speaker: None,
-            embedding: None,
             at: 0,
             span: None,
         }

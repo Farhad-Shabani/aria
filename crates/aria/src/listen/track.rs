@@ -5,7 +5,7 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread::JoinHandle;
+use std::thread::{Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::audio::{canonical_duration, canonical_samples};
@@ -23,23 +23,27 @@ const MAX_LAG_SAMPLES: u64 = canonical_samples(Duration::from_secs(30));
 /// One slow inference call can exceed it.
 const DRAIN_LIMIT: Duration = Duration::from_secs(3);
 
-/// A voice track running beside the transcriber.
-pub(crate) struct VoiceThread {
+/// A voice track running beside the transcriber, inside the session's scope.
+pub(crate) struct VoiceThread<'scope> {
     track: Arc<Mutex<VoiceTrack>>,
     merges: Receiver<Merged>,
-    thread: Option<JoinHandle<()>>,
+    thread: Option<ScopedJoinHandle<'scope, ()>>,
 }
 
-impl VoiceThread {
+impl<'scope> VoiceThread<'scope> {
     /// Starts the track over `audio`, which must be its own fork of the
     /// recording: the walk releases what it has read.
-    pub(crate) fn spawn(track: VoiceTrack, audio: RecordingReader) -> std::io::Result<Self> {
+    pub(crate) fn spawn(
+        scope: &'scope Scope<'scope, '_>,
+        track: VoiceTrack,
+        audio: RecordingReader,
+    ) -> std::io::Result<Self> {
         let track = Arc::new(Mutex::new(track));
         let walking = Arc::clone(&track);
         let (sender, merges) = channel();
         let thread = std::thread::Builder::new()
             .name("aria-listen-voices".into())
-            .spawn(move || walk(&walking, audio, &sender))?;
+            .spawn_scoped(scope, move || walk(&walking, audio, &sender))?;
         Ok(Self {
             track,
             merges,

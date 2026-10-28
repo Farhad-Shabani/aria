@@ -1,12 +1,12 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use super::{Judgment, NamedTurn, SpeakerTracker, Timeline, Turn};
+use super::{Embedding, Judgment, LabeledTurn, SpeakerTracker, Timeline, Turn};
 use crate::audio::canonical_samples;
 use crate::primitives::error_chain;
 use crate::segmentation::{Activity, ChunkShape, SegmentationError, Segmenter};
 use crate::speaker::changes::{Continuity, Evidence};
-use crate::speaker::{Diarizer, Embedder, OWN_VOICE_THRESHOLD, Role, SpeakerName};
+use crate::speaker::{Diarizer, Embedder, Label, OWN_VOICE_THRESHOLD, Role, SpeakerName};
 use crate::voice_activity::{LEAD_IN_FRAMES, SpeechMap};
 
 #[cfg(test)]
@@ -40,6 +40,7 @@ const SPEAKER_CHANGE_THRESHOLD: f32 = 0.3;
 /// admission needs.
 pub struct VoiceprintTracker<'a, E, S = NoSegmenter> {
     diarizer: &'a mut Diarizer<E>,
+    labeling: Labeling,
     /// The speech map's frame size, taken from the map heard last.
     frame_samples: usize,
     /// What the speech map said about the frame being heard.
@@ -52,6 +53,17 @@ pub struct VoiceprintTracker<'a, E, S = NoSegmenter> {
     timeline: Timeline,
     open: Option<OpenTurn>,
     continuity: Option<Continuity<S>>,
+}
+
+/// Which voices a tracker labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Labeling {
+    /// Enrolled voices only, by name.
+    Enrolled,
+    /// Every voice, numbering those nobody enrolled. Each check's embedding
+    /// stays in the timeline, so a session can relabel its voices once it
+    /// ends.
+    Numbered,
 }
 
 /// What the speech map said about a frame, once it was scored.
@@ -82,11 +94,11 @@ struct OpenTurn {
     /// Where a turn proposed as the owner's starts, until the segmenter
     /// confirms the speaker change or the turn is judged without it.
     proposed: Option<u64>,
-    /// The sum of the embeddings heard since the turn was last named, each
-    /// weighted by the speech it added.
+    /// The sum of the embeddings heard since the turn was last labeled,
+    /// each weighted by the speech it added.
     embedding: Vec<f32>,
-    /// How much speech the recording held when the turn was last named.
-    named: u64,
+    /// How much speech the recording held when the turn was last labeled.
+    labeled: u64,
 }
 
 impl OpenTurn {
@@ -133,10 +145,16 @@ impl Segmenter for NoSegmenter {
 }
 
 impl<'a, E: Embedder> VoiceprintTracker<'a, E> {
-    /// A tracker that names voices but cannot admit only the owner. The
-    /// first sample heard sits at `at`.
+    /// A tracker that names enrolled voices but cannot admit only the
+    /// owner. The first sample heard sits at `at`.
     pub fn new(diarizer: &'a mut Diarizer<E>, at: u64) -> Self {
-        Self::build(diarizer, None, at)
+        Self::build(diarizer, None, Labeling::Enrolled, at)
+    }
+
+    /// A tracker that labels every voice, numbering those nobody enrolled.
+    /// It has no segmenter, so a speaker change splits a turn unchecked.
+    pub fn numbering(diarizer: &'a mut Diarizer<E>, at: u64) -> Self {
+        Self::build(diarizer, None, Labeling::Numbered, at)
     }
 }
 
@@ -152,12 +170,23 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             return Err(OwnerTrackingError::NoOwner);
         }
         let continuity = Continuity::new(segmenter, at).map_err(OwnerTrackingError::Segmenter)?;
-        Ok(Self::build(diarizer, Some(continuity), at))
+        Ok(Self::build(
+            diarizer,
+            Some(continuity),
+            Labeling::Enrolled,
+            at,
+        ))
     }
 
-    fn build(diarizer: &'a mut Diarizer<E>, continuity: Option<Continuity<S>>, at: u64) -> Self {
+    fn build(
+        diarizer: &'a mut Diarizer<E>,
+        continuity: Option<Continuity<S>>,
+        labeling: Labeling,
+        at: u64,
+    ) -> Self {
         Self {
             diarizer,
+            labeling,
             frame_samples: 0,
             scored: FrameSpeech::default(),
             rejoin: false,
@@ -190,9 +219,9 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             span: self.position()..at,
             judgment: Judgment::Other,
         });
-        self.timeline.names.push(NamedTurn {
+        self.timeline.labels.push(LabeledTurn {
             span: self.position()..at,
-            name: None,
+            label: None,
         });
         self.scored = FrameSpeech::default();
         self.rejoin = true;
@@ -270,7 +299,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             if let Some(turn) = self.timeline.turns.last_mut() {
                 turn.span.end = position;
             }
-            if let Some(turn) = self.timeline.names.last_mut() {
+            if let Some(turn) = self.timeline.labels.last_mut() {
                 turn.span.end = position;
             }
             if due {
@@ -332,9 +361,9 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             span: start..at,
             judgment: Judgment::Pending,
         });
-        self.timeline.names.push(NamedTurn {
+        self.timeline.labels.push(LabeledTurn {
             span: start..at,
-            name: None,
+            label: None,
         });
         self.open = Some(OpenTurn {
             audio,
@@ -344,7 +373,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             anchor: None,
             proposed: None,
             embedding: Vec::new(),
-            named: self
+            labeled: self
                 .scored
                 .speech_before
                 .saturating_sub(self.frame_samples as u64),
@@ -408,14 +437,15 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             .is_some_and(|voice| voice.matched_role == Some(Role::Guest));
         let open = self.open.as_mut().expect("the checked turn is open");
         if voice.is_some() && !input.is_empty() {
-            open.anchor = Some(input);
+            open.anchor = Some(input.clone());
         }
         open.scored |= score.is_some();
         open.doubted |= matched_guest
             || score.is_some_and(|score| !score.is_finite() || score < SPEAKER_CHANGE_THRESHOLD);
         let verdict = open.verdict(length, closing, self.diarizer.owners());
         if let Some(voice) = voice {
-            self.name(&voice.embedding);
+            let heard = self.assign_label(input, &voice);
+            self.label_turn(&voice.embedding, heard);
         }
         let turn = self
             .timeline
@@ -447,6 +477,10 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         let recent = tail(voiced, RECENT_SAMPLES);
         let voiced_len = voiced.len();
         let recent_len = recent.len();
+        let recent_end = self
+            .position()
+            .saturating_sub(silence.min(open.audio.len()) as u64);
+        let window = recent_end.saturating_sub(recent_len as u64)..recent_end;
         let Some(voice) = score(self.diarizer, &mut self.timeline, recent) else {
             return;
         };
@@ -457,18 +491,17 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             judged = ?judged,
             "speaker change watch"
         );
-        let name_changed = self
+        let at = window.start;
+        let heard = self.assign_label(window, &voice);
+        let label_changed = self
             .timeline
-            .names
+            .labels
             .last()
-            .is_some_and(|turn| turn.name != voice.name);
-        if can_split && name_changed {
-            let at = self
-                .position()
-                .saturating_sub((silence + recent_len) as u64);
-            self.split_name(at, voice.name);
+            .is_some_and(|turn| turn.label != heard);
+        if can_split && label_changed {
+            self.split_label(at, heard.clone());
         }
-        self.name(&voice.embedding);
+        self.label_turn(&voice.embedding, heard);
         match judged {
             Judgment::Owner
                 if can_split
@@ -540,7 +573,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
                 open.anchor = anchor;
                 open.proposed = Some(from);
             }
-            self.split_name(from, None);
+            self.split_label(from, None);
         }
     }
 
@@ -671,7 +704,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
                 .turns
                 .last()
                 .map_or(range.start, |turn| turn.span.start);
-            self.split_name(at, voice.name);
+            self.split_label(at, voice.name.map(Label::Enrolled));
         } else {
             if let Some(turn) = self.timeline.turns.last_mut() {
                 turn.judgment = Judgment::Other;
@@ -694,13 +727,40 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         self.split(from, judgment, similarity);
     }
 
-    fn name(&mut self, embedding: &[f32]) {
-        let (Some(open), Some(turn)) = (self.open.as_mut(), self.timeline.names.last_mut()) else {
+    /// Who the audio over `span` sounds like: an enrolled voice, or, when
+    /// the tracker numbers voices, a numbered one. The voice speaking last
+    /// keeps its number through a close call.
+    fn assign_label(&mut self, span: Range<u64>, voice: &Scored) -> Option<Label> {
+        if self.labeling == Labeling::Numbered {
+            self.timeline.embeddings.push(Embedding {
+                span,
+                vector: voice.embedding.clone(),
+            });
+        }
+        if let Some(name) = &voice.name {
+            return Some(Label::Enrolled(name.clone()));
+        }
+        if self.labeling == Labeling::Enrolled {
+            return None;
+        }
+        let speaking = self
+            .timeline
+            .labels
+            .iter()
+            .rev()
+            .find_map(|turn| turn.label.as_ref());
+        Some(self.diarizer.label(&voice.embedding, speaking))
+    }
+
+    /// Labels the open turn by its whole voice so far. `heard` is the label
+    /// of its latest window, which a turn nobody enrolled keeps.
+    fn label_turn(&mut self, embedding: &[f32], heard: Option<Label>) {
+        let (Some(open), Some(turn)) = (self.open.as_mut(), self.timeline.labels.last_mut()) else {
             return;
         };
         let speech = self.scored.speech_before;
-        let weight = speech.saturating_sub(open.named);
-        open.named = speech;
+        let weight = speech.saturating_sub(open.labeled);
+        open.labeled = speech;
         if weight == 0 {
             return;
         }
@@ -711,21 +771,21 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             *sum += value * weight as f32;
         }
         if let Some(voice) = crate::speaker::normalized(open.embedding.clone()) {
-            turn.name = self
-                .diarizer
-                .matched_profile(&voice)
-                .map(|profile| profile.name.clone());
+            turn.label = match self.diarizer.matched_profile(&voice) {
+                Some(profile) => Some(Label::Enrolled(profile.name.clone())),
+                None => heard.filter(|label| label.enrolled().is_none()),
+            };
         }
     }
 
-    fn split_name(&mut self, at: u64, name: Option<SpeakerName>) {
+    fn split_label(&mut self, at: u64, label: Option<Label>) {
         let end = self.position();
-        if let Some(turn) = self.timeline.names.last_mut() {
+        if let Some(turn) = self.timeline.labels.last_mut() {
             let at = at.max(turn.span.start).min(end);
             turn.span.end = at;
-            self.timeline.names.push(NamedTurn {
+            self.timeline.labels.push(LabeledTurn {
                 span: at..end,
-                name,
+                label,
             });
         }
         if let Some(open) = self.open.as_mut() {
@@ -892,6 +952,20 @@ impl<E: Embedder, S: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, S> {
 
     fn timeline(&self) -> &Timeline {
         &self.timeline
+    }
+
+    fn forget_before(&mut self, at: u64) -> u64 {
+        // The open turn keeps at most a judged turn's length of audio.
+        let at = at.min(self.heard_to().saturating_sub(TURN_JUDGED_SAMPLES as u64));
+        // The open turn is still being judged, so nothing from its start on
+        // is forgotten.
+        let open = self
+            .open
+            .as_ref()
+            .and(self.timeline.turns.last())
+            .map_or(at, |turn| turn.span.start);
+        self.timeline.forget_before(at.min(open));
+        at
     }
 }
 

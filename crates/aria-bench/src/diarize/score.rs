@@ -6,7 +6,7 @@ use aria::speaker::Label;
 
 use crate::stt::words;
 
-use crate::diarize::replay::{Dropped, Labeler, Segment};
+use crate::diarize::replay::{Dropped, Segment};
 use crate::diarize::synth::Scenario;
 use crate::diarize::{SAMPLE_RATE, ScenarioReport};
 
@@ -16,34 +16,16 @@ pub(crate) struct Labeled {
 }
 
 impl Scenario {
-    /// Scores one heard scenario twice: the live labels as they streamed,
-    /// and the final ones after the re-cluster.
+    /// Scores one heard scenario on the labels it ended with.
     pub(crate) fn scored(
         &self,
-        labeler: &Labeler,
         segments: &[Segment],
+        finals: Vec<Option<Label>>,
         dropped: &Dropped,
     ) -> ScenarioReport {
-        let live: Vec<Labeled> = segments
-            .iter()
-            .map(|segment| Labeled {
-                text: segment.text.clone(),
-                label: segment.label.clone(),
-            })
-            .collect();
-        let embeddings: Vec<Option<Vec<f32>>> = segments
-            .iter()
-            .map(|segment| segment.embedding.clone())
-            .collect();
-        // The same `settle` the listen sink runs, with a different rule for
-        // openings: a slot nobody could embed and nobody labeled live opens an utterance, so
-        // it takes the voice after it rather than the one before. Live labels
-        // never stand in — they number their speakers differently.
-        let mut settled = labeler.labeler().relabel(&embeddings);
-        aria::speaker::settle(&mut settled, |index| segments[index].label.is_none());
         let finals: Vec<Labeled> = segments
             .iter()
-            .zip(settled)
+            .zip(finals)
             .map(|(segment, label)| Labeled {
                 text: segment.text.clone(),
                 label,
@@ -55,7 +37,6 @@ impl Scenario {
             segments: segments.len(),
             dropped: dropped.segments,
             dropped_seconds: dropped.samples as f64 / SAMPLE_RATE,
-            live_accuracy: self.accuracy(&live),
             final_accuracy: self.accuracy(&finals),
             word_recall: self.word_recall(&finals),
         }

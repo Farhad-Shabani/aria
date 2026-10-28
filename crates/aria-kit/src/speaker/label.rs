@@ -17,6 +17,15 @@ pub enum Label {
     Anonymous(u32),
 }
 
+impl Label {
+    pub fn enrolled(&self) -> Option<&SpeakerName> {
+        match self {
+            Self::Enrolled(name) => Some(name),
+            Self::Anonymous(_) => None,
+        }
+    }
+}
+
 impl fmt::Display for Label {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

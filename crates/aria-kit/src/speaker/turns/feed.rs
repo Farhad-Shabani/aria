@@ -91,11 +91,15 @@ impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
     }
 
     /// Paced by itself: the detector takes all the audio that has arrived,
-    /// the tracker at most `piece` of it.
-    pub fn hear_ahead(&mut self, piece: Duration) -> Ahead {
+    /// the tracker at most `piece` of it. A tracker more than `max_lag`
+    /// behind the detector first skips to it.
+    pub fn hear_ahead(&mut self, piece: Duration, max_lag: Option<Duration>) -> Ahead {
         let before = self.heard_to();
         let filled = self.audio.fill_available();
         self.speak(filled, u64::MAX);
+        if let Some(max_lag) = max_lag {
+            self.catch_up(max_lag);
+        }
         let through = self.tracker.as_ref().map_or(self.spoken_to, |tracker| {
             tracker.heard_to() + canonical_samples(piece)
         });
@@ -134,10 +138,21 @@ impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
     pub fn hear_rest(&mut self) {
         let filled = self.audio.fill();
         self.speak(filled, u64::MAX);
+        self.speech.finish();
         self.track_through(u64::MAX);
         if let Some(tracker) = &mut self.tracker {
             tracker.finish();
         }
+    }
+
+    /// Forgets the map, and the tracker's timeline, before `at`, though
+    /// never what the detector or the tracker still reads.
+    pub fn forget_before(&mut self, at: u64) {
+        let at = match &mut self.tracker {
+            Some(tracker) => tracker.forget_before(at),
+            None => at.min(self.spoken_to),
+        };
+        self.speech.forget_before(at);
     }
 
     fn speak(&mut self, filled: Result<(), CaptureError>, position: u64) {
@@ -155,6 +170,14 @@ impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
             );
         }
         self.spoken_to = end;
+    }
+
+    fn catch_up(&mut self, max_lag: Duration) {
+        if let Some(tracker) = &mut self.tracker
+            && self.spoken_to.saturating_sub(tracker.heard_to()) > canonical_samples(max_lag)
+        {
+            tracker.skip_to(self.speech.map(), self.spoken_to);
+        }
     }
 
     /// The tracker hears up to stream `position`, but never past the audio

@@ -19,9 +19,9 @@ use crate::primitives::error_chain;
 
 pub use aria_kit::speaker::{
     Chunk, Diarizer, Enrolled, Enrollment, EnrollmentError, Grouping, Label, Merged, Profile,
-    ProfileError, ProfileStore, PyannoteVoices, Replace, Revision, Role, SegmentLabeler,
-    SegmentReader, SpeakerName, SpeakerNameError, Standing, StoredProfiles, Verdict, Voiceprint,
-    VoiceprintTracker, Voices, attribute_spans, normalized, settle,
+    ProfileError, ProfileStore, PyannoteVoices, Replace, Revision, Role, SpeakerName,
+    SpeakerNameError, Standing, StoredProfiles, Voiceprint, VoiceprintTracker, Voices,
+    attribute_spans, normalized, settle,
 };
 
 /// The voice track listen runs: the shipped segmentation net over the shipped
@@ -71,13 +71,6 @@ pub fn speech_gate() -> Option<SileroVad> {
         .ok()
 }
 
-/// The segment reader listen runs. The speech gate marks
-/// the pauses between speakers; the engines' word timings blur them.
-pub(crate) fn reader(config: &SpeakerConfig) -> SegmentReader<WeSpeaker> {
-    let diarizer = embedder(config).map(|embedder| Diarizer::new(embedder, enrolled(config)));
-    SegmentReader::new(SegmentLabeler::new(speech_gate(), diarizer))
-}
-
 /// The models dictation tracks voices with: the diarizer, then the
 /// segmenter. A segmenter only serves a diarizer, so it loads only beside
 /// one.
@@ -123,8 +116,8 @@ pub fn usable_profiles(stored: Result<StoredProfiles, ProfileError>) -> Vec<Prof
 }
 
 /// The voice track listen runs beside its transcriber. `None` when no
-/// segmentation model is installed, which leaves the live per-segment guess
-/// standing.
+/// segmentation model is installed: live labels then stand until the
+/// session relabels them at its end.
 pub fn voice_track(
     model: &std::path::Path,
     embedder: WeSpeaker,

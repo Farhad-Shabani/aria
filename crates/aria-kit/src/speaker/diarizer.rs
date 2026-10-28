@@ -4,11 +4,11 @@
 
 use super::{AnonymousNumbering, Embedder, Label, Profile, Role, SpeakerError, SpeakerName};
 
-/// Minimum similarity for claiming an enrolled name.
+/// Minimum similarity for claiming a guest's enrolled name.
 pub const ENROLLED_THRESHOLD: f32 = 0.5;
-/// The owner's voice passes at this similarity: below the naming bar,
-/// so a short turn can pass. On two test voices, the owner's 1.5–3 s
-/// turns scored 0.29–0.56; another voice scored 0.18–0.21.
+/// The owner's voice passes, and is named, at this similarity: below a
+/// guest's bar, so a short turn can pass. On two test voices, the owner's
+/// 1.5–3 s turns scored 0.29–0.56; another voice scored 0.18–0.21.
 pub const OWN_VOICE_THRESHOLD: f32 = 0.35;
 /// Similarity threshold for anonymous clusters; short audio windows need a lower gate.
 pub const CLUSTER_THRESHOLD: f32 = 0.21;
@@ -76,16 +76,7 @@ impl<E: Embedder> Diarizer<E> {
 
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub(super) fn matched_profile(&self, embedding: &[f32]) -> Option<&Profile> {
-        let (profile, similarity) = closest(
-            self.enrolled
-                .iter()
-                .map(|profile| (profile, dot(&profile.vector, embedding))),
-        )?;
-        let bar = match profile.role {
-            Role::Owner => OWN_VOICE_THRESHOLD,
-            Role::Guest => ENROLLED_THRESHOLD,
-        };
-        (similarity >= bar).then_some(profile)
+        enrolled_match(&self.enrolled, embedding).map(|at| &self.enrolled[at])
     }
 
     /// How close this voice comes to the nearest profile the machine's owner
@@ -149,8 +140,8 @@ fn assign(
     embedding: &[f32],
     speaking: Option<&Label>,
 ) -> Label {
-    if let Some(name) = enrolled_name(enrolled, embedding) {
-        return Label::Enrolled(name.clone());
+    if let Some(at) = enrolled_match(enrolled, embedding) {
+        return Label::Enrolled(enrolled[at].name.clone());
     }
     let similarities: Vec<f32> = clusters
         .iter()
@@ -185,23 +176,35 @@ fn absorb<'a>(cluster: &'a mut Cluster, embedding: &[f32]) -> &'a Label {
     &cluster.label
 }
 
-/// The enrolled profile this embedding is close enough to claim.
-pub(super) fn enrolled_name<'a>(
-    enrolled: &'a [Profile],
-    embedding: &[f32],
-) -> Option<&'a SpeakerName> {
-    enrolled_match(enrolled, embedding).map(|at| &enrolled[at].name)
-}
-
+/// The index of the closest profile, if the embedding reaches its role's bar.
 fn enrolled_match(enrolled: &[Profile], embedding: &[f32]) -> Option<usize> {
-    closest(
+    let (at, similarity) = closest(
         enrolled
             .iter()
             .map(|profile| dot(&profile.vector, embedding))
             .enumerate(),
+    )?;
+    let bar = match enrolled[at].role {
+        Role::Owner => OWN_VOICE_THRESHOLD,
+        Role::Guest => ENROLLED_THRESHOLD,
+    };
+    (similarity >= bar).then_some(at)
+}
+
+/// The enrolled name this embedding is close enough to claim, with every
+/// profile held to [`ENROLLED_THRESHOLD`]. The voice track embeds whole
+/// chunks, and the owner's lower bar was measured only on short turns.
+pub(super) fn name_at_enrolled_threshold<'a>(
+    enrolled: &'a [Profile],
+    embedding: &[f32],
+) -> Option<&'a SpeakerName> {
+    closest(
+        enrolled
+            .iter()
+            .map(|profile| (&profile.name, dot(&profile.vector, embedding))),
     )
     .filter(|(_, similarity)| *similarity >= ENROLLED_THRESHOLD)
-    .map(|(at, _)| at)
+    .map(|(name, _)| name)
 }
 
 fn closest<T>(candidates: impl Iterator<Item = (T, f32)>) -> Option<(T, f32)> {
@@ -278,18 +281,16 @@ fn recluster(enrolled: &[Profile], paragraphs: &[Option<Vec<f32>>]) -> Vec<Optio
     let mut labels = vec![None; paragraphs.len()];
     let mut numbering = AnonymousNumbering::default();
     for group in &groups {
-        let anchored = group.profile.map(|at| enrolled[at].name.clone());
-        let label = anchored.map(Label::Enrolled).unwrap_or_else(|| {
-            closest(enrolled.iter().map(|profile| {
-                (
-                    &profile.name,
-                    dot(&profile.vector, &group.sum) / group.count as f32,
-                )
-            }))
-            .filter(|(_, similarity)| *similarity >= ENROLLED_THRESHOLD)
-            .map(|(name, _)| Label::Enrolled(name.clone()))
-            .unwrap_or_else(|| numbering.issue())
-        });
+        let mean: Vec<f32> = group
+            .sum
+            .iter()
+            .map(|value| value / group.count as f32)
+            .collect();
+        let label = group
+            .profile
+            .or_else(|| enrolled_match(enrolled, &mean))
+            .map(|at| Label::Enrolled(enrolled[at].name.clone()))
+            .unwrap_or_else(|| numbering.issue());
         for &member in &group.members {
             labels[member] = Some(label.clone());
         }
@@ -474,5 +475,28 @@ mod tests {
         let labels = recluster(&profiles, &paragraphs);
 
         assert_eq!(labels, [Some(enrolled("alex")), Some(enrolled("blake"))]);
+    }
+
+    #[test]
+    fn an_owner_heard_below_a_guests_bar_keeps_the_name_through_relabel() {
+        let profiles = vec![
+            super::super::enrolled_voice("alex", Role::Owner, A.to_vec()),
+            super::super::enrolled_voice("blake", Role::Guest, B.to_vec()),
+        ];
+        // Each scores 0.4 against its own profile: past the owner's bar,
+        // short of a guest's.
+        let owner_like = normalized(vec![0.4, 0.0, 0.9165, 0.0]).expect("nonzero");
+        let guest_like = normalized(vec![0.0, 0.4, 0.0, 0.9165]).expect("nonzero");
+        let mut clusters = Vec::new();
+        let mut numbering = AnonymousNumbering::default();
+
+        let live = assign(&profiles, &mut clusters, &mut numbering, &owner_like, None);
+        let relabeled = recluster(&profiles, &[Some(owner_like), Some(guest_like)]);
+
+        assert_eq!(live, enrolled("alex"));
+        assert_eq!(
+            relabeled,
+            [Some(enrolled("alex")), Some(Label::Anonymous(1))]
+        );
     }
 }

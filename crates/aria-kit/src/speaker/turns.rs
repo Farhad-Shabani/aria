@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use super::SpeakerName;
+use super::{Label, SpeakerName};
 use crate::voice_activity::SpeechMap;
 
 mod feed;
@@ -36,6 +36,10 @@ pub trait SpeakerTracker: sealed::Sealed {
     /// Judges what is still open. Call once the recording ends.
     fn finish(&mut self);
     fn timeline(&self) -> &Timeline;
+    /// Forgets the timeline before `at`, or before the open turn's start
+    /// when that comes first. Returns how far the speech map may be
+    /// forgotten: never past what the tracker still reads from it.
+    fn forget_before(&mut self, at: u64) -> u64;
 }
 
 /// One run of speech and whose voice it is.
@@ -47,9 +51,16 @@ struct Turn {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct NamedTurn {
+struct LabeledTurn {
     span: Range<u64>,
-    name: Option<SpeakerName>,
+    label: Option<Label>,
+}
+
+/// The embedding one check computed over a span.
+#[derive(Debug, Clone, PartialEq)]
+struct Embedding {
+    span: Range<u64>,
+    vector: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,9 +88,12 @@ pub enum Speaker {
 #[derive(Debug, Clone, Default)]
 pub struct Timeline {
     turns: Vec<Turn>,
-    // Kept apart from `turns`: a name change must not judge a turn or reset
+    // Kept apart from `turns`: a label change must not judge a turn or reset
     // its evidence.
-    names: Vec<NamedTurn>,
+    labels: Vec<LabeledTurn>,
+    /// Kept only by a tracker that numbers voices, so a session can
+    /// relabel them once it ends.
+    embeddings: Vec<Embedding>,
     reached: u64,
     /// Whether the last turn is still open.
     open: bool,
@@ -169,6 +183,28 @@ impl Timeline {
         self.reached
     }
 
+    /// Forgets turns, labels and embeddings that ended before `at`, keeping
+    /// the latest turn and the latest label. Only for sessions that never
+    /// ask about the whole recording.
+    pub(crate) fn forget_before(&mut self, at: u64) {
+        let ended = |span: &Range<u64>| span.end <= at;
+        let turns = self
+            .turns
+            .iter()
+            .take_while(|turn| ended(&turn.span))
+            .count();
+        self.turns
+            .drain(..turns.min(self.turns.len().saturating_sub(1)));
+        let labels = self
+            .labels
+            .iter()
+            .take_while(|turn| ended(&turn.span))
+            .count();
+        self.labels
+            .drain(..labels.min(self.labels.len().saturating_sub(1)));
+        self.embeddings.retain(|embedding| !ended(&embedding.span));
+    }
+
     pub fn is_broken(&self) -> bool {
         self.broken
     }
@@ -184,14 +220,39 @@ impl Timeline {
 
     /// The enrolled voice of the turn that covers most of `span`.
     pub fn speaker(&self, span: &Range<u64>) -> Option<&SpeakerName> {
+        self.label(span)?.enrolled()
+    }
+
+    /// The unit-norm embedding of `span`: every check's embedding over it,
+    /// each weighted by how much of `span` it covers.
+    fn embedding(&self, span: &Range<u64>) -> Option<Vec<f32>> {
         if self.broken {
             return None;
         }
-        self.names
+        let mut sum = Vec::new();
+        for embedding in &self.embeddings {
+            let weight = overlap(span, &embedding.span) as f32;
+            if weight == 0.0 {
+                continue;
+            }
+            sum.resize(embedding.vector.len(), 0.0);
+            for (sum, value) in sum.iter_mut().zip(&embedding.vector) {
+                *sum += value * weight;
+            }
+        }
+        super::normalized(sum)
+    }
+
+    /// The label of the turn that covers most of `span`.
+    fn label(&self, span: &Range<u64>) -> Option<&Label> {
+        if self.broken {
+            return None;
+        }
+        self.labels
             .iter()
             .filter(|turn| overlap(span, &turn.span) > 0)
             .max_by_key(|turn| overlap(span, &turn.span))?
-            .name
+            .label
             .as_ref()
     }
 
@@ -201,7 +262,10 @@ impl Timeline {
             return None;
         }
         let turn = self.turns.last()?;
-        let name = self.names.last().and_then(|turn| turn.name.clone());
+        let name = self
+            .labels
+            .last()
+            .and_then(|turn| turn.label.as_ref()?.enrolled().cloned());
         Some(match turn.judgment {
             Judgment::Pending => Speaker::Pending(name),
             Judgment::Unverified => Speaker::Unverified,
@@ -215,15 +279,15 @@ impl Timeline {
         if self.broken {
             return None;
         }
-        self.names
+        self.labels
             .iter()
-            .filter_map(|named| {
-                let name = named.name.as_ref()?;
+            .filter_map(|labeled| {
+                let name = labeled.label.as_ref()?.enrolled()?;
                 let owner_samples: u64 = self
                     .turns
                     .iter()
                     .filter(|turn| turn.judgment == Judgment::Owner)
-                    .map(|turn| overlap(&named.span, &turn.span))
+                    .map(|turn| overlap(&labeled.span, &turn.span))
                     .sum();
                 (owner_samples > 0).then_some((owner_samples, name))
             })
