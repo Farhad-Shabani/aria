@@ -17,7 +17,7 @@ workspace = true
 
 [features]
 default = [  ]
-kokoro  = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror" ]
+kokoro  = [ "dep:misaki-rs", "dep:npyz", "dep:ort", "dep:thiserror", "dep:zip" ]
 qwen    = [ "dep:candle-core", "dep:candle-nn", "dep:rand", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
 system  = [ "dep:thiserror" ]
 # Apple-only Candle backends; Linux selects the qwen CPU feature.
@@ -32,13 +32,14 @@ aria-kit = { workspace = true }
 candle-core = { version = "0.11", optional = true }
 candle-nn   = { version = "0.11", optional = true }
 misaki-rs   = { version = "0.3", default-features = false, optional = true }
-npyz        = { version = "0.9", features = [ "npz" ], optional = true }
+npyz        = { version = "0.9", optional = true }
 ort         = { workspace = true, optional = true }
 rand        = { version = "0.9", optional = true }
 serde       = { workspace = true, optional = true }
 serde_json  = { workspace = true, optional = true }
 thiserror   = { workspace = true, optional = true }
 tokenizers  = { version = "0.21", default-features = false, features = [ "unstable_wasm" ], optional = true }
+zip         = { version = "8", default-features = false, optional = true }
 
 # The kokoro doctest speaks through the default output device.
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
