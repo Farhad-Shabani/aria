@@ -691,7 +691,7 @@ fn whole_source_admission_preserves_finalized_and_unresolved_states() {
             },
         ],
         reached: 20,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     assert_eq!(timeline.wholly_admitted(&(0..20)), Some(true));
@@ -700,7 +700,7 @@ fn whole_source_admission_preserves_finalized_and_unresolved_states() {
     timeline.turns[1].judgment = Judgment::Pending;
     assert_eq!(timeline.wholly_admitted(&(0..20)), None);
     timeline.turns[1].judgment = Judgment::Unverified;
-    timeline.broken = true;
+    timeline.break_off();
     assert_eq!(timeline.wholly_admitted(&(0..20)), None);
 }
 
@@ -787,7 +787,7 @@ fn only_owner_turns_may_leave_the_computer() {
             },
         ],
         reached: 8,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let samples = [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0];
@@ -809,7 +809,7 @@ fn whole_source_admission_keeps_point_words() {
             judgment: Judgment::Owner,
         }],
         reached: 10,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     assert_eq!(timeline.wholly_admitted(&(3..3)), Some(true));
@@ -1035,7 +1035,7 @@ fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
             judgment: Judgment::Owner,
         }],
         reached: 25_600,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let mut mixed = owner.clone();
@@ -1048,7 +1048,7 @@ fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
         ..owner.clone()
     };
     let broken = Timeline {
-        broken: true,
+        progress: Progress::Broken,
         ..owner.clone()
     };
     for (timeline, word, source) in [
@@ -1075,7 +1075,7 @@ fn source_admission_does_not_reach_before_the_tracking_origin() {
             judgment: Judgment::Owner,
         }],
         reached: 32_000,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let mut held = Gate::new(Admission::OwnerOnly, 16_000);
@@ -1107,7 +1107,7 @@ fn source_admission_waits_for_its_pending_turn() {
 
     timeline.turns[0].judgment = Judgment::Unverified;
     timeline.open = false;
-    timeline.finished = true;
+    timeline.progress = Progress::Finished;
     assert_eq!(release(&mut held, &timeline).len(), 1);
 }
 
@@ -1150,7 +1150,7 @@ fn sentence_punctuation_does_not_move_an_owner_word_into_a_guest_turn() {
             },
         ],
         reached: SECOND as u64,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let words = word_timings([

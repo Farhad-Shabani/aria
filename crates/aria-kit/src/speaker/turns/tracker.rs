@@ -7,7 +7,7 @@ use crate::primitives::error_chain;
 use crate::segmentation::{Activity, ChunkShape, SegmentationError, Segmenter};
 use crate::speaker::changes::{Continuity, Evidence};
 use crate::speaker::{Diarizer, Embedder, Label, OWN_VOICE_THRESHOLD, Role, SpeakerName};
-use crate::voice_activity::{LEAD_IN_FRAMES, SpeechMap};
+use crate::voice_activity::{LEAD_IN_FRAMES, Progress, SpeechMap};
 
 #[cfg(test)]
 mod tests;
@@ -242,7 +242,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         if end > speech.reached() {
             // Past where the detector failed, nothing can be told apart.
             debug_assert!(speech.is_broken(), "a frame is heard before it is scored");
-            self.timeline.broken = true;
+            self.timeline.break_off();
             return;
         }
         self.scored = FrameSpeech {
@@ -271,7 +271,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
     /// Checks land every [`CHECK_EVERY_SAMPLES`] of turn audio, however the
     /// audio was split into pushes.
     fn hear(&mut self, mut samples: &[f32], silence: usize) {
-        while !samples.is_empty() && !self.timeline.broken {
+        while !samples.is_empty() && !self.timeline.is_broken() {
             let room = self.open.as_ref().map_or(samples.len(), |open| {
                 CHECK_EVERY_SAMPLES.saturating_sub(open.unchecked).max(1)
             });
@@ -281,7 +281,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
                 && let Err(error) = continuity.push(self.timeline.reached, now)
             {
                 tracing::warn!(error = %error_chain(&error), "voice continuity could not retain audio");
-                self.timeline.broken = true;
+                self.timeline.break_off();
                 return;
             }
             self.timeline.reached += now.len() as u64;
@@ -559,7 +559,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         let candidate = start..end;
         if let Some((judgment, range, voice)) = self.verified_change(&candidate) {
             self.apply_change(judgment, range, voice);
-        } else if !self.timeline.broken {
+        } else if !self.timeline.is_broken() {
             let anchor = self.open.as_ref().and_then(|open| open.anchor.clone());
             self.split_at(candidate.start, Judgment::Pending, None);
             let from = self
@@ -594,7 +594,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             self.apply_change(judgment, range, voice);
             return;
         }
-        if self.timeline.broken {
+        if self.timeline.is_broken() {
             return;
         }
         let Some(open) = self.open.as_mut() else {
@@ -617,14 +617,14 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         let anchor = self.open.as_ref()?.anchor.clone();
         let Some(continuity) = &mut self.continuity else {
             tracing::warn!("own-voice filtering has no continuity verifier");
-            self.timeline.broken = true;
+            self.timeline.break_off();
             return None;
         };
         let evidence = match continuity.verify(anchor.as_ref(), candidate, TURN_JUDGED_SAMPLES) {
             Ok(evidence) => evidence,
             Err(error) => {
                 tracing::warn!(error = %error_chain(&error), "voice continuity could not be judged");
-                self.timeline.broken = true;
+                self.timeline.break_off();
                 return None;
             }
         };
@@ -640,7 +640,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         let similarity = voice.owner?;
         if !similarity.is_finite() {
             tracing::warn!("voice continuity returned an invalid owner score");
-            self.timeline.broken = true;
+            self.timeline.break_off();
             return None;
         }
         let judgment = if similarity >= OWN_VOICE_THRESHOLD {
@@ -659,14 +659,14 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
 
     fn score_range(&mut self, range: &Range<u64>) -> Option<Scored> {
         let Some(continuity) = &self.continuity else {
-            self.timeline.broken = true;
+            self.timeline.break_off();
             return None;
         };
         let audio = match continuity.audio(range) {
             Ok(audio) => audio,
             Err(error) => {
                 tracing::warn!(error = %error_chain(&error), "voice evidence was not retained");
-                self.timeline.broken = true;
+                self.timeline.break_off();
                 return None;
             }
         };
@@ -893,14 +893,14 @@ fn score<E: Embedder>(
     timeline: &mut Timeline,
     audio: &[f32],
 ) -> Option<Scored> {
-    if timeline.broken {
+    if timeline.is_broken() {
         return None;
     }
     let voice = match diarizer.embed(audio) {
         Ok(voice) => voice?,
         Err(error) => {
             tracing::warn!(error = %error_chain(&error), "the voice timeline could not score audio");
-            timeline.broken = true;
+            timeline.break_off();
             return None;
         }
     };
@@ -922,7 +922,7 @@ impl<E: Embedder, S: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, S> {
 
     fn hear(&mut self, speech: &SpeechMap, mut audio: &[f32]) {
         self.frame_samples = speech.frame_samples();
-        while !audio.is_empty() && !self.timeline.broken {
+        while !audio.is_empty() && !self.timeline.is_broken() {
             let taken = audio.len().min(self.frame_samples - self.frame.len());
             self.frame.extend_from_slice(&audio[..taken]);
             audio = &audio[taken..];
@@ -941,10 +941,10 @@ impl<E: Embedder, S: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, S> {
     }
 
     fn finish(&mut self) {
-        self.timeline.finished = true;
-        if self.timeline.broken {
+        if self.timeline.is_broken() {
             return;
         }
+        self.timeline.progress = Progress::Finished;
         let frame = std::mem::take(&mut self.frame);
         self.hear(&frame, self.trailing_silence());
         self.close_turn(self.trailing_silence());

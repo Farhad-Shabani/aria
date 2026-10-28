@@ -168,7 +168,7 @@ impl Gate {
     /// Releases admitted words in order; broken tracking discards the queue.
     fn release_owner(&mut self, timeline: &Timeline, decision: &mut Decision) {
         while let Some(mut heard) = self.held.pop_front() {
-            if timeline.broken {
+            if timeline.is_broken() {
                 tracing::debug!("segment not delivered: nothing can be judged");
                 decision.dropped.push(heard);
                 continue;
@@ -205,7 +205,7 @@ impl Gate {
     /// sits in the owner's speech so far.
     fn owner_preview(&self, timeline: &Timeline, provisional: &Provisional) -> Option<String> {
         let read_to = provisional.read_to;
-        if timeline.broken || timeline.reached < read_to {
+        if timeline.is_broken() || timeline.reached < read_to {
             return None;
         }
         let fallback = self.from..read_to;

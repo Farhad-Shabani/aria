@@ -6,7 +6,7 @@
 use std::ops::Range;
 
 use super::{Label, SpeakerName};
-use crate::voice_activity::SpeechMap;
+use crate::voice_activity::{Progress, SpeechMap};
 
 mod feed;
 mod gate;
@@ -98,9 +98,7 @@ pub struct Timeline {
     /// Whether the last turn is still open.
     open: bool,
     stable_to: u64,
-    /// The speech gate failed: nothing after it can be judged.
-    broken: bool,
-    finished: bool,
+    progress: Progress,
 }
 
 /// How much of a span lies in admitted turns and how much in rejected ones.
@@ -131,7 +129,7 @@ impl Timeline {
     }
 
     pub fn wholly_admitted(&self, span: &Range<u64>) -> Option<bool> {
-        if self.broken || span.start > span.end {
+        if self.is_broken() || span.start > span.end {
             return None;
         }
         self.tally(span).map(Tally::wholly_admitted)
@@ -151,7 +149,7 @@ impl Timeline {
         // A word timed at a single instant still sits in a turn.
         let span = span.start..span.end.max(span.start.saturating_add(1));
         if span.end > self.reached {
-            return self.finished.then_some(Tally {
+            return (self.progress == Progress::Finished).then_some(Tally {
                 admitted: 0,
                 rejected: 0,
             });
@@ -206,14 +204,18 @@ impl Timeline {
     }
 
     pub fn is_broken(&self) -> bool {
-        self.broken
+        self.progress == Progress::Broken
+    }
+
+    fn break_off(&mut self) {
+        self.progress = Progress::Broken;
     }
 
     /// A timeline nothing can be judged by: every segment held against it
     /// is dropped.
     pub fn broken() -> Self {
         Self {
-            broken: true,
+            progress: Progress::Broken,
             ..Self::default()
         }
     }
@@ -226,7 +228,7 @@ impl Timeline {
     /// The unit-norm embedding of `span`: every check's embedding over it,
     /// each weighted by how much of `span` it covers.
     fn embedding(&self, span: &Range<u64>) -> Option<Vec<f32>> {
-        if self.broken {
+        if self.is_broken() {
             return None;
         }
         let mut sum = Vec::new();
@@ -245,7 +247,7 @@ impl Timeline {
 
     /// The label of the turn that covers most of `span`.
     fn label(&self, span: &Range<u64>) -> Option<&Label> {
-        if self.broken {
+        if self.is_broken() {
             return None;
         }
         self.labels
@@ -258,7 +260,7 @@ impl Timeline {
 
     /// Whose voice the latest turn is. `None` before anyone speaks.
     pub fn speaking(&self) -> Option<Speaker> {
-        if self.broken {
+        if self.is_broken() {
             return None;
         }
         let turn = self.turns.last()?;
@@ -276,7 +278,7 @@ impl Timeline {
 
     /// The name covering the longest span of admitted owner audio.
     pub fn owner_name(&self) -> Option<&SpeakerName> {
-        if self.broken {
+        if self.is_broken() {
             return None;
         }
         self.labels
@@ -296,8 +298,7 @@ impl Timeline {
     }
 
     pub fn admitted_is_owner(&self) -> bool {
-        !self.broken
-            && self.finished
+        self.progress == Progress::Finished
             && self
                 .turns
                 .iter()
@@ -341,7 +342,7 @@ impl Timeline {
         from: u64,
         keep: impl Fn(Judgment) -> bool,
     ) -> Vec<f32> {
-        if self.broken {
+        if self.is_broken() {
             return Vec::new();
         }
         self.turns
