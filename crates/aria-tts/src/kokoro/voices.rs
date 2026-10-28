@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 use super::{MAX_TOKENS, STYLE_WIDTH};
@@ -26,31 +26,29 @@ pub(super) struct VoiceStyles {
 impl VoiceStyles {
     pub(super) fn read(path: &Path) -> Result<Self, VoicesError> {
         let file = File::open(path).map_err(VoicesError::Open)?;
-        let mut archive = npyz::npz::NpzArchive::new(BufReader::new(file))
-            .map_err(|source| VoicesError::Archive(Box::new(source)))?;
+        Self::from_archive(BufReader::new(file))
+    }
 
-        let names: Vec<String> = archive.array_names().map(str::to_owned).collect();
-        if names.len() > MAX_VOICES {
+    /// Reads an npz archive: a zip with one `<voice>.npy` entry per voice.
+    fn from_archive(reader: impl Read + Seek) -> Result<Self, VoicesError> {
+        let mut archive = zip::ZipArchive::new(reader).map_err(archive_error)?;
+        if archive.len() > MAX_VOICES {
             return Err(VoicesError::TooManyVoices {
-                actual: names.len(),
+                actual: archive.len(),
                 maximum: MAX_VOICES,
             });
         }
         let mut styles = BTreeMap::new();
-        for name in names {
-            let array = archive
-                .by_name(&name)
-                .map_err(|source| VoicesError::Archive(Box::new(source)))?
-                .ok_or_else(|| VoicesError::MissingEntry {
-                    voice: name.clone(),
-                })?;
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).map_err(archive_error)?;
+            let name = entry.name();
+            let name = name.strip_suffix(".npy").unwrap_or(name).to_owned();
+            let array = npyz::NpyFile::new(entry).map_err(archive_error)?;
             let shape = array.shape().to_vec();
             if shape != [MAX_TOKENS as u64, 1, STYLE_WIDTH as u64] {
                 return Err(VoicesError::WrongShape { voice: name, shape });
             }
-            let table: Vec<f32> = array
-                .into_vec()
-                .map_err(|source| VoicesError::Archive(Box::new(source)))?;
+            let table: Vec<f32> = array.into_vec().map_err(archive_error)?;
             styles.insert(name, table);
         }
         if styles.is_empty() {
@@ -87,9 +85,6 @@ pub(super) enum VoicesError {
     #[error("the voices file is not a readable npz archive")]
     Archive(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("the voices archive lost its entry for {voice}")]
-    MissingEntry { voice: String },
-
     #[error("voice {voice} has shape {shape:?}; expected [510, 1, 256]")]
     WrongShape { voice: String, shape: Vec<u64> },
 
@@ -98,4 +93,49 @@ pub(super) enum VoicesError {
 
     #[error("the voices archive holds no voices")]
     Empty,
+}
+
+fn archive_error(source: impl std::error::Error + Send + Sync + 'static) -> VoicesError {
+    VoicesError::Archive(Box::new(source))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Write};
+
+    use npyz::WriterBuilder as _;
+
+    use super::*;
+
+    fn stored_archive() -> Cursor<Vec<u8>> {
+        let mut npy = Vec::new();
+        let mut writer = npyz::WriteOptions::new()
+            .default_dtype()
+            .shape(&[MAX_TOKENS as u64, 1, STYLE_WIDTH as u64])
+            .writer(&mut npy)
+            .begin_nd()
+            .unwrap();
+        writer
+            .extend((0..MAX_TOKENS * STYLE_WIDTH).map(|index| index as f32))
+            .unwrap();
+        writer.finish().unwrap();
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("af_heart.npy", options).unwrap();
+        zip.write_all(&npy).unwrap();
+        zip.finish().unwrap()
+    }
+
+    #[test]
+    fn a_stored_archive_names_each_voice_by_its_entry() {
+        let mut bytes = stored_archive();
+        bytes.set_position(0);
+
+        let voices = VoiceStyles::from_archive(bytes).unwrap();
+
+        assert_eq!(voices.names().collect::<Vec<_>>(), ["af_heart"]);
+        let row = voices.style(None, 1).unwrap();
+        assert_eq!(row[0], STYLE_WIDTH as f32);
+    }
 }

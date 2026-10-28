@@ -100,11 +100,13 @@ impl ChatTokenizer {
         tokenizer.with_post_processor(Some(post));
 
         let specials = Self::special_ids(&config)?;
-        let tokens: Vec<AddedToken> = specials
-            .values()
-            .map(|content| AddedToken::from(content.as_str(), true))
-            .collect();
-        tokenizer.add_special_tokens(&tokens);
+        tokenizer
+            .add_special_tokens(
+                specials
+                    .values()
+                    .map(|content| AddedToken::from(content.as_str(), true)),
+            )
+            .map_err(|e| TextError::Load(e.to_string()))?;
         for (id, content) in &specials {
             if tokenizer.token_to_id(content) != Some(*id) {
                 return Err(TextError::SpecialIdMismatch {
