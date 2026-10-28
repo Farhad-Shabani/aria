@@ -153,7 +153,8 @@ impl Engine {
         {
             check_cancelled(cancel).map_err(transcription_failure)?;
             // The client refuses a preview once a completion is claimed.
-            if operation.completed().is_some() && matches!(update, TranscriptUpdate::Provisional(_))
+            if operation.completed().is_some()
+                && matches!(update, TranscriptUpdate::Provisional { .. })
             {
                 continue;
             }
@@ -207,7 +208,7 @@ impl OutputBudget {
         completed: Option<&Completion>,
     ) -> Result<(), RpcFailure> {
         let text = match update {
-            TranscriptUpdate::Provisional(text) => text.as_str(),
+            TranscriptUpdate::Provisional { text, .. } => text.as_str(),
             TranscriptUpdate::Finalized(segment) => {
                 let separator = usize::from(self.finalized > 0);
                 self.finalized = self
@@ -294,20 +295,12 @@ fn bounded_segment(
     segment: TranscriptSegment,
     audio_end: u64,
 ) -> Result<TranscriptSegment, RpcFailure> {
-    let span = match segment.span() {
-        Some(span) => {
-            let end = span.end.min(audio_end);
-            if span.start > end || (span.start == end && span.end > span.start) {
-                return Err(RpcFailure::new(
-                    RpcErrorCode::TranscriptionFailed,
-                    "inference returned an invalid audio span",
-                ));
-            }
-            Some(span.start..end)
-        }
-        None => None,
-    };
-    TranscriptSegment::new(segment.into_text(), span).map_err(transcription_failure)
+    segment.bounded(audio_end).map_err(|_| {
+        RpcFailure::new(
+            RpcErrorCode::TranscriptionFailed,
+            "inference returned an invalid audio span",
+        )
+    })
 }
 
 fn preparation_failure() -> RpcFailure {
@@ -350,7 +343,10 @@ mod tests {
 
     fn event() -> Event {
         Event::Update {
-            update: TranscriptUpdate::Provisional("words".into()),
+            update: TranscriptUpdate::Provisional {
+                text: "words".into(),
+                source_window: None,
+            },
             retained_from: 0,
             read_to: 0,
             completed: None,
@@ -418,7 +414,10 @@ mod tests {
             budget.admit(&segment(), None).unwrap_err().code,
             RpcErrorCode::PayloadTooLarge
         );
-        let preview = TranscriptUpdate::Provisional("x".repeat(MAX_TEXT_BYTES + 1));
+        let preview = TranscriptUpdate::Provisional {
+            text: "x".repeat(MAX_TEXT_BYTES + 1),
+            source_window: None,
+        };
         assert!(OutputBudget::default().admit(&preview, None).is_err());
     }
 }

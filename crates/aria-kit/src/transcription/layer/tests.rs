@@ -105,7 +105,7 @@ fn complete_and_streaming_sessions_apply_real_layers() {
     let segment = session.next_finalized().unwrap().unwrap();
     assert_eq!(segment.as_str(), "Open Cargo.toml.");
     assert!(session.next_finalized().unwrap().is_none());
-    assert_eq!(session.stop().unwrap().as_str(), segment.as_str());
+    assert_eq!(session.finish().unwrap().as_str(), segment.as_str());
 }
 
 struct WavScripted(&'static str);
@@ -138,7 +138,7 @@ fn whole_wav_layers_process_text_and_can_remove_all_speech() {
             .with(RemoveHesitations)
             .with(Vocabulary::new(["Cargo.toml"]).unwrap());
         let session = Session::over(&transcription, &Language::Automatic, recording).unwrap();
-        let result = session.stop();
+        let result = session.finish();
         match expected {
             Some(text) => assert_eq!(result.unwrap().as_str(), text),
             None => assert!(matches!(result, Err(TranscriptionError::NoSpeech))),
@@ -212,11 +212,6 @@ fn native_layers_process_joined_words_and_flush_with_independent_opt_outs() {
             {
                 let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
                 assert_eq!(segment.as_str(), *text);
-                let span = segment.span.unwrap();
-                assert_eq!(
-                    recording.span(span.clone()).len() as u64,
-                    span.end - span.start
-                );
                 recording.release_before(operation.retained_from());
             }
             if drain_tail {
@@ -281,7 +276,7 @@ fn a_suppressed_streaming_segment_does_not_end_the_stream() {
     capture.push(&[0.5; 1600]);
     assert!(matches!(
         operation.next_update(&mut recording).unwrap(),
-        Some(TranscriptUpdate::Provisional(text)) if text == "um"
+        Some(TranscriptUpdate::Provisional { text, .. }) if text == "um"
     ));
     capture.push(&[0.5; 1600]);
     capture.finish();
@@ -346,7 +341,7 @@ fn completion_includes_the_processed_tail_without_reapplying_layers() {
         capture.push(&[0.5; 1600]);
         assert!(matches!(
             operation.next_update(&mut recording).unwrap(),
-            Some(TranscriptUpdate::Provisional(text)) if text == "one two"
+            Some(TranscriptUpdate::Provisional { text, .. }) if text == "one two"
         ));
         capture.push(&[0.5; 1600]);
         capture.finish();

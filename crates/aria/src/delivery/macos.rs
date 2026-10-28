@@ -89,6 +89,10 @@ impl TextDelivery for MacOsTextDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
     const OUTLIVES_PROCESS: bool = true;
 
+    fn frontmost(&self) -> Option<crate::history::Application> {
+        frontmost_application()
+    }
+
     fn prepare(
         &self,
         mode: OutputMode,

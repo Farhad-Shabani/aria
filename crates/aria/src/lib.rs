@@ -13,6 +13,7 @@ pub mod enrollment;
 pub(crate) mod event;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod feedback;
+pub(crate) mod hearing;
 pub mod history;
 pub(crate) mod hotkey;
 pub(crate) mod inference;

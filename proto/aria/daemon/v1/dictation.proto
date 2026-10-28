@@ -73,9 +73,13 @@ message DictationEvent {
   // The segment just transcribed, and only then. A live caption joins
   // these; the press ends at delivered, cancelled, or failed.
   string text = 2;
-  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: the enrolled name of who
-  // is speaking. Empty until a voice is recognized.
+  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED, and on
+  // DICTATION_STAGE_SPEAKER_CHANGED when heard is HEARD_SPEAKER_TYPED: the
+  // enrolled name of who is speaking. Empty until a speaker is recognized.
   string speaker_name = 7;
+  // Set on DICTATION_STAGE_SPEAKER_CHANGED: what the press does with that
+  // speaker's words.
+  HeardSpeaker heard = 8;
   // Set on DICTATION_STAGE_DELIVERED. Unspecified for a press that
   // asked only for its transcript.
   DeliveryOutcome outcome = 5;
@@ -83,6 +87,17 @@ message DictationEvent {
   uint32 word_count = 6;
   // Meaningful only when stage is DICTATION_STAGE_FAILED.
   ErrorCode error_code = 3;
+}
+
+// What a press does with the current speaker's words.
+enum HeardSpeaker {
+  HEARD_SPEAKER_UNSPECIFIED = 0;
+  // Too little is heard yet to tell who is speaking.
+  HEARD_SPEAKER_UNDECIDED = 1;
+  // Their words are typed.
+  HEARD_SPEAKER_TYPED = 2;
+  // Their words are not typed: the press types only the owner's.
+  HEARD_SPEAKER_KEPT_OUT = 3;
 }
 
 message CaptionSnapshot {
@@ -139,6 +154,9 @@ enum DictationStage {
   // A streamed segment, a different axis from the press.
   DICTATION_STAGE_SEGMENT_TRANSCRIBED = 7;
   DICTATION_STAGE_SEGMENT_DELIVERED = 8;
+  // Another speaker started, announced before any of their words are
+  // typed.
+  DICTATION_STAGE_SPEAKER_CHANGED = 9;
 }
 
 // Where a delivered transcript went.

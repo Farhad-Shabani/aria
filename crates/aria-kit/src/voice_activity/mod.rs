@@ -2,14 +2,22 @@
 //! carry a human voice rather than music, noise, or silence.
 
 mod endpointer;
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+mod map;
 #[cfg(feature = "silero")]
 mod silero;
 
 pub use endpointer::{Boundary, Endpointer};
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+pub use map::{SpeechDetector, SpeechMap};
 #[cfg(feature = "silero")]
 pub use silero::{SileroVad, Speech};
 
 pub const SPEECH_THRESHOLD: f32 = 0.5;
+
+/// The silence that closes an utterance in a [`SpeechMap`].
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+pub(crate) const UTTERANCE_GAP: std::time::Duration = std::time::Duration::from_millis(700);
 
 /// Frames to keep before a [`Boundary::Start`], so an utterance does not open
 /// mid-syllable. `StopOnSilence` keeps this many.

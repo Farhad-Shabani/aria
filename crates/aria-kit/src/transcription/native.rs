@@ -4,6 +4,7 @@
 
 use crate::audio::{RecordingReader, canonical_duration};
 use crate::cancel::CancelToken;
+use crate::primitives::error_chain;
 
 use super::{
     ChunkStep, ChunkStream, Emitted, Transcript, TranscriptSegment, TranscriptUpdate,
@@ -22,15 +23,15 @@ pub struct NativeState {
     fed: u64,
     /// A chunk's last word, kept until the next chunk shows whether it
     /// opens with the rest of it.
-    held: Option<Held>,
+    held: Option<Word>,
     transcript: Vec<String>,
     finished: bool,
 }
 
-struct Held {
+struct Word {
     text: String,
-    /// Where the word's audio starts.
-    from: u64,
+    window: std::ops::Range<u64>,
+    timed: bool,
 }
 
 impl NativeState {
@@ -50,17 +51,21 @@ impl NativeState {
         let last_chunk = self.fed.saturating_sub(self.chunk());
         self.held
             .as_ref()
-            .map_or(last_chunk, |held| held.from.min(last_chunk))
+            .map_or(last_chunk, |held| held.window.start.min(last_chunk))
     }
 
     fn chunk(&self) -> u64 {
         self.stream.chunk_samples() as u64
     }
 
+    /// Feeds chunks until one completes a word, and returns those words as
+    /// a segment. With `previews`, a chunk that completes none returns its
+    /// unfinished last word as provisional text instead.
     pub(super) fn next_finalized_with(
         &mut self,
         recording: &mut RecordingReader,
         cancel: &CancelToken,
+        previews: bool,
     ) -> Result<Option<ChunkStep>, TranscriptionError> {
         if self.finished {
             return Ok(None);
@@ -83,10 +88,32 @@ impl NativeState {
                 words = emitted.words.as_str().split_whitespace().count(),
                 "native decode step"
             );
-            if let Some(segment) = self.absorb(&emitted, at, chunk) {
+            let words = self.absorb(&emitted, at, chunk);
+            if let Some(segment) = segment(&words, self.fed) {
                 self.transcript.push(segment.as_str().to_owned());
                 return Ok(Some(ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
+                    transcript: None,
+                }));
+            }
+            if previews {
+                let text = self
+                    .held
+                    .as_ref()
+                    .map_or_else(String::new, |held| held.text.clone());
+                let source_window = self.held.as_ref().map(|held| {
+                    if held.timed {
+                        held.window.clone()
+                    } else {
+                        // An untimed word may come from any earlier chunk.
+                        0..self.fed
+                    }
+                });
+                return Ok(Some(ChunkStep {
+                    update: Some(TranscriptUpdate::Provisional {
+                        text,
+                        source_window,
+                    }),
                     transcript: None,
                 }));
             }
@@ -96,55 +123,51 @@ impl NativeState {
     /// Takes in what a chunk let go of and returns the words now complete,
     /// pinned to the audio they came from. The chunk's last word stays
     /// held: the next chunk may open with the rest of it.
-    fn absorb(&mut self, emitted: &Emitted, at: u64, chunk: u64) -> Option<TranscriptSegment> {
+    fn absorb(&mut self, emitted: &Emitted, at: u64, chunk: u64) -> Vec<Word> {
         let heard = &emitted.words;
-        let mut words: Vec<String> = heard
+        let mut windows = chunk_windows(heard, at, chunk).map(Vec::into_iter);
+        let mut words: Vec<Word> = heard
             .as_str()
             .split_whitespace()
-            .map(str::to_owned)
+            .map(|text| match windows.as_mut().and_then(Iterator::next) {
+                Some(window) => Word {
+                    text: text.to_owned(),
+                    window,
+                    timed: true,
+                },
+                None => Word {
+                    text: text.to_owned(),
+                    window: at..at + chunk,
+                    timed: false,
+                },
+            })
             .collect();
         if words.is_empty() {
-            return None;
+            return Vec::new();
         }
-        let timings = heard.words();
-        let starts_at = |index: usize| match timings.get(index) {
-            Some(timing) => timing.span_from(at).start,
-            None => at,
-        };
-        let ends_at = |index: usize| match timings.get(index) {
-            Some(timing) => timing.span_from(at).end,
-            None => at + chunk,
-        };
 
         let mut complete = Vec::new();
-        let mut from = starts_at(0);
-        let mut first_joined = false;
         if let Some(held) = self.held.take() {
-            from = held.from;
             if emitted.joins_previous {
-                words[0].insert_str(0, &held.text);
-                first_joined = true;
+                let first = &mut words[0];
+                if first.text.chars().all(super::sentence_punctuation)
+                    && held
+                        .text
+                        .chars()
+                        .any(|character| !super::sentence_punctuation(character))
+                {
+                    first.window.end = held.window.end;
+                }
+                first.text.insert_str(0, &held.text);
+                first.window.start = held.window.start;
+                first.timed &= held.timed;
             } else {
-                complete.push(held.text);
+                complete.push(held);
             }
         }
-        let last = words.pop().expect("a chunk with words has a last one");
-        let last_index = words.len();
-        let last_from = match (last_index, first_joined) {
-            (0, true) => from,
-            _ => starts_at(last_index),
-        };
+        self.held = words.pop();
         complete.extend(words);
-        self.held = Some(Held {
-            text: last,
-            from: last_from,
-        });
-        // The held word delivered on its own ended before this chunk.
-        let to = match last_index {
-            0 => at,
-            _ => ends_at(last_index - 1),
-        };
-        TranscriptSegment::spanned(&complete, Some(from..to.max(from)))
+        complete
     }
 
     /// Feeds what is left of the audio, padded to a chunk, then silence,
@@ -158,33 +181,34 @@ impl NativeState {
         let chunk = self.chunk();
         let audio_end = recording.held_to();
         let tail_start = self.fed;
-        let mut parts: Vec<String> = Vec::new();
+        let mut parts = Vec::new();
         if audio_end > tail_start {
             let mut tail = recording.span(tail_start..audio_end).to_vec();
             // A short chunk is dropped by the model, not decoded.
             tail.resize(chunk as usize, 0.0);
             let emitted = self.stream.feed(&tail)?;
-            parts.extend(
-                self.absorb(&emitted, tail_start, chunk)
-                    .map(TranscriptSegment::into_text),
-            );
+            parts.extend(self.absorb(&emitted, tail_start, chunk));
         }
         if audio_end > 0 {
             let silence = vec![0.0; chunk as usize];
             for _ in 0..FLUSH_CHUNKS {
                 check_cancelled(cancel)?;
                 let emitted = self.stream.feed(&silence)?;
-                parts.extend(
-                    self.absorb(&emitted, audio_end, chunk)
-                        .map(TranscriptSegment::into_text),
-                );
+                parts.extend(self.absorb(&emitted, audio_end, chunk));
             }
         }
-        parts.extend(self.held.take().map(|held| held.text));
-        // What comes out here was spoken no earlier than the last full
-        // chunk, whose audio stays retained; the span starts there.
-        let span = tail_start.saturating_sub(chunk)..audio_end;
-        let segment = TranscriptSegment::spanned(&parts, Some(span));
+        parts.extend(self.held.take());
+        let retained = tail_start.saturating_sub(chunk)..audio_end;
+        for word in &mut parts {
+            if word.window.start >= audio_end {
+                // A word emitted in synthetic padding has no real timestamp.
+                word.window = retained.clone();
+                word.timed = false;
+            } else {
+                word.window.end = word.window.end.min(audio_end);
+            }
+        }
+        let segment = segment(&parts, audio_end);
         if let Some(segment) = &segment {
             self.transcript.push(segment.as_str().to_owned());
         }
@@ -197,6 +221,45 @@ impl NativeState {
             transcript,
         }))
     }
+}
+
+/// Where each word of a chunk sits in the stream. A chunk with any
+/// impossible timing counts as untimed: its words still go out.
+fn chunk_windows(
+    heard: &super::Hypothesis,
+    at: u64,
+    chunk: u64,
+) -> Option<Vec<std::ops::Range<u64>>> {
+    if heard.words().is_empty() {
+        return None;
+    }
+    let windows: Result<Vec<_>, TranscriptionError> = heard
+        .words()
+        .iter()
+        .map(|timing| super::bounded_span(timing.span_from(at)?, at + chunk))
+        .collect();
+    windows
+        .inspect_err(|error| {
+            tracing::debug!(error = %error_chain(error), "chunk timings are impossible; heard untimed");
+        })
+        .ok()
+}
+
+fn segment(words: &[Word], audio_end: u64) -> Option<TranscriptSegment> {
+    if words.iter().all(|word| word.timed) {
+        let timed: Vec<_> = words
+            .iter()
+            .map(|word| (word.text.clone(), word.window.clone()))
+            .collect();
+        let mut segment = TranscriptSegment::timed(&timed)?;
+        segment.source_window = segment.span();
+        return Some(segment);
+    }
+    let text: Vec<_> = words.iter().map(|word| word.text.clone()).collect();
+    let mut segment = TranscriptSegment::spanned(&text, None)?;
+    // A native stream may emit untimed words from any earlier chunk.
+    segment.source_window = Some(0..audio_end);
+    Some(segment)
 }
 
 #[cfg(test)]
@@ -281,7 +344,7 @@ mod tests {
         let cancel = CancelToken::never();
         let mut texts = Vec::new();
         while let Some(step) = state
-            .next_finalized_with(recording, &cancel)
+            .next_finalized_with(recording, &cancel, false)
             .expect("the step succeeds")
         {
             if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
@@ -327,7 +390,7 @@ mod tests {
         let mut state = state(stream);
 
         let first = state
-            .next_finalized_with(&mut recording, &CancelToken::never())
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
             .expect("the step succeeds")
             .expect("a segment arrives");
 
@@ -348,6 +411,33 @@ mod tests {
 
         assert_eq!(texts, ["one two three"]);
         assert_eq!(*fed.lock().expect("no poison"), [CHUNK; 3]);
+    }
+
+    #[test]
+    fn a_chunk_with_impossible_timings_is_heard_untimed() {
+        let mut recording = RecordingReader::from_samples(&[0.5; CHUNK]);
+        let mut state = state(Scripted::timed(vec![Hypothesis::with_words(
+            "hello",
+            vec![TimedWord {
+                start: f32::NAN,
+                end: 0.05,
+            }],
+        )]));
+
+        let mut finalized = Vec::new();
+        while let Some(step) = state
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
+            .expect("an impossible timing does not fail the chunk")
+        {
+            if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                finalized.push(segment);
+            }
+        }
+        let [segment] = finalized.as_slice() else {
+            panic!("one segment goes out: {finalized:?}");
+        };
+        assert_eq!(segment.as_str(), "hello");
+        assert!(segment.word_spans().is_none());
     }
 
     #[test]
@@ -373,7 +463,7 @@ mod tests {
         ]));
 
         let step = state
-            .next_finalized_with(&mut recording, &CancelToken::never())
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
             .expect("the step succeeds")
             .expect("a segment arrives");
 
@@ -383,42 +473,161 @@ mod tests {
         assert_eq!(segment.as_str(), "hello");
         let at = 2 * CHUNK as u64;
         assert_eq!(segment.span().expect("timed"), at + 160..at + 800);
+        assert_eq!(
+            segment.word_spans(),
+            Some(std::slice::from_ref(&(at + 160..at + 800)))
+        );
+
+        let tail = state
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
+            .unwrap()
+            .unwrap();
+        let Some(TranscriptUpdate::Finalized(segment)) = tail.update else {
+            panic!("the held word finishes");
+        };
+        assert_eq!(segment.as_str(), "world");
+        assert_eq!(
+            segment.word_spans(),
+            Some(std::slice::from_ref(&(at + 960..at + 1440)))
+        );
     }
 
     #[test]
-    fn an_untimed_chunk_spans_itself() {
+    fn previews_keep_timed_sources_and_bound_untimed_sources_conservatively() {
+        let at = 2 * CHUNK as u64;
+        for (hypothesis, expected) in [
+            (
+                Hypothesis::with_words(
+                    "hello",
+                    vec![TimedWord {
+                        start: 0.01,
+                        end: 0.05,
+                    }],
+                ),
+                at + 160..at + 800,
+            ),
+            (Hypothesis::new("hello"), 0..3 * CHUNK as u64),
+        ] {
+            let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
+            let mut state = state(Scripted::timed(vec![
+                Hypothesis::new(""),
+                Hypothesis::new(""),
+                hypothesis,
+            ]));
+            for index in 0..3 {
+                let step = state
+                    .next_finalized_with(&mut recording, &CancelToken::never(), true)
+                    .unwrap()
+                    .unwrap();
+                let Some(TranscriptUpdate::Provisional {
+                    text,
+                    source_window,
+                }) = step.update
+                else {
+                    panic!("an unfinished word remains provisional");
+                };
+                if index == 2 {
+                    assert_eq!(text, "hello");
+                    assert_eq!(source_window, Some(expected.clone()));
+                } else {
+                    assert!(text.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_untimed_chunk_can_have_words_from_any_earlier_audio() {
         let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
         let (stream, _) = Scripted::new(&["", "hello world"]);
         let mut state = state(stream);
 
         let step = state
-            .next_finalized_with(&mut recording, &CancelToken::never())
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
             .expect("the step succeeds")
             .expect("a segment arrives");
 
         let Some(TranscriptUpdate::Finalized(segment)) = step.update else {
             panic!("a segment");
         };
-        let span = segment.span().expect("spanned");
-        assert_eq!(span, CHUNK as u64..2 * CHUNK as u64);
+        assert_eq!(segment.span(), None);
+        assert_eq!(segment.source_window(), Some(0..2 * CHUNK as u64));
     }
 
     #[test]
-    fn a_held_word_delivered_alone_ends_where_the_next_chunk_starts() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
-        let (stream, _) = Scripted::new(&["hello", "world", ""]);
+    fn joined_sentence_punctuation_keeps_the_spoken_end() {
+        for (prefix, suffix, end) in [("owner", ".", 1440), ("20", "%", 2240), (".", ".", 2240)] {
+            let mut state = state(Scripted::timed(vec![]));
+            let first = Emitted {
+                words: Hypothesis::with_words(
+                    prefix,
+                    vec![TimedWord {
+                        start: 0.01,
+                        end: 0.09,
+                    }],
+                ),
+                joins_previous: false,
+            };
+            assert!(state.absorb(&first, 0, CHUNK as u64).is_empty());
+            let second = Emitted {
+                words: Hypothesis::with_words(
+                    format!("{suffix} next"),
+                    vec![
+                        TimedWord {
+                            start: 0.0,
+                            end: 0.04,
+                        },
+                        TimedWord {
+                            start: 0.05,
+                            end: 0.09,
+                        },
+                    ],
+                ),
+                joins_previous: true,
+            };
+            let joined = segment(
+                &state.absorb(&second, CHUNK as u64, CHUNK as u64),
+                2 * CHUNK as u64,
+            )
+            .unwrap();
+            assert_eq!(joined.as_str(), format!("{prefix}{suffix}"));
+            assert_eq!(joined.word_spans(), Some(std::slice::from_ref(&(160..end))));
+        }
+    }
+
+    #[test]
+    fn a_word_completed_by_the_flush_keeps_its_real_audio() {
+        let (_directory, mut recording) = recorded(&vec![0_i16; CHUNK]);
+        let mut stream = Scripted::timed(vec![
+            Hypothesis::with_words(
+                "some",
+                vec![TimedWord {
+                    start: 0.01,
+                    end: 0.09,
+                }],
+            ),
+            Hypothesis::with_words(
+                "thing",
+                vec![TimedWord {
+                    start: 0.0,
+                    end: 0.04,
+                }],
+            ),
+        ]);
+        stream.answers[1].joins_previous = true;
         let mut state = state(stream);
-
-        let step = state
-            .next_finalized_with(&mut recording, &CancelToken::never())
-            .expect("the step succeeds")
-            .expect("a segment arrives");
-
-        let Some(TranscriptUpdate::Finalized(segment)) = step.update else {
-            panic!("a segment");
+        let tail = state
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
+            .unwrap()
+            .unwrap();
+        let Some(TranscriptUpdate::Finalized(segment)) = tail.update else {
+            panic!("the joined word finishes");
         };
-        assert_eq!(segment.as_str(), "hello");
-        assert_eq!(segment.span().expect("spanned"), 0..CHUNK as u64);
+        assert_eq!(segment.as_str(), "something");
+        assert_eq!(
+            segment.word_spans(),
+            Some(std::slice::from_ref(&(160..CHUNK as u64)))
+        );
     }
 
     #[test]
@@ -428,7 +637,7 @@ mod tests {
         let mut state = state(stream);
 
         let step = state
-            .next_finalized_with(&mut recording, &CancelToken::never())
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
             .expect("the step succeeds")
             .expect("the end delivers");
 
@@ -436,10 +645,8 @@ mod tests {
             panic!("a segment");
         };
         assert_eq!(segment.as_str(), "held back");
-        assert_eq!(
-            segment.span().expect("spanned"),
-            CHUNK as u64..2 * CHUNK as u64
-        );
+        assert_eq!(segment.source_window(), Some(0..2 * CHUNK as u64));
+        assert_eq!(segment.span(), None);
         assert!(step.transcript.is_some());
     }
 
@@ -452,7 +659,7 @@ mod tests {
 
         assert_eq!(state.retained_from(), 0);
         state
-            .next_finalized_with(&mut recording, &cancel)
+            .next_finalized_with(&mut recording, &cancel, false)
             .expect("the step succeeds");
         // "one" is delivered by chunk three, which holds "two" from position
         // 2·CHUNK; the chunk before it stays as well.
@@ -469,7 +676,7 @@ mod tests {
 
         let mut transcript = None;
         while let Some(step) = state
-            .next_finalized_with(&mut recording, &cancel)
+            .next_finalized_with(&mut recording, &cancel, false)
             .expect("the step succeeds")
         {
             transcript = transcript.or(step.transcript);
@@ -488,7 +695,7 @@ mod tests {
         let mut state = state(stream);
 
         let step = state
-            .next_finalized_with(&mut recording, &CancelToken::never())
+            .next_finalized_with(&mut recording, &CancelToken::never(), false)
             .expect("the step succeeds")
             .expect("the end is a step");
 
@@ -496,7 +703,7 @@ mod tests {
         assert!(step.transcript.is_none());
         assert!(
             state
-                .next_finalized_with(&mut recording, &CancelToken::never())
+                .next_finalized_with(&mut recording, &CancelToken::never(), false)
                 .expect("the step succeeds")
                 .is_none()
         );
@@ -508,7 +715,7 @@ mod tests {
         let (stream, fed) = Scripted::new(&["never"]);
         let mut state = state(stream);
 
-        let outcome = state.next_finalized_with(&mut recording, &CancelToken::never());
+        let outcome = state.next_finalized_with(&mut recording, &CancelToken::never(), false);
 
         assert!(matches!(outcome, Err(TranscriptionError::Capture(_))));
         assert!(fed.lock().expect("no poison").is_empty());
@@ -522,7 +729,7 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
 
-        let outcome = state.next_finalized_with(&mut recording, &cancel);
+        let outcome = state.next_finalized_with(&mut recording, &cancel, false);
 
         assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
         assert!(fed.lock().expect("no poison").is_empty());

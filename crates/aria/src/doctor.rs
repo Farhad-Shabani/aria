@@ -235,7 +235,8 @@ fn speaker_model() -> Check {
     }
 }
 
-/// A missing segmentation model warns because Listen can label per segment.
+/// A missing segmentation model warns: Listen still names speakers, less
+/// reliably, and dictation still types every voice.
 fn segmentation_model() -> Check {
     let resolved = Environment::capture()
         .and_then(|environment| SpeakerConfig::load(&environment))
@@ -250,7 +251,7 @@ fn segmentation_model() -> Check {
         Ok(model) => Check::ok(SEGMENTATION_MODEL, model.display().to_string()),
         Err(detail) => Check::warning(
             SEGMENTATION_MODEL,
-            format!("{detail}; listen names speakers by guess"),
+            format!("{detail}; listen names speakers by guess, and Only type my voice cannot run"),
         ),
     }
 }

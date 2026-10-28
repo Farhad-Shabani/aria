@@ -239,13 +239,13 @@ fn transcribe_into<T: Transcriber, E: Embedder>(
             events.emit(ListenStage::SegmentTranscribed {
                 text: Arc::from(heard.segment.as_str()),
                 label: label.as_ref().map(|label| Arc::from(label.to_string())),
-                at_seconds: canonical_duration(heard.at).as_secs(),
+                at_seconds: canonical_duration(heard.window.start).as_secs(),
             });
             sink.segment(Utterance {
                 text: heard.segment.as_str(),
                 speaker: label.as_ref(),
                 embedding: embedding.as_deref(),
-                at: heard.at,
+                at: heard.window.start,
                 span: heard.span.clone(),
             })
             .map_err(ListenError::Transcript)?;

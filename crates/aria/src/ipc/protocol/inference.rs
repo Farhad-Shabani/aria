@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::inference::{
     Completion, Event, Info, MAX_AUDIO_SAMPLES, MAX_ENGINE_NAME_BYTES, MAX_TEXT_BYTES, Start,
     Strategy,
@@ -132,16 +134,26 @@ impl From<Event> for wire::InferenceResponse {
                 read_to,
                 completed,
             } => {
+                let mut provisional_source_window = None;
                 let body = match update {
-                    TranscriptUpdate::Provisional(text) => {
+                    TranscriptUpdate::Provisional {
+                        text,
+                        source_window,
+                    } => {
+                        provisional_source_window = source_window.map(wire_span);
                         wire::inference_update::Body::Provisional(text)
                     }
                     TranscriptUpdate::Finalized(segment) => {
                         wire::inference_update::Body::Finalized(wire::InferenceSegment {
-                            span: segment.span().map(|span| wire::InferenceSpan {
-                                start_sample: span.start,
-                                end_sample: span.end,
-                            }),
+                            source_window: segment.source_window().map(wire_span),
+                            words: segment
+                                .word_spans()
+                                .unwrap_or_default()
+                                .iter()
+                                .cloned()
+                                .map(wire_span)
+                                .collect(),
+                            span: segment.span().map(wire_span),
                             text: segment.into_text(),
                         })
                     }
@@ -151,6 +163,7 @@ impl From<Event> for wire::InferenceResponse {
                     read_to_sample: Some(read_to),
                     body: Some(body),
                     completed: completed.map(Into::into),
+                    provisional_source_window,
                 })
             }
         };
@@ -173,26 +186,16 @@ impl TryFrom<wire::InferenceResponse> for Event {
                 if read_to > MAX_AUDIO_SAMPLES || value.retained_from_sample > read_to {
                     return Err(ProtocolError::InvalidInference);
                 }
-                let update = match value.body.ok_or(ProtocolError::InvalidInference)? {
-                    wire::inference_update::Body::Provisional(text) => {
-                        if text.len() > MAX_TEXT_BYTES {
-                            return Err(ProtocolError::InvalidInference);
-                        }
-                        TranscriptUpdate::Provisional(text)
+                let body = value.body.ok_or(ProtocolError::InvalidInference)?;
+                let update = match (body, value.provisional_source_window) {
+                    (wire::inference_update::Body::Provisional(text), window) => {
+                        preview(text, window, read_to)?
                     }
-                    wire::inference_update::Body::Finalized(segment) => {
-                        if segment.text.len() > MAX_TEXT_BYTES
-                            || segment.span.as_ref().is_some_and(|span| {
-                                span.start_sample > span.end_sample || span.end_sample > read_to
-                            })
-                        {
-                            return Err(ProtocolError::InvalidInference);
-                        }
-                        let span = segment.span.map(|span| span.start_sample..span.end_sample);
-                        TranscriptUpdate::Finalized(
-                            TranscriptSegment::new(segment.text, span)
-                                .map_err(|_| ProtocolError::InvalidInference)?,
-                        )
+                    (wire::inference_update::Body::Finalized(segment), None) => {
+                        TranscriptUpdate::Finalized(finalized(segment, read_to)?)
+                    }
+                    (wire::inference_update::Body::Finalized(_), Some(_misplaced)) => {
+                        return Err(ProtocolError::InvalidInference);
                     }
                 };
                 Ok(Self::Update {
@@ -206,8 +209,74 @@ impl TryFrom<wire::InferenceResponse> for Event {
     }
 }
 
+fn preview(
+    text: String,
+    window: Option<wire::InferenceSpan>,
+    read_to: u64,
+) -> Result<TranscriptUpdate, ProtocolError> {
+    if text.len() > MAX_TEXT_BYTES
+        || window
+            .as_ref()
+            .is_some_and(|span| out_of_bounds(span, read_to))
+    {
+        return Err(ProtocolError::InvalidInference);
+    }
+    Ok(TranscriptUpdate::Provisional {
+        text,
+        source_window: window.map(|span| span.start_sample..span.end_sample),
+    })
+}
+
+fn finalized(
+    segment: wire::InferenceSegment,
+    read_to: u64,
+) -> Result<TranscriptSegment, ProtocolError> {
+    if segment.text.len() > MAX_TEXT_BYTES
+        || segment
+            .source_window
+            .as_ref()
+            .is_some_and(|span| out_of_bounds(span, read_to))
+        || segment
+            .span
+            .as_ref()
+            .is_some_and(|span| out_of_bounds(span, read_to))
+    {
+        return Err(ProtocolError::InvalidInference);
+    }
+    let span = segment.span.map(|span| span.start_sample..span.end_sample);
+    let mut finalized =
+        TranscriptSegment::new(segment.text, span).map_err(|_| ProtocolError::InvalidInference)?;
+    if !segment.words.is_empty() {
+        let words = segment
+            .words
+            .into_iter()
+            .map(|word| word.start_sample..word.end_sample)
+            .collect();
+        finalized = finalized
+            .with_word_spans(words)
+            .map_err(|_| ProtocolError::InvalidInference)?;
+    }
+    if let Some(window) = segment.source_window {
+        finalized = finalized
+            .with_source_window(window.start_sample..window.end_sample)
+            .map_err(|_| ProtocolError::InvalidInference)?;
+    }
+    Ok(finalized)
+}
+
 fn valid_engine(engine: &str) -> bool {
     !engine.is_empty() && engine.len() <= MAX_ENGINE_NAME_BYTES
+}
+
+fn wire_span(span: Range<u64>) -> wire::InferenceSpan {
+    wire::InferenceSpan {
+        start_sample: span.start,
+        end_sample: span.end,
+    }
+}
+
+fn out_of_bounds(span: &wire::InferenceSpan, read_to: u64) -> bool {
+    span.start_sample > span.end_sample || span.end_sample > read_to
 }
 
 #[cfg(test)]
@@ -262,14 +331,125 @@ mod tests {
     }
 
     #[test]
+    fn inference_previews_preserve_optional_source_windows() {
+        for window in [None, Some(8..32)] {
+            let event = Event::Update {
+                update: TranscriptUpdate::Provisional {
+                    text: "words".into(),
+                    source_window: window.clone(),
+                },
+                retained_from: 8,
+                read_to: 32,
+                completed: None,
+            };
+            let response = wire::InferenceResponse::from(event);
+            let Event::Update {
+                update:
+                    TranscriptUpdate::Provisional {
+                        text,
+                        source_window,
+                    },
+                ..
+            } = Event::try_from(response).unwrap()
+            else {
+                panic!("a preview stays provisional");
+            };
+            assert_eq!(text, "words");
+            assert_eq!(source_window, window);
+        }
+    }
+
+    fn update_mut(response: &mut wire::InferenceResponse) -> &mut wire::InferenceUpdate {
+        let Some(wire::inference_response::Body::Update(update)) = &mut response.body else {
+            panic!("the response carries an update");
+        };
+        update
+    }
+
+    fn finalized_mut(response: &mut wire::InferenceResponse) -> &mut wire::InferenceSegment {
+        let Some(wire::inference_update::Body::Finalized(segment)) = &mut update_mut(response).body
+        else {
+            panic!("the update carries a finalized segment");
+        };
+        segment
+    }
+
+    #[test]
+    fn inference_rejects_invalid_or_misplaced_preview_sources() {
+        let response = wire::InferenceResponse::from(Event::Update {
+            update: TranscriptUpdate::Provisional {
+                text: "words".into(),
+                source_window: Some(8..32),
+            },
+            retained_from: 8,
+            read_to: 32,
+            completed: None,
+        });
+        let reversed = std::ops::Range { start: 32, end: 8 };
+        for window in [reversed, 8..33] {
+            let mut invalid = response.clone();
+            update_mut(&mut invalid).provisional_source_window = Some(wire_span(window));
+            assert!(Event::try_from(invalid).is_err());
+        }
+        let mut invalid = response;
+        update_mut(&mut invalid).body = Some(wire::inference_update::Body::Finalized(
+            wire::InferenceSegment {
+                text: "words".into(),
+                ..Default::default()
+            },
+        ));
+        assert!(Event::try_from(invalid).is_err());
+    }
+
+    #[test]
+    fn inference_preserves_word_spans_and_rejects_invalid_alignment() {
+        let event = Event::Update {
+            update: TranscriptUpdate::Finalized(
+                TranscriptSegment::new("one two", Some(12..24))
+                    .unwrap()
+                    .with_word_spans(vec![12..16, 18..24])
+                    .unwrap()
+                    .with_source_window(8..32)
+                    .unwrap(),
+            ),
+            retained_from: 8,
+            read_to: 32,
+            completed: None,
+        };
+        let response = wire::InferenceResponse::from(event);
+        let Event::Update {
+            update: TranscriptUpdate::Finalized(segment),
+            ..
+        } = Event::try_from(response.clone()).unwrap()
+        else {
+            panic!("a finalized segment stays finalized");
+        };
+        assert_eq!(segment.word_spans(), Some(&[12..16, 18..24][..]));
+        assert_eq!(segment.source_window(), Some(8..32));
+
+        let mut one_word_short = response.clone();
+        finalized_mut(&mut one_word_short).words = vec![wire_span(12..16)];
+        assert!(Event::try_from(one_word_short).is_err());
+        // 13..32 leaves out the start of the span; 9..33 reads past read_to.
+        for window in [13..32, 9..33] {
+            let mut invalid = response.clone();
+            finalized_mut(&mut invalid).source_window = Some(wire_span(window));
+            assert!(Event::try_from(invalid).is_err());
+        }
+    }
+
+    #[test]
     fn inference_updates_reject_missing_fields_and_impossible_positions() {
         assert!(Event::try_from(wire::InferenceResponse { body: None }).is_err());
         let update = |retained_from, read_to, span: (u64, u64)| wire::InferenceUpdate {
             retained_from_sample: retained_from,
             read_to_sample: read_to,
+            provisional_source_window: None,
             body: Some(wire::inference_update::Body::Finalized(
                 wire::InferenceSegment {
                     text: "private words".into(),
+                    source_window: None,
+                    words: Vec::new(),
                     span: Some(wire::InferenceSpan {
                         start_sample: span.0,
                         end_sample: span.1,

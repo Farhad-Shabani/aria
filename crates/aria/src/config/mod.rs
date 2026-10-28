@@ -184,17 +184,24 @@ impl DictationConfig {
         load::load(environment)
     }
 
-    /// The LLM cleanup layer this configuration asks for, if any.
-    pub(crate) fn cleanup_layer(
+    pub(crate) fn rewrites(
         &self,
         home: &std::path::Path,
-    ) -> Result<Option<crate::dictation::LlmCleanup>, crate::dictation::CleanupError> {
-        self.cleanup_llm
+    ) -> Result<
+        crate::dictation::Rewrites<crate::dictation::ConfiguredLayers>,
+        crate::dictation::CleanupError,
+    > {
+        let llm = self
+            .cleanup_llm
             .as_ref()
             .map(|cleanup| {
                 crate::dictation::LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home)
             })
-            .transpose()
+            .transpose()?;
+        Ok(crate::dictation::Rewrites::new()
+            .removing_disfluencies(self.cleanup)
+            .backtracking(self.backtrack)
+            .with(llm))
     }
 }
 

@@ -34,6 +34,10 @@ impl TextDelivery for LinuxTextDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Copy;
     const OUTLIVES_PROCESS: bool = false;
 
+    fn frontmost(&self) -> Option<crate::history::Application> {
+        None
+    }
+
     fn prepare(
         &self,
         mode: OutputMode,

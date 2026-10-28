@@ -23,6 +23,8 @@ mod wav;
 use std::time::Duration;
 
 pub use clip::{Clip, ClipError};
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+pub use recording::RecordingWaker;
 #[cfg(not(target_family = "wasm"))]
 pub use recording::SpooledRecordingWriter;
 pub use recording::{CaptureError, RecordedAudio, Recording, RecordingReader, RecordingWriter};

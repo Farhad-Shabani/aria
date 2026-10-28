@@ -70,6 +70,9 @@ message InferenceUpdate {
     string provisional = 2;
     InferenceSegment finalized = 3;
   }
+  // Only with provisional text. Canonical sample bounds within read_to_sample;
+  // absent means the source audio is unknown.
+  InferenceSpan provisional_source_window = 6;
   // Present when this update completes recognition. The client waits for
   // Complete and clean response EOF before exposing this update.
   InferenceComplete completed = 4;
@@ -78,6 +81,12 @@ message InferenceUpdate {
 message InferenceSegment {
   string text = 1;
   InferenceSpan span = 2;
+  // One span per word of text, in order, each within span. Empty when the
+  // engine does not time words.
+  repeated InferenceSpan words = 3;
+  // The audio the segment was decoded from. Contains span. Absent when the
+  // source audio is unknown.
+  InferenceSpan source_window = 4;
 }
 
 message InferenceSpan {

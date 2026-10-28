@@ -1,11 +1,13 @@
 //! The speech-to-text contract engine crates implement.
 
 mod agreement;
+mod heard;
 pub mod layer;
 mod native;
 mod session;
 mod spacing;
 
+pub use heard::{Heard, HeardUpdate, next_heard, next_heard_update};
 pub use layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats, Vocabulary};
 pub use spacing::Caret;
 
@@ -24,8 +26,6 @@ pub use session::Session;
 /// delivery, custom cadences — stay out and take an explicit `aria-kit`
 /// dependency.
 pub mod prelude {
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub use super::session::HeardSession;
     pub use super::{
         Backtrack, Caret, Language, Layer, RemoveHesitations, RemoveRepeats, Session, Streaming,
         Transcript, TranscriptSegment, Transcription, TranscriptionError, Vocabulary, Whole,
@@ -35,8 +35,6 @@ pub mod prelude {
     pub use crate::audio::{Microphone, RecordingMode};
     pub use crate::cancel::CancelToken;
     pub use crate::speaker::{Diarizer, Embedder};
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub use crate::speaker::{Heard, SegmentLabeler, SegmentReader, Verdict};
 }
 
 const MAX_LANGUAGE_CODE_BYTES: usize = 64;
@@ -308,13 +306,24 @@ pub struct TimedWord {
 
 impl TimedWord {
     /// Where the word sits in the stream, for a window opening at `origin`.
-    pub fn span_from(&self, origin: u64) -> std::ops::Range<u64> {
+    pub fn span_from(&self, origin: u64) -> Result<std::ops::Range<u64>, TranscriptionError> {
+        if !self.start.is_finite()
+            || !self.end.is_finite()
+            || self.start < 0.0
+            || self.end < self.start
+        {
+            return Err(TranscriptionError::InvalidSegment);
+        }
         let position = |seconds: f32| {
-            let samples = (f64::from(seconds) * f64::from(CANONICAL_SAMPLE_RATE)).round() as u64;
-            origin.saturating_add(samples)
+            let samples = (f64::from(seconds) * f64::from(CANONICAL_SAMPLE_RATE)).round();
+            if samples >= u64::MAX as f64 {
+                return Err(TranscriptionError::InvalidSegment);
+            }
+            origin
+                .checked_add(samples as u64)
+                .ok_or(TranscriptionError::InvalidSegment)
         };
-        let start = position(self.start);
-        start..position(self.end).max(start)
+        Ok(position(self.start)?..position(self.end)?)
     }
 }
 
@@ -356,31 +365,39 @@ impl Hypothesis {
     }
 }
 
-/// Times the words the tokens spell. Each token is its text and its time
-/// inside the window. A word runs from one non-blank to the next blank;
-/// it starts with its first token and ends with its last. U+2581,
-/// SentencePiece's marker, counts as a blank, so the words match what
-/// [`Hypothesis::with_words`] counts once the text spells that marker as
-/// a space.
+/// Times whitespace words, treating SentencePiece's U+2581 marker as a space.
 pub fn word_timings<'a>(tokens: impl IntoIterator<Item = (&'a str, TimedWord)>) -> Vec<TimedWord> {
     let mut words: Vec<TimedWord> = Vec::new();
     let mut open = false;
+    let mut has_content = false;
     for (text, timing) in tokens {
         for character in text.chars() {
             if character.is_whitespace() || character == '\u{2581}' {
                 open = false;
+                has_content = false;
                 continue;
             }
+            let punctuation = sentence_punctuation(character);
             match words.last_mut() {
-                Some(word) if open => word.end = word.end.max(timing.end),
+                Some(word) if open => {
+                    // Sentence punctuation can arrive after the speech it punctuates.
+                    if !punctuation || !has_content {
+                        word.end = word.end.max(timing.end);
+                    }
+                }
                 _ => {
                     words.push(timing);
                     open = true;
                 }
             }
+            has_content |= !punctuation;
         }
     }
     words
+}
+
+fn sentence_punctuation(character: char) -> bool {
+    matches!(character, '.' | ',' | '!' | '?' | ':' | ';')
 }
 
 impl std::fmt::Debug for Hypothesis {
@@ -760,7 +777,7 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
         loop {
             match self.next(recording, false)? {
                 Some(TranscriptUpdate::Finalized(segment)) => return Ok(Some(segment)),
-                Some(TranscriptUpdate::Provisional(_)) => {}
+                Some(TranscriptUpdate::Provisional { .. }) => {}
                 None => return Ok(None),
             }
         }
@@ -899,18 +916,14 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
                 if self.transcript.is_some() {
                     return Ok(None);
                 }
-                let completed = transcribe_complete(
+                let segment = transcribe_complete(
                     *input,
                     recording,
                     self.transcriber,
                     self.language,
                     &self.cancel,
                 )?;
-                let segment = TranscriptSegment {
-                    text: completed.as_str().to_owned(),
-                    span: None,
-                };
-                self.transcript = Some(completed);
+                self.transcript = Some(Transcript::new(segment.as_str())?);
                 ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
                     transcript: None,
@@ -929,10 +942,12 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
                     None => return Ok(None),
                 }
             }
-            Strategy::Native(state) => match state.next_finalized_with(recording, &self.cancel)? {
-                Some(step) => step,
-                None => return Ok(None),
-            },
+            Strategy::Native(state) => {
+                match state.next_finalized_with(recording, &self.cancel, previews)? {
+                    Some(step) => step,
+                    None => return Ok(None),
+                }
+            }
             Strategy::Delegated(source) => match source.next(recording, previews, &self.cancel)? {
                 Some(step) => step,
                 None => return Ok(None),
@@ -959,17 +974,18 @@ fn transcribe_complete<T: Transcriber>(
     transcriber: &T,
     language: &Language,
     cancel: &CancelToken,
-) -> Result<Transcript, TranscriptionError> {
+) -> Result<TranscriptSegment, TranscriptionError> {
     check_cancelled(cancel)?;
-    let hypothesis = match input {
+    let (hypothesis, origin) = match input {
         WholeRecordingInput::Samples => {
             recording.fill().map_err(TranscriptionError::Capture)?;
             check_cancelled(cancel)?;
-            transcriber.transcribe_with(
+            let hypothesis = transcriber.transcribe_with(
                 TranscriptionAudio::Samples(recording.samples()),
                 language,
                 cancel,
-            )?
+            )?;
+            (hypothesis, recording.held_from())
         }
         #[cfg(not(target_family = "wasm"))]
         WholeRecordingInput::Wav => {
@@ -977,11 +993,27 @@ fn transcribe_complete<T: Transcriber>(
                 .finished_audio()
                 .map_err(TranscriptionError::Capture)?;
             check_cancelled(cancel)?;
-            transcriber.transcribe_with(TranscriptionAudio::Wav(audio), language, cancel)?
+            let hypothesis =
+                transcriber.transcribe_with(TranscriptionAudio::Wav(audio), language, cancel)?;
+            (hypothesis, 0)
         }
     };
     check_cancelled(cancel)?;
-    Transcript::new(hypothesis.into_text())
+    if hypothesis.as_str().is_empty() {
+        return Err(TranscriptionError::NoSpeech);
+    }
+    let source_window = origin..recording.held_to();
+    let words = hypothesis
+        .words()
+        .iter()
+        .map(|timing| bounded_span(timing.span_from(origin)?, source_window.end))
+        .collect::<Result<Vec<_>, _>>()?;
+    let span = envelope(words.iter().cloned());
+    let mut segment = TranscriptSegment::new(hypothesis.into_text(), span)?;
+    if !words.is_empty() {
+        segment = segment.with_word_spans(words)?;
+    }
+    segment.with_source_window(source_window)
 }
 
 /// [`TranscriptionError::Cancelled`] once `cancel` fires.
@@ -994,13 +1026,21 @@ pub fn check_cancelled(cancel: &CancelToken) -> Result<(), TranscriptionError> {
 
 pub enum TranscriptUpdate {
     Finalized(TranscriptSegment),
-    Provisional(String),
+    Provisional {
+        text: String,
+        source_window: Option<std::ops::Range<u64>>,
+    },
 }
 
 #[derive(Clone)]
 pub struct TranscriptSegment {
     text: String,
     span: Option<std::ops::Range<u64>>,
+    // Bounds the possible source audio, including speech absent from the text.
+    source_window: Option<std::ops::Range<u64>>,
+    /// Where each word of `text` sits, in order, when every word was timed.
+    /// Cleared whenever the text is rewritten.
+    word_spans: Option<Vec<std::ops::Range<u64>>>,
 }
 
 impl TranscriptSegment {
@@ -1012,12 +1052,34 @@ impl TranscriptSegment {
         if text.is_empty() || span.as_ref().is_some_and(|span| span.start > span.end) {
             return Err(TranscriptionError::InvalidSegment);
         }
-        Ok(Self { text, span })
+        Ok(Self {
+            text,
+            span,
+            word_spans: None,
+            source_window: None,
+        })
     }
 
     fn spanned(words: &[String], span: Option<std::ops::Range<u64>>) -> Option<Self> {
         let text = words.join(" ");
-        (!text.is_empty()).then_some(Self { text, span })
+        (!text.is_empty()).then_some(Self {
+            text,
+            span,
+            word_spans: None,
+            source_window: None,
+        })
+    }
+
+    /// One segment for words that were each timed, keeping every timing.
+    fn timed(words: &[(String, std::ops::Range<u64>)]) -> Option<Self> {
+        let span = envelope(words.iter().map(|(_, span)| span.clone()))?;
+        let texts: Vec<&str> = words.iter().map(|(text, _)| text.as_str()).collect();
+        Some(Self {
+            text: texts.join(" "),
+            span: Some(span),
+            word_spans: Some(words.iter().map(|(_, span)| span.clone()).collect()),
+            source_window: None,
+        })
     }
 
     pub fn as_str(&self) -> &str {
@@ -1030,9 +1092,121 @@ impl TranscriptSegment {
         self.span.clone()
     }
 
+    /// Where each word sits, in order, when every word was timed.
+    pub fn word_spans(&self) -> Option<&[std::ops::Range<u64>]> {
+        self.word_spans.as_deref()
+    }
+
+    pub fn source_window(&self) -> Option<std::ops::Range<u64>> {
+        self.source_window.clone()
+    }
+
+    pub fn with_source_window(
+        mut self,
+        window: std::ops::Range<u64>,
+    ) -> Result<Self, TranscriptionError> {
+        if window.start > window.end
+            || self
+                .span
+                .as_ref()
+                .is_some_and(|span| span.start < window.start || span.end > window.end)
+        {
+            return Err(TranscriptionError::InvalidSegment);
+        }
+        self.source_window = Some(window);
+        Ok(self)
+    }
+
+    pub fn with_word_spans(
+        mut self,
+        words: Vec<std::ops::Range<u64>>,
+    ) -> Result<Self, TranscriptionError> {
+        let Some(span) = &self.span else {
+            return Err(TranscriptionError::InvalidSegment);
+        };
+        if words.len() != self.text.split_whitespace().count()
+            || words
+                .iter()
+                .any(|word| word.start > word.end || word.start < span.start || word.end > span.end)
+        {
+            return Err(TranscriptionError::InvalidSegment);
+        }
+        self.word_spans = Some(words);
+        Ok(self)
+    }
+
+    pub fn bounded(mut self, audio_end: u64) -> Result<Self, TranscriptionError> {
+        if let Some(window) = self.source_window.take() {
+            self.source_window = Some(bounded_span(window, audio_end)?);
+        }
+        if let Some(span) = self.span.take() {
+            self.span = Some(bounded_span(span, audio_end)?);
+        }
+        if let Some(words) = &mut self.word_spans {
+            for span in words {
+                *span = bounded_span(span.clone(), audio_end)?;
+            }
+        }
+        Ok(self)
+    }
+
+    /// The same segment with only the words `keep` marks: one mark per
+    /// timed word, or one for the whole of an untimed segment. `None` when
+    /// it keeps none.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(crate) fn keeping(&self, keep: &[bool]) -> Option<Self> {
+        let marks = self.word_spans.as_ref().map_or(1, Vec::len);
+        assert_eq!(keep.len(), marks, "one mark per word");
+        let Some(spans) = &self.word_spans else {
+            return keep[0].then(|| self.clone());
+        };
+        let words: Vec<(String, std::ops::Range<u64>)> = self
+            .text
+            .split_whitespace()
+            .zip(spans)
+            .zip(keep)
+            .filter(|(_, kept)| **kept)
+            .map(|((text, span), _)| (text.to_owned(), span.clone()))
+            .collect();
+        let mut segment = Self::timed(&words)?;
+        segment.source_window.clone_from(&self.source_window);
+        Some(segment)
+    }
+
     pub fn into_text(self) -> String {
         self.text
     }
+
+    /// Rewrites the text, which leaves the word timings nothing to match.
+    pub(crate) fn rewrite(&mut self, text: String) {
+        if text != self.text {
+            self.word_spans = None;
+        }
+        self.text = text;
+    }
+}
+
+fn envelope(spans: impl IntoIterator<Item = std::ops::Range<u64>>) -> Option<std::ops::Range<u64>> {
+    spans
+        .into_iter()
+        .reduce(|covered, span| covered.start.min(span.start)..covered.end.max(span.end))
+}
+
+fn bounded_span(
+    span: std::ops::Range<u64>,
+    audio_end: u64,
+) -> Result<std::ops::Range<u64>, TranscriptionError> {
+    let end = span.end.min(audio_end);
+    if span.start > end || (span.start == end && span.end > span.start) {
+        return Err(TranscriptionError::InvalidSegment);
+    }
+    // An instantaneous EOF timing belongs to the audio just before EOF.
+    let start = if span.start == audio_end && audio_end > 0 {
+        audio_end - 1
+    } else {
+        span.start
+    };
+    Ok(start..end)
 }
 
 impl std::fmt::Debug for TranscriptSegment {
@@ -1227,7 +1401,7 @@ pub enum TranscriptionError {
     #[error("the transcriber was asked to run an operation but offers none")]
     NoDelegatedOperation,
 
-    #[error("transcript segment has empty text or a reversed audio span")]
+    #[error("transcript segment has invalid text or audio bounds")]
     InvalidSegment,
 
     #[error("transcript processing failed")]
@@ -1308,7 +1482,10 @@ mod operation_source_tests {
             self.openings.lock().unwrap().push(incremental);
             let mut steps = VecDeque::from([
                 OperationStep::Update {
-                    update: TranscriptUpdate::Provisional("hello".into()),
+                    update: TranscriptUpdate::Provisional {
+                        text: "hello".into(),
+                        source_window: None,
+                    },
                     retained_from: 0,
                     read_to: 20,
                     completed: None,
@@ -1347,7 +1524,7 @@ mod operation_source_tests {
 
         assert!(matches!(
             operation.next_update(&mut recording).unwrap(),
-            Some(TranscriptUpdate::Provisional(text)) if text == "hello"
+            Some(TranscriptUpdate::Provisional { text, .. }) if text == "hello"
         ));
         assert!(operation.completed().is_none());
         assert_eq!(recording.held_to(), 40);
@@ -1453,6 +1630,91 @@ mod operation_source_tests {
         ));
     }
 
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    #[test]
+    fn a_segment_keeps_the_words_asked_for_with_their_timings() {
+        let words = [
+            ("one".to_owned(), 0..10),
+            ("two".to_owned(), 20..30),
+            ("three".to_owned(), 40..50),
+        ];
+        let timed = TranscriptSegment::timed(&words)
+            .expect("words to join")
+            .with_source_window(0..60)
+            .unwrap();
+        let untimed = TranscriptSegment::new("one two", None).unwrap();
+        let overlapping = TranscriptSegment::new("one two three", Some(10..80))
+            .unwrap()
+            .with_word_spans(vec![30..80, 10..50, 40..60])
+            .unwrap()
+            .with_source_window(0..100)
+            .unwrap();
+
+        for (segment, keep, text, span, word_spans, source_window) in [
+            (
+                &timed,
+                &[false, true, true][..],
+                "two three",
+                Some(20..50),
+                Some(&[20..30, 40..50][..]),
+                Some(0..60),
+            ),
+            (&untimed, &[true][..], "one two", None, None, None),
+            (
+                &overlapping,
+                &[true, true, false][..],
+                "one two",
+                Some(10..80),
+                Some(&[30..80, 10..50][..]),
+                Some(0..100),
+            ),
+        ] {
+            let kept = segment.keeping(keep).expect("words kept");
+
+            assert_eq!(kept.as_str(), text);
+            assert_eq!(kept.span(), span);
+            assert_eq!(kept.word_spans(), word_spans);
+            assert_eq!(kept.source_window(), source_window);
+            assert!(segment.keeping(&vec![false; keep.len()]).is_none());
+            if let Some(words) = word_spans {
+                assert!(kept.with_word_spans(words.to_vec()).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn word_spans_must_match_the_text_and_its_audio() {
+        let segment = || TranscriptSegment::new("one two", Some(0..30)).unwrap();
+        assert!(segment().with_word_spans(vec![0..10, 20..30]).is_ok());
+        let reversed = std::ops::Range { start: 25, end: 20 };
+        let missing = std::iter::once(0..10).collect();
+        for spans in [missing, vec![0..10, 20..31], vec![0..10, reversed]] {
+            assert!(segment().with_word_spans(spans).is_err());
+        }
+    }
+
+    #[test]
+    fn bounding_a_segment_preserves_its_word_alignment() {
+        let segment = TranscriptSegment::new("one two", Some(0..40))
+            .unwrap()
+            .with_word_spans(vec![0..10, 20..40])
+            .unwrap()
+            .with_source_window(0..45)
+            .unwrap()
+            .bounded(30)
+            .unwrap();
+        assert_eq!(segment.span(), Some(0..30));
+        assert_eq!(segment.word_spans(), Some(&[0..10, 20..30][..]));
+        assert_eq!(segment.source_window(), Some(0..30));
+        let eof = TranscriptSegment::new("end", Some(30..30))
+            .unwrap()
+            .with_word_spans(std::iter::once(30..30).collect())
+            .unwrap()
+            .bounded(30)
+            .unwrap();
+        assert_eq!(eof.word_spans(), Some(std::slice::from_ref(&(29..30))));
+    }
+
     #[test]
     fn external_segments_reject_empty_text_and_reversed_spans() {
         assert!(TranscriptSegment::new(" ", None).is_err());
@@ -1473,6 +1735,43 @@ mod word_timing_tests {
     }
 
     #[test]
+    fn punctuation_only_words_and_spoken_symbols_keep_their_timings() {
+        let words = word_timings([
+            token(" .", 0.0, 0.1),
+            token("..", 0.1, 0.2),
+            token(" $", 0.2, 0.3),
+            token("5", 0.3, 0.4),
+            token(" -", 0.4, 0.5),
+            token("20", 0.5, 0.6),
+            token("%", 0.6, 0.7),
+            token(" .", 0.7, 0.8),
+            token("5", 0.8, 0.9),
+            token(".", 0.9, 1.0),
+        ]);
+        assert_eq!(
+            words,
+            [
+                TimedWord {
+                    start: 0.0,
+                    end: 0.2
+                },
+                TimedWord {
+                    start: 0.2,
+                    end: 0.4
+                },
+                TimedWord {
+                    start: 0.4,
+                    end: 0.7
+                },
+                TimedWord {
+                    start: 0.7,
+                    end: 0.9
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn tokens_group_into_words_at_the_sentencepiece_marker() {
         let tokens = [
             token("\u{2581}hel", 0.0, 0.2),
@@ -1482,7 +1781,7 @@ mod word_timing_tests {
         ];
         let words = word_timings(tokens);
         assert_eq!(words.len(), 2);
-        assert_eq!((words[0].start, words[0].end), (0.0, 0.5));
+        assert_eq!((words[0].start, words[0].end), (0.0, 0.4));
         assert_eq!((words[1].start, words[1].end), (0.6, 0.9));
     }
 
@@ -1496,7 +1795,7 @@ mod word_timing_tests {
         ];
         let words = word_timings(tokens);
         assert_eq!(words.len(), 2);
-        assert_eq!((words[0].start, words[0].end), (0.0, 0.5));
+        assert_eq!((words[0].start, words[0].end), (0.0, 0.4));
         assert_eq!((words[1].start, words[1].end), (0.6, 0.9));
     }
 
@@ -1518,7 +1817,35 @@ mod word_timing_tests {
         let words = word_timings(tokens);
         assert_eq!(words.len(), text.split_whitespace().count());
         assert_eq!((words[0].start, words[0].end), (0.1, 0.4));
-        assert_eq!((words[2].start, words[2].end), (0.4, 0.9));
+        assert_eq!((words[2].start, words[2].end), (0.4, 0.8));
+    }
+
+    #[test]
+    fn word_timing_conversion_rejects_invalid_values_and_overflow() {
+        for (start, end, origin) in [
+            (f32::NAN, 0.5, 0),
+            (0.0, f32::NAN, 0),
+            (f32::NEG_INFINITY, 0.5, 0),
+            (0.0, f32::INFINITY, 0),
+            (-0.1, 0.5, 0),
+            (0.5, 0.1, 0),
+            (0.0, f32::MAX, 0),
+            (0.0, 0.5, u64::MAX - 7_999),
+        ] {
+            assert!(matches!(
+                TimedWord { start, end }.span_from(origin),
+                Err(TranscriptionError::InvalidSegment)
+            ));
+        }
+    }
+
+    #[test]
+    fn word_timing_conversion_accepts_zero_duration() {
+        let (start, end, origin, expected) = (0.0, 0.0, 0, 0..0);
+        assert_eq!(
+            TimedWord { start, end }.span_from(origin).unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -1529,7 +1856,7 @@ mod word_timing_tests {
             end: 0.200_04,
         };
 
-        assert_eq!(word.span_from(1_000), 2_600..4_201);
+        assert_eq!(word.span_from(1_000).unwrap(), 2_600..4_201);
     }
 }
 
@@ -1587,6 +1914,7 @@ mod coordinator_tests {
 
     struct FakeTranscriber {
         response: &'static str,
+        words: Vec<TimedWord>,
         reject_language: bool,
         inputs: Mutex<Vec<AudioInputKind>>,
     }
@@ -1595,9 +1923,15 @@ mod coordinator_tests {
         fn answering(response: &'static str) -> Self {
             Self {
                 response,
+                words: Vec::new(),
                 reject_language: false,
                 inputs: Mutex::new(Vec::new()),
             }
+        }
+
+        fn with_words(mut self, words: Vec<TimedWord>) -> Self {
+            self.words = words;
+            self
         }
 
         fn inputs(&self) -> Vec<AudioInputKind> {
@@ -1633,7 +1967,7 @@ mod coordinator_tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(audio.kind());
-            Ok(Hypothesis::new(self.response))
+            Ok(Hypothesis::with_words(self.response, self.words.clone()))
         }
     }
 
@@ -1737,7 +2071,7 @@ mod coordinator_tests {
         let mut operation = transcription.start(&Language::Automatic).expect("starts");
         capture.push(&[0.5; 1600]);
         assert!(
-            matches!(operation.next_update(&mut recording).expect("preview"), Some(TranscriptUpdate::Provisional(text)) if text == "one two")
+            matches!(operation.next_update(&mut recording).expect("preview"), Some(TranscriptUpdate::Provisional { text, .. }) if text == "one two")
         );
         capture.push(&[0.5; 1600]);
         capture.finish();
@@ -1753,7 +2087,7 @@ mod coordinator_tests {
             matches!(operation.next_update(&mut recording).expect("tail"), Some(TranscriptUpdate::Finalized(segment)) if segment.as_str() == "three")
         );
         assert!(
-            matches!(operation.next_update(&mut recording).expect("clear"), Some(TranscriptUpdate::Provisional(text)) if text.is_empty())
+            matches!(operation.next_update(&mut recording).expect("clear"), Some(TranscriptUpdate::Provisional { text, .. }) if text.is_empty())
         );
         assert!(
             operation
@@ -1764,16 +2098,16 @@ mod coordinator_tests {
     }
 
     #[test]
-    fn native_and_whole_updates_are_finalized_only() {
+    fn native_and_whole_updates_finalize_every_word() {
         fn check<T: Transcriber, M: Mode>(transcription: Transcription<T, M>, expected: &str) {
             let (_directory, mut recording) = recorded(&[1, 2, 3, 4]);
             let mut operation = transcription.start(&Language::Automatic).expect("starts");
             let mut segments = Vec::new();
             while let Some(update) = operation.next_update(&mut recording).expect("reads") {
-                let TranscriptUpdate::Finalized(segment) = update else {
-                    panic!("only agreement exposes provisional words");
-                };
-                segments.push(segment.into_text());
+                // A native stream previews its held word; nothing else is provisional.
+                if let TranscriptUpdate::Finalized(segment) = update {
+                    segments.push(segment.into_text());
+                }
             }
             assert_eq!(segments.join(" "), expected);
             assert_eq!(operation.completed().expect("completed").as_str(), expected);
@@ -1829,6 +2163,189 @@ mod coordinator_tests {
 
         assert_eq!(transcriber.inputs(), [AudioInputKind::Wav]);
         assert!(recording.samples().is_empty());
+    }
+
+    #[test]
+    fn complete_samples_preserves_timings_relative_to_the_decoded_window() {
+        let mut recording = RecordingReader::from_samples(&[0.5; 32_000]);
+        recording.fill().unwrap();
+        recording.release_before(16_000);
+        let transcription = Transcription::complete_samples(
+            FakeTranscriber::answering("hello  there").with_words(vec![
+                TimedWord {
+                    start: 0.1,
+                    end: 0.2,
+                },
+                TimedWord {
+                    start: 0.3,
+                    end: 0.4,
+                },
+            ]),
+        );
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+
+        assert_eq!(segment.as_str(), "hello  there");
+        assert_eq!(segment.span(), Some(17_600..22_400));
+        assert_eq!(
+            segment.word_spans(),
+            Some(&[17_600..19_200, 20_800..22_400][..])
+        );
+        assert_eq!(segment.source_window(), Some(16_000..32_000));
+        assert_eq!(operation.completed().unwrap().as_str(), "hello  there");
+        assert!(operation.next_finalized(&mut recording).unwrap().is_none());
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn complete_wav_preserves_recording_coordinates_without_retaining_samples() {
+        let (_directory, mut recording) = recorded(&[1; 32_000]);
+        recording.fill().unwrap();
+        recording.release_before(16_000);
+        let transcription =
+            Transcription::complete_wav(FakeTranscriber::answering("hello").with_words(vec![
+                TimedWord {
+                    start: 0.1,
+                    end: 0.2,
+                },
+            ]));
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+
+        assert_eq!(
+            segment.word_spans(),
+            Some(std::slice::from_ref(&(1_600..3_200)))
+        );
+        assert_eq!(segment.source_window(), Some(0..32_000));
+        assert!(recording.samples().is_empty());
+    }
+
+    #[test]
+    fn complete_without_aligned_timings_stays_untimed() {
+        for words in [
+            vec![],
+            vec![TimedWord {
+                start: 0.1,
+                end: 0.2,
+            }],
+        ] {
+            let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
+            let transcription = Transcription::complete_samples(
+                FakeTranscriber::answering("hello there").with_words(words),
+            );
+            let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+            let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+
+            assert_eq!(segment.word_spans(), None);
+            assert_eq!(segment.span(), None);
+            assert_eq!(segment.source_window(), Some(0..16_000));
+        }
+    }
+
+    #[test]
+    fn complete_bounds_word_timings_to_the_actual_audio() {
+        let timing = TimedWord {
+            start: 0.5,
+            end: 1.5,
+        };
+        let expected = 8_000..16_000;
+        let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
+        let transcription = Transcription::complete_samples(
+            FakeTranscriber::answering("hello").with_words(vec![timing]),
+        );
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+
+        assert_eq!(segment.word_spans(), Some(std::slice::from_ref(&expected)));
+        assert_eq!(segment.span(), Some(expected));
+        assert_eq!(segment.source_window(), Some(0..16_000));
+    }
+
+    #[test]
+    fn complete_encloses_all_word_bounds_without_reordering_words() {
+        let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
+        let transcription = Transcription::complete_samples(
+            FakeTranscriber::answering("hello there").with_words(vec![
+                TimedWord {
+                    start: 0.3,
+                    end: 0.8,
+                },
+                TimedWord {
+                    start: 0.1,
+                    end: 0.5,
+                },
+            ]),
+        );
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+
+        assert_eq!(segment.as_str(), "hello there");
+        assert_eq!(segment.span(), Some(1_600..12_800));
+        assert_eq!(
+            segment.word_spans(),
+            Some(&[4_800..12_800, 1_600..8_000][..])
+        );
+    }
+
+    #[test]
+    fn complete_rejects_malformed_or_unavailable_word_timings() {
+        for timing in [
+            TimedWord {
+                start: f32::NAN,
+                end: 0.2,
+            },
+            TimedWord {
+                start: 1.1,
+                end: 1.2,
+            },
+            TimedWord {
+                start: 1.0,
+                end: 1.2,
+            },
+        ] {
+            let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
+            let transcription = Transcription::complete_samples(
+                FakeTranscriber::answering("hello").with_words(vec![timing]),
+            );
+            let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+            assert!(matches!(
+                operation.next_finalized(&mut recording),
+                Err(TranscriptionError::InvalidSegment)
+            ));
+            assert!(operation.completed().is_none());
+        }
+    }
+
+    #[test]
+    fn complete_text_layers_drop_timings_only_when_text_changes() {
+        for text in ["hello there", "um hello"] {
+            let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
+            let transcription =
+                Transcription::complete_samples(FakeTranscriber::answering(text).with_words(vec![
+                    TimedWord {
+                        start: 0.1,
+                        end: 0.2,
+                    },
+                    TimedWord {
+                        start: 0.3,
+                        end: 0.4,
+                    },
+                ]))
+                .with(layer::RemoveHesitations);
+            let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+            let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+
+            assert_eq!(segment.word_spans().is_some(), text == "hello there");
+            assert_eq!(segment.as_str(), operation.completed().unwrap().as_str());
+            assert_eq!(segment.source_window(), Some(0..16_000));
+        }
     }
 
     #[test]

@@ -191,7 +191,7 @@ impl Composed {
                 loop {
                     let segment = match operation.next(recording, previews.is_some())? {
                         Some(TranscriptUpdate::Finalized(segment)) => segment,
-                        Some(TranscriptUpdate::Provisional(text)) => {
+                        Some(TranscriptUpdate::Provisional { text, .. }) => {
                             previews
                                 .as_deref_mut()
                                 .expect("previews enabled")
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn streaming_trace_preserves_emission_order_and_audio_spans() {
+    fn streaming_trace_preserves_order_without_inventing_word_spans() {
         let directory = tempfile::tempdir().unwrap();
         let mut recording =
             aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
@@ -719,11 +719,7 @@ mod tests {
                     segment.available_samples
                 ))
                 .collect::<Vec<_>>(),
-            vec![
-                ("one", Some(0..2), 4),
-                ("two three", Some(0..4), 4),
-                ("four", Some(2..4), 4)
-            ]
+            vec![("one", None, 4), ("two three", None, 4), ("four", None, 4)]
         );
         assert!(
             segments
@@ -790,7 +786,18 @@ mod tests {
                     preview.available_samples
                 ))
                 .collect::<Vec<_>>(),
-            [("one two three four", 0, 1600), ("", 1, 3200),]
+            [
+                ("one two three four", 0, 1600),
+                ("", 1, 3200),
+                ("", 1, 4800),
+                ("", 1, 6400),
+                ("", 1, 8000),
+                ("", 1, 9600),
+                ("", 1, 11200),
+                ("", 1, 12800),
+                ("", 1, 14400),
+                ("", 1, 16000),
+            ]
         );
     }
 
@@ -814,7 +821,7 @@ mod tests {
         assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "one");
-        assert_eq!(segments[0].span_samples, Some(0..2));
+        assert_eq!(segments[0].span_samples, None);
         assert_eq!(segments[0].available_samples, 4);
     }
 

@@ -31,6 +31,16 @@ pub trait Segmenter {
     fn segment(&mut self, chunk: &[f32]) -> Result<Vec<Activity>, SegmentationError>;
 }
 
+impl<S: Segmenter> Segmenter for &mut S {
+    fn shape(&self) -> ChunkShape {
+        (**self).shape()
+    }
+
+    fn segment(&mut self, chunk: &[f32]) -> Result<Vec<Activity>, SegmentationError> {
+        (**self).segment(chunk)
+    }
+}
+
 /// How an engine is constructed from its own configuration. Implementing
 /// this beside [`Segmenter`] is the whole checklist for a new engine.
 pub trait Engine: Segmenter + Sized {

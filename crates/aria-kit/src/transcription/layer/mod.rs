@@ -139,15 +139,16 @@ impl Output {
         if let TranscriptUpdate::Finalized(segment) = &mut update {
             // Matching stays within one segment. A phrase split across
             // segments would need bounded holdback.
-            apply(layers, &mut segment.text, cancel)?;
-            segment.text = segment.text.trim().to_owned();
-            if segment.text.is_empty() {
+            let mut text = segment.as_str().to_owned();
+            apply(layers, &mut text, cancel)?;
+            segment.rewrite(text.trim().to_owned());
+            if segment.as_str().is_empty() {
                 return Ok(());
             }
             if !self.text.is_empty() {
                 self.text.push(' ');
             }
-            self.text.push_str(&segment.text);
+            self.text.push_str(segment.as_str());
         }
         self.pending.push_back(update);
         Ok(())

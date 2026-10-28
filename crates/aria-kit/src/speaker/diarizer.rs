@@ -6,6 +6,10 @@ use super::{AnonymousNumbering, Embedder, Label, Profile, Role, SpeakerError, Sp
 
 /// Minimum similarity for claiming an enrolled name.
 pub const ENROLLED_THRESHOLD: f32 = 0.5;
+/// The owner's voice passes at this similarity: below the naming bar,
+/// so a short turn can pass. On two test voices, the owner's 1.5–3 s
+/// turns scored 0.29–0.56; another voice scored 0.18–0.21.
+pub const OWN_VOICE_THRESHOLD: f32 = 0.35;
 /// Similarity threshold for anonymous clusters; short audio windows need a lower gate.
 pub const CLUSTER_THRESHOLD: f32 = 0.21;
 /// Similarity advantage required to switch anonymous speakers.
@@ -70,15 +74,18 @@ impl<E: Embedder> Diarizer<E> {
             .count()
     }
 
-    /// The enrolled profile nearest this embedding, and how near, as a
-    /// cosine. The caller sets the bar it must clear.
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub(super) fn closest_enrolled(&self, embedding: &[f32]) -> Option<(&Profile, f32)> {
-        closest(
+    pub(super) fn matched_profile(&self, embedding: &[f32]) -> Option<&Profile> {
+        let (profile, similarity) = closest(
             self.enrolled
                 .iter()
                 .map(|profile| (profile, dot(&profile.vector, embedding))),
-        )
+        )?;
+        let bar = match profile.role {
+            Role::Owner => OWN_VOICE_THRESHOLD,
+            Role::Guest => ENROLLED_THRESHOLD,
+        };
+        (similarity >= bar).then_some(profile)
     }
 
     /// How close this voice comes to the nearest profile the machine's owner

@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::Layered;
 use aria_kit::voice_activity::SileroVad;
 
 use super::super::capture::{CaptureBackend, PreparedCapture};
@@ -20,9 +19,10 @@ use crate::config::{
 };
 use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
-    CleanupError, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
-    DictationExecutor, DictationPipeline, DictationPolicy, DictationPolicyError, DictationResult,
-    DictationSettings, ExecutionControl, LlmCleanup, Transcribed,
+    CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
+    DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
+    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
+    Transcribed,
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
@@ -34,6 +34,7 @@ use crate::vocabulary::{Directory, Vocabulary};
 use super::super::transcripts::{History, TranscriptStore};
 use super::model_load::ModelLoad;
 
+use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_stt::EngineConfig;
 use aria_stt::moonshine::{Moonshine, MoonshineConfig};
@@ -52,12 +53,19 @@ pub(super) type RuntimeExecutor = Box<dyn DictationExecutor>;
 /// The sinks a dictation publishes to, in order: history, then the cursor,
 /// so a transcript the app refuses is still on record.
 type Sinks = (History, Cursor<PlatformTextDelivery>);
-type CompletionLayers = Layered<Option<LlmCleanup>, ()>;
 
 struct EngineExecution<T: Transcriber, M: Mode> {
     engine: &'static str,
-    pipeline:
-        DictationPipeline<Arc<CaptureBackend>, T, M, WeSpeaker, SileroVad, Sinks, CompletionLayers>,
+    pipeline: DictationPipeline<
+        Arc<CaptureBackend>,
+        SileroVad,
+        WeSpeaker,
+        Pyannote,
+        T,
+        M,
+        ConfiguredLayers,
+        Sinks,
+    >,
     wake: Option<WakeWordControl>,
     /// Read before every press: a voice enrolled since the daemon started
     /// must be recognized without restarting it.
@@ -116,18 +124,15 @@ where
         project: Option<&Directory>,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
-        let (transcript, served_by) = self.prepared(project, |vocabulary| {
+        self.prepared(project, |vocabulary| {
             self.pipeline.transcribe(
                 recording,
                 language,
                 own_voice_only,
                 Some(vocabulary),
+                self.engine,
                 cancel,
             )
-        })?;
-        Ok(Transcribed {
-            transcript,
-            engine: served_by.unwrap_or(self.engine),
         })
     }
 }
@@ -333,9 +338,7 @@ struct ExecutionParts {
     wake: Option<WakeWordControl>,
     speaker: SpeakerConfig,
     vocabulary: Arc<VocabularyRuntime>,
-    cleanup: bool,
-    backtrack: bool,
-    cleanup_llm: Option<LlmCleanup>,
+    rewrites: Rewrites<ConfiguredLayers>,
 }
 
 impl ExecutionParts {
@@ -350,21 +353,20 @@ impl ExecutionParts {
         T: Transcriber,
         M: Mode,
     {
+        let (diarizer, segmenter) = speaker::tracking_models(&self.speaker);
         Box::new(EngineExecution::<T, M> {
             engine,
             pipeline: DictationPipeline::new(
                 self.capture,
                 transcription,
-                speaker::reader(&self.speaker),
                 (
                     History::new(self.transcripts, engine),
                     Cursor::new(self.delivery),
                 ),
             )
-            .cleaning(self.cleanup)
-            .backtracking(self.backtrack)
             .hearing_speech(speaker::speech_gate())
-            .with(self.cleanup_llm),
+            .tracking_voices(diarizer, segmenter)
+            .rewriting(self.rewrites),
             wake: self.wake,
             speaker: self.speaker,
             vocabulary: self.vocabulary,
@@ -391,9 +393,9 @@ pub(super) fn build_dictation(
     loading: ModelLoading,
     microphone: Arc<Gate>,
 ) -> Result<BuiltDictation, DictationInitializationError> {
-    let cleanup_llm = setup
+    let rewrites = setup
         .dictation
-        .cleanup_layer(home)
+        .rewrites(home)
         .map_err(DictationInitializationError::Cleanup)?;
     let DictationSetup {
         dictation:
@@ -401,8 +403,8 @@ pub(super) fn build_dictation(
                 capture,
                 transcription,
                 dictation_timeouts: timeouts,
-                cleanup,
-                backtrack,
+                cleanup: _,
+                backtrack: _,
                 cleanup_llm: _,
             },
         wake,
@@ -427,9 +429,7 @@ pub(super) fn build_dictation(
         wake: wake_control.clone(),
         speaker,
         vocabulary,
-        cleanup,
-        backtrack,
-        cleanup_llm,
+        rewrites,
     });
     Ok(BuiltDictation {
         engine: engine.name,
@@ -458,28 +458,28 @@ pub(super) fn transcribe_retry(
     cancel: &CancelToken,
 ) -> Result<Transcribed, DictationError> {
     let config = &setup.dictation;
-    let cleanup_llm = config
-        .cleanup_layer(&setup.home)
+    let rewrites = config
+        .rewrites(&setup.home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
     let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
-    let pipeline = DictationPipeline::new((), transcription, speaker::reader(&setup.speaker), ())
-        .cleaning(config.cleanup)
-        .backtracking(config.backtrack)
+    let (diarizer, segmenter) = if settings.own_voice_only {
+        speaker::tracking_models(&setup.speaker)
+    } else {
+        (None, None)
+    };
+    let pipeline = DictationPipeline::new((), transcription, ())
         .hearing_speech(speaker::speech_gate())
-        .with(cleanup_llm);
-    pipeline.refresh_enrolled(speaker::enrolled(&setup.speaker));
-    let (transcript, served_by) = pipeline.transcribe(
+        .tracking_voices(diarizer, segmenter)
+        .rewriting(rewrites);
+    pipeline.transcribe(
         recording,
         &settings.recognition_language,
         settings.own_voice_only,
         Some(snapshot.matcher.as_ref()),
+        engine,
         cancel,
-    )?;
-    Ok(Transcribed {
-        transcript,
-        engine: served_by.unwrap_or(engine),
-    })
+    )
 }
 
 /// A retry decodes the stored recording once, so every engine runs whole.

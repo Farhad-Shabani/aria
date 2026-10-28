@@ -368,6 +368,21 @@ impl Recording {
 /// Audio is addressed by stream position — counted from the first sample
 /// capture ever appended — so a position keeps meaning what it meant after a
 /// release moves the window forward.
+/// Wakes a recording's waiting readers, so a reader waiting for audio
+/// notices whatever else it waits for.
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+#[derive(Clone)]
+pub struct RecordingWaker(Arc<Recording>);
+
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+impl RecordingWaker {
+    pub fn wake(&self) {
+        // Taken so a reader between checking and sleeping cannot miss it.
+        drop(self.0.lock());
+        self.0.changed.notify_all();
+    }
+}
+
 pub struct RecordingReader {
     recording: Arc<Recording>,
     samples: Vec<f32>,
@@ -589,6 +604,29 @@ impl RecordingReader {
             .wait_timeout_while(state, timeout, |state| state.ended.is_none())
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.ended.is_some()
+    }
+
+    /// Waits up to `timeout` for audio this reader has not taken, for
+    /// capture to end, or for `stopped`, reading nothing. A stop that rings
+    /// the [`RecordingWaker`] ends the wait at once; one that is only
+    /// polled is seen at the timeout.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub(crate) fn wait_for_audio(&self, timeout: Duration, stopped: impl Fn() -> bool) {
+        let queue = self.queue;
+        let state = self.recording.lock();
+        let _ = self
+            .recording
+            .changed
+            .wait_timeout_while(state, timeout, |state| {
+                state.queue(queue).pending.is_empty() && state.ended.is_none() && !stopped()
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+
+    /// Wakes this recording's waiting readers without writing to it.
+    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
+    pub fn waker(&self) -> RecordingWaker {
+        RecordingWaker(Arc::clone(&self.recording))
     }
 
     /// When capture ended. Unlike [`RecordingReader::reached_end`], it does not wait

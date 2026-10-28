@@ -3,10 +3,25 @@ import SwiftUI
 struct Pill: Equatable {
     let state: PillState
     let prompt: String?
-    /// The color of the voice heard; none until one is recognized.
-    let voice: VoiceColor?
+    /// The ring for the voice heard; none until one is recognized.
+    let ring: PillRing?
 
     var label: String? { state.label(prompt: prompt) }
+}
+
+/// What the ring around the pill says about the voice heard.
+enum PillRing: Equatable {
+    /// An enrolled voice, in its own color.
+    case voice(VoiceColor)
+    /// A voice whose words are not typed.
+    case keptOut
+
+    var color: Color? {
+        switch self {
+        case .voice(let color): color.ring
+        case .keptOut: OverlayStyle.keptOutRing
+        }
+    }
 }
 
 /// The ribbon and the bar share one slot, so a press never jumps as the
@@ -45,7 +60,7 @@ struct StatusPillView: View {
         .padding(9)
         .background(OverlayStyle.fill, in: Capsule())
         .overlay {
-            if let ring = pill.voice?.ring {
+            if let ring = pill.ring?.color {
                 Capsule().strokeBorder(ring, lineWidth: OverlayStyle.ringWidth)
             }
         }
