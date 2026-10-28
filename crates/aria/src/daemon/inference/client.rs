@@ -1444,7 +1444,7 @@ mod tests {
         use crate::dictation::testing::Loud;
         use crate::transcription::Transcription;
         use crate::vocabulary::{PersonalRules, Vocabulary};
-        use aria_kit::speaker::{Diarizer, Embedder, SpeakerError, VoiceprintTracker};
+        use aria_kit::speaker::{Diarizer, Embedder, LevelSegmenter, SpeakerError};
 
         struct Voice([f32; 2]);
         impl Embedder for Voice {
@@ -1475,14 +1475,12 @@ mod tests {
                     crate::speaker::Role::Owner,
                     vec![1.0, 0.0],
                 )];
-                let turns = VoiceprintTracker::new(Diarizer::new(Voice(voice), enrolled))
-                    .with_segmenter(aria_kit::speaker::LevelSegmenter)
-                    .unwrap();
+                let diarizer = Diarizer::new(Voice(voice), enrolled);
                 let remote = client.transcriber();
                 let pipeline =
                     DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
-                        .tracking_voices(Some(turns))
+                        .tracking_voices(Some(diarizer), Some(LevelSegmenter))
                         .editing(crate::dictation::TextLayers::new().removing_disfluencies(true));
                 let mut recording = crate::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(

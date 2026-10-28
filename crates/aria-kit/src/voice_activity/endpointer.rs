@@ -76,17 +76,6 @@ impl<V: VoiceActivityDetector> Endpointer<V> {
         }
     }
 
-    /// Forgets the last stream: positions count from zero again.
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub(crate) fn restart(&mut self) {
-        self.vad.reset();
-        self.frame.clear();
-        self.scored_samples = 0;
-        self.speech_samples = 0;
-        self.speaking = false;
-        self.silence_since = None;
-    }
-
     /// Where the open utterance's trailing silence began: `None` while
     /// speech goes on, or outside an utterance.
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]

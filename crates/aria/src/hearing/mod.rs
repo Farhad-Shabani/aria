@@ -94,7 +94,7 @@ pub(crate) struct Decoding<'scope, T> {
 /// capture runs, with no decoder, for a press decoded only once it ends.
 /// Only the owner's words pass, so it returns the timeline to judge them by.
 pub(crate) fn hear_to_end<V, K>(
-    feed: TurnFeed<'_, V, K>,
+    feed: TurnFeed<V, K>,
     recording: &RecordingReader,
     cancel: &CancelToken,
     progress: impl FnMut(&Snapshot) + Send,
@@ -127,7 +127,8 @@ where
 /// Hears a saved recording on the caller's thread, start to end. Returns
 /// the timeline to judge the owner's words by, under owner-only admission.
 pub(crate) fn hear_saved<V: VoiceActivityDetector, K: SpeakerTracker>(
-    mut feed: TurnFeed<'_, V, K>,
+    mut feed: TurnFeed<V, K>,
+    admission: Admission,
     cancel: &CancelToken,
 ) -> Result<Option<Timeline>, HearingError> {
     let stopped = || {
@@ -135,20 +136,24 @@ pub(crate) fn hear_saved<V: VoiceActivityDetector, K: SpeakerTracker>(
             .is_cancelled()
             .then_some(HearingError::Tracking(TrackingError::Cancelled))
     };
+    // Paced in pieces, so a long recording is never scored in one step
+    // between two cancel checks.
     let piece = canonical_samples(turns::PIECE);
-    while feed.spoken_to() < feed.written() {
+    let mut through = feed.held_from();
+    loop {
         if let Some(error) = stopped() {
             return Err(error);
         }
-        let through = feed.written().min(feed.spoken_to() + piece);
-        feed.hear_through(through);
+        through += piece;
+        if !feed.hear_through(through) {
+            break;
+        }
     }
     if let Some(error) = stopped() {
         return Err(error);
     }
     feed.hear_rest();
-    let timeline = feed.voices().map(SpeakerTracker::timeline);
-    Ok(verdict(Some(feed.speech()), timeline, feed.admission())?.cloned())
+    Ok(verdict(Some(feed.speech()), feed.timeline(), admission)?.cloned())
 }
 
 /// How a hearing ends once all of it is heard. A recording without speech
@@ -226,25 +231,24 @@ impl Abandon {
 }
 
 impl<'scope> Hearing<'scope> {
-    /// Starts both threads. `abandon`'s token started the decoder's
-    /// operation. `progress` sees every snapshot the turn thread publishes.
+    /// Starts both threads. `admission` decides which words the gate
+    /// releases. `abandon`'s token started the decoder's operation.
+    /// `progress` sees every snapshot the turn thread publishes.
     pub(crate) fn start<'env, T, V, K>(
         scope: &'scope Scope<'scope, 'env>,
         decoding: Decoding<'scope, T>,
-        feed: Option<TurnFeed<'scope, V, K>>,
+        feed: Option<TurnFeed<V, K>>,
+        admission: Admission,
         abandon: Abandon,
         progress: impl FnMut(&Snapshot) + Send + 'scope,
     ) -> Result<Self, HearingError>
     where
         T: Transcriber,
-        V: VoiceActivityDetector + Send,
-        K: SpeakerTracker + Send,
+        V: VoiceActivityDetector + Send + 'scope,
+        K: SpeakerTracker + Send + 'scope,
     {
         let (wake, woken) = sync_channel(WAKE_CAPACITY);
         let pending = Arc::new(AtomicBool::new(false));
-        let admission = feed
-            .as_ref()
-            .map_or(Admission::Everyone, TurnFeed::admission);
         let from = feed
             .as_ref()
             .map_or(decoding.recording.held_from(), TurnFeed::held_from);
@@ -261,10 +265,9 @@ impl<'scope> Hearing<'scope> {
                     Err(error) if admission == Admission::OwnerOnly => {
                         return Err(HearingError::Tracking(owner_walk_failed(error)));
                     }
-                    // Naming is a courtesy, and the speech check fails open:
-                    // words whose voices cannot be heard still go out.
+                    // The speech check fails open: every word still goes out.
                     Err(error) => {
-                        tracing::warn!(%error, "the turn thread did not start; voices go unnamed");
+                        tracing::warn!(%error, "the turn thread did not start; speech goes unchecked");
                         None
                     }
                 }
@@ -465,7 +468,7 @@ mod tests {
 
     use super::*;
     use crate::dictation::testing::{Loud, Operations};
-    use crate::speaker::testing::{OWN, Voice, tracker};
+    use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
     use crate::transcription::{Language, Streaming, Transcription};
 
     const SECOND: u64 = 16_000;
@@ -506,16 +509,10 @@ mod tests {
         let transcription = Transcription::<_, Streaming>::delegated(stalling(waiting));
         let (mut recording, mut writer) = Recording::open();
         writer.push(&[0.5; 3 * SECOND as usize]);
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
         let abandon = Abandon::linked(|| false);
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         let operation = transcription
             .start_with(&Language::Automatic, abandon.token())
             .unwrap();
@@ -530,6 +527,7 @@ mod tests {
                     previews: false,
                 },
                 Some(feed),
+                Admission::OwnerOnly,
                 abandon,
                 |_: &Snapshot| {},
             )
@@ -574,14 +572,9 @@ mod tests {
             let transcription = Transcription::<_, Streaming>::delegated(breaking);
             let (mut recording, mut writer) = Recording::open();
             writer.push(&[0.5; SECOND as usize]);
-            let mut speech = SpeechDetector::new(Loud);
-            let feed = TurnFeed::start(
-                &mut speech,
-                None::<&mut VoiceprintTracker<Voice>>,
-                &mut recording,
-                Admission::Everyone,
-            )
-            .unwrap();
+            let speech = SpeechDetector::new(Loud, 0);
+            let feed =
+                TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
             let abandon = Abandon::linked(|| false);
             let operation = transcription
                 .start_with(&Language::Automatic, abandon.token())
@@ -597,6 +590,7 @@ mod tests {
                         previews: false,
                     },
                     Some(feed),
+                    Admission::Everyone,
                     abandon,
                     |_: &Snapshot| {},
                 )
@@ -634,24 +628,17 @@ mod tests {
         for (audio, spoke) in [(silent, false), (spoken_later, true)] {
             for saved in [true, false] {
                 let mut recording = RecordingReader::from_samples(&audio);
-                let mut speech = SpeechDetector::new(Loud);
-                let mut voices = tracker(Voice(OWN));
-                let feed = TurnFeed::start(
-                    &mut speech,
-                    Some(&mut voices),
-                    &mut recording,
-                    Admission::OwnerOnly,
-                )
-                .unwrap();
+                let speech = SpeechDetector::new(Loud, 0);
+                let mut diarizer = diarizer(Voice(OWN));
+                let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
                 let cancel = CancelToken::never();
 
                 let heard = if saved {
-                    hear_saved(feed, &cancel).map(drop)
+                    hear_saved(feed, Admission::OwnerOnly, &cancel).map(drop)
                 } else {
                     hear_to_end(feed, &recording, &cancel, |_: &Snapshot| {}).map(drop)
                 };
 
-                assert!(voices.timeline().is_broken(), "spoke={spoke} saved={saved}");
                 if spoke {
                     assert!(
                         matches!(heard, Err(HearingError::Tracking(TrackingError::Failed))),

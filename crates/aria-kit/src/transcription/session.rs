@@ -17,7 +17,14 @@ use crate::audio::Stopper;
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 use crate::audio::{Microphone, RecordingMode};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-use crate::speaker::{Admission, Gate, Released, SpeakerTracker, Timeline, TurnFeed};
+use crate::primitives::error_chain;
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+use crate::segmentation::Segmenter;
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+use crate::speaker::{
+    Admission, Diarizer, Embedder, Gate, Released, SpeakerTracker, Timeline, TurnFeed,
+    VoiceprintTracker,
+};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 use crate::voice_activity::{SpeechDetector, VoiceActivityDetector};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
@@ -109,39 +116,26 @@ impl<'a, T: Transcriber, L: Layer> Session<'a, T, Streaming, L> {
         self.operation.next_finalized(&mut self.recording)
     }
 
-    /// The same session, with each segment named after the enrolled voice
-    /// heard in it. `speech` finds where anyone spoke, and `voices` says
-    /// who. Call before reading the first segment.
+    /// The same session, keeping only the owner's words. `vad` finds where
+    /// anyone spoke, `diarizer` whose voice it was, and `segmenter` the
+    /// speaker changes. Call before reading the first segment.
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub fn hearing<V: VoiceActivityDetector, K: SpeakerTracker>(
-        self,
-        speech: &'a mut SpeechDetector<V>,
-        voices: &'a mut K,
-    ) -> Result<HeardSession<'a, T, V, K, L>, TranscriptionError> {
-        self.heard(speech, voices, Admission::Everyone)
-    }
-
-    /// The same session, keeping only the owner's words. Call before reading
-    /// the first segment.
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub fn only_own_voice<V: VoiceActivityDetector, K: SpeakerTracker>(
-        self,
-        speech: &'a mut SpeechDetector<V>,
-        voices: &'a mut K,
-    ) -> Result<HeardSession<'a, T, V, K, L>, TranscriptionError> {
-        self.heard(speech, voices, Admission::OwnerOnly)
-    }
-
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    fn heard<V: VoiceActivityDetector, K: SpeakerTracker>(
+    pub fn only_own_voice<V: VoiceActivityDetector, E: Embedder, G: Segmenter>(
         mut self,
-        speech: &'a mut SpeechDetector<V>,
-        voices: &'a mut K,
-        admission: Admission,
-    ) -> Result<HeardSession<'a, T, V, K, L>, TranscriptionError> {
-        let feed = TurnFeed::start(speech, Some(voices), &mut self.recording, admission)?;
+        vad: V,
+        diarizer: &'a mut Diarizer<E>,
+        segmenter: G,
+    ) -> Result<HeardSession<'a, T, V, VoiceprintTracker<'a, E, G>, L>, TranscriptionError> {
+        let from = self.recording.held_from();
+        let speech = SpeechDetector::new(vad, from);
+        let tracker =
+            VoiceprintTracker::owner_only(diarizer, segmenter, from).map_err(|error| {
+                tracing::warn!(error = %error_chain(&error), "own-voice filtering is unavailable");
+                TranscriptionError::SpeakerTracking
+            })?;
+        let feed = TurnFeed::start(&mut self.recording, speech, Some(tracker));
         Ok(HeardSession {
-            gate: Gate::new(admission, feed.held_from()),
+            gate: Gate::new(Admission::OwnerOnly, feed.held_from()),
             session: self,
             feed,
             released: VecDeque::new(),
@@ -151,19 +145,17 @@ impl<'a, T: Transcriber, L: Layer> Session<'a, T, Streaming, L> {
     }
 }
 
-/// A streaming session that names the enrolled voice in each segment. It
-/// can also keep only the owner's words. Voices are judged on the caller's
-/// thread, as each segment is read.
+/// A streaming session that keeps only the owner's words. Voices are
+/// judged on the caller's thread, as each segment is read.
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 pub struct HeardSession<'a, T, V, K, L = ()> {
     session: Session<'a, T, Streaming, L>,
-    feed: TurnFeed<'a, V, K>,
+    feed: TurnFeed<V, K>,
     gate: Gate,
     /// Segments the gate let through, not yet handed out.
     released: VecDeque<Released>,
     decoded: bool,
-    /// What was handed out, for the transcript of a session that keeps
-    /// strangers out.
+    /// What was handed out, for the transcript.
     kept: Vec<String>,
 }
 
@@ -172,12 +164,12 @@ impl<T: Transcriber, V: VoiceActivityDetector, K: SpeakerTracker, L: Layer>
     HeardSession<'_, T, V, K, L>
 {
     /// The next finalized segment and the enrolled voice it was heard in,
-    /// or `None` once the input has ended and the tail is delivered. A
-    /// session that keeps other voices out holds each word until its turn is
-    /// decided, then hands out the owner's and those too short to tell.
+    /// or `None` once the input has ended and the tail is delivered. Each
+    /// word waits until its turn is decided, then the owner's and those too
+    /// short to tell are handed out.
     pub fn next_heard(&mut self) -> Result<Option<Released>, TranscriptionError> {
         loop {
-            self.check_tracking()?;
+            unbroken_timeline(&self.feed)?;
             if let Some(released) = self.released.pop_front() {
                 self.kept.push(released.heard.segment.as_str().to_owned());
                 return Ok(Some(released));
@@ -196,44 +188,31 @@ impl<T: Transcriber, V: VoiceActivityDetector, K: SpeakerTracker, L: Layer>
                     self.decoded = true;
                 }
             }
-            self.check_tracking()?;
-            let unheard = Timeline::default();
-            let timeline = self
-                .feed
-                .voices()
-                .map_or(&unheard, SpeakerTracker::timeline);
-            let decision = self.gate.decide(timeline);
+            let decision = self.gate.decide(unbroken_timeline(&self.feed)?);
             self.released.extend(decision.released);
         }
     }
 
-    /// A session that types every voice goes on without tracking. One that
-    /// keeps other voices out cannot tell whose words to drop.
-    fn check_tracking(&self) -> Result<(), TranscriptionError> {
-        let owner_only = self.gate.admission() == Admission::OwnerOnly;
-        if owner_only
-            && self
-                .feed
-                .voices()
-                .is_some_and(|voices| voices.timeline().is_broken())
-        {
-            return Err(TranscriptionError::SpeakerTracking);
-        }
-        Ok(())
-    }
-
-    /// The completed transcript. A session that keeps strangers out answers
-    /// with what it kept, and [`TranscriptionError::NoSpeech`] when that is
-    /// nothing.
+    /// The completed transcript: what was kept, and
+    /// [`TranscriptionError::NoSpeech`] when that is nothing.
     pub fn finish(mut self) -> Result<Transcript, TranscriptionError> {
-        if self.gate.admission() != Admission::OwnerOnly {
-            return self.session.finish();
-        }
         if let Some(stopper) = &self.session.stopper {
             stopper.stop();
         }
         while self.next_heard()?.is_some() {}
         Transcript::new(self.kept.join(" "))
+    }
+}
+
+/// The timeline to decide words by. Once it breaks, nobody can tell whose
+/// words to drop.
+#[cfg(all(feature = "silero", not(target_family = "wasm")))]
+fn unbroken_timeline<V: VoiceActivityDetector, K: SpeakerTracker>(
+    feed: &TurnFeed<V, K>,
+) -> Result<&Timeline, TranscriptionError> {
+    match feed.timeline() {
+        Some(timeline) if !timeline.is_broken() => Ok(timeline),
+        _ => Err(TranscriptionError::SpeakerTracking),
     }
 }
 
@@ -362,15 +341,16 @@ mod tests {
             recording: Option<RecordingReader>,
             transcription: Transcription<T, Streaming>,
             language: Language,
-            speech: SpeechDetector<V>,
-            voices: VoiceprintTracker<E, LevelSegmenter>,
+            vad: V,
+            diarizer: Diarizer<E>,
+            segmenter: LevelSegmenter,
         }
 
         impl<T: Transcriber, V: VoiceActivityDetector, E: Embedder> Harness<T, V, E> {
             fn new(
                 (directory, recording): (tempfile::TempDir, RecordingReader),
                 transcription: Transcription<T, Streaming>,
-                speech: V,
+                vad: V,
                 voice: E,
                 profiles: Vec<Profile>,
             ) -> Self {
@@ -379,22 +359,24 @@ mod tests {
                     recording: Some(recording),
                     transcription,
                     language: Language::Automatic,
-                    speech: SpeechDetector::new(speech),
-                    voices: VoiceprintTracker::new(Diarizer::new(voice, profiles))
-                        .with_segmenter(LevelSegmenter)
-                        .expect("the segmenter starts"),
+                    vad,
+                    diarizer: Diarizer::new(voice, profiles),
+                    segmenter: LevelSegmenter,
                 }
             }
 
             fn only_own_voice(
                 &mut self,
             ) -> Result<
-                HeardSession<'_, T, V, VoiceprintTracker<E, LevelSegmenter>>,
+                HeardSession<'_, T, &mut V, VoiceprintTracker<'_, E, &mut LevelSegmenter>>,
                 TranscriptionError,
             > {
                 let recording = self.recording.take().expect("one session per harness");
-                Session::over(&self.transcription, &self.language, recording)?
-                    .only_own_voice(&mut self.speech, &mut self.voices)
+                Session::over(&self.transcription, &self.language, recording)?.only_own_voice(
+                    &mut self.vad,
+                    &mut self.diarizer,
+                    &mut self.segmenter,
+                )
             }
         }
 

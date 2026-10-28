@@ -1,12 +1,12 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use super::{Admission, Judgment, NamedTurn, SpeakerTracker, Timeline, Turn};
+use super::{Judgment, NamedTurn, SpeakerTracker, Timeline, Turn};
 use crate::audio::canonical_samples;
 use crate::primitives::error_chain;
 use crate::segmentation::{Activity, ChunkShape, SegmentationError, Segmenter};
 use crate::speaker::changes::{Continuity, Evidence};
-use crate::speaker::{Diarizer, Embedder, OWN_VOICE_THRESHOLD, Profile, Role, SpeakerName};
+use crate::speaker::{Diarizer, Embedder, OWN_VOICE_THRESHOLD, Role, SpeakerName};
 use crate::voice_activity::{LEAD_IN_FRAMES, SpeechMap};
 
 #[cfg(test)]
@@ -34,11 +34,12 @@ const STABLE_THRESHOLD: f32 = 0.45;
 /// 0.32 or less.
 const SPEAKER_CHANGE_THRESHOLD: f32 = 0.3;
 
-/// Cuts a recording into turns and judges each one. `E` scores whose voice
-/// a window is. `S`, once given, checks a speaker change inside a turn,
-/// which owner-only admission needs.
-pub struct VoiceprintTracker<E, S = NoSegmenter> {
-    voices: Diarizer<E>,
+/// Cuts one recording into turns and judges each one. The diarizer scores
+/// whose voice a window is. The segmenter, when there is one, checks a
+/// speaker change inside a turn before the turn splits, which owner-only
+/// admission needs.
+pub struct VoiceprintTracker<'a, E, G = NoSegmenter> {
+    diarizer: &'a mut Diarizer<E>,
     /// The speech map's frame size, taken from the map heard last.
     frame_samples: usize,
     /// What the speech map said about the frame being heard.
@@ -50,8 +51,7 @@ pub struct VoiceprintTracker<E, S = NoSegmenter> {
     lead_in: Vec<f32>,
     timeline: Timeline,
     open: Option<OpenTurn>,
-    admission: Admission,
-    continuity: Option<Continuity<S>>,
+    continuity: Option<Continuity<G>>,
 }
 
 /// What the speech map said about a frame, once it was scored.
@@ -109,6 +109,15 @@ impl OpenTurn {
     }
 }
 
+/// Why no tracker can admit only the owner's words.
+#[derive(Debug, thiserror::Error)]
+pub enum OwnerTrackingError {
+    #[error("no owner is enrolled")]
+    NoOwner,
+    #[error("the segmenter cannot check speaker changes")]
+    Segmenter(#[source] SegmentationError),
+}
+
 /// The segmenter of a tracker that never checks a speaker change, so it can
 /// name voices but not admit only the owner. Nothing can build one.
 pub enum NoSegmenter {}
@@ -123,50 +132,48 @@ impl Segmenter for NoSegmenter {
     }
 }
 
-impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
-    pub fn new(voices: Diarizer<E>) -> Self {
-        Self {
-            voices,
+impl<'a, E: Embedder, G: Segmenter> VoiceprintTracker<'a, E, G> {
+    /// A tracker for one recording. The first sample heard sits at `at`.
+    pub fn new(
+        diarizer: &'a mut Diarizer<E>,
+        segmenter: Option<G>,
+        at: u64,
+    ) -> Result<Self, SegmentationError> {
+        let continuity = match segmenter {
+            Some(segmenter) => Some(Continuity::new(segmenter, at)?),
+            None => None,
+        };
+        Ok(Self {
+            diarizer,
             frame_samples: 0,
             scored: FrameSpeech::default(),
             rejoin: false,
             frame: Vec::new(),
             lead_in: Vec::new(),
-            timeline: Timeline::default(),
+            timeline: Timeline {
+                reached: at,
+                ..Timeline::default()
+            },
             open: None,
-            admission: Admission::Everyone,
-            continuity: None,
+            continuity,
+        })
+    }
+
+    /// A tracker that can admit only the owner's words: it needs an
+    /// enrolled owner, and a segmenter to check speaker changes.
+    pub fn owner_only(
+        diarizer: &'a mut Diarizer<E>,
+        segmenter: G,
+        at: u64,
+    ) -> Result<Self, OwnerTrackingError> {
+        if diarizer.owners() == 0 {
+            return Err(OwnerTrackingError::NoOwner);
         }
-    }
-
-    pub fn with_segmenter(mut self, segmenter: S) -> Result<Self, SegmentationError> {
-        self.continuity = Some(Continuity::new(segmenter)?);
-        Ok(self)
-    }
-
-    fn can_filter(&self) -> bool {
-        self.voices.owners() > 0 && self.continuity.is_some()
+        Self::new(diarizer, Some(segmenter), at).map_err(OwnerTrackingError::Segmenter)
     }
 
     pub fn timeline(&self) -> &Timeline {
         &self.timeline
-    }
-
-    /// Forgets the last recording. Positions count from `at`, where the next
-    /// push starts in the new recording's stream.
-    fn restart(&mut self, at: u64) {
-        self.scored = FrameSpeech::default();
-        self.rejoin = false;
-        self.frame.clear();
-        self.lead_in.clear();
-        self.timeline = Timeline {
-            reached: at,
-            ..Timeline::default()
-        };
-        self.open = None;
-        if let Some(continuity) = &mut self.continuity {
-            continuity.restart(at);
-        }
     }
 
     /// Where the next pushed sample lands in the stream.
@@ -272,8 +279,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
             });
             let (now, rest) = samples.split_at(room.min(samples.len()));
             samples = rest;
-            if self.admission == Admission::OwnerOnly
-                && let Some(continuity) = &mut self.continuity
+            if let Some(continuity) = &mut self.continuity
                 && let Err(error) = continuity.push(self.timeline.reached, now)
             {
                 tracing::warn!(error = %error_chain(&error), "voice continuity could not retain audio");
@@ -349,8 +355,8 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
     /// Opens a turn a few frames before the frame that called it speech, as
     /// the microphone does, so a soft onset is not cut off.
     fn open_turn(&mut self, at: u64) {
-        // The lead-in holds only audio heard since the last turn, a restart,
-        // or a skip, so the turn cannot reach back past any of them.
+        // The lead-in holds only audio heard since the last turn or a skip,
+        // so the turn cannot reach back past either.
         let audio = std::mem::take(&mut self.lead_in);
         let start = at.saturating_sub(audio.len() as u64);
         self.timeline.turns.push(Turn {
@@ -386,7 +392,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
         if let Some(open) = self.open.take()
             && let Some(turn) = self.timeline.turns.last_mut()
             && turn.judgment == Judgment::Pending
-            && let Some(judgment) = open.verdict(turn_length(turn), true, self.voices.owners())
+            && let Some(judgment) = open.verdict(turn_length(turn), true, self.diarizer.owners())
         {
             turn.judgment = judgment;
         }
@@ -426,7 +432,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
             .position()
             .saturating_sub(silence.min(open.audio.len()) as u64);
         let input = input_end.saturating_sub(spoken.len() as u64)..input_end;
-        let voice = score(&mut self.voices, &mut self.timeline, spoken);
+        let voice = score(self.diarizer, &mut self.timeline, spoken);
         let score = voice.as_ref().and_then(|voice| voice.owner);
         let matched_guest = voice
             .as_ref()
@@ -438,7 +444,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
         open.scored |= score.is_some();
         open.doubted |= matched_guest
             || score.is_some_and(|score| !score.is_finite() || score < SPEAKER_CHANGE_THRESHOLD);
-        let verdict = open.verdict(length, closing, self.voices.owners());
+        let verdict = open.verdict(length, closing, self.diarizer.owners());
         if let Some(voice) = voice {
             self.name(&voice.embedding);
         }
@@ -472,7 +478,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
         let recent = tail(voiced, RECENT_SAMPLES);
         let voiced_len = voiced.len();
         let recent_len = recent.len();
-        let Some(voice) = score(&mut self.voices, &mut self.timeline, recent) else {
+        let Some(voice) = score(self.diarizer, &mut self.timeline, recent) else {
             return;
         };
         let similarity = voice.owner;
@@ -520,7 +526,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
                 };
                 let voiced = spoken(&open.audio, silence);
                 let newest = tail(voiced, CHECK_EVERY_SAMPLES);
-                if let Some(newest_voice) = score(&mut self.voices, &mut self.timeline, newest)
+                if let Some(newest_voice) = score(self.diarizer, &mut self.timeline, newest)
                     && newest_voice
                         .owner
                         .is_some_and(|score| score >= OWN_VOICE_THRESHOLD)
@@ -537,7 +543,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
     }
 
     fn propose_owner(&mut self, from: usize, silence: usize, similarity: Option<f32>) {
-        if self.admission != Admission::OwnerOnly {
+        if self.continuity.is_none() {
             self.split(from, Judgment::Owner, similarity);
             return;
         }
@@ -592,7 +598,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
         let Some(open) = self.open.as_mut() else {
             return;
         };
-        if let Some(judgment) = open.verdict(length, closing, self.voices.owners())
+        if let Some(judgment) = open.verdict(length, closing, self.diarizer.owners())
             && let Some(turn) = self.timeline.turns.last_mut()
         {
             turn.judgment = judgment;
@@ -662,7 +668,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
                 return None;
             }
         };
-        score(&mut self.voices, &mut self.timeline, audio)
+        score(self.diarizer, &mut self.timeline, audio)
     }
 
     fn apply_change(&mut self, judgment: Judgment, range: Range<u64>, voice: Scored) {
@@ -737,7 +743,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
         }
         if let Some(voice) = crate::speaker::normalized(open.embedding.clone()) {
             turn.name = self
-                .voices
+                .diarizer
                 .matched_profile(&voice)
                 .map(|profile| profile.name.clone());
         }
@@ -785,7 +791,7 @@ impl<E: Embedder, S: Segmenter> VoiceprintTracker<E, S> {
             if voiced.len().saturating_sub(index) < CHECK_EVERY_SAMPLES {
                 continue;
             }
-            let Some(voice) = score(&mut self.voices, &mut self.timeline, &voiced[index..]) else {
+            let Some(voice) = score(self.diarizer, &mut self.timeline, &voiced[index..]) else {
                 break;
             };
             let Some(similarity) = voice
@@ -854,14 +860,14 @@ struct Scored {
 }
 
 fn score<E: Embedder>(
-    voices: &mut Diarizer<E>,
+    diarizer: &mut Diarizer<E>,
     timeline: &mut Timeline,
     audio: &[f32],
 ) -> Option<Scored> {
     if timeline.broken {
         return None;
     }
-    let voice = match voices.embed(audio) {
+    let voice = match diarizer.embed(audio) {
         Ok(voice) => voice?,
         Err(error) => {
             tracing::warn!(error = %error_chain(&error), "the voice timeline could not score audio");
@@ -869,34 +875,18 @@ fn score<E: Embedder>(
             return None;
         }
     };
-    let profile = voices.matched_profile(&voice);
+    let profile = diarizer.matched_profile(&voice);
     Some(Scored {
-        owner: voices.owner_similarity(&voice),
+        owner: diarizer.owner_similarity(&voice),
         name: profile.map(|profile| profile.name.clone()),
         matched_role: profile.map(|profile| profile.role),
         embedding: voice,
     })
 }
 
-impl<E, S> super::sealed::Sealed for VoiceprintTracker<E, S> {}
+impl<E, G> super::sealed::Sealed for VoiceprintTracker<'_, E, G> {}
 
-impl<E: Embedder, S: Segmenter> SpeakerTracker for VoiceprintTracker<E, S> {
-    fn serves(&self, admission: Admission) -> bool {
-        match admission {
-            Admission::OwnerOnly => self.can_filter(),
-            Admission::Everyone => self.voices.knows_anyone(),
-        }
-    }
-
-    fn enroll(&mut self, profiles: Vec<Profile>) {
-        self.voices.set_enrolled(profiles);
-    }
-
-    fn restart(&mut self, at: u64, admission: Admission) {
-        Self::restart(self, at);
-        self.admission = admission;
-    }
-
+impl<E: Embedder, G: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, G> {
     fn heard_to(&self) -> u64 {
         self.position() + self.frame.len() as u64
     }

@@ -48,8 +48,8 @@ pub use profile::{Profile, Role, SpeakerName, SpeakerNameError};
 pub use store::{ProfileError, ProfileStore, Replace, StoredProfiles};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 pub use turns::{
-    Admission, Decision, Gate, NoSegmenter, Released, Speaker, SpeakerTracker, Timeline, TurnFeed,
-    VoiceprintTracker,
+    Admission, Ahead, Decision, Gate, NoSegmenter, OwnerTrackingError, Released, Speaker,
+    SpeakerTracker, Timeline, TurnFeed, VoiceprintTracker,
 };
 pub use voices::{
     Chunk, Grouping, Merged, PyannoteVoices, Revision, Spoken, Standing, Voiceprint, Voices,

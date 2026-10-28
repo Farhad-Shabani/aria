@@ -20,7 +20,8 @@ pub(super) struct Continuity<S> {
 }
 
 impl<S: Segmenter> Continuity<S> {
-    pub(super) fn new(segmenter: S) -> Result<Self, SegmentationError> {
+    /// The first sample pushed sits at `from`.
+    pub(super) fn new(segmenter: S, from: u64) -> Result<Self, SegmentationError> {
         let shape = segmenter.shape();
         if shape.frame_shift == 0
             || shape.frame_size < shape.frame_shift
@@ -32,7 +33,7 @@ impl<S: Segmenter> Continuity<S> {
         Ok(Self {
             segmenter,
             shape,
-            from: 0,
+            from,
             audio: Vec::new(),
         })
     }
@@ -279,7 +280,7 @@ mod tests {
                     .fold(Activity::SILENT, |active, local| active.speaking(*local))
             })
             .collect();
-        let mut continuity = Continuity::new(Fixed { shape, frames }).unwrap();
+        let mut continuity = Continuity::new(Fixed { shape, frames }, 0).unwrap();
         continuity.push(0, &vec![0.2; shape.samples]).unwrap();
         continuity
     }
@@ -385,10 +386,13 @@ mod tests {
             speakers: 3,
         };
         assert!(
-            Continuity::new(Fixed {
-                shape,
-                frames: vec![]
-            })
+            Continuity::new(
+                Fixed {
+                    shape,
+                    frames: vec![]
+                },
+                0
+            )
             .is_err()
         );
         let mut continuity = fixture(&[&[0], &[0], &[0], &[0], &[0], &[0]]);
@@ -400,10 +404,13 @@ mod tests {
             frame_size: 10,
             speakers: 3,
         };
-        let mut malformed = Continuity::new(Fixed {
-            shape,
-            frames: Vec::new(),
-        })
+        let mut malformed = Continuity::new(
+            Fixed {
+                shape,
+                frames: Vec::new(),
+            },
+            0,
+        )
         .unwrap();
         malformed.push(0, &[0.2; 60]).unwrap();
         assert!(malformed.verify(Some(&(0..20)), &(40..60), 30).is_err());

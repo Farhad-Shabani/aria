@@ -1,53 +1,58 @@
-use super::{Admission, SpeakerTracker};
-use crate::audio::{CaptureError, RecordingReader};
+use std::time::Duration;
+
+use super::{SpeakerTracker, Timeline};
+use crate::audio::{CaptureError, RecordingReader, canonical_samples};
 use crate::primitives::error_chain;
-use crate::transcription::TranscriptionError;
 use crate::voice_activity::{SpeechDetector, SpeechMap, VoiceActivityDetector};
 
-/// Feeds a live recording to the speech detector and then to a tracker, on
+/// Feeds one recording to its speech detector and then to its tracker, on
 /// a fork of its own, so turns are cut where the audio pauses, not where a
-/// decoder finalizes. The detector always runs ahead of the tracker.
-pub struct TurnFeed<'a, V, K> {
+/// decoder finalizes. The tracker hears only what the detector has scored.
+pub struct TurnFeed<V, K> {
     audio: RecordingReader,
-    admission: Admission,
+    speech: SpeechDetector<V>,
+    /// Where the next sample handed to the detector sits.
     spoken_to: u64,
-    speech: &'a mut SpeechDetector<V>,
-    voices: Option<&'a mut K>,
+    tracker: Option<K>,
 }
 
-impl<'a, V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<'a, V, K> {
+/// How far [`TurnFeed::hear_ahead`] got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ahead {
+    Heard,
+    /// Nothing was left to hear, so it waited for more.
+    Idle,
+    /// Capture ended, and the detector and any tracker heard all of it.
+    Ended,
+}
+
+impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
     /// Call before anything reads `recording`, so the fork starts where it
-    /// does. Owner-only admission needs a tracker that serves it.
+    /// does. `speech` and `tracker` start where `recording` holds from.
     pub fn start(
-        speech: &'a mut SpeechDetector<V>,
-        mut voices: Option<&'a mut K>,
         recording: &mut RecordingReader,
-        admission: Admission,
-    ) -> Result<Self, TranscriptionError> {
-        if admission == Admission::OwnerOnly
-            && !voices
-                .as_deref()
-                .is_some_and(|voices| voices.serves(admission))
-        {
-            return Err(TranscriptionError::SpeakerTracking);
-        }
+        speech: SpeechDetector<V>,
+        tracker: Option<K>,
+    ) -> Self {
         let audio = recording.fork_window();
         let from = audio.held_from();
-        speech.restart(from);
-        if let Some(voices) = voices.as_deref_mut() {
-            voices.restart(from, admission);
-        }
-        Ok(Self {
+        debug_assert_eq!(
+            speech.map().reached(),
+            from,
+            "the detector starts at the fork"
+        );
+        debug_assert!(
+            tracker
+                .as_ref()
+                .is_none_or(|tracker| tracker.heard_to() == from),
+            "the tracker starts at the fork"
+        );
+        Self {
             audio,
-            admission,
-            spoken_to: from,
             speech,
-            voices,
-        })
-    }
-
-    pub fn admission(&self) -> Admission {
-        self.admission
+            spoken_to: from,
+            tracker,
+        }
     }
 
     /// The first sample the feed still holds: where the recording starts,
@@ -56,77 +61,61 @@ impl<'a, V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<'a, V, K> {
         self.audio.held_from()
     }
 
-    pub fn written(&self) -> u64 {
-        self.audio.written()
-    }
-
-    /// Where the next sample handed to the speech detector sits.
-    pub fn spoken_to(&self) -> u64 {
-        self.spoken_to
-    }
-
-    pub fn capture_ended(&self) -> bool {
-        self.audio.ended_at().is_some()
-    }
-
-    /// Waits up to `timeout` for audio not yet heard, or for capture to end.
-    pub fn wait_for_audio(&self, timeout: std::time::Duration) {
-        self.audio.wait_for_audio(timeout);
-    }
-
     pub fn speech(&self) -> &SpeechMap {
         self.speech.map()
     }
 
-    /// The tracker, while one judges voices.
-    pub fn voices(&self) -> Option<&K> {
-        self.voices.as_deref()
+    /// `None` when no tracker runs.
+    pub fn timeline(&self) -> Option<&Timeline> {
+        self.tracker.as_ref().map(SpeakerTracker::timeline)
     }
 
     /// Stops judging voices. The detector goes on, and the audio only the
     /// tracker still needed is freed.
-    pub fn drop_voices(&mut self) {
-        self.voices = None;
+    pub fn drop_tracker(&mut self) {
+        self.tracker = None;
         self.release();
     }
 
-    /// The detector hears whatever audio has arrived, without waiting.
-    /// What the tracker has not heard yet stays for it.
-    pub fn hear_speech(&mut self) {
+    /// Paced by a decoder: the detector, then the tracker, hear the audio up
+    /// to stream `position`. Words a decoder has read never end past where
+    /// it read, so their turns are cut by then. Returns whether the
+    /// recording reached `position`.
+    pub fn hear_through(&mut self, position: u64) -> bool {
+        let filled = self.audio.fill_through(position);
+        let reached = filled.as_ref().is_ok_and(|reached| *reached);
+        self.speak(filled.map(drop), position);
+        self.track_through(position);
+        reached
+    }
+
+    /// Paced by itself: the detector takes all the audio that has arrived,
+    /// the tracker at most `piece` of it. With nothing new to hear, waits up
+    /// to `piece` for more.
+    pub fn hear_ahead(&mut self, piece: Duration) -> Ahead {
+        let before = self.heard_to();
         let filled = self.audio.fill_available();
         self.speak(filled, u64::MAX);
-        self.release();
-    }
-
-    /// The tracker hears up to stream `position`, but never past the audio
-    /// the detector has had.
-    pub fn hear_voices_through(&mut self, position: u64) {
-        if let Some(voices) = self.voices.as_deref_mut() {
-            let start = voices.heard_to();
-            let end = position.min(self.spoken_to).max(start);
-            voices.hear(self.speech.map(), self.audio.span(start..end));
+        let through = self.tracker.as_ref().map_or(self.spoken_to, |tracker| {
+            tracker.heard_to() + canonical_samples(piece)
+        });
+        self.track_through(through);
+        // Judged by what moved, not by why: a stage that stops hearing, for
+        // whatever reason, cannot keep the feed spinning.
+        if self.heard_to() != before {
+            return Ahead::Heard;
         }
-        self.release();
-    }
-
-    /// The tracker skips the audio before `position`; the detector still
-    /// hears it.
-    pub fn skip_voices_to(&mut self, position: u64) {
-        let filled = self.audio.fill_available();
-        self.speak(filled, position);
-        if let Some(voices) = self.voices.as_deref_mut() {
-            voices.skip_to(self.speech.map(), position.min(self.spoken_to));
+        if self.audio.ended_at().is_some() {
+            return Ahead::Ended;
         }
-        self.release();
+        self.audio.wait_for_audio(piece);
+        Ahead::Idle
     }
 
-    /// The detector, then the tracker, hear the audio up to stream
-    /// `position`. Words a decoder has read never end past where it read,
-    /// so their turns are cut by then.
-    pub fn hear_through(&mut self, position: u64) {
-        let filled = self.audio.fill_through(position).map(drop);
-        self.speak(filled, position);
-        self.hear_voices_through(position);
+    /// Where the detector and the tracker will hear next.
+    fn heard_to(&self) -> (u64, Option<u64>) {
+        let tracked = self.tracker.as_ref().map(SpeakerTracker::heard_to);
+        (self.spoken_to, tracked)
     }
 
     /// Hears the rest of the recording, waiting for capture to end, and
@@ -134,9 +123,9 @@ impl<'a, V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<'a, V, K> {
     pub fn hear_rest(&mut self) {
         let filled = self.audio.fill();
         self.speak(filled, u64::MAX);
-        self.hear_voices_through(u64::MAX);
-        if let Some(voices) = self.voices.as_deref_mut() {
-            voices.finish();
+        self.track_through(u64::MAX);
+        if let Some(tracker) = &mut self.tracker {
+            tracker.finish();
         }
     }
 
@@ -157,12 +146,23 @@ impl<'a, V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<'a, V, K> {
         self.spoken_to = end;
     }
 
+    /// The tracker hears up to stream `position`, but never past the audio
+    /// the detector has had.
+    fn track_through(&mut self, position: u64) {
+        if let Some(tracker) = &mut self.tracker {
+            let start = tracker.heard_to();
+            let end = position.min(self.spoken_to).max(start);
+            tracker.hear(self.speech.map(), self.audio.span(start..end));
+        }
+        self.release();
+    }
+
     /// Frees the audio both the detector and the tracker are done with.
     fn release(&mut self) {
         let heard = self
-            .voices
-            .as_deref()
-            .map_or(self.spoken_to, |voices| voices.heard_to());
+            .tracker
+            .as_ref()
+            .map_or(self.spoken_to, SpeakerTracker::heard_to);
         self.audio.release_before(heard.min(self.spoken_to));
     }
 }

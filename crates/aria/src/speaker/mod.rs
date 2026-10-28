@@ -78,16 +78,17 @@ pub(crate) fn reader(config: &SpeakerConfig) -> SegmentReader<WeSpeaker> {
     SegmentReader::new(SegmentLabeler::new(speech_gate(), diarizer))
 }
 
-pub(crate) fn turns(config: &SpeakerConfig) -> Option<VoiceprintTracker<WeSpeaker, Pyannote>> {
-    let voices = Diarizer::new(embedder(config)?, enrolled(config));
-    let turns = VoiceprintTracker::new(voices);
-    match segmenter(&config.segmentation_model) {
-        Some(segmenter) => turns
-            .with_segmenter(segmenter)
-            .inspect_err(|error| tracing::warn!(%error, "speaker tracking is unavailable"))
-            .ok(),
-        None => Some(turns),
-    }
+/// The models dictation tracks voices with: the diarizer, then the
+/// segmenter. A segmenter only serves a diarizer, so it loads only beside
+/// one.
+pub(crate) fn tracking_models(
+    config: &SpeakerConfig,
+) -> (Option<Diarizer<WeSpeaker>>, Option<Pyannote>) {
+    let Some(embedder) = embedder(config) else {
+        return (None, None);
+    };
+    let diarizer = Diarizer::new(embedder, enrolled(config));
+    (Some(diarizer), segmenter(&config.segmentation_model))
 }
 
 /// The profiles the shipped embedder can compare against. One enrollment

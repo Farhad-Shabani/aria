@@ -7,15 +7,13 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{Scope, ScopedJoinHandle};
 use std::time::Duration;
 
-use aria_kit::audio::canonical_samples;
 use aria_kit::cancel::CancelToken;
-use aria_kit::speaker::{Admission, SpeakerTracker, Timeline, TurnFeed};
+use aria_kit::speaker::{Ahead, SpeakerTracker, Timeline, TurnFeed};
 use aria_kit::voice_activity::{SpeechMap, VoiceActivityDetector};
 
 /// The longest the walk sleeps without new audio, and the most audio the
 /// tracker takes in one step. It is also how soon an abandoned walk notices.
 pub(super) const PIECE: Duration = Duration::from_millis(100);
-const MAX_NAMING_LAG: u64 = canonical_samples(Duration::from_secs(10));
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TrackingError {
@@ -76,22 +74,20 @@ impl<'scope> TurnThread<'scope> {
     /// `readable` runs once it can be read.
     pub(super) fn spawn<'env, V, K>(
         scope: &'scope Scope<'scope, 'env>,
-        feed: TurnFeed<'scope, V, K>,
+        feed: TurnFeed<V, K>,
         cancel: &CancelToken,
         mut progress: impl FnMut(&Snapshot) + Send + 'scope,
         mut readable: impl FnMut() + Send + 'scope,
     ) -> std::io::Result<Self>
     where
-        V: VoiceActivityDetector + Send,
-        K: SpeakerTracker + Send,
+        V: VoiceActivityDetector + Send + 'scope,
+        K: SpeakerTracker + Send + 'scope,
     {
         let shared = Arc::new(Shared {
             published: Mutex::new(Published {
                 snapshot: Snapshot {
                     speech: Arc::new(feed.speech().clone()),
-                    timeline: feed
-                        .voices()
-                        .map(|voices| Arc::new(voices.timeline().clone())),
+                    timeline: feed.timeline().cloned().map(Arc::new),
                 },
                 done: false,
             }),
@@ -246,64 +242,45 @@ impl Drop for Done<'_> {
 }
 
 fn walk<V: VoiceActivityDetector, K: SpeakerTracker>(
-    mut feed: TurnFeed<'_, V, K>,
+    mut feed: TurnFeed<V, K>,
     shared: &Shared,
     cancel: &CancelToken,
     progress: &mut impl FnMut(&Snapshot),
     readable: &mut impl FnMut(),
 ) {
-    let admission = feed.admission();
     loop {
         if shared.abandoned.load(Ordering::Relaxed) || cancel.is_cancelled() {
             return;
         }
-        if shared.untracked.load(Ordering::Relaxed) && feed.voices().is_some() {
-            feed.drop_voices();
+        if shared.untracked.load(Ordering::Relaxed) {
+            feed.drop_tracker();
         }
-        let tracking_behind = feed
-            .voices()
-            .is_some_and(|voices| voices.heard_to() < feed.spoken_to());
-        if feed.spoken_to() >= feed.written() && !tracking_behind {
-            if feed.capture_ended() {
-                break;
-            }
-            feed.wait_for_audio(PIECE);
-            continue;
-        }
-        feed.hear_speech();
-        if let Some(heard_to) = feed.voices().map(SpeakerTracker::heard_to) {
-            let lag = feed.spoken_to().saturating_sub(heard_to);
-            if admission != Admission::OwnerOnly && lag > MAX_NAMING_LAG {
-                feed.skip_voices_to(feed.spoken_to());
-            }
-            let heard_to = feed.voices().map_or(heard_to, SpeakerTracker::heard_to);
-            let through = feed.spoken_to().min(heard_to + canonical_samples(PIECE));
-            feed.hear_voices_through(through);
+        match feed.hear_ahead(PIECE) {
+            Ahead::Heard => {}
+            Ahead::Idle => continue,
+            Ahead::Ended => break,
         }
         publish(shared, &feed, progress, readable);
-        if feed
-            .voices()
-            .is_some_and(|voices| voices.timeline().is_broken())
-        {
-            // Nothing more can be judged or named, but the speech map still
-            // decides whether anything was said.
-            feed.drop_voices();
+        if feed.timeline().is_some_and(Timeline::is_broken) {
+            // Nothing more can be judged, but the speech map still decides
+            // whether anything was said.
+            feed.drop_tracker();
         }
     }
     feed.hear_rest();
     publish(shared, &feed, progress, readable);
 }
 
-/// Publishes what was heard. Once voices are dropped, the last timeline
-/// stands.
+/// Publishes what was heard. Once the tracker is dropped, the last
+/// timeline stands.
 fn publish<V: VoiceActivityDetector, K: SpeakerTracker>(
     shared: &Shared,
-    feed: &TurnFeed<'_, V, K>,
+    feed: &TurnFeed<V, K>,
     progress: &mut impl FnMut(&Snapshot),
     readable: &mut impl FnMut(),
 ) {
-    let timeline = match feed.voices() {
-        Some(voices) => Some(Arc::new(voices.timeline().clone())),
+    let timeline = match feed.timeline() {
+        Some(timeline) => Some(Arc::new(timeline.clone())),
         None => shared.lock().snapshot.timeline.clone(),
     };
     let snapshot = Snapshot {
@@ -325,7 +302,7 @@ mod tests {
 
     use super::*;
     use crate::dictation::testing::Loud;
-    use crate::speaker::testing::{OWN, Voice, tracker};
+    use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
 
     const SECOND: usize = 16_000;
     /// Panics at the first window it embeds.
@@ -365,15 +342,9 @@ mod tests {
         use aria_kit::speaker::Speaker;
 
         let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         let (entered, waiting) = channel();
         let (resume, blocked) = channel();
         let mut announced = false;
@@ -411,14 +382,8 @@ mod tests {
         use std::sync::mpsc::channel;
 
         let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
-        let mut speech = SpeechDetector::new(Loud);
-        let feed = TurnFeed::start(
-            &mut speech,
-            None::<&mut VoiceprintTracker<Voice>>,
-            &mut recording,
-            Admission::Everyone,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let feed = TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
         let (woken, wakes) = channel();
         let (resume, blocked) = channel::<()>();
         let announced = Arc::new(AtomicU64::new(0));
@@ -445,14 +410,8 @@ mod tests {
     #[test]
     fn the_speech_map_runs_ahead_without_a_tracker() {
         let (mut recording, mut writer) = Recording::open();
-        let mut speech = SpeechDetector::new(Loud);
-        let feed = TurnFeed::start(
-            &mut speech,
-            None::<&mut VoiceprintTracker<Voice>>,
-            &mut recording,
-            Admission::Everyone,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let feed = TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
         writer.push(&[0.5; SECOND]);
 
         std::thread::scope(|scope| {
@@ -475,15 +434,9 @@ mod tests {
         audio.extend([0.0; SECOND]);
         audio.extend([0.5; SECOND]);
         let (mut recording, mut writer) = Recording::open();
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
 
         let timeline = std::thread::scope(|scope| {
             let walk =
@@ -496,19 +449,16 @@ mod tests {
             walk.finish().unwrap().timeline.unwrap()
         });
 
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
         let mut recording = RecordingReader::from_samples(&audio);
-        TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
+        let mut feed = TurnFeed::start(
             &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap()
-        .hear_rest();
-        assert!(!voices.timeline().is_broken());
-        let whole = voices.timeline().admitted_audio(&audio, 0);
+            SpeechDetector::new(Loud, 0),
+            Some(tracker(&mut diarizer, 0)),
+        );
+        feed.hear_rest();
+        let whole_pass = feed.timeline().expect("a tracker runs");
+        assert!(!whole_pass.is_broken());
+        let whole = whole_pass.admitted_audio(&audio, 0);
         assert!(!whole.is_empty() && whole.len() < audio.len());
         assert_eq!(timeline.admitted_audio(&audio, 0), whole);
     }
@@ -516,15 +466,9 @@ mod tests {
     #[test]
     fn dropping_the_walk_stops_it_while_capture_runs() {
         let (mut recording, mut writer) = Recording::open();
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         writer.push(&[0.5; SECOND]);
 
         let started = Instant::now();
@@ -541,17 +485,11 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_that_panics_while_naming_leaves_a_broken_map() {
+    fn a_walk_whose_tracker_panics_leaves_a_broken_map() {
         let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Panicking);
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::Everyone,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Panicking);
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
 
         let snapshot = std::thread::scope(|scope| {
             let walk =
@@ -567,15 +505,9 @@ mod tests {
     #[test]
     fn a_walk_that_panics_lets_nothing_more_pass() {
         let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Panicking);
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Panicking);
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
 
         std::thread::scope(|scope| {
             let walk =
@@ -588,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn naming_reports_failure_after_a_voice_was_recognized() {
+    fn tracking_reports_failure_after_a_voice_was_recognized() {
         struct FailingOwner {
             heard: bool,
             panics: bool,
@@ -615,19 +547,13 @@ mod tests {
         }
 
         for panics in [false, true] {
-            let mut voices = tracker(FailingOwner {
+            let mut diarizer = diarizer(FailingOwner {
                 heard: false,
                 panics,
             });
-            let mut speech = SpeechDetector::new(Loud);
+            let speech = SpeechDetector::new(Loud, 0);
             let mut recording = RecordingReader::from_samples(&[0.5; 2 * SECOND]);
-            let feed = TurnFeed::start(
-                &mut speech,
-                Some(&mut voices),
-                &mut recording,
-                Admission::Everyone,
-            )
-            .unwrap();
+            let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
             let mut snapshots = Vec::new();
             std::thread::scope(|scope| {
                 let walk = TurnThread::spawn(
@@ -656,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_keeps_hearing_speech_after_naming_breaks() {
+    fn a_walk_keeps_hearing_speech_after_tracking_breaks() {
         struct Failing;
 
         impl Embedder for Failing {
@@ -673,15 +599,9 @@ mod tests {
         }
 
         let (mut recording, mut writer) = Recording::open();
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Failing);
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::Everyone,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Failing);
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         writer.push(&[0.5; SECOND]);
 
         let snapshot = std::thread::scope(|scope| {
@@ -725,20 +645,14 @@ mod tests {
         let (entered, waiting) = mpsc::channel();
         let (resume, blocked) = mpsc::channel();
         let calls = Arc::new(AtomicUsize::new(0));
-        let mut voices = tracker(BlockedOwner {
+        let mut diarizer = diarizer(BlockedOwner {
             entered,
             resume: blocked,
             calls: Arc::clone(&calls),
         });
-        let mut speech = SpeechDetector::new(Loud);
+        let speech = SpeechDetector::new(Loud, 0);
         let mut recording = RecordingReader::from_samples(&vec![0.5; 5 * SECOND]);
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         std::thread::scope(|scope| {
             let walk =
                 TurnThread::spawn(scope, feed, &CancelToken::never(), |_: &Snapshot| {}, || {})
@@ -754,15 +668,9 @@ mod tests {
     #[test]
     fn cancelling_a_wait_does_not_need_capture_to_end() {
         let (mut recording, _writer) = Recording::open();
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         let cancel = CancelToken::new();
         std::thread::scope(|scope| {
             let walk = TurnThread::spawn(scope, feed, &cancel, |_: &Snapshot| {}, || {}).unwrap();
@@ -776,42 +684,30 @@ mod tests {
     }
 
     #[test]
-    fn naming_skips_excessive_backlog_but_filtering_drains_it() {
+    fn the_tracker_drains_a_backlog_rather_than_skip_it() {
         let audio = vec![0.5; 12 * SECOND];
-        for admission in [Admission::Everyone, Admission::OwnerOnly] {
-            let mut recording = RecordingReader::from_samples(&audio);
-            let mut speech = SpeechDetector::new(Loud);
-            let mut voices = tracker(Voice(OWN));
-            let feed =
-                TurnFeed::start(&mut speech, Some(&mut voices), &mut recording, admission).unwrap();
-            let timeline = std::thread::scope(|scope| {
-                TurnThread::spawn(scope, feed, &CancelToken::never(), |_: &Snapshot| {}, || {})
-                    .unwrap()
-                    .finish()
-                    .unwrap()
-                    .timeline
-                    .unwrap()
-            });
-            assert_eq!(timeline.reached(), audio.len() as u64);
-            assert_eq!(
-                timeline.admitted_audio(&audio, 0).is_empty(),
-                admission == Admission::Everyone
-            );
-        }
+        let mut recording = RecordingReader::from_samples(&audio);
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
+        let timeline = std::thread::scope(|scope| {
+            TurnThread::spawn(scope, feed, &CancelToken::never(), |_: &Snapshot| {}, || {})
+                .unwrap()
+                .finish()
+                .unwrap()
+                .timeline
+                .unwrap()
+        });
+        assert_eq!(timeline.reached(), audio.len() as u64);
+        assert!(!timeline.admitted_audio(&audio, 0).is_empty());
     }
 
     #[test]
     fn an_empty_finished_recording_ends_the_walk() {
         let mut recording = RecordingReader::from_samples(&[]);
-        let mut speech = SpeechDetector::new(Loud);
-        let mut voices = tracker(Voice(OWN));
-        let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
-            &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut diarizer = diarizer(Voice(OWN));
+        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
         std::thread::scope(|scope| {
             let snapshot =
                 TurnThread::spawn(scope, feed, &CancelToken::never(), |_: &Snapshot| {}, || {})

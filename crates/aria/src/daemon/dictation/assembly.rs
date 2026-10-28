@@ -59,7 +59,8 @@ struct EngineExecution<T: Transcriber, M: Mode> {
     pipeline: DictationPipeline<
         Arc<CaptureBackend>,
         SileroVad,
-        speaker::VoiceprintTracker<WeSpeaker, Pyannote>,
+        WeSpeaker,
+        Pyannote,
         T,
         M,
         ConfiguredLayers,
@@ -352,7 +353,7 @@ impl ExecutionParts {
         T: Transcriber,
         M: Mode,
     {
-        let voices = speaker::turns(&self.speaker);
+        let (diarizer, segmenter) = speaker::tracking_models(&self.speaker);
         Box::new(EngineExecution::<T, M> {
             engine,
             pipeline: DictationPipeline::new(
@@ -364,7 +365,7 @@ impl ExecutionParts {
                 ),
             )
             .hearing_speech(speaker::speech_gate())
-            .tracking_voices(voices)
+            .tracking_voices(diarizer, segmenter)
             .editing(self.text),
             wake: self.wake,
             speaker: self.speaker,
@@ -462,14 +463,14 @@ pub(super) fn transcribe_retry(
         .map_err(|error| DictationError::Transcription(error.into()))?;
     let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
+    let (diarizer, segmenter) = if settings.own_voice_only {
+        speaker::tracking_models(&setup.speaker)
+    } else {
+        (None, None)
+    };
     let pipeline = DictationPipeline::new((), transcription, ())
         .hearing_speech(speaker::speech_gate())
-        .tracking_voices(
-            settings
-                .own_voice_only
-                .then(|| speaker::turns(&setup.speaker))
-                .flatten(),
-        )
+        .tracking_voices(diarizer, segmenter)
         .editing(text);
     pipeline.transcribe(
         recording,

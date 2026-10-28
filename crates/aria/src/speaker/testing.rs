@@ -26,10 +26,17 @@ pub(crate) fn alex() -> Vec<Profile> {
     vec![enrolled_voice("alex", Role::Owner, OWN.to_vec())]
 }
 
-/// Turns that `embedder` hears in every window of sound, judged against
-/// [`alex`].
-pub(crate) fn tracker<E: Embedder>(embedder: E) -> VoiceprintTracker<E, LevelSegmenter> {
-    VoiceprintTracker::new(Diarizer::new(embedder, alex()))
-        .with_segmenter(LevelSegmenter)
-        .expect("a level segmenter suits any embedder")
+/// A diarizer that hears `embedder` in every window of sound, with only
+/// [`alex`] enrolled.
+pub(crate) fn diarizer<E: Embedder>(embedder: E) -> Diarizer<E> {
+    Diarizer::new(embedder, alex())
+}
+
+/// The tracker an owner-only press runs, starting at `at`.
+pub(crate) fn tracker<E: Embedder>(
+    diarizer: &mut Diarizer<E>,
+    at: u64,
+) -> VoiceprintTracker<'_, E, LevelSegmenter> {
+    VoiceprintTracker::owner_only(diarizer, LevelSegmenter, at)
+        .expect("alex is the owner, and a level segmenter suits any embedder")
 }

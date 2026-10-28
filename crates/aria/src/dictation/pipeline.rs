@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::speaker::{Admission, Gate, Speaker, SpeakerTracker, Timeline, TurnFeed};
+use aria_kit::segmentation::Segmenter;
+use aria_kit::speaker::Embedder;
+use aria_kit::speaker::{Admission, Gate, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::Layer;
@@ -15,7 +17,7 @@ use crate::hearing::{
     hear_to_end,
 };
 use crate::primitives::error_chain;
-use crate::speaker::{SpeakerName, VoiceprintTracker};
+use crate::speaker::{Diarizer, Profile, SpeakerName, VoiceprintTracker};
 use crate::transcription::{
     Language, Mode, Operation, Transcriber, Transcript, TranscriptSegment, Transcription,
     TranscriptionError,
@@ -33,15 +35,16 @@ use super::{Meter, TextLayers};
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
-/// The parameters follow a press through: capture, speech, voices,
-/// transcription, text layers, sinks.
-pub(crate) struct DictationPipeline<C, V, K, T, M: Mode, L, S> {
+/// The parameters follow a press through: capture, VAD, diarization,
+/// segmentation, transcription, text layers, sinks.
+pub(crate) struct DictationPipeline<C, V, E, G, T, M: Mode, L, S> {
     capture: C,
     /// Finds where anyone spoke. `None` counts every recording as speech.
-    speech: Mutex<Option<SpeechDetector<V>>>,
-    /// Tells whose voice each turn is. `None` names nobody and refuses
-    /// owner-only presses.
-    voices: Mutex<Option<K>>,
+    vad: Mutex<Option<V>>,
+    /// Tells whose voice a turn is. `None` refuses owner-only presses.
+    diarizer: Mutex<Option<Diarizer<E>>>,
+    /// Finds speaker changes. `None` refuses owner-only presses.
+    segmenter: Mutex<Option<G>>,
     transcription: Transcription<T, M>,
     text: TextLayers<L>,
     sinks: Mutex<S>,
@@ -53,15 +56,14 @@ struct Decoded {
     served_by: Option<&'static str>,
 }
 
-impl<C, T, M: Mode, S>
-    DictationPipeline<C, SileroVad, VoiceprintTracker<WeSpeaker, Pyannote>, T, M, (), S>
-{
+impl<C, T, M: Mode, S> DictationPipeline<C, SileroVad, WeSpeaker, Pyannote, T, M, (), S> {
     /// Hears no speech or voices and changes no text until told to.
     pub(crate) fn new(capture: C, transcription: Transcription<T, M>, sinks: S) -> Self {
         Self {
             capture,
-            speech: Mutex::new(None),
-            voices: Mutex::new(None),
+            vad: Mutex::new(None),
+            diarizer: Mutex::new(None),
+            segmenter: Mutex::new(None),
             transcription,
             text: TextLayers::new(),
             sinks: Mutex::new(sinks),
@@ -69,34 +71,37 @@ impl<C, T, M: Mode, S>
     }
 }
 
-impl<C, V, K, T, M: Mode, L, S> DictationPipeline<C, V, K, T, M, L, S> {
-    /// Types no words from a recording until `detector` hears speech in it,
-    /// and gives the tracker where anyone spoke. With `None`, every
-    /// recording counts as speech and no voice is tracked.
+impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
+    /// Types no words from a recording until `vad` hears speech in it, and
+    /// gives the tracker where anyone spoke. With `None`, every recording
+    /// counts as speech and no voice is tracked.
     pub(crate) fn hearing_speech<W: VoiceActivityDetector>(
         self,
-        detector: Option<W>,
-    ) -> DictationPipeline<C, W, K, T, M, L, S> {
+        vad: Option<W>,
+    ) -> DictationPipeline<C, W, E, G, T, M, L, S> {
         DictationPipeline {
             capture: self.capture,
-            speech: Mutex::new(detector.map(SpeechDetector::new)),
-            voices: self.voices,
+            vad: Mutex::new(vad),
+            diarizer: self.diarizer,
+            segmenter: self.segmenter,
             transcription: self.transcription,
             text: self.text,
             sinks: self.sinks,
         }
     }
 
-    /// Hears turns with `voices`, to name the voices in each segment and to
-    /// keep out those that are not the owner's.
-    pub(crate) fn tracking_voices<J>(
+    /// Tracks voices with `diarizer` and `segmenter`, so an owner-only
+    /// press keeps out the words of other voices.
+    pub(crate) fn tracking_voices<F, H>(
         self,
-        voices: Option<J>,
-    ) -> DictationPipeline<C, V, J, T, M, L, S> {
+        diarizer: Option<Diarizer<F>>,
+        segmenter: Option<H>,
+    ) -> DictationPipeline<C, V, F, H, T, M, L, S> {
         DictationPipeline {
             capture: self.capture,
-            speech: self.speech,
-            voices: Mutex::new(voices),
+            vad: self.vad,
+            diarizer: Mutex::new(diarizer),
+            segmenter: Mutex::new(segmenter),
             transcription: self.transcription,
             text: self.text,
             sinks: self.sinks,
@@ -107,25 +112,32 @@ impl<C, V, K, T, M: Mode, L, S> DictationPipeline<C, V, K, T, M, L, S> {
     pub(crate) fn editing<N: Layer>(
         self,
         text: TextLayers<N>,
-    ) -> DictationPipeline<C, V, K, T, M, N, S> {
+    ) -> DictationPipeline<C, V, E, G, T, M, N, S> {
         DictationPipeline {
             capture: self.capture,
-            speech: self.speech,
-            voices: self.voices,
+            vad: self.vad,
+            diarizer: self.diarizer,
+            segmenter: self.segmenter,
             transcription: self.transcription,
             text,
             sinks: self.sinks,
         }
     }
 
-    fn speech(&self) -> MutexGuard<'_, Option<SpeechDetector<V>>> {
-        self.speech
+    fn vad(&self) -> MutexGuard<'_, Option<V>> {
+        self.vad
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn voices(&self) -> MutexGuard<'_, Option<K>> {
-        self.voices
+    fn diarizer(&self) -> MutexGuard<'_, Option<Diarizer<E>>> {
+        self.diarizer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn segmenter(&self) -> MutexGuard<'_, Option<G>> {
+        self.segmenter
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -137,22 +149,22 @@ impl<C, V, K, T, M: Mode, L, S> DictationPipeline<C, V, K, T, M, L, S> {
     }
 }
 
-impl<C, V, K, T, M: Mode, L, S> DictationPipeline<C, V, K, T, M, L, S>
-where
-    V: VoiceActivityDetector,
-    K: SpeakerTracker,
-{
+impl<C, V, E: Embedder, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
     /// Replaces the enrolled profiles the next press is judged against. A
     /// voice enrolled while the daemon ran is invisible until this is called.
-    pub(crate) fn refresh_enrolled(&self, enrolled: Vec<aria_kit::speaker::Profile>) {
-        if let Some(voices) = self.voices().as_mut() {
-            voices.enroll(enrolled);
+    pub(crate) fn refresh_enrolled(&self, enrolled: Vec<Profile>) {
+        if let Some(diarizer) = self.diarizer().as_mut() {
+            diarizer.set_enrolled(enrolled);
         }
     }
 }
 
-impl<C, V: VoiceActivityDetector, K: SpeakerTracker, T: Transcriber, M: Mode, L: Layer, S>
-    DictationPipeline<C, V, K, T, M, L, S>
+impl<C, V, E, G, T, M: Mode, L: Layer, S> DictationPipeline<C, V, E, G, T, M, L, S>
+where
+    V: VoiceActivityDetector,
+    E: Embedder,
+    G: Segmenter,
+    T: Transcriber,
 {
     /// Transcribes caller-provided audio with the shared engine and speaker
     /// filter, without publishing it to sinks. The result names `engine`, or
@@ -169,33 +181,42 @@ impl<C, V: VoiceActivityDetector, K: SpeakerTracker, T: Transcriber, M: Mode, L:
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
-        let mut speech = self.speech();
-        let mut voices = self.voices();
-        let (judge, unjudged) =
-            match own_voice_only.then(|| own_voice_judge(speech.is_some(), voices.as_mut())) {
-                Some(Ok(judge)) => (Some(judge), None),
-                Some(Err(error)) => (None, Some(error)),
-                None => (None, None),
-            };
-        let timeline = match speech.as_mut() {
+        let from = recording.held_from();
+        let mut vad = self.vad();
+        let speech = vad.as_mut().map(|vad| SpeechDetector::new(vad, from));
+        let mut diarizer = self.diarizer();
+        let mut segmenter = self.segmenter();
+        let (tracker, refused) = if own_voice_only {
+            match owner_tracker(
+                speech.is_some(),
+                diarizer.as_mut(),
+                segmenter.as_mut(),
+                from,
+            ) {
+                Ok(tracker) => (Some(tracker), None),
+                Err(error) => (None, Some(error)),
+            }
+        } else {
+            (None, None)
+        };
+        let admission = match tracker {
+            Some(_) => Admission::OwnerOnly,
+            None => Admission::Everyone,
+        };
+        let timeline = match speech {
             Some(speech) => {
                 check_cancelled(cancel)?;
                 recording.fill().map_err(DictationError::Capture)?;
-                let admission = match judge {
-                    Some(_) => Admission::OwnerOnly,
-                    None => Admission::Everyone,
-                };
-                let feed = TurnFeed::start(speech, judge, recording, admission)
-                    .map_err(DictationError::Transcription)?;
-                hear_saved(feed, cancel).map_err(hearing_error)?
+                let feed = TurnFeed::start(recording, speech, tracker);
+                hear_saved(feed, admission, cancel).map_err(hearing_error)?
             }
             None => None,
         };
         // Silence is "no speech" even when the voices could not be judged.
-        if let Some(error) = unjudged {
+        if let Some(error) = refused {
             return Err(error);
         }
-        drop((speech, voices));
+        drop((vad, diarizer, segmenter));
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
@@ -326,11 +347,12 @@ impl<C, V: VoiceActivityDetector, K: SpeakerTracker, T: Transcriber, M: Mode, L:
     }
 }
 
-impl<C, V, K, T, M, L: Layer, S> DictationPipeline<C, V, K, T, M, L, S>
+impl<C, V, E, G, T, M, L: Layer, S> DictationPipeline<C, V, E, G, T, M, L, S>
 where
     C: AudioCapture,
     V: VoiceActivityDetector + Send,
-    K: SpeakerTracker + Send,
+    E: Embedder + Send,
+    G: Segmenter + Send,
     T: Transcriber,
     M: Mode,
     S: TranscriptSink,
@@ -503,27 +525,32 @@ where
         {
             sinks.served_by(engine);
         }
-        let mut speech = self.speech();
-        let mut voices = self.voices();
-        let (admission, tracker) = if settings.own_voice_only {
-            let tracker = own_voice_judge(speech.is_some(), voices.as_mut())?;
-            (Admission::OwnerOnly, Some(tracker))
+        let from = recording.held_from();
+        let mut vad = self.vad();
+        let speech = vad.as_mut().map(|vad| SpeechDetector::new(vad, from));
+        let mut diarizer = self.diarizer();
+        let mut segmenter = self.segmenter();
+        let admission = if settings.own_voice_only {
+            Admission::OwnerOnly
         } else {
-            let tracker = voices
-                .as_mut()
-                .filter(|voices| voices.serves(Admission::Everyone));
-            (Admission::Everyone, tracker)
+            Admission::Everyone
         };
-        let feed = speech
-            .as_mut()
-            .map(|speech| TurnFeed::start(speech, tracker, recording, admission))
-            .transpose()
-            .map_err(started)?;
+        let tracker = if settings.own_voice_only {
+            Some(owner_tracker(
+                speech.is_some(),
+                diarizer.as_mut(),
+                segmenter.as_mut(),
+                from,
+            )?)
+        } else {
+            None
+        };
+        let feed = speech.map(|speech| TurnFeed::start(recording, speech, tracker));
         let mut announced = Announced::default();
         let ring = events.clone();
         let progress = move |snapshot: &Snapshot| {
             if let Some(timeline) = &snapshot.timeline {
-                announced.update(timeline, admission, &ring);
+                announced.update(timeline, &ring);
             }
         };
         let mut published = Published::new(settings, control, events, started_at);
@@ -562,7 +589,7 @@ where
                 recording: &mut *recording,
                 previews,
             };
-            let mut hearing = Hearing::start(scope, decoding, feed, abandon, progress)
+            let mut hearing = Hearing::start(scope, decoding, feed, admission, abandon, progress)
                 .map_err(|error| failed(error, &mut published))?;
             while let Some(event) = hearing
                 .next()
@@ -601,7 +628,7 @@ where
         &self,
         settings: &DictationSettings,
         recording: &mut RecordingReader,
-        feed: TurnFeed<'_, V, K>,
+        feed: TurnFeed<&mut V, VoiceprintTracker<'_, E, &mut G>>,
         operation: Operation<'_, T>,
         mut published: Published<'_>,
         sinks: &mut S,
@@ -927,23 +954,16 @@ struct Announced(Option<HeardSpeaker>);
 
 impl Announced {
     /// Announces whose voice the walk last heard, if that changed.
-    fn update(
-        &mut self,
-        timeline: &aria_kit::speaker::Timeline,
-        admission: Admission,
-        events: &DictationEventEmitter,
-    ) {
-        let gating = admission == Admission::OwnerOnly;
+    fn update(&mut self, timeline: &Timeline, events: &DictationEventEmitter) {
         let speaking = timeline.speaking();
         if self.0.is_none() && speaking.is_none() {
             return;
         }
         let voice = match speaking {
-            Some(Speaker::Pending(name)) if !gating => HeardSpeaker::Typed(name),
             None | Some(Speaker::Pending(_)) => HeardSpeaker::Undecided,
-            Some(Speaker::Other(_)) if gating => HeardSpeaker::KeptOut,
+            Some(Speaker::Other(_)) => HeardSpeaker::KeptOut,
             Some(Speaker::Unverified) => HeardSpeaker::Typed(None),
-            Some(Speaker::Owner(name) | Speaker::Other(name)) => HeardSpeaker::Typed(name),
+            Some(Speaker::Owner(name)) => HeardSpeaker::Typed(name),
         };
         if self.0.as_ref() != Some(&voice) {
             events.emit(DictationStage::SpeakerChanged(voice.clone()));
@@ -952,21 +972,30 @@ impl Announced {
     }
 }
 
-fn own_voice_judge<K: SpeakerTracker>(
+/// The tracker an owner-only press judges voices with, starting at `from`.
+/// The press is refused unless speech, an enrolled owner, and a segmenter
+/// are all there.
+fn owner_tracker<'a, E: Embedder, G: Segmenter>(
     hears_speech: bool,
-    voices: Option<&mut K>,
-) -> Result<&mut K, DictationError> {
-    match voices {
-        Some(voices) if hears_speech && voices.serves(Admission::OwnerOnly) => Ok(voices),
-        Some(_) => {
-            tracing::warn!("own-voice filtering requires owner enrollment and voice tracking");
-            Err(DictationError::Speaker(TrackingError::Unavailable))
-        }
-        None => {
-            tracing::warn!("own-voice filtering requires speaker tracking");
-            Err(DictationError::Speaker(TrackingError::Unavailable))
-        }
-    }
+    diarizer: Option<&'a mut Diarizer<E>>,
+    segmenter: Option<&'a mut G>,
+    from: u64,
+) -> Result<VoiceprintTracker<'a, E, &'a mut G>, DictationError> {
+    let unavailable = || DictationError::Speaker(TrackingError::Unavailable);
+    let (has_diarizer, has_segmenter) = (diarizer.is_some(), segmenter.is_some());
+    let (true, Some(diarizer), Some(segmenter)) = (hears_speech, diarizer, segmenter) else {
+        tracing::warn!(
+            speech = hears_speech,
+            diarizer = has_diarizer,
+            segmenter = has_segmenter,
+            "own-voice filtering lacks a model"
+        );
+        return Err(unavailable());
+    };
+    VoiceprintTracker::owner_only(diarizer, segmenter, from).map_err(|error| {
+        tracing::warn!(error = %error_chain(&error), "own-voice filtering is unavailable");
+        unavailable()
+    })
 }
 
 /// A hearing error, for a press that publishes nothing as it goes.
@@ -1241,7 +1270,7 @@ mod tests {
     };
     use crate::dictation::{Cursor, RecordingId};
     use crate::rpc::RpcErrorCode;
-    use crate::speaker::testing::{OWN, Voice, alex, tracker};
+    use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
     use crate::transcription::{
         Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcription,
         TranscriptionAudio,
@@ -1411,42 +1440,45 @@ mod tests {
 
     const OTHER: [f32; 2] = [0.0, 1.0];
 
-    /// Turns that hear `voice` in every window of sound.
-    fn turns(voice: [f32; 2]) -> VoiceprintTracker<Voice, LevelSegmenter> {
-        tracker(Voice(voice))
-    }
-
-    /// A pipeline whose speech gate hears any sound, tracking `voices`.
-    fn filtered_pipeline<C, K, T, M: Mode, S>(
+    /// A pipeline whose speech gate hears any sound, tracking voices with
+    /// `diarizer` and a level segmenter.
+    fn filtered_pipeline<C, E, T, M: Mode, S>(
         capture: C,
-        voices: K,
+        diarizer: Diarizer<E>,
         transcription: Transcription<T, M>,
         sinks: S,
-    ) -> DictationPipeline<C, Loud, K, T, M, (), S> {
+    ) -> DictationPipeline<C, Loud, E, LevelSegmenter, T, M, (), S> {
         DictationPipeline::new(capture, transcription, sinks)
             .hearing_speech(Some(Loud))
-            .tracking_voices(Some(voices))
+            .tracking_voices(Some(diarizer), Some(LevelSegmenter))
     }
 
-    fn unavailable_filters() -> [(
+    /// A case name, and models an owner-only press cannot run with.
+    type UnavailableFilter = (
         &'static str,
-        Option<VoiceprintTracker<Voice, LevelSegmenter>>,
-    ); 4] {
-        let mut empty = turns(OWN);
-        empty.enroll(Vec::new());
-        let mut guest_only = turns(OWN);
-        guest_only.enroll(vec![aria_kit::speaker::enrolled_voice(
-            "sam",
-            crate::speaker::Role::Guest,
-            OWN.to_vec(),
-        )]);
+        Option<Diarizer<Voice>>,
+        Option<LevelSegmenter>,
+    );
+
+    fn unavailable_filters() -> [UnavailableFilter; 4] {
+        let guest =
+            aria_kit::speaker::enrolled_voice("sam", crate::speaker::Role::Guest, OWN.to_vec());
         [
-            ("no tracker", None),
-            ("no profiles", Some(empty)),
-            ("guest profile only", Some(guest_only)),
+            ("no diarizer", None, Some(LevelSegmenter)),
+            (
+                "no profiles",
+                Some(Diarizer::new(Voice(OWN), Vec::new())),
+                Some(LevelSegmenter),
+            ),
+            (
+                "guest profile only",
+                Some(Diarizer::new(Voice(OWN), vec![guest])),
+                Some(LevelSegmenter),
+            ),
             (
                 "owner without segmentation",
-                Some(VoiceprintTracker::new(Diarizer::new(Voice(OWN), alex()))),
+                Some(diarizer(Voice(OWN))),
+                None,
             ),
         ]
     }
@@ -1484,11 +1516,12 @@ mod tests {
         (events, receive)
     }
 
-    impl<C, V, K, T, M, L, S> DictationPipeline<C, V, K, T, M, L, S>
+    impl<C, V, E, G, T, M, L, S> DictationPipeline<C, V, E, G, T, M, L, S>
     where
         C: AudioCapture,
         V: VoiceActivityDetector + Send,
-        K: SpeakerTracker + Send,
+        E: Embedder + Send,
+        G: Segmenter + Send,
         T: Transcriber,
         M: Mode,
         S: TranscriptSink,
@@ -1622,7 +1655,8 @@ mod tests {
     ) -> DictationPipeline<
         Live,
         SileroVad,
-        VoiceprintTracker<aria_speaker::wespeaker::WeSpeaker, Pyannote>,
+        aria_speaker::wespeaker::WeSpeaker,
+        Pyannote,
         Scripted,
         Streaming,
         (),
@@ -1843,7 +1877,7 @@ mod tests {
             let (_directory, capture) = judged_capture();
             let pipeline = filtered_pipeline(
                 capture,
-                turns(voice),
+                diarizer(Voice(voice)),
                 Transcription::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
                 CallLog::default().history(),
             );
@@ -2755,7 +2789,7 @@ mod tests {
             );
             let pipeline = filtered_pipeline(
                 capture,
-                turns(voice),
+                diarizer(Voice(voice)),
                 Transcription::agreement(Cadence::from_millis(500, 20_000), engine),
                 CallLog::default().history(),
             );
@@ -2801,11 +2835,6 @@ mod tests {
         }
     }
 
-    /// Turns that tell the two voices apart by level.
-    fn level_turns() -> VoiceprintTracker<VoiceByLevel, LevelSegmenter> {
-        tracker(VoiceByLevel)
-    }
-
     /// A press whose decoder hears nothing while `steps` play, then
     /// finalizes `last` all at once: a decoder that fell behind.
     fn late_press(
@@ -2821,7 +2850,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = filtered_pipeline(
             capture,
-            level_turns(),
+            diarizer(VoiceByLevel),
             Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
             (log.history(), log.cursor()),
         );
@@ -2929,7 +2958,7 @@ mod tests {
         });
         let pipeline = filtered_pipeline(
             Finished(source),
-            level_turns(),
+            diarizer(VoiceByLevel),
             Transcription::complete_samples(context_sensitive),
             (log.history(), log.cursor()),
         );
@@ -2952,7 +2981,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = filtered_pipeline(
             Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
-            level_turns(),
+            diarizer(VoiceByLevel),
             // A filler inside the owner's turn.
             Transcription::complete_samples(Hypotheses(|_| {
                 Ok(timed(
@@ -2985,7 +3014,7 @@ mod tests {
             let inputs = Arc::new(Mutex::new(Vec::new()));
             let pipeline = filtered_pipeline(
                 Finished(source.clone()),
-                level_turns(),
+                diarizer(VoiceByLevel),
                 Transcription::complete_samples(levels(Arc::clone(&inputs))),
                 CallLog::default().history(),
             );
@@ -3080,7 +3109,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = filtered_pipeline(
                 Finished(source.clone()),
-                level_turns(),
+                diarizer(VoiceByLevel),
                 Transcription::<_, crate::transcription::Whole>::delegated(model),
                 (log.history(), log.cursor()),
             );
@@ -3142,7 +3171,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = filtered_pipeline(
             Finished([OWN_SPEECH, PAUSE, OWN_SPEECH].concat()),
-            level_turns(),
+            diarizer(VoiceByLevel),
             Transcription::<_, crate::transcription::Whole>::delegated(model),
             (log.history(), log.cursor()),
         );
@@ -3180,17 +3209,14 @@ mod tests {
         .hearing_speech(None::<Loud>);
         let mut recording = RecordingReader::from_samples(&OWN_SPEECH[..4_000]);
         recording.fill().unwrap();
-        let mut voices = level_turns();
-        let mut speech = SpeechDetector::new(Loud);
-        let mut feed = aria_kit::speaker::TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
+        let mut diarizer = diarizer(VoiceByLevel);
+        let mut feed = TurnFeed::start(
             &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
+            SpeechDetector::new(Loud, 0),
+            Some(tracker(&mut diarizer, 0)),
+        );
         feed.hear_through(4_000);
-        let timeline = voices.timeline().clone();
+        let timeline = feed.timeline().expect("a tracker runs").clone();
         let language = Language::Automatic;
         let operation = pipeline.transcription.start(&language).unwrap();
 
@@ -3238,7 +3264,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = filtered_pipeline(
                 Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
-                level_turns(),
+                diarizer(VoiceByLevel),
                 Transcription::<_, crate::transcription::Whole>::delegated(model),
                 (log.history(), log.cursor()),
             );
@@ -3270,16 +3296,15 @@ mod tests {
         let mut recording = RecordingReader::from_samples(source);
         recording.fill().unwrap();
         recording.release_before(origin);
-        let mut voices = level_turns();
-        let mut speech = SpeechDetector::new(Loud);
+        let mut diarizer = diarizer(VoiceByLevel);
         let feed = TurnFeed::start(
-            &mut speech,
-            Some(&mut voices),
             &mut recording,
-            Admission::OwnerOnly,
-        )
-        .unwrap();
-        let timeline = hear_saved(feed, &CancelToken::never()).unwrap().unwrap();
+            SpeechDetector::new(Loud, origin),
+            Some(tracker(&mut diarizer, origin)),
+        );
+        let timeline = hear_saved(feed, Admission::OwnerOnly, &CancelToken::never())
+            .unwrap()
+            .unwrap();
         let language = Language::Automatic;
         let operation = pipeline.transcription.start(&language).unwrap();
         pipeline
@@ -3414,7 +3439,7 @@ mod tests {
                 let log = CallLog::default();
                 let pipeline = filtered_pipeline(
                     Finished(source.clone()),
-                    level_turns(),
+                    diarizer(VoiceByLevel),
                     Transcription::<_, crate::transcription::Whole>::delegated(model),
                     (log.history(), log.cursor()),
                 );
@@ -3471,7 +3496,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = filtered_pipeline(
                 Finished(source.clone()),
-                level_turns(),
+                diarizer(VoiceByLevel),
                 // Hears only the guest, timed inside the guest's turn.
                 Transcription::complete_samples(Hypotheses({
                     let calls = Arc::clone(&calls);
@@ -3529,7 +3554,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = filtered_pipeline(
             capture,
-            level_turns(),
+            diarizer(VoiceByLevel),
             Transcription::complete_wav(wav_levels(Arc::clone(&inputs))),
             (log.history(), log.cursor()),
         );
@@ -3585,7 +3610,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = filtered_pipeline(
                 Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
-                level_turns(),
+                diarizer(VoiceByLevel),
                 Transcription::complete_samples(levels(Arc::default())),
                 (log.history(), log.cursor()),
             )
@@ -3655,7 +3680,7 @@ mod tests {
                 (log.history(), log.cursor()),
             )
             .hearing_speech(Some(Deaf))
-            .tracking_voices(Some(turns(OWN)));
+            .tracking_voices(Some(diarizer(Voice(OWN))), Some(LevelSegmenter));
 
             let result = pipeline.run(own_voice_only(settings(delivery, OutputMode::Insert)));
 
@@ -3671,7 +3696,7 @@ mod tests {
     fn live_owner_filtering_requires_filter_inputs() {
         for delivery in [DeliveryMode::Streaming, DeliveryMode::Complete] {
             for own_voice in [false, true] {
-                for (case, tracker) in unavailable_filters() {
+                for (case, diarizer, segmenter) in unavailable_filters() {
                     let log = CallLog::default();
                     let pipeline = DictationPipeline::new(
                         Finished(OWN_SPEECH.to_vec()),
@@ -3682,7 +3707,7 @@ mod tests {
                         (log.history(), log.cursor()),
                     )
                     .hearing_speech(Some(Loud))
-                    .tracking_voices(tracker);
+                    .tracking_voices(diarizer, segmenter);
                     let mut settings = settings(delivery, OutputMode::Insert);
                     settings.own_voice_only = own_voice;
 
@@ -3709,14 +3734,14 @@ mod tests {
     #[test]
     fn saved_owner_filtering_requires_filter_inputs() {
         for own_voice in [false, true] {
-            for (case, tracker) in unavailable_filters() {
+            for (case, diarizer, segmenter) in unavailable_filters() {
                 let pipeline = DictationPipeline::new(
                     Finished(OWN_SPEECH.to_vec()),
                     Transcription::complete_samples(Answering("hello")),
                     UnreachableSink,
                 )
                 .hearing_speech(Some(Loud))
-                .tracking_voices(tracker);
+                .tracking_voices(diarizer, segmenter);
                 let mut recording = RecordingReader::from_samples(OWN_SPEECH);
 
                 let result = pipeline.transcribe(
@@ -3891,7 +3916,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = filtered_pipeline(
                 capture,
-                tracker(VoiceByLevel),
+                diarizer(VoiceByLevel),
                 Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("yeah")),
                 (log.history(), log.cursor()),
             );
@@ -3923,7 +3948,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = filtered_pipeline(
             capture,
-            turns(OTHER),
+            diarizer(Voice(OTHER)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.cursor()),
         );
@@ -4126,7 +4151,7 @@ mod tests {
         let (_directory, capture) = judged_capture();
         let pipeline = filtered_pipeline(
             capture,
-            turns(OTHER),
+            diarizer(Voice(OTHER)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (CallLog::default().history(), CallLog::default().cursor()),
         );
@@ -4155,7 +4180,7 @@ mod tests {
         let (directory, capture) = judged_capture();
         let pipeline = filtered_pipeline(
             capture,
-            turns(OTHER),
+            diarizer(Voice(OTHER)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (),
         );
@@ -4179,7 +4204,7 @@ mod tests {
         let (directory, capture) = judged_capture();
         let pipeline = filtered_pipeline(
             capture,
-            turns(OWN),
+            diarizer(Voice(OWN)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (),
         );
@@ -4260,23 +4285,17 @@ mod tests {
 
         let cancel = CancelToken::new();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mut voices = tracker(CancelAfterEmbedding {
+        let mut diarizer = diarizer(CancelAfterEmbedding {
             cancel: cancel.clone(),
             calls: Arc::clone(&calls),
         });
         let mut recording = RecordingReader::from_samples(&vec![0.5; 5 * 16_000]);
-        let mut speech = SpeechDetector::new(Loud);
-        let result = hear_saved(
-            TurnFeed::start(
-                &mut speech,
-                Some(&mut voices),
-                &mut recording,
-                Admission::OwnerOnly,
-            )
-            .unwrap(),
-            &cancel,
-        )
-        .map_err(hearing_error);
+        let feed = TurnFeed::start(
+            &mut recording,
+            SpeechDetector::new(Loud, 0),
+            Some(tracker(&mut diarizer, 0)),
+        );
+        let result = hear_saved(feed, Admission::OwnerOnly, &cancel).map_err(hearing_error);
         assert!(matches!(result, Err(DictationError::Cancelled)));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
@@ -4320,23 +4339,17 @@ mod tests {
     }
 
     #[test]
-    fn segments_name_the_enrolled_voice_they_were_heard_in() {
-        let alex = SpeakerName::new("alex").unwrap();
+    fn without_the_filter_no_segment_is_named() {
         for mode in [DeliveryMode::Streaming, DeliveryMode::Complete] {
-            for (voice, expected) in [(OWN, Some(alex.clone())), (OTHER, None)] {
+            for voice in [OWN, OTHER] {
                 let (_directory, capture) = judged_capture();
                 let log = CallLog::default();
                 let pipeline = filtered_pipeline(
                     capture,
-                    turns(voice),
+                    diarizer(Voice(voice)),
                     Transcription::agreement(
                         Cadence::from_millis(1_000, 20_000),
-                        // Slow enough that the voice walk has heard the
-                        // replayed press before any of it is decoded.
-                        Hypotheses(|_| {
-                            std::thread::sleep(Duration::from_millis(50));
-                            Ok(Hypothesis::new("hello"))
-                        }),
+                        Answering("hello"),
                     ),
                     (log.history(), log.cursor()),
                 );
@@ -4346,16 +4359,56 @@ mod tests {
                     .run_observed(settings(mode, OutputMode::Insert), &events)
                     .unwrap();
 
+                let stages: Vec<_> = stages.try_iter().collect();
                 let speakers: Vec<_> = stages
-                    .try_iter()
+                    .iter()
                     .filter_map(|stage| match stage {
                         DictationStage::SegmentTranscribed { speaker, .. } => Some(speaker),
                         _ => None,
                     })
                     .collect();
-                assert_eq!(speakers, [expected], "{mode:?}");
+                assert_eq!(speakers, [&None], "{mode:?}");
+                assert!(
+                    !stages
+                        .iter()
+                        .any(|stage| matches!(stage, DictationStage::SpeakerChanged(_))),
+                    "the ring stays silent, {mode:?}"
+                );
             }
         }
+    }
+
+    /// Each press builds its own tracker, so nothing one press heard
+    /// carries into the next.
+    #[test]
+    fn a_second_owner_only_press_hears_as_the_first_did() {
+        let (_directory, capture) = judged_capture();
+        let log = CallLog::default();
+        let pipeline = filtered_pipeline(
+            capture,
+            diarizer(Voice(OWN)),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            (log.history(), log.cursor()),
+        );
+        let press = || {
+            let (events, stages) = stage_events();
+            let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
+            let text = pipeline.run_observed(settings, &events).unwrap().text;
+            let ring: Vec<_> = stages
+                .try_iter()
+                .filter_map(|stage| match stage {
+                    DictationStage::SpeakerChanged(voice) => Some(voice),
+                    _ => None,
+                })
+                .collect();
+            (text, ring)
+        };
+
+        let first = press();
+        let second = press();
+
+        assert_eq!(first.0, "hello");
+        assert_eq!(second, first);
     }
 
     #[test]
@@ -4366,7 +4419,7 @@ mod tests {
                 writer: Arc::clone(&writer),
                 opening: OWN_SPEECH,
             },
-            turns(OWN),
+            diarizer(Voice(OWN)),
             Transcription::complete_samples(Answering("hello")),
             CallLog::default().history(),
         );
@@ -4381,7 +4434,7 @@ mod tests {
         let heard = std::thread::scope(|scope| {
             let press = scope.spawn(|| {
                 pipeline.run_observed(
-                    settings(DeliveryMode::Complete, OutputMode::Insert),
+                    own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
                     &events,
                 )
             });
@@ -4403,7 +4456,7 @@ mod tests {
         let (_directory, capture) = judged_capture();
         let pipeline = filtered_pipeline(
             capture,
-            turns(OWN),
+            diarizer(Voice(OWN)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             CallLog::default().history(),
         );
@@ -4435,7 +4488,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = filtered_pipeline(
             capture,
-            turns(OWN),
+            diarizer(Voice(OWN)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.cursor()),
         );
@@ -4465,7 +4518,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = filtered_pipeline(
                 capture,
-                turns(voice),
+                diarizer(Voice(voice)),
                 Transcription::complete_samples(Echoing),
                 (log.history(), log.cursor()),
             );

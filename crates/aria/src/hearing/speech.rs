@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn a_map_that_could_not_be_judged_counts_as_speech() {
-        let mut detector = SpeechDetector::new(Loud);
+        let mut detector = SpeechDetector::new(Loud, 0);
         detector.hear(&[0.0; 16_000]).unwrap();
         let mut speech = detector.map().clone();
         speech.break_off();

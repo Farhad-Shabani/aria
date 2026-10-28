@@ -5,16 +5,16 @@
 
 use std::ops::Range;
 
-use super::{Profile, SpeakerName};
+use super::SpeakerName;
 use crate::voice_activity::SpeechMap;
 
 mod feed;
 mod gate;
 mod tracker;
 
-pub use feed::TurnFeed;
+pub use feed::{Ahead, TurnFeed};
 pub use gate::{Admission, Decision, Gate, Released};
-pub use tracker::{NoSegmenter, VoiceprintTracker};
+pub use tracker::{NoSegmenter, OwnerTrackingError, VoiceprintTracker};
 
 /// Public items here stay unnameable outside this module.
 mod sealed {
@@ -27,13 +27,6 @@ mod sealed {
 ///
 /// Only this crate implements it, since a [`Timeline`] is built here.
 pub trait SpeakerTracker: sealed::Sealed {
-    /// Whether the tracker has anything to give under `admission`: the
-    /// owner's judgments for `OwnerOnly`, enrolled names otherwise.
-    fn serves(&self, admission: Admission) -> bool;
-    /// Replaces the enrolled profiles the next recording is judged against.
-    fn enroll(&mut self, profiles: Vec<Profile>);
-    /// Forgets the last recording. The next sample heard sits at `at`.
-    fn restart(&mut self, at: u64, admission: Admission);
     /// Where the next sample heard sits.
     fn heard_to(&self) -> u64;
     /// Takes the audio after what it has heard.

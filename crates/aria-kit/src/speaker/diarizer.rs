@@ -75,12 +75,6 @@ impl<E: Embedder> Diarizer<E> {
             .count()
     }
 
-    /// Whether anyone is enrolled, so a voice could be named.
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub(super) fn knows_anyone(&self) -> bool {
-        !self.enrolled.is_empty()
-    }
-
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub(super) fn matched_profile(&self, embedding: &[f32]) -> Option<&Profile> {
         let (profile, similarity) = closest(

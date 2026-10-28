@@ -1,7 +1,7 @@
 //! Where anyone was speaking in one recording, recorded frame by frame from
 //! one [`Endpointer`] run, so every reader answers from the same detector.
 //!
-//! Positions are stream samples. Frames start where the map was restarted
+//! Positions are stream samples. Frames start where the detector starts
 //! and follow each other without gaps, so a frame is named by where it
 //! starts or ends.
 
@@ -183,24 +183,18 @@ pub struct SpeechDetector<V> {
 }
 
 impl<V: VoiceActivityDetector> SpeechDetector<V> {
-    pub fn new(vad: V) -> Self {
+    /// A detector for one recording. The first sample heard sits at `at`.
+    pub fn new(vad: V, at: u64) -> Self {
         let gap = SilenceDuration::new(UTTERANCE_GAP).expect("the utterance gap is a silence");
-        Self::with_gap(vad, gap)
+        Self::with_gap(vad, gap, at)
     }
 
-    fn with_gap(vad: V, utterance_gap: SilenceDuration) -> Self {
+    fn with_gap(vad: V, utterance_gap: SilenceDuration, at: u64) -> Self {
         Self {
             endpointer: Endpointer::new(vad, utterance_gap),
             frame: Vec::with_capacity(V::FRAME_SAMPLES),
-            map: SpeechMap::new(V::FRAME_SAMPLES, 0),
+            map: SpeechMap::new(V::FRAME_SAMPLES, at),
         }
-    }
-
-    /// Forgets the last recording. The next sample heard sits at `at`.
-    pub fn restart(&mut self, at: u64) {
-        self.endpointer.restart();
-        self.frame.clear();
-        self.map = SpeechMap::new(V::FRAME_SAMPLES, at);
     }
 
     pub fn map(&self) -> &SpeechMap {
@@ -280,7 +274,7 @@ mod tests {
 
     const FRAME: u64 = Scripted::FRAME_SAMPLES as u64;
 
-    fn detector(scores: &[f32], gap_frames: u64) -> SpeechDetector<Scripted> {
+    fn detector(scores: &[f32], gap_frames: u64, at: u64) -> SpeechDetector<Scripted> {
         let gap = SilenceDuration::new(Duration::from_millis(gap_frames * 10))
             .expect("the duration is in range");
         SpeechDetector::with_gap(
@@ -289,11 +283,12 @@ mod tests {
                 calls: 0,
             },
             gap,
+            at,
         )
     }
 
     fn heard(scores: &[f32], gap_frames: u64, piece: usize) -> SpeechMap {
-        let mut detector = detector(scores, gap_frames);
+        let mut detector = detector(scores, gap_frames, 0);
         let audio = vec![0.0; scores.len() * Scripted::FRAME_SAMPLES];
         for chunk in audio.chunks(piece) {
             detector.hear(chunk).expect("the scripted VAD scores");
@@ -344,10 +339,8 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_counts_positions_from_where_it_says() {
-        let mut detector = detector(&[0.9, 0.9], 10);
-        detector.hear(&[0.0; 160]).unwrap();
-        detector.restart(1_000);
+    fn positions_count_from_where_the_detector_starts() {
+        let mut detector = detector(&[0.9], 10, 1_000);
         detector.hear(&[0.0; 160]).unwrap();
 
         let map = detector.map();
@@ -368,7 +361,7 @@ mod tests {
 
     #[test]
     fn a_failed_frame_breaks_the_map_where_it_stood() {
-        let mut detector = SpeechDetector::new(Failing);
+        let mut detector = SpeechDetector::new(Failing, 0);
 
         assert!(detector.hear(&[0.0; 320]).is_err());
         assert!(detector.map().is_broken());
