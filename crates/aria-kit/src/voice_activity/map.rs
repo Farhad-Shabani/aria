@@ -18,6 +18,17 @@ const PAUSE_SAMPLES: u64 = canonical_samples(Duration::from_millis(150));
 /// a second or two, which holds fewer than this.
 const PAUSES_KEPT: usize = 8;
 
+/// Whether more of the recording is still to come.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Progress {
+    #[default]
+    Ongoing,
+    /// The whole recording was heard.
+    Finished,
+    /// Hearing failed: nothing after `reached` can be told apart.
+    Broken,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Utterance {
     start: u64,
@@ -45,7 +56,9 @@ pub struct SpeechMap {
     quiet: Vec<Quiet>,
     /// Frames scored as speech, joined where they touch.
     speech: Vec<Range<u64>>,
-    broken: bool,
+    /// Speech in what was forgotten, so counts from the start stay whole.
+    forgotten_speech: u64,
+    progress: Progress,
 }
 
 impl SpeechMap {
@@ -75,13 +88,19 @@ impl SpeechMap {
 
     /// The detector failed: nothing after `reached` can be told apart.
     pub fn is_broken(&self) -> bool {
-        self.broken
+        self.progress == Progress::Broken
+    }
+
+    /// Whether the detector heard the whole recording, so nothing after
+    /// `reached` is still to come.
+    pub fn is_finished(&self) -> bool {
+        self.progress == Progress::Finished
     }
 
     /// Marks the map broken where it stands, as when its detector stopped
     /// without saying why.
     pub fn break_off(&mut self) {
-        self.broken = true;
+        self.progress = Progress::Broken;
     }
 
     /// Whether an utterance opened on the frame starting at `at`.
@@ -146,10 +165,31 @@ impl SpeechMap {
 
     /// Samples of speech scored before `at`.
     pub fn speech_before(&self, at: u64) -> u64 {
-        self.speech(&(0..at))
+        self.forgotten_speech + self.speech(&(0..at))
     }
 
-    /// Samples of speech scored inside `span`.
+    pub(crate) fn forget_before(&mut self, at: u64) {
+        let mut forgotten = 0;
+        self.speech.retain_mut(|run| {
+            if run.end <= at {
+                forgotten += run.end - run.start;
+                return false;
+            }
+            if run.start < at {
+                forgotten += at - run.start;
+                run.start = at;
+            }
+            true
+        });
+        self.forgotten_speech += forgotten;
+        self.utterances
+            .retain(|utterance| utterance.end.is_none_or(|end| end > at));
+        self.quiet
+            .retain(|quiet| quiet.end.is_none_or(|end| end > at));
+    }
+
+    /// Samples of speech scored inside `span`. Speech already forgotten does
+    /// not count.
     pub fn speech(&self, span: &Range<u64>) -> u64 {
         self.speech
             .iter()
@@ -202,10 +242,24 @@ impl<V: VoiceActivityDetector> SpeechDetector<V> {
         &self.map
     }
 
+    /// Forgets the map before `at`: no reader asks about it again. Only the
+    /// count of speech in it stays.
+    pub(crate) fn forget_before(&mut self, at: u64) {
+        self.map.forget_before(at);
+    }
+
+    /// The recording ended after the audio heard so far. A last partial
+    /// frame is never scored.
+    pub(crate) fn finish(&mut self) {
+        if self.map.progress == Progress::Ongoing {
+            self.map.progress = Progress::Finished;
+        }
+    }
+
     /// Scores `audio`, which continues the stream where the last call left
     /// off. A partial frame waits for the next call.
     pub fn hear(&mut self, mut audio: &[f32]) -> Result<(), VoiceActivityError> {
-        while !audio.is_empty() && !self.map.broken {
+        while !audio.is_empty() && !self.map.is_broken() {
             let taken = audio.len().min(V::FRAME_SAMPLES - self.frame.len());
             self.frame
                 .extend(audio[..taken].iter().copied().map(pcm16_from_f32));
@@ -225,7 +279,7 @@ impl<V: VoiceActivityDetector> SpeechDetector<V> {
         let boundaries = self
             .endpointer
             .push(&self.frame)
-            .inspect_err(|_| self.map.broken = true)?;
+            .inspect_err(|_| self.map.break_off())?;
         let end = start + V::FRAME_SAMPLES as u64;
         self.map.reached = end;
         if self.endpointer.speech_samples() > speech_before {
@@ -348,5 +402,22 @@ mod tests {
         assert_eq!(map.reached(), 1_000 + FRAME);
         assert!(map.opens_at(1_000));
         assert_eq!(map.speech_before(map.reached()), FRAME);
+    }
+
+    #[test]
+    fn forgetting_keeps_what_comes_after_and_the_count_before() {
+        let mut scores = vec![0.9; 5];
+        scores.extend([0.0; 15]);
+        scores.extend([0.9; 5]);
+        scores.extend([0.0; 15]);
+        let mut map = heard(&scores, 10, 160);
+        let before = map.speech_before(map.reached());
+
+        map.forget_before(20 * FRAME);
+
+        assert_eq!(map.speech_before(map.reached()), before);
+        assert_eq!(map.speech(&(20 * FRAME..25 * FRAME)), 5 * FRAME);
+        assert!(map.opens_at(20 * FRAME));
+        assert!(!map.closes_at(15 * FRAME));
     }
 }

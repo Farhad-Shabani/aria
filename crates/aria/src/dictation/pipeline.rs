@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use aria_kit::cancel::CancelToken;
 use aria_kit::segmentation::Segmenter;
 use aria_kit::speaker::Embedder;
-use aria_kit::speaker::{Admission, Gate, Speaker, Timeline, TurnFeed};
+use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::Layer;
@@ -16,7 +16,7 @@ use crate::hearing::{
     Board, Decoding, Event, Hearing, HearingError, TrackingError, hear_saved, hear_to_end,
 };
 use crate::primitives::error_chain;
-use crate::speaker::{Diarizer, Profile, SpeakerName, VoiceprintTracker};
+use crate::speaker::{Diarizer, Label, Profile, SpeakerName, VoiceprintTracker};
 use crate::transcription::{
     Language, Mode, Operation, Transcriber, Transcript, TranscriptSegment, Transcription,
     TranscriptionError,
@@ -591,14 +591,13 @@ where
             );
         }
         let previews = (published.caption.is_some() || published.streaming) && M::INCREMENTAL;
-        let deliver = |published: &mut Published<'_>,
-                       sinks: &mut S,
-                       heard: Heard,
-                       speaker: Option<SpeakerName>| {
+        let deliver = |published: &mut Published<'_>, sinks: &mut S, released: Released| {
+            let Released { heard, speaker, .. } = released;
             let mut text = heard.segment.as_str().to_owned();
             self.rewrites
                 .segment(&mut text, vocabulary, &cancel)
                 .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
+            let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
             published.segment(heard, &text, speaker, sinks)
         };
         let failed = |error: HearingError, published: &mut Published<'_>| match error {
@@ -616,7 +615,7 @@ where
                 Event::Timeline(timeline) => announced.update(&timeline, events),
                 Event::Preview(shown) => published.provisional(&shown, sinks),
                 Event::Released(released) => {
-                    deliver(published, sinks, released.heard, released.speaker)?;
+                    deliver(published, sinks, released)?;
                 }
             }
             Ok(())
@@ -777,7 +776,6 @@ impl<'a> Published<'a> {
         let published = sinks.segment(Utterance {
             text: corrected,
             speaker: None,
-            embedding: None,
             at: heard.window.start,
             span: heard.span,
         });
@@ -1028,7 +1026,7 @@ fn gate_timed(
         gate.hold(heard);
     }
     let segments: Vec<Heard> = gate
-        .decide(timeline)
+        .decide(timeline, None)
         .released
         .into_iter()
         .map(|released| released.heard)

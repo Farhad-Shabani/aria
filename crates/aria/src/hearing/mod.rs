@@ -27,7 +27,7 @@ use turns::TurnThread;
 pub(crate) use turns::{Snapshot, TrackingError};
 
 /// Names the hearing as the backend when its own decoder thread fails.
-const BACKEND: &str = "dictation";
+const BACKEND: &str = "hearing";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HearingError {
@@ -77,7 +77,7 @@ where
 {
     std::thread::scope(|scope| {
         let board = Board::new();
-        let walk = TurnThread::spawn(scope, feed, cancel, &board)
+        let walk = TurnThread::spawn(scope, feed, None, cancel, &board)
             .map_err(|error| HearingError::Tracking(owner_walk_failed(error)))?;
         // The walk ends with capture. A tracker that fails once someone
         // spoke ends the press early; before that, it may still be NoSpeech.
@@ -135,22 +135,24 @@ pub(crate) fn hear_saved<V: VoiceActivityDetector, K: SpeakerTracker>(
     Ok(verdict(Some(feed.speech()), feed.timeline(), admission)?.cloned())
 }
 
-/// How a hearing ends once all of it is heard. A recording without speech
+/// How a hearing ends once all of it is heard. Under spoken admission it
+/// never fails: the gate drops what has no speech under it, and a broken
+/// timeline only leaves voices unlabeled. Otherwise a recording without speech
 /// is `NoSpeech`, whatever became of its voices. Then, under owner-only
 /// admission, a missing or broken timeline fails it: none of the owner's
 /// words can be judged. `speech` is `None` when no detector ran, which
-/// counts as speech. The timeline comes back only under owner-only
-/// admission.
+/// counts as speech. Under admission of everyone, no timeline comes back.
 fn verdict<T: Borrow<Timeline>>(
     speech: Option<&SpeechMap>,
     timeline: Option<T>,
     admission: Admission,
 ) -> Result<Option<T>, HearingError> {
-    if speech.is_some_and(|speech| !held_speech(speech)) {
+    if admission != Admission::Spoken && speech.is_some_and(|speech| !held_speech(speech)) {
         return Err(HearingError::Transcription(TranscriptionError::NoSpeech));
     }
     match admission {
         Admission::Everyone => Ok(None),
+        Admission::Spoken => Ok(timeline),
         Admission::OwnerOnly => match timeline {
             Some(timeline) if !timeline.borrow().is_broken() => Ok(Some(timeline)),
             _ => Err(HearingError::Tracking(TrackingError::Failed)),
@@ -198,6 +200,8 @@ pub(crate) struct Hearing<'scope> {
     trusted: Vec<String>,
     /// The decoder has sent its last update.
     done: bool,
+    /// The earliest audio the decoder may still send a segment from.
+    retained_from: u64,
 }
 
 impl<'scope> Hearing<'scope> {
@@ -220,9 +224,15 @@ impl<'scope> Hearing<'scope> {
         let from = feed
             .as_ref()
             .map_or(decoding.recording.held_from(), TurnFeed::held_from);
+        // Only the owner's words wait for their turns. Otherwise a tracker
+        // that falls behind costs labels, not words.
+        let max_lag = match admission {
+            Admission::OwnerOnly => None,
+            Admission::Everyone | Admission::Spoken => Some(turns::MAX_LABELING_LAG),
+        };
         let turns = match feed {
             Some(feed) => {
-                match TurnThread::spawn(scope, feed, cancel, board) {
+                match TurnThread::spawn(scope, feed, max_lag, cancel, board) {
                     Ok(turns) => Some(turns),
                     Err(error) if admission == Admission::OwnerOnly => {
                         return Err(HearingError::Tracking(owner_walk_failed(error)));
@@ -253,13 +263,16 @@ impl<'scope> Hearing<'scope> {
         Ok(Self {
             board: Arc::clone(board),
             decoder,
-            spoken: false,
+            // Under spoken admission the gate drops segments with no
+            // speech under them, so none are unspoken.
+            spoken: admission == Admission::Spoken,
             turns,
             gate: Gate::new(admission, from),
             events: VecDeque::new(),
             unspoken: 0,
             trusted: Vec::new(),
             done: false,
+            retained_from: from,
         })
     }
 
@@ -274,16 +287,19 @@ impl<'scope> Hearing<'scope> {
                 return Ok(None);
             }
             let wake = self.board.next_wake();
-            let heard = matches!(wake, Wake::Heard);
+            let published = matches!(wake, Wake::Snapshot);
             match wake {
-                Wake::Decoded(decoded) => self.take(decoded.update, decoded.read_to)?,
-                Wake::Heard => {}
+                Wake::Decoded(decoded) => {
+                    self.take(decoded.update, decoded.read_to)?;
+                    self.retained_from = decoded.retained_from;
+                }
+                Wake::Snapshot => {}
                 Wake::DecoderDone => self.done = true,
             }
             let snapshot = self.turns.is_some().then(|| self.board.snapshot());
             // Queued ahead of what the gate releases, so whose voice it is
             // shows before their words do.
-            if heard
+            if published
                 && let Some(timeline) = snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.timeline.clone())
@@ -296,6 +312,7 @@ impl<'scope> Hearing<'scope> {
                 return Err(HearingError::Tracking(TrackingError::Failed));
             }
             self.decide(snapshot.as_ref());
+            self.forget_decided();
         }
     }
 
@@ -329,14 +346,20 @@ impl<'scope> Hearing<'scope> {
         let last = snapshot
             .as_ref()
             .and_then(|snapshot| snapshot.timeline.clone());
-        let timeline = verdict(
-            snapshot.as_ref().map(|snapshot| &*snapshot.speech),
-            last.as_deref(),
-            admission,
-        )?;
-        let (released, own_voice) = match timeline {
-            Some(timeline) => (gate.decide(timeline).released, timeline.admitted_is_owner()),
-            None => (Vec::new(), false),
+        let speech = snapshot.as_ref().map(|snapshot| &*snapshot.speech);
+        let timeline = verdict(speech, last.as_deref(), admission)?;
+        let (released, own_voice) = match (admission, timeline) {
+            (Admission::OwnerOnly, Some(timeline)) => (
+                gate.decide(timeline, speech).released,
+                timeline.admitted_is_owner(),
+            ),
+            // What waited for the speech map to reach it goes out now.
+            (Admission::Spoken, timeline) => {
+                let unheard = Timeline::default();
+                let timeline = timeline.unwrap_or(&unheard);
+                (gate.decide(timeline, speech).released, false)
+            }
+            (Admission::OwnerOnly | Admission::Everyone, _) => (Vec::new(), false),
         };
         let transcript = if unspoken > 0 {
             tracing::debug!(
@@ -409,23 +432,34 @@ impl<'scope> Hearing<'scope> {
         let timeline = snapshot
             .and_then(|snapshot| snapshot.timeline.as_deref())
             .unwrap_or(&unheard);
-        let decision = self.gate.decide(timeline);
+        let speech = snapshot.map(|snapshot| &*snapshot.speech);
+        let decision = self.gate.decide(timeline, speech);
         if let Some(preview) = decision.preview {
             self.events.push_back(Event::Preview(preview));
         }
         self.events
             .extend(decision.released.into_iter().map(Event::Released));
     }
+
+    /// Lets the walk forget audio before both the oldest held segment and
+    /// the decoder's retained audio. Only a listen session forgets.
+    fn forget_decided(&self) {
+        if self.gate.admission() == Admission::Spoken && self.turns.is_some() {
+            let undecided = self.gate.undecided_from().unwrap_or(u64::MAX);
+            self.board.decided_before(undecided.min(self.retained_from));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
     use std::sync::Mutex;
     use std::sync::mpsc::{Receiver, channel};
     use std::time::{Duration, Instant};
 
     use aria_kit::audio::Recording;
-    use aria_kit::speaker::VoiceprintTracker;
+    use aria_kit::speaker::{LevelSegmenter, VoiceprintTracker};
     use aria_kit::transcription::{
         OperationSource, OperationStep, TranscriptSegment, TranscriptUpdate,
     };
@@ -437,6 +471,35 @@ mod tests {
     use crate::transcription::{Language, Streaming, Transcription};
 
     const SECOND: u64 = 16_000;
+
+    /// Starts a hearing of `recording` under `admission`, decoded by
+    /// `transcriber`, with `tracker` judging voices, and hands it to `act`.
+    fn hearing<R>(
+        transcriber: impl Transcriber,
+        mut recording: RecordingReader,
+        tracker: Option<VoiceprintTracker<'_, Voice, LevelSegmenter>>,
+        admission: Admission,
+        act: impl FnOnce(Hearing<'_>) -> R,
+    ) -> R {
+        let transcription = Transcription::<_, Streaming>::delegated(transcriber);
+        let speech = SpeechDetector::new(Loud, recording.held_from());
+        let feed = TurnFeed::start(&mut recording, speech, tracker);
+        let board = Board::new();
+        let cancel = board.token(|| false);
+        let operation = transcription
+            .start_with(&Language::Automatic, &cancel)
+            .unwrap();
+        std::thread::scope(|scope| {
+            let decoding = Decoding {
+                operation,
+                recording: &mut recording,
+                previews: false,
+            };
+            let hearing =
+                Hearing::start(scope, decoding, Some(feed), admission, &board, &cancel).unwrap();
+            act(hearing)
+        })
+    }
 
     /// Finalizes "hello" at once, then stalls until `go_on` says to.
     fn stalling(go_on: Receiver<()>) -> impl Transcriber {
@@ -471,59 +534,111 @@ mod tests {
     #[test]
     fn an_owner_word_is_released_while_the_decoder_stalls() {
         let (go_on, waiting) = channel();
-        let transcription = Transcription::<_, Streaming>::delegated(stalling(waiting));
-        let (mut recording, mut writer) = Recording::open();
+        let (recording, mut writer) = Recording::open();
         writer.push(&[0.5; 3 * SECOND as usize]);
-        let speech = SpeechDetector::new(Loud, 0);
         let mut diarizer = diarizer(Voice(OWN));
-        let board = Board::new();
-        let cancel = board.token(|| false);
-        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
-        let operation = transcription
-            .start_with(&Language::Automatic, &cancel)
-            .unwrap();
-
-        std::thread::scope(|scope| {
-            let started = Instant::now();
-            let mut hearing = Hearing::start(
-                scope,
-                Decoding {
-                    operation,
-                    recording: &mut recording,
-                    previews: false,
-                },
-                Some(feed),
-                Admission::OwnerOnly,
-                &board,
-                &cancel,
-            )
-            .unwrap();
-            let unblock = scope.spawn(move || {
-                std::thread::sleep(Duration::from_secs(3));
-                let _ = go_on.send(());
-            });
-
-            let mut ring_first = false;
-            let released = loop {
-                match hearing.next().unwrap() {
-                    Some(Event::Timeline(_)) => ring_first = true,
-                    Some(Event::Released(released)) => break released,
-                    Some(Event::Preview(_)) | None => panic!("the word is released"),
-                }
-            };
-            assert!(ring_first, "whose voice it is shows before the words");
-            assert_eq!(released.heard.segment.as_str(), "hello");
-            assert!(
-                started.elapsed() < Duration::from_secs(2),
-                "released before the decoder's next step"
-            );
-
-            writer.finish();
-            while hearing.next().unwrap().is_some() {}
-            let ended = hearing.finish().unwrap();
-            assert!(ended.own_voice);
-            unblock.join().unwrap();
+        let started = Instant::now();
+        let unblock = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            let _ = go_on.send(());
         });
+
+        hearing(
+            stalling(waiting),
+            recording,
+            Some(tracker(&mut diarizer, 0)),
+            Admission::OwnerOnly,
+            |mut hearing| {
+                let mut ring_first = false;
+                let released = loop {
+                    match hearing.next().unwrap() {
+                        Some(Event::Timeline(_)) => ring_first = true,
+                        Some(Event::Released(released)) => break released,
+                        Some(Event::Preview(_)) | None => panic!("the word is released"),
+                    }
+                };
+                assert!(ring_first, "whose voice it is shows before the words");
+                assert_eq!(released.heard.segment.as_str(), "hello");
+                assert!(
+                    started.elapsed() < Duration::from_secs(2),
+                    "released before the decoder's next step"
+                );
+
+                writer.finish();
+                while hearing.next().unwrap().is_some() {}
+                assert!(hearing.finish().unwrap().own_voice);
+            },
+        );
+        unblock.join().unwrap();
+    }
+
+    /// Finalizes each `(text, span)` in turn, then completes at `end`.
+    fn scripted(segments: Vec<(&'static str, Range<u64>)>, end: u64) -> impl Transcriber {
+        let segments = Mutex::new(Some(segments));
+        Operations(move |_: &CancelToken| {
+            let mut segments = segments
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one operation")
+                .into_iter();
+            OperationSource::new("scripted", move |_, _| {
+                Ok(match segments.next() {
+                    Some((text, span)) => OperationStep::Update {
+                        update: TranscriptUpdate::Finalized(
+                            TranscriptSegment::new(text, Some(span.clone()))?
+                                .with_word_spans(vec![span.clone()])?,
+                        ),
+                        retained_from: 0,
+                        read_to: span.end,
+                        completed: None,
+                    },
+                    None => OperationStep::Complete {
+                        transcript: Transcript::new("done")?,
+                        retained_from: 0,
+                        read_to: end,
+                    },
+                })
+            })
+        })
+    }
+
+    #[test]
+    fn a_listen_hearing_without_a_tracker_drops_what_has_no_speech_under_it() {
+        // Speech, two seconds of silence, then speech up to an end that is
+        // not on the detector's frame grid.
+        let end = 4 * SECOND + 3;
+        let mut audio = vec![0.5; SECOND as usize];
+        audio.extend(vec![0.0; 2 * SECOND as usize]);
+        audio.extend(vec![0.5; (end - 3 * SECOND) as usize]);
+        let script = scripted(
+            vec![
+                ("hello", 0..SECOND),
+                // Kept: the segment before it held speech.
+                ("hum", 3 * SECOND / 2..2 * SECOND),
+                ("noise", 2 * SECOND..5 * SECOND / 2),
+                ("end", 3 * SECOND..end),
+            ],
+            end,
+        );
+        let recording = RecordingReader::from_samples(&audio);
+
+        let written = hearing(script, recording, None, Admission::Spoken, |mut hearing| {
+            let mut written = Vec::new();
+            while let Some(event) = hearing.next().unwrap() {
+                if let Event::Released(released) = event {
+                    written.push(released.heard.segment.as_str().to_owned());
+                }
+            }
+            let ended = hearing.finish().unwrap();
+            written.extend(ended.events.into_iter().filter_map(|event| match event {
+                Event::Released(released) => Some(released.heard.segment.as_str().to_owned()),
+                Event::Timeline(_) | Event::Preview(_) => None,
+            }));
+            written
+        });
+
+        assert_eq!(written, ["hello", "hum", "end"]);
     }
 
     #[test]
@@ -541,62 +656,46 @@ mod tests {
                     })
                 })
             });
-            let transcription = Transcription::<_, Streaming>::delegated(breaking);
-            let (mut recording, mut writer) = Recording::open();
+            let (recording, mut writer) = Recording::open();
             writer.push(&[0.5; SECOND as usize]);
-            let speech = SpeechDetector::new(Loud, 0);
-            let feed =
-                TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
-            let board = Board::new();
-            let cancel = board.token(|| false);
-            let operation = transcription
-                .start_with(&Language::Automatic, &cancel)
-                .unwrap();
-
-            std::thread::scope(|scope| {
-                let started = Instant::now();
-                let mut hearing = Hearing::start(
-                    scope,
-                    Decoding {
-                        operation,
-                        recording: &mut recording,
-                        previews: false,
-                    },
-                    Some(feed),
-                    Admission::Everyone,
-                    &board,
-                    &cancel,
-                )
-                .unwrap();
-                let capture = scope.spawn(move || {
-                    std::thread::sleep(Duration::from_secs(3));
-                    writer.finish();
-                });
-
-                while hearing.next().unwrap().is_some() {}
-                let ended = hearing.finish();
-                assert!(
-                    started.elapsed() < Duration::from_secs(2),
-                    "the hearing waited for capture to end, panics={panics}"
-                );
-                if panics {
-                    assert!(matches!(
-                        ended,
-                        Err(HearingError::Transcription(TranscriptionError::Inference {
-                            backend: BACKEND,
-                            ..
-                        }))
-                    ));
-                } else {
-                    assert!(matches!(
-                        ended,
-                        Err(HearingError::Transcription(
-                            TranscriptionError::Inference { .. }
-                        ))
-                    ));
-                }
-                capture.join().unwrap();
+            let started = Instant::now();
+            let capture = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(3));
+                writer.finish();
             });
+
+            let ended = hearing(
+                breaking,
+                recording,
+                None,
+                Admission::Spoken,
+                |mut hearing| {
+                    while hearing.next().unwrap().is_some() {}
+                    hearing.finish().map(drop)
+                },
+            );
+
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "the hearing waited for capture to end, panics={panics}"
+            );
+            if panics {
+                assert!(matches!(
+                    ended,
+                    Err(HearingError::Transcription(TranscriptionError::Inference {
+                        backend: BACKEND,
+                        ..
+                    }))
+                ));
+            } else {
+                assert!(matches!(
+                    ended,
+                    Err(HearingError::Transcription(
+                        TranscriptionError::Inference { .. }
+                    ))
+                ));
+            }
+            capture.join().unwrap();
         }
     }
 

@@ -1,10 +1,8 @@
 //! Diarization accuracy over synthesized ground-truth conversations.
 //!
 //! A TTS engine renders scripted multi-speaker conversations, the real
-//! listen stack (streaming STT, speech gate, speaker labeler) hears them
-//! replayed in realtime, and the labels are scored against the script.
-//! One approximation: the final pass reclusters per-segment embeddings,
-//! where production reclusters paragraph means.
+//! listen stack (streaming STT, speech map, gate) hears them replayed in
+//! realtime, and the voice track's labels are scored against the script.
 //!
 //! The speaker engine is what this measures, so this crate owns it. TTS and
 //! STT are the harness that produces and reads the audio; the caller loads
@@ -30,7 +28,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Duration;
 
-use aria::speaker::Diarizer;
+use aria::speaker::{Diarizer, Label};
 use aria::transcription::{StreamingEngine, Transcription, TranscriptionError};
 use aria_kit::audio::{
     CANONICAL_SAMPLE_RATE, CaptureError, ClipError, ReplayPace, ResampleError, WavError,
@@ -71,9 +69,9 @@ pub struct Labeled {
     pub turns: Vec<Turn>,
     pub dropped_segments: usize,
     pub dropped_seconds: f64,
-    /// One entry per segment the pipeline heard, in order. Clustering is what
-    /// turns these into names, and tuning it against a 15-minute replay is
-    /// hopeless — dumped, they can be re-clustered offline in seconds.
+    /// One entry per voiceprint, in order, from `--by-voice` and
+    /// `--segmented`. Re-clustering them offline takes seconds; a replay
+    /// takes 15 minutes.
     pub embeddings: Vec<Embedded>,
 }
 
@@ -92,28 +90,23 @@ pub struct Embedded {
 pub fn label_recording<Stt: StreamingEngine>(
     stt: Stt,
     speaker: SpeakerConfig,
+    segmentation: &Path,
     wav: &Path,
     timeline: Timeline,
 ) -> Result<Labeled, BenchError> {
     let transcription = Transcription::streaming(stt);
     let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
-    let speakers_dir = workspace.path().join("speakers");
-    std::fs::create_dir_all(&speakers_dir).map_err(BenchError::Workspace)?;
 
-    let mut labeler = replay::labeler(&speaker, &speakers_dir)?;
     let (segments, dropped) = replay::hear(
         &transcription,
         wav,
         workspace.path(),
-        &mut labeler,
         "recording",
         ReplayPace::Realtime,
         RECORDING_LIMIT,
     )?;
 
-    let embeddings: Vec<Option<Vec<f32>>> = segments.iter().map(|s| s.embedding.clone()).collect();
-    let mut settled = labeler.labeler().relabel(&embeddings);
-    aria::speaker::settle(&mut settled, |index| segments[index].label.is_none());
+    let settled = settled(segmentation, speaker, wav, &segments)?;
     let mut turns: Vec<Turn> = segments
         .iter()
         .zip(settled)
@@ -135,15 +128,39 @@ pub fn label_recording<Stt: StreamingEngine>(
         turns,
         dropped_segments: dropped.segments,
         dropped_seconds: dropped.samples as f64 / SAMPLE_RATE,
-        embeddings: segments
-            .iter()
-            .map(|segment| Embedded {
-                start: segment.span.start as f64 / SAMPLE_RATE,
-                end: segment.span.end as f64 / SAMPLE_RATE,
-                embedding: segment.embedding.clone(),
-            })
-            .collect(),
+        embeddings: Vec::new(),
     })
+}
+
+/// The voice track's labels for each segment's audio, with gaps closed as
+/// listen closes them. The bench settles per segment where listen settles
+/// per paragraph.
+fn settled(
+    segmentation: &Path,
+    speaker: SpeakerConfig,
+    wav: &Path,
+    segments: &[replay::Segment],
+) -> Result<Vec<Option<Label>>, BenchError> {
+    let voices = shipped::observe(Run {
+        segmentation,
+        speaker,
+        wav,
+        grouping: Grouping::default(),
+        cache: None,
+        journal: None,
+    })?;
+    let spans: Vec<Option<Range<u64>>> = segments
+        .iter()
+        .map(|segment| Some(segment.span.clone()))
+        .collect();
+    let mut labels = aria::speaker::attribute_spans(&voices, &spans);
+    let gap = (aria::listen::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
+    aria::speaker::settle(&mut labels, |index| {
+        segments
+            .get(index + 1)
+            .is_some_and(|next| next.span.start.saturating_sub(segments[index].span.end) < gap)
+    });
+    Ok(labels)
 }
 
 fn diarizer(speaker: SpeakerConfig) -> Result<Diarizer<WeSpeaker>, BenchError> {
@@ -300,6 +317,8 @@ pub struct Request<Tts, Stt> {
     pub tts: Tts,
     pub stt: Stt,
     pub speaker: SpeakerConfig,
+    /// The segmentation model the voice track labels voices with.
+    pub segmentation: std::path::PathBuf,
 }
 
 pub struct Report {
@@ -313,9 +332,8 @@ pub struct ScenarioReport {
     /// Seconds of audio the speech gate threw away — the budget any coverage
     /// fix could win back.
     pub dropped_seconds: f64,
-    /// Word-weighted label accuracy of the live, tentative labels.
-    pub live_accuracy: f64,
-    /// The same after the final re-cluster — what the transcript ends with.
+    /// Word-weighted accuracy of the labels the transcript ends with: the
+    /// voice track's.
     pub final_accuracy: f64,
     /// The share of the script's evidence words that reached the transcript.
     /// Accuracy alone cannot fall when speech goes missing; this can.
@@ -324,28 +342,32 @@ pub struct ScenarioReport {
 
 impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
     pub fn run(self) -> Result<Report, BenchError> {
-        let Self { tts, stt, speaker } = self;
+        let Self {
+            tts,
+            stt,
+            speaker,
+            segmentation,
+        } = self;
         // The same composition the listen daemon runs.
         let transcription = Transcription::streaming(stt);
         let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
-        // An empty speakers directory keeps enrolled profiles out of the score.
-        let speakers_dir = workspace.path().join("speakers");
-        std::fs::create_dir_all(&speakers_dir).map_err(BenchError::Workspace)?;
 
         let mut scenarios = Vec::new();
         for scenario in synth::Scenario::all() {
             let wav = scenario.synthesize(&tts, workspace.path())?;
-            let mut labeler = replay::labeler(&speaker, &speakers_dir)?;
             let (segments, dropped) = replay::hear(
                 &transcription,
                 &wav,
                 workspace.path(),
-                &mut labeler,
                 scenario.name,
                 ReplayPace::Realtime,
                 SCENARIO_LIMIT,
             )?;
-            scenarios.push(scenario.scored(&labeler, &segments, &dropped));
+            let model = SpeakerConfig {
+                model: speaker.model.clone(),
+            };
+            let finals = settled(&segmentation, model, &wav, &segments)?;
+            scenarios.push(scenario.scored(&segments, finals, &dropped));
         }
         Ok(Report { scenarios })
     }

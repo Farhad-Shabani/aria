@@ -4,7 +4,7 @@
 //! RPC that started it, so nothing here ties cancellation to a request.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use aria_kit::cancel::CancelToken;
@@ -23,6 +23,7 @@ pub(super) struct ListenState {
     lifetime: DaemonLifetime,
     environment: Environment,
     events: ListenEventEmitter,
+    vocabulary: Arc<super::vocabulary::Runtime>,
     active: Mutex<Slot>,
 }
 
@@ -62,11 +63,13 @@ impl ListenState {
         lifetime: DaemonLifetime,
         environment: Environment,
         events: ListenEventEmitter,
+        vocabulary: Arc<super::vocabulary::Runtime>,
     ) -> Self {
         Self {
             lifetime,
             environment,
             events,
+            vocabulary,
             active: Mutex::new(Slot::Idle),
         }
     }
@@ -100,9 +103,14 @@ impl ListenState {
         let (capture, recording) = SystemAudioCapture::spawn().map_err(failure)?;
         let stopper = capture.stopper();
         let cancel = CancelToken::new();
+        // Listen has no focused project: the user's own word list only. The
+        // snapshot is let go at once, so background vocabulary work does
+        // not wait on a session that runs for hours.
+        let vocabulary = Arc::clone(&self.vocabulary.snapshot(None).matcher);
         let thread = spawn_session(
             config,
             speaker,
+            vocabulary,
             self.events.clone(),
             capture,
             recording,

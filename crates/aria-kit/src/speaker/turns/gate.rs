@@ -2,10 +2,17 @@
 
 use std::collections::VecDeque;
 use std::ops::Range;
+use std::time::Duration;
 
 use super::{Tally, Timeline};
-use crate::speaker::SpeakerName;
+use crate::audio::canonical_samples;
+use crate::speaker::Label;
 use crate::transcription::Heard;
+use crate::voice_activity::SpeechMap;
+
+/// Under [`Admission::Spoken`], a segment with less speech than this, whose
+/// segment before it had less too, is music or noise.
+const MIN_SPEECH_SAMPLES: u64 = canonical_samples(Duration::from_millis(200));
 
 /// Which words a session lets out. The tracker reads it to know what to
 /// judge, and the gate reads it to know what to release.
@@ -15,6 +22,8 @@ pub enum Admission {
     OwnerOnly,
     /// Every word, named when an enrolled voice was heard in it.
     Everyone,
+    /// Every word spoken: a segment with no speech under it is dropped.
+    Spoken,
 }
 
 /// Holds decoded segments until the timeline decides them.
@@ -24,6 +33,10 @@ pub struct Gate {
     from: u64,
     held: VecDeque<Heard>,
     provisional: Option<Provisional>,
+    /// Speech under the last segment judged by its speech. A segment short
+    /// of speech still passes when this was enough: decode windows lag the
+    /// words at a boundary.
+    previous_speech: u64,
 }
 
 /// The decoder's latest provisional text.
@@ -34,17 +47,29 @@ struct Provisional {
     read_to: u64,
 }
 
-/// A segment let out, and the enrolled voice it was heard in.
+/// A segment let out, and the voice it was heard in.
 pub struct Released {
     pub heard: Heard,
-    pub speaker: Option<SpeakerName>,
+    pub speaker: Option<Label>,
+    /// The unit-norm embedding of its audio, when the tracker numbers voices.
+    pub embedding: Option<Vec<f32>>,
+}
+
+impl Released {
+    fn new(heard: Heard, timeline: &Timeline) -> Self {
+        Self {
+            speaker: timeline.label(&heard.window).cloned(),
+            embedding: timeline.embedding(&heard.window),
+            heard,
+        }
+    }
 }
 
 /// What may go out now. Segments still undecided stay held.
 #[derive(Default)]
 pub struct Decision {
     pub released: Vec<Released>,
-    /// Whole segments kept out, in another voice.
+    /// Whole segments kept out: in another voice, or with no speech.
     pub dropped: Vec<Heard>,
     /// The provisional text to show, empty to hide it. `None` while the
     /// decoder has none since its last finalized segment.
@@ -59,11 +84,17 @@ impl Gate {
             from,
             held: VecDeque::new(),
             provisional: None,
+            previous_speech: 0,
         }
     }
 
     pub fn admission(&self) -> Admission {
         self.admission
+    }
+
+    /// Where the oldest held segment's audio starts, while one is held.
+    pub fn undecided_from(&self) -> Option<u64> {
+        self.held.front().map(|heard| heard.window.start)
     }
 
     /// A finalized segment joins the queue. It replaces the provisional text it came from.
@@ -81,27 +112,63 @@ impl Gate {
         });
     }
 
-    /// Decides what the timeline allows out now. The preview is judged
-    /// before the release, against the segments held when it was asked for.
-    pub fn decide(&mut self, timeline: &Timeline) -> Decision {
+    /// Decides what the timeline and the speech map allow out now. The
+    /// preview is judged before the release, against the segments held when
+    /// it was asked for. Without a speech map, every recording counts as
+    /// speech.
+    pub fn decide(&mut self, timeline: &Timeline, speech: Option<&SpeechMap>) -> Decision {
         let mut decision = Decision {
             preview: self.preview(timeline),
             ..Decision::default()
         };
         match self.admission {
-            Admission::Everyone => decision.released.extend(self.held.drain(..).map(|heard| {
-                let speaker = timeline.speaker(&heard.window).cloned();
-                Released { heard, speaker }
-            })),
+            Admission::Everyone => decision.released.extend(
+                self.held
+                    .drain(..)
+                    .map(|heard| Released::new(heard, timeline)),
+            ),
             Admission::OwnerOnly => self.release_owner(timeline, &mut decision),
+            Admission::Spoken => self.release_spoken(timeline, speech, &mut decision),
         }
         decision
+    }
+
+    /// Releases segments with speech under them, in order, once the speech
+    /// map has scored their audio.
+    fn release_spoken(
+        &mut self,
+        timeline: &Timeline,
+        speech: Option<&SpeechMap>,
+        decision: &mut Decision,
+    ) {
+        while let Some(heard) = self.held.pop_front() {
+            // A map that could not be judged counts as speech.
+            let spoken = match speech.filter(|speech| !speech.is_broken()) {
+                None => true,
+                Some(speech) => {
+                    if heard.window.end > speech.reached() && !speech.is_finished() {
+                        self.held.push_front(heard);
+                        break;
+                    }
+                    let heard_speech = speech.speech(&heard.window);
+                    let enough = heard_speech.max(self.previous_speech) >= MIN_SPEECH_SAMPLES;
+                    self.previous_speech = heard_speech;
+                    enough
+                }
+            };
+            if spoken {
+                decision.released.push(Released::new(heard, timeline));
+            } else {
+                tracing::debug!("a segment with no speech under it was dropped");
+                decision.dropped.push(heard);
+            }
+        }
     }
 
     /// Releases admitted words in order; broken tracking discards the queue.
     fn release_owner(&mut self, timeline: &Timeline, decision: &mut Decision) {
         while let Some(mut heard) = self.held.pop_front() {
-            if timeline.broken {
+            if timeline.is_broken() {
                 tracing::debug!("segment not delivered: nothing can be judged");
                 decision.dropped.push(heard);
                 continue;
@@ -120,15 +187,14 @@ impl Gate {
                 heard.window = segment.span().unwrap_or(heard.window);
             }
             heard.segment = segment;
-            let speaker = timeline.speaker(&heard.window).cloned();
-            decision.released.push(Released { heard, speaker });
+            decision.released.push(Released::new(heard, timeline));
         }
     }
 
     fn preview(&self, timeline: &Timeline) -> Option<String> {
         let provisional = self.provisional.as_ref()?;
         Some(match self.admission {
-            Admission::Everyone => provisional.text.clone(),
+            Admission::Everyone | Admission::Spoken => provisional.text.clone(),
             Admission::OwnerOnly => self
                 .owner_preview(timeline, provisional)
                 .unwrap_or_default(),
@@ -139,7 +205,7 @@ impl Gate {
     /// sits in the owner's speech so far.
     fn owner_preview(&self, timeline: &Timeline, provisional: &Provisional) -> Option<String> {
         let read_to = provisional.read_to;
-        if timeline.broken || timeline.reached < read_to {
+        if timeline.is_broken() || timeline.reached < read_to {
             return None;
         }
         let fallback = self.from..read_to;

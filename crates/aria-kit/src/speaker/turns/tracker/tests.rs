@@ -87,7 +87,7 @@ impl<V: VoiceActivityDetector, E: Embedder, S: Segmenter> Listening<'_, V, E, S>
 }
 
 fn release(gate: &mut Gate, timeline: &Timeline) -> Vec<Heard> {
-    gate.decide(timeline)
+    gate.decide(timeline, None)
         .released
         .into_iter()
         .map(|released| released.heard)
@@ -103,7 +103,7 @@ fn preview(
     window: Option<&Range<u64>>,
 ) -> Option<String> {
     gate.propose(text.to_owned(), window.cloned(), read_to);
-    gate.decide(timeline)
+    gate.decide(timeline, None)
         .preview
         .filter(|shown| !shown.is_empty())
 }
@@ -411,15 +411,9 @@ fn a_later_verified_owner_resolves_the_earlier_pending_prefix() {
     voices.finish();
     assert!(!judgments(&voices).contains(&Judgment::Pending));
     let mut held = Gate::new(Admission::OwnerOnly, 0);
-    for (text, span) in [("before", seconds(5.0, 5.5)), ("owner", seconds(6.0, 7.0))] {
-        held.hold(Heard {
-            segment: crate::transcription::TranscriptSegment::new(text, Some(span.clone()))
-                .unwrap(),
-            span: Some(span.clone()),
-            window: span,
-        });
-    }
-    let decision = held.decide(&voices.timeline);
+    held.hold(heard_text("before", seconds(5.0, 5.5)));
+    held.hold(heard_text("owner", seconds(6.0, 7.0)));
+    let decision = held.decide(&voices.timeline, None);
     let released: Vec<&str> = decision
         .released
         .iter()
@@ -461,7 +455,7 @@ fn filtering_replay_is_invariant_to_push_size() {
             let state = (
                 voices.tracker.timeline.turns,
                 voices.tracker.timeline.stable_to,
-                voices.tracker.timeline.names,
+                voices.tracker.timeline.labels,
             );
             if let Some(expected) = &expected {
                 assert_eq!(&state, expected);
@@ -697,7 +691,7 @@ fn whole_source_admission_preserves_finalized_and_unresolved_states() {
             },
         ],
         reached: 20,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     assert_eq!(timeline.wholly_admitted(&(0..20)), Some(true));
@@ -706,8 +700,73 @@ fn whole_source_admission_preserves_finalized_and_unresolved_states() {
     timeline.turns[1].judgment = Judgment::Pending;
     assert_eq!(timeline.wholly_admitted(&(0..20)), None);
     timeline.turns[1].judgment = Judgment::Unverified;
-    timeline.broken = true;
+    timeline.break_off();
     assert_eq!(timeline.wholly_admitted(&(0..20)), None);
+}
+
+#[test]
+fn spoken_admission_drops_segments_without_speech_under_them() {
+    let mut speech = SpeechDetector::new(Loud, 0);
+    speech
+        .hear(&audio(&[(OWN_LEVEL, 1.0), (0.0, 2.0)]))
+        .unwrap();
+    let mut gate = Gate::new(Admission::Spoken, 0);
+    gate.hold(heard_text("hello", seconds(0.0, 1.0)));
+    // Silent, but the segment before it held speech.
+    gate.hold(heard_text("tail", seconds(1.0, 1.5)));
+    gate.hold(heard_text("noise", seconds(1.5, 2.5)));
+    // Past what the detector has scored.
+    gate.hold(heard_text("later", seconds(2.5, 3.5)));
+
+    let decision = gate.decide(&Timeline::default(), Some(speech.map()));
+    let texts = |segments: Vec<&Heard>| -> Vec<String> {
+        segments
+            .into_iter()
+            .map(|heard| heard.segment.as_str().to_owned())
+            .collect()
+    };
+
+    assert_eq!(
+        texts(
+            decision
+                .released
+                .iter()
+                .map(|released| &released.heard)
+                .collect()
+        ),
+        ["hello", "tail"]
+    );
+    assert_eq!(texts(decision.dropped.iter().collect()), ["noise"]);
+    assert!(gate.undecided_from().is_some());
+}
+
+#[test]
+fn forgetting_keeps_the_latest_turn_and_what_comes_after() {
+    let mut timeline = Timeline {
+        turns: vec![
+            Turn {
+                span: 0..4,
+                judgment: Judgment::Owner,
+            },
+            Turn {
+                span: 4..8,
+                judgment: Judgment::Other,
+            },
+        ],
+        labels: vec![LabeledTurn {
+            span: 0..8,
+            label: None,
+        }],
+        reached: 8,
+        ..Timeline::default()
+    };
+
+    timeline.forget_before(6);
+    assert_eq!(timeline.turns.len(), 1);
+    assert_eq!(timeline.admission(&(5..7)), Some(false));
+    timeline.forget_before(100);
+    assert_eq!(timeline.turns.len(), 1);
+    assert_eq!(timeline.labels.len(), 1);
 }
 
 #[test]
@@ -728,7 +787,7 @@ fn only_owner_turns_may_leave_the_computer() {
             },
         ],
         reached: 8,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let samples = [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0];
@@ -750,7 +809,7 @@ fn whole_source_admission_keeps_point_words() {
             judgment: Judgment::Owner,
         }],
         reached: 10,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     assert_eq!(timeline.wholly_admitted(&(3..3)), Some(true));
@@ -766,12 +825,7 @@ fn a_preview_shows_held_words_only_while_their_voice_is_the_owners() {
         let mut feed = TurnFeed::start(&mut recording, speech, Some(tracker));
         let mut gate = Gate::new(Admission::OwnerOnly, feed.held_from());
         feed.hear_through(SECOND as u64);
-        gate.hold(Heard {
-            segment: crate::transcription::TranscriptSegment::new("hello", Some(8_000..16_000))
-                .expect("a segment"),
-            span: Some(8_000..16_000),
-            window: 8_000..16_000,
-        });
+        gate.hold(heard_text("hello", 8_000..16_000));
 
         let timeline = feed.timeline().expect("a tracker runs");
         let reached = timeline.reached;
@@ -829,12 +883,7 @@ fn a_silence_trimmed_change_cannot_revise_released_audio() {
     let released = seconds(2.85, 2.95);
     assert_eq!(voices.timeline.admission(&released), Some(true));
     let mut held = Gate::new(Admission::OwnerOnly, 0);
-    held.hold(Heard {
-        segment: crate::transcription::TranscriptSegment::new("owner", Some(released.clone()))
-            .unwrap(),
-        span: Some(released.clone()),
-        window: released.clone(),
-    });
+    held.hold(heard_text("owner", released.clone()));
     assert_eq!(release(&mut held, &voices.timeline).len(), 1);
     changed.set(true);
     for frame in audio(&[(OTHER_LEVEL, 0.3), (0.0, 0.2)]).chunks(Loud::FRAME_SAMPLES) {
@@ -950,6 +999,35 @@ fn naming_tracks_a_change_between_people_with_the_same_role() {
 }
 
 #[test]
+fn a_numbering_tracker_numbers_voices_nobody_enrolled_and_splits_them_without_a_pause() {
+    let mut diarizer = Diarizer::new(VoiceByLevel, vec![]);
+    let mut speech = SpeechDetector::new(Loud, 0);
+    let mut tracker = VoiceprintTracker::numbering(&mut diarizer, 0);
+    let samples = audio(&[
+        (OWN_LEVEL, 4.0),
+        (OTHER_LEVEL, 4.0),
+        (0.0, 1.0),
+        (OWN_LEVEL, 2.0),
+    ]);
+    speech.hear(&samples).unwrap();
+    SpeakerTracker::hear(&mut tracker, speech.map(), &samples);
+    tracker.finish();
+
+    let label = |from, to| {
+        tracker
+            .timeline
+            .label(&seconds(from, to))
+            .map(Label::to_string)
+    };
+    assert_eq!(label(0.0, 1.0).as_deref(), Some("Speaker 1"));
+    assert_eq!(label(6.0, 7.0).as_deref(), Some("Speaker 2"));
+    assert_eq!(label(9.5, 10.5).as_deref(), Some("Speaker 1"));
+    let embedding = |from, to| tracker.timeline.embedding(&seconds(from, to)).unwrap();
+    assert!(embedding(6.0, 7.0)[1] > 0.9);
+    assert!(embedding(0.0, 1.0)[0] > 0.9);
+}
+
+#[test]
 fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
     let owner = Timeline {
         turns: vec![Turn {
@@ -957,7 +1035,7 @@ fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
             judgment: Judgment::Owner,
         }],
         reached: 25_600,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let mut mixed = owner.clone();
@@ -970,7 +1048,7 @@ fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
         ..owner.clone()
     };
     let broken = Timeline {
-        broken: true,
+        progress: Progress::Broken,
         ..owner.clone()
     };
     for (timeline, word, source) in [
@@ -983,7 +1061,7 @@ fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
     ] {
         let mut held = Gate::new(Admission::OwnerOnly, 0);
         held.hold(timed_heard(word, source));
-        let decision = held.decide(&timeline);
+        let decision = held.decide(&timeline, None);
         assert!(decision.released.is_empty());
         assert_eq!(decision.dropped.len(), 1);
     }
@@ -997,7 +1075,7 @@ fn source_admission_does_not_reach_before_the_tracking_origin() {
             judgment: Judgment::Owner,
         }],
         reached: 32_000,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let mut held = Gate::new(Admission::OwnerOnly, 16_000);
@@ -1025,11 +1103,20 @@ fn source_admission_waits_for_its_pending_turn() {
     let mut held = Gate::new(Admission::OwnerOnly, 0);
     held.hold(timed_heard(2_560..5_120, Some(0..25_600)));
     assert!(release(&mut held, &timeline).is_empty());
+    assert!(held.undecided_from().is_some());
 
     timeline.turns[0].judgment = Judgment::Unverified;
     timeline.open = false;
-    timeline.finished = true;
+    timeline.progress = Progress::Finished;
     assert_eq!(release(&mut held, &timeline).len(), 1);
+}
+
+fn heard_text(text: &str, window: Range<u64>) -> Heard {
+    Heard {
+        segment: crate::transcription::TranscriptSegment::new(text, Some(window.clone())).unwrap(),
+        span: Some(window.clone()),
+        window,
+    }
 }
 
 fn timed_heard(word: Range<u64>, source: Option<Range<u64>>) -> Heard {
@@ -1063,7 +1150,7 @@ fn sentence_punctuation_does_not_move_an_owner_word_into_a_guest_turn() {
             },
         ],
         reached: SECOND as u64,
-        finished: true,
+        progress: Progress::Finished,
         ..Timeline::default()
     };
     let words = word_timings([
@@ -1147,7 +1234,10 @@ fn a_feed_without_a_tracker_frees_what_the_detector_heard() {
         None::<VoiceprintTracker<'_, VoiceByLevel>>,
     );
 
-    assert_eq!(feed.hear_ahead(Duration::from_millis(100)), Ahead::Heard);
+    assert_eq!(
+        feed.hear_ahead(Duration::from_millis(100), None),
+        Ahead::Heard
+    );
 
     assert_eq!(feed.held_from(), SECOND as u64);
 }
@@ -1163,10 +1253,29 @@ fn a_feed_whose_tracker_breaks_still_ends() {
     let mut feed = TurnFeed::start(&mut recording, SpeechDetector::new(Loud, 0), Some(tracker));
 
     let mut steps = 0;
-    while feed.hear_ahead(Duration::from_millis(100)) != Ahead::Ended {
+    while feed.hear_ahead(Duration::from_millis(100), None) != Ahead::Ended {
         steps += 1;
         assert!(steps < 100, "the feed keeps hearing nothing");
     }
 
     assert!(feed.timeline().expect("a tracker runs").is_broken());
+}
+
+#[test]
+fn a_tracker_further_behind_than_the_lag_allows_skips_to_the_detector() {
+    let piece = Duration::from_millis(100);
+    for (max_lag, reached) in [
+        (None, canonical_samples(piece)),
+        (Some(Duration::from_secs(1)), 3 * SECOND as u64),
+    ] {
+        let mut recording = RecordingReader::from_samples(&[OWN_LEVEL; 3 * SECOND]);
+        let mut diarizer = Diarizer::new(VoiceByLevel, vec![]);
+        let tracker = VoiceprintTracker::numbering(&mut diarizer, 0);
+        let mut feed = TurnFeed::start(&mut recording, SpeechDetector::new(Loud, 0), Some(tracker));
+
+        feed.hear_ahead(piece, max_lag);
+
+        let timeline = feed.timeline().expect("a tracker runs");
+        assert_eq!(timeline.reached(), reached, "{max_lag:?}");
+    }
 }

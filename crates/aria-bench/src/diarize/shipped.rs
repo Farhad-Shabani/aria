@@ -102,7 +102,7 @@ pub fn label_as_attributed(run: Run<'_>) -> Result<Labeled, BenchError> {
 /// not need to do — it lets a sweep keep the chunks under `cache` and pay
 /// for the nets once. What the track ends up believing is the same either
 /// way; only `retained_from` differs, and nothing below reads it.
-fn observe(run: Run<'_>) -> Result<VoiceTrack, BenchError> {
+pub(crate) fn observe(run: Run<'_>) -> Result<VoiceTrack, BenchError> {
     let samples = crate::diarize::sibling::read(run.wav)?;
 
     let model = run.speaker.model.clone();
