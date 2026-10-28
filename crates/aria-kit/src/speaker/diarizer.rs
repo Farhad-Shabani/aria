@@ -6,10 +6,9 @@ use super::{AnonymousNumbering, Embedder, Label, Profile, Role, SpeakerError, Sp
 
 /// Minimum similarity for claiming an enrolled name.
 pub const ENROLLED_THRESHOLD: f32 = 0.5;
-/// The owner's voice passes at this similarity, below the naming bar so a
-/// short turn can pass. Measured on two live voices against a profile
-/// enrolled from sentences of about seven seconds: the owner's turns of
-/// 1.5–3 s scored 0.29–0.56, another speaker's 0.18–0.21.
+/// The owner's voice passes at this similarity: below the naming bar,
+/// so a short turn can pass. On two test voices, the owner's 1.5–3 s
+/// turns scored 0.29–0.56; another voice scored 0.18–0.21.
 pub const OWN_VOICE_THRESHOLD: f32 = 0.35;
 /// Similarity threshold for anonymous clusters; short audio windows need a lower gate.
 pub const CLUSTER_THRESHOLD: f32 = 0.21;

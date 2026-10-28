@@ -5,7 +5,6 @@
 
 mod board;
 mod decoder;
-mod speech;
 mod turns;
 
 use std::borrow::Borrow;
@@ -14,6 +13,7 @@ use std::sync::Arc;
 use std::thread::Scope;
 
 use aria_kit::audio::{RecordingReader, canonical_samples};
+use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Admission, Gate, Released, SpeakerTracker, Timeline, TurnFeed};
 use aria_kit::transcription::HeardUpdate;
@@ -23,35 +23,18 @@ use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionErro
 pub(crate) use board::Board;
 use board::Wake;
 use decoder::DecodeThread;
-
-use speech::held_speech;
 use turns::TurnThread;
 pub(crate) use turns::{Snapshot, TrackingError};
+
+/// Names the hearing as the backend when its own decoder thread fails.
+const BACKEND: &str = "dictation";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HearingError {
     #[error(transparent)]
-    Decoder(TranscriptionError),
-    #[error("the decoder panicked")]
-    DecoderPanicked,
-    #[error("could not start the decoder")]
-    DecoderSpawn(#[source] std::io::Error),
+    Transcription(TranscriptionError),
     #[error(transparent)]
     Tracking(TrackingError),
-}
-
-impl HearingError {
-    /// Decoder errors pass through. A decoder that panicked or never
-    /// started becomes an inference failure of `backend`.
-    pub(crate) fn into_transcription(self, backend: &'static str) -> TranscriptionError {
-        match self {
-            Self::Decoder(error) => error,
-            error => TranscriptionError::Inference {
-                backend,
-                source: aria_kit::backend::BackendError::engine(error),
-            },
-        }
-    }
 }
 
 pub(crate) enum Event {
@@ -65,11 +48,10 @@ pub(crate) enum Event {
 
 pub(crate) struct Ended {
     pub(crate) transcript: Transcript,
-    /// The walk's last timeline, which may land after the decoder's last
-    /// update. Only a hearing with a tracker has one.
-    pub(crate) timeline: Option<Arc<Timeline>>,
-    /// What the gate let out once hearing ended.
-    pub(crate) released: Vec<Released>,
+    /// What hearing still owed once it ended: the walk's last timeline,
+    /// which may land after the decoder's last update, then what the gate
+    /// let out.
+    pub(crate) events: Vec<Event>,
     /// Every word typed was the owner's, judged on a whole recording.
     pub(crate) own_voice: bool,
 }
@@ -100,14 +82,14 @@ where
         // The walk ends with capture. A tracker that fails once someone
         // spoke ends the press early; before that, it may still be NoSpeech.
         loop {
-            let snapshot = walk.next_snapshot();
+            let snapshot = board.next_snapshot();
             if let Some(timeline) = &snapshot.timeline {
                 heard(timeline);
             }
             if snapshot.tracking_failed() && held_speech(&snapshot.speech) {
                 return Err(HearingError::Tracking(TrackingError::Failed));
             }
-            if walk.ended() {
+            if board.walk_ending().is_some() {
                 break;
             }
         }
@@ -165,7 +147,7 @@ fn verdict<T: Borrow<Timeline>>(
     admission: Admission,
 ) -> Result<Option<T>, HearingError> {
     if speech.is_some_and(|speech| !held_speech(speech)) {
-        return Err(HearingError::Decoder(TranscriptionError::NoSpeech));
+        return Err(HearingError::Transcription(TranscriptionError::NoSpeech));
     }
     match admission {
         Admission::Everyone => Ok(None),
@@ -183,9 +165,29 @@ fn owner_walk_failed(error: std::io::Error) -> TrackingError {
     TrackingError::Spawn(error)
 }
 
+/// Whether `speech` holds speech before `at`. A decoder can name words in
+/// silence that look like real ones, so the audio decides. A map that could
+/// not be judged counts as speech: losing words is worse than letting words
+/// decoded from silence through.
+fn held_speech_before(speech: &SpeechMap, at: u64) -> bool {
+    if speech.is_broken() {
+        tracing::warn!("the recording could not be judged for speech; its words pass");
+        return true;
+    }
+    speech.speech_before(at) > 0
+}
+
+fn held_speech(speech: &SpeechMap) -> bool {
+    if held_speech_before(speech, speech.reached()) {
+        return true;
+    }
+    tracing::info!("no speech detected in the recording; its words are dropped");
+    false
+}
+
 pub(crate) struct Hearing<'scope> {
     board: Arc<Board>,
-    decoder: Option<DecodeThread<'scope>>,
+    decoder: DecodeThread<'scope>,
     turns: Option<TurnThread<'scope>>,
     gate: Gate,
     events: VecDeque<Event>,
@@ -241,10 +243,16 @@ impl<'scope> Hearing<'scope> {
             decoding.previews,
             Arc::clone(board),
         )
-        .map_err(HearingError::DecoderSpawn)?;
+        .map_err(|error| {
+            tracing::error!(%error, "the decoder thread did not start");
+            HearingError::Transcription(TranscriptionError::Inference {
+                backend: BACKEND,
+                source: BackendError::engine(error),
+            })
+        })?;
         Ok(Self {
             board: Arc::clone(board),
-            decoder: Some(decoder),
+            decoder,
             spoken: false,
             turns,
             gate: Gate::new(admission, from),
@@ -272,7 +280,7 @@ impl<'scope> Hearing<'scope> {
                 Wake::Heard => {}
                 Wake::DecoderDone => self.done = true,
             }
-            let snapshot = self.turns.as_ref().map(TurnThread::snapshot);
+            let snapshot = self.turns.is_some().then(|| self.board.snapshot());
             // Queued ahead of what the gate releases, so whose voice it is
             // shows before their words do.
             if heard
@@ -292,14 +300,26 @@ impl<'scope> Hearing<'scope> {
     }
 
     /// Waits for both threads, and decides what is still held.
-    pub(crate) fn finish(mut self) -> Result<Ended, HearingError> {
-        let decoder = self.decoder.take().expect("a hearing finishes once");
+    pub(crate) fn finish(self) -> Result<Ended, HearingError> {
+        let Self {
+            decoder,
+            turns,
+            mut gate,
+            unspoken,
+            trusted,
+            ..
+        } = self;
         let transcript = decoder
             .finish()
-            .ok_or(HearingError::DecoderPanicked)?
-            .map_err(HearingError::Decoder)?;
-        let admission = self.gate.admission();
-        let snapshot = match self.turns.take() {
+            .unwrap_or_else(|| {
+                Err(TranscriptionError::Inference {
+                    backend: BACKEND,
+                    source: BackendError::Engine("the decoder panicked".into()),
+                })
+            })
+            .map_err(HearingError::Transcription)?;
+        let admission = gate.admission();
+        let snapshot = match turns {
             Some(turns) if admission == Admission::OwnerOnly => Some(turns.finish()),
             Some(turns) => Some(turns.finish_speech()),
             None => None,
@@ -315,25 +335,26 @@ impl<'scope> Hearing<'scope> {
             admission,
         )?;
         let (released, own_voice) = match timeline {
-            Some(timeline) => (
-                self.gate.decide(timeline).released,
-                timeline.admitted_is_owner(),
-            ),
+            Some(timeline) => (gate.decide(timeline).released, timeline.admitted_is_owner()),
             None => (Vec::new(), false),
         };
-        let transcript = if self.unspoken > 0 {
+        let transcript = if unspoken > 0 {
             tracing::debug!(
-                segments = self.unspoken,
+                segments = unspoken,
                 "segments decoded before speech was heard dropped"
             );
-            Transcript::new(self.trusted.join(" ")).map_err(HearingError::Decoder)?
+            Transcript::new(trusted.join(" ")).map_err(HearingError::Transcription)?
         } else {
             transcript
         };
+        let events = last
+            .map(Event::Timeline)
+            .into_iter()
+            .chain(released.into_iter().map(Event::Released))
+            .collect();
         Ok(Ended {
             transcript,
-            timeline: last,
-            released,
+            events,
             own_voice,
         })
     }
@@ -379,7 +400,7 @@ impl<'scope> Hearing<'scope> {
         let speech = turns
             .speech_through(read_to)
             .map_err(HearingError::Tracking)?;
-        Ok(speech::spoken_by(&speech, read_to))
+        Ok(held_speech_before(&speech, read_to))
     }
 
     /// Without a tracker, an empty timeline names nobody.
@@ -559,11 +580,19 @@ mod tests {
                     "the hearing waited for capture to end, panics={panics}"
                 );
                 if panics {
-                    assert!(matches!(ended, Err(HearingError::DecoderPanicked)));
+                    assert!(matches!(
+                        ended,
+                        Err(HearingError::Transcription(TranscriptionError::Inference {
+                            backend: BACKEND,
+                            ..
+                        }))
+                    ));
                 } else {
                     assert!(matches!(
                         ended,
-                        Err(HearingError::Decoder(TranscriptionError::Inference { .. }))
+                        Err(HearingError::Transcription(
+                            TranscriptionError::Inference { .. }
+                        ))
                     ));
                 }
                 capture.join().unwrap();
@@ -626,12 +655,64 @@ mod tests {
                     assert!(
                         matches!(
                             heard,
-                            Err(HearingError::Decoder(TranscriptionError::NoSpeech))
+                            Err(HearingError::Transcription(TranscriptionError::NoSpeech))
                         ),
                         "saved={saved}"
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_map_that_could_not_be_judged_counts_as_speech() {
+        let mut detector = SpeechDetector::new(Loud, 0);
+        detector.hear(&[0.0; 16_000]).unwrap();
+        let mut speech = detector.map().clone();
+        speech.break_off();
+
+        assert!(held_speech(&speech));
+    }
+
+    #[test]
+    fn cancelling_recorded_filtering_stops_further_checks() {
+        struct CancelAfterEmbedding {
+            cancel: CancelToken,
+            calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        impl aria_kit::speaker::Embedder for CancelAfterEmbedding {
+            fn embed(
+                &mut self,
+                _audio: &[f32],
+            ) -> Result<Option<Vec<f32>>, aria_kit::speaker::SpeakerError> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.cancel.cancel();
+                Ok(Some(OWN.to_vec()))
+            }
+
+            fn dimension(&self) -> usize {
+                OWN.len()
+            }
+        }
+
+        let cancel = CancelToken::new();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut diarizer = diarizer(CancelAfterEmbedding {
+            cancel: cancel.clone(),
+            calls: Arc::clone(&calls),
+        });
+        let mut recording = RecordingReader::from_samples(&vec![0.5; 5 * 16_000]);
+        let feed = TurnFeed::start(
+            &mut recording,
+            SpeechDetector::new(Loud, 0),
+            Some(tracker(&mut diarizer, 0)),
+        );
+        let result = hear_saved(feed, Admission::OwnerOnly, &cancel);
+        assert!(matches!(
+            result,
+            Err(HearingError::Tracking(TrackingError::Cancelled))
+        ));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

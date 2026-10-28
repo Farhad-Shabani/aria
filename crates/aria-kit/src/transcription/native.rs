@@ -89,7 +89,6 @@ impl NativeState {
             );
             let words = self.absorb(&emitted, at, chunk)?;
             if let Some(segment) = segment(&words, self.fed) {
-                let segment = segment.bounded(self.fed)?;
                 self.transcript.push(segment.as_str().to_owned());
                 return Ok(Some(ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
@@ -101,8 +100,13 @@ impl NativeState {
                     .held
                     .as_ref()
                     .map_or_else(String::new, |held| held.text.clone());
-                let source_window = self.held.as_ref().and_then(|held| {
-                    segment(std::slice::from_ref(held), self.fed)?.source_window()
+                let source_window = self.held.as_ref().map(|held| {
+                    if held.timed {
+                        held.window.clone()
+                    } else {
+                        // An untimed word may come from any earlier chunk.
+                        0..self.fed
+                    }
                 });
                 return Ok(Some(ChunkStep {
                     update: Some(TranscriptUpdate::Provisional {

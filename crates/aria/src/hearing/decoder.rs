@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread::{Scope, ScopedJoinHandle};
 
 use aria_kit::audio::RecordingReader;
-use aria_kit::transcription::{HeardUpdate, next_heard, next_heard_update};
+use aria_kit::transcription::next_heard_update;
 
 use super::board::{Board, Decoded};
 use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
@@ -74,15 +74,7 @@ fn decode<T: Transcriber>(
     previews: bool,
     board: &Board,
 ) -> Result<Transcript, TranscriptionError> {
-    loop {
-        let update = if previews {
-            next_heard_update(operation, recording)?
-        } else {
-            next_heard(operation, recording)?.map(HeardUpdate::Finalized)
-        };
-        let Some(update) = update else {
-            break;
-        };
+    while let Some(update) = next_heard_update(operation, recording, previews)? {
         let decoded = Decoded {
             update,
             read_to: operation.read_to(),

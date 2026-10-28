@@ -31,7 +31,7 @@ pub trait Segmenter {
     fn segment(&mut self, chunk: &[f32]) -> Result<Vec<Activity>, SegmentationError>;
 }
 
-impl<G: Segmenter> Segmenter for &mut G {
+impl<S: Segmenter> Segmenter for &mut S {
     fn shape(&self) -> ChunkShape {
         (**self).shape()
     }

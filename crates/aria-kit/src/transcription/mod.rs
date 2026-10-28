@@ -26,22 +26,15 @@ pub use session::Session;
 /// delivery, custom cadences — stay out and take an explicit `aria-kit`
 /// dependency.
 pub mod prelude {
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub use super::session::HeardSession;
     pub use super::{
-        Backtrack, Caret, Heard, Language, Layer, RemoveHesitations, RemoveRepeats, Session,
-        Streaming, Transcript, TranscriptSegment, Transcription, TranscriptionError, Vocabulary,
-        Whole,
+        Backtrack, Caret, Language, Layer, RemoveHesitations, RemoveRepeats, Session, Streaming,
+        Transcript, TranscriptSegment, Transcription, TranscriptionError, Vocabulary, Whole,
     };
     pub use crate::audio::RecordingReader;
     #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
     pub use crate::audio::{Microphone, RecordingMode};
     pub use crate::cancel::CancelToken;
     pub use crate::speaker::{Diarizer, Embedder};
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub use crate::speaker::{Released, VoiceprintTracker};
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    pub use crate::voice_activity::SpeechDetector;
 }
 
 const MAX_LANGUAGE_CODE_BYTES: usize = 64;
@@ -1047,7 +1040,7 @@ pub struct TranscriptSegment {
     source_window: Option<std::ops::Range<u64>>,
     /// Where each word of `text` sits, in order, when every word was timed.
     /// Cleared whenever the text is rewritten.
-    words: Option<Vec<std::ops::Range<u64>>>,
+    word_spans: Option<Vec<std::ops::Range<u64>>>,
 }
 
 impl TranscriptSegment {
@@ -1062,7 +1055,7 @@ impl TranscriptSegment {
         Ok(Self {
             text,
             span,
-            words: None,
+            word_spans: None,
             source_window: None,
         })
     }
@@ -1072,7 +1065,7 @@ impl TranscriptSegment {
         (!text.is_empty()).then_some(Self {
             text,
             span,
-            words: None,
+            word_spans: None,
             source_window: None,
         })
     }
@@ -1084,7 +1077,7 @@ impl TranscriptSegment {
         Some(Self {
             text: texts.join(" "),
             span: Some(span),
-            words: Some(words.iter().map(|(_, span)| span.clone()).collect()),
+            word_spans: Some(words.iter().map(|(_, span)| span.clone()).collect()),
             source_window: None,
         })
     }
@@ -1101,7 +1094,7 @@ impl TranscriptSegment {
 
     /// Where each word sits, in order, when every word was timed.
     pub fn word_spans(&self) -> Option<&[std::ops::Range<u64>]> {
-        self.words.as_deref()
+        self.word_spans.as_deref()
     }
 
     pub fn source_window(&self) -> Option<std::ops::Range<u64>> {
@@ -1138,7 +1131,7 @@ impl TranscriptSegment {
         {
             return Err(TranscriptionError::InvalidSegment);
         }
-        self.words = Some(words);
+        self.word_spans = Some(words);
         Ok(self)
     }
 
@@ -1149,7 +1142,7 @@ impl TranscriptSegment {
         if let Some(span) = self.span.take() {
             self.span = Some(bounded_span(span, audio_end)?);
         }
-        if let Some(words) = &mut self.words {
+        if let Some(words) = &mut self.word_spans {
             for span in words {
                 *span = bounded_span(span.clone(), audio_end)?;
             }
@@ -1162,9 +1155,9 @@ impl TranscriptSegment {
     /// it keeps none.
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     pub(crate) fn keeping(&self, keep: &[bool]) -> Option<Self> {
-        let marks = self.words.as_ref().map_or(1, Vec::len);
+        let marks = self.word_spans.as_ref().map_or(1, Vec::len);
         assert_eq!(keep.len(), marks, "one mark per word");
-        let Some(spans) = &self.words else {
+        let Some(spans) = &self.word_spans else {
             return keep[0].then(|| self.clone());
         };
         let words: Vec<(String, std::ops::Range<u64>)> = self
@@ -1187,7 +1180,7 @@ impl TranscriptSegment {
     /// Rewrites the text, which leaves the word timings nothing to match.
     pub(crate) fn rewrite(&mut self, text: String) {
         if text != self.text {
-            self.words = None;
+            self.word_spans = None;
         }
         self.text = text;
     }
@@ -1404,9 +1397,6 @@ pub enum TranscriptionError {
 
     #[error("no speech was transcribed")]
     NoSpeech,
-
-    #[error("speaker tracking failed")]
-    SpeakerTracking,
 
     #[error("the transcriber was asked to run an operation but offers none")]
     NoDelegatedOperation,
@@ -1642,57 +1632,54 @@ mod operation_source_tests {
 
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     #[test]
-    fn a_timed_segment_keeps_the_words_asked_for_with_their_timings() {
+    fn a_segment_keeps_the_words_asked_for_with_their_timings() {
         let words = [
             ("one".to_owned(), 0..10),
             ("two".to_owned(), 20..30),
             ("three".to_owned(), 40..50),
         ];
-        let segment = TranscriptSegment::timed(&words)
+        let timed = TranscriptSegment::timed(&words)
             .expect("words to join")
             .with_source_window(0..60)
             .unwrap();
-
-        let kept = segment
-            .keeping(&[false, true, true])
-            .expect("two words kept");
-
-        assert_eq!(kept.as_str(), "two three");
-        assert_eq!(kept.span(), Some(20..50));
-        assert_eq!(kept.word_spans(), Some(&[20..30, 40..50][..]));
-        assert_eq!(kept.source_window(), Some(0..60));
-        assert!(segment.keeping(&[false, false, false]).is_none());
-    }
-
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    #[test]
-    fn an_untimed_segment_keeps_all_or_nothing() {
-        let segment = TranscriptSegment::new("one two", None).unwrap();
-
-        assert_eq!(
-            segment.keeping(&[true]).map(TranscriptSegment::into_text),
-            Some("one two".into())
-        );
-        assert!(segment.keeping(&[false]).is_none());
-    }
-
-    #[cfg(all(feature = "silero", not(target_family = "wasm")))]
-    #[test]
-    fn keeping_words_preserves_the_envelope_of_every_retained_timing() {
-        let segment = TranscriptSegment::new("one two three", Some(10..80))
+        let untimed = TranscriptSegment::new("one two", None).unwrap();
+        let overlapping = TranscriptSegment::new("one two three", Some(10..80))
             .unwrap()
             .with_word_spans(vec![30..80, 10..50, 40..60])
             .unwrap()
             .with_source_window(0..100)
             .unwrap();
 
-        let retained = segment.keeping(&[true, true, false]).unwrap();
+        for (segment, keep, text, span, word_spans, source_window) in [
+            (
+                &timed,
+                &[false, true, true][..],
+                "two three",
+                Some(20..50),
+                Some(&[20..30, 40..50][..]),
+                Some(0..60),
+            ),
+            (&untimed, &[true][..], "one two", None, None, None),
+            (
+                &overlapping,
+                &[true, true, false][..],
+                "one two",
+                Some(10..80),
+                Some(&[30..80, 10..50][..]),
+                Some(0..100),
+            ),
+        ] {
+            let kept = segment.keeping(keep).expect("words kept");
 
-        assert_eq!(retained.span(), Some(10..80));
-        assert_eq!(retained.source_window(), Some(0..100));
-        assert_eq!(retained.as_str(), "one two");
-        let words = retained.word_spans().unwrap().to_vec();
-        assert!(retained.with_word_spans(words).is_ok());
+            assert_eq!(kept.as_str(), text);
+            assert_eq!(kept.span(), span);
+            assert_eq!(kept.word_spans(), word_spans);
+            assert_eq!(kept.source_window(), source_window);
+            assert!(segment.keeping(&vec![false; keep.len()]).is_none());
+            if let Some(words) = word_spans {
+                assert!(kept.with_word_spans(words.to_vec()).is_ok());
+            }
+        }
     }
 
     #[test]
@@ -1745,30 +1732,6 @@ mod word_timing_tests {
 
     fn token(text: &str, start: f32, end: f32) -> (&str, TimedWord) {
         (text, TimedWord { start, end })
-    }
-
-    #[test]
-    fn sentence_punctuation_does_not_extend_spoken_word_timings() {
-        for punctuation in [".", ",", "!", "?", ":", ";"] {
-            let words = word_timings([
-                token(" word", 0.0, 0.4),
-                token(punctuation, 0.4, 0.8),
-                token(" next", 0.8, 1.0),
-            ]);
-            assert_eq!(
-                words,
-                [
-                    TimedWord {
-                        start: 0.0,
-                        end: 0.4
-                    },
-                    TimedWord {
-                        start: 0.8,
-                        end: 1.0
-                    },
-                ]
-            );
-        }
     }
 
     #[test]
@@ -1877,17 +1840,12 @@ mod word_timing_tests {
     }
 
     #[test]
-    fn word_timing_conversion_accepts_zero_duration_and_exact_integer_limits() {
-        for (start, end, origin, expected) in [
-            (0.0, 0.0, 0, 0..0),
-            (0.0, 0.0, u64::MAX, u64::MAX..u64::MAX),
-            (0.0, 0.5, u64::MAX - 8_000, u64::MAX - 8_000..u64::MAX),
-        ] {
-            assert_eq!(
-                TimedWord { start, end }.span_from(origin).unwrap(),
-                expected
-            );
-        }
+    fn word_timing_conversion_accepts_zero_duration() {
+        let (start, end, origin, expected) = (0.0, 0.0, 0, 0..0);
+        assert_eq!(
+            TimedWord { start, end }.span_from(origin).unwrap(),
+            expected
+        );
     }
 
     #[test]

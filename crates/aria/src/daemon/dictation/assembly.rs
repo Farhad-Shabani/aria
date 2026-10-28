@@ -21,7 +21,7 @@ use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
-    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, TextLayers,
+    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
     Transcribed,
 };
 use crate::rpc::RpcErrorCode;
@@ -338,7 +338,7 @@ struct ExecutionParts {
     wake: Option<WakeWordControl>,
     speaker: SpeakerConfig,
     vocabulary: Arc<VocabularyRuntime>,
-    text: TextLayers<ConfiguredLayers>,
+    rewrites: Rewrites<ConfiguredLayers>,
 }
 
 impl ExecutionParts {
@@ -366,7 +366,7 @@ impl ExecutionParts {
             )
             .hearing_speech(speaker::speech_gate())
             .tracking_voices(diarizer, segmenter)
-            .editing(self.text),
+            .rewriting(self.rewrites),
             wake: self.wake,
             speaker: self.speaker,
             vocabulary: self.vocabulary,
@@ -393,9 +393,9 @@ pub(super) fn build_dictation(
     loading: ModelLoading,
     microphone: Arc<Gate>,
 ) -> Result<BuiltDictation, DictationInitializationError> {
-    let text = setup
+    let rewrites = setup
         .dictation
-        .text_layers(home)
+        .rewrites(home)
         .map_err(DictationInitializationError::Cleanup)?;
     let DictationSetup {
         dictation:
@@ -429,7 +429,7 @@ pub(super) fn build_dictation(
         wake: wake_control.clone(),
         speaker,
         vocabulary,
-        text,
+        rewrites,
     });
     Ok(BuiltDictation {
         engine: engine.name,
@@ -458,8 +458,8 @@ pub(super) fn transcribe_retry(
     cancel: &CancelToken,
 ) -> Result<Transcribed, DictationError> {
     let config = &setup.dictation;
-    let text = config
-        .text_layers(&setup.home)
+    let rewrites = config
+        .rewrites(&setup.home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
     let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
@@ -471,7 +471,7 @@ pub(super) fn transcribe_retry(
     let pipeline = DictationPipeline::new((), transcription, ())
         .hearing_speech(speaker::speech_gate())
         .tracking_voices(diarizer, segmenter)
-        .editing(text);
+        .rewriting(rewrites);
     pipeline.transcribe(
         recording,
         &settings.recognition_language,

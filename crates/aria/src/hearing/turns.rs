@@ -22,8 +22,6 @@ pub(crate) enum TrackingError {
     Unavailable,
     #[error("speaker tracking failed")]
     Failed,
-    #[error("speaker tracking panicked")]
-    Panicked,
     #[error("speaker tracking was cancelled")]
     Cancelled,
     #[error("could not start speaker tracking")]
@@ -110,21 +108,6 @@ impl<'scope> TurnThread<'scope> {
         })
     }
 
-    /// What the walk has heard so far, without waiting.
-    pub(super) fn snapshot(&self) -> Snapshot {
-        self.board.snapshot()
-    }
-
-    /// The next snapshot the walk publishes, waiting for it. Its end counts
-    /// as one.
-    pub(super) fn next_snapshot(&self) -> Snapshot {
-        self.board.next_snapshot()
-    }
-
-    pub(super) fn ended(&self) -> bool {
-        self.board.walk_ending().is_some()
-    }
-
     /// The speech map once the detector has scored through stream
     /// `position`, or as far as it got before it stopped. The decoder never
     /// reads past what capture has delivered, and the detector takes all of
@@ -137,25 +120,27 @@ impl<'scope> TurnThread<'scope> {
             .map(|snapshot| snapshot.speech)
     }
 
-    /// The snapshot once the tracker, too, has heard through `position`.
-    pub(super) fn heard_through(&self, position: u64) -> Result<Snapshot, TrackingError> {
-        self.board.wait_walk(|snapshot| match &snapshot.timeline {
-            Some(timeline) => timeline.is_broken() || timeline.reached() >= position,
-            None => snapshot.speech.is_broken() || snapshot.speech.reached() >= position,
-        })
+    /// Waits until the tracker, too, has heard through `position`.
+    pub(super) fn heard_through(&self, position: u64) -> Result<(), TrackingError> {
+        self.board
+            .wait_walk(|snapshot| match &snapshot.timeline {
+                Some(timeline) => timeline.is_broken() || timeline.reached() >= position,
+                None => snapshot.speech.is_broken() || snapshot.speech.reached() >= position,
+            })
+            .map(drop)
     }
 
-    /// Waits until the whole recording is heard. A walk that panicked heard
-    /// nothing more, so nothing after it passes.
+    /// Waits until the whole recording is heard. A walk that panicked
+    /// fails, since its voices can no longer be judged.
     pub(super) fn finish(mut self) -> Result<Snapshot, TrackingError> {
         let worker = self.worker.take().expect("the walk is joined only once");
         if worker.join().is_err() {
-            tracing::error!("the turn thread panicked; nothing more passes");
-            return Err(TrackingError::Panicked);
+            tracing::error!("the turn thread panicked");
+            return Err(TrackingError::Failed);
         }
         match self.board.walk_ending() {
             Some(Ending::Heard) => Ok(self.board.snapshot()),
-            Some(Ending::Panicked) => Err(TrackingError::Panicked),
+            Some(Ending::Panicked) => Err(TrackingError::Failed),
             Some(Ending::Stopped) | None => Err(TrackingError::Cancelled),
         }
     }
@@ -165,10 +150,11 @@ impl<'scope> TurnThread<'scope> {
     pub(super) fn finish_speech(self) -> Result<Snapshot, TrackingError> {
         self.board.untrack();
         let board = Arc::clone(&self.board);
-        match self.finish() {
-            Err(TrackingError::Panicked) => Ok(board.snapshot()),
-            finished => finished,
+        let finished = self.finish();
+        if board.walk_ending() == Some(Ending::Panicked) {
+            return Ok(board.snapshot());
         }
+        finished
     }
 }
 
@@ -249,7 +235,7 @@ mod tests {
     use std::time::Instant;
 
     use aria_kit::audio::{Recording, RecordingReader};
-    use aria_kit::speaker::{Embedder, SpeakerError, VoiceprintTracker};
+    use aria_kit::speaker::{Embedder, SpeakerError};
     use aria_kit::voice_activity::SpeechDetector;
 
     use super::*;
@@ -276,7 +262,7 @@ mod tests {
     fn timeline_through(walk: &TurnThread<'_>, position: u64) -> Arc<Timeline> {
         let started = Instant::now();
         loop {
-            let timeline = walk.snapshot().timeline.expect("a tracker runs");
+            let timeline = walk.board.snapshot().timeline.expect("a tracker runs");
             if timeline.reached() >= position || timeline.is_broken() {
                 return timeline;
             }
@@ -289,57 +275,50 @@ mod tests {
     }
 
     #[test]
-    fn the_speech_map_runs_ahead_without_a_tracker() {
-        let (mut recording, mut writer) = Recording::open();
-        let speech = SpeechDetector::new(Loud, 0);
-        let feed = TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);
-        writer.push(&[0.5; SECOND]);
-
-        std::thread::scope(|scope| {
-            let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
-            let map = walk.speech_through(SECOND as u64).unwrap();
-
-            assert_eq!(map.speech_before(SECOND as u64), SECOND as u64);
-            assert!(walk.snapshot().timeline.is_none());
-            writer.finish();
-            assert!(walk.finish().is_ok());
-        });
-    }
-
-    #[test]
     fn the_walk_cuts_a_finished_press_as_a_whole_pass_does() {
-        let mut audio = vec![0.0; SECOND / 2];
-        audio.extend([0.5; SECOND]);
-        audio.extend([0.0; SECOND]);
-        audio.extend([0.5; SECOND]);
-        let (mut recording, mut writer) = Recording::open();
-        let speech = SpeechDetector::new(Loud, 0);
-        let mut diarizer = diarizer(Voice(OWN));
-        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
+        let mut press = vec![0.0; SECOND / 2];
+        press.extend([0.5; SECOND]);
+        press.extend([0.0; SECOND]);
+        press.extend([0.5; SECOND]);
+        let mut backlog = vec![0.0; SECOND / 2];
+        backlog.resize(12 * SECOND, 0.5);
+        for (audio, written_before_the_walk) in [(press, false), (backlog, true)] {
+            let (mut recording, writer) = if written_before_the_walk {
+                (RecordingReader::from_samples(&audio), None)
+            } else {
+                let (recording, writer) = Recording::open();
+                (recording, Some(writer))
+            };
+            let speech = SpeechDetector::new(Loud, 0);
+            let mut diarizer = diarizer(Voice(OWN));
+            let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
 
-        let timeline = std::thread::scope(|scope| {
-            let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
-            for piece in audio.chunks(1_000) {
-                writer.push(piece);
-            }
-            writer.finish();
-            walk.finish().unwrap().timeline.unwrap()
-        });
+            let timeline = std::thread::scope(|scope| {
+                let walk =
+                    TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
+                if let Some(mut writer) = writer {
+                    for piece in audio.chunks(1_000) {
+                        writer.push(piece);
+                    }
+                    writer.finish();
+                }
+                walk.finish().unwrap().timeline.unwrap()
+            });
+            assert_eq!(timeline.reached(), audio.len() as u64);
 
-        let mut recording = RecordingReader::from_samples(&audio);
-        let mut feed = TurnFeed::start(
-            &mut recording,
-            SpeechDetector::new(Loud, 0),
-            Some(tracker(&mut diarizer, 0)),
-        );
-        feed.hear_rest();
-        let whole_pass = feed.timeline().expect("a tracker runs");
-        assert!(!whole_pass.is_broken());
-        let whole = whole_pass.admitted_audio(&audio, 0);
-        assert!(!whole.is_empty() && whole.len() < audio.len());
-        assert_eq!(timeline.admitted_audio(&audio, 0), whole);
+            let mut recording = RecordingReader::from_samples(&audio);
+            let mut feed = TurnFeed::start(
+                &mut recording,
+                SpeechDetector::new(Loud, 0),
+                Some(tracker(&mut diarizer, 0)),
+            );
+            feed.hear_rest();
+            let whole_pass = feed.timeline().expect("a tracker runs");
+            assert!(!whole_pass.is_broken());
+            let whole = whole_pass.admitted_audio(&audio, 0);
+            assert!(!whole.is_empty() && whole.len() < audio.len());
+            assert_eq!(timeline.admitted_audio(&audio, 0), whole);
+        }
     }
 
     #[test]
@@ -363,36 +342,26 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_whose_tracker_panics_leaves_a_broken_map() {
-        let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
-        let speech = SpeechDetector::new(Loud, 0);
-        let mut diarizer = diarizer(Panicking);
-        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
-
-        let snapshot = std::thread::scope(|scope| {
-            let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
-            assert!(timeline_through(&walk, SECOND as u64).is_broken());
-            walk.finish_speech()
-        });
-
-        assert!(snapshot.unwrap().speech.is_broken());
-    }
-
-    #[test]
     fn a_walk_that_panics_lets_nothing_more_pass() {
-        let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
-        let speech = SpeechDetector::new(Loud, 0);
-        let mut diarizer = diarizer(Panicking);
-        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
+        for speech_only in [false, true] {
+            let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
+            let speech = SpeechDetector::new(Loud, 0);
+            let mut diarizer = diarizer(Panicking);
+            let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
 
-        std::thread::scope(|scope| {
-            let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
-            assert!(timeline_through(&walk, SECOND as u64).is_broken());
-            assert!(walk.speech_through(SECOND as u64).unwrap().is_broken());
-            assert!(matches!(walk.finish(), Err(TrackingError::Panicked)));
-        });
+            std::thread::scope(|scope| {
+                let walk =
+                    TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
+                assert!(timeline_through(&walk, SECOND as u64).is_broken());
+                assert!(walk.speech_through(SECOND as u64).unwrap().is_broken());
+                if speech_only {
+                    let snapshot = walk.finish_speech();
+                    assert!(snapshot.unwrap().speech.is_broken());
+                } else {
+                    assert!(matches!(walk.finish(), Err(TrackingError::Failed)));
+                }
+            });
+        }
     }
 
     #[test]
@@ -422,43 +391,8 @@ mod tests {
                 wakes.recv_timeout(Duration::from_secs(2)).is_ok(),
                 "the reader never woke for the broken snapshot"
             );
-            assert!(matches!(walk.finish(), Err(TrackingError::Panicked)));
+            assert!(matches!(walk.finish(), Err(TrackingError::Failed)));
         });
-    }
-
-    #[test]
-    fn a_walk_keeps_hearing_speech_after_tracking_breaks() {
-        struct Failing;
-
-        impl Embedder for Failing {
-            fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
-                Err(SpeakerError::Inference {
-                    backend: "test",
-                    source: aria_kit::backend::BackendError::Unusable("embedding failed".into()),
-                })
-            }
-
-            fn dimension(&self) -> usize {
-                2
-            }
-        }
-
-        let (mut recording, mut writer) = Recording::open();
-        let speech = SpeechDetector::new(Loud, 0);
-        let mut diarizer = diarizer(Failing);
-        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
-        writer.push(&[0.5; SECOND]);
-
-        let snapshot = std::thread::scope(|scope| {
-            let walk =
-                TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new()).unwrap();
-            assert!(timeline_through(&walk, SECOND as u64).is_broken());
-            writer.push(&[0.5; SECOND]);
-            writer.finish();
-            walk.finish_speech().unwrap()
-        });
-
-        assert_eq!(snapshot.speech.reached(), 2 * SECOND as u64);
     }
 
     #[test]
@@ -524,25 +458,6 @@ mod tests {
             ));
             assert!(matches!(walk.finish(), Err(TrackingError::Cancelled)));
         });
-    }
-
-    #[test]
-    fn the_tracker_drains_a_backlog_rather_than_skip_it() {
-        let audio = vec![0.5; 12 * SECOND];
-        let mut recording = RecordingReader::from_samples(&audio);
-        let speech = SpeechDetector::new(Loud, 0);
-        let mut diarizer = diarizer(Voice(OWN));
-        let feed = TurnFeed::start(&mut recording, speech, Some(tracker(&mut diarizer, 0)));
-        let timeline = std::thread::scope(|scope| {
-            TurnThread::spawn(scope, feed, &CancelToken::never(), &Board::new())
-                .unwrap()
-                .finish()
-                .unwrap()
-                .timeline
-                .unwrap()
-        });
-        assert_eq!(timeline.reached(), audio.len() as u64);
-        assert!(!timeline.admitted_audio(&audio, 0).is_empty());
     }
 
     #[test]

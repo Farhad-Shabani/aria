@@ -20,7 +20,7 @@ pub(crate) type ConfiguredLayers = Layered<Option<LlmCleanup>, ()>;
 /// cheap ones. A transcript delivered whole gets every one.
 /// The vocabulary comes with each press, since it follows the project.
 #[derive(Default)]
-pub(crate) struct TextLayers<L = ()> {
+pub(crate) struct Rewrites<L = ()> {
     /// Drops fillers and doubled words.
     disfluencies: bool,
     /// Applies "scratch that" and the like, which need the whole text.
@@ -30,13 +30,13 @@ pub(crate) struct TextLayers<L = ()> {
     llm: L,
 }
 
-impl TextLayers {
+impl Rewrites {
     pub(crate) fn new() -> Self {
         Self::default()
     }
 }
 
-impl<L: Layer> TextLayers<L> {
+impl<L: Layer> Rewrites<L> {
     pub(crate) fn removing_disfluencies(mut self, enabled: bool) -> Self {
         self.disfluencies = enabled;
         self
@@ -47,21 +47,31 @@ impl<L: Layer> TextLayers<L> {
         self
     }
 
-    pub(crate) fn with<N: Layer>(self, layer: N) -> TextLayers<Layered<N, L>> {
-        TextLayers {
+    pub(crate) fn with<N: Layer>(self, layer: N) -> Rewrites<Layered<N, L>> {
+        Rewrites {
             disfluencies: self.disfluencies,
             backtrack: self.backtrack,
             llm: Layered::new(self.llm, layer),
         }
     }
 
+    /// Calls each layer directly rather than through `Layered`, whose 64 KiB
+    /// bound would stop deterministic cleanup on a long transcript.
     pub(crate) fn segment(
         &self,
         text: &mut String,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
-        correct(text, self.disfluencies, vocabulary, cancel)
+        check_cancelled(cancel)?;
+        if self.disfluencies {
+            RemoveHesitations.apply(text, cancel)?;
+            RemoveRepeats.apply(text, cancel)?;
+        }
+        if let Some(corrected) = vocabulary.and_then(|vocabulary| vocabulary.correct(text)) {
+            *text = corrected;
+        }
+        check_cancelled(cancel)
     }
 
     /// Corrects the whole transcript once the press ends.
@@ -75,7 +85,7 @@ impl<L: Layer> TextLayers<L> {
         if self.backtrack {
             Backtrack.apply(&mut text, cancel)?;
         }
-        correct(&mut text, self.disfluencies, vocabulary, cancel)?;
+        self.segment(&mut text, vocabulary, cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
         if !self.llm.enabled() {
@@ -103,23 +113,4 @@ impl<L: Layer> TextLayers<L> {
         result?;
         Transcript::new(text)
     }
-}
-
-/// Calls each layer directly rather than through `Layered`, whose 64 KiB
-/// bound would stop deterministic cleanup on a long transcript.
-fn correct(
-    text: &mut String,
-    disfluencies: bool,
-    vocabulary: Option<&Vocabulary>,
-    cancel: &CancelToken,
-) -> Result<(), TranscriptionError> {
-    check_cancelled(cancel)?;
-    if disfluencies {
-        RemoveHesitations.apply(text, cancel)?;
-        RemoveRepeats.apply(text, cancel)?;
-    }
-    if let Some(corrected) = vocabulary.and_then(|vocabulary| vocabulary.correct(text)) {
-        *text = corrected;
-    }
-    check_cancelled(cancel)
 }

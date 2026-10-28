@@ -186,6 +186,15 @@ impl From<crate::hearing::TrackingError> for DictationError {
     }
 }
 
+impl From<crate::hearing::HearingError> for DictationError {
+    fn from(error: crate::hearing::HearingError) -> Self {
+        match error {
+            crate::hearing::HearingError::Transcription(error) => error.into(),
+            crate::hearing::HearingError::Tracking(error) => error.into(),
+        }
+    }
+}
+
 impl From<CaptureError> for DictationError {
     fn from(error: CaptureError) -> Self {
         match error {

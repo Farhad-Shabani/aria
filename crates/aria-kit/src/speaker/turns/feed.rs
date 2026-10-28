@@ -27,8 +27,9 @@ pub enum Ahead {
 }
 
 impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
-    /// Call before anything reads `recording`, so the fork starts where it
-    /// does. `speech` and `tracker` start where `recording` holds from.
+    /// Forks `recording`, so call it before anything reads from it: the fork
+    /// starts where the reader stands. `speech` and `tracker` must start at
+    /// `recording.held_from()`.
     pub fn start(
         recording: &mut RecordingReader,
         speech: SpeechDetector<V>,

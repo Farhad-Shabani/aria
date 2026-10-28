@@ -14,10 +14,10 @@ mod level;
 #[cfg(target_os = "macos")]
 mod output;
 mod pipeline;
+mod rewrites;
 pub(crate) mod subscribers;
 #[cfg(test)]
 pub(crate) mod testing;
-mod text_layers;
 mod transcripts;
 
 pub use crate::delivery::{DeliveryOutcome, OutputMode};
@@ -34,7 +34,7 @@ pub(crate) use execution::{
 use level::Meter;
 pub(crate) use level::MicLevel;
 pub(crate) use pipeline::DictationPipeline;
-pub(crate) use text_layers::{ConfiguredLayers, TextLayers};
+pub(crate) use rewrites::{ConfiguredLayers, Rewrites};
 pub(crate) use transcripts::{TranscriptSink, Utterance};
 
 pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(320);

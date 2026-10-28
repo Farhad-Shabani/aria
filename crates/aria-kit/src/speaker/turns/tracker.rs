@@ -38,7 +38,7 @@ const SPEAKER_CHANGE_THRESHOLD: f32 = 0.3;
 /// whose voice a window is. The segmenter, when there is one, checks a
 /// speaker change inside a turn before the turn splits, which owner-only
 /// admission needs.
-pub struct VoiceprintTracker<'a, E, G = NoSegmenter> {
+pub struct VoiceprintTracker<'a, E, S = NoSegmenter> {
     diarizer: &'a mut Diarizer<E>,
     /// The speech map's frame size, taken from the map heard last.
     frame_samples: usize,
@@ -51,7 +51,7 @@ pub struct VoiceprintTracker<'a, E, G = NoSegmenter> {
     lead_in: Vec<f32>,
     timeline: Timeline,
     open: Option<OpenTurn>,
-    continuity: Option<Continuity<G>>,
+    continuity: Option<Continuity<S>>,
 }
 
 /// What the speech map said about a frame, once it was scored.
@@ -132,18 +132,31 @@ impl Segmenter for NoSegmenter {
     }
 }
 
-impl<'a, E: Embedder, G: Segmenter> VoiceprintTracker<'a, E, G> {
-    /// A tracker for one recording. The first sample heard sits at `at`.
-    pub fn new(
+impl<'a, E: Embedder> VoiceprintTracker<'a, E> {
+    /// A tracker that names voices but cannot admit only the owner. The
+    /// first sample heard sits at `at`.
+    pub fn new(diarizer: &'a mut Diarizer<E>, at: u64) -> Self {
+        Self::build(diarizer, None, at)
+    }
+}
+
+impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
+    /// A tracker that can admit only the owner's words: it needs an
+    /// enrolled owner, and a segmenter to check speaker changes.
+    pub fn owner_only(
         diarizer: &'a mut Diarizer<E>,
-        segmenter: Option<G>,
+        segmenter: S,
         at: u64,
-    ) -> Result<Self, SegmentationError> {
-        let continuity = match segmenter {
-            Some(segmenter) => Some(Continuity::new(segmenter, at)?),
-            None => None,
-        };
-        Ok(Self {
+    ) -> Result<Self, OwnerTrackingError> {
+        if diarizer.owners() == 0 {
+            return Err(OwnerTrackingError::NoOwner);
+        }
+        let continuity = Continuity::new(segmenter, at).map_err(OwnerTrackingError::Segmenter)?;
+        Ok(Self::build(diarizer, Some(continuity), at))
+    }
+
+    fn build(diarizer: &'a mut Diarizer<E>, continuity: Option<Continuity<S>>, at: u64) -> Self {
+        Self {
             diarizer,
             frame_samples: 0,
             scored: FrameSpeech::default(),
@@ -156,24 +169,7 @@ impl<'a, E: Embedder, G: Segmenter> VoiceprintTracker<'a, E, G> {
             },
             open: None,
             continuity,
-        })
-    }
-
-    /// A tracker that can admit only the owner's words: it needs an
-    /// enrolled owner, and a segmenter to check speaker changes.
-    pub fn owner_only(
-        diarizer: &'a mut Diarizer<E>,
-        segmenter: G,
-        at: u64,
-    ) -> Result<Self, OwnerTrackingError> {
-        if diarizer.owners() == 0 {
-            return Err(OwnerTrackingError::NoOwner);
         }
-        Self::new(diarizer, Some(segmenter), at).map_err(OwnerTrackingError::Segmenter)
-    }
-
-    pub fn timeline(&self) -> &Timeline {
-        &self.timeline
     }
 
     /// Where the next pushed sample lands in the stream.
@@ -211,22 +207,6 @@ impl<'a, E: Embedder, G: Segmenter> VoiceprintTracker<'a, E, G> {
         }
     }
 
-    /// Takes the recording's audio in order, in pieces of any size.
-    fn push(&mut self, speech: &SpeechMap, mut samples: &[f32]) {
-        self.frame_samples = speech.frame_samples();
-        while !samples.is_empty() && !self.timeline.broken {
-            let taken = samples.len().min(self.frame_samples - self.frame.len());
-            self.frame.extend_from_slice(&samples[..taken]);
-            samples = &samples[taken..];
-            if self.frame.len() == self.frame_samples {
-                let mut frame = std::mem::take(&mut self.frame);
-                self.push_frame(speech, &frame);
-                frame.clear();
-                self.frame = frame;
-            }
-        }
-    }
-
     fn push_frame(&mut self, speech: &SpeechMap, samples: &[f32]) {
         let start = self.position();
         let end = start + samples.len() as u64;
@@ -252,17 +232,6 @@ impl<'a, E: Embedder, G: Segmenter> VoiceprintTracker<'a, E, G> {
         } else {
             self.hear(samples, self.trailing_silence());
         }
-    }
-
-    /// Judges the open turn on what it had. Call once the recording ends.
-    fn finish(&mut self) {
-        self.timeline.finished = true;
-        if self.timeline.broken {
-            return;
-        }
-        let frame = std::mem::take(&mut self.frame);
-        self.hear(&frame, self.trailing_silence());
-        self.close_turn(self.trailing_silence());
     }
 
     /// How much silence the open turn ends in so far.
@@ -884,15 +853,26 @@ fn score<E: Embedder>(
     })
 }
 
-impl<E, G> super::sealed::Sealed for VoiceprintTracker<'_, E, G> {}
+impl<E, S> super::sealed::Sealed for VoiceprintTracker<'_, E, S> {}
 
-impl<E: Embedder, G: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, G> {
+impl<E: Embedder, S: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, S> {
     fn heard_to(&self) -> u64 {
         self.position() + self.frame.len() as u64
     }
 
-    fn hear(&mut self, speech: &SpeechMap, audio: &[f32]) {
-        self.push(speech, audio);
+    fn hear(&mut self, speech: &SpeechMap, mut audio: &[f32]) {
+        self.frame_samples = speech.frame_samples();
+        while !audio.is_empty() && !self.timeline.broken {
+            let taken = audio.len().min(self.frame_samples - self.frame.len());
+            self.frame.extend_from_slice(&audio[..taken]);
+            audio = &audio[taken..];
+            if self.frame.len() == self.frame_samples {
+                let mut frame = std::mem::take(&mut self.frame);
+                self.push_frame(speech, &frame);
+                frame.clear();
+                self.frame = frame;
+            }
+        }
     }
 
     fn skip_to(&mut self, speech: &SpeechMap, at: u64) {
@@ -901,7 +881,13 @@ impl<E: Embedder, G: Segmenter> SpeakerTracker for VoiceprintTracker<'_, E, G> {
     }
 
     fn finish(&mut self) {
-        Self::finish(self);
+        self.timeline.finished = true;
+        if self.timeline.broken {
+            return;
+        }
+        let frame = std::mem::take(&mut self.frame);
+        self.hear(&frame, self.trailing_silence());
+        self.close_turn(self.trailing_silence());
     }
 
     fn timeline(&self) -> &Timeline {

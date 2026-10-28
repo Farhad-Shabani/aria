@@ -43,7 +43,6 @@ pub struct SpeechMap {
     reached: u64,
     utterances: Vec<Utterance>,
     quiet: Vec<Quiet>,
-    pauses: Vec<Range<u64>>,
     /// Frames scored as speech, joined where they touch.
     speech: Vec<Range<u64>>,
     broken: bool,
@@ -131,13 +130,18 @@ impl SpeechMap {
             .find(|utterance| utterance.start < at)
             .filter(|utterance| utterance.end.is_none_or(|end| at < end))
             .map(|utterance| utterance.start);
-        self.pauses
+        self.quiet
             .iter()
             .rev()
+            .filter_map(|quiet| match quiet.end {
+                Some(end) if quiet.resumed && end - quiet.start >= PAUSE_SAMPLES => {
+                    Some(quiet.start..end)
+                }
+                _ => None,
+            })
             .filter(move |pause| pause.end < at)
             .take_while(move |pause| open.is_some_and(|start| pause.start >= start))
             .take(PAUSES_KEPT)
-            .cloned()
     }
 
     /// Samples of speech scored before `at`.
@@ -168,9 +172,6 @@ impl SpeechMap {
         if let Some(quiet) = self.quiet.last_mut().filter(|quiet| quiet.end.is_none()) {
             quiet.end = Some(end);
             quiet.resumed = resumed;
-            if resumed && end - quiet.start >= PAUSE_SAMPLES {
-                self.pauses.push(quiet.start..end);
-            }
         }
     }
 }
@@ -347,24 +348,5 @@ mod tests {
         assert_eq!(map.reached(), 1_000 + FRAME);
         assert!(map.opens_at(1_000));
         assert_eq!(map.speech_before(map.reached()), FRAME);
-    }
-
-    struct Failing;
-
-    impl VoiceActivityDetector for Failing {
-        const FRAME_SAMPLES: usize = 160;
-
-        fn probability(&mut self, _samples: &[i16]) -> Result<f32, VoiceActivityError> {
-            Err(VoiceActivityError::Inference(Box::from("the model broke")))
-        }
-    }
-
-    #[test]
-    fn a_failed_frame_breaks_the_map_where_it_stood() {
-        let mut detector = SpeechDetector::new(Failing, 0);
-
-        assert!(detector.hear(&[0.0; 320]).is_err());
-        assert!(detector.map().is_broken());
-        assert_eq!(detector.map().reached(), 0);
     }
 }

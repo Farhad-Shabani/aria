@@ -132,7 +132,7 @@ impl AgreementState {
         let pending = self
             .pending_segment
             .as_ref()
-            .and_then(|segment| segment.source_window().or_else(|| segment.span()))
+            .and_then(TranscriptSegment::source_window)
             .map(|span| span.start);
         match pending {
             Some(start) => start.min(self.buffer_start),
@@ -1583,36 +1583,27 @@ mod tests {
         }
 
         #[test]
-        fn text_anchors_keep_a_new_word_whose_timing_drifts_before_the_frontier() {
-            let mut agreement = Agreement::default();
-            let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
-            let mut continued = timed(&["one", "two", "three", "four", "five"]);
-            continued[4].span.as_mut().unwrap().start -= TRIM_FRAME_SAMPLES as u64;
-            agreement.agree(continued.clone(), None);
-            let (confirmed, _) = agreement.agree(continued, None);
-            assert_eq!(text_of(confirmed).as_deref(), Some("five"));
-        }
-
-        #[test]
-        fn a_stable_delivered_prefix_survives_drift_beyond_the_timing_margin() {
-            for finish_at_eof in [false, true] {
-                let mut agreement = Agreement::default();
-                let opening = timed(&["one", "two", "three", "four"]);
-                agreement.agree(opening.clone(), None);
-                agreement.agree(opening, None);
-                let mut continued = timed(&["one", "two", "three", "four", "five"]);
-                continued[3].span.as_mut().unwrap().end = 18_432;
-                continued[4].span.as_mut().unwrap().start = 18_432;
-                agreement.agree(continued.clone(), None);
-                let confirmed = if finish_at_eof {
-                    agreement.take_tail(None)
-                } else {
-                    agreement.agree(continued, None).0
-                };
-                assert_eq!(text_of(confirmed).as_deref(), Some("five"));
-                assert!(agreement.take_tail(None).is_none());
+        fn a_stable_delivered_prefix_survives_timing_drift() {
+            // One frame of drift sits inside the timing margin; four lie beyond it.
+            for drift in [TRIM_FRAME_SAMPLES as u64, 4 * TRIM_FRAME_SAMPLES as u64] {
+                for finish_at_eof in [false, true] {
+                    let mut agreement = Agreement::default();
+                    let opening = timed(&["one", "two", "three", "four"]);
+                    agreement.agree(opening.clone(), None);
+                    agreement.agree(opening, None);
+                    let mut continued = timed(&["one", "two", "three", "four", "five"]);
+                    let boundary = continued[4].span.as_ref().unwrap().start - drift;
+                    continued[3].span.as_mut().unwrap().end = boundary;
+                    continued[4].span.as_mut().unwrap().start = boundary;
+                    agreement.agree(continued.clone(), None);
+                    let confirmed = if finish_at_eof {
+                        agreement.take_tail(None)
+                    } else {
+                        agreement.agree(continued, None).0
+                    };
+                    assert_eq!(text_of(confirmed).as_deref(), Some("five"));
+                    assert!(agreement.take_tail(None).is_none());
+                }
             }
         }
 
@@ -2065,10 +2056,13 @@ mod tests {
             // What a cap-forced trim leaves behind: the buffer has moved past a
             // segment nobody has been handed yet.
             state.buffer_start = 10 * STRIDE as u64;
-            state.pending_segment = TranscriptSegment::spanned(
+            let mut pending = TranscriptSegment::spanned(
                 &["alpha".to_owned()],
                 Some(STRIDE as u64..2 * STRIDE as u64),
-            );
+            )
+            .unwrap();
+            pending.source_window = Some(STRIDE as u64..2 * STRIDE as u64);
+            state.pending_segment = Some(pending);
             assert_eq!(state.retained_from(), STRIDE as u64);
 
             state.pending_segment = None;

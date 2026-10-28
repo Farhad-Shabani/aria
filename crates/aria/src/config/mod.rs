@@ -184,11 +184,11 @@ impl DictationConfig {
         load::load(environment)
     }
 
-    pub(crate) fn text_layers(
+    pub(crate) fn rewrites(
         &self,
         home: &std::path::Path,
     ) -> Result<
-        crate::dictation::TextLayers<crate::dictation::ConfiguredLayers>,
+        crate::dictation::Rewrites<crate::dictation::ConfiguredLayers>,
         crate::dictation::CleanupError,
     > {
         let llm = self
@@ -198,7 +198,7 @@ impl DictationConfig {
                 crate::dictation::LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home)
             })
             .transpose()?;
-        Ok(crate::dictation::TextLayers::new()
+        Ok(crate::dictation::Rewrites::new()
             .removing_disfluencies(self.cleanup)
             .backtracking(self.backtrack)
             .with(llm))

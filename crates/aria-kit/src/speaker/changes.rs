@@ -98,27 +98,27 @@ impl<S: Segmenter> Continuity<S> {
         {
             return Err(invalid("segmentation returned an invalid activity grid"));
         }
-        let snapshot = Snapshot {
+        let activity = ChunkActivity {
             from: self.from,
             through: candidate.end,
             shape: self.shape,
             frames: &frames,
         };
-        let Some(current) = snapshot.single(candidate) else {
+        let Some(current) = activity.single(candidate) else {
             return Ok(Evidence::Unresolved);
         };
         let retained_anchor = anchor.filter(|anchor| self.audio(anchor).is_ok());
         let Some(anchor) = retained_anchor else {
-            return Ok(snapshot
+            return Ok(activity
                 .fresh(candidate)
                 .filter(|range| range.end - range.start >= fresh_samples as u64)
                 .map_or(Evidence::Unresolved, Evidence::Reassess));
         };
         let reassess = anchor.start..candidate.end;
-        if snapshot.single(&reassess).is_some() {
+        if activity.single(&reassess).is_some() {
             return Ok(Evidence::Reassess(reassess));
         }
-        let Some((previous, exclusive)) = snapshot.latest_exclusive(anchor) else {
+        let Some((previous, exclusive)) = activity.latest_exclusive(anchor) else {
             return Ok(Evidence::Unresolved);
         };
         if previous == current || exclusive.end > candidate.start {
@@ -131,14 +131,14 @@ impl<S: Segmenter> Continuity<S> {
     }
 }
 
-struct Snapshot<'a> {
+struct ChunkActivity<'a> {
     from: u64,
     through: u64,
     shape: ChunkShape,
     frames: &'a [Activity],
 }
 
-impl Snapshot<'_> {
+impl ChunkActivity<'_> {
     fn within(&self, span: &Range<u64>) -> impl Iterator<Item = (Range<u64>, Activity)> + '_ {
         let span = span.clone();
         self.frames
@@ -323,23 +323,25 @@ mod tests {
 
     #[test]
     fn mixed_anchor_uses_its_latest_exclusive_contiguous_run() {
-        let mut continuity = fixture(&[&[0, 1], &[0], &[0], &[1], &[1], &[1]]);
-        assert!(
-            matches!(continuity.verify(Some(&(0..30)), &(40..60), 30).unwrap(), Evidence::Replaced { anchor, .. } if anchor == (10..30))
-        );
-        let mut continuity = fixture(&[&[0, 1], &[0, 1], &[0, 1], &[1], &[1], &[1]]);
-        assert!(matches!(
-            continuity.verify(Some(&(0..30)), &(40..60), 30).unwrap(),
-            Evidence::Unresolved
-        ));
-    }
-
-    #[test]
-    fn an_overlap_tail_preserves_the_latest_completed_exclusive_anchor_run() {
-        let mut continuity = fixture(&[&[0], &[0], &[0, 1], &[1], &[1], &[1]]);
-        assert!(
-            matches!(continuity.verify(Some(&(0..30)), &(40..60), 30).unwrap(), Evidence::Replaced { anchor, candidate } if anchor == (0..20) && candidate == (40..60))
-        );
+        let mixed_head: &[&[usize]] = &[&[0, 1], &[0], &[0], &[1], &[1], &[1]];
+        let overlap_tail: &[&[usize]] = &[&[0], &[0], &[0, 1], &[1], &[1], &[1]];
+        let never_exclusive: &[&[usize]] = &[&[0, 1], &[0, 1], &[0, 1], &[1], &[1], &[1]];
+        for (voices, expected) in [
+            (mixed_head, Some(10..30)),
+            (overlap_tail, Some(0..20)),
+            (never_exclusive, None),
+        ] {
+            let mut continuity = fixture(voices);
+            match expected {
+                Some(expected) => assert!(
+                    matches!(continuity.verify(Some(&(0..30)), &(40..60), 30).unwrap(), Evidence::Replaced { anchor, candidate } if anchor == expected && candidate == (40..60))
+                ),
+                None => assert!(matches!(
+                    continuity.verify(Some(&(0..30)), &(40..60), 30).unwrap(),
+                    Evidence::Unresolved
+                )),
+            }
+        }
     }
 
     #[test]

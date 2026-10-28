@@ -1481,7 +1481,7 @@ mod tests {
                     DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
                         .tracking_voices(Some(diarizer), Some(LevelSegmenter))
-                        .editing(crate::dictation::TextLayers::new().removing_disfluencies(true));
+                        .rewriting(crate::dictation::Rewrites::new().removing_disfluencies(true));
                 let mut recording = crate::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(
                     &mut recording,

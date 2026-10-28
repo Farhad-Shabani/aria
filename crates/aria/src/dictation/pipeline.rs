@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use aria_kit::cancel::CancelToken;
@@ -30,26 +30,75 @@ use super::{
     DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, HeardSpeaker, StopMode,
     Transcribed, TranscriptSink, Utterance,
 };
-use super::{Meter, TextLayers};
+use super::{Meter, Rewrites};
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
 /// The parameters follow a press through: capture, VAD, diarization,
-/// segmentation, transcription, text layers, sinks.
+/// segmentation, transcription, rewrites, sinks.
 pub(crate) struct DictationPipeline<C, V, E, G, T, M: Mode, L, S> {
     capture: C,
-    /// Finds where anyone spoke. `None` counts every recording as speech.
-    vad: Mutex<Option<V>>,
-    /// Tells whose voice a turn is. `None` refuses owner-only presses.
-    diarizer: Mutex<Option<Diarizer<E>>>,
-    /// Finds speaker changes. `None` refuses owner-only presses.
-    segmenter: Mutex<Option<G>>,
+    /// Hears where anyone spoke and whose voice it was.
+    listening: Mutex<Listening<V, E, G>>,
     transcription: Transcription<T, M>,
-    text: TextLayers<L>,
+    rewrites: Rewrites<L>,
     sinks: Mutex<S>,
 }
 
-struct Decoded {
+struct Listening<V, E, G> {
+    /// Finds where anyone spoke. `None` counts every recording as speech.
+    vad: Option<V>,
+    /// Tells whose voice a turn is. `None` refuses owner-only presses.
+    diarizer: Option<Diarizer<E>>,
+    /// Finds speaker changes. `None` refuses owner-only presses.
+    segmenter: Option<G>,
+}
+
+impl<V: VoiceActivityDetector, E: Embedder, G: Segmenter> Listening<V, E, G> {
+    /// The press's speech detector, and its owner tracker when only the
+    /// owner's voice passes, both starting at `from`. The tracker is refused
+    /// unless speech, an enrolled owner, and a segmenter are all there.
+    #[allow(
+        clippy::type_complexity,
+        reason = "a detector, and a tracker that may be refused"
+    )]
+    fn start(
+        &mut self,
+        own_voice_only: bool,
+        from: u64,
+    ) -> (
+        Option<SpeechDetector<&mut V>>,
+        Result<Option<VoiceprintTracker<'_, E, &mut G>>, DictationError>,
+    ) {
+        let speech = self.vad.as_mut().map(|vad| SpeechDetector::new(vad, from));
+        if !own_voice_only {
+            return (speech, Ok(None));
+        }
+        let unavailable = || DictationError::Speaker(TrackingError::Unavailable);
+        let hears_speech = speech.is_some();
+        let (has_diarizer, has_segmenter) = (self.diarizer.is_some(), self.segmenter.is_some());
+        let (true, Some(diarizer), Some(segmenter)) = (
+            hears_speech,
+            self.diarizer.as_mut(),
+            self.segmenter.as_mut(),
+        ) else {
+            tracing::warn!(
+                speech = hears_speech,
+                diarizer = has_diarizer,
+                segmenter = has_segmenter,
+                "own-voice filtering lacks a model"
+            );
+            return (speech, Err(unavailable()));
+        };
+        let tracker = VoiceprintTracker::owner_only(diarizer, segmenter, from).map_err(|error| {
+            tracing::warn!(error = %error_chain(&error), "own-voice filtering is unavailable");
+            unavailable()
+        });
+        (speech, tracker.map(Some))
+    }
+}
+
+struct CompleteDecode {
     segments: Vec<Heard>,
     transcript: Transcript,
     served_by: Option<&'static str>,
@@ -60,11 +109,13 @@ impl<C, T, M: Mode, S> DictationPipeline<C, SileroVad, WeSpeaker, Pyannote, T, M
     pub(crate) fn new(capture: C, transcription: Transcription<T, M>, sinks: S) -> Self {
         Self {
             capture,
-            vad: Mutex::new(None),
-            diarizer: Mutex::new(None),
-            segmenter: Mutex::new(None),
+            listening: Mutex::new(Listening {
+                vad: None,
+                diarizer: None,
+                segmenter: None,
+            }),
             transcription,
-            text: TextLayers::new(),
+            rewrites: Rewrites::new(),
             sinks: Mutex::new(sinks),
         }
     }
@@ -78,13 +129,19 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
         self,
         vad: Option<W>,
     ) -> DictationPipeline<C, W, E, G, T, M, L, S> {
+        let listening = self
+            .listening
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
         DictationPipeline {
             capture: self.capture,
-            vad: Mutex::new(vad),
-            diarizer: self.diarizer,
-            segmenter: self.segmenter,
+            listening: Mutex::new(Listening {
+                vad,
+                diarizer: listening.diarizer,
+                segmenter: listening.segmenter,
+            }),
             transcription: self.transcription,
-            text: self.text,
+            rewrites: self.rewrites,
             sinks: self.sinks,
         }
     }
@@ -96,47 +153,39 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
         diarizer: Option<Diarizer<F>>,
         segmenter: Option<H>,
     ) -> DictationPipeline<C, V, F, H, T, M, L, S> {
+        let listening = self
+            .listening
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
         DictationPipeline {
             capture: self.capture,
-            vad: self.vad,
-            diarizer: Mutex::new(diarizer),
-            segmenter: Mutex::new(segmenter),
+            listening: Mutex::new(Listening {
+                vad: listening.vad,
+                diarizer,
+                segmenter,
+            }),
             transcription: self.transcription,
-            text: self.text,
+            rewrites: self.rewrites,
             sinks: self.sinks,
         }
     }
 
-    /// Runs `text` on what the gate lets out.
-    pub(crate) fn editing<N: Layer>(
+    /// Runs `rewrites` on what the gate lets out.
+    pub(crate) fn rewriting<N: Layer>(
         self,
-        text: TextLayers<N>,
+        rewrites: Rewrites<N>,
     ) -> DictationPipeline<C, V, E, G, T, M, N, S> {
         DictationPipeline {
             capture: self.capture,
-            vad: self.vad,
-            diarizer: self.diarizer,
-            segmenter: self.segmenter,
+            listening: self.listening,
             transcription: self.transcription,
-            text,
+            rewrites,
             sinks: self.sinks,
         }
     }
 
-    fn vad(&self) -> MutexGuard<'_, Option<V>> {
-        self.vad
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn diarizer(&self) -> MutexGuard<'_, Option<Diarizer<E>>> {
-        self.diarizer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn segmenter(&self) -> MutexGuard<'_, Option<G>> {
-        self.segmenter
+    fn listening(&self) -> MutexGuard<'_, Listening<V, E, G>> {
+        self.listening
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -152,7 +201,7 @@ impl<C, V, E: Embedder, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M,
     /// Replaces the enrolled profiles the next press is judged against. A
     /// voice enrolled while the daemon ran is invisible until this is called.
     pub(crate) fn refresh_enrolled(&self, enrolled: Vec<Profile>) {
-        if let Some(diarizer) = self.diarizer().as_mut() {
+        if let Some(diarizer) = self.listening().diarizer.as_mut() {
             diarizer.set_enrolled(enrolled);
         }
     }
@@ -181,22 +230,11 @@ where
             return Err(DictationError::Cancelled);
         }
         let from = recording.held_from();
-        let mut vad = self.vad();
-        let speech = vad.as_mut().map(|vad| SpeechDetector::new(vad, from));
-        let mut diarizer = self.diarizer();
-        let mut segmenter = self.segmenter();
-        let (tracker, refused) = if own_voice_only {
-            match owner_tracker(
-                speech.is_some(),
-                diarizer.as_mut(),
-                segmenter.as_mut(),
-                from,
-            ) {
-                Ok(tracker) => (Some(tracker), None),
-                Err(error) => (None, Some(error)),
-            }
-        } else {
-            (None, None)
+        let mut listening = self.listening();
+        let (speech, tracker) = listening.start(own_voice_only, from);
+        let (tracker, refused) = match tracker {
+            Ok(tracker) => (tracker, None),
+            Err(error) => (None, Some(error)),
         };
         let admission = match tracker {
             Some(_) => Admission::OwnerOnly,
@@ -207,7 +245,7 @@ where
                 check_cancelled(cancel)?;
                 recording.fill().map_err(DictationError::Capture)?;
                 let feed = TurnFeed::start(recording, speech, tracker);
-                hear_saved(feed, admission, cancel).map_err(hearing_error)?
+                hear_saved(feed, admission, cancel)?
             }
             None => None,
         };
@@ -215,7 +253,7 @@ where
         if let Some(error) = refused {
             return Err(error);
         }
-        drop((vad, diarizer, segmenter));
+        drop(listening);
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
@@ -232,7 +270,7 @@ where
             }
         };
         Ok(Transcribed {
-            transcript: self.text.finish(transcript, vocabulary, cancel)?,
+            transcript: self.rewrites.finish(transcript, vocabulary, cancel)?,
             engine: served_by.unwrap_or(engine),
         })
     }
@@ -241,7 +279,7 @@ where
         &self,
         mut operation: Operation<'_, T>,
         recording: &mut RecordingReader,
-    ) -> Result<Decoded, DictationError> {
+    ) -> Result<CompleteDecode, DictationError> {
         let served_by = operation.served_by();
         recording.fill().map_err(DictationError::Capture)?;
         let source = recording.held_from()..recording.held_to();
@@ -267,7 +305,7 @@ where
         if segments.is_empty() {
             return Err(TranscriptionError::InvalidSegment.into());
         }
-        Ok(Decoded {
+        Ok(CompleteDecode {
             segments,
             transcript,
             served_by,
@@ -281,7 +319,7 @@ where
         operation: Operation<'_, T>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Decoded, DictationError> {
+    ) -> Result<CompleteDecode, DictationError> {
         check_cancelled(cancel)?;
         recording.fill().map_err(DictationError::Capture)?;
         let retained = recording.fork_window();
@@ -330,11 +368,11 @@ where
         operation: Operation<'_, T>,
         gated: &mut RecordingReader,
         source: std::ops::Range<u64>,
-    ) -> Result<Decoded, DictationError> {
+    ) -> Result<CompleteDecode, DictationError> {
         let decoded = self.collect_completed(operation, gated)?;
         let segment = TranscriptSegment::new(decoded.transcript.as_str(), None)?
             .with_source_window(source.clone())?;
-        Ok(Decoded {
+        Ok(CompleteDecode {
             segments: vec![Heard {
                 segment,
                 span: None,
@@ -525,24 +563,13 @@ where
             sinks.served_by(engine);
         }
         let from = recording.held_from();
-        let mut vad = self.vad();
-        let speech = vad.as_mut().map(|vad| SpeechDetector::new(vad, from));
-        let mut diarizer = self.diarizer();
-        let mut segmenter = self.segmenter();
+        let mut listening = self.listening();
+        let (speech, tracker) = listening.start(settings.own_voice_only, from);
+        let tracker = tracker?;
         let admission = if settings.own_voice_only {
             Admission::OwnerOnly
         } else {
             Admission::Everyone
-        };
-        let tracker = if settings.own_voice_only {
-            Some(owner_tracker(
-                speech.is_some(),
-                diarizer.as_mut(),
-                segmenter.as_mut(),
-                from,
-            )?)
-        } else {
-            None
         };
         let feed = speech.map(|speech| TurnFeed::start(recording, speech, tracker));
         let mut announced = Announced::default();
@@ -569,19 +596,30 @@ where
                        heard: Heard,
                        speaker: Option<SpeakerName>| {
             let mut text = heard.segment.as_str().to_owned();
-            self.text
+            self.rewrites
                 .segment(&mut text, vocabulary, &cancel)
                 .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
             published.segment(heard, &text, speaker, sinks)
         };
         let failed = |error: HearingError, published: &mut Published<'_>| match error {
-            HearingError::Decoder(error) => {
-                published.failure.take().unwrap_or_else(|| started(error))
+            HearingError::Transcription(_) => published
+                .failure
+                .take()
+                .unwrap_or_else(|| hearing_failed(error, control, started_at)),
+            HearingError::Tracking(_) => hearing_failed(error, control, started_at),
+        };
+        let mut act = |event: Event,
+                       published: &mut Published<'_>,
+                       sinks: &mut S|
+         -> Result<(), DictationError> {
+            match event {
+                Event::Timeline(timeline) => announced.update(&timeline, events),
+                Event::Preview(shown) => published.provisional(&shown, sinks),
+                Event::Released(released) => {
+                    deliver(published, sinks, released.heard, released.speaker)?;
+                }
             }
-            HearingError::Tracking(error) => map_tracking_error(error, control),
-            error @ (HearingError::DecoderPanicked | HearingError::DecoderSpawn(_)) => {
-                started(error.into_transcription("dictation"))
-            }
+            Ok(())
         };
         let ended = std::thread::scope(|scope| {
             let decoding = Decoding {
@@ -595,28 +633,19 @@ where
                 .next()
                 .map_err(|error| failed(error, &mut published))?
             {
-                match event {
-                    Event::Timeline(timeline) => announced.update(&timeline, events),
-                    Event::Preview(shown) => published.provisional(&shown, sinks),
-                    Event::Released(released) => {
-                        deliver(&mut published, sinks, released.heard, released.speaker)?;
-                    }
-                }
+                act(event, &mut published, sinks)?;
             }
             let mut ended = hearing
                 .finish()
                 .map_err(|error| failed(error, &mut published))?;
-            if let Some(timeline) = &ended.timeline {
-                announced.update(timeline, events);
-            }
-            for released in std::mem::take(&mut ended.released) {
-                deliver(&mut published, sinks, released.heard, released.speaker)?;
+            for event in std::mem::take(&mut ended.events) {
+                act(event, &mut published, sinks)?;
             }
             Ok::<_, DictationError>(ended)
         })?;
         let transcript = match settings.delivery_mode {
             DeliveryMode::Complete => self
-                .text
+                .rewrites
                 .finish(ended.transcript, vocabulary, &cancel)
                 .map_err(started)?,
             DeliveryMode::Streaming => ended.transcript,
@@ -642,10 +671,8 @@ where
     ) -> Result<Dictated, DictationError> {
         let (control, started_at) = (published.control, published.started_at);
         let started = |error| log_transcription_error(error, control, started_at);
-        let timeline = hear_to_end(feed, cancel, heard).map_err(|error| match error {
-            HearingError::Tracking(error) => map_tracking_error(error, control),
-            error => started(error.into_transcription("dictation")),
-        })?;
+        let timeline = hear_to_end(feed, cancel, heard)
+            .map_err(|error| hearing_failed(error, control, started_at))?;
         recording.fill().map_err(DictationError::Capture)?;
         let decoded = self
             .filtered_complete(
@@ -660,7 +687,7 @@ where
                 error => check_execution(control).err().unwrap_or(error),
             })?;
         let transcript = self
-            .text
+            .rewrites
             .finish(decoded.transcript, vocabulary, cancel)
             .map_err(started)?;
         if let Some(engine) = decoded.served_by {
@@ -675,7 +702,7 @@ where
             }
             .cloned();
             let mut text = heard.segment.as_str().to_owned();
-            self.text
+            self.rewrites
                 .segment(&mut text, vocabulary, cancel)
                 .map_err(started)?;
             published.segment(heard, &text, speaker, sinks)?;
@@ -895,7 +922,6 @@ fn log_transcription_error(
 ) -> DictationError {
     let stage = match &error {
         TranscriptionError::Capture(_) => "recording",
-        TranscriptionError::SpeakerTracking => "speaker",
         TranscriptionError::Model { .. }
         | TranscriptionError::Load { .. }
         | TranscriptionError::Inference { .. }
@@ -975,49 +1001,28 @@ impl Announced {
     }
 }
 
-/// The tracker an owner-only press judges voices with, starting at `from`.
-/// The press is refused unless speech, an enrolled owner, and a segmenter
-/// are all there.
-fn owner_tracker<'a, E: Embedder, G: Segmenter>(
-    hears_speech: bool,
-    diarizer: Option<&'a mut Diarizer<E>>,
-    segmenter: Option<&'a mut G>,
-    from: u64,
-) -> Result<VoiceprintTracker<'a, E, &'a mut G>, DictationError> {
-    let unavailable = || DictationError::Speaker(TrackingError::Unavailable);
-    let (has_diarizer, has_segmenter) = (diarizer.is_some(), segmenter.is_some());
-    let (true, Some(diarizer), Some(segmenter)) = (hears_speech, diarizer, segmenter) else {
-        tracing::warn!(
-            speech = hears_speech,
-            diarizer = has_diarizer,
-            segmenter = has_segmenter,
-            "own-voice filtering lacks a model"
-        );
-        return Err(unavailable());
-    };
-    VoiceprintTracker::owner_only(diarizer, segmenter, from).map_err(|error| {
-        tracing::warn!(error = %error_chain(&error), "own-voice filtering is unavailable");
-        unavailable()
-    })
-}
-
-/// A hearing error, for a press that publishes nothing as it goes.
-fn hearing_error(error: HearingError) -> DictationError {
+/// A tracking failure on a press already cancelled or out of time ends it
+/// as cancelled or timed out.
+fn hearing_failed(
+    error: HearingError,
+    control: &ExecutionControl,
+    started_at: Instant,
+) -> DictationError {
     match error {
-        HearingError::Tracking(error) => error.into(),
-        error => error.into_transcription("dictation").into(),
+        HearingError::Transcription(error) => log_transcription_error(error, control, started_at),
+        HearingError::Tracking(error) => check_execution(control)
+            .err()
+            .unwrap_or_else(|| error.into()),
     }
-}
-
-fn map_tracking_error(error: TrackingError, control: &ExecutionControl) -> DictationError {
-    check_execution(control)
-        .err()
-        .unwrap_or_else(|| error.into())
 }
 
 /// Keeps the owner's words of a decode timed word by word, read from
 /// stream position `from`.
-fn gate_timed(decoded: Decoded, timeline: &Timeline, from: u64) -> Result<Decoded, DictationError> {
+fn gate_timed(
+    decoded: CompleteDecode,
+    timeline: &Timeline,
+    from: u64,
+) -> Result<CompleteDecode, DictationError> {
     let mut gate = Gate::new(Admission::OwnerOnly, from);
     for heard in decoded.segments {
         gate.hold(heard);
@@ -1033,7 +1038,7 @@ fn gate_timed(decoded: Decoded, timeline: &Timeline, from: u64) -> Result<Decode
         .map(|heard| heard.segment.as_str())
         .collect::<Vec<_>>()
         .join(" ");
-    Ok(Decoded {
+    Ok(CompleteDecode {
         segments,
         transcript: Transcript::new(text)?,
         served_by: decoded.served_by,
@@ -1459,6 +1464,7 @@ mod tests {
     /// A case name, and models an owner-only press cannot run with.
     type UnavailableFilter = (
         &'static str,
+        Option<Loud>,
         Option<Diarizer<Voice>>,
         Option<LevelSegmenter>,
     );
@@ -1467,19 +1473,22 @@ mod tests {
         let guest =
             aria_kit::speaker::enrolled_voice("sam", crate::speaker::Role::Guest, OWN.to_vec());
         [
-            ("no diarizer", None, Some(LevelSegmenter)),
             (
-                "no profiles",
-                Some(Diarizer::new(Voice(OWN), Vec::new())),
+                "no speech detector",
+                None,
+                Some(diarizer(Voice(OWN))),
                 Some(LevelSegmenter),
             ),
+            ("no diarizer", Some(Loud), None, Some(LevelSegmenter)),
             (
                 "guest profile only",
+                Some(Loud),
                 Some(Diarizer::new(Voice(OWN), vec![guest])),
                 Some(LevelSegmenter),
             ),
             (
                 "owner without segmentation",
+                Some(Loud),
                 Some(diarizer(Voice(OWN))),
                 None,
             ),
@@ -2259,7 +2268,7 @@ mod tests {
                         Transcription::stream(Stream::Native, Parts(parts)),
                         (log.history(), log.cursor()),
                     )
-                    .editing(TextLayers::new().backtracking(enabled).with(()));
+                    .rewriting(Rewrites::new().backtracking(enabled).with(()));
                     let result = pipeline
                         .run(settings(mode, OutputMode::InsertAndSubmit))
                         .unwrap();
@@ -2303,7 +2312,7 @@ mod tests {
                 Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 (log.history(), log.cursor()),
             )
-            .editing(TextLayers::new().backtracking(true));
+            .rewriting(Rewrites::new().backtracking(true));
             let result = pipeline.run(settings(mode, OutputMode::Insert)).unwrap();
             let expected = if mode == DeliveryMode::Complete {
                 "meet at 3"
@@ -2326,11 +2335,11 @@ mod tests {
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
-        .editing(TextLayers::new().backtracking(true));
+        .rewriting(Rewrites::new().backtracking(true));
         for text in ["meet at 2", "actually 3", "scratch", "that to Sara"] {
             assert_eq!(
                 pipeline
-                    .text
+                    .rewrites
                     .finish(Transcript::new(text).unwrap(), None, &CancelToken::never())
                     .unwrap()
                     .as_str(),
@@ -2340,7 +2349,7 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
-            pipeline.text.finish(
+            pipeline.rewrites.finish(
                 Transcript::new("meet at 2 actually 3").unwrap(),
                 None,
                 &cancel
@@ -2370,8 +2379,8 @@ mod tests {
                     Transcription::stream(Stream::Native, Parts(&["um meet at 2", "actually 3"])),
                     (log.history(), log.cursor()),
                 )
-                .editing(
-                    TextLayers::new()
+                .rewriting(
+                    Rewrites::new()
                         .removing_disfluencies(true)
                         .with(enabled.then_some(layer))
                         .with(enabled.then_some(punctuation)),
@@ -2415,8 +2424,8 @@ mod tests {
             Transcription::complete_samples(Answering("um meet at 2 actually 3")),
             UnreachableSink,
         )
-        .editing(
-            TextLayers::new()
+        .rewriting(
+            Rewrites::new()
                 .removing_disfluencies(true)
                 .backtracking(true)
                 .with(layer),
@@ -2471,7 +2480,7 @@ mod tests {
                 Transcription::complete_samples(Answering("meet at 2 actually 3")),
                 (log.history(), log.cursor()),
             )
-            .editing(TextLayers::new().backtracking(true).with(layer));
+            .rewriting(Rewrites::new().backtracking(true).with(layer));
             let result = pipeline.run(settings(
                 DeliveryMode::Complete,
                 OutputMode::InsertAndSubmit,
@@ -2503,12 +2512,12 @@ mod tests {
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
-        .editing(TextLayers::new().backtracking(true).with(Some(cleanup)));
+        .rewriting(Rewrites::new().backtracking(true).with(Some(cleanup)));
         for bytes in [4097, 65537] {
             let prefix = "a".repeat(bytes);
             let text = format!("{prefix} meet at 2 actually 3");
             let transcript = pipeline
-                .text
+                .rewrites
                 .finish(Transcript::new(&text).unwrap(), None, &CancelToken::never())
                 .unwrap();
             assert_eq!(transcript.as_str(), format!("{prefix} meet at 3"));
@@ -2552,8 +2561,8 @@ mod tests {
             Transcription::complete_samples(Answering("um meet Alice at 2 actually 3")),
             (log.history(), log.cursor()),
         )
-        .editing(
-            TextLayers::new()
+        .rewriting(
+            Rewrites::new()
                 .removing_disfluencies(true)
                 .backtracking(true)
                 .with(layer),
@@ -2589,7 +2598,7 @@ mod tests {
                 ),
                 (log.history(), log.cursor()),
             )
-            .editing(TextLayers::new().removing_disfluencies(true));
+            .rewriting(Rewrites::new().removing_disfluencies(true));
             let matcher = crate::vocabulary::Vocabulary::compile(
                 &[crate::vocabulary::Term {
                     canonical: "aria-kit".into(),
@@ -2679,10 +2688,10 @@ mod tests {
                 Transcription::complete_samples(Answering("")),
                 UnreachableSink,
             )
-            .editing(TextLayers::new().removing_disfluencies(enabled));
+            .rewriting(Rewrites::new().removing_disfluencies(enabled));
 
             let transcript = pipeline
-                .text
+                .rewrites
                 .finish(
                     Transcript::new("send the the um report").unwrap(),
                     None,
@@ -2701,11 +2710,11 @@ mod tests {
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
-        .editing(TextLayers::new().removing_disfluencies(true));
+        .rewriting(Rewrites::new().removing_disfluencies(true));
 
         let result =
             pipeline
-                .text
+                .rewrites
                 .finish(Transcript::new("um").unwrap(), None, &CancelToken::never());
 
         assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
@@ -2994,7 +3003,7 @@ mod tests {
             })),
             (log.history(), log.cursor()),
         )
-        .editing(TextLayers::new().removing_disfluencies(true));
+        .rewriting(Rewrites::new().removing_disfluencies(true));
 
         let result = pipeline
             .run(own_voice_only(settings(
@@ -3010,44 +3019,40 @@ mod tests {
 
     #[test]
     fn complete_context_does_not_decode_wholly_admitted_audio_twice() {
-        for source in [
-            OWN_SPEECH.to_vec(),
-            [OWN_SPEECH, PAUSE, OWN_SPEECH].concat(),
-        ] {
-            let inputs = Arc::new(Mutex::new(Vec::new()));
-            let pipeline = filtered_pipeline(
-                Finished(source.clone()),
-                diarizer(VoiceByLevel),
-                Transcription::complete_samples(levels(Arc::clone(&inputs))),
-                CallLog::default().history(),
-            );
-            assert_eq!(
-                pipeline
-                    .run(own_voice_only(settings(
-                        DeliveryMode::Complete,
-                        OutputMode::Insert
-                    )))
-                    .unwrap()
-                    .text,
-                "own"
-            );
-            assert_eq!(
-                pipeline
-                    .transcribe(
-                        &mut RecordingReader::from_samples(&source),
-                        &Language::Automatic,
-                        true,
-                        None,
-                        "test",
-                        &CancelToken::never()
-                    )
-                    .unwrap()
-                    .transcript
-                    .as_str(),
-                "own"
-            );
-            assert_eq!(*inputs.lock().unwrap(), [false, false]);
-        }
+        let source = OWN_SPEECH.to_vec();
+        let inputs = Arc::new(Mutex::new(Vec::new()));
+        let pipeline = filtered_pipeline(
+            Finished(source.clone()),
+            diarizer(VoiceByLevel),
+            Transcription::complete_samples(levels(Arc::clone(&inputs))),
+            CallLog::default().history(),
+        );
+        assert_eq!(
+            pipeline
+                .run(own_voice_only(settings(
+                    DeliveryMode::Complete,
+                    OutputMode::Insert
+                )))
+                .unwrap()
+                .text,
+            "own"
+        );
+        assert_eq!(
+            pipeline
+                .transcribe(
+                    &mut RecordingReader::from_samples(&source),
+                    &Language::Automatic,
+                    true,
+                    None,
+                    "test",
+                    &CancelToken::never()
+                )
+                .unwrap()
+                .transcript
+                .as_str(),
+            "own"
+        );
+        assert_eq!(*inputs.lock().unwrap(), [false, false]);
     }
 
     fn source_for_segments(
@@ -3294,7 +3299,7 @@ mod tests {
         transcription: Transcription<T, M>,
         source: &[f32],
         origin: u64,
-    ) -> Decoded {
+    ) -> CompleteDecode {
         let pipeline = DictationPipeline::new((), transcription, ()).hearing_speech(None::<Loud>);
         let mut recording = RecordingReader::from_samples(source);
         recording.fill().unwrap();
@@ -3379,20 +3384,16 @@ mod tests {
     }
 
     #[test]
-    fn complete_context_does_not_retry_after_late_failure_or_cancellation() {
+    fn complete_context_late_failures_map_to_errors_and_publish_nothing() {
         use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
-        use std::sync::atomic::{AtomicUsize, Ordering};
 
         for failure in ["inference", "cancel", "no-speech", "no-segments"] {
             for live in [false, true] {
                 if failure == "cancel" && live {
                     continue;
                 }
-                let openings = Arc::new(AtomicUsize::new(0));
                 let model = Operations({
-                    let openings = Arc::clone(&openings);
                     move |cancel: &CancelToken| {
-                        assert_eq!(openings.fetch_add(1, Ordering::Relaxed), 0);
                         let cancel = cancel.clone();
                         let mut first = true;
                         OperationSource::new("discarded-engine", move |recording, _| {
@@ -3483,7 +3484,6 @@ mod tests {
                     "no-speech" => assert!(matches!(result, Err(DictationError::NoSpeech))),
                     _ => unreachable!(),
                 }
-                assert_eq!(openings.load(Ordering::Relaxed), 1);
                 assert!(log.entries().iter().all(|entry| entry == "prepare:Insert"));
             }
         }
@@ -3617,8 +3617,8 @@ mod tests {
                 Transcription::complete_samples(levels(Arc::default())),
                 (log.history(), log.cursor()),
             )
-            .editing(
-                TextLayers::new()
+            .rewriting(
+                Rewrites::new()
                     .backtracking(true)
                     .removing_disfluencies(true)
                     .with(layer),
@@ -3698,76 +3698,58 @@ mod tests {
     #[test]
     fn live_owner_filtering_requires_filter_inputs() {
         for delivery in [DeliveryMode::Streaming, DeliveryMode::Complete] {
-            for own_voice in [false, true] {
-                for (case, diarizer, segmenter) in unavailable_filters() {
-                    let log = CallLog::default();
-                    let pipeline = DictationPipeline::new(
-                        Finished(OWN_SPEECH.to_vec()),
-                        Transcription::agreement(
-                            Cadence::from_millis(100, 20_000),
-                            Answering("hello"),
-                        ),
-                        (log.history(), log.cursor()),
-                    )
-                    .hearing_speech(Some(Loud))
-                    .tracking_voices(diarizer, segmenter);
-                    let mut settings = settings(delivery, OutputMode::Insert);
-                    settings.own_voice_only = own_voice;
+            for (case, speech, diarizer, segmenter) in unavailable_filters() {
+                let log = CallLog::default();
+                let pipeline = DictationPipeline::new(
+                    Finished(OWN_SPEECH.to_vec()),
+                    Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+                    (log.history(), log.cursor()),
+                )
+                .hearing_speech(speech)
+                .tracking_voices(diarizer, segmenter);
 
-                    let result = pipeline.run(settings);
+                let result = pipeline.run(own_voice_only(settings(delivery, OutputMode::Insert)));
 
-                    if own_voice {
-                        assert!(
-                            matches!(
-                                result,
-                                Err(DictationError::Speaker(TrackingError::Unavailable))
-                            ),
-                            "{case}, {delivery:?}"
-                        );
-                        assert_eq!(delivered(&log.entries()), "", "{case}, {delivery:?}");
-                    } else {
-                        assert_eq!(result.unwrap().text, "hello", "{case}, {delivery:?}");
-                        assert_eq!(delivered(&log.entries()), "hello", "{case}, {delivery:?}");
-                    }
-                }
+                assert!(
+                    matches!(
+                        result,
+                        Err(DictationError::Speaker(TrackingError::Unavailable))
+                    ),
+                    "{case}, {delivery:?}"
+                );
+                assert_eq!(delivered(&log.entries()), "", "{case}, {delivery:?}");
             }
         }
     }
 
     #[test]
     fn saved_owner_filtering_requires_filter_inputs() {
-        for own_voice in [false, true] {
-            for (case, diarizer, segmenter) in unavailable_filters() {
-                let pipeline = DictationPipeline::new(
-                    Finished(OWN_SPEECH.to_vec()),
-                    Transcription::complete_samples(Answering("hello")),
-                    UnreachableSink,
-                )
-                .hearing_speech(Some(Loud))
-                .tracking_voices(diarizer, segmenter);
-                let mut recording = RecordingReader::from_samples(OWN_SPEECH);
+        for (case, speech, diarizer, segmenter) in unavailable_filters() {
+            let pipeline = DictationPipeline::new(
+                Finished(OWN_SPEECH.to_vec()),
+                Transcription::complete_samples(Answering("hello")),
+                UnreachableSink,
+            )
+            .hearing_speech(speech)
+            .tracking_voices(diarizer, segmenter);
+            let mut recording = RecordingReader::from_samples(OWN_SPEECH);
 
-                let result = pipeline.transcribe(
-                    &mut recording,
-                    &Language::Automatic,
-                    own_voice,
-                    None,
-                    "test",
-                    &CancelToken::never(),
-                );
+            let result = pipeline.transcribe(
+                &mut recording,
+                &Language::Automatic,
+                true,
+                None,
+                "test",
+                &CancelToken::never(),
+            );
 
-                if own_voice {
-                    assert!(
-                        matches!(
-                            result,
-                            Err(DictationError::Speaker(TrackingError::Unavailable))
-                        ),
-                        "{case}"
-                    );
-                } else {
-                    assert_eq!(result.unwrap().transcript.as_str(), "hello", "{case}");
-                }
-            }
+            assert!(
+                matches!(
+                    result,
+                    Err(DictationError::Speaker(TrackingError::Unavailable))
+                ),
+                "{case}"
+            );
         }
     }
 
@@ -3943,25 +3925,6 @@ mod tests {
             assert!(voices.contains(&HeardSpeaker::Typed(None)));
             assert!(!voices.contains(&HeardSpeaker::KeptOut));
         }
-    }
-
-    #[test]
-    fn own_voice_only_types_nothing_said_in_another_voice() {
-        let (_directory, capture) = judged_capture();
-        let log = CallLog::default();
-        let pipeline = filtered_pipeline(
-            capture,
-            diarizer(Voice(OTHER)),
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-            (log.history(), log.cursor()),
-        );
-        let result = pipeline.run(own_voice_only(settings(
-            DeliveryMode::Streaming,
-            OutputMode::Insert,
-        )));
-
-        assert!(matches!(result, Err(DictationError::NoSpeech)));
-        assert_eq!(log.entries(), ["prepare:Insert"]);
     }
 
     /// Runs one press and returns its result and the sink log.
@@ -4152,11 +4115,12 @@ mod tests {
     fn a_failed_press_ends_on_its_failure() {
         let (events, stages) = stage_events();
         let (_directory, capture) = judged_capture();
+        let log = CallLog::default();
         let pipeline = filtered_pipeline(
             capture,
             diarizer(Voice(OTHER)),
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-            (CallLog::default().history(), CallLog::default().cursor()),
+            (log.history(), log.cursor()),
         );
         let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
 
@@ -4167,6 +4131,7 @@ mod tests {
             matches!(result, Err(DictationError::NoSpeech)),
             "{result:?}"
         );
+        assert_eq!(log.entries(), ["prepare:Insert"]);
         // The ring may skip a state the walk passed through, so only its
         // last word before the failure is pinned.
         let stages: Vec<_> = stages.iter().collect();
@@ -4184,57 +4149,38 @@ mod tests {
     }
 
     #[test]
-    fn a_relayed_recording_in_another_voice_is_refused() {
-        let (directory, capture) = judged_capture();
-        let pipeline = filtered_pipeline(
-            capture,
-            diarizer(Voice(OTHER)),
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-            (),
-        );
-        let mut recording = RecordingReader::from_samples_in(directory.path(), &[0.5; 64_000])
-            .expect("the test recording is written");
+    fn a_relayed_recording_is_heard_only_in_the_enrolled_voice() {
+        for voice in [OWN, OTHER] {
+            let (directory, capture) = judged_capture();
+            let pipeline = filtered_pipeline(
+                capture,
+                diarizer(Voice(voice)),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+                (),
+            );
+            let mut recording = RecordingReader::from_samples_in(directory.path(), &[0.5; 64_000])
+                .expect("the test recording is written");
 
-        let heard = pipeline.transcribe(
-            &mut recording,
-            &Language::Automatic,
-            true,
-            None,
-            "test",
-            &CancelToken::never(),
-        );
-
-        assert!(matches!(heard, Err(DictationError::NoSpeech)));
-    }
-
-    #[test]
-    fn a_relayed_recording_in_the_enrolled_voice_is_heard() {
-        let (directory, capture) = judged_capture();
-        let pipeline = filtered_pipeline(
-            capture,
-            diarizer(Voice(OWN)),
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-            (),
-        );
-        let mut recording = RecordingReader::from_samples_in(directory.path(), &[0.5; 64_000])
-            .expect("the test recording is written");
-
-        let heard = pipeline
-            .transcribe(
+            let heard = pipeline.transcribe(
                 &mut recording,
                 &Language::Automatic,
                 true,
                 None,
                 "test",
                 &CancelToken::never(),
-            )
-            .expect("the enrolled voice is typed");
+            );
 
-        assert_eq!(heard.transcript.as_str(), "hello");
+            if voice == OWN {
+                let heard = heard.expect("the enrolled voice is typed");
+                assert_eq!(heard.transcript.as_str(), "hello");
+            } else {
+                assert!(matches!(heard, Err(DictationError::NoSpeech)));
+            }
+        }
     }
 
     #[test]
-    fn retry_requires_voice_filtering_and_honors_cancellation() {
+    fn retry_honors_cancellation() {
         let (directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
@@ -4243,17 +4189,6 @@ mod tests {
         );
         let mut recording =
             RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-        assert!(matches!(
-            pipeline.transcribe(
-                &mut recording,
-                &Language::Automatic,
-                true,
-                None,
-                "test",
-                &CancelToken::never()
-            ),
-            Err(DictationError::Speaker(TrackingError::Unavailable))
-        ));
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
@@ -4267,45 +4202,6 @@ mod tests {
             ),
             Err(DictationError::Cancelled)
         ));
-    }
-
-    #[test]
-    fn cancelling_recorded_filtering_stops_further_checks() {
-        struct CancelAfterEmbedding {
-            cancel: CancelToken,
-            calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        }
-
-        impl Embedder for CancelAfterEmbedding {
-            fn embed(
-                &mut self,
-                _audio: &[f32],
-            ) -> Result<Option<Vec<f32>>, aria_kit::speaker::SpeakerError> {
-                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                self.cancel.cancel();
-                Ok(Some(OWN.to_vec()))
-            }
-
-            fn dimension(&self) -> usize {
-                OWN.len()
-            }
-        }
-
-        let cancel = CancelToken::new();
-        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mut diarizer = diarizer(CancelAfterEmbedding {
-            cancel: cancel.clone(),
-            calls: Arc::clone(&calls),
-        });
-        let mut recording = RecordingReader::from_samples(&vec![0.5; 5 * 16_000]);
-        let feed = TurnFeed::start(
-            &mut recording,
-            SpeechDetector::new(Loud, 0),
-            Some(tracker(&mut diarizer, 0)),
-        );
-        let result = hear_saved(feed, Admission::OwnerOnly, &cancel).map_err(hearing_error);
-        assert!(matches!(result, Err(DictationError::Cancelled)));
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     /// Where each published segment sat in its recording.
@@ -4349,40 +4245,35 @@ mod tests {
     #[test]
     fn without_the_filter_no_segment_is_named() {
         for mode in [DeliveryMode::Streaming, DeliveryMode::Complete] {
-            for voice in [OWN, OTHER] {
-                let (_directory, capture) = judged_capture();
-                let log = CallLog::default();
-                let pipeline = filtered_pipeline(
-                    capture,
-                    diarizer(Voice(voice)),
-                    Transcription::agreement(
-                        Cadence::from_millis(1_000, 20_000),
-                        Answering("hello"),
-                    ),
-                    (log.history(), log.cursor()),
-                );
-                let (events, stages) = stage_events();
+            let (_directory, capture) = judged_capture();
+            let log = CallLog::default();
+            let pipeline = filtered_pipeline(
+                capture,
+                diarizer(Voice(OWN)),
+                Transcription::agreement(Cadence::from_millis(1_000, 20_000), Answering("hello")),
+                (log.history(), log.cursor()),
+            );
+            let (events, stages) = stage_events();
 
-                pipeline
-                    .run_observed(settings(mode, OutputMode::Insert), &events)
-                    .unwrap();
+            pipeline
+                .run_observed(settings(mode, OutputMode::Insert), &events)
+                .unwrap();
 
-                let stages: Vec<_> = stages.try_iter().collect();
-                let speakers: Vec<_> = stages
+            let stages: Vec<_> = stages.try_iter().collect();
+            let speakers: Vec<_> = stages
+                .iter()
+                .filter_map(|stage| match stage {
+                    DictationStage::SegmentTranscribed { speaker, .. } => Some(speaker),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(speakers, [&None], "{mode:?}");
+            assert!(
+                !stages
                     .iter()
-                    .filter_map(|stage| match stage {
-                        DictationStage::SegmentTranscribed { speaker, .. } => Some(speaker),
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(speakers, [&None], "{mode:?}");
-                assert!(
-                    !stages
-                        .iter()
-                        .any(|stage| matches!(stage, DictationStage::SpeakerChanged(_))),
-                    "the ring stays silent, {mode:?}"
-                );
-            }
+                    .any(|stage| matches!(stage, DictationStage::SpeakerChanged(_))),
+                "the ring stays silent, {mode:?}"
+            );
         }
     }
 
@@ -4460,37 +4351,6 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_press_cut_to_the_owner_is_named_theirs() {
-        let (_directory, capture) = judged_capture();
-        let pipeline = filtered_pipeline(
-            capture,
-            diarizer(Voice(OWN)),
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-            CallLog::default().history(),
-        );
-        let (send, stages) = std::sync::mpsc::channel();
-        let events = DictationEventEmitter::forwarded_by(move |event| {
-            if let super::super::DictationEvent::Stage(DictationStage::SegmentTranscribed {
-                speaker,
-                ..
-            }) = event
-            {
-                let _ = send.send(speaker);
-            }
-        });
-
-        pipeline
-            .run_observed(
-                own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
-                &events,
-            )
-            .unwrap();
-
-        let alex = SpeakerName::new("alex").unwrap();
-        assert_eq!(stages.try_iter().collect::<Vec<_>>(), [Some(alex)]);
-    }
-
-    #[test]
     fn own_voice_only_types_what_the_enrolled_voice_said() {
         let (_directory, capture) = judged_capture();
         let log = CallLog::default();
@@ -4505,7 +4365,9 @@ mod tests {
             OutputMode::Insert,
         )));
 
-        let text = result.unwrap().text;
+        let result = result.unwrap();
+        assert!(result.own_voice);
+        let text = result.text;
         assert_eq!(text, "hello");
         let log = log.entries();
         assert_eq!(
@@ -4530,15 +4392,27 @@ mod tests {
                 Transcription::complete_samples(Echoing),
                 (log.history(), log.cursor()),
             );
-            let result = pipeline.run(own_voice_only(settings(
-                DeliveryMode::Complete,
-                OutputMode::Insert,
-            )));
+            let (send, stages) = std::sync::mpsc::channel();
+            let events = DictationEventEmitter::forwarded_by(move |event| {
+                if let super::super::DictationEvent::Stage(DictationStage::SegmentTranscribed {
+                    speaker,
+                    ..
+                }) = event
+                {
+                    let _ = send.send(speaker);
+                }
+            });
+            let result = pipeline.run_observed(
+                own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
+                &events,
+            );
 
             match expected {
                 Some(text) => {
                     assert_eq!(result.unwrap().text, text);
                     assert!(log.entries().contains(&"deliver:hello".to_owned()));
+                    let alex = SpeakerName::new("alex").unwrap();
+                    assert_eq!(stages.try_iter().collect::<Vec<_>>(), [Some(alex)]);
                 }
                 None => {
                     assert!(
@@ -4606,40 +4480,6 @@ mod tests {
         );
 
         assert!(matches!(result, Err(DictationError::Delivery(_))));
-        assert!(started.elapsed() < Duration::from_secs(2));
-    }
-
-    #[test]
-    fn unavailable_owner_filtering_stops_the_recording_before_decoding() {
-        let directory = tempfile::tempdir().unwrap();
-        let capture = WavReplayCapture::new(
-            directory.path(),
-            Duration::from_secs(20),
-            &fixture_of(directory.path(), 160_000),
-            ReplayPace::Realtime,
-        )
-        .unwrap();
-        let log = CallLog::default();
-        let pipeline = DictationPipeline::new(
-            capture,
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
-            (log.history(), log.cursor()),
-        );
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let started = Instant::now();
-
-        let result = pipeline.execute(
-            own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert)),
-            &control,
-            &DictationEventEmitter::unsubscribed(),
-            None,
-        );
-
-        assert!(matches!(
-            result,
-            Err(DictationError::Speaker(TrackingError::Unavailable))
-        ));
-        assert_eq!(delivered(&log.entries()), "");
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 

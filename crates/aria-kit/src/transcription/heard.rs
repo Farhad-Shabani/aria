@@ -17,7 +17,7 @@ pub fn next_heard<T: Transcriber, L: Layer>(
     recording: &mut RecordingReader,
 ) -> Result<Option<Heard>, TranscriptionError> {
     loop {
-        match read(operation, recording, false)? {
+        match next_heard_update(operation, recording, false)? {
             Some(HeardUpdate::Finalized(heard)) => return Ok(Some(heard)),
             Some(HeardUpdate::Provisional { .. }) => {}
             None => return Ok(None),
@@ -25,15 +25,9 @@ pub fn next_heard<T: Transcriber, L: Layer>(
     }
 }
 
-/// [`next_heard`], with the decoder's provisional text between finalized segments.
+/// [`next_heard`], with the decoder's provisional text between finalized
+/// segments when `previews` asks for it.
 pub fn next_heard_update<T: Transcriber, L: Layer>(
-    operation: &mut Operation<'_, T, L>,
-    recording: &mut RecordingReader,
-) -> Result<Option<HeardUpdate>, TranscriptionError> {
-    read(operation, recording, true)
-}
-
-fn read<T: Transcriber, L: Layer>(
     operation: &mut Operation<'_, T, L>,
     recording: &mut RecordingReader,
     previews: bool,
@@ -156,7 +150,7 @@ mod tests {
             let mut preview_count = 0;
             loop {
                 let update = if previews {
-                    next_heard_update(&mut operation, &mut recording)
+                    next_heard_update(&mut operation, &mut recording, true)
                 } else {
                     next_heard(&mut operation, &mut recording)
                         .map(|heard| heard.map(HeardUpdate::Finalized))

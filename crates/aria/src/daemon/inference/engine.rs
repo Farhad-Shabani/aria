@@ -330,7 +330,6 @@ pub(super) fn transcription_failure(error: TranscriptionError) -> RpcFailure {
         | TranscriptionError::NoDelegatedOperation
         | TranscriptionError::LoadPanicked
         | TranscriptionError::InvalidSegment
-        | TranscriptionError::SpeakerTracking
         | TranscriptionError::Processing(_) => {
             (RpcErrorCode::TranscriptionFailed, "inference failed")
         }
