@@ -251,7 +251,6 @@ mod tests {
         desc
     }
 
-    /// Header, `desc`, a `free` chunk, then `data` with the given size field.
     fn caf(desc: [u8; 32], data_size: i64, data: &[u8]) -> Vec<u8> {
         let mut bytes = b"caff\x00\x01\x00\x00".to_vec();
         for (kind, size, payload) in [

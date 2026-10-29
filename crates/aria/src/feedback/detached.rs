@@ -16,7 +16,6 @@ pub(crate) fn run_detached(purpose: &'static str, mut command: Command) {
     spawn_detached(purpose, move || run(purpose, &mut command));
 }
 
-/// Runs `work` on its own named thread and forgets it.
 pub(crate) fn spawn_detached(purpose: &'static str, work: impl FnOnce() + Send + 'static) {
     let spawned = std::thread::Builder::new()
         .name(format!("aria-{purpose}"))

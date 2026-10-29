@@ -1,7 +1,7 @@
 //! Sounds for a person at the machine.
 //!
-//! macOS dictation cues play in-process from clips read at startup: a player
-//! process per cue paid a CoreAudio client setup each time, and that stalls
+//! macOS dictation cues play in-process from clips read at startup. A player
+//! process per cue would pay a CoreAudio client setup each time, which stalls
 //! under load. Everything else goes through one player per platform:
 //! `afplay` with the system sounds on macOS, `paplay` with the freedesktop
 //! theme on Linux. A desktop without the player just logs.
@@ -28,7 +28,7 @@ pub(crate) use detached::run_detached;
 
 /// Plays the clip on the default output device from its own thread. The
 /// player waits a drain grace after the last sample, so the thread outlives
-/// the sound by about half a second.
+/// the sound by over half a second.
 #[cfg(target_os = "macos")]
 pub(crate) fn play_clip(purpose: &'static str, clip: Arc<Clip>) {
     detached::spawn_detached(purpose, move || {
