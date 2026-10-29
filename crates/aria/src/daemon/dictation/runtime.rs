@@ -249,6 +249,12 @@ impl DictationRuntime {
         ))
     }
 
+    /// Stops a manual recording the way a second manual press does. `false`
+    /// with none open, so the press is free to mean something else.
+    pub(in crate::daemon) fn stop_manual_recording(&self) -> bool {
+        self.microphone.stop_manual_recording()
+    }
+
     /// Ends the named recording and lets transcription finish. Returns false
     /// if it is not running, without loading a deferred coordinator.
     pub(in crate::daemon) fn stop_recording(&self, recording: RecordingId) -> bool {

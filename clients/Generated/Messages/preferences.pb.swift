@@ -317,7 +317,7 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
     set {_uniqueStorage()._dictationHotkey = newValue}
   }
 
-  /// Press to record, again to send, again to cancel.
+  /// Starts an ask. The Aria key then sends and cancels it.
   public var askHotkey: Aria_Daemon_V1_Hotkey {
     get {_storage._askHotkey ?? Aria_Daemon_V1_Hotkey()}
     set {_uniqueStorage()._askHotkey = newValue}

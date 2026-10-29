@@ -116,6 +116,18 @@ impl Gate {
         }
     }
 
+    /// Stops a manual recording, as a second manual press would. `false`
+    /// with none open, or with one that stops on silence, so the press is
+    /// free to mean something else.
+    pub(crate) fn stop_manual_recording(&self) -> bool {
+        match self.hold().as_ref() {
+            Some(Holder::Dictation(running)) => {
+                running.stop_mode() == StopMode::Manual && running.request_recording_stop()
+            }
+            Some(Holder::Enrollment | Holder::Relay | Holder::HistoryRetry) | None => false,
+        }
+    }
+
     /// Admits an enrollment. `None` when something is already recording.
     pub(crate) fn admit_enrollment(self: &Arc<Self>) -> Option<Claim> {
         let mut holder = self.hold();
@@ -369,6 +381,31 @@ mod tests {
             gate.admit_dictation(StopMode::Manual, control(StopMode::Manual)),
             Admitted::StopAccepted
         ));
+    }
+
+    #[test]
+    fn a_tap_stops_a_manual_recording_and_leaves_the_rest_alone() {
+        let gate = Gate::new();
+        assert!(!gate.stop_manual_recording(), "nothing is recording");
+
+        let on_silence = control(StopMode::OnSilence);
+        let _listening = on_silence
+            .start_recording(&DictationEventEmitter::unsubscribed())
+            .expect("recording starts");
+        let dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&on_silence));
+        assert!(
+            !gate.stop_manual_recording(),
+            "a silence-stopped recording is not a tap's"
+        );
+        drop(dictating);
+        drop(_listening);
+
+        let manual = control(StopMode::Manual);
+        let _recording = manual
+            .start_recording(&DictationEventEmitter::unsubscribed())
+            .expect("recording starts");
+        let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&manual));
+        assert!(gate.stop_manual_recording());
     }
 
     /// A phone that walks out of range mid-upload drops its session, and

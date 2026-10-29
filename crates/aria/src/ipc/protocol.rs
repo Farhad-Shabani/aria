@@ -473,6 +473,7 @@ impl From<ChatRequest> for wire::AskRequest {
             model_id: request.model_id.unwrap_or_default(),
             session_name: request.session.unwrap_or_default(),
             own_voice: request.own_voice,
+            tap_cancels: request.tap_cancels,
         }
     }
 }
@@ -504,6 +505,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             new: request.new_conversation,
             output_mode,
             own_voice: request.own_voice,
+            tap_cancels: request.tap_cancels,
         })
     }
 }
@@ -523,6 +525,7 @@ impl TryFrom<wire::RunPromptRequest> for PromptCall {
             text: request.text,
             prompt: PromptId::new(request.prompt_id)?,
             application,
+            tap_cancels: request.tap_cancels,
         })
     }
 }
@@ -2558,6 +2561,7 @@ mod tests {
             new: true,
             output_mode: Some(OutputMode::Copy),
             own_voice: true,
+            tap_cancels: true,
         };
 
         let sent = wire::AskRequest::from(request.clone());
@@ -3062,6 +3066,7 @@ mod tests {
                 text: text.to_owned(),
                 prompt_id: id.to_owned(),
                 application_id: app.to_owned(),
+                tap_cancels: false,
             })
         };
         assert!(matches!(

@@ -195,6 +195,7 @@ fn compose(
         HotkeyConfig::Enabled => Some(HotkeyTrigger::new(
             dictation_hotkey,
             dictation.clone(),
+            chat.clone(),
             Arc::clone(&dictation_runtime),
             Arc::clone(&subscriptions),
             health.clone(),

@@ -76,7 +76,7 @@ message UserPreferences {
   // Shortcuts
 
   HotkeyKey dictation_hotkey = 11;
-  // Press to record, again to send, again to cancel.
+  // Starts an ask. The Aria key then sends and cancels it.
   Hotkey ask_hotkey = 12;
   // Lists the prompts that are on, so one runs without its own chord.
   Hotkey prompt_list_hotkey = 13;

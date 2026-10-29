@@ -1,5 +1,6 @@
 //! The Aria key as a trigger, owned by a persistent daemon. A tap toggles
-//! dictation and a hold records here; a combo is broadcast for a client to run.
+//! dictation, or cancels a run a client's press started; a hold records
+//! here; a combo is broadcast for a client to run.
 
 use std::sync::Arc;
 
@@ -14,8 +15,10 @@ use crate::dictation::{
 use crate::hotkey::{Combo, HotkeyKey, ListenerEvent, ListenerExit, PlatformHotkeyListener, Press};
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
 
+use super::chat::{ChatCallError, ChatHandle};
 use super::dictation::DictationRuntimeError;
 use super::dictation::{AutoStopRule, DictationCallError, DictationHandle, DictationRuntime};
+use super::operation::CallError;
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 
@@ -25,6 +28,9 @@ type Listener = fn(HotkeyKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool) -> List
 pub(super) struct HotkeyTrigger {
     key: watch::Receiver<HotkeyKey>,
     dictation: DictationHandle,
+    /// Cancels a run a client's press started, so a tap does not dictate
+    /// over it.
+    chat: ChatHandle,
     /// Stops a hold's recording by id, the same way a client's stop does.
     runtime: Arc<DictationRuntime>,
     /// Where combos go; the Mac app runs their actions.
@@ -60,6 +66,7 @@ impl HotkeyTrigger {
     pub(super) fn new(
         key: watch::Receiver<HotkeyKey>,
         dictation: DictationHandle,
+        chat: ChatHandle,
         runtime: Arc<DictationRuntime>,
         subscriptions: Arc<Subscriptions>,
         health: HealthReporter,
@@ -67,6 +74,7 @@ impl HotkeyTrigger {
         Self {
             key,
             dictation,
+            chat,
             runtime,
             subscriptions,
             health,
@@ -187,18 +195,39 @@ impl HotkeyTrigger {
         }
     }
 
-    /// One detached task per tap. A starting tap holds its call open for
-    /// the whole dictation, so the stopping tap must not queue behind it —
-    /// admission turns the second Manual start into the stop.
+    /// One detached task per tap. A tap ends what the user is in the middle
+    /// of: an open manual recording first, then a run a press started; with
+    /// neither, it is dictation. A starting tap holds its call open for the
+    /// whole dictation, so nothing queues behind it. Between a press's
+    /// recording stopping and its ticket, one round trip, a tap still
+    /// dictates.
     fn tap(&self) {
         tracing::info!(trigger = "hotkey", "tap");
+        let runtime = Arc::clone(&self.runtime);
+        let chat = self.chat.clone();
         let dictation = self.dictation.clone();
         tokio::spawn(async move {
-            log_outcome(
-                dictation
-                    .start(DictationRequest::new(StopMode::Manual))
-                    .await,
-            );
+            if runtime.stop_manual_recording() {
+                tracing::info!(
+                    trigger = "hotkey",
+                    status = "stop_accepted",
+                    "hotkey tap stopped the running recording"
+                );
+                return;
+            }
+            match chat.cancel_tapped().await {
+                Ok(true) => tracing::info!(
+                    trigger = "hotkey",
+                    status = "cancelled",
+                    "hotkey tap cancelled the run a press started"
+                ),
+                Ok(false) => log_outcome(
+                    dictation
+                        .start(DictationRequest::new(StopMode::Manual))
+                        .await,
+                ),
+                Err(error) => log_chat_unreached(error),
+            }
         });
     }
 
@@ -316,6 +345,22 @@ fn log_outcome(outcome: Result<DictationOutcome, DictationCallError>) {
     }
 }
 
+fn log_chat_unreached(error: ChatCallError) {
+    match error {
+        CallError::Unavailable => tracing::info!(
+            trigger = "hotkey",
+            status = "unavailable",
+            "hotkey tap did nothing; the daemon is stopping"
+        ),
+        error @ (CallError::Runtime(_) | CallError::JobFailed) => tracing::warn!(
+            trigger = "hotkey",
+            status = "failed",
+            %error,
+            "hotkey tap could not ask chat"
+        ),
+    }
+}
+
 fn listener_exit(result: Result<ListenerExit, tokio::task::JoinError>) -> HotkeyExit {
     match result {
         Ok(ListenerExit::Shutdown) => HotkeyExit::Shutdown,
@@ -346,10 +391,16 @@ mod tests {
     use tonic_health::pb::health_server::Health;
     use tonic_health::server::HealthService;
 
+    use crate::dictation::testing::{RecordsUntilStopped, recording_started};
     use crate::hotkey::Combo;
     use crate::ipc::wire;
     use crate::preferences::PreferenceStore;
+    use crate::runtime::RuntimePaths;
 
+    use super::super::chat::{ChatRuntime, channel as chat_channel};
+    use super::super::context::Context;
+    use super::super::dictation::channel as dictation_channel;
+    use super::super::host::DaemonLifetime;
     use super::*;
 
     /// Keys each fake listener was armed on; a fn pointer cannot capture.
@@ -379,6 +430,18 @@ mod tests {
         ListenerExit::Shutdown
     }
 
+    fn tap_listener(
+        _key: HotkeyKey,
+        events: &dyn Fn(ListenerEvent),
+        should_stop: &dyn Fn() -> bool,
+    ) -> ListenerExit {
+        events(ListenerEvent::Press(Press::Tap));
+        while !should_stop() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        ListenerExit::Shutdown
+    }
+
     /// A trigger with no dictation behind it. The directory holds its
     /// preferences and must outlive it.
     fn trigger(
@@ -391,6 +454,7 @@ mod tests {
         HotkeyTrigger {
             key,
             dictation: DictationHandle::detached(),
+            chat: ChatHandle::detached(),
             runtime: Arc::new(DictationRuntime::detached(Arc::new(
                 PreferenceStore::open(directory.path().join("preferences.json"))
                     .expect("the preference store should open"),
@@ -460,6 +524,58 @@ mod tests {
                 combo: wire::HotkeyCombo::Shift.into(),
             }))
         );
+    }
+
+    /// A live chat actor with no job answers the tap with nothing to
+    /// cancel, so the tap reaches dictation.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tap_with_nothing_in_flight_records() {
+        let directory = tempfile::TempDir::new().expect("the test directory should be created");
+        let paths = RuntimePaths::in_directory(directory.path().to_path_buf())
+            .prepare()
+            .expect("the runtime paths should prepare");
+        let context = Context::detect(&paths, DaemonLifetime::OnDemand).expect("a test context");
+        let subscriptions = Arc::new(Subscriptions::new());
+        let preferences = Arc::new(
+            PreferenceStore::open(directory.path().join("preferences.json"))
+                .expect("the preference store should open"),
+        );
+        let chat = ChatRuntime::new(
+            &context,
+            Arc::clone(&subscriptions),
+            Arc::clone(&preferences),
+            None,
+        );
+        let (chat, chat_actor) = chat_channel(Arc::new(chat));
+        let mut dictation = DictationRuntime::detached(preferences);
+        let (executor, edges) = RecordsUntilStopped::new();
+        dictation.execute_with(Box::new(executor));
+        let dictation = Arc::new(dictation);
+        let (handle, dictation_actor) = dictation_channel(Arc::clone(&dictation));
+        let (_key, watch) = watch::channel(HotkeyKey::RightOption);
+        let (health, _server) = tonic_health::server::health_reporter();
+        let trigger = HotkeyTrigger {
+            key: watch,
+            dictation: handle,
+            chat,
+            runtime: dictation,
+            subscriptions,
+            health,
+            listener: tap_listener,
+        };
+        let shutdown = CancellationToken::new();
+        let chat_actor = tokio::spawn(chat_actor.run(shutdown.clone()));
+        let dictation_actor = tokio::spawn(dictation_actor.run(shutdown.clone()));
+        let running = tokio::spawn(trigger.run(shutdown.clone()));
+
+        tokio::task::spawn_blocking(move || recording_started(&edges))
+            .await
+            .expect("the wait does not panic");
+
+        shutdown.cancel();
+        running.await.expect("the trigger should stop cleanly");
+        dictation_actor.await.expect("the dictation actor drains");
+        chat_actor.await.expect("the chat actor drains");
     }
 
     #[tokio::test]

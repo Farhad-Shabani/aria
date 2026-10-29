@@ -238,6 +238,12 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {self._outputMode = nil}
 
+  /// A tap of the Aria key cancels this run while it is in flight. The Mac
+  /// app sets it on a run a key press started, so one key drives the run.
+  /// Absent means no: a terminal's ask, or an older client's, is never ended
+  /// by a tap.
+  public var tapCancels: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -270,6 +276,9 @@ public nonisolated struct Aria_Daemon_V1_RunPromptRequest: Sendable {
   /// The bundle ID of the app in front when the chord was first pressed. The
   /// result is typed only there. Empty when unknown.
   public var applicationID: String = String()
+
+  /// As on AskRequest: a tap of the Aria key cancels the run.
+  public var tapCancels: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -518,7 +527,7 @@ nonisolated extension Aria_Daemon_V1_ListAssistantModelsResponse: SwiftProtobuf.
 
 nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AskRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}assistant_id\0\u{3}model_id\0\u{1}workdir\0\u{3}session_name\0\u{3}new_conversation\0\u{1}text\0\u{3}own_voice\0\u{3}output_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}assistant_id\0\u{3}model_id\0\u{1}workdir\0\u{3}session_name\0\u{3}new_conversation\0\u{1}text\0\u{3}own_voice\0\u{3}output_mode\0\u{3}tap_cancels\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -534,6 +543,7 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
       case 6: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 7: try { try decoder.decodeSingularBoolField(value: &self.ownVoice) }()
       case 8: try { try decoder.decodeSingularEnumField(value: &self._outputMode) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.tapCancels) }()
       default: break
       }
     }
@@ -568,6 +578,9 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
     try { if let v = self._outputMode {
       try visitor.visitSingularEnumField(value: v, fieldNumber: 8)
     } }()
+    if self.tapCancels != false {
+      try visitor.visitSingularBoolField(value: self.tapCancels, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -580,6 +593,7 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
     if lhs.text != rhs.text {return false}
     if lhs.ownVoice != rhs.ownVoice {return false}
     if lhs._outputMode != rhs._outputMode {return false}
+    if lhs.tapCancels != rhs.tapCancels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -617,7 +631,7 @@ nonisolated extension Aria_Daemon_V1_AskResponse: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunPromptRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0\u{3}tap_cancels\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -628,6 +642,7 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.promptID) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.applicationID) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.tapCancels) }()
       default: break
       }
     }
@@ -643,6 +658,9 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
     if !self.applicationID.isEmpty {
       try visitor.visitSingularStringField(value: self.applicationID, fieldNumber: 3)
     }
+    if self.tapCancels != false {
+      try visitor.visitSingularBoolField(value: self.tapCancels, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -650,6 +668,7 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
     if lhs.text != rhs.text {return false}
     if lhs.promptID != rhs.promptID {return false}
     if lhs.applicationID != rhs.applicationID {return false}
+    if lhs.tapCancels != rhs.tapCancels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

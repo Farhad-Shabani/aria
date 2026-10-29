@@ -34,9 +34,17 @@ struct SubmitCommand {
     reply: Reply<Ticket, Infallible>,
 }
 
-/// Answered with whether the ticket was still pending.
+/// Which job a cancel names.
+enum Cancel {
+    Ticket(Ticket),
+    /// The newest job in flight that a tap of the Aria key may end. Two at
+    /// once, an ask and a prompt run, take one tap each, newest first.
+    Tapped,
+}
+
+/// Answered with whether the job was still pending.
 struct CancelCommand {
-    ticket: Ticket,
+    target: Cancel,
     reply: Reply<bool, Infallible>,
 }
 
@@ -78,12 +86,32 @@ impl ChatHandle {
 
     /// Ends the job, running or waiting. `false` when it was neither.
     pub(in crate::daemon) async fn cancel(&self, ticket: Ticket) -> Result<bool, ChatCallError> {
-        let (command, pending) = call(|reply| CancelCommand { ticket, reply });
+        self.send_cancel(Cancel::Ticket(ticket)).await
+    }
+
+    /// Ends the newest job a tap may end. `false` when none is in flight.
+    pub(in crate::daemon) async fn cancel_tapped(&self) -> Result<bool, ChatCallError> {
+        self.send_cancel(Cancel::Tapped).await
+    }
+
+    async fn send_cancel(&self, target: Cancel) -> Result<bool, ChatCallError> {
+        let (command, pending) = call(|reply| CancelCommand { target, reply });
         self.cancels
             .send(command)
             .await
             .map_err(|_closed| CallError::Unavailable)?;
         pending.wait().await
+    }
+
+    /// A handle nobody serves; every call reports Unavailable.
+    #[cfg(test)]
+    pub(in crate::daemon) fn detached() -> Self {
+        let (submissions, _) = mpsc::channel(COMMAND_CAPACITY);
+        let (cancels, _) = mpsc::channel(COMMAND_CAPACITY);
+        Self {
+            submissions,
+            cancels,
+        }
     }
 }
 
@@ -119,6 +147,7 @@ impl Lane {
 /// The one job running in a lane, and what a cancel pulls to end it.
 struct Running {
     ticket: Ticket,
+    tap_cancels: bool,
     token: CancelToken,
 }
 
@@ -182,6 +211,7 @@ impl ChatActor {
             key.clone(),
             Running {
                 ticket,
+                tap_cancels: job.tap_cancels(),
                 token: token.clone(),
             },
         );
@@ -201,19 +231,45 @@ impl ChatActor {
     /// A running job is pulled by its token and ends itself; a waiting one
     /// is lifted out of its lane and ended here, since no job will.
     fn cancel(&mut self, command: CancelCommand) {
-        let CancelCommand { ticket, reply } = command;
+        let CancelCommand { target, reply } = command;
+        let found = match target {
+            Cancel::Ticket(ticket) => self.cancel_ticket(ticket),
+            Cancel::Tapped => self
+                .tapped()
+                .is_some_and(|ticket| self.cancel_ticket(ticket)),
+        };
+        reply.answer(found);
+    }
+
+    fn cancel_ticket(&mut self, ticket: Ticket) -> bool {
         if let Some(job) = self.running.values().find(|job| job.ticket == ticket) {
             job.token.cancel();
-            reply.answer(true);
-            return;
+            return true;
         }
         match self.take_waiting(ticket) {
             Some(job) => {
                 self.runtime.cancel_unstarted(ticket, job.assistant_id());
-                reply.answer(true);
+                true
             }
-            None => reply.answer(false),
+            None => false,
         }
+    }
+
+    /// The newest job a tap may end, running or waiting. A job already
+    /// told to stop is still winding down, so the next tap moves on.
+    fn tapped(&self) -> Option<Ticket> {
+        let running = self
+            .running
+            .values()
+            .filter(|job| job.tap_cancels && !job.token.is_cancelled())
+            .map(|job| job.ticket);
+        let waiting = self
+            .lanes
+            .values()
+            .flatten()
+            .filter(|(_, job)| job.tap_cancels())
+            .map(|(ticket, _)| *ticket);
+        running.chain(waiting).max()
     }
 
     /// Lifts a job out of its lane, dropping a lane that empties.
@@ -472,6 +528,100 @@ mod tests {
         );
     }
 
+    fn pressed_request(text: &str, workdir: &Path) -> ChatRequest {
+        ChatRequest {
+            tap_cancels: true,
+            ..request(text, workdir, false)
+        }
+    }
+
+    fn ended_within(harness: &Harness, ticket: Ticket) -> Option<RpcErrorCode> {
+        (0..4)
+            .filter_map(|_| harness.events.recv_timeout(PATIENCE).ok())
+            .find_map(|stage| ended_as(&stage, ticket))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tap_ends_the_newest_run_a_press_started() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let elsewhere = tempfile::tempdir().expect("another directory");
+        let harness = harness(directory.path());
+
+        let older = harness
+            .handle
+            .ask(pressed_request("1", directory.path()))
+            .await
+            .expect("the older is taken");
+        let newer = harness
+            .handle
+            .ask(pressed_request("2", elsewhere.path()))
+            .await
+            .expect("the newer is taken");
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+
+        assert!(harness.handle.cancel_tapped().await.expect("answered"));
+        assert_eq!(ended_within(&harness, newer), Some(RpcErrorCode::Cancelled));
+
+        assert!(harness.handle.cancel_tapped().await.expect("answered"));
+        assert_eq!(ended_within(&harness, older), Some(RpcErrorCode::Cancelled));
+
+        assert!(
+            !harness.handle.cancel_tapped().await.expect("answered"),
+            "nothing is left for a tap to end"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tap_leaves_a_run_no_press_started_alone() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let elsewhere = tempfile::tempdir().expect("another directory");
+        let harness = harness(directory.path());
+
+        let pressed = harness
+            .handle
+            .ask(pressed_request("1", directory.path()))
+            .await
+            .expect("the pressed ask is taken");
+        let typed = harness
+            .handle
+            .ask(request("2", elsewhere.path(), false))
+            .await
+            .expect("the typed ask is taken");
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+
+        assert!(harness.handle.cancel_tapped().await.expect("answered"));
+        assert_eq!(
+            ended_within(&harness, pressed),
+            Some(RpcErrorCode::Cancelled),
+            "the older pressed ask ends, not the newer typed one"
+        );
+
+        let waiting = harness
+            .handle
+            .ask(pressed_request("3", elsewhere.path()))
+            .await
+            .expect("the waiting pressed ask is taken");
+        assert!(harness.handle.cancel_tapped().await.expect("answered"));
+        assert_eq!(
+            ended_within(&harness, waiting),
+            Some(RpcErrorCode::Cancelled),
+            "the pressed ask waiting behind the typed one ends"
+        );
+        assert!(
+            !harness.handle.cancel_tapped().await.expect("answered"),
+            "a typed ask is not a tap's to end"
+        );
+
+        harness.release.send(()).expect("the typed ask is released");
+        let replied = (0..3)
+            .filter_map(|_| harness.events.recv_timeout(PATIENCE).ok())
+            .find(|stage| matches!(stage.kind, ChatStageKind::Replied(..)))
+            .map(|stage| stage.ticket);
+        assert_eq!(replied, Some(typed));
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_drops_waiting_asks_and_waits_out_the_running_one() {
         let directory = tempfile::tempdir().expect("test directory");
@@ -518,6 +668,7 @@ mod tests {
                 assistant_id: crate::config::AssistantId::ClaudeCode,
                 model_id: None,
                 application: None,
+                tap_cancels: false,
             })
         };
         let mut ask = request("hi", Path::new("/w"), false);
