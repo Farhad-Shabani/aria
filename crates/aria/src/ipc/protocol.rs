@@ -11,7 +11,7 @@ use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
 };
 
-use crate::audio::{SilenceDuration, SilenceDurationError};
+use crate::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
 use crate::chat::{
     AskTarget, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, PromptKind, Step,
     Ticket,
@@ -1362,6 +1362,10 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
                 silence_duration: SilenceDuration::new(Duration::from_millis(
                     preferences.silence_duration_ms,
                 ))?,
+                auto_stop: preferences
+                    .auto_stop_ms
+                    .map(|milliseconds| AutoStop::new(Duration::from_millis(milliseconds)))
+                    .transpose()?,
                 own_voice_only: preferences.own_voice_only,
                 dictation_history: preferences.dictation_history,
                 history_audio_retention: preferences.history_audio_retention,
@@ -1434,6 +1438,9 @@ impl From<PreferencePatch> for wire::PreferencePatch {
             silence_duration_ms: patch
                 .silence_duration
                 .map(|duration| duration.get().as_millis() as u64),
+            auto_stop_ms: patch.auto_stop.map(|auto_stop| {
+                auto_stop.map_or(0, |auto_stop| auto_stop.get().as_millis() as u64)
+            }),
             own_voice_only: patch.own_voice_only,
             dictation_history: patch.dictation_history,
             history_audio_retention: patch.history_audio_retention,
@@ -1474,6 +1481,10 @@ impl From<&PreferenceSnapshot> for wire::PreferenceSnapshot {
                 output_mode: wire::OutputMode::from(snapshot.preferences.output_mode) as i32,
                 delivery_mode: wire::DeliveryMode::from(snapshot.preferences.delivery_mode) as i32,
                 silence_duration_ms: snapshot.preferences.silence_duration.get().as_millis() as u64,
+                auto_stop_ms: snapshot
+                    .preferences
+                    .auto_stop
+                    .map(|auto_stop| auto_stop.get().as_millis() as u64),
                 own_voice_only: snapshot.preferences.own_voice_only,
                 dictation_history: snapshot.preferences.dictation_history,
                 history_audio_retention: snapshot.preferences.history_audio_retention,
@@ -1542,6 +1553,13 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
             silence_duration: patch
                 .silence_duration_ms
                 .map(|milliseconds| SilenceDuration::new(Duration::from_millis(milliseconds)))
+                .transpose()?,
+            auto_stop: patch
+                .auto_stop_ms
+                .map(|milliseconds| match milliseconds {
+                    0 => Ok(None),
+                    _ => AutoStop::new(Duration::from_millis(milliseconds)).map(Some),
+                })
                 .transpose()?,
             own_voice_only: patch.own_voice_only,
             dictation_history: patch.dictation_history,
@@ -2083,6 +2101,9 @@ pub enum ProtocolError {
 
     #[error(transparent)]
     InvalidSilenceDuration(#[from] SilenceDurationError),
+
+    #[error(transparent)]
+    InvalidAutoStop(#[from] AutoStopError),
 
     #[error(transparent)]
     InvalidSpeechText(#[from] SpeechTextError),
@@ -2652,6 +2673,32 @@ mod tests {
         for mute_output in [None, Some(false), Some(true)] {
             let patch = PreferencePatch {
                 mute_output,
+                ..Default::default()
+            };
+            let encoded = wire::PreferencePatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::PreferencePatch::decode(encoded.as_slice()).unwrap();
+            assert_eq!(PreferencePatch::try_from(decoded).unwrap(), patch);
+        }
+    }
+
+    #[test]
+    fn auto_stop_off_and_values_survive_the_wire() {
+        let ten_seconds = Some(AutoStop::new(Duration::from_secs(10)).unwrap());
+        for auto_stop in [None, ten_seconds] {
+            let snapshot = PreferenceSnapshot {
+                revision: 4,
+                preferences: UserPreferences {
+                    auto_stop,
+                    ..Default::default()
+                },
+            };
+            let encoded = wire::PreferenceSnapshot::from(&snapshot).encode_to_vec();
+            let decoded = wire::PreferenceSnapshot::decode(encoded.as_slice()).unwrap();
+            assert_eq!(PreferenceSnapshot::try_from(decoded).unwrap(), snapshot);
+        }
+        for auto_stop in [None, Some(None), Some(ten_seconds)] {
+            let patch = PreferencePatch {
+                auto_stop,
                 ..Default::default()
             };
             let encoded = wire::PreferencePatch::from(patch.clone()).encode_to_vec();

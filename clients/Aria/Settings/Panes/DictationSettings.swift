@@ -14,8 +14,12 @@ struct DictationSettings: View {
                 delivery(editor)
             }
             Section("Recording") {
-                Toggle("Mute output while recording", isOn: editor.binding(\.muteOutput, \.muteOutput))
+                autoStop(editor)
                 silence(editor)
+                Toggle(isOn: editor.binding(\.muteOutput, \.muteOutput)) {
+                    Text("Mute sound while recording")
+                    Text("Sound returns when recording stops.")
+                }
             }
         }
     }
@@ -42,6 +46,17 @@ struct DictationSettings: View {
         .disabled(DictationEdits.locksDelivery(editor.snapshot.outputMode))
     }
 
+    private func autoStop(_ editor: PreferencesEditor) -> some View {
+        Picker(selection: editor.binding(\.autoStopMs, \.autoStopMs)) {
+            ForEach(DictationEdits.autoStopChoices(including: editor.snapshot.autoStopMs), id: \.self) {
+                Text(DictationEdits.autoStopTitle($0)).tag($0)
+            }
+        } label: {
+            Text("Auto-stop")
+            Text("Stops a tapped recording after this much silence.")
+        }
+    }
+
     private func silence(_ editor: PreferencesEditor) -> some View {
         LabeledContent {
             HStack {
@@ -56,8 +71,8 @@ struct DictationSettings: View {
                     .monospacedDigit()
             }
         } label: {
-            Text("Silence")
-            Text("Ends wake-word and command-line dictation without --toggle. Hotkeys stop on tap or release.")
+            Text("Wake-word pause")
+            Text("Stops a wake-word recording after this much silence.")
         }
         .onChange(of: editor.snapshot.silenceDurationMs, initial: true) { _, ms in
             silenceSeconds = Double(ms) / 1000

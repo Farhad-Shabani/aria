@@ -249,6 +249,18 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
     set {_uniqueStorage()._muteOutput = newValue}
   }
 
+  /// Ends a tapped or toggled recording once this long passes without speech.
+  /// A held key records until release. Whole milliseconds, 3000 to 60000
+  /// inclusive. Absent is off.
+  public var autoStopMs: UInt64 {
+    get {_storage._autoStopMs ?? 0}
+    set {_uniqueStorage()._autoStopMs = newValue}
+  }
+  /// Returns true if `autoStopMs` has been explicitly set.
+  public var hasAutoStopMs: Bool {_storage._autoStopMs != nil}
+  /// Clears the value of `autoStopMs`. Subsequent reads from it will return its default value.
+  public mutating func clearAutoStopMs() {_uniqueStorage()._autoStopMs = nil}
+
   /// A language code such as "en" or "en-us", or "auto" to detect.
   public var recognitionLanguage: String {
     get {_storage._recognitionLanguage}
@@ -384,6 +396,17 @@ public nonisolated struct Aria_Daemon_V1_PreferencePatch: @unchecked Sendable {
   public var hasMuteOutput: Bool {_storage._muteOutput != nil}
   /// Clears the value of `muteOutput`. Subsequent reads from it will return its default value.
   public mutating func clearMuteOutput() {_uniqueStorage()._muteOutput = nil}
+
+  /// Whole milliseconds, 3000 to 60000 inclusive. 0 turns auto-stop off;
+  /// absent leaves it unchanged.
+  public var autoStopMs: UInt64 {
+    get {_storage._autoStopMs ?? 0}
+    set {_uniqueStorage()._autoStopMs = newValue}
+  }
+  /// Returns true if `autoStopMs` has been explicitly set.
+  public var hasAutoStopMs: Bool {_storage._autoStopMs != nil}
+  /// Clears the value of `autoStopMs`. Subsequent reads from it will return its default value.
+  public mutating func clearAutoStopMs() {_uniqueStorage()._autoStopMs = nil}
 
   /// A language code such as "en" or "en-us", or "auto" to detect.
   public var recognitionLanguage: String {
@@ -950,11 +973,12 @@ nonisolated extension Aria_Daemon_V1_AssistantModelPreference: SwiftProtobuf.Mes
 
 nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UserPreferences"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}prompt_list_hotkey\0\u{1}prompts\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}prompt_list_hotkey\0\u{1}prompts\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0\u{3}auto_stop_ms\0")
 
   fileprivate class _StorageClass {
     var _silenceDurationMs: UInt64 = 0
     var _muteOutput: Bool = false
+    var _autoStopMs: UInt64? = nil
     var _recognitionLanguage: String = String()
     var _ownVoiceOnly: Bool = false
     var _projectVocabulary: Bool = false
@@ -982,6 +1006,7 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
     init(copying source: _StorageClass) {
       _silenceDurationMs = source._silenceDurationMs
       _muteOutput = source._muteOutput
+      _autoStopMs = source._autoStopMs
       _recognitionLanguage = source._recognitionLanguage
       _ownVoiceOnly = source._ownVoiceOnly
       _projectVocabulary = source._projectVocabulary
@@ -1032,6 +1057,7 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
         case 15: try { try decoder.decodeSingularMessageField(value: &_storage._applicationOverrides) }()
         case 16: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
         case 17: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
+        case 18: try { try decoder.decodeSingularUInt64Field(value: &_storage._autoStopMs) }()
         default: break
         }
       }
@@ -1095,6 +1121,9 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
       if _storage._historyAudioRetention != false {
         try visitor.visitSingularBoolField(value: _storage._historyAudioRetention, fieldNumber: 17)
       }
+      try { if let v = _storage._autoStopMs {
+        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 18)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1106,6 +1135,7 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
         let rhs_storage = _args.1
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._muteOutput != rhs_storage._muteOutput {return false}
+        if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
         if _storage._recognitionLanguage != rhs_storage._recognitionLanguage {return false}
         if _storage._ownVoiceOnly != rhs_storage._ownVoiceOnly {return false}
         if _storage._projectVocabulary != rhs_storage._projectVocabulary {return false}
@@ -1132,11 +1162,12 @@ nonisolated extension Aria_Daemon_V1_UserPreferences: SwiftProtobuf.Message, Swi
 
 nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PreferencePatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}prompt_list_hotkey\0\u{1}prompts\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_output\0\u{3}recognition_language\0\u{3}own_voice_only\0\u{3}project_vocabulary\0\u{3}vocabulary_directory\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}dictation_hotkey\0\u{3}ask_hotkey\0\u{3}prompt_list_hotkey\0\u{1}prompts\0\u{3}application_overrides\0\u{3}dictation_history\0\u{3}history_audio_retention\0\u{3}auto_stop_ms\0")
 
   fileprivate class _StorageClass {
     var _silenceDurationMs: UInt64? = nil
     var _muteOutput: Bool? = nil
+    var _autoStopMs: UInt64? = nil
     var _recognitionLanguage: String? = nil
     var _ownVoiceOnly: Bool? = nil
     var _projectVocabulary: Bool? = nil
@@ -1164,6 +1195,7 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
     init(copying source: _StorageClass) {
       _silenceDurationMs = source._silenceDurationMs
       _muteOutput = source._muteOutput
+      _autoStopMs = source._autoStopMs
       _recognitionLanguage = source._recognitionLanguage
       _ownVoiceOnly = source._ownVoiceOnly
       _projectVocabulary = source._projectVocabulary
@@ -1214,6 +1246,7 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
         case 15: try { try decoder.decodeSingularMessageField(value: &_storage._applicationOverrides) }()
         case 16: try { try decoder.decodeSingularBoolField(value: &_storage._dictationHistory) }()
         case 17: try { try decoder.decodeSingularBoolField(value: &_storage._historyAudioRetention) }()
+        case 18: try { try decoder.decodeSingularUInt64Field(value: &_storage._autoStopMs) }()
         default: break
         }
       }
@@ -1277,6 +1310,9 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
       try { if let v = _storage._historyAudioRetention {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 17)
       } }()
+      try { if let v = _storage._autoStopMs {
+        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 18)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1288,6 +1324,7 @@ nonisolated extension Aria_Daemon_V1_PreferencePatch: SwiftProtobuf.Message, Swi
         let rhs_storage = _args.1
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._muteOutput != rhs_storage._muteOutput {return false}
+        if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
         if _storage._recognitionLanguage != rhs_storage._recognitionLanguage {return false}
         if _storage._ownVoiceOnly != rhs_storage._ownVoiceOnly {return false}
         if _storage._projectVocabulary != rhs_storage._projectVocabulary {return false}

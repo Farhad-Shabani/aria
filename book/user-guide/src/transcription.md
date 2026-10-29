@@ -36,8 +36,17 @@ aria dictate \
 Speak, then press **Esc** when the terminal shows the stop prompt. Aria stops
 recording, finishes transcription, and copies the result.
 
-Without `--toggle`, silence ends the recording. Recordings stop after five
-minutes at most.
+Without `--toggle`, silence ends the recording. With it, **Auto-stop** still
+ends the recording once you stop speaking, after 10 seconds by default. Change
+it under **Settings → Dictation**, or from the terminal:
+
+```sh
+aria dictate auto-stop       # show the setting
+aria dictate auto-stop 20    # stop after 20 seconds of silence
+aria dictate auto-stop off   # stop on Esc or a second run
+```
+
+Recordings stop after ten minutes at most.
 
 ## Mac insertion
 

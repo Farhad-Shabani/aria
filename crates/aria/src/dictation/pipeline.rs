@@ -522,7 +522,10 @@ where
             StopMode::OnSilence => RecordingMode::StopOnSilence {
                 trailing_silence: settings.silence_duration,
             },
-            StopMode::Manual => RecordingMode::UntilStopped,
+            StopMode::Manual => match settings.auto_stop {
+                Some(auto_stop) => RecordingMode::UntilQuiet { auto_stop },
+                None => RecordingMode::UntilStopped,
+            },
         };
         let recording = self
             .capture
@@ -1958,6 +1961,50 @@ mod tests {
             Err(DictationError::StreamingDeliveryUnavailable)
         ));
         assert!(log.entries().is_empty());
+    }
+
+    /// Records the mode each press asks for, then hands back a finished
+    /// recording of speech.
+    #[derive(Default)]
+    struct ModeSpy(Mutex<Vec<RecordingMode>>);
+
+    impl AudioCapture for ModeSpy {
+        fn start(
+            &self,
+            mode: RecordingMode,
+            stop: StopSignal,
+        ) -> Result<RecordingReader, CaptureError> {
+            self.0.lock().unwrap().push(mode);
+            Finished(SPEECH.to_vec()).start(mode, stop)
+        }
+    }
+
+    #[test]
+    fn a_manual_press_records_until_quiet_only_with_auto_stop_on() {
+        let ten_seconds = crate::audio::AutoStop::new(Duration::from_secs(10)).unwrap();
+        for (auto_stop, expected) in [
+            (
+                Some(ten_seconds),
+                RecordingMode::UntilQuiet {
+                    auto_stop: ten_seconds,
+                },
+            ),
+            (None, RecordingMode::UntilStopped),
+        ] {
+            let capture = Arc::new(ModeSpy::default());
+            let log = CallLog::default();
+            let pipeline = DictationPipeline::new(
+                Arc::clone(&capture),
+                Transcription::complete_samples(Answering("hello")),
+                (log.history(), log.cursor()),
+            );
+            let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+            settings.auto_stop = auto_stop;
+
+            pipeline.run(settings).expect("the press completes");
+
+            assert_eq!(*capture.0.lock().unwrap(), [expected]);
+        }
     }
 
     #[test]

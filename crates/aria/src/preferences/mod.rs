@@ -9,7 +9,7 @@ mod store;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::audio::{SilenceDuration, SilenceDurationError};
+use crate::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
 use crate::config::{AssistantId, ConfigError, Environment};
 use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
 use crate::dictation::{DeliveryMode, DictationRequest, DictationSettings};
@@ -37,6 +37,8 @@ pub struct UserPreferences {
     pub output_mode: OutputMode,
     pub delivery_mode: DeliveryMode,
     pub silence_duration: SilenceDuration,
+    /// `None` leaves a manual recording running until it is stopped.
+    pub auto_stop: Option<AutoStop>,
     /// Dictation types only what an enrolled voice said.
     pub own_voice_only: bool,
     pub dictation_hotkey: HotkeyKey,
@@ -103,6 +105,7 @@ impl Default for UserPreferences {
             output_mode: PlatformTextDelivery::DEFAULT_MODE,
             delivery_mode: DeliveryMode::Streaming,
             silence_duration: SilenceDuration::default(),
+            auto_stop: Some(AutoStop::default()),
             own_voice_only: false,
             dictation_hotkey: HotkeyKey::RightOption,
             ask_hotkey: Some(Chord::ASK),
@@ -165,6 +168,7 @@ impl UserPreferences {
             delivery_mode,
             stop_mode: request.stop_mode,
             silence_duration: self.silence_duration,
+            auto_stop: self.auto_stop,
             own_voice_only: self.own_voice_only,
             transcript_only: request.transcript_only,
             project: if self.project_vocabulary {
@@ -215,6 +219,13 @@ pub enum PreferenceStoreError {
         path: PathBuf,
         #[source]
         source: SilenceDurationError,
+    },
+
+    #[error("preference file {} contains an invalid auto-stop", path.display())]
+    InvalidAutoStop {
+        path: PathBuf,
+        #[source]
+        source: AutoStopError,
     },
 
     #[error("preference file {} contains an invalid chord", path.display())]

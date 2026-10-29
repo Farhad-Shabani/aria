@@ -4,6 +4,8 @@ enum DictationEdits {
     static let outputModes: [Aria_Daemon_V1_OutputMode] = [.insert, .insertAndSubmit, .insertOrCopy, .copy]
     static let deliveryModes: [Aria_Daemon_V1_DeliveryMode] = [.streaming, .complete]
     static let silenceSecondsRange = 0.5...3.0
+    /// Milliseconds; 0 is off.
+    static let autoStopChoices: [UInt64] = [0, 3000, 5000, 10000, 15000, 20000, 30000, 45000, 60000]
 
     /// Copy cannot stream, so the daemon delivers it after recording stops.
     static func locksDelivery(_ mode: Aria_Daemon_V1_OutputMode) -> Bool {
@@ -21,6 +23,18 @@ enum DictationEdits {
     /// daemon's 100 ms to 10 s window.
     static func silenceMilliseconds(seconds: Double) -> UInt64 {
         UInt64((seconds * 1000).rounded())
+    }
+
+    /// The daemon accepts any whole millisecond in range, so a value set
+    /// elsewhere is listed too and the menu always has a match.
+    static func autoStopChoices(including current: UInt64) -> [UInt64] {
+        autoStopChoices.contains(current) ? autoStopChoices : (autoStopChoices + [current]).sorted()
+    }
+
+    static func autoStopTitle(_ milliseconds: UInt64) -> String {
+        guard milliseconds > 0 else { return "Off" }
+        let seconds = Double(milliseconds) / 1000
+        return "\(seconds.formatted(.number.precision(.fractionLength(0...1)))) s"
     }
 
     static func languageChoices(including current: String) -> [String] {
@@ -73,6 +87,7 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasOutputMode { patch.outputMode = outputMode }
         if hasDeliveryMode { patch.deliveryMode = deliveryMode }
         if hasSilenceDurationMs { patch.silenceDurationMs = silenceDurationMs }
+        if hasAutoStopMs { patch.autoStopMs = autoStopMs }
         if hasOwnVoiceOnly { patch.ownVoiceOnly = ownVoiceOnly }
         if hasDictationHotkey { patch.dictationHotkey = dictationHotkey }
         if hasAskHotkey { patch.askHotkey = askHotkey }
@@ -96,6 +111,14 @@ extension Aria_Daemon_V1_PreferencePatch {
         if hasOutputMode { preferences.outputMode = outputMode }
         if hasDeliveryMode { preferences.deliveryMode = deliveryMode }
         if hasSilenceDurationMs { preferences.silenceDurationMs = silenceDurationMs }
+        if hasAutoStopMs {
+            // 0 turns it off on the wire; the snapshot shows none.
+            if autoStopMs == 0 {
+                preferences.clearAutoStopMs()
+            } else {
+                preferences.autoStopMs = autoStopMs
+            }
+        }
         if hasOwnVoiceOnly { preferences.ownVoiceOnly = ownVoiceOnly }
         if hasDictationHotkey { preferences.dictationHotkey = dictationHotkey }
         if hasAskHotkey { preferences.askHotkey = askHotkey }

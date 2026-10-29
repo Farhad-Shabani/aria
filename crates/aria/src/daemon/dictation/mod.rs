@@ -8,4 +8,6 @@ mod runtime;
 
 pub(in crate::daemon) use actor::{DictationActor, DictationCallError, DictationHandle, channel};
 pub use assembly::DictationInitializationError;
-pub(in crate::daemon) use runtime::{DictationRuntime, DictationRuntimeError, DictationSetup};
+pub(in crate::daemon) use runtime::{
+    AutoStopRule, DictationRuntime, DictationRuntimeError, DictationSetup,
+};

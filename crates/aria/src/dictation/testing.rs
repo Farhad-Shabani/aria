@@ -278,6 +278,7 @@ pub(crate) fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> 
         delivery_mode,
         stop_mode: StopMode::Manual,
         silence_duration: SilenceDuration::default(),
+        auto_stop: None,
         own_voice_only: false,
         project: None,
         transcript_only: false,

@@ -32,6 +32,10 @@ Recognized words appear as segments become ready.
 
 Tap the key to start and tap again to stop. You can also hold it to record;
 recording starts half a second into the hold, and releasing the key stops it.
+
+If you forget the second tap, **Auto-stop** ends the recording once you stop
+speaking. It waits 10 seconds by default. Change or turn it off under
+**Settings → Dictation**.
 Change the key to **Fn** under **Settings → Shortcuts** if you prefer.
 
 Other keyboard or mouse input while you hold the key can cancel the recording.

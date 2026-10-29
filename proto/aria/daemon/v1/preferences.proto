@@ -49,6 +49,10 @@ message UserPreferences {
   // Whole milliseconds, 100 to 10000 inclusive.
   uint64 silence_duration_ms = 1;
   bool mute_output = 2;
+  // Ends a tapped or toggled recording once this long passes without speech.
+  // A held key records until release. Whole milliseconds, 3000 to 60000
+  // inclusive. Absent is off.
+  optional uint64 auto_stop_ms = 18;
 
   // Recognition
 
@@ -99,6 +103,9 @@ message PreferencePatch {
   // Whole milliseconds, 100 to 10000 inclusive.
   optional uint64 silence_duration_ms = 1;
   optional bool mute_output = 2;
+  // Whole milliseconds, 3000 to 60000 inclusive. 0 turns auto-stop off;
+  // absent leaves it unchanged.
+  optional uint64 auto_stop_ms = 18;
 
   // Recognition
 
