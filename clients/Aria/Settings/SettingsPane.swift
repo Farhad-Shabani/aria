@@ -1,5 +1,3 @@
-import SwiftUI
-
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general
     case dictation
@@ -44,19 +42,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .apps: "square.grid.2x2.fill"
         case .privacy: "hand.raised.fill"
         case .phone: "iphone"
-        case .about: "info"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .general, .about: .gray
-        case .dictation: .red
-        case .recognition: .purple
-        case .shortcuts: .indigo
-        case .prompts: .orange
-        case .privacy, .apps: .blue
-        case .phone: .green
+        case .about: "info.circle.fill"
         }
     }
 }

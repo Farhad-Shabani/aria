@@ -19,7 +19,7 @@ struct SettingsSidebar: View {
                         Label {
                             Text("Finish Setting Up Aria")
                         } icon: {
-                            SettingsIcon(symbol: "exclamationmark", tint: .orange)
+                            SettingsIcon(symbol: "exclamationmark.circle.fill", isWarning: true)
                         }
                     }
                     .buttonStyle(.plain)

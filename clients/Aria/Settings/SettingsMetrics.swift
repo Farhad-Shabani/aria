@@ -12,7 +12,5 @@ enum SettingsMetrics {
     static let sheetSpacing: CGFloat = 14
     static let sheetGlyphSide: CGFloat = 56
 
-    /// A tile's corner radius as a share of its side, matching System Settings.
-    static let cornerRatio: CGFloat = 0.225
-    static let glyphRatio: CGFloat = 0.6
+    static let glyphRatio: CGFloat = 0.7
 }
