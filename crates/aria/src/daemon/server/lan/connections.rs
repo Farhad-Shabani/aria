@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -11,15 +12,24 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tokio_stream::{Stream, StreamExt};
 use tonic::transport::server::{Connected, TcpConnectInfo};
 
-/// Accepted connections, at most `limit` open at once. One past the limit
-/// is closed as it arrives.
+/// Connections one address may hold open at once, so one peer holding idle
+/// sockets can't take every slot.
+pub(in crate::daemon) const MAX_CONNECTIONS_PER_PEER: usize = 4;
+
+/// Accepted connections, at most `limit` open at once and
+/// [`MAX_CONNECTIONS_PER_PEER`] from one address. One past either limit is
+/// closed as it arrives.
 pub(in crate::daemon) fn admitted(
     listener: TcpListener,
     limit: usize,
 ) -> impl Stream<Item = io::Result<Admitted>> {
     let open = Arc::new(Semaphore::new(limit));
+    let mut open_by_peer: HashMap<IpAddr, Arc<Semaphore>> = HashMap::new();
     // EMFILE repeats on every poll until a descriptor frees up.
     let mut failing = false;
+    // A flood of refusals would rotate older entries out of the daemon log,
+    // so only the first after an admission is logged.
+    let mut refusing = false;
     TcpListenerStream::new(listener).filter_map(move |accepted| match accepted {
         Err(error) => {
             if !failing {
@@ -30,28 +40,44 @@ pub(in crate::daemon) fn admitted(
         }
         Ok(stream) => {
             failing = false;
-            match Arc::clone(&open).try_acquire_owned() {
-                Ok(slot) => Some(Ok(Admitted {
-                    stream,
-                    _slot: slot,
-                })),
-                Err(_full) => {
-                    tracing::warn!(
-                        limit,
-                        peer = stream.peer_addr().ok().map(tracing::field::display),
-                        "closing a LAN connection past the limit"
-                    );
-                    None
-                }
+            let peer = stream.peer_addr().ok()?.ip().to_canonical();
+            open_by_peer.retain(|_, open| open.available_permits() < MAX_CONNECTIONS_PER_PEER);
+            let peer_open = open_by_peer
+                .entry(peer)
+                .or_insert_with(|| Arc::new(Semaphore::new(MAX_CONNECTIONS_PER_PEER)));
+            let admitted = Arc::clone(peer_open)
+                .try_acquire_owned()
+                .ok()
+                .and_then(|peer_slot| {
+                    let slot = Arc::clone(&open).try_acquire_owned().ok()?;
+                    Some(Admitted {
+                        stream,
+                        _slot: slot,
+                        _peer_slot: peer_slot,
+                    })
+                });
+            if admitted.is_some() {
+                refusing = false;
+            } else if !refusing {
+                refusing = true;
+                tracing::warn!(
+                    limit,
+                    per_peer = MAX_CONNECTIONS_PER_PEER,
+                    %peer,
+                    "closing LAN connections past the limit"
+                );
             }
+            admitted.map(Ok)
         }
     })
 }
 
-/// A connection holding one of the open slots until it drops.
+/// A connection holding its slots, overall and for its address, until it
+/// drops.
 pub(in crate::daemon) struct Admitted {
     stream: TcpStream,
     _slot: OwnedSemaphorePermit,
+    _peer_slot: OwnedSemaphorePermit,
 }
 
 impl Admitted {
@@ -131,6 +157,30 @@ mod tests {
 
         drop(first);
         let _third_client = TcpStream::connect(address).await.unwrap();
+        assert!(incoming.next().await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn one_peer_past_its_share_is_closed_while_slots_remain() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut incoming = Box::pin(admitted(listener, MAX_CONNECTIONS_PER_PEER * 2));
+        let mut clients = Vec::new();
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONNECTIONS_PER_PEER {
+            clients.push(TcpStream::connect(address).await.unwrap());
+            held.push(incoming.next().await.unwrap().unwrap());
+        }
+
+        let mut past_share = TcpStream::connect(address).await.unwrap();
+        let mut byte = [0u8; 1];
+        tokio::select! {
+            _ = incoming.next() => panic!("a connection past the peer's share was admitted"),
+            read = past_share.read(&mut byte) => assert_eq!(read.unwrap(), 0),
+        }
+
+        held.pop();
+        let _next_client = TcpStream::connect(address).await.unwrap();
         assert!(incoming.next().await.unwrap().is_ok());
     }
 }

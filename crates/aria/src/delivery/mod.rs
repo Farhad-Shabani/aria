@@ -167,6 +167,14 @@ fn validate_text(text: &str) -> Result<(), DeliveryError> {
             maximum_bytes: MAX_TEXT_BYTES,
         });
     }
+    // Typed text reaches the app in front as keystrokes, where an escape or
+    // ^C acts on that app instead of landing as text.
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+    {
+        return Err(DeliveryError::ControlCharacter);
+    }
     Ok(())
 }
 
@@ -190,6 +198,9 @@ pub enum DeliveryError {
         actual_bytes: usize,
         maximum_bytes: usize,
     },
+
+    #[error("delivery text contains a control character other than a line break or tab")]
+    ControlCharacter,
 
     #[error("delivery timeout must be greater than zero and at most {maximum:?}; got {actual:?}")]
     InvalidTimeout { actual: Duration, maximum: Duration },
@@ -249,6 +260,17 @@ mod tests {
         TargetPolicy {
             overridden_for: Some(id.into()),
             ..TargetPolicy::default()
+        }
+    }
+
+    #[test]
+    fn text_with_a_control_character_other_than_a_line_break_or_tab_is_refused() {
+        assert!(validate_text("one\ttwo\nthree").is_ok());
+        for typed in ["rm -rf ~\u{1b}", "stop\u{3}", "back\r", "next\u{85}line"] {
+            assert!(
+                matches!(validate_text(typed), Err(DeliveryError::ControlCharacter)),
+                "{typed:?}"
+            );
         }
     }
 
