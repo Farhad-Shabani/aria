@@ -89,7 +89,12 @@ impl UserPreferences {
             .into_iter()
             .flatten()
             .filter_map(Hotkey::chord)
-            .chain(self.prompts.entries().iter().filter_map(|prompt| prompt.chord()))
+            .chain(
+                self.prompts
+                    .entries()
+                    .iter()
+                    .filter_map(|prompt| prompt.chord()),
+            )
             .collect();
         chords
             .iter()

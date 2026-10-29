@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
-    DictationOverrides, Hotkey, Modifiers, OverrideError, PreferenceSnapshot,
-    PreferenceStoreError, Prompt, PromptError, PromptId, Prompts, UserPreferences,
+    DictationOverrides, Hotkey, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError,
+    Prompt, PromptError, PromptId, Prompts, UserPreferences,
 };
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::chat::PromptKind;
@@ -739,7 +739,11 @@ mod tests {
         ] {
             let json = serde_json::to_string(&StoredHotkey::from(hotkey)).expect("encodes");
             let decoded: StoredHotkey = serde_json::from_str(&json).expect("decodes");
-            assert_eq!(decoded.hotkey(Combo::Command).expect("valid"), hotkey, "{json}");
+            assert_eq!(
+                decoded.hotkey(Combo::Command).expect("valid"),
+                hotkey,
+                "{json}"
+            );
         }
         let off = serde_json::to_string(&StoredHotkey::from(None)).expect("encodes");
         assert_eq!(off, r#""off""#);
