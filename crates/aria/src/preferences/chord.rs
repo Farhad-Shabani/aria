@@ -23,18 +23,6 @@ pub struct Chord {
 }
 
 impl Chord {
-    /// Control-option-A: the ask's chord before anyone chooses one. `0` is
-    /// `kVK_ANSI_A`.
-    pub const ASK: Self = Self {
-        key_code: 0,
-        modifiers: Modifiers {
-            control: true,
-            option: true,
-            shift: false,
-            command: false,
-        },
-    };
-
     pub fn new(key_code: u16, modifiers: Modifiers) -> Result<Self, ChordError> {
         if modifiers.is_empty() {
             return Err(ChordError::NoModifier);

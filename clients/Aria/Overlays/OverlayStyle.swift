@@ -38,6 +38,9 @@ enum OverlayStyle {
         endPoint: .bottom
     )
     static let frostEdgeWidth: CGFloat = 0.75
+    /// A key drawn on the glass, such as a prompt's number.
+    static let keyFill = Color.white.opacity(0.12)
+    static let keyEdge = Color.white.opacity(0.15)
 
     /// Recording, and a press that ended without its result.
     static let alertTint = Color(red: 0.88, green: 0.42, blue: 0.45)

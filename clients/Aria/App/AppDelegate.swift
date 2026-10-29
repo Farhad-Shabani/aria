@@ -44,6 +44,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status?.noteAsk(run)
         }
         super.init()
+        events.onHotkey { [weak self] combo in
+            guard let action = ComboAction(combo: combo) else { return }
+            self?.run(action)
+        }
+    }
+
+    /// A combo presses the same controller its chord would.
+    private func run(_ action: ComboAction) {
+        switch action {
+        case .ask: askHotkey.press()
+        case .promptList: promptList.press()
+        }
     }
 
     /// A menu bar scene body sits idle while the menu is closed, so the

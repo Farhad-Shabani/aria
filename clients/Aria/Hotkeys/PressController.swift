@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 /// Runs an ask, or a stored prompt, from presses: one to record, the next to
-/// send, the next to cancel. The presses come from a chord, the prompt
-/// list, or both.
+/// send, the next to cancel. The presses come from a chord, the Aria
+/// key, or the prompt list.
 ///
 /// The daemon does the work and already announces every step, so this draws
 /// nothing. The caption and status overlays show the recording and the

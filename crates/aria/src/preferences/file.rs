@@ -265,7 +265,7 @@ struct StoredPreferences {
     dictation_hotkey: StoredHotkeyKey,
     #[serde(default)]
     ask_hotkey: StoredHotkey,
-    #[serde(default = "prompt_list_off")]
+    #[serde(default)]
     prompt_list_hotkey: StoredHotkey,
     #[serde(default)]
     project_vocabulary: bool,
@@ -308,10 +308,6 @@ fn history_enabled() -> bool {
 
 fn auto_stop_on() -> Option<u64> {
     Some(AutoStop::default().get().as_millis() as u64)
-}
-
-fn prompt_list_off() -> StoredHotkey {
-    StoredHotkey::from(None)
 }
 
 fn default_stored_delivery_mode() -> StoredDeliveryMode {
@@ -483,10 +479,9 @@ struct StoredHotkey {
     command: bool,
 }
 
-// An older file has no ask_hotkey; the default chord matches a fresh one.
 impl Default for StoredHotkey {
     fn default() -> Self {
-        Self::from(Some(Chord::ASK))
+        Self::from(None)
     }
 }
 
@@ -666,7 +661,7 @@ mod tests {
                 .ask_hotkey
                 .chord()
                 .expect("a valid default"),
-            Some(Chord::ASK)
+            None
         );
         assert_eq!(
             document
@@ -695,7 +690,16 @@ mod tests {
             r#"{"enabled":true,"key_code":0,"control":true,"option":true,"shift":false,"command":false}"#,
         )
         .expect("a released file's ask hotkey parses");
-        assert_eq!(released.chord().expect("valid"), Some(Chord::ASK));
+        let control_option_a = Chord::new(
+            0,
+            Modifiers {
+                control: true,
+                option: true,
+                ..Modifiers::default()
+            },
+        )
+        .expect("a chord");
+        assert_eq!(released.chord().expect("valid"), Some(control_option_a));
 
         let switched_off: StoredHotkey = serde_json::from_str(
             r#"{"enabled":false,"key_code":0,"control":true,"option":true,"shift":false,"command":false}"#,
@@ -714,7 +718,8 @@ mod tests {
     fn a_file_that_gives_one_chord_two_jobs_is_refused() {
         let document: StoredDocument = serde_json::from_str(
             r#"{"revision":2,"preferences":{"recognition_language":"en","output_mode":"insert",
-                "silence_duration_ms":1500,"prompts":[{"id":"p","name":"P","kind":"rewrite",
+                "silence_duration_ms":1500,"ask_hotkey":{"enabled":true,"key_code":0,
+                "control":true,"option":true,"shift":false,"command":false},"prompts":[{"id":"p","name":"P","kind":"rewrite",
                 "file":"/p.md","enabled":true,"chord":{"key_code":0,"control":true,
                 "option":true,"shift":false,"command":false}}]}}"#,
         )

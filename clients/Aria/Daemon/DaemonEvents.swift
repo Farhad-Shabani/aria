@@ -18,6 +18,7 @@ final class DaemonEvents {
     private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
     private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
     private var levelHandlers: [(Float) -> Void] = []
+    private var hotkeyHandlers: [(Aria_Daemon_V1_HotkeyCombo) -> Void] = []
 
     /// Called with `nil` whenever the stream is not carrying events.
     func onDictation(_ handle: @escaping (Aria_Daemon_V1_DictationEvent?) -> Void) {
@@ -50,6 +51,12 @@ final class DaemonEvents {
     /// stream is not carrying events.
     func onSpeaker(_ handle: @escaping (Aria_Daemon_V1_SpeakerEvent?) -> Void) {
         speakerHandlers.append(handle)
+    }
+
+    /// Called for every Aria key combo the daemon reads. A combo is over the
+    /// moment it arrives, so a lost stream leaves nothing to clear.
+    func onHotkey(_ handle: @escaping (Aria_Daemon_V1_HotkeyCombo) -> Void) {
+        hotkeyHandlers.append(handle)
     }
 
     private static let retryDelay = Duration.seconds(2)
@@ -97,6 +104,10 @@ final class DaemonEvents {
         for handler in levelHandlers { handler(level) }
     }
 
+    private func publish(hotkey: Aria_Daemon_V1_HotkeyCombo) {
+        for handler in hotkeyHandlers { handler(hotkey) }
+    }
+
     private func subscribeOnce() async {
         do {
             try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
@@ -122,6 +133,8 @@ final class DaemonEvents {
                             await MainActor.run { self.publish(chat: chat) }
                         case .speaker(let speaker):
                             await MainActor.run { self.publish(speaker: speaker) }
+                        case .hotkey(let hotkey):
+                            await MainActor.run { self.publish(hotkey: hotkey.combo) }
                         default:
                             continue
                         }

@@ -30,5 +30,19 @@ message Event {
     CaptionSnapshot caption = 6;
     MicLevel level = 7;
     GhostSnapshot ghost = 8;
+    HotkeyEvent hotkey = 9;
   }
+}
+
+// The Aria key was let go after a combo: held with Shift or Command alone,
+// with no other key or click. The daemon only reports it; a client decides
+// what each combo runs.
+message HotkeyEvent {
+  HotkeyCombo combo = 1;
+}
+
+enum HotkeyCombo {
+  HOTKEY_COMBO_UNSPECIFIED = 0;
+  HOTKEY_COMBO_SHIFT = 1;
+  HOTKEY_COMBO_COMMAND = 2;
 }

@@ -206,7 +206,8 @@ message ApplicationOverrides {
   repeated ApplicationOverride entries = 1;
 }
 
-// The bare modifier whose clean tap starts dictation.
+// The Aria key: a bare modifier read as a tap, a hold, or a combo. A tap or
+// hold dictates. A combo is a HotkeyEvent for a client to run.
 enum HotkeyKey {
   HOTKEY_KEY_UNSPECIFIED = 0;
   HOTKEY_KEY_RIGHT_OPTION = 1;

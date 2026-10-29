@@ -59,8 +59,9 @@ transcription:
 #   model: ~/.aria/models/wakeword/aria.onnx
 #   threshold: 0.5
 
-# The global dictation hotkey: a clean tap of the key toggles streaming
-# dictation. Enabled by default on macOS; it needs a persistent `aria daemon`
+# The Aria key: a clean tap toggles streaming dictation, and Shift or Command
+# held with it runs Ask or the prompt list in the Mac app. Turning it off
+# turns off both. Enabled by default on macOS; it needs a persistent `aria daemon`
 # and the Accessibility grant on the aria binary (`aria doctor` shows the
 # steps). Which key (right-option by default, or fn) is a user preference
 # set from the Mac app's settings. No Linux backend exists yet.

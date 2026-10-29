@@ -1,4 +1,5 @@
-//! The global hotkey as a dictation trigger, owned by a persistent daemon.
+//! The Aria key as a trigger, owned by a persistent daemon. A tap toggles
+//! dictation and a hold records here; a combo is broadcast for a client to run.
 
 use std::sync::Arc;
 
@@ -10,11 +11,12 @@ use tonic_health::server::HealthReporter;
 use crate::dictation::{
     DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
 };
-use crate::hotkey::{HotkeyKey, ListenerEvent, ListenerExit, PlatformHotkeyListener, Press};
+use crate::hotkey::{Combo, HotkeyKey, ListenerEvent, ListenerExit, PlatformHotkeyListener, Press};
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
 
 use super::dictation::DictationRuntimeError;
 use super::dictation::{AutoStopRule, DictationCallError, DictationHandle, DictationRuntime};
+use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 
 /// The blocking platform listener; tests swap in a fake.
@@ -25,6 +27,8 @@ pub(super) struct HotkeyTrigger {
     dictation: DictationHandle,
     /// Stops a hold's recording by id, the same way a client's stop does.
     runtime: Arc<DictationRuntime>,
+    /// Where combos go; the Mac app runs their actions.
+    subscriptions: Arc<Subscriptions>,
     health: HealthReporter,
     listener: Listener,
 }
@@ -57,12 +61,14 @@ impl HotkeyTrigger {
         key: watch::Receiver<HotkeyKey>,
         dictation: DictationHandle,
         runtime: Arc<DictationRuntime>,
+        subscriptions: Arc<Subscriptions>,
         health: HealthReporter,
     ) -> Self {
         Self {
             key,
             dictation,
             runtime,
+            subscriptions,
             health,
             listener: |key, events, should_stop| {
                 PlatformHotkeyListener::listen(key, events, should_stop)
@@ -152,6 +158,7 @@ impl HotkeyTrigger {
                     ListenerEvent::Press(Press::HoldCancelled) => {
                         end_hold(&mut hold, HoldEnd::Cancelled);
                     }
+                    ListenerEvent::Press(Press::Combo(combo)) => self.combo(combo),
                 },
                 result = &mut listener => return self.classify(listener_exit(result), key, shutdown),
                 () = shutdown.cancelled() => return listener_exit(listener.await),
@@ -193,6 +200,12 @@ impl HotkeyTrigger {
                     .await,
             );
         });
+    }
+
+    /// With no subscriber, the press goes nowhere.
+    fn combo(&self, combo: Combo) {
+        tracing::info!(trigger = "hotkey", ?combo, "combo");
+        self.subscriptions.broadcast(combo);
     }
 
     /// One detached task per hold. It owns the hold's call, so the listener
@@ -327,11 +340,14 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
+    use tokio_stream::StreamExt;
     use tonic_health::pb::HealthCheckRequest;
     use tonic_health::pb::health_check_response::ServingStatus;
     use tonic_health::pb::health_server::Health;
     use tonic_health::server::HealthService;
 
+    use crate::hotkey::Combo;
+    use crate::ipc::wire;
     use crate::preferences::PreferenceStore;
 
     use super::*;
@@ -351,6 +367,40 @@ mod tests {
         ListenerExit::Shutdown
     }
 
+    fn shift_combo_listener(
+        _key: HotkeyKey,
+        events: &dyn Fn(ListenerEvent),
+        should_stop: &dyn Fn() -> bool,
+    ) -> ListenerExit {
+        events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
+        while !should_stop() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        ListenerExit::Shutdown
+    }
+
+    /// A trigger with no dictation behind it. The directory holds its
+    /// preferences and must outlive it.
+    fn trigger(
+        key: watch::Receiver<HotkeyKey>,
+        subscriptions: Arc<Subscriptions>,
+        listener: Listener,
+        directory: &tempfile::TempDir,
+    ) -> HotkeyTrigger {
+        let (health, _server) = tonic_health::server::health_reporter();
+        HotkeyTrigger {
+            key,
+            dictation: DictationHandle::detached(),
+            runtime: Arc::new(DictationRuntime::detached(Arc::new(
+                PreferenceStore::open(directory.path().join("preferences.json"))
+                    .expect("the preference store should open"),
+            ))),
+            subscriptions,
+            health,
+            listener,
+        }
+    }
+
     async fn armed_count_reaches(count: usize) {
         tokio::time::timeout(Duration::from_secs(2), async {
             while ARMED.lock().expect("armed keys").len() < count {
@@ -364,18 +414,13 @@ mod tests {
     #[tokio::test]
     async fn a_key_change_rearms_on_the_new_key() {
         let (key, watch) = watch::channel(HotkeyKey::RightOption);
-        let (health, _server) = tonic_health::server::health_reporter();
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
-        let trigger = HotkeyTrigger {
-            key: watch,
-            dictation: DictationHandle::detached(),
-            runtime: Arc::new(DictationRuntime::detached(Arc::new(
-                PreferenceStore::open(directory.path().join("preferences.json"))
-                    .expect("the preference store should open"),
-            ))),
-            health,
-            listener: fake_listener,
-        };
+        let trigger = trigger(
+            watch,
+            Arc::new(Subscriptions::new()),
+            fake_listener,
+            &directory,
+        );
         let shutdown = CancellationToken::new();
         let running = tokio::spawn(trigger.run(shutdown.clone()));
 
@@ -388,6 +433,32 @@ mod tests {
         assert_eq!(
             *ARMED.lock().expect("armed keys"),
             [HotkeyKey::RightOption, HotkeyKey::Fn]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_combo_reaches_subscribers() {
+        let (_key, watch) = watch::channel(HotkeyKey::RightOption);
+        let directory = tempfile::TempDir::new().expect("the test directory should be created");
+        let subscriptions = Arc::new(Subscriptions::new());
+        let mut events = subscriptions.subscribe().expect("a subscriber fits");
+        let trigger = trigger(watch, subscriptions, shift_combo_listener, &directory);
+        let shutdown = CancellationToken::new();
+        let running = tokio::spawn(trigger.run(shutdown.clone()));
+
+        let event = tokio::time::timeout(Duration::from_secs(2), events.next())
+            .await
+            .expect("the combo should arrive in time")
+            .expect("the stream stays open")
+            .expect("the event is not an error");
+        shutdown.cancel();
+        running.await.expect("the trigger should stop cleanly");
+
+        assert_eq!(
+            event.payload,
+            Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
+                combo: wire::HotkeyCombo::Shift.into(),
+            }))
         );
     }
 

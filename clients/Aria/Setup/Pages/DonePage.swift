@@ -2,25 +2,22 @@ import SwiftUI
 
 struct DonePage: View {
     @ObservedObject var state: SetupState
-    let dictationKey: HotkeyKey
-    let askHotkey: Chord?
+    let ariaKey: HotkeyKey
 
     var body: some View {
         Form {
-            if state.selections.hotkey || state.selections.wake || askHotkey != nil {
+            if state.selections.hotkey || state.selections.wake {
                 Section("How to use Aria") {
                     if state.selections.hotkey {
-                        LabeledContent(
-                            "Dictate",
-                            value: state.isHotkeyReady
-                                ? "Tap \(dictationKey.title)" : "Works once Accessibility access is given"
-                        )
+                        if state.isHotkeyReady {
+                            LabeledContent("Dictate", value: "Tap \(ariaKey.title)")
+                            LabeledContent("Ask your agent", value: ariaKey.gesture(for: .ask))
+                        } else {
+                            LabeledContent("Dictate", value: "Works once Accessibility access is given")
+                        }
                     }
                     if state.selections.wake {
                         LabeledContent("Dictate hands-free", value: "Say the wake word")
-                    }
-                    if let askHotkey {
-                        LabeledContent("Ask your agent") { ChordLabel(chord: askHotkey) }
                     }
                 }
             }

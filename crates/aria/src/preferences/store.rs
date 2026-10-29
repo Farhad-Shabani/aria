@@ -174,6 +174,7 @@ impl PreferencePatch {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Modifiers;
     use super::*;
 
     #[test]
@@ -545,14 +546,24 @@ mod tests {
     }
 
     #[test]
-    fn a_chord_the_ask_already_holds_is_refused_for_the_prompt_list() {
+    fn one_chord_for_the_ask_and_the_prompt_list_is_refused() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let store = PreferenceStore::open(dir.path().join("preferences.json")).unwrap();
+        let control_option_a = Chord::new(
+            0,
+            Modifiers {
+                control: true,
+                option: true,
+                ..Modifiers::default()
+            },
+        )
+        .expect("a chord");
 
         let result = store.update(
             0,
             PreferencePatch {
-                prompt_list_hotkey: Some(Some(Chord::ASK)),
+                ask_hotkey: Some(Some(control_option_a)),
+                prompt_list_hotkey: Some(Some(control_option_a)),
                 ..Default::default()
             },
         );

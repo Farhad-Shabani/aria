@@ -196,6 +196,7 @@ fn compose(
             dictation_hotkey,
             dictation.clone(),
             Arc::clone(&dictation_runtime),
+            Arc::clone(&subscriptions),
             health.clone(),
         )),
         HotkeyConfig::Disabled => None,

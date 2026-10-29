@@ -2,9 +2,10 @@ import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
-/// One chord that lists the prompts that are on, so one runs without its own
-/// chord: press it, then the prompt's number. While a run it started is
-/// going, the chord stands in for that prompt's own: stop, then cancel.
+/// Lists the prompts that are on, so one runs without its own chord: press
+/// Aria key + Command or the list's chord, then the prompt's number. While a
+/// run it started is going, that press stands in for the prompt's own: stop,
+/// then cancel.
 ///
 /// The list takes no focus, so the app in front keeps its caret. Its keys
 /// are chords of their own, taken only while it shows.
@@ -35,10 +36,9 @@ final class PromptList {
 
     private func apply(_ chord: Chord?) {
         self.chord.bind(chord)
-        if chord == nil { close() }
     }
 
-    private func press() {
+    func press() {
         switch gesture.press(isOpen: !listKeys.isEmpty, isBusy: { prompts.isBusy($0) }) {
         case .prompt(let id): prompts.press(id)
         case .open: open()
@@ -99,33 +99,54 @@ private let listBottomMargin = OverlayStyle.pillBottomMargin + 46
 
 private enum Layout {
     static let maxNameWidth: CGFloat = 280
+    static let keySize: CGFloat = 20
+    static let keyCornerRadius: CGFloat = 5
 }
 
 private struct PromptListView: View {
     let entries: [Aria_Daemon_V1_Prompt]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 HStack(spacing: 10) {
-                    Text("\(index + 1)")
-                        .foregroundStyle(OverlayStyle.dimInk)
+                    Keycap(number: index + 1)
                     Text(entry.name)
+                        .font(OverlayStyle.captionFont)
                         .lineLimit(1)
                         .frame(maxWidth: Layout.maxNameWidth, alignment: .leading)
-                    Spacer(minLength: 16)
+                    Spacer(minLength: 24)
                     if let chord = entry.storedChord {
                         ChordLabel(chord: chord)
+                            .font(OverlayStyle.labelFont)
                             .foregroundStyle(OverlayStyle.dimInk)
+                            // Tracked text underestimates its width and wraps.
+                            .fixedSize()
                     }
                 }
+                .padding(.vertical, 4)
             }
         }
-        .font(OverlayStyle.labelFont)
-        .monospacedDigit()
         .foregroundStyle(OverlayStyle.ink)
-        .padding(12)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
         .fixedSize()
-        .background(OverlayStyle.fill, in: RoundedRectangle(cornerRadius: OverlayStyle.cardCornerRadius))
+        .background { Frost.card(cornerRadius: OverlayStyle.cardCornerRadius) }
+    }
+}
+
+private struct Keycap: View {
+    let number: Int
+
+    var body: some View {
+        Text("\(number)")
+            .font(OverlayStyle.labelFont)
+            .monospacedDigit()
+            .frame(width: Layout.keySize, height: Layout.keySize)
+            .background(OverlayStyle.keyFill, in: RoundedRectangle(cornerRadius: Layout.keyCornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: Layout.keyCornerRadius)
+                    .strokeBorder(OverlayStyle.keyEdge, lineWidth: OverlayStyle.frostEdgeWidth)
+            }
     }
 }

@@ -40,6 +40,18 @@ Change the key to **Fn** under **Settings → Shortcuts** if you prefer.
 
 Other keyboard or mouse input while you hold the key can cancel the recording.
 
+## Ask or pick a prompt
+
+Settings calls the key you tap the **Aria key**: right Option, or Fn if you
+chose it. Hold it, tap a second key, then let go:
+
+- **⇧ Shift** asks your agent. Speak, then press Aria key + ⇧ again to send.
+  Press it a third time to cancel.
+- **⌘ Command** shows the [prompt list](./prompts.md#pick-a-prompt-from-a-list).
+
+Any other key pressed with the Aria key cancels the press. Option shortcuts
+in other apps keep working. These presses need Accessibility access.
+
 ## Captions
 
 Turn on **Show captions** in **Settings → General** to see what Aria hears in

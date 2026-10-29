@@ -17,6 +17,16 @@ final class HotkeyTests: XCTestCase {
         XCTAssertNil(bare.storedChord)
     }
 
+    func testEachComboRunsItsActionAndShowsItsModifier() {
+        XCTAssertEqual(ComboAction(combo: .shift), .ask)
+        XCTAssertEqual(ComboAction(combo: .command), .promptList)
+        XCTAssertNil(ComboAction(combo: .unspecified))
+        XCTAssertNil(ComboAction(combo: .UNRECOGNIZED(9)))
+
+        XCTAssertEqual(HotkeyKey.rightOption.gesture(for: .ask), "Right Option + ⇧")
+        XCTAssertEqual(HotkeyKey.fn.gesture(for: .promptList), "Fn + ⌘")
+    }
+
     func testAPromptWithNoChordRunsOnlyFromThePromptList() {
         var on = PromptEdits.makeEntry(for: URL(fileURLWithPath: "/on.md"))
         on.chord = chord.wire

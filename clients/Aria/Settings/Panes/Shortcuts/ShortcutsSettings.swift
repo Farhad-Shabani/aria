@@ -8,10 +8,11 @@ struct ShortcutsSettings: View {
 
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
-            Section("Dictation") {
+            let ariaKey = editor.snapshot.storedDictationHotkey ?? .default
+            Section {
                 Picker(
-                    "Dictation hotkey",
-                    selection: editor.binding(editor.snapshot.storedDictationHotkey ?? .default) { key, edit in
+                    "Aria key",
+                    selection: editor.binding(ariaKey) { key, edit in
                         edit.dictationHotkey = key.wire
                     }
                 ) {
@@ -21,6 +22,13 @@ struct ShortcutsSettings: View {
                 }
                 // An unknown stored key stays untouched rather than shown as Right Option.
                 .disabled(editor.snapshot.storedDictationHotkey == nil)
+                LabeledContent("Dictate", value: "Tap, or hold to talk")
+                LabeledContent("Ask", value: ariaKey.gesture(for: .ask))
+                LabeledContent("Show prompt list", value: ariaKey.gesture(for: .promptList))
+            } footer: {
+                Text(
+                    "Hold the Aria key, tap Shift or Command, then let go. Needs Accessibility access, and `hotkey.enabled` left on in the daemon config."
+                )
             }
             Section("Ask") {
                 HotkeyRecorder(
@@ -35,7 +43,7 @@ struct ShortcutsSettings: View {
             }
             Section("Prompts") {
                 HotkeyRecorder(
-                    title: "Show prompt list",
+                    title: "Prompt list shortcut",
                     chord: editor.snapshot.promptListHotkey.storedChord,
                     binding: promptListChord
                 ) {

@@ -23,7 +23,7 @@ use crate::dictation::{
     DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, OutputMode, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
-use crate::hotkey::HotkeyKey;
+use crate::hotkey::{Combo, HotkeyKey};
 use crate::listen::ListenStage;
 use crate::preferences::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
@@ -202,6 +202,20 @@ impl TryFrom<wire::UpdatePreferencesResponse> for UpdateResult {
                 Ok(Self::Conflict(current.try_into()?))
             }
             None => Err(ProtocolError::MissingBody("preferences update response")),
+        }
+    }
+}
+
+impl From<Combo> for wire::Event {
+    fn from(combo: Combo) -> Self {
+        let combo = match combo {
+            Combo::Shift => wire::HotkeyCombo::Shift,
+            Combo::Command => wire::HotkeyCombo::Command,
+        };
+        Self {
+            payload: Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
+                combo: combo.into(),
+            })),
         }
     }
 }
@@ -2982,6 +2996,22 @@ mod tests {
     }
 
     #[test]
+    fn each_combo_keeps_its_modifier_on_the_wire() {
+        for (combo, expected) in [
+            (Combo::Shift, wire::HotkeyCombo::Shift),
+            (Combo::Command, wire::HotkeyCombo::Command),
+        ] {
+            assert_eq!(
+                wire::Event::from(combo).payload,
+                Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
+                    combo: expected.into(),
+                })),
+                "{combo:?}"
+            );
+        }
+    }
+
+    #[test]
     fn prompts_round_trip_and_need_their_kind() {
         let prompts = Prompts::new(vec![
             Prompt::new(
@@ -2990,7 +3020,16 @@ mod tests {
                 PromptKind::Compose,
                 "/prompts/polish.md".into(),
                 true,
-                Some(Chord::ASK),
+                Some(
+                    Chord::new(
+                        0,
+                        Modifiers {
+                            control: true,
+                            ..Modifiers::default()
+                        },
+                    )
+                    .expect("chord"),
+                ),
             )
             .expect("prompt"),
         ])

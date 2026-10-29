@@ -22,6 +22,44 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+public nonisolated enum Aria_Daemon_V1_HotkeyCombo: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case shift // = 1
+  case command // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .shift
+    case 2: self = .command
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .shift: return 1
+    case .command: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_HotkeyCombo] = [
+    .unspecified,
+    .shift,
+    .command,
+  ]
+
+}
+
 public nonisolated struct Aria_Daemon_V1_SubscribeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -104,6 +142,14 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     set {payload = .ghost(newValue)}
   }
 
+  public var hotkey: Aria_Daemon_V1_HotkeyEvent {
+    get {
+      if case .hotkey(let v)? = payload {return v}
+      return Aria_Daemon_V1_HotkeyEvent()
+    }
+    set {payload = .hotkey(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -115,8 +161,24 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     case caption(Aria_Daemon_V1_CaptionSnapshot)
     case level(Aria_Daemon_V1_MicLevel)
     case ghost(Aria_Daemon_V1_GhostSnapshot)
+    case hotkey(Aria_Daemon_V1_HotkeyEvent)
 
   }
+
+  public init() {}
+}
+
+/// The Aria key was let go after a combo: held with Shift or Command alone,
+/// with no other key or click. The daemon only reports it; a client decides
+/// what each combo runs.
+public nonisolated struct Aria_Daemon_V1_HotkeyEvent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var combo: Aria_Daemon_V1_HotkeyCombo = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
@@ -124,6 +186,10 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
+
+nonisolated extension Aria_Daemon_V1_HotkeyCombo: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HOTKEY_COMBO_UNSPECIFIED\0\u{1}HOTKEY_COMBO_SHIFT\0\u{1}HOTKEY_COMBO_COMMAND\0")
+}
 
 nonisolated extension Aria_Daemon_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SubscribeRequest"
@@ -146,7 +212,7 @@ nonisolated extension Aria_Daemon_V1_SubscribeRequest: SwiftProtobuf.Message, Sw
 
 nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0\u{1}hotkey\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -258,6 +324,19 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
           self.payload = .ghost(v)
         }
       }()
+      case 9: try {
+        var v: Aria_Daemon_V1_HotkeyEvent?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .hotkey(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .hotkey(v)
+        }
+      }()
       default: break
       }
     }
@@ -301,6 +380,10 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
       guard case .ghost(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
     }()
+    case .hotkey?: try {
+      guard case .hotkey(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -308,6 +391,36 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
 
   public static func ==(lhs: Aria_Daemon_V1_Event, rhs: Aria_Daemon_V1_Event) -> Bool {
     if lhs.payload != rhs.payload {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_HotkeyEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".HotkeyEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}combo\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.combo) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.combo != .unspecified {
+      try visitor.visitSingularEnumField(value: self.combo, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_HotkeyEvent, rhs: Aria_Daemon_V1_HotkeyEvent) -> Bool {
+    if lhs.combo != rhs.combo {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

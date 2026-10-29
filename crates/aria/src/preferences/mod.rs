@@ -108,7 +108,7 @@ impl Default for UserPreferences {
             auto_stop: Some(AutoStop::default()),
             own_voice_only: false,
             dictation_hotkey: HotkeyKey::RightOption,
-            ask_hotkey: Some(Chord::ASK),
+            ask_hotkey: None,
             prompt_list_hotkey: None,
             project_vocabulary: false,
             vocabulary_directory: None,
