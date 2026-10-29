@@ -4,6 +4,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::audio::{Clip, ClipError};
 
@@ -11,69 +12,60 @@ use crate::audio::{Clip, ClipError};
 /// replaced path into anything.
 const MAX_CUE_BYTES: usize = 4 * 1024 * 1024;
 
+/// A cue is written to the speech stream whole before playback drains it.
+/// The stream holds ten seconds, so a longer clip would wait forever.
+const MAX_CUE_DURATION: Duration = Duration::from_secs(5);
+
 const FORMAT_FLAG_FLOAT: u32 = 1 << 0;
 const FORMAT_FLAG_LITTLE_ENDIAN: u32 = 1 << 1;
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum CafError {
-    #[error("failed to open CAF file {}", path.display())]
-    Open {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+#[error("CAF file {}", path.display())]
+pub(crate) struct CafError {
+    path: PathBuf,
+    #[source]
+    problem: Problem,
+}
 
-    #[error("CAF file is larger than {MAX_CUE_BYTES} bytes: {}", path.display())]
-    TooLarge { path: PathBuf },
+#[derive(Debug, thiserror::Error)]
+enum Problem {
+    #[error("could not be opened")]
+    Open(#[source] std::io::Error),
 
-    #[error("CAF file {}: {reason}", path.display())]
-    Malformed { path: PathBuf, reason: &'static str },
+    #[error("could not be read")]
+    Read(#[source] std::io::Error),
 
-    #[error("CAF file is not packed integer or 32-bit float PCM: {}", path.display())]
-    UnsupportedEncoding { path: PathBuf },
+    #[error("is larger than {MAX_CUE_BYTES} bytes")]
+    TooLarge,
 
-    #[error("CAF file contains no samples: {}", path.display())]
-    Empty { path: PathBuf },
+    #[error("is longer than {MAX_CUE_DURATION:?}")]
+    TooLong,
 
-    #[error("CAF file {}: {source}", path.display())]
-    SampleRate {
-        path: PathBuf,
-        #[source]
-        source: ClipError,
-    },
+    #[error("{0}")]
+    Malformed(&'static str),
+
+    #[error("is not packed integer or 32-bit float PCM")]
+    UnsupportedEncoding,
+
+    #[error("contains no samples")]
+    Empty,
+
+    #[error(transparent)]
+    SampleRate(ClipError),
 }
 
 pub(crate) fn read_caf(path: impl AsRef<Path>) -> Result<Clip, CafError> {
     let path = path.as_ref();
-    let file = std::fs::File::open(path).map_err(|source| CafError::Open {
+    clip_at(path).map_err(|problem| CafError {
         path: path.to_path_buf(),
-        source,
-    })?;
-    let bytes = read_bounded(file).map_err(|problem| problem.at(path))?;
-    decode(&bytes).map_err(|problem| problem.at(path))
+        problem,
+    })
 }
 
-/// What went wrong, before the path is known.
-#[derive(Debug)]
-enum Problem {
-    TooLarge,
-    Malformed(&'static str),
-    UnsupportedEncoding,
-    Empty,
-    SampleRate(ClipError),
-}
-
-impl Problem {
-    fn at(self, path: &Path) -> CafError {
-        let path = path.to_path_buf();
-        match self {
-            Self::TooLarge => CafError::TooLarge { path },
-            Self::Malformed(reason) => CafError::Malformed { path, reason },
-            Self::UnsupportedEncoding => CafError::UnsupportedEncoding { path },
-            Self::Empty => CafError::Empty { path },
-            Self::SampleRate(source) => CafError::SampleRate { path, source },
-        }
-    }
+fn clip_at(path: &Path) -> Result<Clip, Problem> {
+    let file = std::fs::File::open(path).map_err(Problem::Open)?;
+    let bytes = read_bounded(file)?;
+    decode(&bytes)
 }
 
 fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Problem> {
@@ -81,7 +73,7 @@ fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Problem> {
     reader
         .take(MAX_CUE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_error| Problem::Malformed("read failed"))?;
+        .map_err(Problem::Read)?;
     if bytes.len() > MAX_CUE_BYTES {
         return Err(Problem::TooLarge);
     }
@@ -156,7 +148,7 @@ fn describe(desc: &[u8]) -> Result<Description, Problem> {
     let packed = bits % 8 == 0
         && channels > 0
         && frames_per_packet == 1
-        && bytes_per_packet == channels * bytes_per_sample;
+        && channels.checked_mul(bytes_per_sample) == Some(bytes_per_packet);
     let width_known = matches!((float, bits), (false, 16 | 24 | 32) | (true, 32));
     if !packed || !width_known {
         return Err(Problem::UnsupportedEncoding);
@@ -187,7 +179,11 @@ fn samples(description: &Description, audio: &[u8]) -> Result<Clip, Problem> {
         return Err(Problem::Empty);
     }
     let sample_rate = description.sample_rate.round() as u32;
-    Clip::new(sample_rate, mono).map_err(Problem::SampleRate)
+    let clip = Clip::new(sample_rate, mono).map_err(Problem::SampleRate)?;
+    if clip.duration() > MAX_CUE_DURATION {
+        return Err(Problem::TooLong);
+    }
+    Ok(clip)
 }
 
 /// One sample as full scale ±1. Integers are left-aligned into 32 bits, so
@@ -338,5 +334,39 @@ mod tests {
     fn a_file_over_the_cap_is_refused() {
         let refused = read_bounded(std::io::repeat(0).take(MAX_CUE_BYTES as u64 + 1));
         assert!(matches!(refused, Err(Problem::TooLarge)), "{refused:?}");
+    }
+
+    #[test]
+    fn a_clip_longer_than_the_stream_buffers_is_refused() {
+        let data = vec![0u8; (MAX_CUE_DURATION.as_secs() as usize * 44_100 + 1) * 2];
+        let refused = decode(&caf(
+            lpcm(LITTLE_ENDIAN, 1, 16),
+            data.len() as i64 + 4,
+            &data,
+        ));
+        assert!(matches!(refused, Err(Problem::TooLong)), "{refused:?}");
+    }
+
+    #[test]
+    fn a_channel_count_that_overflows_the_frame_size_is_refused() {
+        let mut desc = lpcm(LITTLE_ENDIAN, 1, 32);
+        desc[24..28].copy_from_slice(&0x4000_0000u32.to_be_bytes());
+        let refused = decode(&caf(desc, 8, &[0, 0, 0, 0]));
+        assert!(
+            matches!(refused, Err(Problem::UnsupportedEncoding)),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_read_failure_keeps_its_cause() {
+        struct Broken;
+        impl Read for Broken {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk"))
+            }
+        }
+        let refused = read_bounded(Broken);
+        assert!(matches!(refused, Err(Problem::Read(_))), "{refused:?}");
     }
 }
