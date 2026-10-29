@@ -545,8 +545,8 @@ fn terminal_weak_scores_do_not_erase_an_earlier_low_score() {
 
 #[test]
 fn a_weak_score_rejects_once_its_length_reads_it_as_another_voice() {
-    for (seconds_heard, closed) in [(1.5, Speaker::Unverified), (2.0, Speaker::Other(None))] {
-        let score = Cell::new(Some(0.33));
+    for (seconds_heard, closed) in [(1.0, Speaker::Unverified), (1.5, Speaker::Other(None))] {
+        let score = Cell::new(Some(0.3));
         let mut models = scored(&score);
         let mut voices = models.listen(Loud, 0);
         voices.push(&audio(&[(OWN_LEVEL, seconds_heard)])).unwrap();
@@ -575,7 +575,7 @@ fn a_short_turn_after_the_owners_is_another_voice_only_when_the_segmenter_hears_
         .with_segmenter(LevelSegmenter);
         let mut voices = models.listen(Loud, 0);
         voices
-            .push(&audio(&[(OWN_LEVEL, 2.0), (0.0, 1.0), (level, 0.8)]))
+            .push(&audio(&[(OWN_LEVEL, 2.0), (0.0, 1.0), (level, 0.4)]))
             .unwrap();
         voices.finish();
 
@@ -589,7 +589,7 @@ fn the_owners_turn_that_dips_once_before_passing_is_admitted_whole() {
     let mut models = scored_by(|_| {
         let check = checks.get();
         checks.set(check + 1);
-        Some([0.6, 0.3, 0.33, 0.38].get(check).copied().unwrap_or(0.6))
+        Some([0.2, 0.2, 0.33, 0.38].get(check).copied().unwrap_or(0.6))
     })
     .with_segmenter(LevelSegmenter);
     let mut voices = models.listen(Loud, 0);
@@ -623,15 +623,11 @@ fn a_turn_not_passed_by_three_seconds_is_another_voice_before_it_closes() {
 
 #[test]
 fn terminal_weak_scores_do_not_admit_an_enrolled_guest() {
-    let score = Cell::new(Some(0.33));
+    let score = Cell::new(Some(0.3));
     let mut models = scored(&score);
     models.diarizer.set_enrolled(vec![
         enrolled_voice("alex", Role::Owner, OWN.to_vec()),
-        enrolled_voice(
-            "sam",
-            Role::Guest,
-            vec![0.33, (1.0_f32 - 0.33 * 0.33).sqrt()],
-        ),
+        enrolled_voice("sam", Role::Guest, vec![0.3, (1.0_f32 - 0.3 * 0.3).sqrt()]),
     ]);
     let mut voices = models.listen(Loud, 0);
     let stream = audio(&[(OWN_LEVEL, 0.8)]);

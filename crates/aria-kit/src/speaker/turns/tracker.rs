@@ -604,7 +604,8 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
     }
 
     /// Proposes where the owner began in the open turn: at a pause, or else
-    /// within the newest second. `false` when that second is not the owner's.
+    /// within the newest half second. `false` when that half second is not
+    /// the owner's.
     fn propose_owner_start(&mut self, silence: usize) -> bool {
         if let Some((from, similarity)) = self.owner_since_a_pause(silence) {
             self.propose_owner(from, silence, Some(similarity));

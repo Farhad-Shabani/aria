@@ -4,18 +4,17 @@
 //!
 //! Fitted for the WeSpeaker ResNet34-LM embedder by `aria-bench
 //! own-voice-scores` on LibriSpeech dev-clean and dev-other: 59 speakers,
-//! each enrolled from one chapter and heard in the openings of utterances
-//! from their others, against every enrolled speaker of the same gender.
-//! test-clean, which the own-voice corpus is read from, reproduces every bar
-//! within 0.02.
+//! each enrolled from one chapter and heard from where speech starts in
+//! utterances from their others, against every enrolled speaker of the same
+//! gender. test-clean, which the own-voice corpus is read from, reproduces
+//! every accept bar within 0.02 and every doubt bar within 0.05.
 
 use std::time::Duration;
 
 use crate::audio::{CANONICAL_SAMPLE_RATE, canonical_samples};
 
-/// Under this much speech a score says nothing: on half a second the owner
-/// and other voices share an equal error rate of 20–31%.
-pub(super) const LEAST_READ_SAMPLES: usize = canonical_samples(Duration::from_secs(1)) as usize;
+/// No bars were fitted on less speech than this.
+pub(super) const LEAST_READ_SAMPLES: usize = canonical_samples(Duration::from_millis(500)) as usize;
 
 /// How a check's score reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,31 +34,36 @@ struct Bars {
 }
 
 /// The bars by seconds of speech, from [`LEAST_READ_SAMPLES`] on.
-const FITTED: [Bars; 5] = [
+const FITTED: [Bars; 6] = [
+    Bars {
+        seconds: 0.5,
+        accept: 0.313,
+        doubt: 0.156,
+    },
     Bars {
         seconds: 1.0,
-        accept: 0.346,
-        doubt: 0.179,
+        accept: 0.358,
+        doubt: 0.232,
     },
     Bars {
         seconds: 1.5,
-        accept: 0.370,
-        doubt: 0.300,
+        accept: 0.379,
+        doubt: 0.346,
     },
     Bars {
         seconds: 2.0,
-        accept: 0.385,
-        doubt: 0.385,
+        accept: 0.390,
+        doubt: 0.390,
     },
     Bars {
         seconds: 2.5,
-        accept: 0.395,
-        doubt: 0.395,
+        accept: 0.398,
+        doubt: 0.398,
     },
     Bars {
         seconds: 3.0,
-        accept: 0.401,
-        doubt: 0.401,
+        accept: 0.403,
+        doubt: 0.403,
     },
 ];
 
@@ -104,9 +108,9 @@ mod tests {
     }
 
     #[test]
-    fn under_a_second_no_score_decides() {
+    fn under_half_a_second_no_score_decides() {
         for similarity in [-1.0, 0.0, 0.99] {
-            assert_eq!(read(similarity, samples(0.9)), Reading::Pending);
+            assert_eq!(read(similarity, samples(0.4)), Reading::Pending);
         }
     }
 
@@ -118,12 +122,12 @@ mod tests {
             assert_eq!(read(row.doubt.next_down(), scored), Reading::Other);
         }
         assert_eq!(read(0.25, samples(1.5)), Reading::Other);
-        assert_eq!(read(0.32, samples(1.5)), Reading::Pending);
+        assert_eq!(read(0.36, samples(1.5)), Reading::Pending);
     }
 
     #[test]
     fn a_length_between_rows_reads_by_bars_between_theirs() {
-        assert_eq!(read(0.357, samples(1.25)), Reading::Pending);
-        assert_eq!(read(0.359, samples(1.25)), Reading::Owner);
+        assert_eq!(read(0.367, samples(1.25)), Reading::Pending);
+        assert_eq!(read(0.369, samples(1.25)), Reading::Owner);
     }
 }
