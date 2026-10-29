@@ -221,6 +221,20 @@ fn another_voice_answering_the_owner_without_a_pause_is_kept_out() {
 }
 
 #[test]
+fn the_owner_taking_over_a_doubted_turn_leaves_the_voice_before_out() {
+    let mut models = enrolled().with_segmenter(LevelSegmenter);
+    let mut voices = models.listen(Loud, 0);
+    voices
+        .push(&audio(&[(OTHER_LEVEL, 1.5), (0.0, 0.2), (OWN_LEVEL, 2.5)]))
+        .unwrap();
+    voices.finish();
+
+    assert_eq!(judgments(&voices), [Judgment::Other, Judgment::Owner]);
+    assert_eq!(voices.timeline.admission(&seconds(0.0, 1.5)), Some(false));
+    assert_eq!(voices.timeline.admission(&seconds(2.0, 4.0)), Some(true));
+}
+
+#[test]
 fn a_turn_opens_a_few_frames_before_its_first_loud_one() {
     let mut models = enrolled();
     let tracker = heard(&mut models, &[(0.0, 1.0), (OWN_LEVEL, 1.0)]);
@@ -517,44 +531,94 @@ fn terminal_weak_scores_admit_short_speech_without_owner_provenance() {
 
 #[test]
 fn terminal_weak_scores_do_not_erase_an_earlier_low_score() {
-    let score = Cell::new(Some(0.29));
+    let score = Cell::new(Some(0.15));
     let mut models = scored(&score);
     let mut voices = models.listen(Loud, 0);
-    let stream = audio(&[(OWN_LEVEL, 0.5)]);
+    let stream = audio(&[(OWN_LEVEL, 1.0)]);
     voices.push(&stream).unwrap();
     score.set(Some(0.33));
-    voices.push(&stream).unwrap();
+    voices.push(&audio(&[(OWN_LEVEL, 0.5)])).unwrap();
     voices.finish();
     assert_eq!(voices.timeline.speaking(), Some(Speaker::Other(None)));
     assert!(voices.timeline.admitted_audio(&stream, 0).is_empty());
 }
 
 #[test]
-fn terminal_weak_scores_preserve_the_three_second_rejection_horizon() {
-    for length in [
-        TURN_JUDGED_SAMPLES - Loud::FRAME_SAMPLES,
-        TURN_JUDGED_SAMPLES,
-    ] {
+fn a_weak_score_rejects_once_its_length_reads_it_as_another_voice() {
+    for (seconds_heard, closed) in [(1.5, Speaker::Unverified), (2.0, Speaker::Other(None))] {
         let score = Cell::new(Some(0.33));
         let mut models = scored(&score);
         let mut voices = models.listen(Loud, 0);
-        voices.push(&vec![OWN_LEVEL; length]).unwrap();
-        if length < TURN_JUDGED_SAMPLES {
-            assert!(matches!(
-                voices.timeline.speaking(),
-                Some(Speaker::Pending(_))
-            ));
-            voices.finish();
-            assert_eq!(voices.timeline.speaking(), Some(Speaker::Unverified));
-        } else {
-            assert_eq!(voices.timeline.speaking(), Some(Speaker::Other(None)));
-            assert_eq!(voices.timeline.admission(&seconds(0.0, 1.0)), Some(false));
-            voices.push(&audio(&[(OWN_LEVEL, 2.0)])).unwrap();
-            assert_eq!(voices.timeline.speaking(), Some(Speaker::Other(None)));
-            voices.finish();
-            assert_eq!(voices.timeline.speaking(), Some(Speaker::Other(None)));
-        }
+        voices.push(&audio(&[(OWN_LEVEL, seconds_heard)])).unwrap();
+        assert!(matches!(
+            voices.timeline.speaking(),
+            Some(Speaker::Pending(_))
+        ));
+        voices.finish();
+        assert_eq!(voices.timeline.speaking(), Some(closed));
     }
+}
+
+#[test]
+fn a_short_turn_after_the_owners_is_another_voice_only_when_the_segmenter_hears_a_change() {
+    for (level, settled) in [
+        (OTHER_LEVEL, Judgment::Other),
+        (OWN_LEVEL, Judgment::Unverified),
+    ] {
+        let mut models = scored_by(|window| {
+            Some(if window.iter().any(|sample| *sample >= 0.4) {
+                0.9
+            } else {
+                0.25
+            })
+        })
+        .with_segmenter(LevelSegmenter);
+        let mut voices = models.listen(Loud, 0);
+        voices
+            .push(&audio(&[(OWN_LEVEL, 2.0), (0.0, 1.0), (level, 0.8)]))
+            .unwrap();
+        voices.finish();
+
+        assert_eq!(judgments(&voices), [Judgment::Owner, settled]);
+    }
+}
+
+#[test]
+fn the_owners_turn_that_dips_once_before_passing_is_admitted_whole() {
+    let checks = Cell::new(0);
+    let mut models = scored_by(|_| {
+        let check = checks.get();
+        checks.set(check + 1);
+        Some([0.6, 0.3, 0.33, 0.38].get(check).copied().unwrap_or(0.6))
+    })
+    .with_segmenter(LevelSegmenter);
+    let mut voices = models.listen(Loud, 0);
+    voices
+        .push(&audio(&[(OWN_LEVEL, 3.0), (0.0, 1.0)]))
+        .unwrap();
+    voices.finish();
+
+    assert_eq!(voices.timeline.admission(&seconds(0.0, 3.0)), Some(true));
+    assert!(
+        voices
+            .timeline
+            .turns
+            .iter()
+            .all(|turn| turn.judgment == Judgment::Owner || turn.span.is_empty())
+    );
+}
+
+#[test]
+fn a_turn_not_passed_by_three_seconds_is_another_voice_before_it_closes() {
+    let score = Cell::new(Some(0.33));
+    let mut models = scored(&score);
+    let mut voices = models.listen(Loud, 0);
+    voices.push(&vec![OWN_LEVEL; TURN_JUDGED_SAMPLES]).unwrap();
+    assert_eq!(voices.timeline.speaking(), Some(Speaker::Other(None)));
+    assert_eq!(voices.timeline.admission(&seconds(0.0, 1.0)), Some(false));
+    voices.push(&audio(&[(OWN_LEVEL, 2.0)])).unwrap();
+    voices.finish();
+    assert_eq!(voices.timeline.speaking(), Some(Speaker::Other(None)));
 }
 
 #[test]
@@ -855,14 +919,8 @@ fn a_tracker_begins_its_recording_where_it_says() {
 }
 
 #[test]
-fn a_naming_check_cannot_judge_admission_before_its_change_window() {
-    let mut models = scored_by(|window| {
-        Some(match window.len() {
-            CHECK_EVERY_SAMPLES => 0.4,
-            SECOND => 0.5,
-            _ => 0.0,
-        })
-    });
+fn a_pass_short_of_stable_cannot_admit_audio_before_its_change_window() {
+    let mut models = scored_by(|window| Some(if window.len() == SECOND { 0.4 } else { 0.0 }));
     let mut voices = models.listen(Loud, 0);
     voices.push(&audio(&[(OTHER_LEVEL, 1.0)])).unwrap();
     let word = seconds(0.1, 0.4);
@@ -900,7 +958,7 @@ fn a_late_detector_failure_invalidates_owner_audio() {
         const FRAME_SAMPLES: usize = 160;
         fn probability(&mut self, _: &[i16]) -> Result<f32, VoiceActivityError> {
             self.0 += 1;
-            if self.0 > 50 {
+            if self.0 > 100 {
                 Err(VoiceActivityError::InvalidProbability(f32::NAN))
             } else {
                 Ok(1.0)
@@ -909,7 +967,7 @@ fn a_late_detector_failure_invalidates_owner_audio() {
     }
     let mut models = scored_by(|_| Some(1.0));
     let mut voices = models.listen(FailsAfterOwner(0), 0);
-    let stream = audio(&[(OWN_LEVEL, 0.5)]);
+    let stream = audio(&[(OWN_LEVEL, 1.0)]);
     voices.push(&stream).unwrap();
     assert!(!voices.timeline.admitted_audio(&stream, 0).is_empty());
     assert!(voices.push(&[OWN_LEVEL; 160]).is_err());
@@ -936,16 +994,16 @@ fn embedding_failures_invalidate_admission_after_an_owner_passes() {
             2
         }
     }
-    let mut models = Models::new(Diarizer::new(Failing(1), owner()));
+    let mut models = Models::new(Diarizer::new(Failing(2), owner()));
     let mut voices = models.listen(Loud, 0);
-    let stream = audio(&[(OWN_LEVEL, 0.5), (OTHER_LEVEL, 2.0)]);
-    voices.push(&stream[..SECOND / 2]).unwrap();
+    let stream = audio(&[(OWN_LEVEL, 1.0), (OTHER_LEVEL, 2.0)]);
+    voices.push(&stream[..SECOND]).unwrap();
     assert!(!voices.timeline.admitted_audio(&stream, 0).is_empty());
-    voices.push(&stream[SECOND / 2..]).unwrap();
+    voices.push(&stream[SECOND..]).unwrap();
     voices.finish();
     assert!(voices.timeline.is_broken());
     assert!(voices.timeline.admitted_audio(&stream, 0).is_empty());
-    assert_eq!(voices.timeline.speaker(&seconds(0.0, 0.5)), None);
+    assert_eq!(voices.timeline.speaker(&seconds(0.0, 1.0)), None);
     assert_eq!(voices.timeline.speaking(), None);
     assert_eq!(voices.timeline.owner_name(), None);
 }
@@ -963,14 +1021,14 @@ fn naming_tracks_a_change_between_people_with_the_same_role() {
         }
         let mut models = Models::new(Diarizer::new(VoiceByLevel, profiles));
         let mut voices = models.listen(Loud, 0);
-        voices.push(&audio(&[(OWN_LEVEL, 0.5)])).unwrap();
+        voices.push(&audio(&[(OWN_LEVEL, 1.0)])).unwrap();
         let name = Some(SpeakerName::new("alex").unwrap());
         let speaking = match role {
             Role::Owner => Speaker::Owner(name),
             Role::Guest => Speaker::Pending(name),
         };
         assert_eq!(voices.timeline.speaking(), Some(speaking));
-        for frame in audio(&[(OWN_LEVEL, 3.5), (OTHER_LEVEL, 3.0)]).chunks(Loud::FRAME_SAMPLES) {
+        for frame in audio(&[(OWN_LEVEL, 3.0), (OTHER_LEVEL, 3.0)]).chunks(Loud::FRAME_SAMPLES) {
             voices.push(frame).unwrap();
         }
         voices.finish();
