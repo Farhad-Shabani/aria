@@ -19,8 +19,7 @@ use super::corpus::{Built, CorpusError, write_manifest};
 use super::fetch::{self, FetchError, create_dir, ensure, io_error, parse, require, run_tool};
 
 const LIST: &str = include_str!("../../corpus/librispeech-test-clean.tsv");
-const ARCHIVE_URL: &str = "https://www.openslr.org/resources/12/test-clean.tar.gz";
-const SPEAKERS: usize = 40;
+const ARCHIVES_URL: &str = "https://www.openslr.org/resources/12";
 const SAMPLE_RATE: &str = "16000";
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const DECODE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -34,10 +33,10 @@ pub fn build(output: &Path, wanted: NonZeroUsize) -> Result<Built, LibrispeechEr
     let mut downloaded = false;
     build_from(LIST, output, wanted, |id, wav| {
         if !downloaded {
-            download(&speech)?;
+            download(&speech, Subset::TestClean)?;
             downloaded = true;
         }
-        let recording = recording_for(&speech, id);
+        let recording = recording_for(&speech, Subset::TestClean, id);
         if !recording.is_file() {
             return Err(LibrispeechError::MissingRecording(recording));
         }
@@ -77,25 +76,152 @@ fn build_from(
     )?)
 }
 
+/// A LibriSpeech subset of clean read speech, CC BY 4.0. Each holds its own
+/// speakers, so one can fit what another is measured on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Subset {
+    DevClean,
+    DevOther,
+    TestClean,
+}
+
+impl Subset {
+    /// How many speakers the subset holds.
+    fn readers(self) -> usize {
+        match self {
+            Self::DevClean | Self::TestClean => 40,
+            Self::DevOther => 33,
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::DevClean => "dev-clean",
+            Self::DevOther => "dev-other",
+            Self::TestClean => "test-clean",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Gender {
+    Female,
+    Male,
+}
+
+/// One reader and what they read, in id order.
+#[derive(Debug)]
+pub(crate) struct Speaker {
+    pub id: u32,
+    pub gender: Gender,
+    pub chapters: Vec<Chapter>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Chapter {
+    /// Each utterance id and its transcript.
+    pub utterances: Vec<(String, String)>,
+}
+
+/// Every speaker of `subset` in the extracted archive under `speech`, by id.
+pub(crate) fn speakers(speech: &Path, subset: Subset) -> Result<Vec<Speaker>, LibrispeechError> {
+    let root = speech.join("LibriSpeech");
+    let listed = root.join("SPEAKERS.TXT");
+    let genders = genders(
+        &fs::read_to_string(&listed).map_err(io_error(&listed))?,
+        subset,
+    )?;
+    let mut speakers = Vec::new();
+    for (id, gender) in genders {
+        let directory = root.join(subset.name()).join(id.to_string());
+        let mut chapters = Vec::new();
+        for chapter in numbered_dirs(&directory)? {
+            let transcripts = directory
+                .join(chapter.to_string())
+                .join(format!("{id}-{chapter}.trans.txt"));
+            let text = fs::read_to_string(&transcripts).map_err(io_error(&transcripts))?;
+            chapters.push(Chapter {
+                utterances: transcript(&text),
+            });
+        }
+        speakers.push(Speaker {
+            id,
+            gender,
+            chapters,
+        });
+    }
+    Ok(speakers)
+}
+
+/// The readers of `subset` in `SPEAKERS.TXT`, by id.
+fn genders(listed: &str, subset: Subset) -> Result<Vec<(u32, Gender)>, LibrispeechError> {
+    let mut genders = Vec::new();
+    for line in listed.lines().filter(|line| !line.starts_with(';')) {
+        let fields: Vec<&str> = line.split('|').map(str::trim).collect();
+        if fields.get(2) != Some(&subset.name()) {
+            continue;
+        }
+        let unreadable = || LibrispeechError::Speakers(line.to_owned());
+        let id = fields[0].parse().map_err(|_| unreadable())?;
+        let gender = match fields[1] {
+            "F" => Gender::Female,
+            "M" => Gender::Male,
+            _ => return Err(unreadable()),
+        };
+        genders.push((id, gender));
+    }
+    genders.sort_by_key(|(id, _)| *id);
+    Ok(genders)
+}
+
+fn transcript(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| line.split_once(' '))
+        .map(|(id, words)| (id.to_owned(), words.to_owned()))
+        .collect()
+}
+
+fn numbered_dirs(directory: &Path) -> Result<Vec<u32>, FetchError> {
+    let mut numbers: Vec<u32> = fs::read_dir(directory)
+        .map_err(io_error(directory))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+        .collect();
+    numbers.sort_unstable();
+    Ok(numbers)
+}
+
 /// Extracts into a staging directory that moves into place only once tar
 /// succeeds, so a cut-short extraction never passes for a complete one.
-fn download(speech: &Path) -> Result<(), FetchError> {
+/// One cache holds every subset; extracting replaces only `subset`.
+pub(crate) fn download(speech: &Path, subset: Subset) -> Result<(), FetchError> {
     let extracted = speech.join("LibriSpeech");
-    if speakers_in(&extracted.join("test-clean")) >= SPEAKERS {
+    let readers = extracted.join(subset.name());
+    if speakers_in(&readers) >= subset.readers() {
         return Ok(());
     }
     require("tar", "--version")?;
     require("ffmpeg", "-version")?;
     let staging = speech.join("extracting");
-    remove_dir(&extracted)?;
+    remove_dir(&readers)?;
     remove_dir(&staging)?;
     create_dir(&staging)?;
-    let archive = speech.join("test-clean.tar.gz.part");
-    fetch::download(ARCHIVE_URL, &archive)?;
+    let archive = speech.join(format!("{}.tar.gz.part", subset.name()));
+    fetch::download(
+        &format!("{ARCHIVES_URL}/{}.tar.gz", subset.name()),
+        &archive,
+    )?;
     let mut tar = Command::new("tar");
     tar.arg("-xzf").arg(&archive).arg("-C").arg(&staging);
     run_tool("tar", &mut tar, EXTRACT_TIMEOUT)?;
-    fs::rename(staging.join("LibriSpeech"), &extracted).map_err(io_error(&extracted))?;
+    create_dir(&extracted)?;
+    let unpacked = staging.join("LibriSpeech");
+    fs::rename(unpacked.join(subset.name()), &readers).map_err(io_error(&readers))?;
+    // Every archive carries the list of every subset's speakers.
+    let listed = extracted.join("SPEAKERS.TXT");
+    fs::rename(unpacked.join("SPEAKERS.TXT"), &listed).map_err(io_error(&listed))?;
     remove_dir(&staging)?;
     fs::remove_file(&archive).map_err(io_error(&archive))
 }
@@ -118,12 +244,13 @@ fn speakers_in(directory: &Path) -> usize {
 
 /// LibriSpeech names a recording `<speaker>-<chapter>-<index>` and files it
 /// under `<speaker>/<chapter>/`, so the id alone locates it.
-fn recording_for(speech: &Path, id: &str) -> PathBuf {
+pub(crate) fn recording_for(speech: &Path, subset: Subset, id: &str) -> PathBuf {
     let mut parts = id.splitn(3, '-');
     let speaker = parts.next().unwrap_or_default();
     let chapter = parts.next().unwrap_or_default();
     speech
-        .join("LibriSpeech/test-clean")
+        .join("LibriSpeech")
+        .join(subset.name())
         .join(speaker)
         .join(chapter)
         .join(format!("{id}.flac"))
@@ -131,7 +258,7 @@ fn recording_for(speech: &Path, id: &str) -> PathBuf {
 
 /// Writes the one WAV format capture accepts. Bitexact output omits the
 /// encoder version, so every ffmpeg writes the same bytes.
-fn decode(recording: &Path, wav: &Path) -> Result<(), FetchError> {
+pub(crate) fn decode(recording: &Path, wav: &Path) -> Result<(), FetchError> {
     let mut ffmpeg = Command::new("ffmpeg");
     ffmpeg
         .args(["-nostdin", "-loglevel", "error", "-y", "-i"])
@@ -149,6 +276,9 @@ pub enum LibrispeechError {
 
     #[error("the archive is missing {}", .0.display())]
     MissingRecording(PathBuf),
+
+    #[error("SPEAKERS.TXT has an unreadable row: {0}")]
+    Speakers(String),
 
     #[error(transparent)]
     Fetch(#[from] FetchError),
@@ -238,19 +368,33 @@ mod tests {
     #[test]
     fn the_committed_list_spans_every_speaker_within_its_first_rows() {
         let rows = parse(LIST).unwrap();
-        let speakers: BTreeSet<_> = rows[..SPEAKERS]
+        let readers = Subset::TestClean.readers();
+        let speakers: BTreeSet<_> = rows[..readers]
             .iter()
             .map(|row| row.id.split('-').next().unwrap())
             .collect();
 
         assert_eq!(rows.len(), 100);
-        assert_eq!(speakers.len(), SPEAKERS);
+        assert_eq!(speakers.len(), readers);
+    }
+
+    #[test]
+    fn only_test_clean_readers_are_listed_by_id() {
+        let listed = ";ID  |SEX| SUBSET           |MINUTES| NAME\n\
+                      237  | F | test-clean       | 8.02  | rachelellen\n\
+                      14   | F | train-clean-360  | 25.03 | Kristin LeMoine\n\
+                      61   | M | test-clean       | 8.08  | Paul-Gabriel Wiener\n";
+
+        assert_eq!(
+            genders(listed, Subset::TestClean).unwrap(),
+            [(61, Gender::Male), (237, Gender::Female)]
+        );
     }
 
     #[test]
     fn an_id_locates_its_recording_under_speaker_and_chapter() {
         assert_eq!(
-            recording_for(Path::new("/speech"), "1089-134686-0000"),
+            recording_for(Path::new("/speech"), Subset::TestClean, "1089-134686-0000"),
             Path::new("/speech/LibriSpeech/test-clean/1089/134686/1089-134686-0000.flac")
         );
     }

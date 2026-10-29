@@ -302,7 +302,16 @@ impl ExecutionControl {
         stop_mode: StopMode,
         cancellation: CancelToken,
     ) -> Arc<Self> {
-        let policy = DictationPolicy::new(Duration::from_secs(5)).expect("test policy is valid");
+        Self::for_test_lasting(stop_mode, cancellation, Duration::from_secs(5))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_lasting(
+        stop_mode: StopMode,
+        cancellation: CancelToken,
+        overall: Duration,
+    ) -> Arc<Self> {
+        let policy = DictationPolicy::new(overall).expect("test policy is valid");
         Arc::new(Self::new(
             RecordingId(0),
             stop_mode,

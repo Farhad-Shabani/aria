@@ -1,8 +1,9 @@
 //! Diarization accuracy over synthesized ground-truth conversations.
 //!
 //! A TTS engine renders scripted multi-speaker conversations, the real
-//! listen stack (streaming STT, speech map, gate) hears them replayed in
-//! realtime, and the voice track's labels are scored against the script.
+//! listen stack (streaming STT, speech map, speaker tracker, gate) hears them
+//! replayed in realtime, and the tracker's and the voice track's labels are
+//! scored against the script.
 //!
 //! The speaker engine is what this measures, so this crate owns it. TTS and
 //! STT are the harness that produces and reads the audio; the caller loads
@@ -17,7 +18,7 @@ mod replay;
 mod score;
 mod shipped;
 mod sibling;
-mod synth;
+pub(crate) mod synth;
 
 pub use aria::speaker::Grouping;
 pub use pyannote::{Clustering, Tuning, label_by_segmentation};
@@ -97,6 +98,7 @@ pub fn label_recording<Stt: StreamingEngine>(
     let transcription = Transcription::streaming(stt);
     let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
+    // Only the voice track's labels are scored, so no tracker runs.
     let (segments, dropped) = replay::hear(
         &transcription,
         wav,
@@ -104,6 +106,7 @@ pub fn label_recording<Stt: StreamingEngine>(
         "recording",
         ReplayPace::Realtime,
         RECORDING_LIMIT,
+        None,
     )?;
 
     let settled = settled(segmentation, speaker, wav, &segments)?;
@@ -154,20 +157,25 @@ fn settled(
         .map(|segment| Some(segment.span.clone()))
         .collect();
     let mut labels = aria::speaker::attribute_spans(&voices, &spans);
+    settle_gaps(&mut labels, segments);
+    Ok(labels)
+}
+
+/// Fills unnamed segments from their neighbours, as listen's transcript does.
+fn settle_gaps(labels: &mut [Option<Label>], segments: &[replay::Segment]) {
     let gap = (aria::listen::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
-    aria::speaker::settle(&mut labels, |index| {
+    aria::speaker::settle(labels, |index| {
         segments
             .get(index + 1)
             .is_some_and(|next| next.span.start.saturating_sub(segments[index].span.end) < gap)
     });
-    Ok(labels)
 }
 
 fn diarizer(speaker: SpeakerConfig) -> Result<Diarizer<WeSpeaker>, BenchError> {
     Ok(Diarizer::new(embedder(speaker)?, Vec::new()))
 }
 
-fn embedder(speaker: SpeakerConfig) -> Result<WeSpeaker, BenchError> {
+pub(crate) fn embedder(speaker: SpeakerConfig) -> Result<WeSpeaker, BenchError> {
     WeSpeaker::load_from(speaker).map_err(BenchError::SpeakerModel)
 }
 
@@ -332,8 +340,13 @@ pub struct ScenarioReport {
     /// Seconds of audio the speech gate threw away — the budget any coverage
     /// fix could win back.
     pub dropped_seconds: f64,
-    /// Word-weighted accuracy of the labels the transcript ends with: the
-    /// voice track's.
+    /// Word-weighted accuracy of the labels the tracker gave as each
+    /// segment was released.
+    pub live_accuracy: f64,
+    /// The same, for the labels a session without the voice track ends
+    /// with, relabeled per segment rather than per paragraph as listen does.
+    pub fallback_accuracy: f64,
+    /// The same, for the labels the transcript ends with: the voice track's.
     pub final_accuracy: f64,
     /// The share of the script's evidence words that reached the transcript.
     /// Accuracy alone cannot fall when speech goes missing; this can.
@@ -355,6 +368,10 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
         let mut scenarios = Vec::new();
         for scenario in synth::Scenario::all() {
             let wav = scenario.synthesize(&tts, workspace.path())?;
+            let model = || SpeakerConfig {
+                model: speaker.model.clone(),
+            };
+            let mut diarizer = diarizer(model())?;
             let (segments, dropped) = replay::hear(
                 &transcription,
                 &wav,
@@ -362,12 +379,11 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
                 scenario.name,
                 ReplayPace::Realtime,
                 SCENARIO_LIMIT,
+                Some(&mut diarizer),
             )?;
-            let model = SpeakerConfig {
-                model: speaker.model.clone(),
-            };
-            let finals = settled(&segmentation, model, &wav, &segments)?;
-            scenarios.push(scenario.scored(&segments, finals, &dropped));
+            let fallbacks = replay::relabeled(&diarizer, &segments);
+            let finals = settled(&segmentation, model(), &wav, &segments)?;
+            scenarios.push(scenario.scored(&segments, fallbacks, finals, &dropped));
         }
         Ok(Report { scenarios })
     }
@@ -423,6 +439,11 @@ pub enum BenchError {
     // Same failure, reached where no engine error was produced to carry.
     #[error("no speaker model is installed, so the run would measure nothing")]
     NoSpeakerModel,
+
+    #[error(
+        "speaker tracking failed on the {scenario} scenario, so its live labels would score as wrong"
+    )]
+    Tracking { scenario: &'static str },
 
     #[error("failed to replay the {scenario} scenario's audio")]
     Replay {

@@ -6,7 +6,10 @@
 mod report;
 mod trials;
 
-pub use report::{Rates, Report, equal_error_rate, rates_at};
+pub use report::{
+    Rates, Report, equal_error_rate, rates_at, threshold_for_false_accept,
+    threshold_for_false_reject,
+};
 pub use trials::{Trial, read_trials};
 
 use std::collections::HashMap;
@@ -82,14 +85,15 @@ pub fn measure(model: &Path, trials: &[Trial]) -> Result<Measured, VerifyError> 
         };
         measured.scored.push(Scored {
             same_speaker: trial.same_speaker,
-            score: cosine(&enrolled, &heard),
+            score: similarity(&enrolled, &heard),
         });
     }
     Ok(measured)
 }
 
-/// Both vectors are unit norm, so their cosine is a plain dot product.
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
+/// How alike two voices are: the cosine of two unit-norm embeddings, so a
+/// plain dot product.
+pub fn similarity(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 

@@ -13,6 +13,7 @@ mod catalog;
 mod daemon;
 pub mod inputs;
 pub mod log;
+pub mod own_voice;
 mod runner;
 mod sandbox;
 pub mod stats;

@@ -16,10 +16,12 @@ pub(super) mod target;
 pub(super) struct Preparation {
     project: Option<PathBuf>,
     personal: Option<String>,
+    pub(super) own_voice_only: bool,
 }
 
 impl Preparation {
     pub(super) fn load(streaming: bool) -> anyhow::Result<Self> {
+        let own_voice_only = inputs::switch("ARIA_BENCH_OWN_VOICE_ONLY")?;
         let project = inputs::path_input("ARIA_BENCH_VOCABULARY_DIR")?;
         if let Some(project) = &project {
             ensure!(
@@ -37,7 +39,11 @@ impl Preparation {
                 "the benchmark owns its target; unset ARIA_BENCH_TARGET_TEXT_FILE and ARIA_BENCH_TARGET_PID"
             );
         }
-        Ok(Self { project, personal })
+        Ok(Self {
+            project,
+            personal,
+            own_voice_only,
+        })
     }
 
     pub(super) fn personal_identity(&self) -> anyhow::Result<String> {
@@ -53,14 +59,26 @@ impl Preparation {
         Ok(())
     }
 
+    fn preference_patch(&self) -> anyhow::Result<wire::PreferencePatch> {
+        Ok(wire::PreferencePatch {
+            own_voice_only: Some(self.own_voice_only),
+            project_vocabulary: self.project.as_ref().map(|_| true),
+            vocabulary_directory: self
+                .project
+                .as_ref()
+                .map(|project| {
+                    project
+                        .to_str()
+                        .context("non-UTF8 benchmark directory")
+                        .map(str::to_owned)
+                })
+                .transpose()?,
+            ..Default::default()
+        })
+    }
+
     pub(super) async fn prepare(&self, channel: Channel) -> anyhow::Result<Option<Value>> {
-        let Some(project) = &self.project else {
-            return Ok(None);
-        };
-        let directory = project
-            .to_str()
-            .context("non-UTF8 benchmark directory")?
-            .to_owned();
+        let patch = self.preference_patch()?;
         let mut preferences =
             wire::preferences_service_client::PreferencesServiceClient::new(channel.clone());
         let snapshot = preferences
@@ -70,24 +88,32 @@ impl Preparation {
         let updated = preferences
             .update(wire::UpdatePreferencesRequest {
                 expected_revision: snapshot.revision,
-                patch: Some(wire::PreferencePatch {
-                    project_vocabulary: Some(true),
-                    vocabulary_directory: Some(directory.clone()),
-                    ..Default::default()
-                }),
+                patch: Some(patch),
             })
             .await?
             .into_inner();
         let Some(wire::update_preferences_response::Result::Snapshot(snapshot)) = updated.result
         else {
-            anyhow::bail!("vocabulary preference update conflicted");
+            anyhow::bail!("benchmark preference update conflicted");
+        };
+        let preferences = snapshot
+            .preferences
+            .context("daemon returned no preferences")?;
+        ensure!(
+            preferences.own_voice_only == self.own_voice_only,
+            "daemon did not apply own-voice preference"
+        );
+        let Some(project) = &self.project else {
+            return Ok(None);
         };
         ensure!(
-            snapshot
-                .preferences
-                .is_some_and(|preferences| preferences.project_vocabulary),
+            preferences.project_vocabulary,
             "daemon did not enable vocabulary"
         );
+        let directory = project
+            .to_str()
+            .context("non-UTF8 benchmark directory")?
+            .to_owned();
         let mut vocabulary = wire::vocabulary_service_client::VocabularyServiceClient::new(channel);
         let status = loop {
             let status = vocabulary
@@ -166,7 +192,7 @@ pub(super) async fn record(
                         Ok(wire::DictationStage::SegmentDelivered) => segment_deliveries += 1,
                         _ => {}
                     }
-                    events.push(json!({"stage": stage.stage, "elapsed_ms": elapsed_ms, "text": stage.text}));
+                    events.push(json!({"stage": stage.stage, "elapsed_ms": elapsed_ms, "text_fingerprint": artifact::text_fingerprint(&stage.text)?}));
                 }
                 Some(wire::start_dictation_response::Body::Result(result)) => { text = Some(result.text); break; }
                 Some(wire::start_dictation_response::Body::StopAccepted(_)) => anyhow::bail!("benchmark unexpectedly stopped another recording"),
@@ -178,7 +204,7 @@ pub(super) async fn record(
 
         let first_delivered_ms = delivered_ms.context("delivery event was not observed")?
             .checked_sub(recording_ms.context("recording event was not observed")?).context("delivery preceded recording")?;
-        let mut trace = json!({"started_unix_us": started_unix_us, "text": text, "capture_to_delivered_ms": first_delivered_ms, "client_ms": client_ms, "events": events});
+        let mut trace = json!({"started_unix_us": started_unix_us, "text_fingerprint": artifact::text_fingerprint(&text)?, "capture_to_delivered_ms": first_delivered_ms, "client_ms": client_ms, "events": events});
         if let Some(target) = target {
             ensure!(segment_deliveries == segments.len(), "segment delivery events missing");
             let metrics = segment_metrics(&segments, recording_ms.context("recording event missing")?, &text)?;
@@ -189,7 +215,7 @@ pub(super) async fn record(
         } else {
             let clipboard = clipboard_text()?;
             ensure!(clipboard == text, "clipboard differs from completed dictation result");
-            trace["clipboard_text"] = json!(clipboard);
+            trace["clipboard_text_fingerprint"] = json!(artifact::text_fingerprint(&clipboard)?);
         }
         Ok(trace)
     }).await.context("dictation delivery observation timed out")?
@@ -226,7 +252,7 @@ fn segment_metrics(
                     .context("segment events are out of order")
             })
             .transpose()?;
-        corrected.push(json!({"elapsed_ms": elapsed_ms, "text": text, "gap_ms": gap}));
+        corrected.push(json!({"elapsed_ms": elapsed_ms, "text_fingerprint": artifact::text_fingerprint(text)?, "gap_ms": gap}));
         previous = Some(*elapsed_ms);
     }
     Ok(json!({"capture_to_first_segment_ms": first_ms, "corrected_segments": corrected}))
@@ -253,12 +279,42 @@ fn clipboard_text() -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn own_voice_preference_does_not_depend_on_vocabulary() {
+        for own_voice_only in [false, true] {
+            let mut preparation = super::Preparation {
+                project: None,
+                personal: None,
+                own_voice_only,
+            };
+            let patch = preparation.preference_patch().unwrap();
+            assert_eq!(patch.own_voice_only, Some(own_voice_only));
+            assert_eq!(patch.project_vocabulary, None);
+            assert_eq!(patch.vocabulary_directory, None);
+            preparation.project = Some("/benchmark/vocabulary".into());
+            let patch = preparation.preference_patch().unwrap();
+            assert_eq!(patch.own_voice_only, Some(own_voice_only));
+            assert_eq!(patch.project_vocabulary, Some(true));
+            assert_eq!(
+                patch.vocabulary_directory.as_deref(),
+                Some("/benchmark/vocabulary")
+            );
+        }
+    }
+
+    #[test]
     fn reconstructs_corrected_segments_with_spaces_and_relative_timings() {
         let segments = vec![(125, "héllo".into()), (180, "world".into())];
         let metrics = super::segment_metrics(&segments, 100, "héllo world").unwrap();
         assert_eq!(metrics["capture_to_first_segment_ms"], 25);
         assert!(metrics["corrected_segments"][0]["gap_ms"].is_null());
         assert_eq!(metrics["corrected_segments"][1]["gap_ms"], 55);
+        assert_eq!(
+            metrics["corrected_segments"][0]["text_fingerprint"]["utf8_bytes"],
+            6
+        );
+        let encoded = serde_json::to_string(&metrics).unwrap();
+        assert!(!encoded.contains("héllo"));
+        assert!(!encoded.contains("world"));
         assert!(super::segment_metrics(&segments, 100, "hélloworld").is_err());
         assert!(super::segment_metrics(&segments, 130, "héllo world").is_err());
         assert!(super::segment_metrics(&[], 100, "").is_err());

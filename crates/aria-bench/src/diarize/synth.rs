@@ -197,14 +197,14 @@ fn turn(speaker: &'static str, text: &'static str) -> Turn {
 }
 
 /// A turn's rendering failure, still missing the scenario that names it.
-enum RenderError {
+pub(crate) enum RenderError {
     Script(ScriptError),
     Synthesis(SynthesisError),
     SampleRate(ClipError),
 }
 
 impl RenderError {
-    fn at(self, scenario: &'static str) -> BenchError {
+    pub(crate) fn at(self, scenario: &'static str) -> BenchError {
         match self {
             Self::Script(source) => BenchError::Script { scenario, source },
             Self::Synthesis(source) => BenchError::Synthesis { scenario, source },
@@ -213,7 +213,7 @@ impl RenderError {
     }
 }
 
-fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Clip, RenderError> {
+pub(crate) fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Clip, RenderError> {
     let script = |error: ScriptError| RenderError::Script(error);
     let text = SpeechText::new(turn.text).map_err(|error| script(error.into()))?;
     let voice = Voice::new(turn.speaker).map_err(|error| script(error.into()))?;

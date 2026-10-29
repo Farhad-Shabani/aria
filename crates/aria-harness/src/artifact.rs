@@ -85,6 +85,30 @@ pub fn fingerprint_value(value: &impl Serialize) -> Result<String, ArtifactError
     Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
+/// Identifies a text in an artifact without storing it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextFingerprint {
+    pub json_sha256: String,
+    pub utf8_bytes: u64,
+}
+
+impl TextFingerprint {
+    pub fn is_valid(&self) -> bool {
+        self.json_sha256.len() == 64
+            && self
+                .json_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+    }
+}
+
+pub fn text_fingerprint(text: &str) -> Result<TextFingerprint, ArtifactError> {
+    Ok(TextFingerprint {
+        json_sha256: fingerprint_value(&text)?,
+        utf8_bytes: text.len() as u64,
+    })
+}
+
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<(), ArtifactError> {
     write_artifact(path, |file| {
         serde_json::to_writer_pretty(&mut *file, value)?;

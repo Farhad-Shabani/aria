@@ -53,6 +53,33 @@ pub fn equal_error_rate(scored: &[Scored]) -> Option<Rates> {
         })
 }
 
+/// The lowest threshold that accepts at most `rate` of the different-speaker
+/// trials. `None` when there are none.
+pub fn threshold_for_false_accept(scored: &[Scored], rate: f64) -> Option<f32> {
+    let mut different: Vec<f32> = scored
+        .iter()
+        .filter(|trial| !trial.same_speaker)
+        .map(|trial| trial.score)
+        .collect();
+    different.sort_by(f32::total_cmp);
+    let accepted = (different.len() as f64 * rate).floor() as usize;
+    let highest_rejected = different.len().checked_sub(accepted + 1)?;
+    Some(different[highest_rejected].next_up())
+}
+
+/// The highest threshold that rejects at most `rate` of the same-speaker
+/// trials. `None` when there are none.
+pub fn threshold_for_false_reject(scored: &[Scored], rate: f64) -> Option<f32> {
+    let mut same: Vec<f32> = scored
+        .iter()
+        .filter(|trial| trial.same_speaker)
+        .map(|trial| trial.score)
+        .collect();
+    same.sort_by(f32::total_cmp);
+    let rejected = (same.len() as f64 * rate).floor() as usize;
+    same.get(rejected).copied()
+}
+
 /// A fraction of `trials`, or zero when there are none to judge.
 fn share(trials: &[&Scored], wrong: impl Fn(&Scored) -> bool) -> f64 {
     if trials.is_empty() {
@@ -193,6 +220,22 @@ mod tests {
                 score,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_threshold_for_a_rate_errs_on_exactly_that_share() {
+        let mut trials = Vec::new();
+        for score in 0..100 {
+            trials.push((true, 0.5 + score as f32 / 200.0));
+            trials.push((false, score as f32 / 200.0));
+        }
+        let trials = scored(&trials);
+
+        let accept = threshold_for_false_accept(&trials, 0.01).unwrap();
+        let reject = threshold_for_false_reject(&trials, 0.01).unwrap();
+
+        assert_eq!(rates_at(&trials, accept).false_accept, 0.01);
+        assert_eq!(rates_at(&trials, reject).false_reject, 0.01);
     }
 
     #[test]

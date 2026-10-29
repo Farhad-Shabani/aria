@@ -263,7 +263,7 @@ impl Snapshot {
             "request_to_first_receipt_ms": (first.uptime_ns - started_ns) / 1_000_000,
             "request_to_final_receipt_ms": (last.uptime_ns - started_ns) / 1_000_000,
             "receipts": receipts,
-            "text": self.text,
+            "text_fingerprint": aria_harness::artifact::text_fingerprint(&self.text)?,
         }))
     }
 }
@@ -298,6 +298,8 @@ mod tests {
         assert_eq!(metrics["request_to_first_receipt_ms"], 1);
         assert_eq!(metrics["request_to_final_receipt_ms"], 3);
         assert_eq!(metrics["receipts"][1]["gap_us"], 2000);
+        assert_eq!(metrics["text_fingerprint"]["utf8_bytes"], 7);
+        assert!(!serde_json::to_string(&metrics).unwrap().contains("hé🙂"));
         assert!(snapshot.metrics(3_000_000, "hé🙂").is_err());
         assert!(snapshot.metrics(1_000_000, "wrong").is_err());
         snapshot.active = false;

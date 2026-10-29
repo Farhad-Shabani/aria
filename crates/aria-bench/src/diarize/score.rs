@@ -16,27 +16,40 @@ pub(crate) struct Labeled {
 }
 
 impl Scenario {
-    /// Scores one heard scenario on the labels it ended with.
+    /// Scores one heard scenario on its live labels, and on the labels it
+    /// ends with without and with the voice track.
     pub(crate) fn scored(
         &self,
         segments: &[Segment],
+        fallbacks: Vec<Option<Label>>,
         finals: Vec<Option<Label>>,
         dropped: &Dropped,
     ) -> ScenarioReport {
-        let finals: Vec<Labeled> = segments
-            .iter()
-            .zip(finals)
-            .map(|(segment, label)| Labeled {
-                text: segment.text.clone(),
-                label,
-            })
-            .collect();
+        let labeled = |labels: Vec<Option<Label>>| -> Vec<Labeled> {
+            segments
+                .iter()
+                .zip(labels)
+                .map(|(segment, label)| Labeled {
+                    text: segment.text.clone(),
+                    label,
+                })
+                .collect()
+        };
+        let lives = labeled(
+            segments
+                .iter()
+                .map(|segment| segment.live.clone())
+                .collect(),
+        );
+        let finals = labeled(finals);
 
         ScenarioReport {
             name: self.name,
             segments: segments.len(),
             dropped: dropped.segments,
             dropped_seconds: dropped.samples as f64 / SAMPLE_RATE,
+            live_accuracy: self.accuracy(&lives),
+            fallback_accuracy: self.accuracy(&labeled(fallbacks)),
             final_accuracy: self.accuracy(&finals),
             word_recall: self.word_recall(&finals),
         }

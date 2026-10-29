@@ -244,16 +244,18 @@ fn write(cli: &Cli, name: &str, rttm: &str, heard: &Labeled) -> anyhow::Result<(
 
 fn print(report: &Report) {
     println!(
-        "{:<10} {:>9} {:>8} {:>9} {:>7} {:>8}",
-        "scenario", "segments", "dropped", "drop secs", "final", "recall"
+        "{:<10} {:>9} {:>8} {:>9} {:>7} {:>12} {:>7} {:>8}",
+        "scenario", "segments", "dropped", "drop secs", "live", "fallback/seg", "final", "recall"
     );
     for scenario in &report.scenarios {
         println!(
-            "{:<10} {:>9} {:>8} {:>9.1} {:>6.1}% {:>7.1}%",
+            "{:<10} {:>9} {:>8} {:>9.1} {:>6.1}% {:>11.1}% {:>6.1}% {:>7.1}%",
             scenario.name,
             scenario.segments,
             scenario.dropped,
             scenario.dropped_seconds,
+            scenario.live_accuracy * 100.0,
+            scenario.fallback_accuracy * 100.0,
             scenario.final_accuracy * 100.0,
             scenario.word_recall * 100.0,
         );
