@@ -3,6 +3,8 @@ import SwiftUI
 struct DonePage: View {
     @ObservedObject var state: SetupState
     let ariaKey: HotkeyKey
+    /// Nil when the ask holds a chord or nothing.
+    let askCombo: Aria_Daemon_V1_HotkeyCombo?
 
     var body: some View {
         Form {
@@ -11,7 +13,9 @@ struct DonePage: View {
                     if state.selections.hotkey {
                         if state.isHotkeyReady {
                             LabeledContent("Dictate", value: "Tap \(ariaKey.title)")
-                            LabeledContent("Ask your agent", value: ariaKey.gesture(for: .ask))
+                            if let askCombo {
+                                LabeledContent("Ask your agent", value: ariaKey.gesture(for: askCombo))
+                            }
                         } else {
                             LabeledContent("Dictate", value: "Works once Accessibility access is given")
                         }

@@ -14,7 +14,7 @@ use crate::config::{AssistantId, ConfigError, Environment};
 use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
 use crate::dictation::{DeliveryMode, DictationRequest, DictationSettings};
 use crate::history::Application;
-use crate::hotkey::HotkeyKey;
+use crate::hotkey::{Combo, HotkeyKey};
 use crate::primitives::private_document::DocumentError;
 use crate::transcription::{Language, LanguageCode, LanguageCodeError};
 
@@ -42,9 +42,9 @@ pub struct UserPreferences {
     /// Dictation types only what an enrolled voice said.
     pub own_voice_only: bool,
     pub dictation_hotkey: HotkeyKey,
-    /// Only the Mac app reads these.
-    pub ask_hotkey: Option<Chord>,
-    pub prompt_list_hotkey: Option<Chord>,
+    /// Only the Mac app reads these. `None` is off.
+    pub ask_hotkey: Option<Hotkey>,
+    pub prompt_list_hotkey: Option<Hotkey>,
     pub project_vocabulary: bool,
     pub vocabulary_directory: Option<crate::vocabulary::Directory>,
     pub application_overrides: ApplicationOverrides,
@@ -78,18 +78,40 @@ impl UserPreferences {
         }
     }
 
-    /// One chord can run only one thing: the ask, the prompt list, or a
-    /// prompt.
-    pub(super) fn shares_a_chord(&self) -> bool {
+    /// One shortcut can run only one thing: the ask, the prompt list, or a
+    /// prompt. Prompts hold chords only, so a combo can clash only between
+    /// the first two.
+    pub(super) fn shares_a_binding(&self) -> bool {
+        if self.ask_hotkey.is_some() && self.ask_hotkey == self.prompt_list_hotkey {
+            return true;
+        }
         let chords: Vec<Chord> = [self.ask_hotkey, self.prompt_list_hotkey]
             .into_iter()
-            .chain(self.prompts.entries().iter().map(Prompt::chord))
             .flatten()
+            .filter_map(Hotkey::chord)
+            .chain(self.prompts.entries().iter().filter_map(|prompt| prompt.chord()))
             .collect();
         chords
             .iter()
             .enumerate()
             .any(|(index, chord)| chords[..index].contains(chord))
+    }
+}
+
+/// What starts the ask or the prompt list: an Aria key combo, or a chord of
+/// the user's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hotkey {
+    Combo(Combo),
+    Chord(Chord),
+}
+
+impl Hotkey {
+    pub fn chord(self) -> Option<Chord> {
+        match self {
+            Self::Chord(chord) => Some(chord),
+            Self::Combo(_) => None,
+        }
     }
 }
 
@@ -108,8 +130,8 @@ impl Default for UserPreferences {
             auto_stop: Some(AutoStop::default()),
             own_voice_only: false,
             dictation_hotkey: HotkeyKey::RightOption,
-            ask_hotkey: None,
-            prompt_list_hotkey: None,
+            ask_hotkey: Some(Hotkey::Combo(Combo::Shift)),
+            prompt_list_hotkey: Some(Hotkey::Combo(Combo::Command)),
             project_vocabulary: false,
             vocabulary_directory: None,
             application_overrides: ApplicationOverrides::default(),
@@ -276,11 +298,11 @@ pub enum PreferenceStoreError {
     #[error("preference revision is exhausted")]
     RevisionExhausted,
 
-    #[error("one chord is set for two things")]
-    ChordInUse,
+    #[error("one shortcut is set for two things")]
+    BindingInUse,
 
-    #[error("preference file {} sets one chord for two things", path.display())]
-    SharedChord { path: PathBuf },
+    #[error("preference file {} sets one shortcut for two things", path.display())]
+    SharedBinding { path: PathBuf },
 
     #[error("preference state lock is poisoned")]
     LockPoisoned,

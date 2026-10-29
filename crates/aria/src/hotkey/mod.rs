@@ -69,9 +69,9 @@ impl HotkeyKey {
 }
 
 /// The Aria key held with Shift or Command alone. What a combo runs is the
-/// client's choice.
+/// client's choice, read off the preferences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Combo {
+pub enum Combo {
     Shift,
     Command,
 }

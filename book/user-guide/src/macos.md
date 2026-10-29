@@ -49,6 +49,9 @@ chose it. Hold it, tap a second key, then let go:
   again while Aria thinks to cancel.
 - **⌘ Command** shows the [prompt list](./prompts.md#pick-a-prompt-from-a-list).
 
+Each is a setting under **Settings → Shortcuts**: keep the combo, record a
+shortcut of your own instead, or turn it off.
+
 While an ask or prompt runs, pressing its combo again does nothing. The Aria
 key alone sends and cancels it.
 

@@ -79,17 +79,6 @@ extension Chord {
     }
 }
 
-extension Aria_Daemon_V1_Hotkey {
-    init(_ chord: Chord?) {
-        self.init()
-        if let chord { self.chord = chord.wire }
-    }
-
-    var storedChord: Chord? {
-        Chord(stored: chord, isSet: hasChord)
-    }
-}
-
 extension Aria_Daemon_V1_Prompt {
     var storedChord: Chord? {
         Chord(stored: chord, isSet: hasChord)

@@ -74,13 +74,14 @@ so a terminal runs each line as a command.
 
 ## Pick a prompt from a list
 
-1. Hold the Aria key (right Option, or Fn if you chose it), tap **⌘**, then
-   let go. A list shows up to nine prompts that are on.
+1. Hold the Aria key (right Option, or Fn if you chose it), tap **⌘** (or
+   the list's own shortcut from **Settings → Shortcuts**), then let go. A
+   list shows up to nine prompts that are on.
 2. Press a prompt's number to start it, then speak.
 3. Tap the Aria key to stop. Tap it once more to cancel.
 
-To open the list with a shortcut of your own, set **Prompt list shortcut** in
-**Settings → Shortcuts**.
+To open the list with a shortcut of your own, or to turn it off, change
+**Prompt list shortcut** in **Settings → Shortcuts**.
 
 **Esc** closes the list. It also closes by itself after eight seconds.
 While the list shows, the number keys and Esc go to the list, not to the app.

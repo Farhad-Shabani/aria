@@ -22,29 +22,34 @@ struct ShortcutsSettings: View {
                 }
                 // An unknown stored key stays untouched rather than shown as Right Option.
                 .disabled(editor.snapshot.storedDictationHotkey == nil)
-                LabeledContent("Dictate", value: "Tap, or hold to talk")
-                LabeledContent("Ask", value: ariaKey.gesture(for: .ask))
-                LabeledContent("Show prompt list", value: ariaKey.gesture(for: .promptList))
             } footer: {
                 Text(
-                    "Hold the Aria key, tap Shift or Command, then let go. Tap the Aria key alone to send, and again to cancel. Needs Accessibility access, and `hotkey.enabled` left on in the daemon config."
+                    "Tap to dictate, or hold to talk. Requires Accessibility access."
                 )
             }
-            Section("Ask") {
+            Section {
                 HotkeyRecorder(
                     title: "Shortcut",
-                    chord: editor.snapshot.askHotkey.storedChord,
+                    hotkey: editor.snapshot.askHotkey,
+                    combo: .shift,
+                    ariaKey: ariaKey,
                     binding: askChord
                 ) {
                     editor.set(\.askHotkey, to: Aria_Daemon_V1_Hotkey($0))
                 }
                 // Nothing to edit until the daemon sends its ask hotkey.
                 .disabled(!editor.snapshot.hasAskHotkey)
+            } header: {
+                Text("Ask")
+            } footer: {
+                Text("Tap the Aria key to send. Tap again to cancel.")
             }
             Section("Prompts") {
                 HotkeyRecorder(
                     title: "Prompt list shortcut",
-                    chord: editor.snapshot.promptListHotkey.storedChord,
+                    hotkey: editor.snapshot.promptListHotkey,
+                    combo: .command,
+                    ariaKey: ariaKey,
                     binding: promptListChord
                 ) {
                     editor.set(\.promptListHotkey, to: Aria_Daemon_V1_Hotkey($0))

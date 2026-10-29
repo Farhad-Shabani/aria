@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shownCommitted: String?
     private var shownProvisional: String?
     private var expiryTimer: Timer?
+    private var preferences: DaemonPreferences?
     private var askChordChange: AnyCancellable?
 
     override init() {
@@ -45,16 +46,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         super.init()
         events.onHotkey { [weak self] combo in
-            guard let action = ComboAction(combo: combo) else { return }
-            self?.run(action)
+            self?.run(combo)
         }
     }
 
-    /// A combo presses the same controller its chord would.
-    private func run(_ action: ComboAction) {
-        switch action {
+    /// A combo presses the controller whose shortcut it is. Before the
+    /// first snapshot nothing holds one.
+    private func run(_ combo: Aria_Daemon_V1_HotkeyCombo) {
+        guard let snapshot = preferences?.snapshot else { return }
+        switch ComboAction(combo: combo, in: snapshot) {
         case .ask: askHotkey.press()
         case .promptList: promptList.press()
+        case nil: break
         }
     }
 
@@ -62,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stored chords are watched rather than read through a SwiftUI
     /// `onChange`.
     func trackHotkeys(_ preferences: DaemonPreferences) {
+        self.preferences = preferences
         askChordChange = preferences.$snapshot
             .map { $0?.askHotkey.storedChord }
             .sink { [weak self] chord in

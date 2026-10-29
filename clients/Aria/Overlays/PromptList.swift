@@ -3,9 +3,9 @@ import Combine
 import SwiftUI
 
 /// Lists the prompts that are on, so one runs without its own chord: press
-/// Aria key + Command or the list's chord, then the prompt's number. While a
-/// run it started is going, that press does nothing; the Aria key drives
-/// the run.
+/// the list's shortcut, Aria key + Command unless changed, then the prompt's
+/// number. While a run it started is going, that press does nothing; the
+/// Aria key drives the run.
 ///
 /// The list takes no focus, so the app in front keeps its caret. Its keys
 /// are chords of their own, taken only while it shows.

@@ -107,6 +107,45 @@ public nonisolated enum Aria_Daemon_V1_HotkeyKey: SwiftProtobuf.Enum, Swift.Case
 
 }
 
+/// The Aria key held with Shift or Command alone.
+public nonisolated enum Aria_Daemon_V1_HotkeyCombo: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case shift // = 1
+  case command // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .shift
+    case 2: self = .command
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .shift: return 1
+    case .command: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_HotkeyCombo] = [
+    .unspecified,
+    .shift,
+    .command,
+  ]
+
+}
+
 public nonisolated struct Aria_Daemon_V1_GetPreferencesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -317,7 +356,8 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
     set {_uniqueStorage()._dictationHotkey = newValue}
   }
 
-  /// Starts an ask. The Aria key then sends and cancels it.
+  /// Starts an ask: Aria key + Shift unless changed. The Aria key then sends
+  /// and cancels it.
   public var askHotkey: Aria_Daemon_V1_Hotkey {
     get {_storage._askHotkey ?? Aria_Daemon_V1_Hotkey()}
     set {_uniqueStorage()._askHotkey = newValue}
@@ -327,7 +367,8 @@ public nonisolated struct Aria_Daemon_V1_UserPreferences: @unchecked Sendable {
   /// Clears the value of `askHotkey`. Subsequent reads from it will return its default value.
   public mutating func clearAskHotkey() {_uniqueStorage()._askHotkey = nil}
 
-  /// Lists the prompts that are on, so one runs without its own chord.
+  /// Lists the prompts that are on, so one runs without its own chord. Aria
+  /// key + Command unless changed.
   public var promptListHotkey: Aria_Daemon_V1_Hotkey {
     get {_storage._promptListHotkey ?? Aria_Daemon_V1_Hotkey()}
     set {_uniqueStorage()._promptListHotkey = newValue}
@@ -704,27 +745,40 @@ public nonisolated struct Aria_Daemon_V1_Chord: Sendable {
   public init() {}
 }
 
-/// One of the Mac app's shortcuts. A patch that sets it with no chord
-/// clears it.
+/// One of the Mac app's shortcuts. No binding means off, and a patch that
+/// sets it with no binding turns it off.
 public nonisolated struct Aria_Daemon_V1_Hotkey: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  public var binding: Aria_Daemon_V1_Hotkey.OneOf_Binding? = nil
+
   public var chord: Aria_Daemon_V1_Chord {
-    get {_chord ?? Aria_Daemon_V1_Chord()}
-    set {_chord = newValue}
+    get {
+      if case .chord(let v)? = binding {return v}
+      return Aria_Daemon_V1_Chord()
+    }
+    set {binding = .chord(newValue)}
   }
-  /// Returns true if `chord` has been explicitly set.
-  public var hasChord: Bool {self._chord != nil}
-  /// Clears the value of `chord`. Subsequent reads from it will return its default value.
-  public mutating func clearChord() {self._chord = nil}
+
+  public var combo: Aria_Daemon_V1_HotkeyCombo {
+    get {
+      if case .combo(let v)? = binding {return v}
+      return .unspecified
+    }
+    set {binding = .combo(newValue)}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public init() {}
+  public nonisolated enum OneOf_Binding: Equatable, Sendable {
+    case chord(Aria_Daemon_V1_Chord)
+    case combo(Aria_Daemon_V1_HotkeyCombo)
 
-  fileprivate var _chord: Aria_Daemon_V1_Chord? = nil
+  }
+
+  public init() {}
 }
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
@@ -737,6 +791,10 @@ nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProvidi
 
 nonisolated extension Aria_Daemon_V1_HotkeyKey: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HOTKEY_KEY_UNSPECIFIED\0\u{1}HOTKEY_KEY_RIGHT_OPTION\0\u{1}HOTKEY_KEY_FN\0")
+}
+
+nonisolated extension Aria_Daemon_V1_HotkeyCombo: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HOTKEY_COMBO_UNSPECIFIED\0\u{1}HOTKEY_COMBO_SHIFT\0\u{1}HOTKEY_COMBO_COMMAND\0")
 }
 
 nonisolated extension Aria_Daemon_V1_GetPreferencesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -1604,7 +1662,7 @@ nonisolated extension Aria_Daemon_V1_Chord: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Aria_Daemon_V1_Hotkey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Hotkey"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chord\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chord\0\u{1}combo\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1612,7 +1670,27 @@ nonisolated extension Aria_Daemon_V1_Hotkey: SwiftProtobuf.Message, SwiftProtobu
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._chord) }()
+      case 1: try {
+        var v: Aria_Daemon_V1_Chord?
+        var hadOneofValue = false
+        if let current = self.binding {
+          hadOneofValue = true
+          if case .chord(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.binding = .chord(v)
+        }
+      }()
+      case 2: try {
+        var v: Aria_Daemon_V1_HotkeyCombo?
+        try decoder.decodeSingularEnumField(value: &v)
+        if let v = v {
+          if self.binding != nil {try decoder.handleConflictingOneOf()}
+          self.binding = .combo(v)
+        }
+      }()
       default: break
       }
     }
@@ -1623,14 +1701,22 @@ nonisolated extension Aria_Daemon_V1_Hotkey: SwiftProtobuf.Message, SwiftProtobu
     // allocates stack space for every if/case branch local when no optimizations
     // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
     // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._chord {
+    switch self.binding {
+    case .chord?: try {
+      guard case .chord(let v)? = self.binding else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
+    }()
+    case .combo?: try {
+      guard case .combo(let v)? = self.binding else { preconditionFailure() }
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 2)
+    }()
+    case nil: break
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_Hotkey, rhs: Aria_Daemon_V1_Hotkey) -> Bool {
-    if lhs._chord != rhs._chord {return false}
+    if lhs.binding != rhs.binding {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 use tokio::sync::watch;
 
 use super::{
-    ApplicationOverrides, Chord, Language, PreferenceStoreError, Prompts, UserPreferences, file,
+    ApplicationOverrides, Hotkey, Language, PreferenceStoreError, Prompts, UserPreferences, file,
 };
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
@@ -35,8 +35,8 @@ pub struct PreferencePatch {
     pub auto_stop: Option<Option<AutoStop>>,
     pub own_voice_only: Option<bool>,
     pub dictation_hotkey: Option<HotkeyKey>,
-    pub ask_hotkey: Option<Option<Chord>>,
-    pub prompt_list_hotkey: Option<Option<Chord>>,
+    pub ask_hotkey: Option<Option<Hotkey>>,
+    pub prompt_list_hotkey: Option<Option<Hotkey>>,
     pub project_vocabulary: Option<bool>,
     pub vocabulary_directory: Option<Option<crate::vocabulary::Directory>>,
     /// Replaces every entry.
@@ -94,8 +94,8 @@ impl PreferenceStore {
 
         let preferences = patch.apply_to(&current.preferences);
         preferences.validate_assistant_models()?;
-        if preferences.shares_a_chord() {
-            return Err(PreferenceStoreError::ChordInUse);
+        if preferences.shares_a_binding() {
+            return Err(PreferenceStoreError::BindingInUse);
         }
         if preferences == current.preferences {
             return Ok(UpdateResult::Updated(current.clone()));
@@ -174,8 +174,9 @@ impl PreferencePatch {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Modifiers;
+    use super::super::{Chord, Modifiers};
     use super::*;
+    use crate::hotkey::Combo;
 
     #[test]
     fn assistant_models_persist_independently_and_empty_resets_to_default() {
@@ -546,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn one_chord_for_the_ask_and_the_prompt_list_is_refused() {
+    fn one_binding_for_the_ask_and_the_prompt_list_is_refused() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let store = PreferenceStore::open(dir.path().join("preferences.json")).unwrap();
         let control_option_a = Chord::new(
@@ -559,16 +560,20 @@ mod tests {
         )
         .expect("a chord");
 
-        let result = store.update(
-            0,
-            PreferencePatch {
-                ask_hotkey: Some(Some(control_option_a)),
-                prompt_list_hotkey: Some(Some(control_option_a)),
-                ..Default::default()
-            },
-        );
-
-        assert!(matches!(result, Err(PreferenceStoreError::ChordInUse)));
+        for shared in [Hotkey::Chord(control_option_a), Hotkey::Combo(Combo::Shift)] {
+            let result = store.update(
+                0,
+                PreferencePatch {
+                    ask_hotkey: Some(Some(shared)),
+                    prompt_list_hotkey: Some(Some(shared)),
+                    ..Default::default()
+                },
+            );
+            assert!(
+                matches!(result, Err(PreferenceStoreError::BindingInUse)),
+                "{shared:?}"
+            );
+        }
     }
 
     #[test]

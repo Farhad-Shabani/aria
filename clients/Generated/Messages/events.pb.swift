@@ -22,44 +22,6 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
-public nonisolated enum Aria_Daemon_V1_HotkeyCombo: SwiftProtobuf.Enum, Swift.CaseIterable {
-  public typealias RawValue = Int
-  case unspecified // = 0
-  case shift // = 1
-  case command // = 2
-  case UNRECOGNIZED(Int)
-
-  public init() {
-    self = .unspecified
-  }
-
-  public init?(rawValue: Int) {
-    switch rawValue {
-    case 0: self = .unspecified
-    case 1: self = .shift
-    case 2: self = .command
-    default: self = .UNRECOGNIZED(rawValue)
-    }
-  }
-
-  public var rawValue: Int {
-    switch self {
-    case .unspecified: return 0
-    case .shift: return 1
-    case .command: return 2
-    case .UNRECOGNIZED(let i): return i
-    }
-  }
-
-  // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Aria_Daemon_V1_HotkeyCombo] = [
-    .unspecified,
-    .shift,
-    .command,
-  ]
-
-}
-
 public nonisolated struct Aria_Daemon_V1_SubscribeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -186,10 +148,6 @@ public nonisolated struct Aria_Daemon_V1_HotkeyEvent: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
-
-nonisolated extension Aria_Daemon_V1_HotkeyCombo: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HOTKEY_COMBO_UNSPECIFIED\0\u{1}HOTKEY_COMBO_SHIFT\0\u{1}HOTKEY_COMBO_COMMAND\0")
-}
 
 nonisolated extension Aria_Daemon_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SubscribeRequest"

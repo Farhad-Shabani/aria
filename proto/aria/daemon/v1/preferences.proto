@@ -76,9 +76,11 @@ message UserPreferences {
   // Shortcuts
 
   HotkeyKey dictation_hotkey = 11;
-  // Starts an ask. The Aria key then sends and cancels it.
+  // Starts an ask: Aria key + Shift unless changed. The Aria key then sends
+  // and cancels it.
   Hotkey ask_hotkey = 12;
-  // Lists the prompts that are on, so one runs without its own chord.
+  // Lists the prompts that are on, so one runs without its own chord. Aria
+  // key + Command unless changed.
   Hotkey prompt_list_hotkey = 13;
 
   // Prompts
@@ -214,6 +216,13 @@ enum HotkeyKey {
   HOTKEY_KEY_FN = 2;
 }
 
+// The Aria key held with Shift or Command alone.
+enum HotkeyCombo {
+  HOTKEY_COMBO_UNSPECIFIED = 0;
+  HOTKEY_COMBO_SHIFT = 1;
+  HOTKEY_COMBO_COMMAND = 2;
+}
+
 // A key held with at least one modifier. A chord is registered rather than
 // watched, so unlike HotkeyKey it needs no Accessibility grant.
 message Chord {
@@ -225,8 +234,11 @@ message Chord {
   bool command = 5;
 }
 
-// One of the Mac app's shortcuts. A patch that sets it with no chord
-// clears it.
+// One of the Mac app's shortcuts. No binding means off, and a patch that
+// sets it with no binding turns it off.
 message Hotkey {
-  Chord chord = 1;
+  oneof binding {
+    Chord chord = 1;
+    HotkeyCombo combo = 2;
+  }
 }
