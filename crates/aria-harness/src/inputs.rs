@@ -4,6 +4,7 @@
 //! as environment variables rather than checked-in configuration. An unset
 //! variable yields `None` so the caller can skip instead of failing.
 
+use std::env::VarError;
 use std::path::PathBuf;
 
 const RUNS_ENV: &str = "ARIA_BENCH_RUNS";
@@ -15,6 +16,9 @@ pub enum InputError {
 
     #[error("{RUNS_ENV} must be a positive integer, got {value:?}")]
     InvalidRunCount { value: String },
+
+    #[error("{variable} must be 0 or 1")]
+    InvalidSwitch { variable: String },
 }
 
 /// The run count the environment asks for, or `default`. Zero and non-numbers
@@ -47,6 +51,22 @@ pub fn path_input(variable: &str) -> Result<Option<PathBuf>, InputError> {
     }
 }
 
+/// Whether the environment turns `variable` on. Unset is off; anything but
+/// `0` or `1` is rejected rather than read as either.
+pub fn switch(variable: &str) -> Result<bool, InputError> {
+    parse_switch(variable, std::env::var(variable))
+}
+
+fn parse_switch(variable: &str, value: Result<String, VarError>) -> Result<bool, InputError> {
+    match value.as_deref() {
+        Err(VarError::NotPresent) | Ok("0") => Ok(false),
+        Ok("1") => Ok(true),
+        _ => Err(InputError::InvalidSwitch {
+            variable: variable.to_owned(),
+        }),
+    }
+}
+
 fn expand_home(value: &str, variable: &str) -> Result<PathBuf, InputError> {
     let home = || {
         std::env::var("HOME").map_err(|_unset| InputError::HomeNotSet {
@@ -59,5 +79,22 @@ fn expand_home(value: &str, variable: &str) -> Result<PathBuf, InputError> {
     match value.strip_prefix("~/") {
         Some(relative) => Ok(PathBuf::from(home()?).join(relative)),
         None => Ok(PathBuf::from(value)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_switch_is_off_unless_set_to_one_and_rejects_anything_else() {
+        let parse = |value| parse_switch("ARIA_BENCH_SWITCH", value);
+        assert!(!parse(Err(VarError::NotPresent)).unwrap());
+        assert!(!parse(Ok("0".into())).unwrap());
+        assert!(parse(Ok("1".into())).unwrap());
+        for invalid in ["", "true", "false", "2", " 1"] {
+            assert!(parse(Ok(invalid.into())).is_err());
+        }
+        assert!(parse(Err(VarError::NotUnicode("1".into()))).is_err());
     }
 }

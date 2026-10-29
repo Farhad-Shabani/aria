@@ -5,7 +5,7 @@ use anyhow::{Context, ensure};
 use aria::config::{TranscriptionConfig, TranscriptionDevice, backend};
 use aria::transcription::{Cadence, Stream};
 use aria_harness::{
-    artifact::{self, Provenance},
+    artifact::{self, Provenance, TextFingerprint},
     inputs, stats,
 };
 use serde::{Deserialize, Serialize};
@@ -250,6 +250,10 @@ impl Options {
     }
 }
 
+/// Bumped when a run's fields change: a baseline of another schema cannot
+/// be compared.
+const SCHEMA: u32 = 2;
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Run {
     #[serde(skip)]
@@ -284,7 +288,7 @@ impl Run {
         let output = prepare_output(&directory, kind)?;
         Ok(Self {
             output: Some(output),
-            schema: 1,
+            schema: SCHEMA,
             kind: kind.into(),
             provenance,
             daemon_sha256: None,
@@ -294,11 +298,7 @@ impl Run {
             expected_backends: backends,
             entries: Vec::new(),
             failure: None,
-            require_same_text: match std::env::var("ARIA_BENCH_REQUIRE_SAME_TEXT").as_deref() {
-                Ok("1") => true,
-                Err(std::env::VarError::NotPresent) | Ok("0") => false,
-                _ => anyhow::bail!("ARIA_BENCH_REQUIRE_SAME_TEXT must be 0 or 1"),
-            },
+            require_same_text: inputs::switch("ARIA_BENCH_REQUIRE_SAME_TEXT")?,
         })
     }
 
@@ -370,9 +370,16 @@ impl Observation {
     }
 }
 
+fn text_bytes(fingerprint: &serde_json::Value) -> anyhow::Result<u64> {
+    let fingerprint =
+        TextFingerprint::deserialize(fingerprint).context("missing text fingerprint")?;
+    ensure!(fingerprint.is_valid(), "invalid text fingerprint");
+    Ok(fingerprint.utf8_bytes)
+}
+
 fn validate(run: &Run) -> anyhow::Result<()> {
     ensure!(
-        run.schema == 1 && run.failure.is_none(),
+        run.schema == SCHEMA && run.failure.is_none(),
         "incomplete or unsupported benchmark artifact"
     );
     let mut backends = run
@@ -476,15 +483,16 @@ fn validate(run: &Run) -> anyhow::Result<()> {
             );
             for (index, row) in entry.delivery_traces.iter().enumerate() {
                 let readback = if receipt_evidence {
-                    &row["target"]["text"]
+                    &row["target"]["text_fingerprint"]
                 } else if streaming {
-                    &row["target_appended_text"]
+                    &row["target_appended_text_fingerprint"]
                 } else {
-                    &row["clipboard_text"]
+                    &row["clipboard_text_fingerprint"]
                 };
+                let result_bytes = text_bytes(&row["text_fingerprint"])?;
                 ensure!(
-                    row["text"].is_string() && &row["text"] == readback,
-                    "delivered text differs from result"
+                    &row["text_fingerprint"] == readback,
+                    "delivered text fingerprint differs from result"
                 );
                 if receipt_evidence {
                     let trial = validate_receipts(&row["target"])?;
@@ -522,16 +530,15 @@ fn validate(run: &Run) -> anyhow::Result<()> {
                         .as_array()
                         .context("missing corrected segment evidence")?;
                     ensure!(!segments.is_empty(), "missing corrected segment evidence");
-                    let text = segments
-                        .iter()
-                        .map(|segment| {
-                            segment["text"]
-                                .as_str()
-                                .context("missing corrected segment text")
-                        })
-                        .collect::<anyhow::Result<Vec<_>>>()?
-                        .join(" ");
-                    ensure!(row["text"] == text, "corrected segments differ from result");
+                    let segment_bytes = segments.iter().try_fold(0u64, |bytes, segment| {
+                        bytes
+                            .checked_add(text_bytes(&segment["text_fingerprint"])?)
+                            .context("segment byte count overflow")
+                    })?;
+                    ensure!(
+                        segment_bytes.checked_add(segments.len() as u64 - 1) == Some(result_bytes),
+                        "corrected segment reconstruction differs from result"
+                    );
                 }
             }
         }
@@ -546,7 +553,7 @@ fn validate_receipts(target: &serde_json::Value) -> anyhow::Result<u64> {
         target["clock"] == "CLOCK_UPTIME_RAW",
         "invalid target clock"
     );
-    let text = target["text"].as_str().context("missing target text")?;
+    let text_bytes = text_bytes(&target["text_fingerprint"])?;
     let receipts = target["receipts"]
         .as_array()
         .context("missing target receipts")?;
@@ -561,7 +568,7 @@ fn validate_receipts(target: &serde_json::Value) -> anyhow::Result<u64> {
             .as_u64()
             .context("missing target receipt byte count")?;
         ensure!(
-            elapsed_us >= previous_us && bytes > previous_bytes && bytes <= text.len() as u64,
+            elapsed_us >= previous_us && bytes > previous_bytes && bytes <= text_bytes,
             "target receipts are out of order"
         );
         if index == 0 {
@@ -585,7 +592,7 @@ fn validate_receipts(target: &serde_json::Value) -> anyhow::Result<u64> {
         previous_bytes = bytes;
     }
     ensure!(
-        previous_bytes == text.len() as u64,
+        previous_bytes == text_bytes,
         "final target byte count differs from text"
     );
     ensure!(
@@ -640,13 +647,13 @@ fn compare(current: &Run, recorded: &Run, metric: &str, margin: f64) -> anyhow::
                 .delivery_traces
                 .iter()
                 .skip(current.warmups as usize)
-                .map(|row| &row["text"])
+                .map(|row| &row["text_fingerprint"])
                 .collect();
             let baseline_text: Vec<_> = before
                 .delivery_traces
                 .iter()
                 .skip(recorded.warmups as usize)
-                .map(|row| &row["text"])
+                .map(|row| &row["text_fingerprint"])
                 .collect();
             ensure!(
                 !current_text.is_empty() && current_text == baseline_text,
@@ -725,11 +732,12 @@ pub(crate) fn stream_description(stream: Stream) -> String {
 #[allow(dead_code, unused_imports)]
 mod tests {
     use super::*;
+    use aria_harness::artifact::text_fingerprint;
 
     fn run(samples: &[u64]) -> Run {
         Run {
             output: None,
-            schema: 1,
+            schema: SCHEMA,
             kind: "first-text".into(),
             provenance: Provenance {
                 run_id: "test".into(),
@@ -792,7 +800,7 @@ mod tests {
                 entry.samples_ms.insert(metric.into(), samples.to_vec());
                 entry.warmup_ms.insert(metric.into(), vec![100]);
             }
-            entry.delivery_traces = (0..samples.len()+1).map(|_| serde_json::json!({"text": "open aria now", "clipboard_text": "open aria now"})).collect();
+            entry.delivery_traces = (0..samples.len()+1).map(|_| serde_json::json!({"text_fingerprint": text_fingerprint("open aria now").unwrap(), "clipboard_text_fingerprint": text_fingerprint("open aria now").unwrap()})).collect();
             run
         }
         let baseline = delivery(&[100; 30]);
@@ -800,8 +808,7 @@ mod tests {
         assert!(compare(&delivery(&[150; 30]), &baseline, "capture->delivered", 0.05).is_err());
         for text in ["open aria", "open aria now now"] {
             let mut candidate = delivery(&[100; 30]);
-            candidate.entries[0].delivery_traces[1] =
-                serde_json::json!({"text": text, "clipboard_text": text});
+            candidate.entries[0].delivery_traces[1] = serde_json::json!({"text_fingerprint": text_fingerprint(text).unwrap(), "clipboard_text_fingerprint": text_fingerprint(text).unwrap()});
             assert!(compare(&candidate, &baseline, "capture->delivered", 0.05).is_err());
         }
     }
@@ -830,13 +837,33 @@ mod tests {
         entry.delivery_traces = (0..31)
             .map(|_| {
                 serde_json::json!({
-                    "text": "open aria now", "target_appended_text": "open aria now",
+                    "text_fingerprint": text_fingerprint("open aria now").unwrap(),
+                    "target_appended_text_fingerprint": text_fingerprint("open aria now").unwrap(),
                     "capture_to_first_segment_ms": 100,
-                    "corrected_segments": [{"text": "open aria"}, {"text": "now"}]
+                    "corrected_segments": [{"text_fingerprint": text_fingerprint("open aria").unwrap()}, {"text_fingerprint": text_fingerprint("now").unwrap()}]
                 })
             })
             .collect();
         run
+    }
+
+    #[test]
+    fn delivery_artifacts_preserve_comparisons_without_transcript_text() {
+        let baseline = streaming();
+        let encoded = serde_json::to_string(&baseline).unwrap();
+        assert!(!encoded.contains("open aria"));
+        assert!(!encoded.contains("now"));
+        let decoded: Run = serde_json::from_str(&encoded).unwrap();
+        assert!(compare(&decoded, &baseline, "capture->first-segment", 0.05).is_ok());
+        for invalid in [
+            serde_json::json!({"json_sha256": "x".repeat(64), "utf8_bytes": 12}),
+            serde_json::json!({"json_sha256": "a".repeat(64)}),
+            serde_json::json!({"utf8_bytes": 12}),
+        ] {
+            let mut candidate = streaming();
+            candidate.entries[0].delivery_traces[1]["text_fingerprint"] = invalid;
+            assert!(validate(&candidate).is_err());
+        }
     }
 
     #[test]
@@ -847,7 +874,7 @@ mod tests {
         assert!(compare(&streaming(), &baseline, "release->delivered", 0.05).is_err());
         for field in [
             "capture_to_first_segment_ms",
-            "target_appended_text",
+            "target_appended_text_fingerprint",
             "corrected_segments",
         ] {
             let mut candidate = streaming();
@@ -855,11 +882,14 @@ mod tests {
             assert!(compare(&candidate, &baseline, "capture->first-segment", 0.05).is_err());
         }
         for (field, value) in [
-            ("target_appended_text", serde_json::json!("open arianow")),
+            (
+                "target_appended_text_fingerprint",
+                serde_json::json!(text_fingerprint("open arianow").unwrap()),
+            ),
             ("capture_to_first_segment_ms", serde_json::json!(99)),
             (
                 "corrected_segments",
-                serde_json::json!([{"text": "open"}, {"text": "now"}]),
+                serde_json::json!([{"text_fingerprint": text_fingerprint("open").unwrap()}, {"text_fingerprint": text_fingerprint("now").unwrap()}]),
             ),
         ] {
             let mut candidate = streaming();
@@ -889,13 +919,13 @@ mod tests {
                 entry.warmup_ms.insert(metric.into(), vec![duration]);
             }
             for (index, row) in entry.delivery_traces.iter_mut().enumerate() {
-                row["text"] = serde_json::json!("héllo world");
-                row["corrected_segments"] =
-                    serde_json::json!([{"text": "héllo"}, {"text": "world"}]);
+                row["text_fingerprint"] =
+                    serde_json::json!(text_fingerprint("héllo world").unwrap());
+                row["corrected_segments"] = serde_json::json!([{"text_fingerprint": text_fingerprint("héllo").unwrap()}, {"text_fingerprint": text_fingerprint("world").unwrap()}]);
                 row["target"] = serde_json::json!({
                     "trial": index + 40,
                     "clock": "CLOCK_UPTIME_RAW",
-                    "text": "héllo world",
+                    "text_fingerprint": text_fingerprint("héllo world").unwrap(),
                     "request_to_first_receipt_ms": 100,
                     "request_to_final_receipt_ms": 200,
                     "receipts": [
@@ -903,7 +933,9 @@ mod tests {
                         {"elapsed_us": 200_000, "gap_us": 100_000, "utf8_bytes": 12}
                     ]
                 });
-                row.as_object_mut().unwrap().remove("target_appended_text");
+                row.as_object_mut()
+                    .unwrap()
+                    .remove("target_appended_text_fingerprint");
             }
             run
         }
@@ -929,7 +961,10 @@ mod tests {
             ("/trial", serde_json::json!(0)),
             ("/trial", serde_json::json!(40)),
             ("/clock", serde_json::json!("unix_us")),
-            ("/text", serde_json::json!("hello world")),
+            (
+                "/text_fingerprint",
+                serde_json::json!(text_fingerprint("hello world").unwrap()),
+            ),
             ("/receipts", serde_json::json!([])),
             ("/receipts/0/gap_us", serde_json::json!(0)),
             ("/receipts/1/elapsed_us", serde_json::json!(99_999)),

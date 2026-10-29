@@ -6,17 +6,19 @@ use crate::audio::canonical_samples;
 use crate::primitives::error_chain;
 use crate::segmentation::{Activity, ChunkShape, SegmentationError, Segmenter};
 use crate::speaker::changes::{Continuity, Evidence};
-use crate::speaker::{Diarizer, Embedder, Label, OWN_VOICE_THRESHOLD, Role, SpeakerName};
+use crate::speaker::{Diarizer, Embedder, Label, Role, SpeakerName};
 use crate::voice_activity::{LEAD_IN_FRAMES, Progress, SpeechMap};
 
+mod reading;
 #[cfg(test)]
 mod tests;
+
+use reading::{LEAST_READ_SAMPLES, Reading, read};
 
 /// How much new audio a turn takes before its voice is checked again.
 const CHECK_EVERY_SAMPLES: usize = canonical_samples(Duration::from_millis(500)) as usize;
 /// A turn this long that has not passed as the owner's is another voice's.
-/// The owner's own voice scores near the bar on a second of speech, so a
-/// failing score is not trusted before this.
+/// No check scores more of a turn than this.
 const TURN_JUDGED_SAMPLES: usize = canonical_samples(Duration::from_secs(3)) as usize;
 /// The window at the end of a judged turn, checked for a speaker change
 /// without a pause between. Audio this recent is not stable: a change found
@@ -29,10 +31,6 @@ const TURN_GAP_SAMPLES: usize = canonical_samples(crate::voice_activity::UTTERAN
 /// stable as the owner's. Measured on two live voices: a 1.5 s window
 /// ending in 0.4 s of another voice scored 0.46–0.47, in 0.5 s 0.43–0.44.
 const STABLE_THRESHOLD: f32 = 0.45;
-/// Below this, the recent window of the owner's turn is someone else.
-/// Measured on 1.5 s windows: the owner scored 0.39 or more, another voice
-/// 0.32 or less.
-const SPEAKER_CHANGE_THRESHOLD: f32 = 0.3;
 
 /// Cuts one recording into turns and judges each one. The diarizer scores
 /// whose voice a window is. The segmenter, when there is one, checks a
@@ -394,7 +392,56 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         {
             turn.judgment = judgment;
         }
+        self.settle_unverified();
         self.timeline.open = self.open.is_some();
+    }
+
+    /// A turn that closed too short to judge by its voice is another voice's
+    /// when the segmenter hears the voice change from the owner's latest
+    /// turn. It never becomes the owner's this way: that takes the owner's
+    /// voiceprint.
+    fn settle_unverified(&mut self) {
+        let Some(turn) = self.timeline.turns.last() else {
+            return;
+        };
+        if turn.judgment != Judgment::Unverified {
+            return;
+        }
+        let candidate = turn.span.clone();
+        let Some(owner) = self
+            .timeline
+            .turns
+            .iter()
+            .rev()
+            .skip(1)
+            .find(|turn| turn.judgment == Judgment::Owner)
+            .map(|turn| {
+                turn.span
+                    .end
+                    .saturating_sub(RECENT_SAMPLES as u64)
+                    .max(turn.span.start)..turn.span.end
+            })
+        else {
+            return;
+        };
+        let Some(continuity) = &mut self.continuity else {
+            return;
+        };
+        if owner.is_empty() || continuity.audio(&owner).is_err() {
+            return;
+        }
+        match continuity.verify(Some(&owner), &candidate, TURN_JUDGED_SAMPLES) {
+            Ok(Evidence::Replaced { .. }) => {
+                if let Some(turn) = self.timeline.turns.last_mut() {
+                    turn.judgment = Judgment::Other;
+                }
+            }
+            Ok(Evidence::Reassess(_) | Evidence::Unresolved) => {}
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "voice continuity could not be judged");
+                self.timeline.break_off();
+            }
+        }
     }
 
     /// Checks the open turn's voice. A pending turn passes or, once old
@@ -435,13 +482,21 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         let matched_guest = voice
             .as_ref()
             .is_some_and(|voice| voice.matched_role == Some(Role::Guest));
+        let reading = score.map(|score| read(score, spoken.len()));
+        let passed = reading == Some(Reading::Owner);
         let open = self.open.as_mut().expect("the checked turn is open");
-        if voice.is_some() && !input.is_empty() {
+        // An earlier check heard another voice in this turn, so a passing one
+        // means the owner began partway through it.
+        let owner_began = passed && open.doubted;
+        // Once doubted, the anchor stays on the voice that raised the doubt.
+        // A later window can reach into the owner's speech.
+        if voice.is_some() && !input.is_empty() && !open.doubted {
             open.anchor = Some(input.clone());
         }
         open.scored |= score.is_some();
         open.doubted |= matched_guest
-            || score.is_some_and(|score| !score.is_finite() || score < SPEAKER_CHANGE_THRESHOLD);
+            || reading == Some(Reading::Other)
+            || score.is_some_and(|score| !score.is_finite());
         let verdict = open.verdict(length, closing, self.diarizer.owners());
         if let Some(voice) = voice {
             let heard = self.assign_label(input, &voice);
@@ -452,12 +507,27 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             .turns
             .last_mut()
             .expect("the checked turn is open");
-        if score.is_some_and(|score| score >= OWN_VOICE_THRESHOLD) {
-            turn.judgment = Judgment::Owner;
-        } else if let Some(judgment) = verdict {
-            turn.judgment = judgment;
+        // Once the owner began, the verified change decides the doubted part.
+        if !owner_began {
+            if passed {
+                turn.judgment = Judgment::Owner;
+            } else if let Some(judgment) = verdict {
+                turn.judgment = judgment;
+            }
         }
         log_check(turn, score, length);
+        if owner_began {
+            let doubted = self.timeline.turns.len() - 1;
+            self.propose_owner_start(silence);
+            // A split the segmenter could not verify leaves the doubted part
+            // behind the owner's proposed start.
+            if doubted + 1 < self.timeline.turns.len()
+                && self.timeline.turns[doubted].judgment == Judgment::Pending
+            {
+                self.timeline.turns[doubted].judgment = Judgment::Other;
+            }
+            return;
+        }
         // The bar was measured on windows this long; a longer one dilutes
         // another voice at its end.
         if length <= RECENT_SAMPLES {
@@ -505,7 +575,8 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         match judged {
             Judgment::Owner
                 if can_split
-                    && similarity.is_some_and(|score| score < SPEAKER_CHANGE_THRESHOLD) =>
+                    && similarity
+                        .is_some_and(|score| read(score, recent_len) == Reading::Other) =>
             {
                 // Not before audio an earlier check heard as the owner's.
                 let unstable = self
@@ -513,27 +584,15 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
                     .saturating_sub(silence as u64)
                     .saturating_sub(self.timeline.stable_to);
                 let changed = recent_len.min(unstable as usize);
-                self.split(voiced_len - changed, Judgment::Pending, similarity);
+                self.split(voiced_len - changed, Judgment::Pending, similarity, true);
                 return;
             }
             Judgment::Other
-                if can_split && similarity.is_some_and(|score| score >= OWN_VOICE_THRESHOLD) =>
+                if can_split
+                    && similarity
+                        .is_some_and(|score| read(score, recent_len) == Reading::Owner) =>
             {
-                if let Some((from, similarity)) = self.owner_since_a_pause(silence) {
-                    self.propose_owner(from, silence, Some(similarity));
-                    return;
-                }
-                let Some(open) = self.open.as_ref() else {
-                    return;
-                };
-                let voiced = spoken(&open.audio, silence);
-                let newest = tail(voiced, CHECK_EVERY_SAMPLES);
-                if let Some(newest_voice) = score(self.diarizer, &mut self.timeline, newest)
-                    && newest_voice
-                        .owner
-                        .is_some_and(|score| score >= OWN_VOICE_THRESHOLD)
-                {
-                    self.propose_owner(voiced.len() - newest.len(), silence, newest_voice.owner);
+                if self.propose_owner_start(silence) {
                     return;
                 }
             }
@@ -544,9 +603,35 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         }
     }
 
+    /// Proposes where the owner began in the open turn: at a pause, or else
+    /// within the newest half second. `false` when that half second is not
+    /// the owner's.
+    fn propose_owner_start(&mut self, silence: usize) -> bool {
+        if let Some((from, similarity)) = self.owner_since_a_pause(silence) {
+            self.propose_owner(from, silence, Some(similarity));
+            return true;
+        }
+        let Some(open) = self.open.as_ref() else {
+            return false;
+        };
+        let voiced = spoken(&open.audio, silence);
+        let newest = tail(voiced, LEAST_READ_SAMPLES);
+        let Some(newest_voice) = score(self.diarizer, &mut self.timeline, newest) else {
+            return false;
+        };
+        if !newest_voice
+            .owner
+            .is_some_and(|score| read(score, newest.len()) == Reading::Owner)
+        {
+            return false;
+        }
+        self.propose_owner(voiced.len() - newest.len(), silence, newest_voice.owner);
+        true
+    }
+
     fn propose_owner(&mut self, from: usize, silence: usize, similarity: Option<f32>) {
         if self.continuity.is_none() {
-            self.split(from, Judgment::Owner, similarity);
+            self.split(from, Judgment::Owner, similarity, false);
             return;
         }
         let Some(open) = self.open.as_ref() else {
@@ -643,10 +728,11 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
             self.timeline.break_off();
             return None;
         }
-        let judgment = if similarity >= OWN_VOICE_THRESHOLD {
+        let reading = read(similarity, (range.end - range.start) as usize);
+        let judgment = if reading == Reading::Owner {
             Judgment::Owner
         } else if reassessed
-            || similarity < SPEAKER_CHANGE_THRESHOLD
+            || reading == Reading::Other
             || voice.matched_role == Some(Role::Guest)
             || range.end - range.start >= TURN_JUDGED_SAMPLES as u64
         {
@@ -675,11 +761,11 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
 
     fn apply_change(&mut self, judgment: Judgment, range: Range<u64>, voice: Scored) {
         if judgment == Judgment::Owner {
-            let at = range.start.max(self.timeline.stable_to);
-            let replace =
-                self.timeline.turns.last().is_some_and(|turn| {
-                    turn.judgment == Judgment::Pending && at <= turn.span.start
-                });
+            // Evidence from the pending turn's start judges all of it: none of
+            // its audio has been let out, so nothing stable is revised.
+            let replace = self.timeline.turns.last().is_some_and(|turn| {
+                turn.judgment == Judgment::Pending && range.start <= turn.span.start
+            });
             if let Some(turn) = self.timeline.turns.last_mut()
                 && turn.judgment == Judgment::Pending
             {
@@ -724,7 +810,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         let from = at
             .saturating_sub(retained_from)
             .min(open.audio.len() as u64) as usize;
-        self.split(from, judgment, similarity);
+        self.split(from, judgment, similarity, false);
     }
 
     /// Who the audio over `span` sounds like: an enrolled voice, or, when
@@ -835,8 +921,8 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
     }
 
     /// Ends the open turn at `from`, an index into its audio, and opens a
-    /// new turn there.
-    fn split(&mut self, from: usize, judgment: Judgment, score: Option<f32>) {
+    /// new turn there. `doubted` when `score` read as another voice.
+    fn split(&mut self, from: usize, judgment: Judgment, score: Option<f32>, doubted: bool) {
         let end = self.position();
         let Some(open) = self.open.as_mut() else {
             return;
@@ -852,8 +938,7 @@ impl<'a, E: Embedder, S: Segmenter> VoiceprintTracker<'a, E, S> {
         open.anchor = None;
         open.proposed = None;
         open.scored = score.is_some();
-        open.doubted =
-            score.is_some_and(|score| !score.is_finite() || score < SPEAKER_CHANGE_THRESHOLD);
+        open.doubted = doubted;
         let at = end - open.audio.len() as u64;
         if let Some(turn) = self.timeline.turns.last_mut() {
             turn.span.end = at;

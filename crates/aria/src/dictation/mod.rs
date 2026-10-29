@@ -13,6 +13,8 @@ mod execution;
 mod level;
 #[cfg(target_os = "macos")]
 mod output;
+#[cfg(test)]
+mod own_voice_eval;
 mod pipeline;
 mod rewrites;
 pub(crate) mod subscribers;

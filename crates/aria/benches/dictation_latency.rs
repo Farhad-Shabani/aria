@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use aria::config::{TranscriptionConfig, TranscriptionDevice, backend};
 use aria_harness::{Sandbox, inputs, log, start_service, stats, yaml_string};
 
@@ -13,11 +13,7 @@ const RELEASE_TO_DELIVERED: &str = "release->delivered";
 
 fn main() -> anyhow::Result<()> {
     let options = engines::Options::from_environment()?;
-    let streaming = match std::env::var("ARIA_BENCH_STREAMING").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("0") => false,
-        Ok("1") => true,
-        _ => bail!("ARIA_BENCH_STREAMING must be 0 or 1"),
-    };
+    let streaming = inputs::switch("ARIA_BENCH_STREAMING")?;
     let metric = if streaming {
         "request->first-receipt"
     } else {
@@ -38,6 +34,9 @@ fn main() -> anyhow::Result<()> {
     let binary = inputs::path_input("ARIA_BENCH_DAEMON")?
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_aria")));
     let preparation = dictation_delivery::Preparation::load(streaming)?;
+    if preparation.own_voice_only {
+        require_own_voice(inputs.speaker.as_ref())?;
+    }
     let mut run = engines::Run::new(
         "dictation-latency",
         &inputs.wav,
@@ -63,7 +62,7 @@ fn main() -> anyhow::Result<()> {
             let mut observation = engines::Observation::new(
                 engine,
                 &format!(
-                    "{mode}; realtime; {}; language=en; {}; personal={}",
+                    "{mode}; realtime; {}; language=en; {}; personal={}; speaker={}; own_voice_only={}",
                     if streaming {
                         "insert; streaming; manual"
                     } else {
@@ -74,7 +73,9 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         "rpc-delivery-v1"
                     },
-                    preparation.personal_identity()?
+                    preparation.personal_identity()?,
+                    inputs.speaker_identity()?,
+                    preparation.own_voice_only
                 ),
             )?;
             let result = (|| {
@@ -112,6 +113,14 @@ fn main() -> anyhow::Result<()> {
 struct BenchInputs {
     engines: Vec<engines::BenchEngine>,
     wav: PathBuf,
+    speaker: Option<SpeakerInputs>,
+}
+
+struct SpeakerInputs {
+    model: PathBuf,
+    speakers_dir: PathBuf,
+    /// Owner-only dictation refuses to run without it.
+    segmentation: Option<PathBuf>,
 }
 
 impl BenchInputs {
@@ -127,12 +136,94 @@ impl BenchInputs {
         Ok(Some(Self {
             engines: discovered,
             wav,
+            speaker: speaker_inputs(
+                inputs::path_input("ARIA_BENCH_SPEAKER_MODEL")?,
+                inputs::path_input("ARIA_BENCH_SPEAKERS_DIR")?,
+                inputs::path_input("ARIA_BENCH_SEGMENTATION_MODEL")?,
+            )?,
         }))
     }
 
     fn config(&self, engine: &engines::BenchEngine) -> anyhow::Result<String> {
-        bench_config(engine, &self.wav)
+        bench_config(engine, &self.wav, self.speaker.as_ref())
     }
+
+    fn speaker_identity(&self) -> anyhow::Result<String> {
+        let Some(speaker) = &self.speaker else {
+            return Ok("disabled".into());
+        };
+        let segmentation = match &speaker.segmentation {
+            Some(model) => aria_harness::artifact::fingerprint(model)?,
+            None => "none".into(),
+        };
+        Ok(format!(
+            "{}:{}:{segmentation}",
+            aria_harness::artifact::fingerprint(&speaker.model)?,
+            aria_harness::artifact::fingerprint(&speaker.speakers_dir)?
+        ))
+    }
+}
+
+fn speaker_inputs(
+    model: Option<PathBuf>,
+    speakers_dir: Option<PathBuf>,
+    segmentation: Option<PathBuf>,
+) -> anyhow::Result<Option<SpeakerInputs>> {
+    match (model, speakers_dir) {
+        (None, None) => {
+            ensure!(
+                segmentation.is_none(),
+                "ARIA_BENCH_SEGMENTATION_MODEL requires ARIA_BENCH_SPEAKER_MODEL and ARIA_BENCH_SPEAKERS_DIR"
+            );
+            Ok(None)
+        }
+        (Some(model), Some(speakers_dir)) => {
+            ensure!(model.is_file(), "speaker model must be a file");
+            ensure!(
+                speakers_dir.is_dir(),
+                "the speakers directory must be a directory"
+            );
+            let segmentation = match segmentation {
+                Some(segmentation) => {
+                    ensure!(segmentation.is_file(), "segmentation model must be a file");
+                    Some(segmentation.canonicalize()?)
+                }
+                None => None,
+            };
+            Ok(Some(SpeakerInputs {
+                model: model.canonicalize()?,
+                speakers_dir: speakers_dir.canonicalize()?,
+                segmentation,
+            }))
+        }
+        _ => bail!("set both ARIA_BENCH_SPEAKER_MODEL and ARIA_BENCH_SPEAKERS_DIR"),
+    }
+}
+
+fn require_own_voice(speaker: Option<&SpeakerInputs>) -> anyhow::Result<()> {
+    let speaker = speaker.context(
+        "ARIA_BENCH_OWN_VOICE_ONLY=1 requires ARIA_BENCH_SPEAKER_MODEL and ARIA_BENCH_SPEAKERS_DIR",
+    )?;
+    ensure!(
+        speaker.segmentation.is_some(),
+        "ARIA_BENCH_OWN_VOICE_ONLY=1 requires ARIA_BENCH_SEGMENTATION_MODEL"
+    );
+    require_owner(&speaker.speakers_dir)
+}
+
+fn require_owner(speakers_dir: &Path) -> anyhow::Result<()> {
+    use aria::speaker::{ProfileStore, Role};
+    use aria_speaker::wespeaker;
+    let stored =
+        ProfileStore::open(speakers_dir).read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM)?;
+    ensure!(
+        stored
+            .profiles
+            .iter()
+            .any(|profile| profile.role == Role::Owner),
+        "ARIA_BENCH_OWN_VOICE_ONLY=1 requires a compatible enrolled owner"
+    );
+    Ok(())
 }
 
 fn announce(inputs: &BenchInputs, options: &engines::Options, streaming: bool) {
@@ -239,18 +330,40 @@ fn measure(
     }
     outcome?;
     stopped?;
-    verify_stage_coverage(&daemon_log?)?;
+    let daemon_log = daemon_log?;
+    if preparation.own_voice_only {
+        verify_own_voice(&daemon_log)?;
+    }
+    verify_stage_coverage(&daemon_log)?;
     Ok(())
 }
 
-fn bench_config(engine: &engines::BenchEngine, wav: &Path) -> anyhow::Result<String> {
+fn bench_config(
+    engine: &engines::BenchEngine,
+    wav: &Path,
+    speaker: Option<&SpeakerInputs>,
+) -> anyhow::Result<String> {
     let wav = yaml_string(&wav.to_string_lossy())?;
-    Ok(format!(
+    let mut config = format!(
         "capture:\n  backend: wav-file\n  path: {wav}\n  pace: realtime\n\
          transcription:\n  backend: {}\n{}",
         engine.backend,
         settings(&engine.config)?
-    ))
+    );
+    if let Some(speaker) = speaker {
+        config.push_str(&format!(
+            "speaker:\n  model: {}\n  speakers_dir: {}\n",
+            yaml_string(&speaker.model.to_string_lossy())?,
+            yaml_string(&speaker.speakers_dir.to_string_lossy())?,
+        ));
+        if let Some(segmentation) = &speaker.segmentation {
+            config.push_str(&format!(
+                "  segmentation_model: {}\n",
+                yaml_string(&segmentation.to_string_lossy())?,
+            ));
+        }
+    }
+    Ok(config)
 }
 
 fn settings(config: &TranscriptionConfig) -> anyhow::Result<String> {
@@ -306,6 +419,34 @@ fn report(observation: &engines::Observation, runs: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn verify_own_voice(log: &str) -> anyhow::Result<()> {
+    ensure!(
+        log.contains("speaker model loaded"),
+        "own-voice benchmark has no evidence that the daemon loaded its speaker model"
+    );
+    for failure in [
+        "no speaker model; the transcript stays unlabeled",
+        "speaker model unusable; the transcript stays unlabeled",
+        "no voice-activity model; audio is not speech-gated",
+        "the speakers directory is unreadable; nobody is recognized",
+        "skipping an unreadable speaker profile",
+        "own-voice filtering lacks a model",
+        "own-voice filtering is unavailable",
+        "own-voice filtering has no continuity verifier",
+        "the turn thread did not start",
+        "the turn thread panicked",
+        "speaker embedding failed",
+        "voice-activity inference failed",
+        "the voice timeline could not score audio",
+    ] {
+        ensure!(
+            !log.contains(failure),
+            "own-voice benchmark encountered a daemon fallback or failure: {failure}"
+        );
+    }
+    Ok(())
+}
+
 fn verify_stage_coverage(log: &str) -> anyhow::Result<()> {
     let unknown: Vec<String> = log::stage_names(log)
         .into_iter()
@@ -351,4 +492,129 @@ fn print_series(name: &str, samples: &[u64], expected: u32) -> anyhow::Result<()
         summary.max
     );
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "a bench without the test harness compiles this module but drops its tests"
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn own_voice_requires_successful_loading_without_filter_fallbacks() {
+        let loaded = "INFO aria::speaker: speaker model loaded engine=\"wespeaker\" load_ms=7\n";
+        assert!(verify_own_voice(loaded).is_ok());
+        assert!(verify_own_voice("INFO aria: daemon ready\n").is_err());
+        for failure in [
+            "INFO aria::speaker: no speaker model; the transcript stays unlabeled",
+            "WARN aria::speaker: speaker model unusable; the transcript stays unlabeled",
+            "WARN aria::speaker: no voice-activity model; audio is not speech-gated",
+            "WARN aria::speaker: the speakers directory is unreadable; nobody is recognized",
+            "WARN aria::speaker: skipping an unreadable speaker profile",
+            "WARN aria::dictation::pipeline: own-voice filtering lacks a model speech=true diarizer=true segmenter=false",
+            "WARN aria::dictation::pipeline: own-voice filtering is unavailable",
+            "WARN aria_kit::speaker::turns::tracker: own-voice filtering has no continuity verifier",
+            "ERROR aria::hearing: the turn thread did not start",
+            "ERROR aria::hearing::turns: the turn thread panicked; nothing more passes",
+            "WARN aria_kit::speaker: speaker embedding failed",
+            "WARN aria_kit::speaker::turns: voice-activity inference failed; no more speech can be told apart",
+            "WARN aria_kit::speaker: the voice timeline could not score audio",
+        ] {
+            assert!(verify_own_voice(&format!("{loaded}{failure}\n")).is_err());
+        }
+        assert!(verify_own_voice(&format!(
+            "{loaded}WARN aria::dictation::pipeline: dictation cleanup failed; delivering deterministic text\n"
+        )).is_ok());
+    }
+
+    #[test]
+    fn speaker_inputs_require_both_existing_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("speaker.onnx");
+        std::fs::write(&model, []).unwrap();
+        let speakers_dir = || Some(directory.path().to_path_buf());
+        assert!(speaker_inputs(Some(model.clone()), None, None).is_err());
+        assert!(speaker_inputs(None, speakers_dir(), None).is_err());
+        assert!(speaker_inputs(Some(model.clone()), Some(model.clone()), None).is_err());
+        assert!(speaker_inputs(None, None, Some(model.clone())).is_err());
+        assert!(speaker_inputs(Some(model.clone()), speakers_dir(), speakers_dir()).is_err());
+        let speaker = speaker_inputs(Some(model.clone()), speakers_dir(), Some(model))
+            .unwrap()
+            .unwrap();
+        assert!(speaker.segmentation.is_some());
+        assert!(speaker_inputs(None, None, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn own_voice_requires_speaker_inputs_with_segmentation() {
+        assert!(require_own_voice(None).is_err());
+        let directory = tempfile::tempdir().unwrap();
+        let speaker = SpeakerInputs {
+            model: "/models/speaker.onnx".into(),
+            speakers_dir: directory.path().into(),
+            segmentation: None,
+        };
+        let error = require_own_voice(Some(&speaker)).unwrap_err();
+        assert!(error.to_string().contains("ARIA_BENCH_SEGMENTATION_MODEL"));
+    }
+
+    #[test]
+    fn own_voice_requires_a_compatible_owner_profile() {
+        use aria::speaker::{Profile, ProfileStore, Replace, Role, SpeakerName};
+        use aria_speaker::wespeaker;
+        let directory = tempfile::tempdir().unwrap();
+        let store = ProfileStore::open(directory.path());
+        assert!(require_owner(directory.path()).is_err());
+        let mut vector = vec![0.0; wespeaker::EMBEDDING_DIM];
+        vector[0] = 1.0;
+        let mut profile = Profile {
+            name: SpeakerName::new("benchmark").unwrap(),
+            role: Role::Guest,
+            engine: wespeaker::NAME.into(),
+            enrolled_at: std::time::SystemTime::UNIX_EPOCH,
+            vector,
+        };
+        store.save(&profile, Replace::Allowed).unwrap();
+        assert!(require_owner(directory.path()).is_err());
+        profile.role = Role::Owner;
+        profile.engine = "incompatible".into();
+        store.save(&profile, Replace::Allowed).unwrap();
+        assert!(require_owner(directory.path()).is_err());
+        profile.engine = wespeaker::NAME.into();
+        profile.vector.pop();
+        store.save(&profile, Replace::Allowed).unwrap();
+        assert!(require_owner(directory.path()).is_err());
+        profile.vector.push(0.0);
+        store.save(&profile, Replace::Allowed).unwrap();
+        assert!(require_owner(directory.path()).is_ok());
+    }
+
+    #[test]
+    fn speaker_inputs_reach_the_daemon_config() {
+        let engine = engines::BenchEngine {
+            backend: backend::WHISPER,
+            config: TranscriptionConfig::Whisper {
+                model: "/models/whisper.bin".into(),
+            },
+        };
+        let speaker = SpeakerInputs {
+            model: "/models/speaker.onnx".into(),
+            speakers_dir: "/speakers_dir/voice names".into(),
+            segmentation: Some("/models/segmentation.onnx".into()),
+        };
+        let config = bench_config(&engine, Path::new("/speech.wav"), Some(&speaker)).unwrap();
+        assert!(config.ends_with(
+            "speaker:\n  model: \"/models/speaker.onnx\"\n  \
+             speakers_dir: \"/speakers_dir/voice names\"\n  \
+             segmentation_model: \"/models/segmentation.onnx\"\n"
+        ));
+        assert!(
+            !bench_config(&engine, Path::new("/speech.wav"), None)
+                .unwrap()
+                .contains("speaker:")
+        );
+    }
 }

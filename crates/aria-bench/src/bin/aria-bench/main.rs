@@ -8,6 +8,7 @@
 mod corpus;
 mod diarize;
 mod flag_path;
+mod own_voice;
 mod stt;
 mod tts;
 
@@ -32,6 +33,10 @@ enum Cli {
     Tts(tts::Cli),
     /// Speaker-label accuracy on synthesized conversations.
     Diarize(diarize::Cli),
+    /// Conversations for the own-voice filter, with an enrolled owner.
+    OwnVoiceCorpus(own_voice::Cli),
+    /// How far apart an owner's voice and others score, by window length.
+    OwnVoiceScores(own_voice::ScoresCli),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -51,5 +56,7 @@ fn main() -> anyhow::Result<()> {
         Cli::Noisy(cli) => corpus::noisy(&cli),
         Cli::Tts(cli) => tts::run(&cli),
         Cli::Diarize(cli) => diarize::run(&cli),
+        Cli::OwnVoiceCorpus(cli) => own_voice::run(&cli),
+        Cli::OwnVoiceScores(cli) => own_voice::run_scores(&cli),
     }
 }

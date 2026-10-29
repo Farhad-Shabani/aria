@@ -12,12 +12,13 @@ publish              = false
 workspace = true
 
 [dependencies]
-aria         = { path = "../aria" }
-aria-harness = { workspace = true }
-aria-kit     = { workspace = true, features = [ "silero" ] }
-aria-speaker = { workspace = true }
-aria-stt     = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "parakeet-mlx", "whisper", "whisper-candle" ] }
-aria-tts     = { workspace = true, features = [ "kokoro", "qwen" ] }
+aria               = { path = "../aria" }
+aria-bench-speaker = { path = "../aria-bench-speaker" }
+aria-harness       = { workspace = true }
+aria-kit           = { workspace = true, features = [ "silero" ] }
+aria-speaker       = { workspace = true }
+aria-stt           = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "parakeet-mlx", "whisper", "whisper-candle" ] }
+aria-tts           = { workspace = true, features = [ "kokoro", "qwen" ] }
 
 anyhow             = { workspace = true }
 clap               = { workspace = true }
