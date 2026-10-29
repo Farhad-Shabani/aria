@@ -111,10 +111,11 @@ enum Command {
         command: ServiceCommand,
     },
     /// Record one utterance and deliver the transcript
+    #[command(args_conflicts_with_subcommands = true)]
     Dictate {
         #[arg(long, value_enum)]
         mode: Option<CliOutputMode>,
-        /// Record until you press Esc or run the command again, not until silence
+        /// Record until you press Esc, run the command again, or Auto-stop ends it
         #[arg(long)]
         toggle: bool,
         /// Insert finalized transcript segments while recording continues
@@ -123,6 +124,8 @@ enum Command {
         /// Disable project spellings for this recording
         #[arg(long)]
         no_project: bool,
+        #[command(subcommand)]
+        command: Option<DictateCommand>,
     },
     /// Show or choose the shared assistant for Ask and Prompts
     #[command(args_conflicts_with_subcommands = true)]
@@ -157,7 +160,7 @@ enum Command {
         /// Deliver the reply like a transcript instead of printing it
         #[arg(long, value_enum)]
         mode: Option<CliOutputMode>,
-        /// Record until you press Esc or run the command again, not until silence
+        /// Record until you press Esc, run the command again, or Auto-stop ends it
         #[arg(long)]
         toggle: bool,
         /// Cancel a pending ask by its ticket instead of asking
@@ -194,6 +197,34 @@ enum Command {
         #[arg(long)]
         stop: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum DictateCommand {
+    /// Show or set how much silence stops a tapped or toggled recording
+    AutoStop {
+        /// `off`, or whole seconds from 3 to 60; omit it to show the setting
+        #[arg(value_parser = parse_auto_stop, value_name = "off|SECONDS")]
+        setting: Option<AutoStopSetting>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutoStopSetting {
+    Off,
+    After(aria::audio::AutoStop),
+}
+
+fn parse_auto_stop(value: &str) -> Result<AutoStopSetting, String> {
+    if value.eq_ignore_ascii_case("off") {
+        return Ok(AutoStopSetting::Off);
+    }
+    let seconds: u64 = value
+        .parse()
+        .map_err(|_| format!("expected `off` or whole seconds, got `{value}`"))?;
+    aria::audio::AutoStop::new(std::time::Duration::from_secs(seconds))
+        .map(AutoStopSetting::After)
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Subcommand)]
@@ -508,10 +539,15 @@ fn main() -> anyhow::Result<()> {
         } => run_setup_for_app(command),
         Command::Models { command } => run_models(command),
         Command::Dictate {
+            command: Some(DictateCommand::AutoStop { setting }),
+            ..
+        } => run_auto_stop(setting),
+        Command::Dictate {
             mode,
             toggle,
             stream,
             no_project,
+            command: None,
         } => run_dictate(mode, toggle, stream, no_project),
         Command::Assistant {
             assistant_id,
@@ -1646,6 +1682,35 @@ fn run_dictate(
     Ok(())
 }
 
+fn run_auto_stop(setting: Option<AutoStopSetting>) -> anyhow::Result<()> {
+    use aria::preferences::{PreferencePatch, UpdateResult};
+
+    let paths = PreparedRuntimePaths::for_current_user()?;
+    let session = DaemonSession::connect_at(&paths)?;
+    let snapshot = session.get_preferences()?;
+    let snapshot = if let Some(setting) = setting {
+        let auto_stop = match setting {
+            AutoStopSetting::Off => None,
+            AutoStopSetting::After(auto_stop) => Some(auto_stop),
+        };
+        let patch = PreferencePatch {
+            auto_stop: Some(auto_stop),
+            ..PreferencePatch::default()
+        };
+        match session.update_preferences(snapshot.revision, patch)? {
+            UpdateResult::Updated(snapshot) => snapshot,
+            UpdateResult::Conflict(_) => anyhow::bail!("preferences changed; retry the command"),
+        }
+    } else {
+        snapshot
+    };
+    match snapshot.preferences.auto_stop {
+        Some(auto_stop) => println!("auto-stop: {} seconds", auto_stop.get().as_secs_f64()),
+        None => println!("auto-stop: off"),
+    }
+    Ok(())
+}
+
 fn run_assistant(assistant_id: Option<AssistantId>) -> anyhow::Result<()> {
     use aria::preferences::{PreferencePatch, UpdateResult};
 
@@ -2377,6 +2442,34 @@ mod tests {
             history_audio_label(AudioAvailability::Unavailable),
             "Unavailable"
         );
+    }
+
+    #[test]
+    fn dictate_auto_stop_takes_off_or_seconds_in_range() {
+        let setting = |arguments: &[&str]| match Cli::try_parse_from(arguments).unwrap().command {
+            Command::Dictate {
+                command: Some(DictateCommand::AutoStop { setting }),
+                ..
+            } => setting,
+            _ => panic!("expected the auto-stop command"),
+        };
+        let ten_seconds = aria::audio::AutoStop::new(std::time::Duration::from_secs(10)).unwrap();
+
+        assert_eq!(setting(&["aria", "dictate", "auto-stop"]), None);
+        for off in ["off", "OFF"] {
+            assert_eq!(
+                setting(&["aria", "dictate", "auto-stop", off]),
+                Some(AutoStopSetting::Off)
+            );
+        }
+        assert_eq!(
+            setting(&["aria", "dictate", "auto-stop", "10"]),
+            Some(AutoStopSetting::After(ten_seconds))
+        );
+        for value in ["2", "61", "1.5", "never"] {
+            assert!(Cli::try_parse_from(["aria", "dictate", "auto-stop", value]).is_err());
+        }
+        assert!(Cli::try_parse_from(["aria", "dictate", "--toggle", "auto-stop", "off"]).is_err());
     }
 
     #[test]

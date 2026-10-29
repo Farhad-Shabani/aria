@@ -28,6 +28,23 @@ final class DictationEditsTests: XCTestCase {
         XCTAssertEqual(DictationEdits.languageChoices(including: "pt-br"), ["auto", "en", "pt-br"])
     }
 
+    func testAutoStopChoicesListAnUnknownStoredValueInOrder() {
+        XCTAssertEqual(DictationEdits.autoStopChoices(including: 10000), DictationEdits.autoStopChoices)
+        XCTAssertEqual(
+            DictationEdits.autoStopChoices(including: 7500),
+            [0, 3000, 5000, 7500, 10000, 15000, 20000, 30000, 45000, 60000]
+        )
+    }
+
+    func testAutoStopOffClearsTheSnapshot() {
+        var snapshot = Aria_Daemon_V1_UserPreferences()
+        snapshot.autoStopMs = 10000
+        var patch = Aria_Daemon_V1_PreferencePatch()
+        patch.autoStopMs = 0
+        patch.apply(to: &snapshot)
+        XCTAssertFalse(snapshot.hasAutoStopMs)
+    }
+
     /// The two messages share field numbers, so a protobuf merge is the
     /// reference the hand-written overlay must match field for field.
     func testPatchApplyCoversEveryField() throws {
@@ -36,6 +53,7 @@ final class DictationEditsTests: XCTestCase {
         patch.outputMode = .copy
         patch.deliveryMode = .complete
         patch.silenceDurationMs = 2500
+        patch.autoStopMs = 15000
         patch.ownVoiceOnly = true
         patch.dictationHotkey = .fn
         patch.askHotkey.chord.keyCode = 7

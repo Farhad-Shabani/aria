@@ -9,7 +9,7 @@ use super::{
     DictationOverrides, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError, Prompt,
     PromptError, PromptId, Prompts, UserPreferences,
 };
-use crate::audio::SilenceDuration;
+use crate::audio::{AutoStop, SilenceDuration};
 use crate::chat::PromptKind;
 use crate::config::AssistantId;
 use crate::delivery::OutputMode;
@@ -137,6 +137,15 @@ impl StoredDocument {
                 path: path.to_path_buf(),
                 source,
             })?,
+            auto_stop: self
+                .preferences
+                .auto_stop_ms
+                .map(|ms| AutoStop::new(Duration::from_millis(ms)))
+                .transpose()
+                .map_err(|source| PreferenceStoreError::InvalidAutoStop {
+                    path: path.to_path_buf(),
+                    source,
+                })?,
             own_voice_only: self.preferences.own_voice_only,
             project_vocabulary: self.preferences.project_vocabulary,
             vocabulary_directory: self
@@ -196,6 +205,10 @@ impl From<&PreferenceSnapshot> for StoredDocument {
                 output_mode: snapshot.preferences.output_mode.into(),
                 delivery_mode: snapshot.preferences.delivery_mode.into(),
                 silence_duration_ms: snapshot.preferences.silence_duration.get().as_millis() as u64,
+                auto_stop_ms: snapshot
+                    .preferences
+                    .auto_stop
+                    .map(|auto_stop| auto_stop.get().as_millis() as u64),
                 own_voice_only: snapshot.preferences.own_voice_only,
                 project_vocabulary: snapshot.preferences.project_vocabulary,
                 vocabulary_directory: snapshot
@@ -242,6 +255,9 @@ struct StoredPreferences {
     #[serde(default = "default_stored_delivery_mode")]
     delivery_mode: StoredDeliveryMode,
     silence_duration_ms: u64,
+    // Missing in an older file, which gets the default; `null` is off.
+    #[serde(default = "auto_stop_on")]
+    auto_stop_ms: Option<u64>,
     // An older file has no own_voice_only; off matches its behavior.
     #[serde(default)]
     own_voice_only: bool,
@@ -288,6 +304,10 @@ impl From<StoredAssistantId> for AssistantId {
 
 fn history_enabled() -> bool {
     true
+}
+
+fn auto_stop_on() -> Option<u64> {
+    Some(AutoStop::default().get().as_millis() as u64)
 }
 
 fn prompt_list_off() -> StoredHotkey {
@@ -630,6 +650,7 @@ mod tests {
         assert!(document.preferences.dictation_history);
         assert!(!document.preferences.history_audio_retention);
         assert!(!document.preferences.mute_output);
+        assert_eq!(document.preferences.auto_stop_ms, Some(10_000));
         assert!(!document.preferences.own_voice_only);
         assert!(!document.preferences.project_vocabulary);
         assert!(document.preferences.vocabulary_directory.is_none());
@@ -762,6 +783,39 @@ mod tests {
         assert!(matches!(
             invalid.into_snapshot(path),
             Err(PreferenceStoreError::InvalidApplicationOverrides { .. })
+        ));
+    }
+
+    #[test]
+    fn auto_stop_off_persists_as_null_and_stays_validated() {
+        let snapshot = PreferenceSnapshot {
+            revision: 3,
+            preferences: UserPreferences {
+                auto_stop: None,
+                ..UserPreferences::default()
+            },
+        };
+        let encoded = serde_json::to_string(&StoredDocument::from(&snapshot)).expect("encodes");
+        assert!(encoded.contains(r#""auto_stop_ms":null"#));
+
+        let decoded: StoredDocument = serde_json::from_str(&encoded).expect("decodes");
+        let path = Path::new("preferences.json");
+        assert_eq!(
+            decoded
+                .into_snapshot(path)
+                .expect("loads")
+                .preferences
+                .auto_stop,
+            None
+        );
+
+        let invalid: StoredDocument = serde_json::from_str(
+            &encoded.replace(r#""auto_stop_ms":null"#, r#""auto_stop_ms":2999"#),
+        )
+        .expect("parses");
+        assert!(matches!(
+            invalid.into_snapshot(path),
+            Err(PreferenceStoreError::InvalidAutoStop { .. })
         ));
     }
 

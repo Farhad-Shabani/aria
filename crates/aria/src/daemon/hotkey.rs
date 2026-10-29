@@ -14,7 +14,7 @@ use crate::hotkey::{HotkeyKey, ListenerEvent, ListenerExit, PlatformHotkeyListen
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
 
 use super::dictation::DictationRuntimeError;
-use super::dictation::{DictationCallError, DictationHandle, DictationRuntime};
+use super::dictation::{AutoStopRule, DictationCallError, DictationHandle, DictationRuntime};
 use super::tasks::Supervised;
 
 /// The blocking platform listener; tests swap in a fake.
@@ -213,8 +213,13 @@ impl HotkeyTrigger {
                     recording.send_replace(Some(id));
                 }
             });
+            // The release is the stop, so a pause mid-hold must not end it.
             let pending = match dictation
-                .submit(DictationRequest::new(StopMode::Manual), Some(events))
+                .submit(
+                    DictationRequest::new(StopMode::Manual),
+                    AutoStopRule::Off,
+                    Some(events),
+                )
                 .await
             {
                 Ok(pending) => pending,

@@ -45,9 +45,9 @@ const DEFAULT_WAKE_MODEL: &str = "wakeword/aria.onnx";
 const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
-const DEFAULT_RECORDING_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_RECORDING_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFAULT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(320);
+const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(super) const DEFAULT_CAPTURE_BACKEND: &str = "microphone";
 pub(super) const WAV_FILE_CAPTURE_BACKEND: &str = "wav-file";

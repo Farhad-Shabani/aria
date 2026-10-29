@@ -13,7 +13,9 @@ use crate::primitives::error_chain;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::dictation::DictationRuntimeError;
-use super::super::dictation::{DictationCallError, DictationHandle, DictationRuntime};
+use super::super::dictation::{
+    AutoStopRule, DictationCallError, DictationHandle, DictationRuntime,
+};
 use super::super::operation::CallError;
 use super::super::server::ActivityGuard;
 use super::{invalid_request, preferences};
@@ -69,7 +71,7 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
         });
         let pending = self
             .dictation
-            .submit(request, Some(events))
+            .submit(request, AutoStopRule::Preference, Some(events))
             .await
             .map_err(|error| super::failed(METHOD, failure(error)))?;
 

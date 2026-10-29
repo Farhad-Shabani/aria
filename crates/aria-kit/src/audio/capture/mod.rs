@@ -19,6 +19,9 @@ pub use wav_replay::{ReplayPace, WavReplayCapture, WavReplayError};
 const MIN_SILENCE_DURATION: Duration = Duration::from_millis(100);
 const MAX_SILENCE_DURATION: Duration = Duration::from_secs(10);
 const DEFAULT_SILENCE_DURATION: Duration = Duration::from_millis(1_500);
+const MIN_AUTO_STOP: Duration = Duration::from_secs(3);
+const MAX_AUTO_STOP: Duration = Duration::from_secs(60);
+const DEFAULT_AUTO_STOP: Duration = Duration::from_secs(10);
 
 /// A source of canonical 16 kHz mono audio. Each implementation bounds how
 /// long a recording runs.
@@ -47,8 +50,15 @@ impl<C: AudioCapture> AudioCapture for std::sync::Arc<C> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordingMode {
-    StopOnSilence { trailing_silence: SilenceDuration },
+    StopOnSilence {
+        trailing_silence: SilenceDuration,
+    },
     UntilStopped,
+    /// Records until stopped, or until `auto_stop` passes without speech.
+    /// Silence before the first word counts, and all audio is kept.
+    UntilQuiet {
+        auto_stop: AutoStop,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +100,48 @@ pub enum SilenceDurationError {
     },
 
     #[error("silence duration must use whole-millisecond precision; got {actual:?}")]
+    SubmillisecondPrecision { actual: Duration },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AutoStop(Duration);
+
+impl AutoStop {
+    pub fn new(duration: Duration) -> Result<Self, AutoStopError> {
+        if !(MIN_AUTO_STOP..=MAX_AUTO_STOP).contains(&duration) {
+            return Err(AutoStopError::OutOfRange {
+                actual: duration,
+                minimum: MIN_AUTO_STOP,
+                maximum: MAX_AUTO_STOP,
+            });
+        }
+        if !duration.subsec_nanos().is_multiple_of(1_000_000) {
+            return Err(AutoStopError::SubmillisecondPrecision { actual: duration });
+        }
+        Ok(Self(duration))
+    }
+
+    pub fn get(self) -> Duration {
+        self.0
+    }
+}
+
+impl Default for AutoStop {
+    fn default() -> Self {
+        Self(DEFAULT_AUTO_STOP)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AutoStopError {
+    #[error("auto-stop must be between {minimum:?} and {maximum:?}; got {actual:?}")]
+    OutOfRange {
+        actual: Duration,
+        minimum: Duration,
+        maximum: Duration,
+    },
+
+    #[error("auto-stop must use whole-millisecond precision; got {actual:?}")]
     SubmillisecondPrecision { actual: Duration },
 }
 
@@ -156,4 +208,23 @@ pub enum MicrophoneError {
 
     #[error("voice-activity detection failed")]
     VoiceActivity(#[source] VoiceActivityError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_stop_accepts_its_bounds_and_refuses_beyond_them() {
+        assert!(AutoStop::new(MIN_AUTO_STOP).is_ok());
+        assert!(AutoStop::new(MAX_AUTO_STOP).is_ok());
+        assert!(matches!(
+            AutoStop::new(MIN_AUTO_STOP - Duration::from_millis(1)),
+            Err(AutoStopError::OutOfRange { .. })
+        ));
+        assert!(matches!(
+            AutoStop::new(MAX_AUTO_STOP + Duration::from_millis(1)),
+            Err(AutoStopError::OutOfRange { .. })
+        ));
+    }
 }

@@ -7,7 +7,7 @@ use tokio::sync::watch;
 use super::{
     ApplicationOverrides, Chord, Language, PreferenceStoreError, Prompts, UserPreferences, file,
 };
-use crate::audio::SilenceDuration;
+use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
@@ -32,6 +32,7 @@ pub struct PreferencePatch {
     pub output_mode: Option<OutputMode>,
     pub delivery_mode: Option<DeliveryMode>,
     pub silence_duration: Option<SilenceDuration>,
+    pub auto_stop: Option<Option<AutoStop>>,
     pub own_voice_only: Option<bool>,
     pub dictation_hotkey: Option<HotkeyKey>,
     pub ask_hotkey: Option<Option<Chord>>,
@@ -149,6 +150,7 @@ impl PreferencePatch {
             output_mode,
             delivery_mode,
             silence_duration: self.silence_duration.unwrap_or(current.silence_duration),
+            auto_stop: self.auto_stop.unwrap_or(current.auto_stop),
             own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),
             dictation_hotkey: self.dictation_hotkey.unwrap_or(current.dictation_hotkey),
             ask_hotkey: self.ask_hotkey.unwrap_or(current.ask_hotkey),

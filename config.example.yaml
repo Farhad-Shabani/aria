@@ -163,9 +163,9 @@ transcription:
 # Operator-controlled safety budgets in seconds. User-facing recognition,
 # output, and recording choices belong in preferences, not this file.
 dictation_timeouts:
-  recording: 300.0
+  recording: 600.0
   delivery: 5.0
-  overall: 320.0
+  overall: 660.0
 
 # Drops "um", "uh", and repeated words before delivery. Env: ARIA_DICTATION_CLEANUP.
 # dictation_cleanup: false

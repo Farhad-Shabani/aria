@@ -4,10 +4,14 @@ use std::collections::VecDeque;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::audio::capture::{RecordingMode, SilenceDuration};
+use crate::audio::capture::{AutoStop, RecordingMode, SilenceDuration};
 use crate::audio::spool::WavSpool;
-use crate::audio::{CaptureError, RecordedAudio, StopSignal, canonical_samples};
-use crate::voice_activity::{Boundary, Endpointer, LEAD_IN_FRAMES, VoiceActivityDetector};
+use crate::audio::{
+    CaptureError, RecordedAudio, StopSignal, canonical_duration, canonical_samples,
+};
+use crate::voice_activity::{
+    Boundary, Endpointer, LEAD_IN_FRAMES, SPEECH_THRESHOLD, VoiceActivityDetector,
+};
 
 use super::stream::{DRAIN_BUFFER_SAMPLES, LiveStream};
 use super::{MicrophoneError, Result};
@@ -75,6 +79,7 @@ enum CaptureProgress {
 pub(super) enum CaptureRecording<V> {
     OnSilence(Box<SilenceRecording<V>>),
     UntilStopped(WavSpool),
+    UntilQuiet(Box<QuietRecording<V>>),
 }
 
 impl<V: VoiceActivityDetector> CaptureRecording<V> {
@@ -84,6 +89,9 @@ impl<V: VoiceActivityDetector> CaptureRecording<V> {
                 SilenceRecording::new(spool, vad, trailing_silence),
             )),
             RecordingMode::UntilStopped => Self::UntilStopped(spool),
+            RecordingMode::UntilQuiet { auto_stop } => {
+                Self::UntilQuiet(Box::new(QuietRecording::new(spool, vad, auto_stop)))
+            }
         }
     }
 
@@ -94,17 +102,21 @@ impl<V: VoiceActivityDetector> CaptureRecording<V> {
                 spool.write_samples(samples)?;
                 Ok(CaptureProgress::Continue)
             }
+            Self::UntilQuiet(recording) => recording.push(samples),
         }
     }
 
     /// Writes the samples still buffered when a manual stop lands, so the
     /// last words before the stop are kept.
     fn drain_tail(&mut self, live: &mut LiveStream) -> Result<()> {
-        if let Self::UntilStopped(spool) = self {
-            let mut scratch = [0_i16; DRAIN_BUFFER_SAMPLES];
-            while let input @ [_, ..] = live.pop(&mut scratch)? {
-                spool.write_samples(input)?;
-            }
+        let spool = match self {
+            Self::OnSilence(_) => return Ok(()),
+            Self::UntilStopped(spool) => spool,
+            Self::UntilQuiet(recording) => &mut recording.spool,
+        };
+        let mut scratch = [0_i16; DRAIN_BUFFER_SAMPLES];
+        while let input @ [_, ..] = live.pop(&mut scratch)? {
+            spool.write_samples(input)?;
         }
         Ok(())
     }
@@ -113,7 +125,68 @@ impl<V: VoiceActivityDetector> CaptureRecording<V> {
         match self {
             Self::OnSilence(recording) => recording.finish(),
             Self::UntilStopped(spool) => spool.finish().map_err(Into::into),
+            Self::UntilQuiet(recording) => recording.spool.finish().map_err(Into::into),
         }
+    }
+}
+
+/// Keeps every sample and completes once `auto_stop` has passed with no
+/// frame scored as speech.
+pub(super) struct QuietRecording<V> {
+    spool: WavSpool,
+    vad: V,
+    auto_stop_samples: u64,
+    frame: Vec<i16>,
+    quiet_samples: u64,
+}
+
+impl<V: VoiceActivityDetector> QuietRecording<V> {
+    fn new(spool: WavSpool, mut vad: V, auto_stop: AutoStop) -> Self {
+        // A zero-sample frame is always full, so `push` would never return.
+        const { assert!(V::FRAME_SAMPLES > 0) };
+        vad.reset();
+        Self {
+            spool,
+            vad,
+            auto_stop_samples: canonical_samples(auto_stop.get()),
+            frame: Vec::with_capacity(V::FRAME_SAMPLES),
+            quiet_samples: 0,
+        }
+    }
+
+    fn push(&mut self, mut samples: &[i16]) -> Result<CaptureProgress> {
+        self.spool.write_samples(samples)?;
+        while !samples.is_empty() {
+            let copied = (V::FRAME_SAMPLES - self.frame.len()).min(samples.len());
+            self.frame.extend_from_slice(&samples[..copied]);
+            samples = &samples[copied..];
+            if self.frame.len() == V::FRAME_SAMPLES {
+                self.score_frame()?;
+            }
+        }
+        if self.quiet_samples < self.auto_stop_samples {
+            return Ok(CaptureProgress::Continue);
+        }
+        tracing::info!(
+            stage = "recording",
+            auto_stop_ms = canonical_duration(self.auto_stop_samples).as_millis() as u64,
+            "auto-stop ended the recording"
+        );
+        Ok(CaptureProgress::Complete)
+    }
+
+    fn score_frame(&mut self) -> Result<()> {
+        let probability = self
+            .vad
+            .probability(&self.frame)
+            .map_err(MicrophoneError::VoiceActivity)?;
+        self.frame.clear();
+        self.quiet_samples = if probability >= SPEECH_THRESHOLD {
+            0
+        } else {
+            self.quiet_samples + V::FRAME_SAMPLES as u64
+        };
+        Ok(())
     }
 }
 
@@ -231,6 +304,15 @@ mod tests {
         let trailing_silence =
             SilenceDuration::new(trailing_silence).expect("the trailing silence is in range");
         let recording = SilenceRecording::new(spool, Loudness, trailing_silence);
+        (directory, writer, recording)
+    }
+
+    fn quiet_listening(
+        auto_stop: Duration,
+    ) -> (tempfile::TempDir, RecordingWriter, QuietRecording<Loudness>) {
+        let (directory, writer, spool, _reader) = spooled();
+        let auto_stop = AutoStop::new(auto_stop).expect("the auto-stop is in range");
+        let recording = QuietRecording::new(spool, Loudness, auto_stop);
         (directory, writer, recording)
     }
 
@@ -364,5 +446,63 @@ mod tests {
             .expect("silence is buffered");
 
         assert!(matches!(recording.finish(), Err(CaptureError::NoSpeech(_))));
+    }
+
+    #[test]
+    fn a_quiet_recording_stops_once_auto_stop_has_lasted() {
+        let (_directory, _writer, mut recording) = quiet_listening(Duration::from_secs(3));
+
+        let spoken = recording.push(&speech(Duration::from_secs(1)));
+        let one_frame_short = recording.push(&silence(Duration::from_millis(2_990)));
+        let done = recording.push(&silence(Duration::from_millis(10)));
+
+        assert!(matches!(spoken, Ok(CaptureProgress::Continue)));
+        assert!(matches!(one_frame_short, Ok(CaptureProgress::Continue)));
+        assert!(matches!(done, Ok(CaptureProgress::Complete)));
+    }
+
+    #[test]
+    fn speech_restarts_the_auto_stop_clock() {
+        let (_directory, _writer, mut recording) = quiet_listening(Duration::from_secs(3));
+
+        recording
+            .push(&silence(Duration::from_secs(2)))
+            .expect("the pause is written");
+        recording
+            .push(&speech(Duration::from_secs(1)))
+            .expect("speech is written");
+        let paused = recording.push(&silence(Duration::from_secs(2)));
+
+        assert!(
+            matches!(paused, Ok(CaptureProgress::Continue)),
+            "two separate pauses must not add up to the auto-stop"
+        );
+    }
+
+    #[test]
+    fn silence_from_the_start_counts_toward_auto_stop() {
+        let (_directory, _writer, mut recording) = quiet_listening(Duration::from_secs(3));
+
+        let outcome = recording.push(&silence(Duration::from_secs(3)));
+
+        assert!(matches!(outcome, Ok(CaptureProgress::Complete)));
+    }
+
+    #[test]
+    fn a_quiet_recording_keeps_all_audio() {
+        let (_directory, _writer, mut recording) = quiet_listening(Duration::from_secs(3));
+
+        recording
+            .push(&silence(Duration::from_secs(1)))
+            .expect("the lead-in is written");
+        recording
+            .push(&speech(Duration::from_secs(1)))
+            .expect("speech is written");
+        recording
+            .push(&silence(Duration::from_secs(3)))
+            .expect("the quiet tail is written");
+        let audio = recording.spool.finish().expect("the recording finishes");
+
+        assert_eq!(audio.duration(), Duration::from_secs(5));
     }
 }

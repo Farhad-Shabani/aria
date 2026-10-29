@@ -672,6 +672,7 @@ mod tests {
             delivery_mode: DeliveryMode::Complete,
             stop_mode,
             silence_duration: SilenceDuration::default(),
+            auto_stop: None,
             own_voice_only: false,
             transcript_only: true,
             project: None,

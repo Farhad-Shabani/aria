@@ -59,6 +59,14 @@ pub(in crate::daemon) struct Recorder {
     pub(in crate::daemon) wake: Option<crate::audio::WakeWordControl>,
 }
 
+/// Whether the stored auto-stop may end a manual recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::daemon) enum AutoStopRule {
+    Preference,
+    /// A hold: its release is the stop.
+    Off,
+}
+
 pub(in crate::daemon) struct DictationRuntime {
     emitter: EventEmitter<DaemonEvent>,
     preferences: Arc<PreferenceStore>,
@@ -423,6 +431,7 @@ impl DictationRuntime {
     pub(in crate::daemon) fn execute(
         &self,
         request: DictationRequest,
+        auto_stop: AutoStopRule,
         cancellation: CancelToken,
         events: Option<&DictationEventEmitter>,
     ) -> Result<DictationOutcome, DictationRuntimeError> {
@@ -446,9 +455,13 @@ impl DictationRuntime {
         };
         // Read once the coordinator is built, which may load a model, so the
         // app judged is the one in front as recording starts.
-        let settings = snapshot
+        let mut settings = snapshot
             .preferences
             .resolve_dictation(request, crate::delivery::frontmost_application());
+        match auto_stop {
+            AutoStopRule::Preference => {}
+            AutoStopRule::Off => settings.auto_stop = None,
+        }
 
         coordinator
             .execute(settings, cancellation, &events)
@@ -739,6 +752,7 @@ mod event_tests {
             runtime
                 .execute(
                     DictationRequest::new(StopMode::OnSilence),
+                    AutoStopRule::Preference,
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -758,6 +772,7 @@ mod event_tests {
             runtime
                 .execute(
                     DictationRequest::new(StopMode::OnSilence),
+                    AutoStopRule::Preference,
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -804,6 +819,56 @@ mod event_tests {
             call_events.recv_timeout(Duration::from_secs(2)),
             Err(RecvTimeoutError::Disconnected)
         ));
+    }
+
+    /// Records the auto-stop each press runs with, then ends the press.
+    struct AutoStopSpy(Arc<std::sync::Mutex<Vec<Option<crate::audio::AutoStop>>>>);
+
+    impl crate::dictation::DictationExecutor for AutoStopSpy {
+        fn execute(
+            &self,
+            settings: DictationSettings,
+            _: &Arc<crate::dictation::ExecutionControl>,
+            _: &DictationEventEmitter,
+        ) -> Result<crate::dictation::DictationResult, DictationError> {
+            self.0.lock().unwrap().push(settings.auto_stop);
+            Err(DictationError::NoSpeech)
+        }
+
+        fn transcribe(
+            &self,
+            _: &mut RecordingReader,
+            _: &Language,
+            _: bool,
+            _: Option<&crate::vocabulary::Directory>,
+            _: &CancelToken,
+        ) -> Result<Transcribed, DictationError> {
+            panic!("a press never retries history");
+        }
+    }
+
+    #[test]
+    fn a_hold_runs_without_the_stored_auto_stop() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences =
+            Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
+        let mut runtime = DictationRuntime::detached(preferences);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        runtime.execute_with(Box::new(AutoStopSpy(Arc::clone(&seen))));
+
+        for rule in [AutoStopRule::Preference, AutoStopRule::Off] {
+            let _no_speech = runtime.execute(
+                DictationRequest::new(StopMode::Manual),
+                rule,
+                CancelToken::never(),
+                None,
+            );
+        }
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(crate::audio::AutoStop::default()), None]
+        );
     }
 }
 

@@ -17,7 +17,7 @@ use super::super::operation::{
     CallError, Pending, Reply, cancellable_call, operation_cancellation,
 };
 use super::super::tasks::Supervised;
-use super::runtime::{DictationRuntime, DictationRuntimeError};
+use super::runtime::{AutoStopRule, DictationRuntime, DictationRuntimeError};
 
 /// A handoff slot, not a work queue: admission control stays in the domain
 /// coordinator, so a submitted command is received promptly even while a
@@ -33,6 +33,7 @@ pub(in crate::daemon) type DictationCallError = CallError<DictationRuntimeError>
 
 struct DictationCommand {
     request: DictationRequest,
+    auto_stop: AutoStopRule,
     cancellation: CancelToken,
     /// Where this press announces its stages. `None` means the daemon's
     /// own emitter, which every press reaches anyway.
@@ -61,7 +62,10 @@ impl DictationHandle {
     ) -> Result<DictationOutcome, DictationCallError> {
         // The guard in `pending` cancels the operation if this future is
         // dropped after the command went out.
-        self.submit(request, None).await?.wait().await
+        self.submit(request, AutoStopRule::Preference, None)
+            .await?
+            .wait()
+            .await
     }
 
     /// Hands the press over and returns with what will answer it, waiting
@@ -70,10 +74,12 @@ impl DictationHandle {
     pub(in crate::daemon) async fn submit(
         &self,
         request: DictationRequest,
+        auto_stop: AutoStopRule,
         events: Option<DictationEventEmitter>,
     ) -> Result<Pending<DictationOutcome, DictationRuntimeError>, DictationCallError> {
         let (command, pending) = cancellable_call(|cancellation, reply| DictationCommand {
             request,
+            auto_stop,
             cancellation,
             events,
             reply,
@@ -93,6 +99,7 @@ impl DictationHandle {
     ) -> Result<DictationOutcome, DictationCallError> {
         let (command, pending) = cancellable_call(|cancellation, reply| DictationCommand {
             request,
+            auto_stop: AutoStopRule::Preference,
             cancellation,
             events: None,
             reply,
@@ -148,6 +155,7 @@ impl DictationActor {
     fn start(&mut self, command: DictationCommand, shutdown: &CancellationToken) {
         let DictationCommand {
             request,
+            auto_stop,
             cancellation,
             events,
             reply,
@@ -155,7 +163,7 @@ impl DictationActor {
         let runtime = Arc::clone(&self.runtime);
         let cancellation = operation_cancellation(cancellation, shutdown.clone());
         reply.answer_with(&mut self.jobs, "dictation", move || {
-            runtime.execute(request, cancellation, events.as_ref())
+            runtime.execute(request, auto_stop, cancellation, events.as_ref())
         });
     }
 

@@ -3,7 +3,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use crate::audio::SilenceDuration;
+use crate::audio::{AutoStop, SilenceDuration};
 use crate::transcription::Language;
 
 pub(crate) mod cleanup;
@@ -39,7 +39,7 @@ pub(crate) use pipeline::DictationPipeline;
 pub(crate) use rewrites::{ConfiguredLayers, Rewrites};
 pub(crate) use transcripts::{TranscriptSink, Utterance};
 
-pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(320);
+pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(660);
 
 /// Names one recording for as long as the daemon that took it runs. What
 /// `Stop` names.
@@ -98,6 +98,7 @@ pub(crate) struct DictationSettings {
     pub(crate) delivery_mode: DeliveryMode,
     pub(crate) stop_mode: StopMode,
     pub(crate) silence_duration: SilenceDuration,
+    pub(crate) auto_stop: Option<AutoStop>,
     pub(crate) own_voice_only: bool,
     pub(crate) transcript_only: bool,
     pub(crate) project: Option<crate::vocabulary::Directory>,

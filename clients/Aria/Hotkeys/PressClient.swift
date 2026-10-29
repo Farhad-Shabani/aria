@@ -122,7 +122,7 @@ enum PressClient {
         }
     }
 
-    private static let pressTimeout = Duration.seconds(330)
+    private static let pressTimeout = Duration.seconds(670)
 
     private static func attempt<R: Sendable>(
         _ what: String,

@@ -58,6 +58,7 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         output_mode,
         delivery_mode,
         silence_duration_ms,
+        auto_stop_ms,
         own_voice_only,
         dictation_hotkey,
         ask_hotkey,
@@ -75,6 +76,7 @@ pub(super) fn scoped(patch: wire::PreferencePatch) -> Result<wire::PreferencePat
         ("assistant_models", !assistant_models.is_empty()),
         ("delivery_mode", delivery_mode.is_some()),
         ("silence_duration_ms", silence_duration_ms.is_some()),
+        ("auto_stop_ms", auto_stop_ms.is_some()),
         ("dictation_hotkey", dictation_hotkey.is_some()),
         ("ask_hotkey", ask_hotkey.is_some()),
         ("prompt_list_hotkey", prompt_list_hotkey.is_some()),
@@ -172,6 +174,10 @@ mod tests {
             },
             wire::PreferencePatch {
                 silence_duration_ms: Some(500),
+                ..Default::default()
+            },
+            wire::PreferencePatch {
+                auto_stop_ms: Some(0),
                 ..Default::default()
             },
             wire::PreferencePatch {

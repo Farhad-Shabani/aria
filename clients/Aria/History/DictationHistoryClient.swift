@@ -57,7 +57,7 @@ enum DictationHistoryClient {
                 try await client.regenerate(
                     request: ClientRequest(
                         message: Aria_Daemon_V1_RegenerateHistoryRequest.with { $0.id = id }),
-                    options: options(seconds: 330)
+                    options: options(seconds: 670)
                 ) {
                     try $0.message
                 }
