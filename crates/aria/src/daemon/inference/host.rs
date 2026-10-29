@@ -678,7 +678,7 @@ pub(in crate::daemon) mod tests {
         )
         .unwrap();
         let mut held = vec![fixture.channel.clone()];
-        for _ in 1..MAX_LAN_CONNECTIONS {
+        for _ in 1..connections::MAX_CONNECTIONS_PER_PEER {
             let channel = endpoint.connect().await.unwrap();
             info(channel.clone()).await.unwrap();
             held.push(channel);
