@@ -69,18 +69,20 @@ struct SetupView: View {
         case .grant: GrantPage()
         case .voice: VoicePage(state: state)
         case .tryOut: TryOutPage(state: state)
-        case .done: DonePage(state: state, dictationKey: dictationKey, askHotkey: askHotkey)
+        case .done: DonePage(state: state, ariaKey: ariaKey, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
     }
 
     /// The daemon's default until it answers.
-    private var dictationKey: HotkeyKey {
+    private var ariaKey: HotkeyKey {
         preferences.snapshot?.storedDictationHotkey ?? .default
     }
 
-    private var askHotkey: Chord? {
-        preferences.snapshot?.askHotkey.storedChord
+    private var askCombo: Aria_Daemon_V1_HotkeyCombo? {
+        guard let hotkey = preferences.snapshot?.askHotkey else { return .shift }
+        if case .combo(let combo) = hotkey.storedBinding { return combo }
+        return nil
     }
 
     private var footer: some View {

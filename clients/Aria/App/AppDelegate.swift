@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shownCommitted: String?
     private var shownProvisional: String?
     private var expiryTimer: Timer?
+    private var preferences: DaemonPreferences?
     private var askChordChange: AnyCancellable?
 
     override init() {
@@ -44,12 +45,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status?.noteAsk(run)
         }
         super.init()
+        events.onHotkey { [weak self] combo in
+            self?.run(combo)
+        }
+    }
+
+    /// Before the first snapshot no action holds a combo, so nothing runs.
+    private func run(_ combo: Aria_Daemon_V1_HotkeyCombo) {
+        guard let snapshot = preferences?.snapshot else { return }
+        switch ComboAction(combo: combo, in: snapshot) {
+        case .ask: askHotkey.press()
+        case .promptList: promptList.press()
+        case nil: break
+        }
     }
 
     /// A menu bar scene body sits idle while the menu is closed, so the
     /// stored chords are watched rather than read through a SwiftUI
     /// `onChange`.
     func trackHotkeys(_ preferences: DaemonPreferences) {
+        self.preferences = preferences
         askChordChange = preferences.$snapshot
             .map { $0?.askHotkey.storedChord }
             .sink { [weak self] chord in

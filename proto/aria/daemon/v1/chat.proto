@@ -63,6 +63,12 @@ message AskRequest {
 
   // Deliver the reply like a transcript instead of only announcing it.
   optional OutputMode output_mode = 8;
+
+  // A tap of the Aria key cancels this run while it is in flight. The Mac
+  // app sets it on a run a key press started, so one key drives the run.
+  // Absent means no: a terminal's ask, or an older client's, is never ended
+  // by a tap.
+  bool tap_cancels = 9;
 }
 
 message AskResponse {
@@ -76,6 +82,8 @@ message RunPromptRequest {
   // The bundle ID of the app in front when the chord was first pressed. The
   // result is typed only there. Empty when unknown.
   string application_id = 3;
+  // As on AskRequest: a tap of the Aria key cancels the run.
+  bool tap_cancels = 4;
 }
 
 message CancelAskRequest {

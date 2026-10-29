@@ -23,12 +23,12 @@ use crate::dictation::{
     DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, OutputMode, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
-use crate::hotkey::HotkeyKey;
+use crate::hotkey::{Combo, HotkeyKey};
 use crate::listen::ListenStage;
 use crate::preferences::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
-    DictationOverrides, Modifiers, OverrideError, PreferencePatch, PreferenceSnapshot, Prompt,
-    PromptError, PromptId, Prompts, UpdateResult, UserPreferences,
+    DictationOverrides, Hotkey, Modifiers, OverrideError, PreferencePatch, PreferenceSnapshot,
+    Prompt, PromptError, PromptId, Prompts, UpdateResult, UserPreferences,
 };
 use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::speaker::{Role, SpeakerName, SpeakerNameError};
@@ -202,6 +202,37 @@ impl TryFrom<wire::UpdatePreferencesResponse> for UpdateResult {
                 Ok(Self::Conflict(current.try_into()?))
             }
             None => Err(ProtocolError::MissingBody("preferences update response")),
+        }
+    }
+}
+
+impl From<Combo> for wire::Event {
+    fn from(combo: Combo) -> Self {
+        Self {
+            payload: Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
+                combo: wire::HotkeyCombo::from(combo).into(),
+            })),
+        }
+    }
+}
+
+impl From<Combo> for wire::HotkeyCombo {
+    fn from(combo: Combo) -> Self {
+        match combo {
+            Combo::Shift => Self::Shift,
+            Combo::Command => Self::Command,
+        }
+    }
+}
+
+impl WireEnum for wire::HotkeyCombo {
+    type Domain = Combo;
+
+    fn into_domain(self) -> Option<Self::Domain> {
+        match self {
+            Self::Shift => Some(Combo::Shift),
+            Self::Command => Some(Combo::Command),
+            Self::Unspecified => None,
         }
     }
 }
@@ -459,6 +490,7 @@ impl From<ChatRequest> for wire::AskRequest {
             model_id: request.model_id.unwrap_or_default(),
             session_name: request.session.unwrap_or_default(),
             own_voice: request.own_voice,
+            tap_cancels: request.tap_cancels,
         }
     }
 }
@@ -490,6 +522,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             new: request.new_conversation,
             output_mode,
             own_voice: request.own_voice,
+            tap_cancels: request.tap_cancels,
         })
     }
 }
@@ -509,6 +542,7 @@ impl TryFrom<wire::RunPromptRequest> for PromptCall {
             text: request.text,
             prompt: PromptId::new(request.prompt_id)?,
             application,
+            tap_cancels: request.tap_cancels,
         })
     }
 }
@@ -1379,12 +1413,12 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
                     preferences.dictation_hotkey,
                     "hotkey key",
                 )?,
-                ask_hotkey: Option::<Chord>::try_from(
+                ask_hotkey: Option::<Hotkey>::try_from(
                     preferences
                         .ask_hotkey
                         .ok_or(ProtocolError::MissingBody("ask hotkey"))?,
                 )?,
-                prompt_list_hotkey: Option::<Chord>::try_from(
+                prompt_list_hotkey: Option::<Hotkey>::try_from(
                     preferences
                         .prompt_list_hotkey
                         .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
@@ -1571,11 +1605,11 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
                 .transpose()?,
             ask_hotkey: patch
                 .ask_hotkey
-                .map(Option::<Chord>::try_from)
+                .map(Option::<Hotkey>::try_from)
                 .transpose()?,
             prompt_list_hotkey: patch
                 .prompt_list_hotkey
-                .map(Option::<Chord>::try_from)
+                .map(Option::<Hotkey>::try_from)
                 .transpose()?,
             prompts: patch.prompts.map(Prompts::try_from).transpose()?,
             project_vocabulary: patch.project_vocabulary,
@@ -1724,18 +1758,29 @@ impl From<Chord> for wire::Chord {
     }
 }
 
-impl TryFrom<wire::Hotkey> for Option<Chord> {
+impl TryFrom<wire::Hotkey> for Option<Hotkey> {
     type Error = ProtocolError;
 
     fn try_from(hotkey: wire::Hotkey) -> Result<Self, Self::Error> {
-        hotkey.chord.map(Chord::try_from).transpose()
+        use wire::hotkey::Binding;
+        match hotkey.binding {
+            None => Ok(None),
+            Some(Binding::Chord(chord)) => Chord::try_from(chord).map(Hotkey::Chord).map(Some),
+            Some(Binding::Combo(combo)) => decode_enum::<wire::HotkeyCombo>(combo, "hotkey combo")
+                .map(Hotkey::Combo)
+                .map(Some),
+        }
     }
 }
 
-impl From<Option<Chord>> for wire::Hotkey {
-    fn from(chord: Option<Chord>) -> Self {
+impl From<Option<Hotkey>> for wire::Hotkey {
+    fn from(hotkey: Option<Hotkey>) -> Self {
+        use wire::hotkey::Binding;
         Self {
-            chord: chord.map(wire::Chord::from),
+            binding: hotkey.map(|hotkey| match hotkey {
+                Hotkey::Chord(chord) => Binding::Chord(chord.into()),
+                Hotkey::Combo(combo) => Binding::Combo(wire::HotkeyCombo::from(combo).into()),
+            }),
         }
     }
 }
@@ -2544,6 +2589,7 @@ mod tests {
             new: true,
             output_mode: Some(OutputMode::Copy),
             own_voice: true,
+            tap_cancels: true,
         };
 
         let sent = wire::AskRequest::from(request.clone());
@@ -2982,6 +3028,22 @@ mod tests {
     }
 
     #[test]
+    fn each_combo_keeps_its_modifier_on_the_wire() {
+        for (combo, expected) in [
+            (Combo::Shift, wire::HotkeyCombo::Shift),
+            (Combo::Command, wire::HotkeyCombo::Command),
+        ] {
+            assert_eq!(
+                wire::Event::from(combo).payload,
+                Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
+                    combo: expected.into(),
+                })),
+                "{combo:?}"
+            );
+        }
+    }
+
+    #[test]
     fn prompts_round_trip_and_need_their_kind() {
         let prompts = Prompts::new(vec![
             Prompt::new(
@@ -2990,7 +3052,16 @@ mod tests {
                 PromptKind::Compose,
                 "/prompts/polish.md".into(),
                 true,
-                Some(Chord::ASK),
+                Some(
+                    Chord::new(
+                        0,
+                        Modifiers {
+                            control: true,
+                            ..Modifiers::default()
+                        },
+                    )
+                    .expect("chord"),
+                ),
             )
             .expect("prompt"),
         ])
@@ -3023,6 +3094,7 @@ mod tests {
                 text: text.to_owned(),
                 prompt_id: id.to_owned(),
                 application_id: app.to_owned(),
+                tap_cancels: false,
             })
         };
         assert!(matches!(
@@ -3042,6 +3114,7 @@ mod tests {
 
     #[test]
     fn a_hotkey_round_trips_and_needs_a_chord_with_a_modifier() {
+        use wire::hotkey::Binding;
         let chord = wire::Chord {
             key_code: 13,
             control: true,
@@ -3049,15 +3122,29 @@ mod tests {
             shift: true,
             command: false,
         };
-        let hotkey =
-            Option::<Chord>::try_from(wire::Hotkey { chord: Some(chord) }).expect("decodes");
-        assert_eq!(wire::Hotkey::from(hotkey).chord, Some(chord));
+        for binding in [
+            Some(Binding::Chord(chord)),
+            Some(Binding::Combo(wire::HotkeyCombo::Command.into())),
+            None,
+        ] {
+            let hotkey = Option::<Hotkey>::try_from(wire::Hotkey { binding }).expect("decodes");
+            assert_eq!(wire::Hotkey::from(hotkey).binding, binding);
+        }
         let cleared = PreferencePatch::try_from(wire::PreferencePatch {
-            ask_hotkey: Some(wire::Hotkey { chord: None }),
+            ask_hotkey: Some(wire::Hotkey::default()),
             ..Default::default()
         })
         .expect("decodes");
         assert_eq!(cleared.ask_hotkey, Some(None));
+        assert!(matches!(
+            Option::<Hotkey>::try_from(wire::Hotkey {
+                binding: Some(Binding::Combo(wire::HotkeyCombo::Unspecified.into())),
+            }),
+            Err(ProtocolError::InvalidEnum {
+                field: "hotkey combo",
+                ..
+            })
+        ));
 
         let bare = wire::Chord {
             control: false,

@@ -5,15 +5,15 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "PressClient")
 
-/// The calls a chord makes.
+/// The calls a press makes.
 ///
 /// A failure is logged, never surfaced. There is nowhere to show an error
 /// from a global key press, and every outcome that matters to the user is
 /// already on the event stream.
 enum PressClient {
     /// Reads one press to its outcome. The daemon names the recording as
-    /// it opens, and `onRecording` gets that name on the main actor, since
-    /// a stop can only be sent once it is known.
+    /// it opens, and `onRecording` gets that name on the main actor, so
+    /// the pill can mark it.
     ///
     /// Nil for a stop-accepted — another client was recording, so this call
     /// stopped theirs and the transcript went to them — and for a stream
@@ -58,19 +58,6 @@ enum PressClient {
         return heard ?? nil
     }
 
-    /// False when that recording is not the one running; nil when the
-    /// stop never reached the daemon.
-    static func stopRecording(id: UInt64) async -> Bool? {
-        var request = Aria_Daemon_V1_StopDictationRequest()
-        request.recordingID = id
-        let sent = request
-        let response = await attempt("stop recording") { client in
-            try await Aria_Daemon_V1_DictationService.Client(wrapping: client)
-                .stop(request: ClientRequest(message: sent)) { try $0.message }
-        }
-        return response?.wasRecording
-    }
-
     static func resolve() async -> Aria_Daemon_V1_ResolveAskResponse? {
         await attempt("resolve the project") { client in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
@@ -91,6 +78,8 @@ enum PressClient {
         // The daemon's own verdict, handed back: it may remember what its
         // owner said.
         request.ownVoice = heard.ownVoice
+        // A press started this run, so the Aria key cancels it.
+        request.tapCancels = true
         let sent = request
         let response = await attempt("ask") { client in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
@@ -104,22 +93,13 @@ enum PressClient {
         request.text = text
         request.promptID = promptID
         request.applicationID = application ?? ""
+        request.tapCancels = true
         let sent = request
         let response = await attempt("run the prompt") { client in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .runPrompt(request: ClientRequest(message: sent)) { try $0.message }
         }
         return response?.ticket
-    }
-
-    static func cancel(ticket: UInt64) async {
-        var request = Aria_Daemon_V1_CancelAskRequest()
-        request.ticket = ticket
-        let sent = request
-        _ = await attempt("cancel") { client in
-            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
-                .cancel(request: ClientRequest(message: sent)) { try $0.message }
-        }
     }
 
     private static let pressTimeout = Duration.seconds(670)

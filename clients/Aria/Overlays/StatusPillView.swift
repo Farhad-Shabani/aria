@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct Pill: Equatable {
@@ -48,8 +47,6 @@ struct StatusPillView: View {
     let pill: Pill
     let level: LiveLevel
 
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     var body: some View {
         let state = pill.state
         let label = pill.label
@@ -74,43 +71,7 @@ struct StatusPillView: View {
             }
         }
         .padding(9)
-        .background {
-            Capsule()
-                .fill(OverlayStyle.frost)
-                // Reduce Transparency turns the blur solid, so all of it shows.
-                .background { BehindWindowBlur().opacity(reduceTransparency ? 1 : OverlayStyle.frostBlur) }
-                .overlay { FloorGlow(isLit: pill.glows) }
-                .overlay {
-                    LinearGradient(colors: [OverlayStyle.frostSheen, .clear], startPoint: .top, endPoint: .center)
-                }
-                .clipShape(Capsule())
-                .overlay { Capsule().strokeBorder(OverlayStyle.frostEdge, lineWidth: OverlayStyle.frostEdgeWidth) }
-        }
-    }
-}
-
-/// The windows behind the pill, blurred. The pill is its own transparent
-/// window, so only AppKit can blur what lies under it.
-private struct BehindWindowBlur: NSViewRepresentable {
-    func makeNSView(context: Context) -> CapsuleBlurView {
-        let view = CapsuleBlurView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.appearance = NSAppearance(named: .darkAqua)
-        return view
-    }
-
-    func updateNSView(_ view: CapsuleBlurView, context: Context) {}
-}
-
-private final class CapsuleBlurView: NSVisualEffectView {
-    override func layout() {
-        super.layout()
-        maskImage = NSImage(size: bounds.size, flipped: false) { rect in
-            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
-            return true
-        }
+        .background { Frost.capsule(floor: FloorGlow(isLit: pill.glows)) }
     }
 }
 

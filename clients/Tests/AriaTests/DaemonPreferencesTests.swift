@@ -248,7 +248,7 @@ final class DaemonPreferencesTests: XCTestCase {
                 XCTAssertTrue(preferences.lastError is FakePreferencesTransport.Unreachable)
             }
             XCTAssertEqual(preferences.snapshot?.muteOutput, true, "the edit stays visible")
-            XCTAssertEqual(preferences.snapshot?.askHotkey.hasChord, false)
+            XCTAssertEqual(preferences.snapshot?.askHotkey, Aria_Daemon_V1_Hotkey())
             XCTAssertEqual(preferences.snapshot?.hasVocabularyDirectory, false)
             transport.updateError = nil
             transport.updates = [accepted(snapshot(revision: 4, mute: true))]

@@ -43,6 +43,13 @@ impl ChatJob {
             Self::Prompt(request) => request.assistant_id,
         }
     }
+
+    pub(in crate::daemon) fn tap_cancels(&self) -> bool {
+        match self {
+            Self::Ask(request) => request.tap_cancels,
+            Self::Prompt(request) => request.tap_cancels,
+        }
+    }
 }
 
 pub(in crate::daemon) struct ChatRuntime {
@@ -204,6 +211,7 @@ impl ChatRuntime {
                 .model_id(assistant_id)
                 .map(str::to_owned),
             application: call.application,
+            tap_cancels: call.tap_cancels,
         })
     }
 
@@ -817,6 +825,7 @@ pub(super) mod tests {
             assistant_id: AssistantId::ClaudeCode,
             model_id: None,
             application: None,
+            tap_cancels: false,
         }
     }
 
@@ -912,6 +921,7 @@ pub(super) mod tests {
             text: "hi".to_owned(),
             prompt: PromptId::new("polish").unwrap(),
             application: None,
+            tap_cancels: false,
         };
         assert_eq!(
             runtime.prompt_request(call()).unwrap().assistant_id,
@@ -983,6 +993,7 @@ pub(super) mod tests {
             text: "hi".to_owned(),
             prompt: PromptId::new(id).expect("id"),
             application: None,
+            tap_cancels: false,
         };
         let request = runtime
             .prompt_request(call("on"))
@@ -1213,6 +1224,7 @@ pub(super) mod tests {
             new,
             output_mode: None,
             own_voice: false,
+            tap_cancels: false,
         }
     }
 

@@ -7,6 +7,7 @@ package aria.daemon.v1;
 import "aria/daemon/v1/chat.proto";
 import "aria/daemon/v1/dictation.proto";
 import "aria/daemon/v1/listen.proto";
+import "aria/daemon/v1/preferences.proto";
 import "aria/daemon/v1/speaker.proto";
 import "aria/daemon/v1/speech.proto";
 
@@ -30,5 +31,13 @@ message Event {
     CaptionSnapshot caption = 6;
     MicLevel level = 7;
     GhostSnapshot ghost = 8;
+    HotkeyEvent hotkey = 9;
   }
+}
+
+// The Aria key was let go after a combo: held with Shift or Command alone,
+// with no other key or click. The daemon only reports it; a client decides
+// what each combo runs.
+message HotkeyEvent {
+  HotkeyCombo combo = 1;
 }

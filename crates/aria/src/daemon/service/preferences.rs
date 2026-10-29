@@ -91,7 +91,7 @@ fn failure(operation: &'static str, error: PreferencesCallError) -> RpcFailure {
 pub(super) fn store_error(operation: &'static str, error: PreferenceStoreError) -> RpcFailure {
     if matches!(
         error,
-        PreferenceStoreError::ChordInUse | PreferenceStoreError::InvalidModelId
+        PreferenceStoreError::BindingInUse | PreferenceStoreError::InvalidModelId
     ) {
         return RpcFailure::new(RpcErrorCode::InvalidRequest, error.to_string());
     }

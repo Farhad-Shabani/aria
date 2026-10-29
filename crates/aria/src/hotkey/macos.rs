@@ -277,7 +277,13 @@ unsafe extern "C-unwind" fn tap_callback(
             let key_code =
                 CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
             let flags = CGEvent::flags(Some(event)).0;
-            state.feed(KeyEvent::FlagsChanged { key_code, flags });
+            let source_pid =
+                CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID);
+            state.feed(KeyEvent::FlagsChanged {
+                key_code,
+                flags,
+                synthetic: source_pid != 0,
+            });
         }
         CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown => {
             state.feed(KeyEvent::MouseDown);

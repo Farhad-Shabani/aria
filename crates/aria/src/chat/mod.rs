@@ -78,6 +78,8 @@ pub struct ChatRequest {
     /// The daemon's own-voice gate judged the recording this came from as
     /// the owner's. Typed text, and a recording nothing judged, are not.
     pub own_voice: bool,
+    /// A tap of the Aria key cancels this run while it is in flight.
+    pub tap_cancels: bool,
 }
 
 impl ChatRequest {
@@ -100,6 +102,7 @@ impl ChatRequest {
             new: false,
             output_mode: None,
             own_voice: false,
+            tap_cancels: false,
         })
     }
 
@@ -143,6 +146,8 @@ pub(crate) struct PromptCall {
     /// The app in front when the chord was pressed, the only one the result
     /// may be typed into. None when the caller could not tell.
     pub(crate) application: Option<crate::preferences::ApplicationId>,
+    /// A tap of the Aria key cancels this run while it is in flight.
+    pub(crate) tap_cancels: bool,
 }
 
 /// A prompt call resolved against the stored prompt and the configured
@@ -156,6 +161,7 @@ pub(crate) struct PromptRequest {
     pub(crate) assistant_id: AssistantId,
     pub(crate) model_id: Option<String>,
     pub(crate) application: Option<crate::preferences::ApplicationId>,
+    pub(crate) tap_cancels: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

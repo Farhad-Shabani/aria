@@ -17,8 +17,9 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   muting sound while recording.
 - **Recognition** sets where transcription runs, the language, voice
   filtering, and project vocabulary.
-- **Shortcuts** chooses right Option or Fn for the dictation hotkey, and sets
-  the Ask shortcut.
+- **Shortcuts** chooses right Option or Fn for the Aria key, and what starts
+  Ask and the prompt list: an Aria key combo, a shortcut of your own, or
+  nothing.
 - **Prompts** lists Markdown files that say what to make of what you say,
   each with its own shortcut. See [Prompts](./prompts.md).
 - **Privacy** controls dictation history and retained audio.

@@ -2,9 +2,8 @@ import Carbon.HIToolbox
 
 /// What a press of the prompt list chord asks the caller to do.
 enum PromptListPress: Equatable {
-    /// A run the list started is going, so the chord stands in for that
-    /// prompt's own.
-    case prompt(id: String)
+    /// A run the list started is still going; the Aria key drives it.
+    case ignore
     case open
     case close
 }
@@ -27,7 +26,7 @@ struct PromptListGesture: Equatable {
     /// A run that has ended frees the chord to open the list again.
     mutating func press(isOpen: Bool, isBusy: (String) -> Bool) -> PromptListPress {
         if let started, isBusy(started) {
-            return .prompt(id: started)
+            return .ignore
         }
         started = nil
         return isOpen ? .close : .open

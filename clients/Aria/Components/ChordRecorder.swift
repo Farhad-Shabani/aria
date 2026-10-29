@@ -10,7 +10,7 @@ private enum ActiveCapture {
 /// Captures with a local monitor, which needs no Accessibility grant. It sees
 /// keys only while the Settings window is key, and that is the only time
 /// capture runs.
-struct ChordRecorder: View {
+struct ChordRecorder<Accessory: View>: View {
     let title: String
     let chord: Chord?
     /// Carbon turned the chord down, so another app holds it.
@@ -18,6 +18,8 @@ struct ChordRecorder: View {
     let record: (Chord) -> Void
     /// Removes the chord, from the ⓧ beside it or Delete while recording.
     let clear: () -> Void
+    /// Shown before the chord: the setting's other choices, such as a combo.
+    @ViewBuilder let accessory: Accessory
     @Environment(\.isEnabled) private var isEnabled
     @State private var monitor: Any?
     @State private var refusal: String?
@@ -25,12 +27,9 @@ struct ChordRecorder: View {
     var body: some View {
         LabeledContent {
             HStack {
+                accessory
                 if chord != nil && !isCapturing {
-                    Button("Clear Shortcut", systemImage: "xmark.circle.fill", action: clear)
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Clear Shortcut")
+                    ClearShortcutButton(action: clear)
                 }
                 Button {
                     if isCapturing {
@@ -107,5 +106,28 @@ struct ChordRecorder: View {
             endCapture()
             record(chord)
         }
+    }
+}
+
+extension ChordRecorder where Accessory == EmptyView {
+    init(
+        title: String, chord: Chord?, isInUse: Bool, record: @escaping (Chord) -> Void,
+        clear: @escaping () -> Void
+    ) {
+        self.init(title: title, chord: chord, isInUse: isInUse, record: record, clear: clear) {
+            EmptyView()
+        }
+    }
+}
+
+struct ClearShortcutButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button("Clear Shortcut", systemImage: "xmark.circle.fill", action: action)
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Clear Shortcut")
     }
 }

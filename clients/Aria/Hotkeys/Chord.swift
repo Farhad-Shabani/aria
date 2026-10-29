@@ -71,4 +71,16 @@ extension Chord {
         self.init(
             keyCode: keyCode, control: wire.control, option: wire.option, shift: wire.shift, command: wire.command)
     }
+
+    /// A chord this build cannot use reads as none.
+    init?(stored wire: Aria_Daemon_V1_Chord, isSet: Bool) {
+        guard isSet else { return nil }
+        self.init(wire: wire)
+    }
+}
+
+extension Aria_Daemon_V1_Prompt {
+    var storedChord: Chord? {
+        Chord(stored: chord, isSet: hasChord)
+    }
 }

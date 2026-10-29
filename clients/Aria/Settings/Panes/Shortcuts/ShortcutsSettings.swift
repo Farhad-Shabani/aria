@@ -8,10 +8,11 @@ struct ShortcutsSettings: View {
 
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
-            Section("Dictation") {
+            let ariaKey = editor.snapshot.storedDictationHotkey ?? .default
+            Section {
                 Picker(
-                    "Dictation hotkey",
-                    selection: editor.binding(editor.snapshot.storedDictationHotkey ?? .default) { key, edit in
+                    "Aria key",
+                    selection: editor.binding(ariaKey) { key, edit in
                         edit.dictationHotkey = key.wire
                     }
                 ) {
@@ -21,22 +22,34 @@ struct ShortcutsSettings: View {
                 }
                 // An unknown stored key stays untouched rather than shown as Right Option.
                 .disabled(editor.snapshot.storedDictationHotkey == nil)
+            } footer: {
+                Text(
+                    "Tap to dictate, or hold to talk. Requires Accessibility access."
+                )
             }
-            Section("Ask") {
+            Section {
                 HotkeyRecorder(
                     title: "Shortcut",
-                    chord: editor.snapshot.askHotkey.storedChord,
+                    hotkey: editor.snapshot.askHotkey,
+                    combo: .shift,
+                    ariaKey: ariaKey,
                     binding: askChord
                 ) {
                     editor.set(\.askHotkey, to: Aria_Daemon_V1_Hotkey($0))
                 }
                 // Nothing to edit until the daemon sends its ask hotkey.
                 .disabled(!editor.snapshot.hasAskHotkey)
+            } header: {
+                Text("Ask")
+            } footer: {
+                Text("Tap the Aria key to send. Tap again to cancel.")
             }
             Section("Prompts") {
                 HotkeyRecorder(
-                    title: "Show prompt list",
-                    chord: editor.snapshot.promptListHotkey.storedChord,
+                    title: "Prompt list shortcut",
+                    hotkey: editor.snapshot.promptListHotkey,
+                    combo: .command,
+                    ariaKey: ariaKey,
                     binding: promptListChord
                 ) {
                     editor.set(\.promptListHotkey, to: Aria_Daemon_V1_Hotkey($0))

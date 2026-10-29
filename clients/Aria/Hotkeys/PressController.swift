@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 
-/// Runs an ask, or a stored prompt, from presses: one to record, the next to
-/// send, the next to cancel. The presses come from a chord, the prompt
-/// list, or both.
+/// Runs an ask, or a stored prompt, from a press: a chord, an Aria key
+/// combo, or the prompt list. A press only starts the run. The Aria key
+/// then stops its recording and cancels it, daemon-side.
 ///
 /// The daemon does the work and already announces every step, so this draws
 /// nothing. The caption and status overlays show the recording and the
@@ -23,11 +23,9 @@ final class PressController {
     /// The app in front at the first press: a prompt's result is typed only
     /// there.
     private var pressedIn: String?
-    /// The open `Start`, kept so a stop that never lands can end it.
-    private var recording: Task<Void, Never>?
 
-    /// An ask ends on the event stream, not on the call that started it: the
-    /// third press cancels, but a reply or a failure ends it just as well.
+    /// An ask ends on the event stream, not on the call that started it: a
+    /// reply, a failure, or the daemon's own cancel.
     init(
         events: DaemonEvents,
         operation: Operation,
@@ -51,34 +49,16 @@ final class PressController {
     }
 
     func press() {
-        act(on: gesture.press())
-    }
-
-    var isBusy: Bool { !gesture.isIdle }
-
-    /// A stop that finds nothing running is not chased: the open `Start`
-    /// answers on its own, with a result, a stop-accepted, or nothing, and
-    /// `run` reads all three. A stop that never reached the daemon is
-    /// different: the mic would stay live until the daemon's own deadline,
-    /// so the open `Start` is cancelled, which ends the press daemon-side.
-    private func act(on action: PressAction) {
-        switch action {
+        switch gesture.press() {
         case .record:
             pressedIn = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            recording = Task { await self.run() }
-        case .stop(let id):
-            Task {
-                if await PressClient.stopRecording(id: id) == nil {
-                    recording?.cancel()
-                    gesture.abandon()
-                }
-            }
-        case .cancel(let ticket):
-            Task { await PressClient.cancel(ticket: ticket) }
+            Task { await self.run() }
         case .ignore:
             break
         }
     }
+
+    var isBusy: Bool { !gesture.isIdle }
 
     /// One `Start` spans the whole recording and answers with the transcript
     /// once it has been stopped. Nothing is typed at that point: the reply
@@ -101,7 +81,7 @@ final class PressController {
     }
 
     private func ask() async -> UInt64? {
-        guard let target = await PressClient.resolve(), !Task.isCancelled,
+        guard let target = await PressClient.resolve(),
             let heard = await record(projectDirectory: target.workdir)
         else { return nil }
         return await PressClient.ask(heard: heard, target: target)
@@ -116,9 +96,7 @@ final class PressController {
     /// Nil for silence as well as for a recording that failed.
     private func record(projectDirectory: String?) async -> Aria_Daemon_V1_DictationResult? {
         let heard = await PressClient.transcribe(projectDirectory: projectDirectory) { [weak self] id in
-            guard let self else { return }
-            started(.recording(id))
-            act(on: gesture.recordingStarted(id: id))
+            self?.started(.recording(id))
         }
         guard let heard, !heard.text.isEmpty else { return nil }
         return heard

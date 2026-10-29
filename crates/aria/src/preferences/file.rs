@@ -6,15 +6,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
-    DictationOverrides, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError, Prompt,
-    PromptError, PromptId, Prompts, UserPreferences,
+    DictationOverrides, Hotkey, Modifiers, OverrideError, PreferenceSnapshot, PreferenceStoreError,
+    Prompt, PromptError, PromptId, Prompts, UserPreferences,
 };
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::chat::PromptKind;
 use crate::config::AssistantId;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
-use crate::hotkey::HotkeyKey;
+use crate::hotkey::{Combo, HotkeyKey};
 use crate::primitives::private_document::{self, DocumentError, PreparedWrite, PrivateDocument};
 
 const MAX_FILE_BYTES: u64 = 64 * 1024;
@@ -154,11 +154,15 @@ impl StoredDocument {
                 .map(|path| crate::vocabulary::Directory::new(path.into()))
                 .transpose()?,
             dictation_hotkey: self.preferences.dictation_hotkey.into(),
-            ask_hotkey: self.preferences.ask_hotkey.chord().map_err(invalid_chord)?,
+            ask_hotkey: self
+                .preferences
+                .ask_hotkey
+                .hotkey(Combo::Shift)
+                .map_err(invalid_chord)?,
             prompt_list_hotkey: self
                 .preferences
                 .prompt_list_hotkey
-                .chord()
+                .hotkey(Combo::Command)
                 .map_err(invalid_chord)?,
             application_overrides: ApplicationOverrides::try_from(
                 self.preferences.application_overrides,
@@ -170,8 +174,8 @@ impl StoredDocument {
             prompts,
         };
         preferences.validate_assistant_models()?;
-        if preferences.shares_a_chord() {
-            return Err(PreferenceStoreError::SharedChord {
+        if preferences.shares_a_binding() {
+            return Err(PreferenceStoreError::SharedBinding {
                 path: path.to_path_buf(),
             });
         }
@@ -265,7 +269,7 @@ struct StoredPreferences {
     dictation_hotkey: StoredHotkeyKey,
     #[serde(default)]
     ask_hotkey: StoredHotkey,
-    #[serde(default = "prompt_list_off")]
+    #[serde(default)]
     prompt_list_hotkey: StoredHotkey,
     #[serde(default)]
     project_vocabulary: bool,
@@ -308,10 +312,6 @@ fn history_enabled() -> bool {
 
 fn auto_stop_on() -> Option<u64> {
     Some(AutoStop::default().get().as_millis() as u64)
-}
-
-fn prompt_list_off() -> StoredHotkey {
-    StoredHotkey::from(None)
 }
 
 fn default_stored_delivery_mode() -> StoredDeliveryMode {
@@ -469,13 +469,79 @@ impl From<Chord> for StoredChord {
     }
 }
 
-/// Flat, with a switch beside the chord. A chord that is off, or a switch
-/// with no chord, reads as none.
+/// Written as a word, or as a chord. A file from before the combos were
+/// settable holds the flat form, which is still read: a chord switched on
+/// is that chord, and anything else is the action's combo, which that form
+/// could not turn off.
+#[derive(Clone, Copy, Serialize)]
+#[serde(untagged)]
+enum StoredHotkey {
+    Bound(StoredBinding),
+    Flat(FlatStoredHotkey),
+}
+
+/// Picks the form by its shape, so a fault is reported against that form
+/// and names its field. An untagged derive would report only that neither
+/// matched.
+impl<'de> Deserialize<'de> for StoredHotkey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let hotkey = if value.get("enabled").is_some() {
+            FlatStoredHotkey::deserialize(value).map(Self::Flat)
+        } else {
+            StoredBinding::deserialize(value).map(Self::Bound)
+        };
+        hotkey.map_err(serde::de::Error::custom)
+    }
+}
+
+impl Default for StoredHotkey {
+    fn default() -> Self {
+        Self::Flat(FlatStoredHotkey::default())
+    }
+}
+
+impl StoredHotkey {
+    fn hotkey(self, combo: Combo) -> Result<Option<Hotkey>, ChordError> {
+        match self {
+            Self::Bound(StoredBinding::Off) => Ok(None),
+            Self::Bound(StoredBinding::Shift) => Ok(Some(Hotkey::Combo(Combo::Shift))),
+            Self::Bound(StoredBinding::Command) => Ok(Some(Hotkey::Combo(Combo::Command))),
+            Self::Bound(StoredBinding::Chord(chord)) => {
+                Chord::try_from(chord).map(Hotkey::Chord).map(Some)
+            }
+            Self::Flat(flat) => flat
+                .chord()
+                .map(|chord| Some(chord.map_or(Hotkey::Combo(combo), Hotkey::Chord))),
+        }
+    }
+}
+
+impl From<Option<Hotkey>> for StoredHotkey {
+    fn from(hotkey: Option<Hotkey>) -> Self {
+        Self::Bound(match hotkey {
+            None => StoredBinding::Off,
+            Some(Hotkey::Combo(Combo::Shift)) => StoredBinding::Shift,
+            Some(Hotkey::Combo(Combo::Command)) => StoredBinding::Command,
+            Some(Hotkey::Chord(chord)) => StoredBinding::Chord(chord.into()),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredBinding {
+    Off,
+    Shift,
+    Command,
+    Chord(StoredChord),
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StoredHotkey {
+struct FlatStoredHotkey {
     enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     key_code: Option<u16>,
     control: bool,
     option: bool,
@@ -483,14 +549,7 @@ struct StoredHotkey {
     command: bool,
 }
 
-// An older file has no ask_hotkey; the default chord matches a fresh one.
-impl Default for StoredHotkey {
-    fn default() -> Self {
-        Self::from(Some(Chord::ASK))
-    }
-}
-
-impl StoredHotkey {
+impl FlatStoredHotkey {
     fn chord(self) -> Result<Option<Chord>, ChordError> {
         let (true, Some(key_code)) = (self.enabled, self.key_code) else {
             return Ok(None);
@@ -503,20 +562,6 @@ impl StoredHotkey {
             command: self.command,
         })
         .map(Some)
-    }
-}
-
-impl From<Option<Chord>> for StoredHotkey {
-    fn from(chord: Option<Chord>) -> Self {
-        let chord = chord.map(StoredChord::from);
-        Self {
-            enabled: chord.is_some(),
-            key_code: chord.map(|chord| chord.key_code),
-            control: chord.is_some_and(|chord| chord.control),
-            option: chord.is_some_and(|chord| chord.option),
-            shift: chord.is_some_and(|chord| chord.shift),
-            command: chord.is_some_and(|chord| chord.command),
-        }
     }
 }
 
@@ -664,57 +709,103 @@ mod tests {
             document
                 .preferences
                 .ask_hotkey
-                .chord()
+                .hotkey(Combo::Shift)
                 .expect("a valid default"),
-            Some(Chord::ASK)
+            Some(Hotkey::Combo(Combo::Shift))
         );
         assert_eq!(
             document
                 .preferences
                 .prompt_list_hotkey
-                .chord()
+                .hotkey(Combo::Command)
                 .expect("valid"),
-            None
+            Some(Hotkey::Combo(Combo::Command))
         );
     }
 
     #[test]
-    fn a_stored_hotkey_round_trips_and_keeps_the_flat_layout() {
+    fn a_stored_hotkey_round_trips_tagged_and_reads_the_flat_form() {
         let modifiers = Modifiers {
             option: true,
             command: true,
             ..Modifiers::default()
         };
         let chord = Chord::new(49, modifiers).expect("a chord");
-        for hotkey in [Some(chord), None] {
-            let decoded = StoredHotkey::from(hotkey).chord().expect("decodes");
-            assert_eq!(decoded, hotkey);
+        for hotkey in [
+            Some(Hotkey::Chord(chord)),
+            Some(Hotkey::Combo(Combo::Shift)),
+            Some(Hotkey::Combo(Combo::Command)),
+            None,
+        ] {
+            let json = serde_json::to_string(&StoredHotkey::from(hotkey)).expect("encodes");
+            let decoded: StoredHotkey = serde_json::from_str(&json).expect("decodes");
+            assert_eq!(
+                decoded.hotkey(Combo::Command).expect("valid"),
+                hotkey,
+                "{json}"
+            );
+        }
+        let off = serde_json::to_string(&StoredHotkey::from(None)).expect("encodes");
+        assert_eq!(off, r#""off""#);
+
+        for malformed in [
+            r#""alt""#,
+            r#"{"chord":{"key_code":5,"control":true,"option":false,"shift":false,"command":false},"extra":1}"#,
+            r#"{"chord":{"key_code":5,"control":true,"option":false,"shift":false,"command":false,"enabled":true}}"#,
+            r#"{"enabled":true,"key_code":5,"control":true,"option":false,"shift":false,"command":false,"chord":"off"}"#,
+        ] {
+            let error = serde_json::from_str::<StoredHotkey>(malformed)
+                .err()
+                .unwrap_or_else(|| panic!("{malformed} is refused"));
+            assert!(
+                !error.to_string().contains("untagged enum"),
+                "{malformed}: {error}"
+            );
         }
 
         let released: StoredHotkey = serde_json::from_str(
             r#"{"enabled":true,"key_code":0,"control":true,"option":true,"shift":false,"command":false}"#,
         )
         .expect("a released file's ask hotkey parses");
-        assert_eq!(released.chord().expect("valid"), Some(Chord::ASK));
+        let control_option_a = Chord::new(
+            0,
+            Modifiers {
+                control: true,
+                option: true,
+                ..Modifiers::default()
+            },
+        )
+        .expect("a chord");
+        assert_eq!(
+            released.hotkey(Combo::Shift).expect("valid"),
+            Some(Hotkey::Chord(control_option_a))
+        );
 
         let switched_off: StoredHotkey = serde_json::from_str(
             r#"{"enabled":false,"key_code":0,"control":true,"option":true,"shift":false,"command":false}"#,
         )
         .expect("a released file's switched-off ask hotkey parses");
-        assert_eq!(switched_off.chord().expect("valid"), None);
+        assert_eq!(
+            switched_off.hotkey(Combo::Shift).expect("valid"),
+            Some(Hotkey::Combo(Combo::Shift))
+        );
 
         let on_without_a_key: StoredHotkey = serde_json::from_str(
             r#"{"enabled":true,"control":false,"option":false,"shift":false,"command":false}"#,
         )
         .expect("a switch with no chord parses");
-        assert_eq!(on_without_a_key.chord().expect("valid"), None);
+        assert_eq!(
+            on_without_a_key.hotkey(Combo::Shift).expect("valid"),
+            Some(Hotkey::Combo(Combo::Shift))
+        );
     }
 
     #[test]
     fn a_file_that_gives_one_chord_two_jobs_is_refused() {
         let document: StoredDocument = serde_json::from_str(
             r#"{"revision":2,"preferences":{"recognition_language":"en","output_mode":"insert",
-                "silence_duration_ms":1500,"prompts":[{"id":"p","name":"P","kind":"rewrite",
+                "silence_duration_ms":1500,"ask_hotkey":{"enabled":true,"key_code":0,
+                "control":true,"option":true,"shift":false,"command":false},"prompts":[{"id":"p","name":"P","kind":"rewrite",
                 "file":"/p.md","enabled":true,"chord":{"key_code":0,"control":true,
                 "option":true,"shift":false,"command":false}}]}}"#,
         )
@@ -722,7 +813,7 @@ mod tests {
 
         assert!(matches!(
             document.into_snapshot(Path::new("/p.json")),
-            Err(PreferenceStoreError::SharedChord { .. })
+            Err(PreferenceStoreError::SharedBinding { .. })
         ));
     }
 
