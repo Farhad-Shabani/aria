@@ -53,7 +53,8 @@ final class VoiceProfiles: ObservableObject {
     }
 
     var ownVoiceSummary: String {
-        hasOwner ? "Other voices are heard but not typed." : "Set up your voice to use this."
+        hasOwner
+            ? "Types only your voice. The status pill glows when Aria hears you." : "Set up your voice to use this."
     }
 
     /// A refresh cancelled by leaving the pane is not a failure worth showing.
