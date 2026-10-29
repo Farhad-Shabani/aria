@@ -32,6 +32,27 @@ final class AssistantCatalogTests: XCTestCase {
         XCTAssertFalse(catalog.isLoading)
     }
 
+    func testLoadIfEmptyRetriesAfterFailureButNotAfterSuccess() async {
+        struct Failure: Error {}
+        @MainActor final class ResponseState {
+            var shouldFail = true
+            var calls = 0
+        }
+        let state = ResponseState()
+        let catalog = AssistantCatalog {
+            state.calls += 1
+            if state.shouldFail { throw Failure() }
+            return [self.assistant(.codex, name: "Codex")]
+        }
+        await catalog.loadIfEmpty()
+        XCTAssertNotNil(catalog.failure)
+        state.shouldFail = false
+        await catalog.loadIfEmpty()
+        XCTAssertNil(catalog.failure)
+        await catalog.loadIfEmpty()
+        XCTAssertEqual(state.calls, 2)
+    }
+
     func testCatalogRejectsEmptyDuplicateUnknownAndUnnamedChoices() async {
         let codex = assistant(.codex, name: "Codex")
         for choices in [
