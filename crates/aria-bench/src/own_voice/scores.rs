@@ -2,8 +2,9 @@
 //! much speech a check hears. The tracker's own-voice bars are fitted on this,
 //! on LibriSpeech subsets the own-voice corpus never uses.
 //!
-//! Each speaker is enrolled from one chapter and heard in the openings of
-//! utterances from their other chapters, as a turn's growing checks hear it.
+//! Each speaker is enrolled from one chapter and heard from where speech
+//! starts in utterances from their other chapters, as a turn's growing checks
+//! hear it.
 //! Every speaker is also heard against every other enrolled speaker of the
 //! same gender, the harder half of the impostors.
 
@@ -17,6 +18,7 @@ use aria_bench_speaker::{
 use aria_harness::artifact::{Provenance, fingerprint, write_json};
 use aria_kit::audio::canonical_samples;
 use aria_kit::speaker::{Embedder, EnrollmentError};
+use aria_kit::voice_activity::{SileroVad, VoiceActivityDetector};
 use serde::Serialize;
 
 use super::{Archive, OwnVoiceError, enroll, length};
@@ -79,6 +81,7 @@ struct WindowScores {
 /// table and writes the bars per window to `request.out`.
 pub fn measure(request: &Request) -> Result<(), OwnVoiceError> {
     let mut scorer = embedder(super::speaker_config(&request.speaker_model))?;
+    let mut vad = SileroVad::load().map_err(BenchError::SpeechGate)?;
     let mut voices = Vec::new();
     let mut unenrolled = Vec::new();
     let cache = &request.librispeech;
@@ -105,7 +108,7 @@ pub fn measure(request: &Request) -> Result<(), OwnVoiceError> {
                 id: speaker.id,
                 gender: speaker.gender,
                 profile,
-                windows: windows(&archive, &mut scorer, speaker)?,
+                windows: windows(&archive, &mut scorer, &mut vad, speaker)?,
             });
         }
     }
@@ -130,11 +133,13 @@ pub fn measure(request: &Request) -> Result<(), OwnVoiceError> {
     Ok(())
 }
 
-/// By [`WINDOWS`], the opening of each long-enough utterance outside the
-/// enrollment chapter.
+/// By [`WINDOWS`], the opening of each utterance outside the enrollment
+/// chapter, counted from where speech starts. LibriSpeech utterances open on
+/// silence, and a tracker's turn opens on speech.
 fn windows(
     archive: &Archive,
     scorer: &mut impl Embedder,
+    vad: &mut SileroVad,
     speaker: &Speaker,
 ) -> Result<Vec<Vec<Vec<f32>>>, OwnVoiceError> {
     let longest = WINDOWS[WINDOWS.len() - 1];
@@ -146,7 +151,13 @@ fn windows(
         if openings.len() == TRIAL_UTTERANCES {
             break;
         }
-        let audio = archive.read(id)?;
+        let mut audio = archive.read(id)?;
+        vad.reset();
+        let regions = vad.speech_regions(&audio).map_err(BenchError::SpeechGate)?;
+        let Some(first) = regions.first() else {
+            continue;
+        };
+        audio.drain(..first.start);
         if length(audio.len()) >= longest {
             openings.push(audio);
         }
