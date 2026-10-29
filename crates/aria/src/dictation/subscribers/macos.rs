@@ -2,20 +2,59 @@
 //! and fail. A failure reads in the status pill, which already follows the
 //! press.
 
+use std::sync::Arc;
+
+use crate::audio::Clip;
 use crate::dictation::DictationStage;
 use crate::feedback::{self, SYSTEM_SOUNDS};
+use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 
-pub(super) struct MacosFeedback;
+/// The cues, read once from the system sounds. One that did not read stays
+/// silent; the press goes on without it.
+pub(super) struct MacosFeedback {
+    start: Option<Arc<Clip>>,
+    stop: Option<Arc<Clip>>,
+    error: Option<Arc<Clip>>,
+}
 
 impl MacosFeedback {
-    pub(super) fn new() -> Self {
-        Self
+    pub(super) fn load() -> Self {
+        Self {
+            start: load_cue(Cue::Start),
+            stop: load_cue(Cue::Stop),
+            error: load_cue(Cue::Error),
+        }
     }
 
     pub(super) fn observe(&self, stage: &DictationStage, suppress_cues: bool) {
-        if let Some(cue) = Cue::for_stage(stage, suppress_cues) {
-            play(cue);
+        let Some(cue) = Cue::for_stage(stage, suppress_cues) else {
+            return;
+        };
+        if let Some(clip) = self.clip(cue) {
+            feedback::play_clip("dictation-cue", Arc::clone(clip));
+        }
+    }
+
+    fn clip(&self, cue: Cue) -> Option<&Arc<Clip>> {
+        match cue {
+            Cue::Start => self.start.as_ref(),
+            Cue::Stop => self.stop.as_ref(),
+            Cue::Error => self.error.as_ref(),
+        }
+    }
+}
+
+fn load_cue(cue: Cue) -> Option<Arc<Clip>> {
+    match feedback::read_caf(cue.sound_path()) {
+        Ok(clip) => Some(Arc::new(clip)),
+        Err(error) => {
+            tracing::warn!(
+                error = %error_chain(&error),
+                ?cue,
+                "a dictation cue will stay silent"
+            );
+            None
         }
     }
 }
@@ -58,13 +97,10 @@ impl Cue {
             Self::Error => "mic_unmute_fail.caf",
         }
     }
-}
 
-fn play(cue: Cue) {
-    feedback::play(
-        "dictation-cue",
-        &format!("{SYSTEM_SOUNDS}/{}", cue.sound_file()),
-    );
+    fn sound_path(self) -> String {
+        format!("{SYSTEM_SOUNDS}/{}", self.sound_file())
+    }
 }
 
 #[cfg(test)]
@@ -117,5 +153,15 @@ mod tests {
             files,
             ["begin_record.caf", "end_record.caf", "mic_unmute_fail.caf"]
         );
+    }
+
+    #[test]
+    fn every_cue_file_reads_as_a_clip() {
+        for cue in [Cue::Start, Cue::Stop, Cue::Error] {
+            let clip = feedback::read_caf(cue.sound_path())
+                .unwrap_or_else(|error| panic!("{cue:?} reads: {error}"));
+            assert_eq!(clip.sample_rate(), 44_100, "{cue:?}");
+            assert!(!clip.samples().is_empty(), "{cue:?}");
+        }
     }
 }

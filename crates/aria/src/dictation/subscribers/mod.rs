@@ -31,8 +31,10 @@ pub(crate) struct DictationSubscribers {
 impl DictationSubscribers {
     pub(crate) fn new(status_file: impl Into<PathBuf>) -> Self {
         Self {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(target_os = "linux")]
             feedback: PlatformFeedback::new(),
+            #[cfg(target_os = "macos")]
+            feedback: PlatformFeedback::load(),
             status: StatusFile::new(status_file),
         }
     }
