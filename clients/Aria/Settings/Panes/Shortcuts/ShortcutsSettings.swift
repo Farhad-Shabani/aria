@@ -31,7 +31,6 @@ struct ShortcutsSettings: View {
                 HotkeyRecorder(
                     title: "Shortcut",
                     hotkey: editor.snapshot.askHotkey,
-                    combo: .shift,
                     ariaKey: ariaKey,
                     binding: askChord
                 ) {
@@ -48,7 +47,6 @@ struct ShortcutsSettings: View {
                 HotkeyRecorder(
                     title: "Prompt list shortcut",
                     hotkey: editor.snapshot.promptListHotkey,
-                    combo: .command,
                     ariaKey: ariaKey,
                     binding: promptListChord
                 ) {
@@ -63,6 +61,22 @@ struct ShortcutsSettings: View {
                     }
                 }
             }
+            HStack {
+                Spacer()
+                Button("Restore Defaults") {
+                    editor.set(()) { _, edit in
+                        edit.askHotkey = Aria_Daemon_V1_Hotkey(.combo(.shift))
+                        edit.promptListHotkey = Aria_Daemon_V1_Hotkey(.combo(.command))
+                    }
+                }
+                .disabled(editor.snapshot.holdsDefaultShortcuts)
+            }
         }
+    }
+}
+
+extension Aria_Daemon_V1_UserPreferences {
+    fileprivate var holdsDefaultShortcuts: Bool {
+        askHotkey.storedBinding == .combo(.shift) && promptListHotkey.storedBinding == .combo(.command)
     }
 }

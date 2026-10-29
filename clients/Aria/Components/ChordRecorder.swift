@@ -10,7 +10,7 @@ private enum ActiveCapture {
 /// Captures with a local monitor, which needs no Accessibility grant. It sees
 /// keys only while the Settings window is key, and that is the only time
 /// capture runs.
-struct ChordRecorder<Accessory: View>: View {
+struct ChordRecorder: View {
     let title: String
     let chord: Chord?
     /// Carbon turned the chord down, so another app holds it.
@@ -18,8 +18,6 @@ struct ChordRecorder<Accessory: View>: View {
     let record: (Chord) -> Void
     /// Removes the chord, from the ⓧ beside it or Delete while recording.
     let clear: () -> Void
-    /// Shown before the chord: the setting's other choices, such as a combo.
-    @ViewBuilder let accessory: Accessory
     @Environment(\.isEnabled) private var isEnabled
     @State private var monitor: Any?
     @State private var refusal: String?
@@ -27,7 +25,6 @@ struct ChordRecorder<Accessory: View>: View {
     var body: some View {
         LabeledContent {
             HStack {
-                accessory
                 if chord != nil && !isCapturing {
                     ClearShortcutButton(action: clear)
                 }
@@ -105,17 +102,6 @@ struct ChordRecorder<Accessory: View>: View {
         case .chord(let chord):
             endCapture()
             record(chord)
-        }
-    }
-}
-
-extension ChordRecorder where Accessory == EmptyView {
-    init(
-        title: String, chord: Chord?, isInUse: Bool, record: @escaping (Chord) -> Void,
-        clear: @escaping () -> Void
-    ) {
-        self.init(title: title, chord: chord, isInUse: isInUse, record: record, clear: clear) {
-            EmptyView()
         }
     }
 }
