@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use aria_bench_speaker::{
-    Rates, Scored, equal_error_rate, rates_at, similarity, threshold_for_false_accept,
+    Scored, equal_error_rate, rates_at, similarity, threshold_for_false_accept,
     threshold_for_false_reject,
 };
 use aria_harness::artifact::{Provenance, fingerprint, write_json};
 use aria_kit::audio::canonical_samples;
-use aria_kit::speaker::{Embedder, EnrollmentError, OWN_VOICE_THRESHOLD};
+use aria_kit::speaker::{Embedder, EnrollmentError};
 use serde::Serialize;
 
 use super::{Archive, OwnVoiceError, enroll, length};
@@ -35,10 +35,9 @@ const WINDOWS: [Duration; 6] = [
 ];
 /// Utterances per speaker that trials open on.
 const TRIAL_UTTERANCES: usize = 20;
-/// Shares of other voices a bar may let through.
-const FALSE_ACCEPTS: [f64; 2] = [0.01, 0.001];
-/// Shares of the owner's voice a bar may turn away.
-const FALSE_REJECTS: [f64; 2] = [0.01, 0.05];
+/// The share of other voices the accept bar lets through, and of the owner's
+/// voice the doubt bar turns away.
+const ERROR_RATE: f64 = 0.01;
 
 pub struct Request {
     /// Where the subsets' archives are, or are downloaded to.
@@ -59,7 +58,6 @@ struct Voice {
 
 #[derive(Serialize)]
 struct Bar {
-    rate: f64,
     at: f32,
     /// The other error at this bar.
     costs: f64,
@@ -71,31 +69,10 @@ struct WindowScores {
     same: usize,
     different: usize,
     equal_error: Option<f64>,
-    /// Bars that let at most a share of other voices through, and the share
-    /// of the owner's voice each turns away.
-    accept: Vec<Bar>,
-    /// Bars that turn away at most a share of the owner's voice, and the
-    /// share of other voices each lets through.
-    doubt: Vec<Bar>,
-    /// What the bar the owner is named at costs at this length.
-    naming: Cost,
-}
-
-#[derive(Serialize)]
-struct Cost {
-    at: f32,
-    false_accept: f64,
-    false_reject: f64,
-}
-
-impl From<Rates> for Cost {
-    fn from(rates: Rates) -> Self {
-        Self {
-            at: rates.threshold,
-            false_accept: rates.false_accept,
-            false_reject: rates.false_reject,
-        }
-    }
+    /// Lets [`ERROR_RATE`] of other voices through.
+    accept: Option<Bar>,
+    /// Turns away [`ERROR_RATE`] of the owner's voice.
+    doubt: Option<Bar>,
 }
 
 /// Scores every enrolled speaker against every same-gender window, prints a
@@ -208,28 +185,14 @@ fn scored(voices: &[Voice], window: usize) -> Vec<Scored> {
 }
 
 fn summarize(seconds: f64, scored: &[Scored]) -> WindowScores {
-    let accept = FALSE_ACCEPTS
-        .iter()
-        .filter_map(|&rate| {
-            let at = threshold_for_false_accept(scored, rate)?;
-            Some(Bar {
-                rate,
-                at,
-                costs: rates_at(scored, at).false_reject,
-            })
-        })
-        .collect();
-    let doubt = FALSE_REJECTS
-        .iter()
-        .filter_map(|&rate| {
-            let at = threshold_for_false_reject(scored, rate)?;
-            Some(Bar {
-                rate,
-                at,
-                costs: rates_at(scored, at).false_accept,
-            })
-        })
-        .collect();
+    let accept = threshold_for_false_accept(scored, ERROR_RATE).map(|at| Bar {
+        at,
+        costs: rates_at(scored, at).false_reject,
+    });
+    let doubt = threshold_for_false_reject(scored, ERROR_RATE).map(|at| Bar {
+        at,
+        costs: rates_at(scored, at).false_accept,
+    });
     WindowScores {
         seconds,
         same: scored.iter().filter(|trial| trial.same_speaker).count(),
@@ -237,36 +200,28 @@ fn summarize(seconds: f64, scored: &[Scored]) -> WindowScores {
         equal_error: equal_error_rate(scored).map(|rates| rates.equal_error()),
         accept,
         doubt,
-        naming: rates_at(scored, OWN_VOICE_THRESHOLD).into(),
     }
 }
 
 fn print(summary: &[WindowScores]) {
     println!(
-        "{:>5} {:>6} {:>7} {:>6}   accept bar at FA (owner out)        doubt bar at FR (others in)",
+        "{:>5} {:>6} {:>7} {:>6}   accept (owner out)   doubt (others in)",
         "heard", "owner", "others", "EER"
     );
-    let bar = |bars: &[Bar], index: usize| {
-        bars.get(index).map_or("-".into(), |bar| {
-            format!(
-                "{:>4.1}%: {:.3} ({:>5.1}%)",
-                bar.rate * 100.0,
-                bar.at,
-                bar.costs * 100.0
-            )
+    let bar = |bar: &Option<Bar>| {
+        bar.as_ref().map_or("-".into(), |bar| {
+            format!("{:.3} ({:>5.1}%)", bar.at, bar.costs * 100.0)
         })
     };
     for window in summary {
         println!(
-            "{:>4.1}s {:>6} {:>7} {:>5.1}%   {}  {}   {}  {}",
+            "{:>4.1}s {:>6} {:>7} {:>5.1}%   {:>18}   {:>17}",
             window.seconds,
             window.same,
             window.different,
             window.equal_error.unwrap_or(f64::NAN) * 100.0,
-            bar(&window.accept, 0),
-            bar(&window.accept, 1),
-            bar(&window.doubt, 0),
-            bar(&window.doubt, 1),
+            bar(&window.accept),
+            bar(&window.doubt),
         );
     }
 }

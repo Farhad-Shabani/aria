@@ -315,15 +315,6 @@ own-voice-corpus owners="4":
         --owners {{ owners }} \
         --out {{ justfile_directory() }}/build/own-voice
 
-# The same conversations under room noise at a signal-to-noise ratio in dB
-own-voice-corpus-noisy snr="10" owners="4": noise
-    cargo run --locked --release -p aria-bench -- own-voice-corpus \
-        --librispeech {{ justfile_directory() }}/build/corpus/librispeech \
-        --owners {{ owners }} \
-        --noise {{ justfile_directory() }}/build/noise \
-        --snr {{ snr }} \
-        --out {{ justfile_directory() }}/build/own-voice-{{ snr }}db
-
 test_model_url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin"
 test_model_sha256 := "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
 

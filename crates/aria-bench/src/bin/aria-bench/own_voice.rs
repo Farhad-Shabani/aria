@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 
 use anyhow::Context;
 use aria_bench::own_voice::scores::{self, measure};
-use aria_bench::own_voice::{Noisy, Request, write_corpus};
+use aria_bench::own_voice::{Request, write_corpus};
 use aria_bench::stt::librispeech::Subset;
 use clap::Parser;
 
@@ -15,7 +15,6 @@ use crate::flag_path::expand;
 const EXAMPLES: &str = "\
 Examples:
   aria-bench own-voice-corpus --out build/own-voice
-  aria-bench own-voice-corpus --out build/own-voice-10db --noise build/noise --snr 10
 ";
 
 #[derive(Parser)]
@@ -36,29 +35,15 @@ pub(crate) struct Cli {
     /// How many speakers take a turn as the owner, alternating female and male
     #[arg(long, default_value = "4")]
     owners: NonZeroUsize,
-    /// Directory of noise recordings to mix into every scenario
-    #[arg(long, requires = "snr")]
-    noise: Option<String>,
-    /// Speech power over noise power, in decibels
-    #[arg(long, requires = "noise")]
-    snr: Option<f64>,
 }
 
 pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
     let out = expand(&cli.out)?;
     std::fs::create_dir_all(&out).context("creating the corpus directory")?;
-    let noise = match (&cli.noise, cli.snr) {
-        (Some(recordings), Some(snr_db)) => Some(Noisy {
-            recordings: expand(recordings)?,
-            snr_db,
-        }),
-        _ => None,
-    };
     let request = Request {
         librispeech: expand(&cli.librispeech)?,
         speaker_model: expand(&cli.speaker_model)?,
         owners: cli.owners.get(),
-        noise,
     };
     let owners = write_corpus(&request, &out)?;
     let owners: Vec<String> = owners.iter().map(u32::to_string).collect();

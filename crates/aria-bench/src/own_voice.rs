@@ -32,7 +32,6 @@ use serde::Serialize;
 
 use crate::diarize::{BenchError, embedder};
 use crate::stt::librispeech::{self, Chapter, Gender, LibrispeechError, Speaker, Subset};
-use crate::stt::noise::{self, Noise, NoiseError};
 
 const OWNER: &str = "owner";
 const LEAD_IN: Duration = Duration::from_millis(500);
@@ -81,19 +80,11 @@ struct Scenario {
     turns: Vec<(Start, Actor, Said)>,
 }
 
-pub struct Noisy {
-    /// A directory of noise recordings, any WAV format.
-    pub recordings: PathBuf,
-    /// Speech power over noise power, in decibels.
-    pub snr_db: f64,
-}
-
 pub struct Request {
     /// Where the test-clean archive is, or is downloaded to.
     pub librispeech: PathBuf,
     pub speaker_model: PathBuf,
     pub owners: usize,
-    pub noise: Option<Noisy>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -103,9 +94,6 @@ pub enum OwnVoiceError {
 
     #[error(transparent)]
     Librispeech(#[from] LibrispeechError),
-
-    #[error(transparent)]
-    Noise(#[from] NoiseError),
 
     #[error("the owner's enrollment did not take")]
     Enrollment(#[from] EnrollmentError),
@@ -185,10 +173,6 @@ pub fn write_corpus(request: &Request, directory: &Path) -> Result<Vec<u32>, Own
     librispeech::download(&request.librispeech, Subset::TestClean)
         .map_err(LibrispeechError::from)?;
     let speakers = librispeech::speakers(&request.librispeech, Subset::TestClean)?;
-    let noises = match &request.noise {
-        Some(noisy) => noise::load_noises(&noisy.recordings)?,
-        None => Vec::new(),
-    };
     let mut readers = Readers {
         archive: Archive {
             speech: request.librispeech.clone(),
@@ -221,7 +205,6 @@ pub fn write_corpus(request: &Request, directory: &Path) -> Result<Vec<u32>, Own
     })?;
     let mut scorer = embedder(speaker_config(&request.speaker_model))?;
     let mut casts = Vec::new();
-    let mut written = 0;
     for owner in chosen {
         let folder = directory.join(owner.id.to_string());
         let speakers_dir = folder.join(SPEAKERS_DIR);
@@ -282,19 +265,13 @@ pub fn write_corpus(request: &Request, directory: &Path) -> Result<Vec<u32>, Own
             enrollment_consistency: consistency,
         });
         for scenario in scenarios() {
-            let noise = request.noise.as_ref().map(|noisy| {
-                let recording = &noises[written % noises.len()];
-                (recording, written, noisy.snr_db)
-            });
-            write_scenario(&scenario, &voices, noise, &folder)?;
-            written += 1;
+            write_scenario(&scenario, &voices, &folder)?;
         }
     }
     write_json(
         &directory.join("voices.json"),
         &serde_json::json!({
             "speaker_model_sha256": fingerprint(&request.speaker_model)?,
-            "snr_db": request.noise.as_ref().map(|noisy| noisy.snr_db),
             "provenance": Provenance::capture()?,
             "owners": casts,
         }),
@@ -495,27 +472,20 @@ fn read_lines(archive: &Archive, speaker: &Speaker) -> Result<Option<Lines>, Own
 fn write_scenario(
     scenario: &Scenario,
     voices: &[(Actor, &Lines)],
-    noise: Option<(&Noise, usize, f64)>,
     folder: &Path,
 ) -> Result<(), OwnVoiceError> {
     let name = scenario.name;
-    let (mut mixed, placed) = lay_out(&scenario.turns, voices, |_| true);
+    let (mixed, placed) = lay_out(&scenario.turns, voices, |_| true);
     let overlapping = scenario
         .turns
         .iter()
         .any(|(start, _, _)| matches!(start, Start::Over(_)));
     if !overlapping {
-        if let Some((recording, turn, snr_db)) = noise {
-            add_noise(&mut [&mut mixed], recording, turn, snr_db)?;
-        }
         return write(folder, name, &mixed, placed, None);
     }
     let control = format!("{name}_owner");
-    let (mut owner_only, owner_placed) =
+    let (owner_only, owner_placed) =
         lay_out(&scenario.turns, voices, |actor| actor == Actor::Owner);
-    if let Some((recording, turn, snr_db)) = noise {
-        add_noise(&mut [&mut mixed, &mut owner_only], recording, turn, snr_db)?;
-    }
     let probe = |kind| OverlapProbe {
         artifact_kind: kind,
         controls: OverlapControls {
@@ -574,18 +544,6 @@ fn lay_out(
     }
     audio.resize(latest_end + canonical_samples(TAIL) as usize, 0.0);
     (audio, placed)
-}
-
-/// Mixes the same noise into every layout of one scenario.
-fn add_noise(
-    layouts: &mut [&mut Vec<f32>],
-    recording: &Noise,
-    turn: usize,
-    snr_db: f64,
-) -> Result<(), OwnVoiceError> {
-    let window = recording.window(turn, layouts[0].len())?;
-    noise::mix_into(layouts, &window, snr_db);
-    Ok(())
 }
 
 fn write(

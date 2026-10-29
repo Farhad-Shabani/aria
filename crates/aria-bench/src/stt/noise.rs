@@ -45,7 +45,16 @@ pub fn build(request: &NoisyRequest) -> Result<Built, NoiseError> {
     for (index, utterance) in corpus.utterances.iter().enumerate() {
         let name = format!("{}.wav", utterance.id);
         let speech = read_wav(&utterance.audio)?.into_canonical()?;
-        let window = noises[index % noises.len()].window(index, speech.samples().len())?;
+        let noise = &noises[index % noises.len()];
+        let window: Vec<f32> = noise
+            .cycle_from(index)
+            .take(speech.samples().len())
+            .collect();
+        if power(&window) == 0.0 {
+            return Err(NoiseError::SilentNoise {
+                path: noise.path.clone(),
+            });
+        }
         let mixed = mix(speech.samples(), &window, request.snr_db);
         write_wav(audio_dir.join(&name), &Clip::canonical(mixed))?;
         utterances.push((output.join("wav").join(name), utterance.reference.as_str()));
@@ -68,7 +77,7 @@ fn create_error(path: &Path) -> impl FnOnce(std::io::Error) -> NoiseError + '_ {
     }
 }
 
-pub(crate) fn load_noises(directory: &Path) -> Result<Vec<Noise>, NoiseError> {
+fn load_noises(directory: &Path) -> Result<Vec<Noise>, NoiseError> {
     let mut paths: Vec<PathBuf> = fs::read_dir(directory)
         .and_then(|entries| {
             entries
@@ -98,24 +107,12 @@ pub(crate) fn load_noises(directory: &Path) -> Result<Vec<Noise>, NoiseError> {
         .collect()
 }
 
-pub(crate) struct Noise {
+struct Noise {
     path: PathBuf,
     samples: Vec<f32>,
 }
 
 impl Noise {
-    /// `length` samples of the noise for the `turn`th utterance on it.
-    /// Silent noise has no level to scale to a ratio.
-    pub(crate) fn window(&self, turn: usize, length: usize) -> Result<Vec<f32>, NoiseError> {
-        let window: Vec<f32> = self.cycle_from(turn).take(length).collect();
-        if power(&window) == 0.0 {
-            return Err(NoiseError::SilentNoise {
-                path: self.path.clone(),
-            });
-        }
-        Ok(window)
-    }
-
     /// Each later utterance on a noise opens it a step further in, wrapping
     /// past the end, so neighbours on it do not share an opening.
     fn cycle_from(&self, turn: usize) -> impl Iterator<Item = f32> + '_ {
@@ -127,28 +124,21 @@ impl Noise {
 /// `noise` must not be silent. A sum that would clip is scaled down whole,
 /// which keeps the ratio.
 fn mix(speech: &[f32], noise: &[f32], snr_db: f64) -> Vec<f32> {
-    let mut mixed = speech[..speech.len().min(noise.len())].to_vec();
-    mix_into(&mut [&mut mixed], noise, snr_db);
-    mixed
-}
-
-/// Adds `noise` to every track at `snr_db` against the first. A sum that
-/// would clip scales every track down by the same factor, so tracks that
-/// share a clock stay comparable.
-pub(crate) fn mix_into(tracks: &mut [&mut Vec<f32>], noise: &[f32], snr_db: f64) {
-    let gain = gain_for_snr(power(tracks[0]), power(noise), snr_db);
-    let mut peak = 0f32;
-    for track in tracks.iter_mut() {
-        for (sample, noise) in track.iter_mut().zip(noise) {
-            *sample += gain * noise;
-            peak = peak.max(sample.abs());
-        }
-    }
+    let gain = gain_for_snr(power(speech), power(noise), snr_db);
+    let mut mixed: Vec<f32> = speech
+        .iter()
+        .zip(noise)
+        .map(|(speech, noise)| speech + gain * noise)
+        .collect();
+    let peak = mixed
+        .iter()
+        .fold(0f32, |peak, sample| peak.max(sample.abs()));
     if peak > 1.0 {
-        for track in tracks.iter_mut() {
-            track.iter_mut().for_each(|sample| *sample /= peak);
+        for sample in &mut mixed {
+            *sample /= peak;
         }
     }
+    mixed
 }
 
 /// torchaudio's `add_noise`: the noise gain that puts the mix at `snr_db`.
