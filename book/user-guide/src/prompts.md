@@ -52,10 +52,11 @@ Keep my meaning, names, and numbers.
 
 1. Click into the app where you want the text.
 2. Press the prompt's shortcut and speak.
-3. Press it again to stop. Aria transcribes, runs the prompt, and types the
-   result.
+3. Tap the Aria key (right Option, or Fn if you chose it) to stop. Aria
+   transcribes, runs the prompt, and types the result.
 
-To cancel while Aria works, press the shortcut a third time.
+To cancel while Aria works, tap the Aria key again. Pressing the shortcut
+again does nothing until the run ends.
 
 Aria types only into the app you were in when you started. Nothing is typed
 in these cases:
@@ -76,7 +77,7 @@ so a terminal runs each line as a command.
 1. Hold the Aria key (right Option, or Fn if you chose it), tap **⌘**, then
    let go. A list shows up to nine prompts that are on.
 2. Press a prompt's number to start it, then speak.
-3. Press Aria key + ⌘ again to stop. Press it once more to cancel.
+3. Tap the Aria key to stop. Tap it once more to cancel.
 
 To open the list with a shortcut of your own, set **Prompt list shortcut** in
 **Settings → Shortcuts**.
