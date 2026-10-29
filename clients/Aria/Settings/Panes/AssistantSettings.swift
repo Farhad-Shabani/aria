@@ -7,8 +7,7 @@ struct AssistantSettings: View {
     var body: some View {
         PreferencesForm(preferences: preferences) { editor in
             ItemPage(title: "Assistant", subtitle: "Ask and Prompts") {
-                SettingsIcon(
-                    symbol: "sparkles", tint: .indigo, side: SettingsMetrics.headerIconSide)
+                SettingsIcon(symbol: "sparkles", side: SettingsMetrics.headerIconSide)
             } content: {
                 Section {
                     Picker("Assistant", selection: editor.binding(\.assistantID, \.assistantID)) {

@@ -2,28 +2,20 @@ import SwiftUI
 
 struct SettingsIcon: View {
     let symbol: String
-    let tint: Color
+    var isWarning = false
     var side = SettingsMetrics.iconSide
-
-    init(symbol: String, tint: Color, side: CGFloat = SettingsMetrics.iconSide) {
-        self.symbol = symbol
-        self.tint = tint
-        self.side = side
-    }
-
-    init(pane: SettingsPane, side: CGFloat = SettingsMetrics.iconSide) {
-        self.init(symbol: pane.symbol, tint: pane.tint, side: side)
-    }
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: side * SettingsMetrics.glyphRatio, weight: .semibold))
-            .foregroundStyle(.white)
+            .font(.system(size: side * SettingsMetrics.glyphRatio))
+            .foregroundStyle(isWarning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             .frame(width: side, height: side)
-            .background(
-                tint.gradient,
-                in: RoundedRectangle(cornerRadius: side * SettingsMetrics.cornerRatio, style: .continuous)
-            )
             .accessibilityHidden(true)
+    }
+}
+
+extension SettingsIcon {
+    init(pane: SettingsPane, side: CGFloat = SettingsMetrics.iconSide) {
+        self.init(symbol: pane.symbol, side: side)
     }
 }
