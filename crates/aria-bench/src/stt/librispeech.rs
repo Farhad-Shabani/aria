@@ -195,8 +195,13 @@ fn numbered_dirs(directory: &Path) -> Result<Vec<u32>, FetchError> {
 
 /// Extracts into a staging directory that moves into place only once tar
 /// succeeds, so a cut-short extraction never passes for a complete one.
-/// One cache holds every subset; extracting replaces only `subset`.
+/// One cache holds every subset; extracting replaces only `subset`. Runs
+/// sharing the cache take turns, so none extracts over another.
 pub(crate) fn download(speech: &Path, subset: Subset) -> Result<(), FetchError> {
+    create_dir(speech)?;
+    let lock_path = speech.join("download.lock");
+    let lock = fs::File::create(&lock_path).map_err(io_error(&lock_path))?;
+    lock.lock().map_err(io_error(&lock_path))?;
     let extracted = speech.join("LibriSpeech");
     let readers = extracted.join(subset.name());
     if speakers_in(&readers) >= subset.readers() {
