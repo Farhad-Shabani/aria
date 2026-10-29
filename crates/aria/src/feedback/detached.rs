@@ -13,9 +13,14 @@ const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 /// The thread is what lets the caller move on: `ChildProcess` kills its group
 /// when it drops, so the handle has to outlive the helper rather than the call.
 pub(crate) fn run_detached(purpose: &'static str, mut command: Command) {
+    spawn_detached(purpose, move || run(purpose, &mut command));
+}
+
+/// Runs `work` on its own named thread and forgets it.
+pub(crate) fn spawn_detached(purpose: &'static str, work: impl FnOnce() + Send + 'static) {
     let spawned = std::thread::Builder::new()
         .name(format!("aria-{purpose}"))
-        .spawn(move || run(purpose, &mut command));
+        .spawn(work);
     if let Err(error) = spawned {
         tracing::warn!(%error, purpose, "failed to start the helper thread");
     }

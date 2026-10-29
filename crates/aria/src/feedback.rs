@@ -31,16 +31,11 @@ pub(crate) use detached::run_detached;
 /// the sound by about half a second.
 #[cfg(target_os = "macos")]
 pub(crate) fn play_clip(purpose: &'static str, clip: Arc<Clip>) {
-    let spawned = std::thread::Builder::new()
-        .name(format!("aria-{purpose}"))
-        .spawn(move || {
-            if let Err(error) = play_clip_now(&clip) {
-                tracing::warn!(%error, purpose, "the sound did not play");
-            }
-        });
-    if let Err(error) = spawned {
-        tracing::warn!(%error, purpose, "failed to start the player thread");
-    }
+    detached::spawn_detached(purpose, move || {
+        if let Err(error) = play_clip_now(&clip) {
+            tracing::warn!(%error, purpose, "the sound did not play");
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
