@@ -4,8 +4,6 @@ import SwiftUI
 struct HotkeyRecorder: View {
     let title: String
     let hotkey: Aria_Daemon_V1_Hotkey
-    /// The combo this action holds unless changed.
-    let combo: Aria_Daemon_V1_HotkeyCombo
     let ariaKey: HotkeyKey
     @ObservedObject var binding: ChordBinding
     let set: (HotkeyBinding?) -> Void
@@ -23,10 +21,6 @@ struct HotkeyRecorder: View {
                 set(.chord($0))
             } clear: {
                 set(nil)
-            } accessory: {
-                if hotkey.storedBinding == nil {
-                    Button("Use Aria Key") { set(.combo(combo)) }
-                }
             }
         }
     }
