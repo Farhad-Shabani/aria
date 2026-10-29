@@ -195,12 +195,12 @@ impl HotkeyTrigger {
         }
     }
 
-    /// One detached task per tap. A tap ends what the user is in the middle
-    /// of: an open manual recording first, then a run a press started; with
-    /// neither, it is dictation. A starting tap holds its call open for the
-    /// whole dictation, so nothing queues behind it. Between a press's
-    /// recording stopping and its ticket, one round trip, a tap still
-    /// dictates.
+    /// One detached task per tap: a starting tap holds its call open for
+    /// the whole dictation, and the next tap must not wait behind it. A tap
+    /// ends what the user is in the middle of: an open manual recording
+    /// first, then a run a press started; with neither, it dictates. Between
+    /// a press's recording stopping and its ticket, transcription plus one
+    /// round trip, a tap still dictates.
     fn tap(&self) {
         tracing::info!(trigger = "hotkey", "tap");
         let runtime = Arc::clone(&self.runtime);
@@ -406,16 +406,22 @@ mod tests {
     /// Keys each fake listener was armed on; a fn pointer cannot capture.
     static ARMED: Mutex<Vec<HotkeyKey>> = Mutex::new(Vec::new());
 
+    /// Holds the listener thread open, as the platform listener does, until
+    /// the trigger asks it to stop.
+    fn park_until(should_stop: &dyn Fn() -> bool) -> ListenerExit {
+        while !should_stop() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        ListenerExit::Shutdown
+    }
+
     fn fake_listener(
         key: HotkeyKey,
         _events: &dyn Fn(ListenerEvent),
         should_stop: &dyn Fn() -> bool,
     ) -> ListenerExit {
         ARMED.lock().expect("armed keys").push(key);
-        while !should_stop() {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        ListenerExit::Shutdown
+        park_until(should_stop)
     }
 
     fn shift_combo_listener(
@@ -424,10 +430,7 @@ mod tests {
         should_stop: &dyn Fn() -> bool,
     ) -> ListenerExit {
         events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
-        while !should_stop() {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        ListenerExit::Shutdown
+        park_until(should_stop)
     }
 
     fn tap_listener(
@@ -436,10 +439,7 @@ mod tests {
         should_stop: &dyn Fn() -> bool,
     ) -> ListenerExit {
         events(ListenerEvent::Press(Press::Tap));
-        while !should_stop() {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        ListenerExit::Shutdown
+        park_until(should_stop)
     }
 
     /// A trigger with no dictation behind it. The directory holds its
