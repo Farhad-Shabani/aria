@@ -1,5 +1,5 @@
-/// The Aria key: a bare modifier that dictates when tapped or held, and
-/// makes a combo with Shift or Command. The daemon reads it.
+/// The Aria key: a bare modifier the daemon reads. It dictates, ends a run
+/// a press started, and makes a combo with Shift or Command.
 enum HotkeyKey: CaseIterable {
     case rightOption
     case fn
@@ -14,7 +14,6 @@ enum HotkeyKey: CaseIterable {
         }
     }
 
-    /// Hold the key, tap the combo's modifier, let go.
     func gesture(for combo: Aria_Daemon_V1_HotkeyCombo) -> String {
         "\(title) + \(combo.symbol)"
     }

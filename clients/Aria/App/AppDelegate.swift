@@ -50,8 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A combo presses the controller whose shortcut it is. Before the
-    /// first snapshot nothing holds one.
+    /// Before the first snapshot no action holds a combo, so nothing runs.
     private func run(_ combo: Aria_Daemon_V1_HotkeyCombo) {
         guard let snapshot = preferences?.snapshot else { return }
         switch ComboAction(combo: combo, in: snapshot) {

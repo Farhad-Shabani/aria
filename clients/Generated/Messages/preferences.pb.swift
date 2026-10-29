@@ -67,8 +67,9 @@ public nonisolated enum Aria_Daemon_V1_PromptKind: SwiftProtobuf.Enum, Swift.Cas
 
 }
 
-/// The Aria key: a bare modifier read as a tap, a hold, or a combo. A tap or
-/// hold dictates. A combo is a HotkeyEvent for a client to run.
+/// The Aria key: a bare modifier read as a tap, a hold, or a combo. A hold
+/// dictates. A tap ends a recording or a run a press started, or else
+/// dictates. A combo is a HotkeyEvent for a client to run.
 public nonisolated enum Aria_Daemon_V1_HotkeyKey: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0

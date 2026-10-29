@@ -57,9 +57,8 @@ struct PressGesture: Equatable {
 
     var isIdle: Bool { phase == .idle }
 
-    /// The event stream dropped, so no reply or failure is coming for the
-    /// ask in flight. Holding it would ignore every press for an ask the
-    /// daemon has forgotten.
+    /// The event stream dropped, so the ask's end may never arrive.
+    /// Holding it would ignore every press until it did.
     mutating func streamLost() {
         switch phase {
         case .asking:
