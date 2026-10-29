@@ -1,14 +1,61 @@
 //! Sounds for a person at the machine.
 //!
-//! One player per platform: `afplay` with the system sounds on macOS,
-//! `paplay` with the freedesktop theme on Linux. A desktop without the
-//! player just logs.
+//! macOS dictation cues play in-process from clips read at startup. A player
+//! process per cue would pay a CoreAudio client setup each time, which stalls
+//! under load. Everything else goes through one player per platform:
+//! `afplay` with the system sounds on macOS, `paplay` with the freedesktop
+//! theme on Linux. A desktop without the player just logs.
 
 use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
+use aria_kit::cancel::CancelToken;
+#[cfg(target_os = "macos")]
+use aria_kit::synthesis::{PlaybackError, SpeakerOutput, StreamClosed, stream};
+
+#[cfg(target_os = "macos")]
+use crate::audio::Clip;
+
+#[cfg(target_os = "macos")]
+mod caf;
 mod detached;
 
+#[cfg(target_os = "macos")]
+pub(crate) use caf::read_caf;
 pub(crate) use detached::run_detached;
+
+/// Plays the clip on the default output device from its own thread. The
+/// player waits a drain grace after the last sample, so the thread outlives
+/// the sound by over half a second.
+#[cfg(target_os = "macos")]
+pub(crate) fn play_clip(purpose: &'static str, clip: Arc<Clip>) {
+    detached::spawn_detached(purpose, move || {
+        if let Err(error) = play_clip_now(&clip) {
+            tracing::warn!(%error, purpose, "the sound did not play");
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, thiserror::Error)]
+enum ClipPlaybackError {
+    #[error(transparent)]
+    Stream(#[from] StreamClosed),
+    #[error(transparent)]
+    Playback(#[from] PlaybackError),
+}
+
+#[cfg(target_os = "macos")]
+fn play_clip_now(clip: &Clip) -> Result<(), ClipPlaybackError> {
+    // The stream buffers seconds of audio, so a cue fits in one write.
+    let (mut writer, speech) = stream(clip.sample_rate());
+    writer.write(clip.samples())?;
+    writer.finish();
+    SpeakerOutput::new()?.play_with(speech, &CancelToken::new(), || {})?;
+    Ok(())
+}
 
 #[cfg(target_os = "macos")]
 const PLAYER: &str = "/usr/bin/afplay";
