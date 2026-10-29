@@ -21,8 +21,8 @@ enum SpeakerClient {
         }
     }
 
-    /// An unspecified role lets the daemon choose: owner for the machine's
-    /// first voice, guest for every one after. That rule is what setup wants.
+    /// An unspecified role lets the daemon choose: a replaced voice keeps its
+    /// role, and a new one owns the machine only while nobody does.
     static func enroll(
         name: String,
         role: Aria_Daemon_V1_SpeakerRole = .unspecified,
@@ -47,6 +47,14 @@ enum SpeakerClient {
             var request = Aria_Daemon_V1_RemoveSpeakerRequest()
             request.name = name
             _ = try await client.remove(request: ClientRequest(message: request)) { try $0.message }
+        }
+    }
+
+    static func setOwner(name: String) async throws {
+        try await withClient(failing: "Aria couldn’t change the owner.") { client in
+            var request = Aria_Daemon_V1_SetOwnerRequest()
+            request.name = name
+            _ = try await client.setOwner(request: ClientRequest(message: request)) { try $0.message }
         }
     }
 

@@ -140,4 +140,14 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(recording.label(prompt: "Polish"), "Polish")
         XCTAssertEqual(recording.label(prompt: "Formal email to the leadership team"), "Formal email to the…")
     }
+
+    func testOnlyAriasOwnWorkGlows() {
+        XCTAssertFalse(Pill.glows(run: .recording(1), ask: nil, prompt: nil), "dictation")
+        XCTAssertTrue(Pill.glows(run: .recording(1), ask: .recording(1), prompt: nil), "an ask")
+        XCTAssertFalse(Pill.glows(run: .recording(2), ask: .recording(1), prompt: nil), "a later dictation")
+        XCTAssertFalse(Pill.glows(run: .recording(1), ask: nil, prompt: "Polish"), "a prompt")
+        XCTAssertTrue(Pill.glows(run: .ticket(7), ask: nil, prompt: nil), "an ask's ticket")
+        XCTAssertFalse(Pill.glows(run: .ticket(7), ask: nil, prompt: "Polish"), "a prompt's ticket")
+        XCTAssertFalse(Pill.glows(run: nil, ask: nil, prompt: nil))
+    }
 }

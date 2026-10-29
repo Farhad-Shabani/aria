@@ -16,13 +16,17 @@ service SpeakerService {
   rpc List(ListSpeakersRequest) returns (ListSpeakersResponse);
   // Forget one voice. NOT_ENROLLED when there was nobody by that name.
   rpc Remove(RemoveSpeakerRequest) returns (RemoveSpeakerResponse);
+  // Make one voice the machine's owner. Any other owner becomes a guest.
+  // NOT_ENROLLED when there was nobody by that name.
+  rpc SetOwner(SetOwnerRequest) returns (SetOwnerResponse);
 }
 
 message EnrollSpeakerRequest {
   // The person's name, which is also their profile's filename.
   string name = 1;
-  // Unset takes the role that fits: the first voice on a machine owns it,
-  // every voice after is a guest.
+  // Unset keeps a replaced voice's role, and makes a new voice the owner
+  // only while nobody owns the machine. Saving an owner makes any other
+  // owner a guest.
   SpeakerRole role = 2;
   // How many utterances to record, 2 to 10.
   uint32 samples = 3;
@@ -54,6 +58,12 @@ message RemoveSpeakerRequest {
 }
 
 message RemoveSpeakerResponse {}
+
+message SetOwnerRequest {
+  string name = 1;
+}
+
+message SetOwnerResponse {}
 
 message SpeakerEvent {
   SpeakerStage stage = 1;

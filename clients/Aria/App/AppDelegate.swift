@@ -11,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
     let setupStatus = SetupStatus()
-    let voiceColors = VoiceColors()
     let voices: VoiceProfiles
     lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus)
     let updates = UpdateController()
@@ -37,10 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         promptHotkeys = PromptHotkeys(events: events)
         promptList = PromptList(prompts: promptHotkeys)
-        voices = VoiceProfiles(effects: .live, colors: voiceColors)
-        status = StatusController(events: events, prompts: promptHotkeys, colors: voiceColors)
+        voices = VoiceProfiles(effects: .live)
+        let status = StatusController(events: events, prompts: promptHotkeys)
+        self.status = status
         ghost = GhostController(events: events)
-        askHotkey = PressController(events: events, operation: .ask)
+        askHotkey = PressController(events: events, operation: .ask) { [weak status] run in
+            status?.noteAsk(run)
+        }
         super.init()
     }
 

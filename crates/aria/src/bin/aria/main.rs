@@ -223,8 +223,8 @@ enum SpeakerCommand {
     Enroll {
         /// The person's name, as transcripts should show it
         name: String,
-        /// Owner or guest of this machine. Defaults to owner for the first voice
-        /// enrolled and guest for every one after
+        /// Owner or guest of this machine. Defaults to the role a replaced voice
+        /// had, or to owner while nobody owns the machine
         #[arg(long, value_enum)]
         role: Option<CliRole>,
         /// How many utterances to record, 2 to 10
@@ -238,6 +238,8 @@ enum SpeakerCommand {
     List,
     /// Forget one voice
     Remove { name: String },
+    /// Make one voice the owner; any other owner becomes a guest
+    Owner { name: String },
 }
 
 #[derive(Subcommand)]
@@ -575,6 +577,7 @@ fn run_speaker(command: SpeakerCommand) -> anyhow::Result<()> {
         } => enroll(&session, name, role, samples, replace),
         SpeakerCommand::List => list_speakers(&session),
         SpeakerCommand::Remove { name } => remove_speaker(&session, name),
+        SpeakerCommand::Owner { name } => set_owner(&session, name),
     }
 }
 
@@ -635,6 +638,13 @@ fn remove_speaker(session: &DaemonSession, name: String) -> anyhow::Result<()> {
     let name = SpeakerName::new(name)?;
     session.remove_speaker(&name)?;
     println!("removed {name}");
+    Ok(())
+}
+
+fn set_owner(session: &DaemonSession, name: String) -> anyhow::Result<()> {
+    let name = SpeakerName::new(name)?;
+    session.set_owner(&name)?;
+    println!("{name} is now the owner");
     Ok(())
 }
 

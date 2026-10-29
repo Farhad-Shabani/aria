@@ -102,11 +102,18 @@ impl ProfileStore {
         self.document(name).remove().map_err(ProfileError::Write)
     }
 
+    /// Whether `name` addresses a stored profile. A filesystem that ignores
+    /// case finds `ada.json` for "Ada".
+    pub fn contains(&self, name: &SpeakerName) -> bool {
+        self.path(name).exists()
+    }
+
     fn document(&self, name: &SpeakerName) -> PrivateDocument {
-        PrivateDocument::new(
-            self.directory.join(format!("{name}.json")),
-            MAX_PROFILE_BYTES,
-        )
+        PrivateDocument::new(self.path(name), MAX_PROFILE_BYTES)
+    }
+
+    fn path(&self, name: &SpeakerName) -> PathBuf {
+        self.directory.join(format!("{name}.json"))
     }
 
     fn read(&self, path: &Path) -> Result<Option<Profile>, ProfileError> {

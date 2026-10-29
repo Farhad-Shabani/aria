@@ -25,8 +25,8 @@ use super::tasks::Supervised;
 /// A handoff slot, not a work queue.
 const COMMAND_CAPACITY: usize = 1;
 
-/// An enrollment holds the microphone, so a second one would only wait for
-/// it. The spare slot is for a list or a remove arriving meanwhile.
+/// An enrollment holds the microphone, so a second one is refused as busy.
+/// Two slots let a list, a remove or an owner change run beside it.
 const MAX_IN_FLIGHT_JOBS: usize = 2;
 
 enum SpeakerCommand {
@@ -42,6 +42,10 @@ enum SpeakerCommand {
         name: SpeakerName,
         reply: Reply<()>,
     },
+    SetOwner {
+        name: SpeakerName,
+        reply: Reply<()>,
+    },
 }
 
 type Reply<T> = operation::Reply<T, EnrollError>;
@@ -51,7 +55,7 @@ pub(super) type SpeakerCallError = CallError<EnrollError>;
 /// Enrollment and the profile directory, as the services see them.
 pub(super) struct SpeakerRuntime {
     /// Absent when the speaker configuration would not load.
-    speakers: Option<Speakers>,
+    speakers: Option<Arc<Speakers>>,
     /// Absent on a daemon that builds its microphone for the one press it was
     /// started to serve; there is nothing for an enrollment to record with.
     /// Listing and forgetting still work.
@@ -61,7 +65,7 @@ pub(super) struct SpeakerRuntime {
 
 impl SpeakerRuntime {
     pub(super) fn new(
-        speakers: Option<Speakers>,
+        speakers: Option<Arc<Speakers>>,
         enroller: Option<Enroller<CaptureBackend>>,
         events: EnrollmentEventEmitter,
     ) -> Self {
@@ -77,7 +81,7 @@ impl SpeakerRuntime {
     }
 
     fn speakers(&self) -> Result<&Speakers, EnrollError> {
-        self.speakers.as_ref().ok_or(EnrollError::Unsupported)
+        self.speakers.as_deref().ok_or(EnrollError::Unsupported)
     }
 }
 
@@ -110,6 +114,11 @@ impl SpeakerHandle {
 
     pub(super) async fn remove(&self, name: SpeakerName) -> Result<(), SpeakerCallError> {
         let (command, pending) = call(|reply| SpeakerCommand::Remove { name, reply });
+        self.submit(command, pending).await
+    }
+
+    pub(super) async fn set_owner(&self, name: SpeakerName) -> Result<(), SpeakerCallError> {
+        let (command, pending) = call(|reply| SpeakerCommand::SetOwner { name, reply });
         self.submit(command, pending).await
     }
 
@@ -190,6 +199,11 @@ impl SpeakerActor {
                     runtime.speakers()?.remove(&name)
                 });
             }
+            SpeakerCommand::SetOwner { name, reply } => {
+                reply.answer_with(&mut self.jobs, "speaker owner change", move || {
+                    runtime.speakers()?.make_owner(&name)
+                });
+            }
         }
     }
 
@@ -199,7 +213,9 @@ impl SpeakerActor {
             match command {
                 SpeakerCommand::Enroll { reply, .. } => reply.unavailable(),
                 SpeakerCommand::List { reply } => reply.unavailable(),
-                SpeakerCommand::Remove { reply, .. } => reply.unavailable(),
+                SpeakerCommand::Remove { reply, .. } | SpeakerCommand::SetOwner { reply, .. } => {
+                    reply.unavailable();
+                }
             }
         }
         while let Some(finished) = self.jobs.join_next().await {

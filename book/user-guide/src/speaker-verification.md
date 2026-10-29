@@ -57,14 +57,11 @@ and recognition can still miss words. Recordings kept for
 
 ## See who is speaking
 
-While you dictate, a colored ring around the status pill shows whose voice
-Aria hears. Each voice gets a color. A grey ring means the voice is excluded.
-No ring means Aria hasn't matched a name, including short speech it keeps
-without an identity match. A lost connection clears the ring until fresh
-voice information arrives.
-
-To change a voice's color, or hide its ring, open that voice's menu in
-**Settings → Recognition**.
+While you dictate, the waves in the status pill show whether Aria is typing
+the voice it hears. They brighten for a voice it types and fade for one it
+excludes. Until Aria matches a voice, including short speech it keeps
+without an identity match, the waves stay at their usual red. A lost
+connection returns them to red until fresh voice information arrives.
 
 ## Other speakers
 
@@ -74,6 +71,15 @@ To add a guest:
 aria speaker enroll partner \
   --role guest
 ```
+
+To make a guest the owner, choose **Make Owner** from its menu in
+**Settings → Recognition**, or run:
+
+```sh
+aria speaker owner partner
+```
+
+The previous owner becomes a guest.
 
 In system-audio transcripts, Listen names a voice with a profile once it
 is sure who is speaking. Other voices get numbers, such as Speaker 1.
@@ -85,13 +91,14 @@ from what the terminal printed first.
 In the Mac app, each voice in **Settings → Recognition** has a menu with
 **Set Up Again…** and **Remove…**.
 
-In the terminal, to replace `alex` with new recordings, keep its role explicit:
+In the terminal, to replace `alex` with new recordings:
 
 ```sh
 aria speaker enroll alex \
-  --role owner \
   --replace
 ```
+
+A replaced profile keeps its role.
 
 To remove a profile, use its name from the list:
 

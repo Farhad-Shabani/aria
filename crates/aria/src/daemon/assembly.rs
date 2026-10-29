@@ -384,8 +384,14 @@ fn eager_workers(
         Arc::clone(&microphone),
     )
     .map_err(DaemonError::Dictation)?;
-    let enroller = Enroller::new(recorder.capture, microphone, recorder.wake, &speaker_config);
-    let speakers = Speakers::open(&speaker_config);
+    let speakers = Arc::new(Speakers::open(&speaker_config));
+    let enroller = Enroller::new(
+        recorder.capture,
+        microphone,
+        recorder.wake,
+        Arc::clone(&speakers),
+        &speaker_config,
+    );
     Ok(Workers {
         dictation: Arc::new(dictation),
         speech: Arc::new(speech),
@@ -418,7 +424,7 @@ fn deferred_workers(
     // Reading and forgetting profiles is filesystem work, so a daemon with no
     // microphone of its own still answers those.
     let speakers = match SpeakerConfig::load(&context.config_environment) {
-        Ok(config) => Some(Speakers::open(&config)),
+        Ok(config) => Some(Arc::new(Speakers::open(&config))),
         Err(error) => {
             tracing::warn!(%error, "no speaker configuration; enrolled voices cannot be listed");
             None
