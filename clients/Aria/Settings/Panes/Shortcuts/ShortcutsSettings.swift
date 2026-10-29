@@ -27,7 +27,7 @@ struct ShortcutsSettings: View {
                 LabeledContent("Show prompt list", value: ariaKey.gesture(for: .promptList))
             } footer: {
                 Text(
-                    "Hold the Aria key, tap Shift or Command, then let go. Needs Accessibility access, and `hotkey.enabled` left on in the daemon config."
+                    "Hold the Aria key, tap Shift or Command, then let go. Tap the Aria key alone to send, and again to cancel. Needs Accessibility access, and `hotkey.enabled` left on in the daemon config."
                 )
             }
             Section("Ask") {

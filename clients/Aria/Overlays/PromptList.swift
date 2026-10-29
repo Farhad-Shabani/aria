@@ -4,8 +4,8 @@ import SwiftUI
 
 /// Lists the prompts that are on, so one runs without its own chord: press
 /// Aria key + Command or the list's chord, then the prompt's number. While a
-/// run it started is going, that press stands in for the prompt's own: stop,
-/// then cancel.
+/// run it started is going, that press does nothing; the Aria key drives
+/// the run.
 ///
 /// The list takes no focus, so the app in front keeps its caret. Its keys
 /// are chords of their own, taken only while it shows.
@@ -40,7 +40,7 @@ final class PromptList {
 
     func press() {
         switch gesture.press(isOpen: !listKeys.isEmpty, isBusy: { prompts.isBusy($0) }) {
-        case .prompt(let id): prompts.press(id)
+        case .ignore: break
         case .open: open()
         case .close: close()
         }

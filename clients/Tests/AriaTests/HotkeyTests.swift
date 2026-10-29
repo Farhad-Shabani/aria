@@ -41,13 +41,13 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(plan.chords, [on.id: chord])
     }
 
-    func testTheListChordStandsInForTheRunItStartedAndOtherwiseTogglesTheList() {
+    func testTheListChordIsIgnoredWhileItsRunGoesAndOtherwiseTogglesTheList() {
         var gesture = PromptListGesture()
         XCTAssertEqual(gesture.press(isOpen: false) { _ in true }, .open)
         XCTAssertEqual(gesture.press(isOpen: true) { _ in true }, .close)
 
         gesture.chose("started")
-        XCTAssertEqual(gesture.press(isOpen: false) { $0 == "started" }, .prompt(id: "started"))
+        XCTAssertEqual(gesture.press(isOpen: false) { $0 == "started" }, .ignore)
         XCTAssertEqual(gesture.press(isOpen: false) { _ in false }, .open)
         XCTAssertEqual(gesture.press(isOpen: true) { _ in true }, .close)
 
