@@ -17,6 +17,11 @@ final class AssistantCatalog: ObservableObject {
         self.list = list
     }
 
+    func loadIfEmpty() async {
+        guard choices.isEmpty else { return }
+        await load()
+    }
+
     func load() async {
         let loadID = UUID()
         self.loadID = loadID

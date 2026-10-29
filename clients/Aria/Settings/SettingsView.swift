@@ -42,6 +42,10 @@ struct SettingsView: View {
         }
         .task { await preferences.sync() }
         .task { await assistantCatalog.load() }
+        .onChange(of: poller.state) { _, state in
+            guard state == .running else { return }
+            Task { await assistantCatalog.loadIfEmpty() }
+        }
         // Returning from System Settings or closing the setup window both
         // make this window key, and either may have finished a step.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
@@ -49,6 +53,7 @@ struct SettingsView: View {
                 await preferences.sync()
                 await setupStatus.refresh()
                 await voices.refresh()
+                await assistantCatalog.loadIfEmpty()
             }
         }
     }
