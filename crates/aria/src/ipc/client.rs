@@ -713,6 +713,21 @@ impl DaemonClient {
         Ok(())
     }
 
+    pub(crate) fn set_owner(&self, name: String) -> Result<(), ClientError> {
+        let mut speaker =
+            wire::speaker_service_client::SpeakerServiceClient::new(self.channel.clone());
+        self.runtime
+            .block_on(with_deadline(
+                REQUEST_TIMEOUT,
+                speaker.set_owner(request_with_timeout(
+                    wire::SetOwnerRequest { name },
+                    REQUEST_TIMEOUT,
+                )),
+            ))?
+            .map_err(status_error)?;
+        Ok(())
+    }
+
     pub(crate) fn listen_stop(&self) -> Result<wire::StopListenResponse, ClientError> {
         let mut listen =
             wire::listen_service_client::ListenServiceClient::new(self.channel.clone());

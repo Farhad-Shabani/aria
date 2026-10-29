@@ -375,6 +375,10 @@ impl DaemonSession {
         self.client.remove_speaker(name.to_string())
     }
 
+    pub fn set_owner(&self, name: &SpeakerName) -> Result<(), ClientError> {
+        self.client.set_owner(name.to_string())
+    }
+
     pub fn listen_stop(&self) -> Result<ListenStopped, ListenCommandError> {
         let response = self
             .client

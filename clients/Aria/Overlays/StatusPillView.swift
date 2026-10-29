@@ -1,25 +1,39 @@
+import AppKit
 import SwiftUI
 
 struct Pill: Equatable {
     let state: PillState
     let prompt: String?
-    /// The ring for the voice heard; none until one is recognized.
-    let ring: PillRing?
+    let voice: VoiceEmphasis?
+    let glows: Bool
 
     var label: String? { state.label(prompt: prompt) }
 }
 
-/// What the ring around the pill says about the voice heard.
-enum PillRing: Equatable {
-    /// An enrolled voice, in its own color.
-    case voice(VoiceColor)
-    /// A voice whose words are not typed.
+extension Pill {
+    /// Only Aria's own work glows: an ask, or a ticket of no prompt.
+    /// Dictation and prompts do not. `ask` is the last recording an ask
+    /// press started, and `prompt` the prompt behind the run.
+    static func glows(run: RunID?, ask: RunID?, prompt: String?) -> Bool {
+        guard prompt == nil else { return false }
+        switch run {
+        case .ticket: return true
+        case .recording: return run == ask
+        case nil: return false
+        }
+    }
+}
+
+/// How the waves show the voice heard: brighter while its words are typed,
+/// faint while they are kept out.
+enum VoiceEmphasis: Equatable {
+    case typed
     case keptOut
 
-    var color: Color? {
-        switch self {
-        case .voice(let color): color.ring
-        case .keptOut: OverlayStyle.keptOutRing
+    init(_ voice: HeardSpeaker.Voice) {
+        switch voice {
+        case .named: self = .typed
+        case .keptOut: self = .keptOut
         }
     }
 }
@@ -34,11 +48,13 @@ struct StatusPillView: View {
     let pill: Pill
     let level: LiveLevel
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     var body: some View {
         let state = pill.state
         let label = pill.label
         HStack(spacing: 7) {
-            Mark(state: state, level: level)
+            Mark(state: state, level: level, voice: pill.voice)
             if label != nil || state.since != nil {
                 HStack(spacing: 4) {
                     if let label {
@@ -58,10 +74,108 @@ struct StatusPillView: View {
             }
         }
         .padding(9)
-        .background(OverlayStyle.fill, in: Capsule())
-        .overlay {
-            if let ring = pill.ring?.color {
-                Capsule().strokeBorder(ring, lineWidth: OverlayStyle.ringWidth)
+        .background {
+            Capsule()
+                .fill(OverlayStyle.frost)
+                // Reduce Transparency turns the blur solid, so all of it shows.
+                .background { BehindWindowBlur().opacity(reduceTransparency ? 1 : OverlayStyle.frostBlur) }
+                .overlay { FloorGlow(isLit: pill.glows) }
+                .overlay {
+                    LinearGradient(colors: [OverlayStyle.frostSheen, .clear], startPoint: .top, endPoint: .center)
+                }
+                .clipShape(Capsule())
+                .overlay { Capsule().strokeBorder(OverlayStyle.frostEdge, lineWidth: OverlayStyle.frostEdgeWidth) }
+        }
+    }
+}
+
+/// The windows behind the pill, blurred. The pill is its own transparent
+/// window, so only AppKit can blur what lies under it.
+private struct BehindWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> CapsuleBlurView {
+        let view = CapsuleBlurView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        return view
+    }
+
+    func updateNSView(_ view: CapsuleBlurView, context: Context) {}
+}
+
+private final class CapsuleBlurView: NSVisualEffectView {
+    override func layout() {
+        super.layout()
+        maskImage = NSImage(size: bounds.size, flipped: false) { rect in
+            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+            return true
+        }
+    }
+}
+
+/// The glow's shape and motion. Heights are shares of the pill's height,
+/// widths of its width.
+private enum GlowTuning {
+    /// How far up the glow reaches before it fades out.
+    static let reach = 0.38
+    /// How far out to each side it reaches from the middle of the floor.
+    static let spread = 0.75
+    /// Brightness and lift at the top of the rise, over their resting 1.
+    static let peakBrightness = 1.35
+    static let peakLift = 1.15
+    /// Seconds to rise, to settle back to rest, and to go out.
+    static let riseTime = 0.6
+    static let settleTime = 2.0
+    static let fadeTime = 0.3
+}
+
+private struct GlowFrame {
+    var brightness: Double
+    var lift: Double
+}
+
+/// Light rising from the pill's floor while Aria works on an ask. It lifts
+/// past rest and settles, so it draws the eye once and then stays quiet. An
+/// ask is known a beat after the pill appears, so its glow rises in late.
+private struct FloorGlow: View {
+    let isLit: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        // Reduce Motion fades the glow in and out without rising or sinking.
+        let rest = GlowFrame(brightness: 1, lift: 1)
+        let peak = reduceMotion ? rest : GlowFrame(brightness: GlowTuning.peakBrightness, lift: GlowTuning.peakLift)
+        let out = GlowFrame(brightness: 0, lift: reduceMotion ? 1 : 0)
+        KeyframeAnimator(initialValue: isLit ? rest : out, trigger: isLit) { frame in
+            // A fraction of 1 spans the whole shape, so `reach` is the share
+            // of the height. Dividing by it in the x scale leaves `spread` of the width.
+            EllipticalGradient(
+                colors: [
+                    OverlayStyle.askGlow.opacity(OverlayStyle.askGlowOpacity * frame.brightness),
+                    OverlayStyle.askGlow.opacity(0),
+                ],
+                center: .bottom,
+                endRadiusFraction: GlowTuning.reach
+            )
+            .scaleEffect(x: GlowTuning.spread / GlowTuning.reach, y: frame.lift, anchor: .bottom)
+        } keyframes: { _ in
+            KeyframeTrack(\.brightness) {
+                if isLit {
+                    CubicKeyframe(peak.brightness, duration: GlowTuning.riseTime)
+                    CubicKeyframe(rest.brightness, duration: GlowTuning.settleTime)
+                } else {
+                    CubicKeyframe(out.brightness, duration: GlowTuning.fadeTime)
+                }
+            }
+            KeyframeTrack(\.lift) {
+                if isLit {
+                    CubicKeyframe(peak.lift, duration: GlowTuning.riseTime)
+                    CubicKeyframe(rest.lift, duration: GlowTuning.settleTime)
+                } else {
+                    CubicKeyframe(out.lift, duration: GlowTuning.fadeTime)
+                }
             }
         }
     }
@@ -74,12 +188,13 @@ struct StatusPillView: View {
 private struct Mark: View {
     let state: PillState
     let level: LiveLevel
+    let voice: VoiceEmphasis?
 
     var body: some View {
         switch state {
         case .recording, .transcribing:
             // One branch, so the ribbon's motion carries across the hand-off.
-            Ribbon(state: state, level: level)
+            Ribbon(state: state, level: level, voice: voice)
         case .delivering:
             Bar(tint: state.tint)
         case .delivered(.copied, _), .replied(copied: true):

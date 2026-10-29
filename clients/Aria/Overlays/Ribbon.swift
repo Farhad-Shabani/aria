@@ -41,6 +41,8 @@ final class RibbonModel {
 struct Ribbon: View {
     let state: PillState
     let level: LiveLevel
+    /// Shown only while recording; the sweep after it is the machine's.
+    let voice: VoiceEmphasis?
 
     @State private var model = RibbonModel()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -56,11 +58,31 @@ struct Ribbon: View {
             }
         }
         .frame(width: RibbonTuning.width, height: RibbonTuning.height)
+        .animation(.easeInOut(duration: 0.3), value: voice)
+    }
+
+    private var isRecording: Bool {
+        if case .recording = state { true } else { false }
     }
 
     private func draw(_ outline: Path) -> some View {
-        outline
-            .fill(state.tint)
-            .stroke(state.tint, style: StrokeStyle(lineWidth: RibbonTuning.lineWidth, lineJoin: .round))
+        let isTyped = isRecording && voice == .typed
+        let tint = isTyped ? OverlayStyle.typedVoiceTint : state.tint
+        let opacity =
+            if !isRecording {
+                1.0
+            } else {
+                switch voice {
+                case .typed: 1.0
+                case .keptOut: OverlayStyle.keptOutVoiceOpacity
+                case nil: OverlayStyle.unjudgedVoiceOpacity
+                }
+            }
+        return
+            outline
+            .fill(tint)
+            .stroke(tint, style: StrokeStyle(lineWidth: RibbonTuning.lineWidth, lineJoin: .round))
+            .shadow(color: isTyped ? OverlayStyle.typedVoiceHalo : .clear, radius: OverlayStyle.typedVoiceHaloRadius)
+            .opacity(opacity)
     }
 }

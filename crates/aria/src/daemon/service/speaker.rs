@@ -1,4 +1,5 @@
-//! The speaker service: record a voice, list who is enrolled, forget one.
+//! The speaker service: record a voice, list who is enrolled, forget one,
+//! choose the owner.
 
 use tonic::{Request, Response, Status};
 
@@ -68,6 +69,22 @@ impl wire::speaker_service_server::SpeakerService for SpeakerRpc {
             Ok(()) => {
                 tracing::info!(method = METHOD, status = "ok", "request served");
                 Ok(Response::new(wire::RemoveSpeakerResponse {}))
+            }
+            Err(error) => Err(super::failed(METHOD, failure(error))),
+        }
+    }
+
+    async fn set_owner(
+        &self,
+        request: Request<wire::SetOwnerRequest>,
+    ) -> Result<Response<wire::SetOwnerResponse>, Status> {
+        const METHOD: &str = "SpeakerService/SetOwner";
+        let name = protocol::speaker_name(&request.into_inner().name)
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        match self.speaker.set_owner(name).await {
+            Ok(()) => {
+                tracing::info!(method = METHOD, status = "ok", "request served");
+                Ok(Response::new(wire::SetOwnerResponse {}))
             }
             Err(error) => Err(super::failed(METHOD, failure(error))),
         }

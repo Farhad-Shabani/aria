@@ -5,13 +5,16 @@ struct VoiceSection: View {
 
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var voices: VoiceProfiles
-    @ObservedObject var colors: VoiceColors
     @ObservedObject var setup: SetupStatus
     let editor: PreferencesEditor
     @State private var removing: Aria_Daemon_V1_EnrolledSpeaker?
 
     var body: some View {
         Section {
+            ownVoiceOnly
+                // On a row, not the form: the form first shows a waiting
+                // view, and a task there would not run again once it loads.
+                .task { await voices.refresh() }
             if let speakers = voices.speakers {
                 profiles(speakers)
             }
@@ -19,12 +22,6 @@ struct VoiceSection: View {
             Text("Voice")
         } footer: {
             NoticeText(notice: voices.failure)
-        }
-        Section {
-            ownVoiceOnly
-                // On a row, not the form: the form first shows a waiting
-                // view, and a task there would not run again once it loads.
-                .task { await voices.refresh() }
         }
         .sheet(isPresented: Binding(get: { voices.enrollment != nil }, set: { if !$0 { voices.cancel() } })) {
             if let enrollment = voices.enrollment {
@@ -76,7 +73,7 @@ struct VoiceSection: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(width: Self.monogramSide, height: Self.monogramSide)
-                .background(Circle().fill(colors.color(of: speaker.name)?.monogram ?? .gray))
+                .background(Circle().fill(.gray))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(speaker.name)
@@ -86,12 +83,9 @@ struct VoiceSection: View {
             }
             Spacer()
             Menu {
-                Picker("Color", selection: color(of: speaker.name)) {
-                    choice(.plain)
-                    Divider()
-                    ForEach(VoiceColor.palette, id: \.self, content: choice)
+                if speaker.role != .owner {
+                    Button("Make Owner") { Task { await voices.makeOwner(speaker.name) } }
                 }
-                Divider()
                 Button("Set Up Again…") { voices.beginRerecording(speaker) }
                 Button("Remove…", role: .destructive) { removing = speaker }
             } label: {
@@ -102,21 +96,6 @@ struct VoiceSection: View {
             .fixedSize()
             .accessibilityLabel("\(speaker.name) options")
         }
-    }
-
-    private func choice(_ color: VoiceColor) -> some View {
-        Label {
-            Text(color.title)
-        } icon: {
-            Image(nsImage: color.swatch)
-        }
-        .tag(color)
-    }
-
-    /// Every listed voice has a color once the list syncs; Blue only stands
-    /// in for the moment before.
-    private func color(of name: String) -> Binding<VoiceColor> {
-        Binding(get: { colors.color(of: name) ?? .blue }, set: { colors.set($0, for: name) })
     }
 
     /// Stays switchable off when the owner's voice is gone, so a stale

@@ -30,10 +30,10 @@ final class HeardSpeakerTests: XCTestCase {
         XCTAssertEqual(voice.voice, .keptOut)
 
         voice.apply(heard(.typed))
-        XCTAssertNil(voice.voice, "a voice nobody enrolled has no ring")
+        XCTAssertNil(voice.voice, "a voice nobody enrolled is not named")
     }
 
-    func testATypedSegmentDoesNotMoveTheRing() {
+    func testATypedSegmentKeepsTheVoiceHeard() {
         var voice = HeardSpeaker()
         voice.apply(heard(.keptOut))
         var segment = stage(.segmentTranscribed)

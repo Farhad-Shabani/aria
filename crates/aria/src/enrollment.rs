@@ -3,7 +3,7 @@
 //! Records several utterances, averages their voiceprints, and saves a profile.
 //! Enrollment holds the microphone and suspends wake-word detection.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use aria_kit::cancel::{CancelToken, Deadline};
@@ -33,8 +33,8 @@ const ENROLLMENT_TIMEOUT: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrollmentRequest {
     pub name: SpeakerName,
-    /// Absent takes the role that fits: the first voice on a machine owns it,
-    /// and every voice after is a guest.
+    /// Absent keeps a replaced voice's role, and makes a new voice the owner
+    /// only while nobody owns the machine.
     pub role: Option<Role>,
     pub samples: u32,
     /// Whether an existing profile of this name may be replaced.
@@ -114,20 +114,24 @@ pub(crate) struct Enroller<C> {
     capture: Arc<C>,
     microphone: Arc<Gate>,
     wake: Option<WakeWordControl>,
-    store: ProfileStore,
+    speakers: Arc<Speakers>,
     model: std::path::PathBuf,
 }
 
-/// Reading and forgetting enrolled voices, which need no microphone. Every
-/// daemon serves these, however it was started.
+/// The enrolled voices, which need no microphone. Every write to the
+/// speakers directory goes through here.
 pub(crate) struct Speakers {
     store: ProfileStore,
+    /// Held from the read that decides roles to the last write, so two
+    /// requests never write from each other's stale read.
+    writing: Mutex<()>,
 }
 
 impl Speakers {
     pub(crate) fn open(speaker: &SpeakerConfig) -> Self {
         Self {
             store: ProfileStore::open(&speaker.speakers_dir),
+            writing: Mutex::new(()),
         }
     }
 
@@ -139,12 +143,130 @@ impl Speakers {
     }
 
     pub(crate) fn remove(&self, name: &SpeakerName) -> Result<(), EnrollError> {
+        let _writing = self.lock();
         if self.store.remove(name)? {
             tracing::info!("a speaker profile was removed");
             Ok(())
         } else {
             Err(EnrollError::NotEnrolled)
         }
+    }
+
+    /// Whether `name` addresses a stored voice, matched the way saving
+    /// matches it.
+    pub(crate) fn is_enrolled(&self, name: &SpeakerName) -> bool {
+        let profiles = crate::speaker::usable_profiles(self.store.read_all());
+        self.find(&profiles, name).is_some()
+    }
+
+    /// Makes `name` the only owner.
+    pub(crate) fn make_owner(&self, name: &SpeakerName) -> Result<(), EnrollError> {
+        let _writing = self.lock();
+        let profiles = self.store.read_all()?.profiles;
+        let chosen = self.find(&profiles, name).ok_or(EnrollError::NotEnrolled)?;
+        if chosen.role != Role::Owner {
+            self.save(
+                &Profile {
+                    role: Role::Owner,
+                    ..chosen.clone()
+                },
+                Replace::Allowed,
+            )?;
+        }
+        self.demote_owners_besides(&profiles, &chosen.name)?;
+        tracing::info!("the machine's owner changed");
+        Ok(())
+    }
+
+    /// Settles the role here rather than when recording began, since the
+    /// owner can change meanwhile.
+    fn save_recorded(
+        &self,
+        mut profile: Profile,
+        requested: Option<Role>,
+        replace: Replace,
+    ) -> Result<Role, EnrollError> {
+        let _writing = self.lock();
+        let profiles = self.store.read_all()?.profiles;
+        let replaced = self.find(&profiles, &profile.name);
+        profile.role = requested.unwrap_or_else(|| match replaced {
+            Some(replaced) => replaced.role,
+            None if profiles.iter().any(|other| other.role == Role::Owner) => Role::Guest,
+            None => Role::Owner,
+        });
+        self.save(&profile, replace)?;
+        if profile.role == Role::Owner {
+            // The replaced profile is the file just written, whatever case
+            // its name is stored in, so it is never demoted.
+            let saved = replaced.map_or(&profile.name, |replaced| &replaced.name);
+            self.demote_owners_besides(&profiles, saved)?;
+        }
+        Ok(profile.role)
+    }
+
+    /// Runs after the new owner is saved, so a failure partway leaves two
+    /// owners rather than none.
+    fn demote_owners_besides(
+        &self,
+        profiles: &[Profile],
+        owner: &SpeakerName,
+    ) -> Result<(), EnrollError> {
+        for other in profiles
+            .iter()
+            .filter(|profile| &profile.name != owner && profile.role == Role::Owner)
+        {
+            self.save(
+                &Profile {
+                    role: Role::Guest,
+                    ..other.clone()
+                },
+                Replace::Allowed,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn save(&self, profile: &Profile, replace: Replace) -> Result<(), EnrollError> {
+        match self.store.save(profile, replace) {
+            Ok(()) => Ok(()),
+            // The profile is stored and live; only whether it survives a
+            // power cut is unknown. Reporting failure would send the person
+            // back to redo what is already there.
+            Err(error @ ProfileError::DurabilityUnconfirmed(_)) => {
+                tracing::warn!(%error, "the speaker profile may not survive a power cut");
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The stored profile `name` addresses. The filesystem decides whether
+    /// "Ada" and `ada.json` are one voice, so a match in another case counts
+    /// only where it finds a file for `name`.
+    fn find<'a>(&self, profiles: &'a [Profile], name: &SpeakerName) -> Option<&'a Profile> {
+        if let Some(exact) = profiles.iter().find(|profile| &profile.name == name) {
+            return Some(exact);
+        }
+        if !self.store.contains(name) {
+            return None;
+        }
+        // ponytail: folds case only. A name that differs from its file only
+        // in Unicode normalization goes unmatched; compare file identities if
+        // that ever matters.
+        let wanted = name.as_str().to_lowercase();
+        let mut caseless = profiles
+            .iter()
+            .filter(|profile| profile.name.as_str().to_lowercase() == wanted);
+        match (caseless.next(), caseless.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, ()> {
+        self.writing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -153,13 +275,14 @@ impl<C: AudioCapture> Enroller<C> {
         capture: Arc<C>,
         microphone: Arc<Gate>,
         wake: Option<WakeWordControl>,
+        speakers: Arc<Speakers>,
         speaker: &SpeakerConfig,
     ) -> Self {
         Self {
             capture,
             microphone,
             wake,
-            store: ProfileStore::open(&speaker.speakers_dir),
+            speakers,
             model: speaker.model.clone(),
         }
     }
@@ -199,20 +322,9 @@ impl<C: AudioCapture> Enroller<C> {
             });
         }
 
-        let enrolled = crate::speaker::usable_profiles(self.store.read_all());
-        if !request.replace && enrolled.iter().any(|profile| profile.name == request.name) {
+        if !request.replace && self.speakers.is_enrolled(&request.name) {
             return Err(EnrollError::AlreadyEnrolled);
         }
-        // The first voice on a machine is the person setting it up. Every
-        // voice after belongs to someone visiting it. Re-recording the only
-        // profile leaves it the owner's: the machine did not change hands.
-        let role = request.role.unwrap_or_else(|| {
-            if enrolled.iter().all(|profile| profile.name == request.name) {
-                Role::Owner
-            } else {
-                Role::Guest
-            }
-        });
 
         // Nothing irreversible has happened yet, so a missing model is
         // refused before the microphone is taken.
@@ -248,22 +360,16 @@ impl<C: AudioCapture> Enroller<C> {
             });
         }
 
-        let enrolled = enrollment.finish(request.name.clone(), role)?;
+        // A placeholder: the role is settled as the voice is saved.
+        let enrolled = enrollment.finish(request.name.clone(), Role::Guest)?;
         let replace = if request.replace {
             Replace::Allowed
         } else {
             Replace::Never
         };
-        match self.store.save(&enrolled.profile, replace) {
-            Ok(()) => {}
-            // The profile is stored and the next press will use it; only
-            // whether it survives a power cut is unknown. Reporting failure
-            // would send the person back to re-record what is already there.
-            Err(error @ ProfileError::DurabilityUnconfirmed(_)) => {
-                tracing::warn!(%error, "the speaker profile may not survive a power cut");
-            }
-            Err(error) => return Err(error.into()),
-        }
+        let role = self
+            .speakers
+            .save_recorded(enrolled.profile, request.role, replace)?;
         tracing::info!(%role, samples = request.samples, "a speaker profile was enrolled");
         Ok(EnrollmentResult {
             name: request.name,
@@ -440,7 +546,9 @@ mod tests {
     /// holds the pair.
     fn enroller() -> (tempfile::TempDir, Enroller<Silent>) {
         let home = tempfile::tempdir().expect("a temporary directory");
-        let enroller = Enroller::new(Arc::new(Silent), Gate::new(), None, &config(home.path()));
+        let config = config(home.path());
+        let speakers = Arc::new(Speakers::open(&config));
+        let enroller = Enroller::new(Arc::new(Silent), Gate::new(), None, speakers, &config);
         (home, enroller)
     }
 
@@ -517,5 +625,156 @@ mod tests {
             speakers.remove(&ada),
             Err(EnrollError::NotEnrolled)
         ));
+    }
+
+    fn name(value: &str) -> SpeakerName {
+        SpeakerName::new(value).expect("the name is usable")
+    }
+
+    /// Speakers over a directory holding `voices`, kept alive by the guard.
+    fn speakers_with(voices: &[(&str, Role)]) -> (tempfile::TempDir, Speakers) {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let store = ProfileStore::open(home.path());
+        for (name, role) in voices {
+            store
+                .save(&enrolled_voice(name, *role, vec![1.0, 0.0]), Replace::Never)
+                .expect("the profile is written");
+        }
+        let speakers = Speakers::open(&config(home.path()));
+        (home, speakers)
+    }
+
+    fn roles(speakers: &Speakers) -> Vec<(String, Role)> {
+        speakers
+            .list()
+            .into_iter()
+            .map(|speaker| (speaker.name.to_string(), speaker.role))
+            .collect()
+    }
+
+    #[test]
+    fn a_new_owner_takes_over_from_the_old_one() {
+        let (_home, speakers) = speakers_with(&[("ada", Role::Owner), ("bo", Role::Guest)]);
+
+        speakers.make_owner(&name("bo")).expect("the owner changes");
+
+        assert_eq!(
+            roles(&speakers),
+            [
+                ("ada".to_owned(), Role::Guest),
+                ("bo".to_owned(), Role::Owner)
+            ]
+        );
+    }
+
+    #[test]
+    fn choosing_the_owner_again_changes_nothing() {
+        let (_home, speakers) = speakers_with(&[("ada", Role::Owner), ("bo", Role::Guest)]);
+
+        speakers.make_owner(&name("ada")).expect("the owner stays");
+
+        assert_eq!(
+            roles(&speakers),
+            [
+                ("ada".to_owned(), Role::Owner),
+                ("bo".to_owned(), Role::Guest)
+            ]
+        );
+    }
+
+    /// Whether the directory's filesystem finds `ada.json` for "Ada", as
+    /// macOS does and Linux does not.
+    fn folds_case(home: &tempfile::TempDir) -> bool {
+        ProfileStore::open(home.path()).contains(&name("ADA"))
+    }
+
+    #[test]
+    fn a_name_in_another_case_is_the_same_voice_only_where_the_filesystem_says_so() {
+        let (home, speakers) = speakers_with(&[("ada", Role::Guest), ("bo", Role::Owner)]);
+
+        assert_eq!(speakers.is_enrolled(&name("Ada")), folds_case(&home));
+        assert_eq!(speakers.make_owner(&name("Ada")).is_ok(), folds_case(&home));
+    }
+
+    #[test]
+    fn re_recording_the_owner_in_another_case_keeps_one_owner() {
+        let (home, speakers) = speakers_with(&[("ada", Role::Owner)]);
+
+        let role = record(&speakers, "Ada", None, Replace::Allowed);
+
+        let expected = if folds_case(&home) {
+            Role::Owner
+        } else {
+            Role::Guest
+        };
+        assert_eq!(role, expected);
+        let owners = roles(&speakers)
+            .into_iter()
+            .filter(|(_, role)| *role == Role::Owner)
+            .count();
+        assert_eq!(owners, 1, "never none, never two");
+    }
+
+    /// Saves a fresh recording of `name` as enrollment would.
+    fn record(speakers: &Speakers, name: &str, requested: Option<Role>, replace: Replace) -> Role {
+        speakers
+            .save_recorded(
+                enrolled_voice(name, Role::Guest, vec![0.0, 1.0]),
+                requested,
+                replace,
+            )
+            .expect("the voice is saved")
+    }
+
+    #[test]
+    fn a_re_recorded_voice_keeps_the_role_it_has_when_saved() {
+        let (_home, speakers) = speakers_with(&[("ada", Role::Owner), ("bo", Role::Guest)]);
+        // Bo became the owner while the recording was under way.
+        speakers.make_owner(&name("bo")).expect("the owner changes");
+
+        assert_eq!(record(&speakers, "bo", None, Replace::Allowed), Role::Owner);
+        assert_eq!(
+            roles(&speakers),
+            [
+                ("ada".to_owned(), Role::Guest),
+                ("bo".to_owned(), Role::Owner)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_voice_owns_the_machine_only_while_nobody_does() {
+        let (_home, speakers) = speakers_with(&[("ada", Role::Guest)]);
+
+        assert_eq!(record(&speakers, "bo", None, Replace::Never), Role::Owner);
+        assert_eq!(record(&speakers, "cy", None, Replace::Never), Role::Guest);
+    }
+
+    #[test]
+    fn recording_a_new_owner_makes_the_old_one_a_guest() {
+        let (_home, speakers) = speakers_with(&[("ada", Role::Owner)]);
+
+        assert_eq!(
+            record(&speakers, "bo", Some(Role::Owner), Replace::Never),
+            Role::Owner
+        );
+        assert_eq!(
+            roles(&speakers),
+            [
+                ("ada".to_owned(), Role::Guest),
+                ("bo".to_owned(), Role::Owner)
+            ]
+        );
+    }
+
+    #[test]
+    fn owning_with_a_name_nobody_enrolled_says_so() {
+        let (_home, speakers) = speakers_with(&[("ada", Role::Owner)]);
+
+        assert!(matches!(
+            speakers.make_owner(&name("bo")),
+            Err(EnrollError::NotEnrolled)
+        ));
+        assert_eq!(roles(&speakers), [("ada".to_owned(), Role::Owner)]);
     }
 }

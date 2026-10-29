@@ -13,7 +13,6 @@ final class StatusController: ObservableObject {
 
     private let events: DaemonEvents
     private let prompts: PromptHotkeys
-    private let colors: VoiceColors
     private var heard = HeardSpeaker()
     private let panel = FloatingPanel(width: OverlayStyle.pillWidth, bottomMargin: OverlayStyle.pillBottomMargin)
     private var foregroundState: PillState?
@@ -21,6 +20,9 @@ final class StatusController: ObservableObject {
     /// The recording the daemon opened last. Only its opening event names it.
     private var lastRecording: UInt64?
     private var asks = AsksInFlight()
+    /// The last recording an ask press started. Its events carry no sign of
+    /// the ask, so the press reports it.
+    private var askRecording: RunID?
     private var runsChange: AnyCancellable?
     private var shown: Pill?
     /// The microphone, as of the last level the daemon sent. The ribbon
@@ -30,10 +32,9 @@ final class StatusController: ObservableObject {
     private var expiry: Task<Void, Never>?
 
     /// Shares the caption's stream: one subscription feeds every overlay.
-    init(events: DaemonEvents, prompts: PromptHotkeys, colors: VoiceColors) {
+    init(events: DaemonEvents, prompts: PromptHotkeys) {
         self.events = events
         self.prompts = prompts
-        self.colors = colors
     }
 
     /// The caller starts the stream once every overlay has registered.
@@ -44,6 +45,8 @@ final class StatusController: ObservableObject {
             guard let event else {
                 self.heard.apply(nil)
                 self.lastRecording = nil
+                // A new daemon numbers its recordings from 1 again.
+                self.askRecording = nil
                 self.show(nil)
                 return
             }
@@ -106,14 +109,14 @@ final class StatusController: ObservableObject {
         let run = foregroundState == nil ? asks.oldest.map { RunID.ticket($0.ticket) } : foregroundRun
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         // Only a press is spoken; an agent's step has no voice to show.
-        let ring: PillRing? =
+        let voice: VoiceEmphasis? =
             switch foregroundRun {
             case .ticket: nil
-            case .recording, nil: foregroundState == nil ? nil : heard.voice.map(ring(for:))
+            case .recording, nil: foregroundState == nil ? nil : heard.voice.map(VoiceEmphasis.init)
             }
-        let wanted =
-            enabled
-            ? live.map { Pill(state: $0, prompt: run.flatMap(prompts.runs.prompt(of:)), ring: ring) } : nil
+        let prompt = run.flatMap(prompts.runs.prompt(of:))
+        let glows = Pill.glows(run: run, ask: askRecording, prompt: prompt)
+        let wanted = enabled ? live.map { Pill(state: $0, prompt: prompt, voice: voice, glows: glows) } : nil
         guard wanted != shown else { return }
         shown = wanted
         // A new press starts from silence rather than the last one's level.
@@ -121,11 +124,11 @@ final class StatusController: ObservableObject {
         draw(wanted)
     }
 
-    private func ring(for voice: HeardSpeaker.Voice) -> PillRing {
-        switch voice {
-        case .named(let name): .voice(colors.assignColor(to: name))
-        case .keptOut: .keptOut
-        }
+    func noteAsk(_ run: RunID) {
+        // A ticket is Aria's work anyway; only the recording needs marking.
+        guard case .recording = run else { return }
+        askRecording = run
+        render()
     }
 
     private func draw(_ pill: Pill?) {

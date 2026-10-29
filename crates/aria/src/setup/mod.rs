@@ -736,8 +736,8 @@ fn enroll_voice(
 
     let request = EnrollmentRequest {
         name,
-        // The daemon gives the first voice on a machine owner, and every one
-        // after guest. That rule is what setup wants.
+        // The daemon makes a new voice the owner while nobody owns the
+        // machine. That rule is what setup wants.
         role: None,
         samples: guided::DEFAULT_SAMPLES,
         replace: false,

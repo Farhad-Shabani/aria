@@ -8,6 +8,7 @@ final class VoiceProfiles: ObservableObject {
         var list: () async throws -> [Aria_Daemon_V1_EnrolledSpeaker]
         var enroll: (_ name: String, _ role: Aria_Daemon_V1_SpeakerRole, _ replace: Bool) async throws -> Void
         var remove: (_ name: String) async throws -> Void
+        var setOwner: (_ name: String) async throws -> Void
     }
 
     struct Enrollment {
@@ -40,13 +41,11 @@ final class VoiceProfiles: ObservableObject {
     @Published private(set) var enrollment: Enrollment?
     @Published var name = ""
 
-    let colors: VoiceColors
     private let effects: Effects
     private var recording: Task<Void, Never>?
 
-    init(effects: Effects, colors: VoiceColors) {
+    init(effects: Effects) {
         self.effects = effects
-        self.colors = colors
     }
 
     var hasOwner: Bool {
@@ -54,13 +53,7 @@ final class VoiceProfiles: ObservableObject {
     }
 
     var ownVoiceSummary: String {
-        Self.ownVoiceSummary(owners: speakers?.filter { $0.role == .owner }.map(\.name) ?? [])
-    }
-
-    static func ownVoiceSummary(owners: [String]) -> String {
-        guard !owners.isEmpty else { return "Set up your voice to use this." }
-        let names = owners.map { "\($0)’s" }.formatted(.list(type: .and))
-        return "Types only \(names) \(owners.count == 1 ? "voice" : "voices")."
+        hasOwner ? "Other voices are heard but not typed." : "Set up your voice to use this."
     }
 
     /// A refresh cancelled by leaving the pane is not a failure worth showing.
@@ -68,7 +61,6 @@ final class VoiceProfiles: ObservableObject {
         do {
             let speakers = try await effects.list()
             self.speakers = speakers
-            colors.sync(enrolled: speakers.map(\.name))
             failure = nil
         } catch {
             guard !Task.isCancelled else { return }
@@ -76,8 +68,7 @@ final class VoiceProfiles: ObservableObject {
         }
     }
 
-    /// Asks for owner whenever none exists. Left to the daemon, a voice added
-    /// after the owner was removed would become a guest.
+    /// Asks for owner whenever none exists.
     func beginAdding() {
         name = ""
         enrollment = Enrollment(role: hasOwner ? .guest : .owner, replacing: nil)
@@ -135,6 +126,20 @@ final class VoiceProfiles: ObservableObject {
             failure = error.localizedDescription
         }
     }
+
+    /// The list is read back either way: the daemon demotes the old owner,
+    /// and a failure partway can leave two owners.
+    func makeOwner(_ name: String) async {
+        var reason: String?
+        do {
+            try await effects.setOwner(name)
+        } catch {
+            reason = error.localizedDescription
+        }
+        await refresh()
+        // A clean read clears the failure; this one must still show.
+        if let reason { failure = reason }
+    }
 }
 
 extension VoiceProfiles.Effects {
@@ -144,7 +149,8 @@ extension VoiceProfiles.Effects {
             enroll: { name, role, replace in
                 _ = try await SpeakerClient.enroll(name: name, role: role, replace: replace)
             },
-            remove: { name in try await SpeakerClient.remove(name: name) }
+            remove: { name in try await SpeakerClient.remove(name: name) },
+            setOwner: { name in try await SpeakerClient.setOwner(name: name) }
         )
     }
 }
