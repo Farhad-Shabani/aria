@@ -117,12 +117,14 @@ impl Gate {
     }
 
     /// Stops a manual recording, as a second manual press would. `false`
-    /// with none open, or with one that stops on silence, so the press is
-    /// free to mean something else.
+    /// when a press would not stop one either, so the press is free to mean
+    /// something else.
     pub(crate) fn stop_manual_recording(&self) -> bool {
         match self.hold().as_ref() {
             Some(Holder::Dictation(running)) => {
-                running.stop_mode() == StopMode::Manual && running.request_recording_stop()
+                running.stop_mode() == StopMode::Manual
+                    && !running.is_cancelled()
+                    && running.request_recording_stop()
             }
             Some(Holder::Enrollment | Holder::Relay | Holder::HistoryRetry) | None => false,
         }
