@@ -14,12 +14,17 @@ export ARIA_SIGN_IDENTITY="${ARIA_SIGN_IDENTITY:--}"
 
 "$scripts/sign.sh" "$app"
 
-# The Applications link gives the window its drag-to-install target.
+# The Applications link gives the window its drag-to-install target. The
+# .DS_Store holds the layout: 160px icons at 180,190 and 480,190 in a 660x400
+# window. dmgbuild wrote it against the volume name "Aria" and
+# /.background.png, so both must stay. Regenerate it the same way.
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 ditto "$app" "$stage/Aria.app"
 ln -s /Applications "$stage/Applications"
 mkdir -p "$dist"
+cp "$scripts/dmg-background.png" "$stage/.background.png"
+cp "$scripts/dmg.DS_Store" "$stage/.DS_Store"
 hdiutil create -quiet -ov -volname Aria -srcfolder "$stage" -format ULFO "$dmg"
 if [ "$ARIA_SIGN_IDENTITY" != - ]; then
     codesign --force --timestamp --sign "$ARIA_SIGN_IDENTITY" "$dmg"
