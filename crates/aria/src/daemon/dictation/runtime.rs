@@ -249,8 +249,6 @@ impl DictationRuntime {
         ))
     }
 
-    /// Stops a manual recording the way a second manual press does. `false`
-    /// with none open, so the press is free to mean something else.
     pub(in crate::daemon) fn stop_manual_recording(&self) -> bool {
         self.microphone.stop_manual_recording()
     }

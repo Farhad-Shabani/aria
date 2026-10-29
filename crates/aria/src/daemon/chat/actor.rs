@@ -34,7 +34,6 @@ struct SubmitCommand {
     reply: Reply<Ticket, Infallible>,
 }
 
-/// Which job a cancel names.
 enum Cancel {
     Ticket(Ticket),
     /// The newest job in flight that a tap of the Aria key may end. Two at

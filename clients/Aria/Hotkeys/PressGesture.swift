@@ -35,7 +35,6 @@ struct PressGesture: Equatable {
         return .record
     }
 
-    /// Taken only before the ticket.
     mutating func issued(ticket: UInt64) {
         guard phase == .recording else { return }
         let ended = endedEarly.contains(ticket) || lostWhileRecording
