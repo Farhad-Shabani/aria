@@ -58,6 +58,7 @@ message UserPreferences {
 
   // A language code such as "en" or "en-us", or "auto" to detect.
   string recognition_language = 3;
+  // Removing the last enrolled owner turns it off.
   bool own_voice_only = 4;
   bool project_vocabulary = 5;
   optional string vocabulary_directory = 6;
@@ -113,7 +114,7 @@ message PreferencePatch {
 
   // A language code such as "en" or "en-us", or "auto" to detect.
   optional string recognition_language = 3;
-  // Types only enrolled owner voices. Removing the last owner turns it off.
+  // Types only enrolled owner voices.
   optional bool own_voice_only = 4;
   optional bool project_vocabulary = 5;
   // Empty clears the selected directory; absent leaves it unchanged.
