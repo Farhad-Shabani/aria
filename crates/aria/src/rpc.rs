@@ -60,7 +60,7 @@ pub enum RpcErrorCode {
 impl RpcErrorCode {
     /// The label as words, for a person to read.
     pub fn words(self) -> String {
-        self.label().replace('_', " ")
+        self.to_string().replace('_', " ")
     }
 
     /// What a failure says to a person: its own text, or else its code.

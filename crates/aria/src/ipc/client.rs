@@ -1104,5 +1104,10 @@ mod tests {
 
         assert_eq!(named.to_string(), "the window changed");
         assert_eq!(bare.to_string(), "history unavailable");
+        let newer = ClientError::Rpc {
+            code: RpcErrorCode::Unknown(42),
+            message: String::new(),
+        };
+        assert_eq!(newer.to_string(), "unknown (42)");
     }
 }
