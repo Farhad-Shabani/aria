@@ -688,6 +688,17 @@ impl ConfigParseError {
     }
 }
 
+/// Fields the configuration no longer accepts, each with the field that
+/// replaced it, so the error names the fix instead of only the rejection.
+const RENAMED_FIELDS: [(&str, &str); 1] = [("agent", "chat.assistant")];
+
+fn replacement(field: &str) -> Option<&'static str> {
+    RENAMED_FIELDS
+        .iter()
+        .find(|(renamed, _)| *renamed == field)
+        .map(|(_, replacement)| *replacement)
+}
+
 fn unknown_field(error: &serde_saphyr::Error) -> Option<&str> {
     match error {
         serde_saphyr::Error::SerdeUnknownField { field, .. } => Some(field),
@@ -713,14 +724,18 @@ impl fmt::Display for ConfigParseError {
                 write!(
                     formatter,
                     "unknown configuration field {field:?} at line {line}, column {column}"
-                )
+                )?;
             }
-            (Some(field), None) => write!(formatter, "unknown configuration field {field:?}"),
+            (Some(field), None) => write!(formatter, "unknown configuration field {field:?}")?,
             (None, Some((line, column))) => {
-                write!(formatter, "invalid YAML at line {line}, column {column}")
+                write!(formatter, "invalid YAML at line {line}, column {column}")?;
             }
-            (None, None) => formatter.write_str("invalid YAML"),
+            (None, None) => formatter.write_str("invalid YAML")?,
         }
+        if let Some(replacement) = self.unknown_field.as_deref().and_then(replacement) {
+            write!(formatter, "; it was renamed to {replacement:?}")?;
+        }
+        Ok(())
     }
 }
 

@@ -74,7 +74,7 @@ and settings. Prompt recordings are not kept in dictation history.
 
 The Mac app checks GitHub for a new release about once a day. The check sends
 the request GitHub sees from any download, such as your IP address and the app
-version. Turn it off in **Settings → General** with
+version. Turn it off in **Settings → About** with
 **Automatically check for updates**.
 
 ## Files and folders
