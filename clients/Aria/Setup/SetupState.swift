@@ -53,8 +53,7 @@ final class SetupState: ObservableObject {
 
     static let spokenReply = "Aria is ready."
     private static let installSteps: [(step: Aria_Setup_V1_Step, title: String)] = [
-        (.config, "Configuration"), (.wakeword, "Wake-word models"), (.models, "Models"),
-        (.service, "Background service"),
+        (.config, "Configuration"), (.models, "Models"), (.service, "Background service"),
     ]
 
     @Published private(set) var step: Step = .inspecting {
@@ -184,7 +183,7 @@ final class SetupState: ObservableObject {
             case .wakeword: "wake-word models"
             case .model: "models"
             case .service: "background service"
-            case .grant: "Accessibility grant"
+            case .grant: "Accessibility access"
             case .unspecified, .UNRECOGNIZED: "unknown"
             }
         }
@@ -486,7 +485,7 @@ extension SetupState.Step {
         case .inspecting, .welcome: "Welcome to Aria"
         case .choices: "Choose Your Engines"
         case .applying: "Setting Up…"
-        case .grant: "Allow the Hotkey"
+        case .grant: "Allow Accessibility"
         case .voice: "Your Voice"
         case .tryOut: "Try It"
         case .done: "Aria Is Ready"
@@ -499,7 +498,7 @@ extension SetupState.Step {
         case .inspecting, .welcome: "Dictation stays on this Mac. Ask uses your selected assistant."
         case .choices: "Speech stays on this Mac. You can change these later."
         case .applying: "This takes a moment. Downloads can be cancelled."
-        case .grant: "The dictation hotkey needs Aria's Accessibility grant."
+        case .grant: "Aria uses it to hear the Aria key and type what you say."
         case .voice: "Aria can tell who is speaking once it knows your voice."
         case .tryOut: "Press Record and say a few words. Nothing is typed into other apps."
         case .done: "Aria runs in the background. Find it in the menu bar."
