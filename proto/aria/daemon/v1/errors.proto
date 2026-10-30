@@ -56,6 +56,10 @@ enum ErrorCode {
   ERROR_CODE_ASSISTANT_UNAVAILABLE = 300;
   ERROR_CODE_ASSISTANT_FAILED = 301;
   ERROR_CODE_ASSISTANT_TIMEOUT = 302;
+  // The assistant's command runs but has no login.
+  ERROR_CODE_ASSISTANT_SIGNED_OUT = 303;
+  // A prompt's instruction file can't be read, or is empty or too large.
+  ERROR_CODE_PROMPT_UNREADABLE = 304;
   // No voice-embedding model is installed.
   ERROR_CODE_SPEAKER_MODEL_MISSING = 500;
   ERROR_CODE_SPEAKER_ALREADY_ENROLLED = 501;

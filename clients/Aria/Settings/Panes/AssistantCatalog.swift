@@ -17,8 +17,8 @@ final class AssistantCatalog: ObservableObject {
         self.list = list
     }
 
-    func loadIfEmpty() async {
-        guard choices.isEmpty else { return }
+    func loadUnlessReady() async {
+        guard choices.isEmpty || choices.contains(where: { !$0.isReady }) else { return }
         await load()
     }
 
@@ -35,6 +35,10 @@ final class AssistantCatalog: ObservableObject {
             guard !Task.isCancelled, self.loadID == loadID else { return }
             guard !choices.isEmpty, Set(choices.map(\.id)).count == choices.count,
                 choices.allSatisfy({ choice in
+                    switch choice.status {
+                    case .unspecified, .UNRECOGNIZED: return false
+                    case .ready, .notInstalled, .signedOut, .unchecked: break
+                    }
                     switch choice.id {
                     case .unspecified, .UNRECOGNIZED: return false
                     default:
@@ -51,4 +55,8 @@ final class AssistantCatalog: ObservableObject {
             failure = "Assistants couldn't be loaded. Try again."
         }
     }
+}
+
+extension Aria_Daemon_V1_Assistant {
+    fileprivate var isReady: Bool { status == .ready }
 }

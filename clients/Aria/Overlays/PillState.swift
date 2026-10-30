@@ -42,11 +42,19 @@ enum PillState: Equatable {
         }
     }
 
+    /// After a prompt's name, before or after its recording.
+    static let unreadablePrompt = "can't use its file"
+
+    /// A prompt turned down before its recording, named as its run would be.
+    static func refused(prompt name: String) -> PillState {
+        .failed([shortened(name), unreadablePrompt].joined(separator: " · "))
+    }
+
     /// The pill for an ask that just ended, or nothing for one under way.
     init?(ended event: Aria_Daemon_V1_ChatEvent) {
         switch event.stage {
         case .replied: self = .replied(copied: event.copied)
-        case .failed: self = .noReply
+        case .failed: self = event.errorCode.askMessage.map(PillState.failed) ?? .noReply
         default: return nil
         }
     }
@@ -168,6 +176,16 @@ extension Aria_Daemon_V1_ErrorCode {
         case .deliveryFailed, .deliveryTimeout: return "The transcript could not be delivered"
         case .recordingTimeout, .overallTimeout: return "The press ran past its time limit"
         default: return "Dictation failed"
+        }
+    }
+
+    /// What a failed ask says when the person can fix the cause.
+    fileprivate var askMessage: String? {
+        switch self {
+        case .assistantSignedOut: return "Assistant not signed in"
+        case .assistantUnavailable: return "Assistant not installed"
+        case .promptUnreadable: return PillState.unreadablePrompt
+        default: return nil
         }
     }
 }

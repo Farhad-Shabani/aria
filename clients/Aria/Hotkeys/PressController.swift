@@ -12,7 +12,9 @@ import Foundation
 final class PressController {
     enum Operation {
         case ask
-        case prompt(id: String)
+        /// `canRun` is asked before recording, so a prompt that can't run
+        /// records nothing.
+        case prompt(id: String, canRun: @MainActor () -> Bool)
     }
 
     private let operation: Operation
@@ -70,7 +72,7 @@ final class PressController {
         let ticket =
             switch operation {
             case .ask: await ask()
-            case .prompt(let id): await runPrompt(id: id)
+            case .prompt(let id, let canRun): await runPrompt(id: id, canRun: canRun)
             }
         guard let ticket else {
             gesture.abandon()
@@ -88,8 +90,8 @@ final class PressController {
     }
 
     /// A prompt names no project, so the daemon picks the vocabulary.
-    private func runPrompt(id: String) async -> UInt64? {
-        guard let heard = await record(projectDirectory: nil) else { return nil }
+    private func runPrompt(id: String, canRun: @MainActor () -> Bool) async -> UInt64? {
+        guard canRun(), let heard = await record(projectDirectory: nil) else { return nil }
         return await PressClient.runPrompt(text: heard.text, promptID: id, application: pressedIn)
     }
 

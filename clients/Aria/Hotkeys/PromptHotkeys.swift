@@ -21,6 +21,9 @@ final class PromptHotkeys: ObservableObject {
     /// Prompts whose chord Carbon turned down.
     @Published private(set) var refused: Set<String> = []
     @Published private(set) var runs = PromptRuns()
+    /// The name of each prompt a press turned down because its file can't
+    /// be read.
+    let refusals = PassthroughSubject<String, Never>()
 
     private let events: DaemonEvents
     // A controller dropped with its prompt leaves its chat subscription
@@ -75,13 +78,25 @@ final class PromptHotkeys: ObservableObject {
         for id in ids {
             let controller =
                 controllers[id]
-                ?? PressController(events: events, operation: .prompt(id: id)) { [weak self] started in
+                ?? PressController(
+                    events: events,
+                    operation: .prompt(id: id, canRun: { [weak self] in self?.canRun(id) ?? false })
+                ) { [weak self] started in
                     self?.note(started, prompt: id)
                 }
             controllers[id] = controller
             controller.chord.bind(plan.chords[id])
         }
         refused = Set(controllers.filter { $0.value.chord.wasRefused }.keys)
+    }
+
+    private func canRun(_ id: String) -> Bool {
+        guard let entry = entries.first(where: { $0.id == id }) else { return false }
+        guard PromptFile.isReadable(entry) else {
+            refusals.send(entry.name)
+            return false
+        }
+        return true
     }
 
     /// Named as the prompt is called now, so the pill matches Settings.

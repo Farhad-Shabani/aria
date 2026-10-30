@@ -84,6 +84,8 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::AssistantUnavailable
         | RpcErrorCode::AssistantFailed
         | RpcErrorCode::AssistantTimeout
+        | RpcErrorCode::AssistantSignedOut
+        | RpcErrorCode::PromptUnreadable
         | RpcErrorCode::Unauthenticated
         | RpcErrorCode::PermissionDenied
         | RpcErrorCode::Unsupported

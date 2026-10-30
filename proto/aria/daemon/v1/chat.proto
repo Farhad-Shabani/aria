@@ -127,6 +127,10 @@ message ChatEvent {
 message Assistant {
   AssistantID id = 1;
   string name = 2;
+  AssistantStatus status = 3;
+  // What makes it ready, or why the check failed when UNCHECKED; empty
+  // when READY.
+  string fix = 4;
 }
 
 message AssistantModel {
@@ -138,6 +142,17 @@ enum AssistantID {
   ASSISTANT_ID_UNSPECIFIED = 0;
   ASSISTANT_ID_CLAUDE_CODE = 1;
   ASSISTANT_ID_CODEX = 2;
+}
+
+enum AssistantStatus {
+  ASSISTANT_STATUS_UNSPECIFIED = 0;
+  ASSISTANT_STATUS_READY = 1;
+  // Its command is not on the daemon's PATH.
+  ASSISTANT_STATUS_NOT_INSTALLED = 2;
+  // Its command runs but has no login.
+  ASSISTANT_STATUS_SIGNED_OUT = 3;
+  // The check itself failed, so the status is not known.
+  ASSISTANT_STATUS_UNCHECKED = 4;
 }
 
 enum ChatStage {

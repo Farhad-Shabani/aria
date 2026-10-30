@@ -49,12 +49,22 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         &self,
         _request: Request<wire::ListAssistantsRequest>,
     ) -> Result<Response<wire::ListAssistantsResponse>, Status> {
+        const METHOD: &str = "ChatService/ListAssistants";
+        let runtime = Arc::clone(&self.runtime);
+        let cancellation = self.shutdown.child_token();
+        let _cancel_on_drop = cancellation.clone().drop_guard();
+        let cancel = CancelToken::from_fn(move || cancellation.is_cancelled());
+        let assistants = tokio::task::spawn_blocking(move || runtime.assistants(&cancel))
+            .await
+            .map_err(|_panicked| {
+                super::failed(
+                    METHOD,
+                    RpcFailure::new(RpcErrorCode::Internal, "checking assistants failed"),
+                )
+            })?;
+        tracing::info!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::ListAssistantsResponse {
-            assistants: AssistantId::ALL
-                .iter()
-                .copied()
-                .map(wire::Assistant::from)
-                .collect(),
+            assistants: assistants.into_iter().map(wire::Assistant::from).collect(),
         }))
     }
 

@@ -4,10 +4,13 @@ import XCTest
 
 @MainActor
 final class AssistantCatalogTests: XCTestCase {
-    private func assistant(_ id: Aria_Daemon_V1_AssistantID, name: String) -> Aria_Daemon_V1_Assistant {
+    private func assistant(
+        _ id: Aria_Daemon_V1_AssistantID, name: String, status: Aria_Daemon_V1_AssistantStatus = .ready
+    ) -> Aria_Daemon_V1_Assistant {
         var assistant = Aria_Daemon_V1_Assistant()
         assistant.id = id
         assistant.name = name
+        assistant.status = status
         return assistant
     }
 
@@ -32,32 +35,36 @@ final class AssistantCatalogTests: XCTestCase {
         XCTAssertFalse(catalog.isLoading)
     }
 
-    func testLoadIfEmptyRetriesAfterFailureButNotAfterSuccess() async {
+    func testLoadUnlessReadyRetriesUntilEveryAssistantIsReady() async {
         struct Failure: Error {}
         @MainActor final class ResponseState {
             var shouldFail = true
+            var status = Aria_Daemon_V1_AssistantStatus.signedOut
             var calls = 0
         }
         let state = ResponseState()
         let catalog = AssistantCatalog {
             state.calls += 1
             if state.shouldFail { throw Failure() }
-            return [self.assistant(.codex, name: "Codex")]
+            return [self.assistant(.codex, name: "Codex", status: state.status)]
         }
-        await catalog.loadIfEmpty()
+        await catalog.loadUnlessReady()
         XCTAssertNotNil(catalog.failure)
         state.shouldFail = false
-        await catalog.loadIfEmpty()
+        await catalog.loadUnlessReady()
         XCTAssertNil(catalog.failure)
-        await catalog.loadIfEmpty()
-        XCTAssertEqual(state.calls, 2)
+        state.status = .ready
+        await catalog.loadUnlessReady()
+        await catalog.loadUnlessReady()
+        XCTAssertEqual(state.calls, 3)
     }
 
-    func testCatalogRejectsEmptyDuplicateUnknownAndUnnamedChoices() async {
+    func testCatalogRejectsEmptyDuplicateUnknownUnnamedAndStatuslessChoices() async {
         let codex = assistant(.codex, name: "Codex")
         for choices in [
             [], [codex, codex], [assistant(.unspecified, name: "Unknown")],
             [assistant(.UNRECOGNIZED(99), name: "Unknown")], [assistant(.codex, name: " ")],
+            [assistant(.codex, name: "Codex", status: .unspecified)],
         ] {
             let catalog = AssistantCatalog { choices }
             await catalog.load()

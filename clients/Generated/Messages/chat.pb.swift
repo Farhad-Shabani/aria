@@ -60,6 +60,58 @@ public nonisolated enum Aria_Daemon_V1_AssistantID: SwiftProtobuf.Enum, Swift.Ca
 
 }
 
+public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case ready // = 1
+
+  /// Its command is not on the daemon's PATH.
+  case notInstalled // = 2
+
+  /// Its command runs but has no login.
+  case signedOut // = 3
+
+  /// The check itself failed, so the status is not known.
+  case unchecked // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .ready
+    case 2: self = .notInstalled
+    case 3: self = .signedOut
+    case 4: self = .unchecked
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .ready: return 1
+    case .notInstalled: return 2
+    case .signedOut: return 3
+    case .unchecked: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_AssistantStatus] = [
+    .unspecified,
+    .ready,
+    .notInstalled,
+    .signedOut,
+    .unchecked,
+  ]
+
+}
+
 public nonisolated enum Aria_Daemon_V1_ChatStage: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -381,6 +433,12 @@ public nonisolated struct Aria_Daemon_V1_Assistant: Sendable {
 
   public var name: String = String()
 
+  public var status: Aria_Daemon_V1_AssistantStatus = .unspecified
+
+  /// What makes it ready, or why the check failed when UNCHECKED; empty
+  /// when READY.
+  public var fix: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -406,6 +464,10 @@ fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_AssistantID: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0")
+}
+
+nonisolated extension Aria_Daemon_V1_AssistantStatus: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_STATUS_UNSPECIFIED\0\u{1}ASSISTANT_STATUS_READY\0\u{1}ASSISTANT_STATUS_NOT_INSTALLED\0\u{1}ASSISTANT_STATUS_SIGNED_OUT\0\u{1}ASSISTANT_STATUS_UNCHECKED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_ChatStage: SwiftProtobuf._ProtoNameProviding {
@@ -860,7 +922,7 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Assistant"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}status\0\u{1}fix\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -870,6 +932,8 @@ nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProt
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.status) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.fix) }()
       default: break
       }
     }
@@ -882,12 +946,20 @@ nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProt
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
     }
+    if self.status != .unspecified {
+      try visitor.visitSingularEnumField(value: self.status, fieldNumber: 3)
+    }
+    if !self.fix.isEmpty {
+      try visitor.visitSingularStringField(value: self.fix, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_Assistant, rhs: Aria_Daemon_V1_Assistant) -> Bool {
     if lhs.id != rhs.id {return false}
     if lhs.name != rhs.name {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.fix != rhs.fix {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

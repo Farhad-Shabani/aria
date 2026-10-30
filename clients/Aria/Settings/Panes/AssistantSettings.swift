@@ -15,10 +15,21 @@ struct AssistantSettings: View {
                             Text("Choose an assistant").tag(editor.snapshot.assistantID)
                         }
                         ForEach(catalog.choices, id: \.id) { assistant in
-                            Text(assistant.name).tag(assistant.id)
+                            Text(assistant.pickerLabel).tag(assistant.id)
                         }
                     }
                     .disabled(catalog.isLoading || catalog.choices.isEmpty)
+                    if catalog.failure == nil,
+                        let selected = catalog.choices.first(where: { $0.id == editor.snapshot.assistantID }),
+                        let problem = selected.problem
+                    {
+                        NoticeText(notice: problem)
+                        Text(selected.fix)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Button("Check Again") { Task { await catalog.load() } }
+                            .disabled(catalog.isLoading)
+                    }
                     if catalog.isLoading {
                         HStack {
                             ProgressView().controlSize(.small)
@@ -49,6 +60,26 @@ struct AssistantSettings: View {
                     }
                 }
             }
+        }
+    }
+}
+
+extension Aria_Daemon_V1_Assistant {
+    fileprivate var pickerLabel: String {
+        switch status {
+        case .notInstalled: return "\(name) — not installed"
+        case .signedOut: return "\(name) — not signed in"
+        case .unchecked: return "\(name) — not checked"
+        case .ready, .unspecified, .UNRECOGNIZED: return name
+        }
+    }
+
+    fileprivate var problem: String? {
+        switch status {
+        case .notInstalled: return "\(name) isn't installed."
+        case .signedOut: return "\(name) isn't signed in."
+        case .unchecked: return "Aria couldn't check \(name)."
+        case .ready, .unspecified, .UNRECOGNIZED: return nil
         }
     }
 }

@@ -76,6 +76,12 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
   case assistantFailed // = 301
   case assistantTimeout // = 302
 
+  /// The assistant's command runs but has no login.
+  case assistantSignedOut // = 303
+
+  /// A prompt's instruction file can't be read, or is empty or too large.
+  case promptUnreadable // = 304
+
   /// No voice-embedding model is installed.
   case speakerModelMissing // = 500
   case speakerAlreadyEnrolled // = 501
@@ -132,6 +138,8 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     case 300: self = .assistantUnavailable
     case 301: self = .assistantFailed
     case 302: self = .assistantTimeout
+    case 303: self = .assistantSignedOut
+    case 304: self = .promptUnreadable
     case 500: self = .speakerModelMissing
     case 501: self = .speakerAlreadyEnrolled
     case 502: self = .speakerNotEnrolled
@@ -179,6 +187,8 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     case .assistantUnavailable: return 300
     case .assistantFailed: return 301
     case .assistantTimeout: return 302
+    case .assistantSignedOut: return 303
+    case .promptUnreadable: return 304
     case .speakerModelMissing: return 500
     case .speakerAlreadyEnrolled: return 501
     case .speakerNotEnrolled: return 502
@@ -226,6 +236,8 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     .assistantUnavailable,
     .assistantFailed,
     .assistantTimeout,
+    .assistantSignedOut,
+    .promptUnreadable,
     .speakerModelMissing,
     .speakerAlreadyEnrolled,
     .speakerNotEnrolled,
@@ -266,7 +278,7 @@ public nonisolated struct Aria_Daemon_V1_RpcError: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_INVALID_REQUEST\0\u{1}ERROR_CODE_BUSY\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNAUTHENTICATED\0\u{1}ERROR_CODE_UNSUPPORTED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_PAYLOAD_TOO_LARGE\0\u{1}ERROR_CODE_PERMISSION_DENIED\0\u{1}ERROR_CODE_DURABILITY_UNCONFIRMED\0\u{2}Z\u{1}ERROR_CODE_OVERALL_TIMEOUT\0\u{1}ERROR_CODE_RECORDING_TIMEOUT\0\u{1}ERROR_CODE_DELIVERY_TIMEOUT\0\u{1}ERROR_CODE_CAPTURE_FAILED\0\u{1}ERROR_CODE_NO_SPEECH\0\u{1}ERROR_CODE_TRANSCRIPTION_FAILED\0\u{1}ERROR_CODE_DELIVERY_FAILED\0\u{2}\u{2}ERROR_CODE_DELIVERY_TARGET_CHANGED\0\u{1}ERROR_CODE_DELIVERY_INTERRUPTED\0\u{1}ERROR_CODE_APPLICATION_EXCLUDED\0\u{2}Z\u{1}ERROR_CODE_SYNTHESIS_FAILED\0\u{1}ERROR_CODE_PLAYBACK_FAILED\0\u{1}ERROR_CODE_SPEECH_TIMEOUT\0\u{1}ERROR_CODE_VOICE_UNAVAILABLE\0\u{2}a\u{1}ERROR_CODE_ASSISTANT_UNAVAILABLE\0\u{1}ERROR_CODE_ASSISTANT_FAILED\0\u{1}ERROR_CODE_ASSISTANT_TIMEOUT\0\u{2}F\u{3}ERROR_CODE_SPEAKER_MODEL_MISSING\0\u{1}ERROR_CODE_SPEAKER_ALREADY_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_NOT_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES\0\u{1}ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED\0\u{1}ERROR_CODE_SPEAKER_NO_SPEECH\0\u{2}g\u{4}ERROR_CODE_LISTEN_UNSUPPORTED_OS\0\u{1}ERROR_CODE_LISTEN_PERMISSION_DENIED\0\u{1}ERROR_CODE_LISTEN_CAPTURE_FAILED\0\u{2}b\u{1}ERROR_CODE_HISTORY_MISSING\0\u{1}ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_INVALID_REQUEST\0\u{1}ERROR_CODE_BUSY\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNAUTHENTICATED\0\u{1}ERROR_CODE_UNSUPPORTED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_PAYLOAD_TOO_LARGE\0\u{1}ERROR_CODE_PERMISSION_DENIED\0\u{1}ERROR_CODE_DURABILITY_UNCONFIRMED\0\u{2}Z\u{1}ERROR_CODE_OVERALL_TIMEOUT\0\u{1}ERROR_CODE_RECORDING_TIMEOUT\0\u{1}ERROR_CODE_DELIVERY_TIMEOUT\0\u{1}ERROR_CODE_CAPTURE_FAILED\0\u{1}ERROR_CODE_NO_SPEECH\0\u{1}ERROR_CODE_TRANSCRIPTION_FAILED\0\u{1}ERROR_CODE_DELIVERY_FAILED\0\u{2}\u{2}ERROR_CODE_DELIVERY_TARGET_CHANGED\0\u{1}ERROR_CODE_DELIVERY_INTERRUPTED\0\u{1}ERROR_CODE_APPLICATION_EXCLUDED\0\u{2}Z\u{1}ERROR_CODE_SYNTHESIS_FAILED\0\u{1}ERROR_CODE_PLAYBACK_FAILED\0\u{1}ERROR_CODE_SPEECH_TIMEOUT\0\u{1}ERROR_CODE_VOICE_UNAVAILABLE\0\u{2}a\u{1}ERROR_CODE_ASSISTANT_UNAVAILABLE\0\u{1}ERROR_CODE_ASSISTANT_FAILED\0\u{1}ERROR_CODE_ASSISTANT_TIMEOUT\0\u{1}ERROR_CODE_ASSISTANT_SIGNED_OUT\0\u{1}ERROR_CODE_PROMPT_UNREADABLE\0\u{2}D\u{3}ERROR_CODE_SPEAKER_MODEL_MISSING\0\u{1}ERROR_CODE_SPEAKER_ALREADY_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_NOT_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES\0\u{1}ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED\0\u{1}ERROR_CODE_SPEAKER_NO_SPEECH\0\u{2}g\u{4}ERROR_CODE_LISTEN_UNSUPPORTED_OS\0\u{1}ERROR_CODE_LISTEN_PERMISSION_DENIED\0\u{1}ERROR_CODE_LISTEN_CAPTURE_FAILED\0\u{2}b\u{1}ERROR_CODE_HISTORY_MISSING\0\u{1}ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE\0")
 }
 
 nonisolated extension Aria_Daemon_V1_RpcError: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
