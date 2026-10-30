@@ -64,7 +64,8 @@ On Linux, if it lives outside the service's saved `PATH`, run
 `aria service install` so the service can find it.
 
 On a Mac, **Settings → Assistant** marks an assistant that is not installed or
-not signed in, and shows how to fix it. After you sign in, click **Check Again**.
+not signed in, and shows how to fix it. After you sign in, switch back to
+Settings and it checks again.
 An Ask that fails for either reason says so in the status pill.
 
 Try [a typed question](./voice-chat.md#try-a-typed-question) before a spoken one.
