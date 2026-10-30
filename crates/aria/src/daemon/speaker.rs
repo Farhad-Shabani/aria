@@ -17,7 +17,8 @@ use crate::enrollment::{
     EnrollError, EnrolledSpeaker, Enroller, EnrollmentEventEmitter, EnrollmentRequest,
     EnrollmentResult, Speakers,
 };
-use crate::speaker::SpeakerName;
+use crate::preferences::{PreferencePatch, PreferenceStore, UpdateResult};
+use crate::speaker::{Role, SpeakerName};
 
 use super::operation::{self, CallError, Pending, call, cancellable_call, operation_cancellation};
 use super::tasks::Supervised;
@@ -61,6 +62,7 @@ pub(super) struct SpeakerRuntime {
     /// Listing and forgetting still work.
     enroller: Option<Enroller<CaptureBackend>>,
     events: EnrollmentEventEmitter,
+    preferences: Arc<PreferenceStore>,
 }
 
 impl SpeakerRuntime {
@@ -68,12 +70,61 @@ impl SpeakerRuntime {
         speakers: Option<Arc<Speakers>>,
         enroller: Option<Enroller<CaptureBackend>>,
         events: EnrollmentEventEmitter,
+        preferences: Arc<PreferenceStore>,
     ) -> Self {
         Self {
             speakers,
             enroller,
             events,
+            preferences,
         }
+    }
+
+    fn remove(&self, name: &SpeakerName) -> Result<(), EnrollError> {
+        let speakers = self.speakers()?;
+        speakers.remove(name)?;
+        if !speakers
+            .list()
+            .iter()
+            .any(|speaker| speaker.role == Role::Owner)
+        {
+            self.release_own_voice();
+        }
+        Ok(())
+    }
+
+    /// With no owner left, "only type my voice" would refuse every press.
+    /// The voice is already gone, so a failure here is only logged.
+    fn release_own_voice(&self) {
+        const ATTEMPTS: usize = 3;
+        let off = PreferencePatch {
+            own_voice_only: Some(false),
+            ..PreferencePatch::default()
+        };
+        for _ in 0..ATTEMPTS {
+            let snapshot = match self.preferences.snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(error = %crate::primitives::error_chain(&error), "own-voice filtering stayed on");
+                    return;
+                }
+            };
+            if !snapshot.preferences.own_voice_only {
+                return;
+            }
+            match self.preferences.update(snapshot.revision, off.clone()) {
+                Ok(UpdateResult::Updated(_)) => {
+                    tracing::info!("own-voice filtering turned off with the last owner");
+                    return;
+                }
+                Ok(UpdateResult::Conflict(_)) => {}
+                Err(error) => {
+                    tracing::warn!(error = %crate::primitives::error_chain(&error), "own-voice filtering stayed on");
+                    return;
+                }
+            }
+        }
+        tracing::warn!("own-voice filtering stayed on: preferences kept changing");
     }
 
     fn enroller(&self) -> Result<&Enroller<CaptureBackend>, EnrollError> {
@@ -196,7 +247,7 @@ impl SpeakerActor {
             }
             SpeakerCommand::Remove { name, reply } => {
                 reply.answer_with(&mut self.jobs, "speaker remove", move || {
-                    runtime.speakers()?.remove(&name)
+                    runtime.remove(&name)
                 });
             }
             SpeakerCommand::SetOwner { name, reply } => {
@@ -227,5 +278,73 @@ impl SpeakerActor {
 fn observe(finished: Result<(), tokio::task::JoinError>) {
     if let Err(error) = finished {
         tracing::error!(%error, "a speaker job ended unexpectedly");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aria_kit::speaker::enrolled_voice;
+
+    use super::*;
+    use crate::config::SpeakerConfig;
+    use crate::speaker::{ProfileStore, Replace};
+
+    /// A runtime over a speakers directory holding `voices`, with
+    /// "only type my voice" on.
+    fn runtime_with(voices: &[(&str, Role)]) -> (tempfile::TempDir, SpeakerRuntime) {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let profiles = home.path().join("speakers");
+        let store = ProfileStore::open(&profiles);
+        for (name, role) in voices {
+            store
+                .save(&enrolled_voice(name, *role, vec![1.0, 0.0]), Replace::Never)
+                .expect("the profile is written");
+        }
+        let config = SpeakerConfig {
+            model: home.path().join("absent.onnx"),
+            segmentation_model: home.path().join("absent-segmentation.onnx"),
+            speakers_dir: profiles,
+        };
+        let preferences = PreferenceStore::open(home.path().join("preferences.json"))
+            .expect("the preferences open");
+        let on = PreferencePatch {
+            own_voice_only: Some(true),
+            ..PreferencePatch::default()
+        };
+        preferences.update(0, on).expect("own-voice turns on");
+        let runtime = SpeakerRuntime::new(
+            Some(Arc::new(Speakers::open(&config))),
+            None,
+            EnrollmentEventEmitter::unsubscribed(),
+            Arc::new(preferences),
+        );
+        (home, runtime)
+    }
+
+    fn own_voice_only(runtime: &SpeakerRuntime) -> bool {
+        let snapshot = runtime.preferences.snapshot().expect("a snapshot");
+        snapshot.preferences.own_voice_only
+    }
+
+    fn name(value: &str) -> SpeakerName {
+        SpeakerName::new(value).expect("the name is usable")
+    }
+
+    #[test]
+    fn removing_the_last_owner_turns_own_voice_off() {
+        let (_home, runtime) = runtime_with(&[("ada", Role::Owner), ("bo", Role::Guest)]);
+
+        runtime.remove(&name("ada")).expect("the owner is removed");
+
+        assert!(!own_voice_only(&runtime));
+    }
+
+    #[test]
+    fn removing_a_guest_keeps_own_voice_on() {
+        let (_home, runtime) = runtime_with(&[("ada", Role::Owner), ("bo", Role::Guest)]);
+
+        runtime.remove(&name("bo")).expect("the guest is removed");
+
+        assert!(own_voice_only(&runtime));
     }
 }

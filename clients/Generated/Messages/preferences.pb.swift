@@ -461,7 +461,7 @@ public nonisolated struct Aria_Daemon_V1_PreferencePatch: @unchecked Sendable {
   /// Clears the value of `recognitionLanguage`. Subsequent reads from it will return its default value.
   public mutating func clearRecognitionLanguage() {_uniqueStorage()._recognitionLanguage = nil}
 
-  /// Filter for enrolled owner voices when a speaker model and owner exist.
+  /// Types only enrolled owner voices. Removing the last owner turns it off.
   public var ownVoiceOnly: Bool {
     get {_storage._ownVoiceOnly ?? false}
     set {_uniqueStorage()._ownVoiceOnly = newValue}

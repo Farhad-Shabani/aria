@@ -113,7 +113,7 @@ message PreferencePatch {
 
   // A language code such as "en" or "en-us", or "auto" to detect.
   optional string recognition_language = 3;
-  // Filter for enrolled owner voices when a speaker model and owner exist.
+  // Types only enrolled owner voices. Removing the last owner turns it off.
   optional bool own_voice_only = 4;
   optional bool project_vocabulary = 5;
   // Empty clears the selected directory; absent leaves it unchanged.
