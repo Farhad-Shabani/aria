@@ -391,6 +391,8 @@ final class SetupState: ObservableObject {
 
     private func absorb(_ event: Aria_Setup_V1_SetupEvent) {
         switch event.event {
+        // Bundled wake-word models are copied in a blink; the app shows no step for it.
+        case .started(.wakeword): break
         case .started(let step): applying = step
         case .download(let download): downloadProgress[download.modelID] = download
         case nil: break

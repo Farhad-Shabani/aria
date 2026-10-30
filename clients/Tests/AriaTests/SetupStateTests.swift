@@ -232,6 +232,12 @@ final class SetupStateTests: XCTestCase {
         state.next()
         await waitUntil { harness.applyContinuation != nil }
         var started = Aria_Setup_V1_SetupEvent()
+        started.started = .config
+        harness.onEvent?(started)
+        await waitUntil { state.applying == .config }
+        started.started = .wakeword
+        harness.onEvent?(started)
+        XCTAssertEqual(state.installRows.map(\.progress), [.running, .pending, .pending])
         started.started = .models
         harness.onEvent?(started)
         await waitUntil { state.applying == .models }
