@@ -52,9 +52,11 @@ final class VoiceProfiles: ObservableObject {
         speakers?.contains { $0.role == .owner } ?? false
     }
 
-    var ownVoiceSummary: String {
-        hasOwner
-            ? "Types only your voice. The status pill glows when Aria hears you." : "Set up your voice to use this."
+    /// Nil with no voice yet: the row that sets one up already says so.
+    var ownVoiceSummary: String? {
+        if hasOwner { return "Types only your voice. The status pill glows when Aria hears you." }
+        if speakers?.isEmpty == false { return "Make one voice the owner to use this." }
+        return nil
     }
 
     /// A refresh cancelled by leaving the pane is not a failure worth showing.
