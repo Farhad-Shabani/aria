@@ -5,6 +5,8 @@ import CoreGraphics
 enum SettingsMetrics {
     static let iconSide: CGFloat = 20
     static let headerIconSide: CGFloat = 32
+    /// The app's card atop a sidebar, sized like the Apple Account card.
+    static let cardIconSide: CGFloat = 44
     static let heroIconSide: CGFloat = 64
     /// The gap between a header icon and its title.
     static let headerSpacing: CGFloat = 10
