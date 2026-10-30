@@ -5,8 +5,10 @@ import XCTest
 final class MenuBarStateTests: XCTestCase {
     private let epoch = Date(timeIntervalSince1970: 1_000)
 
-    private func state(_ daemon: DaemonState = .running, pill: PillState? = nil) -> MenuBarState {
-        MenuBarState(daemon: daemon, pill: pill)
+    private func state(
+        _ daemon: DaemonState = .running, pill: PillState? = nil, isUpdateAvailable: Bool = false
+    ) -> MenuBarState {
+        MenuBarState(daemon: daemon, pill: pill, isUpdateAvailable: isUpdateAvailable)
     }
 
     func testTheDaemonComesFirst() {
@@ -34,5 +36,13 @@ final class MenuBarStateTests: XCTestCase {
         XCTAssertEqual(state(pill: .cancelled), .ready)
         XCTAssertEqual(state(pill: .interrupted), .ready)
         XCTAssertEqual(state(pill: .excluded("Slack")), .ready)
+    }
+
+    func testAWaitingUpdateShowsOnlyWhenIdle() {
+        XCTAssertEqual(state(isUpdateAvailable: true), .updateAvailable)
+        XCTAssertEqual(state(pill: .cancelled, isUpdateAvailable: true), .updateAvailable)
+        XCTAssertEqual(state(pill: .recording(since: epoch), isUpdateAvailable: true), .listening)
+        XCTAssertEqual(state(pill: .failed("Dictation failed"), isUpdateAvailable: true), .attention)
+        XCTAssertEqual(state(.stopped, isUpdateAvailable: true), .stopped)
     }
 }
