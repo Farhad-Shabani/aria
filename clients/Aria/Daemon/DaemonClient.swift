@@ -143,7 +143,7 @@ struct DaemonClient: DaemonControlling {
         }
     }
 
-    private static let cliErrorPrefix = "Error: "
+    private static let cliErrorPrefix = "error: "
 
     static func cliFailure(stderr: Data, fallback: String) -> String {
         let lines = String(decoding: stderr, as: UTF8.self).split(whereSeparator: \.isNewline)

@@ -11,13 +11,14 @@ struct VoiceSection: View {
 
     var body: some View {
         Section {
+            // Setup comes first: the toggle below depends on it.
+            if let speakers = voices.speakers {
+                profiles(speakers)
+            }
             ownVoiceOnly
                 // On a row, not the form: the form first shows a waiting
                 // view, and a task there would not run again once it loads.
                 .task { await voices.refresh() }
-            if let speakers = voices.speakers {
-                profiles(speakers)
-            }
         } header: {
             Text("Voice")
         } footer: {
@@ -33,7 +34,13 @@ struct VoiceSection: View {
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             presenting: removing
         ) { speaker in
-            Button("Remove", role: .destructive) { Task { await voices.remove(speaker.name) } }
+            Button("Remove", role: .destructive) {
+                Task {
+                    await voices.remove(speaker.name)
+                    // Removing the last owner turns "only type my voice" off.
+                    await editor.preferences.sync()
+                }
+            }
         } message: { _ in
             Text("Aria won’t recognize this voice anymore.")
         }
@@ -103,7 +110,9 @@ struct VoiceSection: View {
     private var ownVoiceOnly: some View {
         Toggle(isOn: editor.binding(\.ownVoiceOnly, \.ownVoiceOnly)) {
             Text("Only type my voice")
-            Text(voices.ownVoiceSummary)
+            if let summary = voices.ownVoiceSummary {
+                Text(summary)
+            }
         }
         .disabled(!voices.hasOwner && !editor.snapshot.ownVoiceOnly)
     }

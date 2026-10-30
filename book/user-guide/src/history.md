@@ -57,7 +57,7 @@ text unchanged and never falls back to a local model.
 ## Keep successful recordings
 
 To make future successful dictations available for retry, enable
-**Settings → Privacy → Keep recordings for retry**,
+**Settings → Privacy → Keep audio for 24 hours**,
 or run:
 
 ```sh

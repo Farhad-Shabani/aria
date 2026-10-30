@@ -27,7 +27,7 @@ final class PillStateTests: XCTestCase {
         failed.errorCode = .assistantUnavailable
         XCTAssertEqual(PillState(ended: failed), .failed("Assistant not installed"))
         failed.errorCode = .promptUnreadable
-        XCTAssertEqual(PillState(ended: failed), .failed("can't use its file"))
+        XCTAssertEqual(PillState(ended: failed), .failed("File unavailable"))
         failed.errorCode = .assistantFailed
         XCTAssertEqual(PillState(ended: failed), .noReply)
     }

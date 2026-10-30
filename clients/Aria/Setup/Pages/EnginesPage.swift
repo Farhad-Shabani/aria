@@ -10,7 +10,6 @@ struct EnginesPage: View {
                 picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)
             }
             Section {
-                Toggle("Listen for the wake word", isOn: $state.selections.wake)
                 if state.inspection.macos {
                     Toggle(isOn: $state.selections.hotkey) {
                         Text("Start dictation with a hotkey")

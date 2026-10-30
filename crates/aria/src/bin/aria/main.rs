@@ -1,5 +1,6 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -497,8 +498,24 @@ enum RemoteCommand {
     Forget,
 }
 
-fn main() -> anyhow::Result<()> {
-    match Cli::parse().command {
+fn main() -> ExitCode {
+    match run(Cli::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{}", error_line(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// One line, as cargo and git print theirs: anyhow's own report spreads
+/// the causes over a `Caused by:` block.
+fn error_line(error: &anyhow::Error) -> String {
+    format!("error: {}", error_chain(error.as_ref()))
+}
+
+fn run(cli: Cli) -> anyhow::Result<()> {
+    match cli.command {
         Command::Daemon => run_daemon(),
         Command::Serve { bind } => run_serve(bind),
         Command::Remote { command } => run_remote(command),
@@ -1108,7 +1125,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
         MemoryCommand::Why { id } => {
             let fact = store
                 .get(id)?
-                .ok_or_else(|| anyhow::anyhow!("No fact with id {id}"))?;
+                .ok_or_else(|| anyhow::anyhow!("no fact with id {id}"))?;
             println!("[{}] {}", fact.kind, fact.text);
             println!("  said: \"{}\"", fact.source_quote);
             println!(
@@ -1120,7 +1137,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
         MemoryCommand::Forget { id } => {
             let fact = store
                 .get(id)?
-                .ok_or_else(|| anyhow::anyhow!("No fact with id {id}"))?;
+                .ok_or_else(|| anyhow::anyhow!("no fact with id {id}"))?;
             if answer(&format!("Forget \"{}\"? [y/N] ", fact.text))? != "y" {
                 return Ok(());
             }
@@ -1508,7 +1525,7 @@ fn confirm_history_clear(
 fn history_clear_message(result: aria::history::ClearHistoryResult) -> anyhow::Result<String> {
     anyhow::ensure!(
         !result.cleanup_pending,
-        "Dictation text cleared. Some recordings could not be removed; Aria will retry."
+        "dictation text cleared, but some recordings could not be removed; Aria will retry"
     );
     Ok(format!(
         "Dictation history cleared ({} entries).",
@@ -1670,7 +1687,7 @@ fn run_dictate(
         |stage| recording.follow(stage),
     );
     if let Some(error) = recording.take_failure() {
-        eprintln!("the recording could not be stopped: {error:#}");
+        eprintln!("warning: the recording could not be stopped: {error:#}");
     }
     // There is one microphone. A second manual request ends the recording
     // already on it, so this run never listened to anything.
@@ -1870,7 +1887,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
                 let heard =
                     session.transcribe_in(stop_mode, context, |stage| recording.follow(stage));
                 if let Some(error) = recording.take_failure() {
-                    eprintln!("the recording could not be stopped: {error:#}");
+                    eprintln!("warning: the recording could not be stopped: {error:#}");
                 }
                 heard?
             };
@@ -1899,7 +1916,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
             Ok(Routing::Stopped) => return Ok(()),
             // What was said is not lost with the routing that failed.
             Err(error) if spoken.is_some() => {
-                eprintln!("you said: {text}");
+                eprintln!("note: you said: {text}");
                 return Err(error.into());
             }
             Err(error) => return Err(error.into()),
@@ -1920,14 +1937,14 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
         Ok(pending) => pending,
         // What was said is not lost with the ask that failed.
         Err(error) if spoken.is_some() => {
-            eprintln!("you said: {text}");
+            eprintln!("note: you said: {text}");
             return Err(error.into());
         }
         Err(error) => return Err(error.into()),
     };
     let pending_ticket = pending.ticket();
     if let Some(error) = focus.and_then(|focus| focus.store().err()) {
-        eprintln!("the project was not remembered: {error:#}");
+        eprintln!("warning: the project was not remembered: {error:#}");
     }
     eprintln!("asked {pending_ticket} {assistant_name} in {workdir}");
     if args.detach {
@@ -1962,7 +1979,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
         }
     });
     if let Some(error) = working.take_failure() {
-        eprintln!("{pending_ticket} could not be cancelled: {error:#}");
+        eprintln!("warning: {pending_ticket} could not be cancelled: {error:#}");
     }
     let reply = match reply {
         Err(AskError::Failed {
@@ -1973,7 +1990,8 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     };
     match reply.delivery_error {
         Some(code) => {
-            eprintln!("the reply was not delivered ({code}); printing it instead");
+            let reason = code.words();
+            eprintln!("warning: the reply was not delivered ({reason}); printing it instead");
             println!("{}", reply.text);
         }
         None if args.mode.is_none() => println!("{}", reply.text),
@@ -2169,6 +2187,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_error_prints_on_one_line_with_its_causes() {
+        let error =
+            anyhow::anyhow!("permission denied").context("failed to prepare daemon runtime paths");
+
+        assert_eq!(
+            error_line(&error),
+            "error: failed to prepare daemon runtime paths: permission denied"
+        );
+    }
+
+    #[test]
     fn daemon_logging_excludes_http_payloads_under_trace_overrides() {
         use aria_primitives::process::{ChildProcess, WaitOutcome};
         use std::io::Read;
@@ -2341,7 +2370,7 @@ mod tests {
         assert!(
             partial
                 .to_string()
-                .contains("Some recordings could not be removed")
+                .contains("some recordings could not be removed")
         );
         for error in [
             ClientError::Status(tonic::Status::unimplemented("unknown method")),

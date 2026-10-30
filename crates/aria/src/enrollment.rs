@@ -15,6 +15,7 @@ use crate::audio::{
 use crate::config::SpeakerConfig;
 use crate::event::EventEmitter;
 use crate::microphone::Gate;
+use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 use crate::speaker::{
     Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace, Role, SpeakerName,
@@ -142,14 +143,27 @@ impl Speakers {
             .collect()
     }
 
-    pub(crate) fn remove(&self, name: &SpeakerName) -> Result<(), EnrollError> {
+    /// `on_last_owner` runs under the write lock, so an owner enrolled or
+    /// chosen meanwhile is never mistaken for none.
+    pub(crate) fn remove(
+        &self,
+        name: &SpeakerName,
+        on_last_owner: impl FnOnce(),
+    ) -> Result<(), EnrollError> {
         let _writing = self.lock();
-        if self.store.remove(name)? {
-            tracing::info!("a speaker profile was removed");
-            Ok(())
-        } else {
-            Err(EnrollError::NotEnrolled)
+        if !self.store.remove(name)? {
+            return Err(EnrollError::NotEnrolled);
         }
+        tracing::info!("a speaker profile was removed");
+        match self.store.read_all() {
+            Ok(stored) if !stored.profiles.iter().any(|p| p.role == Role::Owner) => on_last_owner(),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                error = %error_chain(&error),
+                "the speakers directory is unreadable; the owner is unknown"
+            ),
+        }
+        Ok(())
     }
 
     /// Whether `name` addresses a stored voice, matched the way saving
@@ -622,7 +636,7 @@ mod tests {
         let ada = SpeakerName::new("ada").expect("the name is usable");
 
         assert!(matches!(
-            speakers.remove(&ada),
+            speakers.remove(&ada, || unreachable!("nothing was removed")),
             Err(EnrollError::NotEnrolled)
         ));
     }

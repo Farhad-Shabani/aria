@@ -81,6 +81,22 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertEqual(voices.enrollment?.role, .guest)
     }
 
+    func testTheOwnVoiceToggleExplainsItselfOnlyOnceAVoiceExists() async {
+        let harness = Harness()
+        let voices = VoiceProfiles(effects: harness.effects)
+        await voices.refresh()
+        XCTAssertNil(voices.ownVoiceSummary)
+
+        harness.speakers = [Self.speaker("sam", .guest)]
+        await voices.refresh()
+        XCTAssertEqual(voices.ownVoiceSummary, "Make one voice the owner to use this.")
+
+        harness.speakers = [Self.speaker("sam", .owner)]
+        await voices.refresh()
+        XCTAssertEqual(
+            voices.ownVoiceSummary, "Types only your voice. The status pill glows when Aria hears you.")
+    }
+
     func testMakingAGuestTheOwnerShowsBothNewRoles() async {
         let harness = Harness()
         harness.speakers = [Self.speaker("alex", .owner), Self.speaker("sam", .guest)]

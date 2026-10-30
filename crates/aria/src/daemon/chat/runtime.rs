@@ -401,7 +401,9 @@ impl ChatRuntime {
         };
         assistant
             .run_prompt(&run, cancel, timeout)
-            .map_err(|error| ChatError::Assistant(diagnosed(assistant, error, cancel)))
+            .map_err(|error| {
+                ChatError::Assistant(diagnosed(assistant, request.assistant_id, error, cancel))
+            })
     }
 
     /// Refuses an app with Aria off and, when given, any app but `application`.
@@ -449,7 +451,7 @@ impl ChatRuntime {
         });
         let prompted = session
             .prompt(prompt, recorder, cancel, timeout)
-            .map_err(|error| diagnosed(assistant, error, cancel));
+            .map_err(|error| diagnosed(assistant, request.assistant_id, error, cancel));
         // The assistant may have deleted the session it was asked to resume.
         // Kept, its id would fail every later ask on this key.
         if resume.is_some() && matches!(prompted, Err(AssistantError::Failed(_))) {
@@ -557,6 +559,7 @@ impl TurnSink for TurnRecorder<'_> {
 /// across versions, so its status command decides.
 fn diagnosed<A: Assistant>(
     assistant: &A,
+    assistant_id: AssistantId,
     error: AssistantError,
     cancel: &CancelToken,
 ) -> AssistantError {
@@ -564,7 +567,10 @@ fn diagnosed<A: Assistant>(
         return error;
     };
     match assistant.check_ready(cancel) {
-        AssistantStatus::SignedOut { fix } => AssistantError::SignedOut { fix },
+        AssistantStatus::SignedOut { fix } => AssistantError::SignedOut {
+            assistant: assistant_id,
+            fix,
+        },
         AssistantStatus::Ready
         | AssistantStatus::NotInstalled { .. }
         | AssistantStatus::Unchecked(_) => error,
@@ -1147,6 +1153,7 @@ pub(super) mod tests {
             .expect_err("the assistant is signed out");
 
         assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::AssistantSignedOut);
+        assert_eq!(error.to_string(), "Claude Code isn't signed in; sign in");
     }
 
     #[test]
@@ -1519,7 +1526,7 @@ pub(super) mod tests {
             let record = std::fs::read_to_string(work.join(SESSION_FILE)).expect("a record");
             if signed_out {
                 assert_eq!(code, RpcErrorCode::AssistantSignedOut);
-                assert!(message.contains("sign in"), "{message}");
+                assert_eq!(message, "Claude Code isn't signed in; sign in");
                 assert!(record.contains("session-1"), "{record}");
             } else {
                 assert_eq!(code, RpcErrorCode::AssistantFailed);
@@ -1830,14 +1837,13 @@ pub(super) mod tests {
                 if cancel.is_cancelled() {
                     return Err(AssistantError::Cancelled);
                 }
-                let released = self
-                    .release
-                    .lock()
-                    .expect("not poisoned")
-                    .recv_timeout(Duration::from_millis(20));
+                // Held only to look: a session waiting under the lock kept
+                // the other from seeing its cancel.
+                let released = self.release.lock().expect("not poisoned").try_recv();
                 if released.is_ok() || std::time::Instant::now() >= deadline {
                     break;
                 }
+                std::thread::sleep(Duration::from_millis(20));
             }
             self.resume = Some(format!("session-{turn}"));
             sink.text(&format!("reply {turn}"));

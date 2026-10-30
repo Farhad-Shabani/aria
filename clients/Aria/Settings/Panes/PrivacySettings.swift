@@ -11,8 +11,9 @@ struct PrivacySettings: View {
                     Text("Text is kept on this Mac for up to 30 days.")
                 }
                 Toggle(isOn: editor.binding(\.historyAudioRetention, \.historyAudioRetention)) {
-                    Text("Keep recordings for retry")
-                    Text("Lets you re-transcribe any dictation for 24 hours. Recordings may include other voices.")
+                    Text("Keep audio for 24 hours")
+                    Text(
+                        "Lets you transcribe a dictation again. Audio stays on this Mac and may capture people nearby.")
                 }
                 .disabled(!editor.snapshot.dictationHistory)
             }

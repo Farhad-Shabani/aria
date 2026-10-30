@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum Layout {
-    static let verticalPadding: CGFloat = 4
+    static let verticalPadding: CGFloat = 8
 }
 
 struct SidebarHeader<Content: View>: View {
@@ -9,7 +9,7 @@ struct SidebarHeader<Content: View>: View {
 
     var body: some View {
         HStack(spacing: SettingsMetrics.headerSpacing) {
-            AppIcon(side: SettingsMetrics.headerIconSide)
+            AppIcon(side: SettingsMetrics.cardIconSide)
             content
         }
         .padding(.vertical, Layout.verticalPadding)

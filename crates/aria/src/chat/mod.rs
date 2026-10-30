@@ -356,8 +356,11 @@ pub(crate) enum AssistantError {
     #[error("the assistant failed: {0}")]
     Failed(String),
 
-    #[error("the assistant is not signed in; {fix}")]
-    SignedOut { fix: &'static str },
+    #[error("{} isn't signed in; {fix}", assistant.display_name())]
+    SignedOut {
+        assistant: AssistantId,
+        fix: &'static str,
+    },
 
     #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),

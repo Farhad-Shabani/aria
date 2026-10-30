@@ -407,6 +407,7 @@ fn eager_workers(
             Some(speakers),
             Some(enroller),
             enrollment_event_emitter(Arc::clone(subscriptions)),
+            Arc::clone(preferences),
         )),
         monitor,
         hotkey,
@@ -456,6 +457,7 @@ fn deferred_workers(
             speakers,
             None,
             enrollment_event_emitter(Arc::clone(subscriptions)),
+            Arc::clone(preferences),
         )),
         monitor: None,
         // An on-demand daemon serves one request and exits. A hotkey, like

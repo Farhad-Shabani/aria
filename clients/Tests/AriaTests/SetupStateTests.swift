@@ -228,16 +228,22 @@ final class SetupStateTests: XCTestCase {
         state.downloads = ["speaker"]
         XCTAssertEqual(state.downloadTotal, "Total download: 10 bytes")
 
-        XCTAssertEqual(state.installRows.map(\.progress), [.pending, .pending, .pending, .pending])
+        XCTAssertEqual(state.installRows.map(\.progress), [.pending, .pending, .pending])
         state.next()
         await waitUntil { harness.applyContinuation != nil }
         var started = Aria_Setup_V1_SetupEvent()
+        started.started = .config
+        harness.onEvent?(started)
+        await waitUntil { state.applying == .config }
+        started.started = .wakeword
+        harness.onEvent?(started)
+        XCTAssertEqual(state.installRows.map(\.progress), [.running, .pending, .pending])
         started.started = .models
         harness.onEvent?(started)
         await waitUntil { state.applying == .models }
-        XCTAssertEqual(state.installRows.map(\.progress), [.done, .done, .running, .pending])
+        XCTAssertEqual(state.installRows.map(\.progress), [.done, .running, .pending])
         XCTAssertEqual(
-            state.installRows.map(\.title), ["Configuration", "Wake-word models", "Models", "Background service"])
+            state.installRows.map(\.title), ["Configuration", "Models", "Background service"])
     }
 
     func testFreshMacWalksEveryStepToDone() async {

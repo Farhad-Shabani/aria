@@ -4,13 +4,17 @@ struct GrantPage: View {
     var body: some View {
         Form {
             Section {
-                Text("macOS asks to let Aria use Accessibility. Choose Open System Settings and switch on Aria.")
-                Text("This page moves on by itself once the hotkey arms.")
                 LabeledContent {
-                    ProgressView().controlSize(.small)
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Waiting").foregroundStyle(.secondary)
+                    }
                 } label: {
-                    Text("Waiting for the grant…").foregroundStyle(.secondary)
+                    Text("Accessibility")
+                    Text("Turn on Aria in Privacy & Security → Accessibility.")
                 }
+            } footer: {
+                Text("Setup continues on its own once Aria is on.")
             }
         }
     }

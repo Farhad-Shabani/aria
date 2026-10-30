@@ -292,7 +292,7 @@ impl Cli {
 
     fn sign_in_fix(self) -> &'static str {
         match self {
-            Self::Claude => "run `claude` in Terminal, then /login",
+            Self::Claude => "run `claude` in Terminal, then type `/login`",
             Self::Codex => "run `codex login` in Terminal",
         }
     }
