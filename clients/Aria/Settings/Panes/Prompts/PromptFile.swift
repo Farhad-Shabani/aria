@@ -7,6 +7,10 @@ enum PromptFile {
         FileManager.default.fileExists(atPath: entry.instructionsPath)
     }
 
+    static func isReadable(_ entry: Aria_Daemon_V1_Prompt) -> Bool {
+        FileManager.default.isReadableFile(atPath: entry.instructionsPath)
+    }
+
     /// Nil when the user cancels.
     @MainActor
     static func choose() -> URL? {

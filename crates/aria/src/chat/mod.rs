@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{AssistantId, ChatConfig, ConfigError, Environment};
 use crate::delivery::{DeliveryError, OutputMode};
 use crate::event::EventEmitter;
+use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 
 pub(crate) use assistants::{
@@ -259,6 +260,9 @@ pub(crate) trait Assistant: Send + Sync {
 
     fn models(&self, cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError>;
 
+    /// Whether its command is installed and signed in. Spends no tokens.
+    fn check_ready(&self, cancel: &CancelToken) -> AssistantStatus;
+
     fn open(&self, spec: SessionSpec<'_>) -> Self::Session;
 
     /// One run outside any conversation or project, with no tools: the
@@ -269,6 +273,35 @@ pub(crate) trait Assistant: Send + Sync {
         cancel: &CancelToken,
         timeout: Duration,
     ) -> Result<String, AssistantError>;
+}
+
+#[derive(Debug)]
+pub(crate) enum AssistantStatus {
+    Ready,
+    /// Its command is not on the daemon's PATH.
+    NotInstalled {
+        binary: PathBuf,
+    },
+    /// Its command runs but has no login.
+    SignedOut {
+        fix: &'static str,
+    },
+    /// The check itself failed, so the status is not known.
+    Unchecked(AssistantError),
+}
+
+impl AssistantStatus {
+    /// What makes it ready, or why the check failed; `None` when ready.
+    pub(crate) fn fix(&self) -> Option<String> {
+        match self {
+            Self::Ready => None,
+            Self::NotInstalled { binary } => {
+                Some(format!("install the `{}` command", binary.display()))
+            }
+            Self::SignedOut { fix } => Some((*fix).to_owned()),
+            Self::Unchecked(error) => Some(error_chain(error)),
+        }
+    }
 }
 
 /// One conversation with an assistant, taking one turn at a time.
@@ -322,6 +355,9 @@ pub(crate) enum AssistantError {
 
     #[error("the assistant failed: {0}")]
     Failed(String),
+
+    #[error("the assistant is not signed in; {fix}")]
+    SignedOut { fix: &'static str },
 
     #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),
@@ -411,9 +447,10 @@ impl From<&ChatError> for RpcErrorCode {
             ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
             ChatError::Assistant(AssistantError::NoWorkdir(_))
             | ChatError::UnknownPrompt
-            | ChatError::PromptOff
-            | ChatError::Instructions(_) => Self::InvalidRequest,
+            | ChatError::PromptOff => Self::InvalidRequest,
+            ChatError::Instructions(_) => Self::PromptUnreadable,
             ChatError::Assistant(AssistantError::Timeout(_)) => Self::AssistantTimeout,
+            ChatError::Assistant(AssistantError::SignedOut { .. }) => Self::AssistantSignedOut,
             ChatError::Assistant(AssistantError::Cancelled)
             | ChatError::Delivery(DeliveryError::Cancelled) => Self::Cancelled,
             ChatError::Assistant(_) => Self::AssistantFailed,

@@ -14,9 +14,12 @@ use std::time::Duration;
 use aria_kit::cancel::CancelToken;
 use serde::Deserialize;
 
-use super::process::run_cli;
+use super::process::{Output, run_cli};
 use super::prompt_run::{self, PromptRun};
-use super::{Assistant, AssistantError, AssistantModel, Session, SessionSpec, Step, TurnSink};
+use super::{
+    Assistant, AssistantError, AssistantModel, AssistantStatus, Session, SessionSpec, Step,
+    TurnSink,
+};
 
 pub(crate) const CLAUDE_BINARY: &str = "claude";
 pub(crate) const CODEX_BINARY: &str = "codex";
@@ -28,6 +31,9 @@ const SHARED_VARIABLES: &[&str] = &["PATH", "HOME", "USER", "TMPDIR"];
 const CLAUDE_PREFIXES: &[&str] = &["ANTHROPIC_", "CLAUDE_", "CLOUD_ML_", "AWS_", "GOOGLE_"];
 const CODEX_PREFIXES: &[&str] = &["OPENAI_", "CODEX_"];
 const NESTING_VARIABLES: &[&str] = &["CLAUDECODE", "CLAUDE_CODE"];
+
+// Both status commands answer in well under a second.
+const READY_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 
 // A deny-list, so a tool a Codex upgrade adds stays on until it is listed
 // here. Checked against codex-cli 0.163.0's `codex features list`.
@@ -90,6 +96,10 @@ impl Assistant for ClaudeCodeAssistant {
         )
     }
 
+    fn check_ready(&self, cancel: &CancelToken) -> AssistantStatus {
+        Cli::Claude.check_ready(&self.binary, cancel)
+    }
+
     fn open(&self, spec: SessionSpec<'_>) -> Self::Session {
         CliSession::new(Cli::Claude, self.binary.clone(), spec)
     }
@@ -131,6 +141,10 @@ impl Assistant for CodexAssistant {
         let mut command = Cli::Codex.command(&self.binary);
         command.args(["debug", "models"]);
         super::models::discover(command, "", super::models::parse_codex, cancel)
+    }
+
+    fn check_ready(&self, cancel: &CancelToken) -> AssistantStatus {
+        Cli::Codex.check_ready(&self.binary, cancel)
     }
 
     fn open(&self, spec: SessionSpec<'_>) -> Self::Session {
@@ -228,6 +242,25 @@ fn codex_prompt_command(
     command
 }
 
+/// Both status commands exit 1 when signed out; a signal or any other code
+/// says nothing about the login.
+const SIGNED_OUT_EXIT_CODE: i32 = 1;
+
+fn status_from(checked: Result<Output, AssistantError>, fix: &'static str) -> AssistantStatus {
+    match checked {
+        Ok(output) if output.status.success() => AssistantStatus::Ready,
+        Ok(output) if output.status.code() == Some(SIGNED_OUT_EXIT_CODE) => {
+            AssistantStatus::SignedOut { fix }
+        }
+        Ok(output) => AssistantStatus::Unchecked(AssistantError::Failed(format!(
+            "its status check ended with {}",
+            output.status
+        ))),
+        Err(AssistantError::Missing { binary }) => AssistantStatus::NotInstalled { binary },
+        Err(error) => AssistantStatus::Unchecked(error),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Cli {
     Claude,
@@ -241,6 +274,27 @@ impl Cli {
             .env_clear()
             .envs(std::env::vars_os().filter(|(name, _)| self.needs(name)));
         command
+    }
+
+    fn check_ready(self, binary: &Path, cancel: &CancelToken) -> AssistantStatus {
+        let mut command = self.command(binary);
+        command.args(self.status_args());
+        let checked = run_cli(&mut command, "", |_| {}, cancel, READY_CHECK_TIMEOUT);
+        status_from(checked, self.sign_in_fix())
+    }
+
+    fn status_args(self) -> [&'static str; 2] {
+        match self {
+            Self::Claude => ["auth", "status"],
+            Self::Codex => ["login", "status"],
+        }
+    }
+
+    fn sign_in_fix(self) -> &'static str {
+        match self {
+            Self::Claude => "run `claude` in Terminal, then /login",
+            Self::Codex => "run `codex login` in Terminal",
+        }
     }
 
     fn needs(self, variable: &OsStr) -> bool {
@@ -664,6 +718,59 @@ mod tests {
                 matches!(result, Err(AssistantError::Missing { binary: path }) if path == binary)
             );
         }
+    }
+
+    #[test]
+    fn the_status_command_decides_readiness() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = |name: &str, body: &str| {
+            let path = directory.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let claude = script("claude", r#"[ "$*" = "auth status" ]"#);
+        let codex = script("codex", r#"[ "$*" = "login status" ]"#);
+        let signed_out = script("signed-out", "exit 1");
+        let broken = script("broken", "exit 2");
+        let killed = script("killed", "kill -9 $$");
+        let missing = directory.path().join("missing");
+        let never = CancelToken::never();
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+
+        assert!(matches!(
+            Cli::Claude.check_ready(&claude, &never),
+            AssistantStatus::Ready
+        ));
+        assert!(matches!(
+            Cli::Codex.check_ready(&codex, &never),
+            AssistantStatus::Ready
+        ));
+        assert!(matches!(
+            Cli::Claude.check_ready(&signed_out, &never),
+            AssistantStatus::SignedOut { fix } if fix.contains("/login")
+        ));
+        assert!(matches!(
+            Cli::Codex.check_ready(&signed_out, &never),
+            AssistantStatus::SignedOut { fix } if fix.contains("codex login")
+        ));
+        for unknown in [&broken, &killed] {
+            assert!(matches!(
+                Cli::Claude.check_ready(unknown, &never),
+                AssistantStatus::Unchecked(AssistantError::Failed(_))
+            ));
+        }
+        assert!(matches!(
+            Cli::Claude.check_ready(&missing, &never),
+            AssistantStatus::NotInstalled { binary } if binary == missing
+        ));
+        assert!(matches!(
+            Cli::Claude.check_ready(&claude, &cancelled),
+            AssistantStatus::Unchecked(AssistantError::Cancelled)
+        ));
     }
 
     fn argv(command: &Command) -> Vec<String> {

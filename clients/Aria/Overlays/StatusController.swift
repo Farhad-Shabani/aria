@@ -24,6 +24,7 @@ final class StatusController: ObservableObject {
     /// the ask, so the press reports it.
     private var askRecording: RunID?
     private var runsChange: AnyCancellable?
+    private var refusalsChange: AnyCancellable?
     private var shown: Pill?
     /// The microphone, as of the last level the daemon sent. The ribbon
     /// reads it every frame, so a new level needs no redraw of the pill.
@@ -71,6 +72,9 @@ final class StatusController: ObservableObject {
         // Published values arrive before they are stored, hence the hop.
         runsChange = prompts.$runs.receive(on: DispatchQueue.main).sink { [weak self] _ in
             MainActor.assumeIsolated { self?.render() }
+        }
+        refusalsChange = prompts.refusals.sink { [weak self] name in
+            MainActor.assumeIsolated { self?.show(.refused(prompt: name)) }
         }
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,

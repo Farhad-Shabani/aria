@@ -13,8 +13,8 @@ use aria_kit::synthesis::{
 
 use crate::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
 use crate::chat::{
-    AskTarget, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, PromptKind, Step,
-    Ticket,
+    AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall,
+    PromptKind, Step, Ticket,
 };
 use crate::config::AssistantId;
 use crate::delivery::{DeliveryOutcome, Placement, Rect};
@@ -104,6 +104,8 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::SpeakerInconsistentSamples
         | RpcErrorCode::ListenUnsupportedOs
         | RpcErrorCode::AssistantUnavailable
+        | RpcErrorCode::AssistantSignedOut
+        | RpcErrorCode::PromptUnreadable
         | RpcErrorCode::ApplicationExcluded => tonic::Code::FailedPrecondition,
         RpcErrorCode::SpeakerAlreadyEnrolled => tonic::Code::AlreadyExists,
         RpcErrorCode::HistoryMissing
@@ -1436,11 +1438,24 @@ impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
     }
 }
 
-impl From<AssistantId> for wire::Assistant {
-    fn from(id: AssistantId) -> Self {
+impl From<(AssistantId, AssistantStatus)> for wire::Assistant {
+    fn from((id, status): (AssistantId, AssistantStatus)) -> Self {
         Self {
             id: wire::AssistantId::from(id) as i32,
             name: id.display_name().to_owned(),
+            status: wire::AssistantStatus::from(&status) as i32,
+            fix: status.fix().unwrap_or_default(),
+        }
+    }
+}
+
+impl From<&AssistantStatus> for wire::AssistantStatus {
+    fn from(status: &AssistantStatus) -> Self {
+        match status {
+            AssistantStatus::Ready => Self::Ready,
+            AssistantStatus::NotInstalled { .. } => Self::NotInstalled,
+            AssistantStatus::SignedOut { .. } => Self::SignedOut,
+            AssistantStatus::Unchecked(_) => Self::Unchecked,
         }
     }
 }
@@ -2027,6 +2042,8 @@ impl From<RpcErrorCode> for i32 {
             RpcErrorCode::AssistantUnavailable => wire::ErrorCode::AssistantUnavailable,
             RpcErrorCode::AssistantFailed => wire::ErrorCode::AssistantFailed,
             RpcErrorCode::AssistantTimeout => wire::ErrorCode::AssistantTimeout,
+            RpcErrorCode::AssistantSignedOut => wire::ErrorCode::AssistantSignedOut,
+            RpcErrorCode::PromptUnreadable => wire::ErrorCode::PromptUnreadable,
             RpcErrorCode::SpeakerModelMissing => wire::ErrorCode::SpeakerModelMissing,
             RpcErrorCode::SpeakerAlreadyEnrolled => wire::ErrorCode::SpeakerAlreadyEnrolled,
             RpcErrorCode::SpeakerNotEnrolled => wire::ErrorCode::SpeakerNotEnrolled,
@@ -2078,6 +2095,8 @@ impl TryFrom<i32> for RpcErrorCode {
             Ok(wire::ErrorCode::AssistantUnavailable) => Self::AssistantUnavailable,
             Ok(wire::ErrorCode::AssistantFailed) => Self::AssistantFailed,
             Ok(wire::ErrorCode::AssistantTimeout) => Self::AssistantTimeout,
+            Ok(wire::ErrorCode::AssistantSignedOut) => Self::AssistantSignedOut,
+            Ok(wire::ErrorCode::PromptUnreadable) => Self::PromptUnreadable,
             Ok(wire::ErrorCode::SpeakerModelMissing) => Self::SpeakerModelMissing,
             Ok(wire::ErrorCode::SpeakerAlreadyEnrolled) => Self::SpeakerAlreadyEnrolled,
             Ok(wire::ErrorCode::SpeakerNotEnrolled) => Self::SpeakerNotEnrolled,
@@ -3013,6 +3032,38 @@ mod tests {
             assert_eq!(decoded, outcome);
         }
         assert!(SpeechOutcome::try_from(wire::SpeakResponse { outcome: 0 }).is_err());
+    }
+
+    #[test]
+    fn an_unready_assistant_reaches_the_wire_with_its_fix() {
+        let missing = wire::Assistant::from((
+            AssistantId::Codex,
+            AssistantStatus::NotInstalled {
+                binary: "codex".into(),
+            },
+        ));
+        assert_eq!(missing.status, wire::AssistantStatus::NotInstalled as i32);
+        assert_eq!(missing.fix, "install the `codex` command");
+
+        let unchecked = wire::Assistant::from((
+            AssistantId::ClaudeCode,
+            AssistantStatus::Unchecked(crate::chat::AssistantError::Timeout(
+                std::time::Duration::from_secs(2),
+            )),
+        ));
+        assert_eq!(unchecked.status, wire::AssistantStatus::Unchecked as i32);
+        assert!(unchecked.fix.contains("deadline"), "{}", unchecked.fix);
+
+        assert_eq!(i32::from(RpcErrorCode::AssistantSignedOut), 303);
+        assert!(matches!(
+            RpcErrorCode::try_from(303),
+            Ok(RpcErrorCode::AssistantSignedOut)
+        ));
+        assert_eq!(i32::from(RpcErrorCode::PromptUnreadable), 304);
+        assert!(matches!(
+            RpcErrorCode::try_from(304),
+            Ok(RpcErrorCode::PromptUnreadable)
+        ));
     }
 
     #[test]

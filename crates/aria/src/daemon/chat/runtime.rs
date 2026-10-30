@@ -10,10 +10,11 @@ use tokio::sync::mpsc;
 use aria_kit::cancel::CancelToken;
 
 use crate::chat::{
-    AskTarget, Assistant, AssistantError, AssistantModel, CLAUDE_BINARY, CODEX_BINARY, ChatError,
-    ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers,
-    ClaudeCodeAssistant, CodexAssistant, Projects, PromptCall, PromptRequest, PromptRun,
-    ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink, read_instructions,
+    AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
+    CODEX_BINARY, ChatError, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
+    ChatSubscribers, ClaudeCodeAssistant, CodexAssistant, Projects, PromptCall, PromptRequest,
+    PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
+    read_instructions,
 };
 use crate::config::{AssistantId, ChatConfig, Environment, MemoryConfig, SpeakerConfig};
 use crate::delivery::{
@@ -105,6 +106,32 @@ impl ChatRuntime {
         }
     }
 
+    pub(in crate::daemon) fn assistants(
+        &self,
+        cancel: &CancelToken,
+    ) -> Vec<(AssistantId, AssistantStatus)> {
+        AssistantId::ALL
+            .iter()
+            .map(|&assistant_id| (assistant_id, self.check_ready(assistant_id, cancel)))
+            .collect()
+    }
+
+    fn check_ready(&self, assistant_id: AssistantId, cancel: &CancelToken) -> AssistantStatus {
+        #[cfg(test)]
+        if let Some(overrides) = &self.assistant_overrides {
+            return (overrides.ready)(assistant_id, cancel);
+        }
+        match assistant_id {
+            AssistantId::ClaudeCode => {
+                ClaudeCodeAssistant::new(CLAUDE_BINARY.into()).check_ready(cancel)
+            }
+            AssistantId::Codex => {
+                CodexAssistant::new(CODEX_BINARY.into(), self.config_environment.codex_home())
+                    .check_ready(cancel)
+            }
+        }
+    }
+
     pub(in crate::daemon) fn prepare_ask(
         &self,
         mut request: ChatRequest,
@@ -172,6 +199,11 @@ impl ChatRuntime {
             Ok(kind) => kind,
             Err(error) => failed(&error),
         };
+        if let ChatStageKind::Failed { code, .. } = &kind {
+            tracing::warn!(%ticket, assistant = assistant_id.name(), code = code.label(), "chat job failed");
+        } else {
+            tracing::info!(%ticket, assistant = assistant_id.name(), "chat job replied");
+        }
         self.emitter.emit(ChatStage {
             ticket,
             assistant_id,
@@ -367,7 +399,9 @@ impl ChatRuntime {
             instructions: &instructions,
             transcript: &request.text,
         };
-        Ok(assistant.run_prompt(&run, cancel, timeout)?)
+        assistant
+            .run_prompt(&run, cancel, timeout)
+            .map_err(|error| ChatError::Assistant(diagnosed(assistant, error, cancel)))
     }
 
     /// Refuses an app with Aria off and, when given, any app but `application`.
@@ -413,7 +447,9 @@ impl ChatRuntime {
             model_id: request.model_id.as_deref(),
             resume: resume.as_deref(),
         });
-        let prompted = session.prompt(prompt, recorder, cancel, timeout);
+        let prompted = session
+            .prompt(prompt, recorder, cancel, timeout)
+            .map_err(|error| diagnosed(assistant, error, cancel));
         // The assistant may have deleted the session it was asked to resume.
         // Kept, its id would fail every later ask on this key.
         if resume.is_some() && matches!(prompted, Err(AssistantError::Failed(_))) {
@@ -517,6 +553,24 @@ impl TurnSink for TurnRecorder<'_> {
     }
 }
 
+/// A failed run may mean the CLI is signed out. Its error text differs
+/// across versions, so its status command decides.
+fn diagnosed<A: Assistant>(
+    assistant: &A,
+    error: AssistantError,
+    cancel: &CancelToken,
+) -> AssistantError {
+    let AssistantError::Failed(_) = error else {
+        return error;
+    };
+    match assistant.check_ready(cancel) {
+        AssistantStatus::SignedOut { fix } => AssistantError::SignedOut { fix },
+        AssistantStatus::Ready
+        | AssistantStatus::NotInstalled { .. }
+        | AssistantStatus::Unchecked(_) => error,
+    }
+}
+
 fn failed(error: &ChatError) -> ChatStageKind {
     ChatStageKind::Failed {
         code: error.into(),
@@ -616,10 +670,12 @@ pub(super) mod tests {
     type DiscoverModels = dyn Fn(AssistantId, &CancelToken) -> Result<Vec<AssistantModel>, AssistantError>
         + Send
         + Sync;
+    type CheckReady = dyn Fn(AssistantId, &CancelToken) -> AssistantStatus + Send + Sync;
 
     pub(super) struct AssistantOverrides {
         pub(super) execute: Box<ExecuteAssistant>,
         pub(super) models: Box<DiscoverModels>,
+        pub(super) ready: Box<CheckReady>,
     }
 
     /// Records what it was asked and answers with a fresh id each turn.
@@ -636,6 +692,10 @@ pub(super) mod tests {
 
         fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
             Ok(Vec::new())
+        }
+
+        fn check_ready(&self, _cancel: &CancelToken) -> AssistantStatus {
+            AssistantStatus::Ready
         }
 
         fn open(&self, spec: SessionSpec<'_>) -> Self::Session {
@@ -758,6 +818,7 @@ pub(super) mod tests {
         let (wake, woken) = mpsc::channel(1);
         let assistant_factory = Arc::new(assistant_factory);
         let for_execution = Arc::clone(&assistant_factory);
+        let for_models = Arc::clone(&assistant_factory);
         let runtime = ChatRuntime {
             config_environment: Environment::in_home(directory.to_path_buf()),
             sessions: SessionStore::open(directory.join(SESSION_FILE)),
@@ -769,7 +830,10 @@ pub(super) mod tests {
                     runtime.execute_with(&for_execution(job.assistant_id()), ticket, job, cancel);
                 }),
                 models: Box::new(move |assistant_id, cancel| {
-                    assistant_factory(assistant_id).models(cancel)
+                    for_models(assistant_id).models(cancel)
+                }),
+                ready: Box::new(move |assistant_id, cancel| {
+                    assistant_factory(assistant_id).check_ready(cancel)
                 }),
             }),
             preferences: Arc::new(
@@ -1065,6 +1129,27 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_signed_out_prompt_run_says_so() {
+        let home = home_with_memory();
+        let instructions = home.path().join("polish.md");
+        std::fs::write(&instructions, "Fix grammar.").expect("the prompt file");
+        let (runtime, _events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
+            signed_out: true,
+        });
+
+        let error = runtime
+            .prompt_answer(
+                &FailingAssistant { signed_out: true },
+                &prompt_request(instructions),
+                Duration::from_secs(5),
+                &CancelToken::never(),
+            )
+            .expect_err("the assistant is signed out");
+
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::AssistantSignedOut);
+    }
+
+    #[test]
     fn a_prompt_run_without_its_file_never_reaches_the_assistant() {
         let home = tempfile::tempdir().expect("a temp home");
         let log = Arc::new(Mutex::new(Log::default()));
@@ -1080,7 +1165,7 @@ pub(super) mod tests {
             .expect_err("the file is missing");
 
         assert!(matches!(error, ChatError::Instructions(_)));
-        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::PromptUnreadable);
         assert!(log.lock().unwrap().prompts.is_empty());
     }
 
@@ -1154,7 +1239,9 @@ pub(super) mod tests {
     fn a_failed_turn_is_not_kept() {
         let home = home_with_memory();
         enroll_owner(home.path());
-        let (runtime, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant);
+        let (runtime, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
+            signed_out: false,
+        });
         let heard = ChatRequest {
             own_voice: true,
             ..request("hello", home.path(), false)
@@ -1166,13 +1253,23 @@ pub(super) mod tests {
         assert!(turns(home.path(), &heard).is_empty());
     }
 
-    struct FailingAssistant;
+    struct FailingAssistant {
+        signed_out: bool,
+    }
 
     impl Assistant for FailingAssistant {
         type Session = FailingSession;
 
         fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
             Err(AssistantError::Failed("down".to_owned()))
+        }
+
+        fn check_ready(&self, _cancel: &CancelToken) -> AssistantStatus {
+            if self.signed_out {
+                AssistantStatus::SignedOut { fix: "sign in" }
+            } else {
+                AssistantStatus::Ready
+            }
         }
 
         fn open(&self, _spec: SessionSpec<'_>) -> Self::Session {
@@ -1404,6 +1501,85 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_signed_out_turn_says_so_and_keeps_the_conversation() {
+        for signed_out in [true, false] {
+            let directory = tempfile::tempdir().expect("test directory");
+            let work = directory.path();
+            let log = Arc::new(Mutex::new(Log::default()));
+            let (runtime, events) = runtime_with(work, logging_assistants(&log));
+            run(&runtime, &events, 1, request("one", work, false));
+            let (failing, failing_events) =
+                runtime_with(work, move |_assistant_id| FailingAssistant { signed_out });
+
+            let outcome = run(&failing, &failing_events, 2, request("two", work, false));
+
+            let ChatStageKind::Failed { code, message } = outcome else {
+                panic!("unexpected {outcome:?}");
+            };
+            let record = std::fs::read_to_string(work.join(SESSION_FILE)).expect("a record");
+            if signed_out {
+                assert_eq!(code, RpcErrorCode::AssistantSignedOut);
+                assert!(message.contains("sign in"), "{message}");
+                assert!(record.contains("session-1"), "{record}");
+            } else {
+                assert_eq!(code, RpcErrorCode::AssistantFailed);
+                assert!(!record.contains("session-1"), "{record}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn listed_assistants_carry_their_status_and_fix() {
+        use crate::daemon::host::DaemonLifetime;
+        use crate::daemon::service::ChatRpc;
+        use crate::ipc::wire::{self, chat_service_server::ChatService};
+
+        let directory = tempfile::tempdir().expect("test directory");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (mut runtime, _events) = runtime_with(directory.path(), logging_assistants(&log));
+        runtime.assistant_overrides.as_mut().unwrap().ready =
+            Box::new(|assistant_id, _cancel| match assistant_id {
+                AssistantId::ClaudeCode => AssistantStatus::SignedOut { fix: "sign in" },
+                AssistantId::Codex => AssistantStatus::Ready,
+            });
+        let runtime = Arc::new(runtime);
+        let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
+        let rpc = ChatRpc::new(
+            handle,
+            runtime,
+            DaemonLifetime::Persistent,
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let listed = rpc
+            .list_assistants(tonic::Request::new(wire::ListAssistantsRequest {}))
+            .await
+            .expect("the list")
+            .into_inner()
+            .assistants;
+
+        let statuses: Vec<_> = listed
+            .iter()
+            .map(|assistant| (assistant.id, assistant.status, assistant.fix.as_str()))
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                (
+                    wire::AssistantId::ClaudeCode as i32,
+                    wire::AssistantStatus::SignedOut as i32,
+                    "sign in"
+                ),
+                (
+                    wire::AssistantId::Codex as i32,
+                    wire::AssistantStatus::Ready as i32,
+                    ""
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn a_cancelled_ask_never_starts() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
@@ -1607,6 +1783,10 @@ pub(super) mod tests {
             Err(AssistantError::Failed(
                 "a parked assistant only takes turns".to_owned(),
             ))
+        }
+
+        fn check_ready(&self, _cancel: &CancelToken) -> AssistantStatus {
+            AssistantStatus::Ready
         }
 
         fn open(&self, _spec: SessionSpec<'_>) -> Self::Session {

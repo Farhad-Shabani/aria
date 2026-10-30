@@ -20,6 +20,25 @@ final class PillStateTests: XCTestCase {
         return event
     }
 
+    func testAFailedAskNamesACauseThePersonCanFix() {
+        var failed = event(.failed, ticket: 1)
+        failed.errorCode = .assistantSignedOut
+        XCTAssertEqual(PillState(ended: failed), .failed("Assistant not signed in"))
+        failed.errorCode = .assistantUnavailable
+        XCTAssertEqual(PillState(ended: failed), .failed("Assistant not installed"))
+        failed.errorCode = .promptUnreadable
+        XCTAssertEqual(PillState(ended: failed), .failed("can't use its file"))
+        failed.errorCode = .assistantFailed
+        XCTAssertEqual(PillState(ended: failed), .noReply)
+    }
+
+    func testARefusedPromptReadsAsItsFailedRun() {
+        let name = "Formal email to the leadership team"
+        XCTAssertEqual(
+            PillState.refused(prompt: name).label(),
+            PillState.failed(PillState.unreadablePrompt).label(prompt: name))
+    }
+
     func testNoAsksNoPill() {
         XCTAssertNil(PillState(asks: AsksInFlight()))
     }
