@@ -44,7 +44,8 @@ struct AssistantSettings: View {
                 } footer: {
                     Text("Requires its command-line app.")
                 }
-                if let modelID = AssistantEdits.modelID(in: editor.snapshot) {
+                // Both lists come from the daemon, so one failure covers both.
+                if catalog.failure == nil, let modelID = AssistantEdits.modelID(in: editor.snapshot) {
                     AssistantModelSection(
                         assistantID: editor.snapshot.assistantID,
                         modelID: editor.binding(modelID) { value, patch in
