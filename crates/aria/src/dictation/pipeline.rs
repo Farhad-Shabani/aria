@@ -4352,7 +4352,11 @@ mod tests {
         let second = press();
 
         assert_eq!(first.0, "hello");
-        assert_eq!(second, first);
+        assert_eq!(second.0, first.0);
+        // How many steps the ring took to name the owner depends on when
+        // the walk published; where it settled does not.
+        assert_eq!(second.1.last(), first.1.last());
+        assert!(first.1.last().is_some(), "the ring named the owner");
     }
 
     #[test]
