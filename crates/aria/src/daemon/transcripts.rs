@@ -262,7 +262,7 @@ impl TranscriptSink for History {
 
 /// A history failure with no specific text reads as its code's label.
 fn failure_from_code(code: RpcErrorCode) -> RpcFailure {
-    RpcFailure::new(code, code.label().replace('_', " "))
+    RpcFailure::new(code, code.words())
 }
 
 #[cfg(test)]

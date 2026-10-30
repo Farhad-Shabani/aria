@@ -58,6 +58,20 @@ pub enum RpcErrorCode {
 }
 
 impl RpcErrorCode {
+    /// The label as words, for a person to read.
+    pub fn words(self) -> String {
+        self.label().replace('_', " ")
+    }
+
+    /// What a failure says to a person: its own text, or else its code.
+    pub(crate) fn reason(self, message: &str) -> String {
+        if message.is_empty() {
+            self.words()
+        } else {
+            message.to_owned()
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::InvalidRequest => "invalid_request",

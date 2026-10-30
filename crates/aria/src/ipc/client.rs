@@ -101,7 +101,7 @@ pub enum ClientError {
     #[error("failed to build the daemon client runtime")]
     Runtime(#[source] std::io::Error),
 
-    #[error("daemon RPC failed ({code}): {message}")]
+    #[error("{}", code.reason(message))]
     Rpc { code: RpcErrorCode, message: String },
 
     #[error("daemon request failed with status {}: {}", .0.code().description(), .0.message())]
@@ -1089,5 +1089,20 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn an_rpc_failure_reads_as_its_message_without_its_code() {
+        let named = ClientError::Rpc {
+            code: RpcErrorCode::DeliveryTargetChanged,
+            message: "the window changed".to_owned(),
+        };
+        let bare = ClientError::Rpc {
+            code: RpcErrorCode::HistoryUnavailable,
+            message: String::new(),
+        };
+
+        assert_eq!(named.to_string(), "the window changed");
+        assert_eq!(bare.to_string(), "history unavailable");
     }
 }

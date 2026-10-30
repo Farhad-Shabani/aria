@@ -539,7 +539,7 @@ pub enum RouteError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
-    #[error("ask {ticket} failed ({}): {message}", code.label())]
+    #[error("{}", code.reason(message))]
     Failed {
         ticket: Ticket,
         code: RpcErrorCode,
