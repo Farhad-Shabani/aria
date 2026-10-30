@@ -18,7 +18,7 @@ use crate::enrollment::{
     EnrollmentResult, Speakers,
 };
 use crate::preferences::{PreferencePatch, PreferenceStore, UpdateResult};
-use crate::speaker::{Role, SpeakerName};
+use crate::speaker::SpeakerName;
 
 use super::operation::{self, CallError, Pending, call, cancellable_call, operation_cancellation};
 use super::tasks::Supervised;
@@ -81,16 +81,7 @@ impl SpeakerRuntime {
     }
 
     fn remove(&self, name: &SpeakerName) -> Result<(), EnrollError> {
-        let speakers = self.speakers()?;
-        speakers.remove(name)?;
-        if !speakers
-            .list()
-            .iter()
-            .any(|speaker| speaker.role == Role::Owner)
-        {
-            self.release_own_voice();
-        }
-        Ok(())
+        self.speakers()?.remove(name, || self.release_own_voice())
     }
 
     /// With no owner left, "only type my voice" would refuse every press.
@@ -287,7 +278,7 @@ mod tests {
 
     use super::*;
     use crate::config::SpeakerConfig;
-    use crate::speaker::{ProfileStore, Replace};
+    use crate::speaker::{ProfileStore, Replace, Role};
 
     /// A runtime over a speakers directory holding `voices`, with
     /// "only type my voice" on.
