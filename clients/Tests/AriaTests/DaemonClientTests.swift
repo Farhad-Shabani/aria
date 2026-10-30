@@ -4,8 +4,8 @@ import XCTest
 
 final class DaemonClientTests: XCTestCase {
     func testCLIFailureKeepsTheFirstLineAsASentence() {
-        let anyhow = Data("Error: remote invitation is invalid\n\nCaused by:\n    eof\n".utf8)
-        XCTAssertEqual(DaemonClient.cliFailure(stderr: anyhow, fallback: "Failed."), "Remote invitation is invalid.")
+        let cli = Data("error: remote invitation is invalid: eof\n".utf8)
+        XCTAssertEqual(DaemonClient.cliFailure(stderr: cli, fallback: "Failed."), "Remote invitation is invalid: eof.")
         XCTAssertEqual(
             DaemonClient.cliFailure(stderr: Data("Already a sentence.".utf8), fallback: "Failed."),
             "Already a sentence.")
