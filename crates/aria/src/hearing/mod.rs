@@ -198,6 +198,8 @@ pub(crate) struct Hearing<'scope> {
     spoken: bool,
     unspoken: usize,
     trusted: Vec<String>,
+    /// The last timeline shown, so each one shows once.
+    shown: Option<Arc<Timeline>>,
     /// The decoder has sent its last update.
     done: bool,
     /// The earliest audio the decoder may still send a segment from.
@@ -271,6 +273,7 @@ impl<'scope> Hearing<'scope> {
             events: VecDeque::new(),
             unspoken: 0,
             trusted: Vec::new(),
+            shown: None,
             done: false,
             retained_from: from,
         })
@@ -286,9 +289,7 @@ impl<'scope> Hearing<'scope> {
             if self.done {
                 return Ok(None);
             }
-            let wake = self.board.next_wake();
-            let published = matches!(wake, Wake::Snapshot);
-            match wake {
+            match self.board.next_wake() {
                 Wake::Decoded(decoded) => {
                     self.take(decoded.update, decoded.read_to)?;
                     self.retained_from = decoded.retained_from;
@@ -298,12 +299,17 @@ impl<'scope> Hearing<'scope> {
             }
             let snapshot = self.turns.is_some().then(|| self.board.snapshot());
             // Queued ahead of what the gate releases, so whose voice it is
-            // shows before their words do.
-            if published
-                && let Some(timeline) = snapshot
+            // shows before their words do. A word that woke this thread may
+            // have waited on a timeline the walk published meanwhile.
+            if let Some(timeline) = snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.timeline.clone())
+                && !self
+                    .shown
                     .as_ref()
-                    .and_then(|snapshot| snapshot.timeline.clone())
+                    .is_some_and(|shown| Arc::ptr_eq(shown, &timeline))
             {
+                self.shown = Some(Arc::clone(&timeline));
                 self.events.push_back(Event::Timeline(timeline));
             }
             if self.gate.admission() == Admission::OwnerOnly
