@@ -43,7 +43,7 @@ enum PillState: Equatable {
     }
 
     /// After a prompt's name, before or after its recording.
-    static let unreadablePrompt = "can't use its file"
+    static let unreadablePrompt = "File unavailable"
 
     /// A prompt turned down before its recording, named as its run would be.
     static func refused(prompt name: String) -> PillState {
