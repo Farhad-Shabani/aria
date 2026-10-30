@@ -1837,14 +1837,13 @@ pub(super) mod tests {
                 if cancel.is_cancelled() {
                     return Err(AssistantError::Cancelled);
                 }
-                let released = self
-                    .release
-                    .lock()
-                    .expect("not poisoned")
-                    .recv_timeout(Duration::from_millis(20));
+                // Held only to look: a session waiting under the lock kept
+                // the other from seeing its cancel.
+                let released = self.release.lock().expect("not poisoned").try_recv();
                 if released.is_ok() || std::time::Instant::now() >= deadline {
                     break;
                 }
+                std::thread::sleep(Duration::from_millis(20));
             }
             self.resume = Some(format!("session-{turn}"));
             sink.text(&format!("reply {turn}"));
