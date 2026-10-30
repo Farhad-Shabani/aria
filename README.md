@@ -1,4 +1,4 @@
-<h1 align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/aria-lockup-inline-animated-dark.svg"><img src="assets/brand/aria-lockup-inline-animated.svg" width="280" alt="Aria"></picture></h1>
+<h1 align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Farhad-Shabani/aria/main/assets/brand/aria-lockup-inline-animated-dark.svg"><img src="https://raw.githubusercontent.com/Farhad-Shabani/aria/main/assets/brand/aria-lockup-inline-animated.svg" width="280" alt="Aria"></picture></h1>
 
 <p align="center"><b>Talk to your AI assistants without sending them your audio.</b></p>
 
@@ -17,20 +17,20 @@
 </p>
 
 Aria is a voice assistant for macOS and Linux. Press a hotkey and speak, and
-Aria types your words into any Mac app. Ask your AI coding assistant a
-question out loud, and Claude Code or Codex answers in your terminal. Speech
+Aria types your words into the Mac app you're using. Ask Claude Code or Codex a
+question, or run one of your prompts, and the answer lands there too. Speech
 runs on your computer by default, so your assistant gets your words as text,
 never your audio.
 
-A menu bar app for macOS brings setup, settings, history, and hotkeys
-together. The `aria` command does the same work in a terminal, on macOS and
-Linux. [Rust libraries](#libraries), licensed Apache-2.0, bring the speech
-pipeline to your own projects, even in the browser through WebAssembly.
+A menu bar app for macOS brings setup, settings, history, and hotkeys together.
+The `aria` command does most of this in a terminal, on macOS and Linux. [Rust
+libraries](#libraries), licensed Apache-2.0, bring the speech pipeline to your
+own projects, even in the browser through WebAssembly.
 
 ## What it does
 
-- **Dictate** into any Mac app, from your Mac, iPhone, or Apple Watch. On
-  Linux, Aria copies the text.
+- **Dictate** into the Mac app you're working in. On Linux, Aria copies the
+  text.
 - **Ask** Claude Code or Codex by voice, and keep the conversation going.
 - **Rewrite** what you say with your own prompts, such as polishing or
   translating it.
@@ -39,7 +39,7 @@ pipeline to your own projects, even in the browser through WebAssembly.
 - **Personalize** dictation to type only your voice, spell your project's
   names, and follow rules for each app.
 
-Prompts, voice profiles, and phone pairing need the Mac app.
+Prompts, app rules, phone pairing, and the voice filter need the Mac app.
 
 ## Get started
 
@@ -67,7 +67,7 @@ Then try it from a terminal:
 aria dictate          # speak; type into a Mac app or copy the text
 aria ask              # speak a question; your assistant answers
 aria say "Done for today."
-aria listen start     # transcribe system audio, with speakers
+aria listen start     # Mac only: system audio, by speaker
 ```
 
 ## What leaves your computer
@@ -77,8 +77,8 @@ has no telemetry or crash reporting.
 
 **Audio**
 
-- **iPhone and Apple Watch:** audio goes to your Mac on your local network,
-  port 9850. It uses mutual TLS, so both devices check each other's
+- **iPhone and Apple Watch (coming soon):** audio goes to your Mac on your
+  local network. It uses mutual TLS, so both devices check each other's
   certificate. Off until you turn on phone pairing.
 - **Your own server (optional):** audio goes to a machine you set up with
   `aria serve` and pair with, over mutual TLS too. Off until you set it up.
@@ -86,11 +86,9 @@ has no telemetry or crash reporting.
 
 **Text and files**, only when you use these features
 
-- **Ask:** your question goes to Claude Code or Codex. While it answers, the
-  assistant may read files in your project and send them to its provider,
-  such as Anthropic or OpenAI. Aria blocks file changes.
-- **Prompts:** your words and the prompt go to Claude Code or Codex. No files,
-  no tools.
+- **Ask and prompts:** your words go to Claude Code or Codex, with the prompt
+  if you run one. For Ask, the assistant may also read files in your project
+  and send them to its provider. Prompts read no files.
 - **Memory (off by default):** spoken Ask conversations go to Claude Code,
   which picks out facts you mention. Aria saves them in `~/.aria/memory`.
 
@@ -109,7 +107,8 @@ hours. Turn saving off under **Settings → Privacy**.
 
 ## Engines
 
-- **Speech recognition:** Whisper, Parakeet, Moonshine, Nemotron, Parakeet MLX
+- **Speech recognition:** Whisper (two builds), Parakeet, Moonshine, Nemotron,
+  Parakeet MLX
 - **Speech synthesis:** Kokoro, Qwen3-TTS, system voice
 - **Wake word:** openWakeWord, livekit-wakeword
 
@@ -160,14 +159,14 @@ A source build runs as `target/release/aria` in the examples above.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Contributors sign a
+See [CONTRIBUTING.md](https://github.com/Farhad-Shabani/aria/blob/main/CONTRIBUTING.md). Contributors sign a
 [CLA](https://cla-assistant.io/Farhad-Shabani/aria) on their first pull
 request.
 
 ## License
 
-- The daemon, CLI, macOS app, `aria-bench`, and the rest of this repository:
-  [GPL-3.0-only](LICENSE-GPL).
-- The toolkit crates, `aria-bench-speaker`, and the protocol in `proto/`:
-  [Apache-2.0](LICENSE-APACHE).
-- Copied third-party material: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- The daemon, CLI, macOS app, and `aria-bench`:
+  [GPL-3.0-only](https://github.com/Farhad-Shabani/aria/blob/main/LICENSE-GPL).
+- The library crates, `aria-harness`, `aria-bench-speaker`, and the protocol in
+  `proto/`: [Apache-2.0](https://github.com/Farhad-Shabani/aria/blob/main/LICENSE-APACHE).
+- Copied third-party material: [THIRD-PARTY-NOTICES.md](https://github.com/Farhad-Shabani/aria/blob/main/THIRD-PARTY-NOTICES.md).
