@@ -8,7 +8,7 @@ struct SettingsIcon: View {
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: side * SettingsMetrics.glyphRatio))
-            .foregroundStyle(isWarning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .foregroundStyle(isWarning ? AnyShapeStyle(.attention) : AnyShapeStyle(.secondary))
             .frame(width: side, height: side)
             .accessibilityHidden(true)
     }

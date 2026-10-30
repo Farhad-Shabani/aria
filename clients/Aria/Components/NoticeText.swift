@@ -4,7 +4,7 @@ extension ShapeStyle where Self == Color {
     /// Text that says something went wrong.
     static var failure: Color { .red }
     /// A mark on something the person can put right.
-    static var attention: Color { .yellow }
+    static var attention: Color { .orange }
 }
 
 struct NoticeText: View {
