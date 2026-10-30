@@ -482,11 +482,7 @@ fn reply_from(
             ChatStageKind::Working(..) => {}
             ChatStageKind::Replied(reply) => return Ok(reply),
             ChatStageKind::Failed { code, message } => {
-                return Err(AskError::Failed {
-                    ticket,
-                    code,
-                    message,
-                });
+                return Err(AskError::Failed { code, message });
             }
         }
     }
@@ -540,11 +536,7 @@ pub enum RouteError {
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
     #[error("{}", code.reason(message))]
-    Failed {
-        ticket: Ticket,
-        code: RpcErrorCode,
-        message: String,
-    },
+    Failed { code: RpcErrorCode, message: String },
 
     #[error("the daemon stopped before answering ticket {0}")]
     DaemonStopped(Ticket),
