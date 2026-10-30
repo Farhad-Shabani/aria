@@ -34,7 +34,13 @@ struct VoiceSection: View {
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             presenting: removing
         ) { speaker in
-            Button("Remove", role: .destructive) { Task { await voices.remove(speaker.name) } }
+            Button("Remove", role: .destructive) {
+                Task {
+                    await voices.remove(speaker.name)
+                    // Removing the last owner turns "only type my voice" off.
+                    await editor.preferences.sync()
+                }
+            }
         } message: { _ in
             Text("Aria won’t recognize this voice anymore.")
         }
