@@ -543,12 +543,12 @@ final class DictationHistoryTests: XCTestCase {
             .projectUnavailable)
     }
 
-    func testHistoryPreferencePreservesExplicitFalse() throws {
-        var patch = Aria_Daemon_V1_PreferencePatch()
-        XCTAssertFalse(patch.hasDictationHistory)
-        patch.dictationHistory = false
-        let decoded = try Aria_Daemon_V1_PreferencePatch(serializedBytes: patch.serializedData())
-        XCTAssertTrue(decoded.hasDictationHistory)
-        XCTAssertFalse(decoded.dictationHistory)
+    func testHistorySettingsPreservesExplicitFalse() throws {
+        var patch = Aria_Daemon_V1_SettingsPatch()
+        XCTAssertFalse(patch.hasHistoryEnabled)
+        patch.historyEnabled = false
+        let decoded = try Aria_Daemon_V1_SettingsPatch(serializedBytes: patch.serializedData())
+        XCTAssertTrue(decoded.hasHistoryEnabled)
+        XCTAssertFalse(decoded.historyEnabled)
     }
 }

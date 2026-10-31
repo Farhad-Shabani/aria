@@ -16,7 +16,7 @@ enum AssistantClient {
         }
     }
 
-    static func models(for assistantID: Aria_Daemon_V1_AssistantID) async throws -> [Aria_Daemon_V1_AssistantModel] {
+    static func models(for assistantID: Aria_Daemon_V1_AssistantId) async throws -> [Aria_Daemon_V1_AssistantModel] {
         var request = Aria_Daemon_V1_ListAssistantModelsRequest()
         request.assistantID = assistantID
         let message = request

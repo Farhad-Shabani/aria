@@ -1,43 +1,43 @@
 import SwiftUI
 
 struct RecognitionSettings: View {
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     @ObservedObject var voices: VoiceProfiles
     let serverTranscription: ServerTranscription
     let setup: SetupStatus
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        SettingsForm(settings: settings) { editor in
             TranscriptionSection(server: serverTranscription, setup: setup)
             Section {
                 language(editor)
             }
             VoiceSection(voices: voices, setup: setup, editor: editor)
             Section("Vocabulary") {
-                Toggle("Use project vocabulary", isOn: editor.binding(\.projectVocabulary, \.projectVocabulary))
+                Toggle("Use project vocabulary", isOn: editor.binding(\.vocabularyEnabled, \.vocabularyEnabled))
                 vocabularyFolder(editor)
-                    .disabled(!editor.snapshot.projectVocabulary)
+                    .disabled(!editor.snapshot.vocabularyEnabled)
             }
         }
     }
 
-    private func language(_ editor: PreferencesEditor) -> some View {
-        Picker("Language", selection: editor.binding(\.recognitionLanguage, \.recognitionLanguage)) {
-            ForEach(DictationEdits.languageChoices(including: editor.snapshot.recognitionLanguage), id: \.self) {
+    private func language(_ editor: SettingsEditor) -> some View {
+        Picker("Language", selection: editor.binding(\.sttLanguage, \.sttLanguage)) {
+            ForEach(DictationEdits.languageChoices(including: editor.snapshot.sttLanguage), id: \.self) {
                 Text(DictationEdits.languageTitle($0)).tag($0)
             }
         }
     }
 
     /// The daemon clears the folder when sent an empty path.
-    private func vocabularyFolder(_ editor: PreferencesEditor) -> some View {
-        let chosen = editor.snapshot.hasVocabularyDirectory ? editor.snapshot.vocabularyDirectory : nil
+    private func vocabularyFolder(_ editor: SettingsEditor) -> some View {
+        let chosen = editor.snapshot.hasVocabularyDir ? editor.snapshot.vocabularyDir : nil
         return LabeledContent {
             HStack {
                 Button("Choose…") {
-                    if let path = Self.chooseFolder() { editor.set(\.vocabularyDirectory, to: path) }
+                    if let path = Self.chooseFolder() { editor.set(\.vocabularyDir, to: path) }
                 }
-                Button("Clear") { editor.set(\.vocabularyDirectory, to: "") }
+                Button("Clear") { editor.set(\.vocabularyDir, to: "") }
                     .disabled(chosen == nil)
             }
         } label: {

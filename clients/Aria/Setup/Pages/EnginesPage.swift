@@ -11,7 +11,7 @@ struct EnginesPage: View {
             }
             Section {
                 if state.inspection.macos {
-                    Toggle(isOn: $state.selections.hotkey) {
+                    Toggle(isOn: $state.selections.ariaKey) {
                         Text("Start dictation with the Aria key")
                         Text("Setup asks for permission next.")
                     }
@@ -32,10 +32,10 @@ struct EnginesPage: View {
                     .accessibilityLabel("\(engine.label), \(download.note ?? download.brief)")
                     .tag(engine.id)
             }
-            // config.yaml may name an engine setup does not offer; the
+            // settings.toml may name an engine setup does not offer; the
             // picker still needs a row for it.
             if chosen == nil {
-                Text("\(key.wrappedValue) (from your configuration)").tag(key.wrappedValue)
+                Text("\(key.wrappedValue) (from your settings)").tag(key.wrappedValue)
             }
         } label: {
             Text(title)

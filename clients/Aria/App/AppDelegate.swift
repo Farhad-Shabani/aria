@@ -24,15 +24,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         width: OverlayStyle.captionWidth, bottomMargin: OverlayStyle.captionBottomMargin)
     let status: StatusController
     private let ghost: GhostController
-    let askHotkey: PressController
+    let askShortcut: PressController
     let promptHotkeys: PromptHotkeys
     let promptList: PromptList
     private var caption = CaptionState()
     private var shownCommitted: String?
     private var shownProvisional: String?
     private var expiryTimer: Timer?
-    private var preferences: DaemonPreferences?
+    private var daemonSettings: DaemonSettings?
     private var askChordChange: AnyCancellable?
+    lazy var settingsHealth = SettingsHealth(
+        effects: .live(reloadSettings: { [weak self] in await self?.daemonSettings?.sync() }))
 
     override init() {
         promptHotkeys = PromptHotkeys(events: events)
@@ -41,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let status = StatusController(events: events, prompts: promptHotkeys)
         self.status = status
         ghost = GhostController(events: events)
-        askHotkey = PressController(events: events, operation: .ask) { [weak status] run in
+        askShortcut = PressController(events: events, operation: .ask) { [weak status] run in
             status?.noteAsk(run)
         }
         super.init()
@@ -51,10 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Before the first snapshot no action holds a combo, so nothing runs.
-    private func run(_ combo: Aria_Daemon_V1_HotkeyCombo) {
-        guard let snapshot = preferences?.snapshot else { return }
+    private func run(_ combo: Aria_Daemon_V1_ShortcutCombo) {
+        guard let snapshot = daemonSettings?.snapshot else { return }
         switch ComboAction(combo: combo, in: snapshot) {
-        case .ask: askHotkey.press()
+        case .ask: askShortcut.press()
         case .promptList: promptList.press()
         case nil: break
         }
@@ -63,15 +65,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A menu bar scene body sits idle while the menu is closed, so the
     /// stored chords are watched rather than read through a SwiftUI
     /// `onChange`.
-    func trackHotkeys(_ preferences: DaemonPreferences) {
-        self.preferences = preferences
-        askChordChange = preferences.$snapshot
-            .map { $0?.askHotkey.storedChord }
+    func trackHotkeys(_ settings: DaemonSettings) {
+        self.daemonSettings = settings
+        events.onSettings { [weak self] status in
+            guard let health = self?.settingsHealth else { return }
+            Task { await health.receive(status) }
+        }
+        events.onStreamOpened { [weak self] in
+            guard let health = self?.settingsHealth else { return }
+            Task { await health.streamOpened() }
+        }
+        askChordChange = settings.$snapshot
+            .map { $0?.askShortcut.storedChord }
             .sink { [weak self] chord in
-                Task { @MainActor in self?.askHotkey.chord.bind(chord) }
+                Task { @MainActor in self?.askShortcut.chord.bind(chord) }
             }
-        promptHotkeys.track(preferences)
-        promptList.track(preferences)
+        promptHotkeys.track(settings)
+        promptList.track(settings)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

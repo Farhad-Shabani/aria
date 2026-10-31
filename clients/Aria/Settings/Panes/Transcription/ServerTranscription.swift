@@ -8,7 +8,7 @@ enum TranscriptionLocation: Equatable {
     case server
 }
 
-/// Each switch runs setup apply, which writes the config and restarts the service.
+/// Each switch runs setup apply, which writes the settings file and restarts the service.
 @MainActor
 final class ServerTranscription: ObservableObject {
     struct Effects {
@@ -18,7 +18,7 @@ final class ServerTranscription: ObservableObject {
         var apply: (Aria_Setup_V1_ApplyRequest) async throws -> Void
         var stopDaemon: () async -> Void
         var startDaemon: () async -> Void
-        /// The config forgets the local engine while the server is in use.
+        /// The settings forget the local engine while the server is in use.
         var lastLocalEngine: () -> String?
         var rememberLocalEngine: (String) -> Void
     }
@@ -163,7 +163,7 @@ final class ServerTranscription: ObservableObject {
     }
 
     /// False when busy or pairing failed. A server in use is applied again,
-    /// so the config takes the new address.
+    /// so the settings take the new address.
     func pair(invitation: String) async -> Bool {
         guard !isBusy else { return false }
         isBusy = true

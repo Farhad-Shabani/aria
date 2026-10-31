@@ -181,7 +181,7 @@ extension Aria_Daemon_V1_HistoryService {
         /// >
         /// > Delete all rows, then remove their audio and orphaned recordings. Any
         /// > active regeneration refuses the whole operation with BUSY. Later saves
-        /// > survive; preferences and active dictation are unchanged. Do not retry
+        /// > survive; settings and active dictation are unchanged. Do not retry
         /// > automatically after a timeout or disconnect: the result is uncertain.
         ///
         /// - Parameters:
@@ -343,7 +343,7 @@ extension Aria_Daemon_V1_HistoryService {
         /// >
         /// > Delete all rows, then remove their audio and orphaned recordings. Any
         /// > active regeneration refuses the whole operation with BUSY. Later saves
-        /// > survive; preferences and active dictation are unchanged. Do not retry
+        /// > survive; settings and active dictation are unchanged. Do not retry
         /// > automatically after a timeout or disconnect: the result is uncertain.
         ///
         /// - Parameters:
@@ -500,7 +500,7 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     /// >
     /// > Delete all rows, then remove their audio and orphaned recordings. Any
     /// > active regeneration refuses the whole operation with BUSY. Later saves
-    /// > survive; preferences and active dictation are unchanged. Do not retry
+    /// > survive; settings and active dictation are unchanged. Do not retry
     /// > automatically after a timeout or disconnect: the result is uncertain.
     ///
     /// - Parameters:
@@ -658,7 +658,7 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     /// >
     /// > Delete all rows, then remove their audio and orphaned recordings. Any
     /// > active regeneration refuses the whole operation with BUSY. Later saves
-    /// > survive; preferences and active dictation are unchanged. Do not retry
+    /// > survive; settings and active dictation are unchanged. Do not retry
     /// > automatically after a timeout or disconnect: the result is uncertain.
     ///
     /// - Parameters:

@@ -4,16 +4,16 @@ import XCTest
 
 final class AssistantEditsTests: XCTestCase {
     func testModelEditsPreserveTheOtherAssistantAndDefaultClearsTheChoice() {
-        var snapshot = Aria_Daemon_V1_UserPreferences()
+        var snapshot = Aria_Daemon_V1_Settings()
         snapshot.assistantID = .claudeCode
-        var pending = Aria_Daemon_V1_PreferencePatch()
+        var pending = Aria_Daemon_V1_SettingsPatch()
         AssistantEdits.setModelID("claude-choice", for: .claudeCode, in: &pending)
         AssistantEdits.setModelID("codex-choice", for: .codex, in: &pending)
         pending.apply(to: &snapshot)
         XCTAssertEqual(AssistantEdits.modelID(in: snapshot), "claude-choice")
         snapshot.assistantID = .codex
         XCTAssertEqual(AssistantEdits.modelID(in: snapshot), "codex-choice")
-        var reset = Aria_Daemon_V1_PreferencePatch()
+        var reset = Aria_Daemon_V1_SettingsPatch()
         AssistantEdits.setModelID("", for: .codex, in: &reset)
         reset.apply(to: &snapshot)
         XCTAssertEqual(AssistantEdits.modelID(in: snapshot), "")

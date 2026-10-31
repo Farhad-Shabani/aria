@@ -2,11 +2,11 @@ import SwiftUI
 
 struct PromptSettings: View {
     let id: String
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     @ObservedObject var hotkeys: PromptHotkeys
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        SettingsForm(settings: settings) { editor in
             if let entry = PromptEdits.entry(id, in: editor.snapshot.prompts) {
                 ItemPage(title: entry.name) {
                     SettingsIcon(pane: .prompts, side: SettingsMetrics.headerIconSide)
@@ -25,7 +25,7 @@ struct PromptSettings: View {
     private func binding<Value>(
         _ field: WritableKeyPath<Aria_Daemon_V1_Prompt, Value> & Sendable,
         of entry: Aria_Daemon_V1_Prompt,
-        _ editor: PreferencesEditor
+        _ editor: SettingsEditor
     ) -> Binding<Value> {
         let id = id
         return Binding(
@@ -34,7 +34,7 @@ struct PromptSettings: View {
         )
     }
 
-    private func promptSection(_ entry: Aria_Daemon_V1_Prompt, _ editor: PreferencesEditor) -> some View {
+    private func promptSection(_ entry: Aria_Daemon_V1_Prompt, _ editor: SettingsEditor) -> some View {
         Section {
             PromptNameField(name: entry.name) { name in
                 editor.editPrompt(id) { $0.name = name }
@@ -48,17 +48,17 @@ struct PromptSettings: View {
                 HStack {
                     Button("Choose…") {
                         guard let file = PromptFile.choose() else { return }
-                        editor.editPrompt(id) { $0.instructionsPath = file.standardizedFileURL.path }
+                        editor.editPrompt(id) { $0.file = file.standardizedFileURL.path }
                     }
                     Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.instructionsPath)])
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.file)])
                     }
                     .disabled(!PromptFile.exists(entry))
                 }
             } label: {
                 Text("File")
                 if PromptFile.exists(entry) {
-                    Text((entry.instructionsPath as NSString).abbreviatingWithTildeInPath)
+                    Text((entry.file as NSString).abbreviatingWithTildeInPath)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
@@ -68,7 +68,7 @@ struct PromptSettings: View {
         }
     }
 
-    private func shortcutSection(_ entry: Aria_Daemon_V1_Prompt, _ editor: PreferencesEditor) -> some View {
+    private func shortcutSection(_ entry: Aria_Daemon_V1_Prompt, _ editor: SettingsEditor) -> some View {
         let id = id
         return Section {
             // The prompt's own switch turns its chord on and off with it.

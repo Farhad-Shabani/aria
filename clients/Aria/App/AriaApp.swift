@@ -7,7 +7,7 @@ struct AriaApp: App {
         client: DaemonClient()
     )
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var preferences = DaemonPreferences(transport: UnixSocketPreferences())
+    @StateObject private var settings = DaemonSettings(transport: UnixSocketSettings())
 
     var body: some Scene {
         MenuBarExtra {
@@ -28,7 +28,11 @@ struct AriaApp: App {
                     .disabled(poller.state == .working)
                 }
                 .padding(8)
-                if let failure = poller.failure {
+                SettingsAttentionView(
+                    health: appDelegate.settingsHealth, poller: poller, settings: settings
+                )
+                .padding(.horizontal, 8)
+                if let failure = poller.failure, !failure.isSettingsInvalid {
                     Text(markdown: failure.message)
                         .font(.caption)
                         .foregroundStyle(.failure)
@@ -53,6 +57,10 @@ struct AriaApp: App {
                         }
                     }
                     .keyboardShortcut(",")
+                    Button("Open Settings File") {
+                        let health = appDelegate.settingsHealth
+                        Task { await health.openSettingsFile() }
+                    }
                     CheckForUpdatesButton(updates: appDelegate.updates)
                 }
                 Divider()
@@ -75,7 +83,7 @@ struct AriaApp: App {
                 poller: poller,
                 status: appDelegate.status,
                 updates: appDelegate.updates,
-                preferences: preferences,
+                settings: settings,
                 controller: appDelegate
             )
         }
@@ -85,15 +93,16 @@ struct AriaApp: App {
         // toolbar that puts Back and Forward beside the sidebar.
         Window("Aria Settings", id: WindowID.settings) {
             SettingsView(
-                preferences: preferences,
+                settings: settings,
                 poller: poller,
                 updates: appDelegate.updates,
                 promptHotkeys: appDelegate.promptHotkeys,
-                askChord: appDelegate.askHotkey.chord,
+                askChord: appDelegate.askShortcut.chord,
                 promptListChord: appDelegate.promptList.chord,
                 setupStatus: appDelegate.setupStatus,
                 voices: appDelegate.voices,
-                serverTranscription: appDelegate.serverTranscription
+                serverTranscription: appDelegate.serverTranscription,
+                settingsHealth: appDelegate.settingsHealth
             )
         }
         .sidebarWindowScene()
@@ -113,7 +122,7 @@ struct AriaApp: App {
         .windowResizability(.contentMinSize)
 
         Window("Aria Setup", id: WindowID.setup) {
-            SetupView(state: appDelegate.setupState, preferences: preferences)
+            SetupView(state: appDelegate.setupState, settings: settings)
         }
         .sidebarWindowScene()
     }
@@ -124,7 +133,7 @@ private struct MenuBarLabel: View {
     @ObservedObject var poller: StatusPoller
     @ObservedObject var status: StatusController
     @ObservedObject var updates: UpdateController
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     let controller: AppDelegate
 
     var body: some View {
@@ -143,13 +152,17 @@ private struct MenuBarLabel: View {
                     NSApplication.shared.activate()
                 }
                 poller.startPolling()
-                controller.trackHotkeys(preferences)
-                Task { await preferences.sync() }
+                controller.trackHotkeys(settings)
+                Task { await settings.sync() }
+                let health = controller.settingsHealth
+                Task { await health.refresh() }
             }
-            // A daemon that came up after launch has preferences nobody read.
+            // A daemon that came up after launch has settings nobody read.
             .onChange(of: poller.state) { _, state in
                 guard state == .running else { return }
-                Task { await preferences.sync() }
+                Task { await settings.sync() }
+                let health = controller.settingsHealth
+                Task { await health.refresh() }
             }
     }
 }

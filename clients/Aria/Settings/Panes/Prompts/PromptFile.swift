@@ -4,11 +4,11 @@ import UniformTypeIdentifiers
 /// The Markdown file a prompt reads, as it stands on disk.
 enum PromptFile {
     static func exists(_ entry: Aria_Daemon_V1_Prompt) -> Bool {
-        FileManager.default.fileExists(atPath: entry.instructionsPath)
+        FileManager.default.fileExists(atPath: entry.file)
     }
 
     static func isReadable(_ entry: Aria_Daemon_V1_Prompt) -> Bool {
-        FileManager.default.isReadableFile(atPath: entry.instructionsPath)
+        FileManager.default.isReadableFile(atPath: entry.file)
     }
 
     /// Nil when the user cancels.

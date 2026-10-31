@@ -112,6 +112,16 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     set {payload = .hotkey(newValue)}
   }
 
+  /// Whenever the status changes: a change of values from a reload or a
+  /// write, a restart key, a revert, or a fault.
+  public var settings: Aria_Daemon_V1_SettingsStatus {
+    get {
+      if case .settings(let v)? = payload {return v}
+      return Aria_Daemon_V1_SettingsStatus()
+    }
+    set {payload = .settings(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -124,6 +134,9 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     case level(Aria_Daemon_V1_MicLevel)
     case ghost(Aria_Daemon_V1_GhostSnapshot)
     case hotkey(Aria_Daemon_V1_HotkeyEvent)
+    /// Whenever the status changes: a change of values from a reload or a
+    /// write, a restart key, a revert, or a fault.
+    case settings(Aria_Daemon_V1_SettingsStatus)
 
   }
 
@@ -138,7 +151,7 @@ public nonisolated struct Aria_Daemon_V1_HotkeyEvent: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var combo: Aria_Daemon_V1_HotkeyCombo = .unspecified
+  public var combo: Aria_Daemon_V1_ShortcutCombo = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -170,7 +183,7 @@ nonisolated extension Aria_Daemon_V1_SubscribeRequest: SwiftProtobuf.Message, Sw
 
 nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0\u{1}hotkey\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0\u{1}hotkey\0\u{1}settings\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -295,6 +308,19 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
           self.payload = .hotkey(v)
         }
       }()
+      case 10: try {
+        var v: Aria_Daemon_V1_SettingsStatus?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .settings(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .settings(v)
+        }
+      }()
       default: break
       }
     }
@@ -341,6 +367,10 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
     case .hotkey?: try {
       guard case .hotkey(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    }()
+    case .settings?: try {
+      guard case .settings(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
     }()
     case nil: break
     }

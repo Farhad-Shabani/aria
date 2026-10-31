@@ -20,7 +20,7 @@ struct InstalledApp {
     }
 
     /// The lookup reads the disk, and Settings redraws its app rows on every
-    /// preference change. An app installed while Aria runs keeps showing its
+    /// setting change. An app installed while Aria runs keeps showing its
     /// bundle ID until Aria relaunches.
     @MainActor
     static func lookUp(_ bundleID: String) -> InstalledApp {

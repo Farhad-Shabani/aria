@@ -3,20 +3,26 @@ import SwiftUI
 struct DictationSettings: View {
     private static let silenceStep = 0.1
 
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     /// Held locally while the thumb moves, then pushed once when it lands.
     @State private var silenceSeconds = DictationEdits.silenceSecondsRange.lowerBound
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        SettingsForm(settings: settings) { editor in
             Section("Text") {
                 output(editor)
                 delivery(editor)
             }
+            Section {
+                Toggle("Spoken corrections", isOn: editor.binding(\.backtrack, \.backtrack))
+                    .disabled(!DictationEdits.allowsSpokenCorrections(editor.snapshot.deliveryMode))
+            } footer: {
+                Text("Applies corrections you say as you dictate. Needs **Deliver** set to After recording stops.")
+            }
             Section("Recording") {
                 autoStop(editor)
                 silence(editor)
-                Toggle(isOn: editor.binding(\.muteOutput, \.muteOutput)) {
+                Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
                     Text("Mute sound while recording")
                     Text("Sound returns when recording stops.")
                 }
@@ -24,7 +30,7 @@ struct DictationSettings: View {
         }
     }
 
-    private func output(_ editor: PreferencesEditor) -> some View {
+    private func output(_ editor: SettingsEditor) -> some View {
         Picker(selection: editor.binding(editor.snapshot.outputMode, edit: DictationEdits.setOutput)) {
             ForEach(DictationEdits.outputModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
@@ -37,7 +43,7 @@ struct DictationSettings: View {
         }
     }
 
-    private func delivery(_ editor: PreferencesEditor) -> some View {
+    private func delivery(_ editor: SettingsEditor) -> some View {
         Picker("Deliver", selection: editor.binding(\.deliveryMode, \.deliveryMode)) {
             ForEach(DictationEdits.deliveryModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
@@ -46,7 +52,7 @@ struct DictationSettings: View {
         .disabled(DictationEdits.locksDelivery(editor.snapshot.outputMode))
     }
 
-    private func autoStop(_ editor: PreferencesEditor) -> some View {
+    private func autoStop(_ editor: SettingsEditor) -> some View {
         Picker(selection: editor.binding(\.autoStopMs, \.autoStopMs)) {
             ForEach(DictationEdits.autoStopChoices(including: editor.snapshot.autoStopMs), id: \.self) {
                 Text(DictationEdits.autoStopTitle($0)).tag($0)
@@ -57,7 +63,7 @@ struct DictationSettings: View {
         }
     }
 
-    private func silence(_ editor: PreferencesEditor) -> some View {
+    private func silence(_ editor: SettingsEditor) -> some View {
         LabeledContent {
             HStack {
                 // A step would make macOS draw tick marks, so the value is rounded when the thumb lands instead.

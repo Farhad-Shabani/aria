@@ -9,7 +9,7 @@ struct SetupView: View {
     private static let scrollGap: CGFloat = 12
 
     @ObservedObject var state: SetupState
-    @ObservedObject var preferences: DaemonPreferences
+    @ObservedObject var settings: DaemonSettings
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -75,12 +75,12 @@ struct SetupView: View {
     }
 
     /// The daemon's default until it answers.
-    private var ariaKey: HotkeyKey {
-        preferences.snapshot?.storedDictationHotkey ?? .default
+    private var ariaKey: AriaKey {
+        settings.snapshot?.storedAriaKey ?? .default
     }
 
-    private var askCombo: Aria_Daemon_V1_HotkeyCombo? {
-        guard let hotkey = preferences.snapshot?.askHotkey else { return .shift }
+    private var askCombo: Aria_Daemon_V1_ShortcutCombo? {
+        guard let hotkey = settings.snapshot?.askShortcut else { return .shift }
         if case .combo(let combo) = hotkey.storedBinding { return combo }
         return nil
     }

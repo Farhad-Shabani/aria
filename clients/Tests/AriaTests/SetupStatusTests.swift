@@ -14,7 +14,7 @@ final class SetupStatusTests: XCTestCase {
     func testOnlyTheGrantAndTheRecognitionModelAreRequired() {
         var inspection = SetupStateTests.freshMac()
         inspection.missing = [
-            Self.missing(.config),
+            Self.missing(.settings),
             Self.missing(.wakeword),
             Self.missing(.model, model: "kokoro"),
             Self.missing(.service),

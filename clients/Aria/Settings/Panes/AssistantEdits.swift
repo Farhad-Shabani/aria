@@ -4,16 +4,16 @@ enum AssistantEdits {
     private static let maximumModelIDBytes = 200
     private static let invalidModelCharacters = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
 
-    static func modelID(in preferences: Aria_Daemon_V1_UserPreferences) -> String? {
-        guard preferences.hasAssistantID, preferences.assistantID != .unspecified else { return nil }
-        if case .UNRECOGNIZED = preferences.assistantID { return nil }
-        return preferences.assistantModels.first { $0.assistantID == preferences.assistantID }?.modelID ?? ""
+    static func modelID(in settings: Aria_Daemon_V1_Settings) -> String? {
+        guard settings.hasAssistantID, settings.assistantID != .unspecified else { return nil }
+        if case .UNRECOGNIZED = settings.assistantID { return nil }
+        return settings.assistantModels.first { $0.assistantID == settings.assistantID }?.modelID ?? ""
     }
 
     static func setModelID(
-        _ modelID: String, for assistantID: Aria_Daemon_V1_AssistantID, in patch: inout Aria_Daemon_V1_PreferencePatch
+        _ modelID: String, for assistantID: Aria_Daemon_V1_AssistantId, in patch: inout Aria_Daemon_V1_SettingsPatch
     ) {
-        var entry = Aria_Daemon_V1_AssistantModelPreference()
+        var entry = Aria_Daemon_V1_AssistantModelSetting()
         entry.assistantID = assistantID
         entry.modelID = modelID
         patch.assistantModels.removeAll { $0.assistantID == assistantID }

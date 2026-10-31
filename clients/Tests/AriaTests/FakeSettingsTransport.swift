@@ -1,17 +1,17 @@
 @testable import Aria
 
-final class FakePreferencesTransport: PreferencesTransport {
+final class FakeSettingsTransport: SettingsTransport {
     struct Unreachable: Error {}
 
-    var snapshots: [Aria_Daemon_V1_PreferenceSnapshot] = []
-    var updates: [Aria_Daemon_V1_UpdatePreferencesResponse] = []
+    var snapshots: [Aria_Daemon_V1_SettingsSnapshot] = []
+    var updates: [Aria_Daemon_V1_UpdateSettingsResponse] = []
     var snapshotError: (any Error)?
     var updateError: (any Error)?
     var duringUpdate: (() async -> Void)?
     var duringSnapshot: (() async -> Void)?
-    private(set) var sentUpdates: [Aria_Daemon_V1_UpdatePreferencesRequest] = []
+    private(set) var sentUpdates: [Aria_Daemon_V1_UpdateSettingsRequest] = []
 
-    func snapshot() async throws -> Aria_Daemon_V1_PreferenceSnapshot {
+    func snapshot() async throws -> Aria_Daemon_V1_SettingsSnapshot {
         let action = duringSnapshot
         duringSnapshot = nil
         await action?()
@@ -21,8 +21,8 @@ final class FakePreferencesTransport: PreferencesTransport {
     }
 
     func update(
-        _ request: Aria_Daemon_V1_UpdatePreferencesRequest
-    ) async throws -> Aria_Daemon_V1_UpdatePreferencesResponse {
+        _ request: Aria_Daemon_V1_UpdateSettingsRequest
+    ) async throws -> Aria_Daemon_V1_UpdateSettingsResponse {
         sentUpdates.append(request)
         let action = duringUpdate
         duringUpdate = nil

@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     private static let paneKey = "settingsPane"
 
-    @ObservedObject var preferences: DaemonPreferences
+    @ObservedObject var settings: DaemonSettings
     @ObservedObject var poller: StatusPoller
     let updates: UpdateController
     let promptHotkeys: PromptHotkeys
@@ -12,6 +12,7 @@ struct SettingsView: View {
     @ObservedObject var setupStatus: SetupStatus
     let voices: VoiceProfiles
     let serverTranscription: ServerTranscription
+    let settingsHealth: SettingsHealth
     @StateObject private var assistantCatalog = AssistantCatalog()
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
@@ -26,6 +27,13 @@ struct SettingsView: View {
             )
         } detail: {
             page
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 8) {
+                        SettingsAttentionView(health: settingsHealth, poller: poller, settings: settings)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+                }
                 .toolbar {
                     ToolbarItemGroup(placement: .navigation) {
                         Button("Back", systemImage: "chevron.left") { history.goBack() }
@@ -40,7 +48,7 @@ struct SettingsView: View {
         .onChange(of: history.current.pane) { _, pane in
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
         }
-        .task { await preferences.sync() }
+        .task { await settings.sync() }
         .task { await assistantCatalog.load() }
         .onChange(of: poller.state) { _, state in
             guard state == .running else { return }
@@ -50,7 +58,7 @@ struct SettingsView: View {
         // make this window key, and either may have finished a step.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             Task {
-                await preferences.sync()
+                await settings.sync()
                 await setupStatus.refresh()
                 await voices.refresh()
                 await assistantCatalog.loadUnlessReady()
@@ -62,21 +70,21 @@ struct SettingsView: View {
     private var page: some View {
         switch history.current {
         case .pane(let pane): page(pane)
-        case .assistant: AssistantSettings(preferences: preferences, catalog: assistantCatalog)
+        case .assistant: AssistantSettings(settings: settings, catalog: assistantCatalog)
         case .item(let pane, let id): item(id, in: pane)
         }
     }
 
     @ViewBuilder
     private func item(_ id: String, in pane: SettingsPane) -> some View {
-        let snapshot = preferences.snapshot
+        let snapshot = settings.snapshot
         switch pane {
         case .apps
         where snapshot.flatMap({ ApplicationOverrideEdits.overrides(for: id, in: $0.applicationOverrides) }) != nil:
-            ApplicationSettings(bundleID: id, preferences: preferences)
+            ApplicationSettings(bundleID: id, settings: settings)
                 .id(id)
         case .prompts where snapshot.flatMap({ PromptEdits.entry(id, in: $0.prompts) }) != nil:
-            PromptSettings(id: id, preferences: preferences, hotkeys: promptHotkeys)
+            PromptSettings(id: id, settings: settings, hotkeys: promptHotkeys)
                 .id(id)
         default:
             // A pane with no item pages, or an item removed since it opened.
@@ -89,28 +97,28 @@ struct SettingsView: View {
         let openPrompt = { history.open(.item(.prompts, id: $0)) }
         switch pane {
         case .general:
-            GeneralSettings(setup: setupStatus, preferences: preferences, catalog: assistantCatalog) {
+            GeneralSettings(setup: setupStatus, settings: settings, catalog: assistantCatalog) {
                 history.open(.assistant)
             }
-        case .dictation: DictationSettings(preferences: preferences)
+        case .dictation: DictationSettings(settings: settings)
         case .recognition:
             RecognitionSettings(
-                preferences: preferences, voices: voices, serverTranscription: serverTranscription,
+                settings: settings, voices: voices, serverTranscription: serverTranscription,
                 setup: setupStatus)
         case .shortcuts:
             ShortcutsSettings(
-                preferences: preferences,
+                settings: settings,
                 askChord: askChord,
                 promptListChord: promptListChord,
                 openPrompt: openPrompt
             )
         case .prompts:
-            PromptsSettings(preferences: preferences, selected: selection(for: .prompts), open: openPrompt)
+            PromptsSettings(settings: settings, selected: selection(for: .prompts), open: openPrompt)
         case .apps:
-            AppsSettings(preferences: preferences, selected: selection(for: .apps)) {
+            AppsSettings(settings: settings, selected: selection(for: .apps)) {
                 history.open(.item(.apps, id: $0))
             }
-        case .privacy: PrivacySettings(preferences: preferences)
+        case .privacy: PrivacySettings(settings: settings)
         case .phone: PhoneSettings(poller: poller)
         case .about: AboutSettings(updates: updates)
         }

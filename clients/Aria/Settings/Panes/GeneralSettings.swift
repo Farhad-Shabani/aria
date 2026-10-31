@@ -3,7 +3,7 @@ import SwiftUI
 struct GeneralSettings: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var setup: SetupStatus
-    @ObservedObject var preferences: DaemonPreferences
+    @ObservedObject var settings: DaemonSettings
     @ObservedObject var catalog: AssistantCatalog
     let openAssistant: () -> Void
     @StateObject private var loginItem = LoginItem()
@@ -40,6 +40,15 @@ struct GeneralSettings: View {
                     Text("What Aria hears appears in a panel while you speak.")
                 }
             }
+            if let snapshot = settings.snapshot {
+                Section {
+                    SpeakingRateRow(editor: SettingsEditor(snapshot: snapshot, settings: settings))
+                } header: {
+                    Text("Spoken Content")
+                } footer: {
+                    Text("Sets how fast Aria reads text aloud, as in Aria Setup and with `aria say`.")
+                }
+            }
             Section {
                 LabeledContent {
                     if setup.required.isEmpty {
@@ -63,8 +72,8 @@ struct GeneralSettings: View {
     }
 
     private var assistantName: String {
-        guard let snapshot = preferences.snapshot else {
-            return preferences.loadFailure == nil ? "Connecting…" : "Unavailable"
+        guard let snapshot = settings.snapshot else {
+            return settings.loadFailure == nil ? "Connecting…" : "Unavailable"
         }
         if let assistant = catalog.choices.first(where: { $0.id == snapshot.assistantID }) {
             return assistant.name
@@ -72,5 +81,32 @@ struct GeneralSettings: View {
         if catalog.isLoading { return "Loading…" }
         if catalog.failure != nil { return "Unavailable" }
         return "Choose…"
+    }
+}
+
+private struct SpeakingRateRow: View {
+    let editor: SettingsEditor
+    /// Held locally while the thumb moves, then pushed once when it lands.
+    @State private var rate = 1.0
+
+    var body: some View {
+        LabeledContent {
+            HStack {
+                // A step would make macOS draw tick marks, so the value is rounded when the thumb lands instead.
+                Slider(value: $rate, in: DictationEdits.speakingRateRange) { editing in
+                    guard !editing else { return }
+                    rate = DictationEdits.roundedSpeakingRate(rate)
+                    editor.set(\.ttsRate, to: rate)
+                }
+                .frame(maxWidth: 160)
+                Text("\(rate, format: .number.precision(.fractionLength(2)))×")
+                    .monospacedDigit()
+            }
+        } label: {
+            Text("Speaking rate")
+        }
+        .onChange(of: editor.snapshot.ttsRate, initial: true) { _, stored in
+            rate = stored
+        }
     }
 }

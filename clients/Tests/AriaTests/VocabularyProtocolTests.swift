@@ -19,18 +19,18 @@ final class VocabularyProtocolTests: XCTestCase {
         XCTAssertNil(Aria_Daemon_V1_StartDictationRequest().project)
     }
 
-    func testPreferencePatchPreservesExplicitFalseAndAbsentProjectFields() throws {
-        var patch = Aria_Daemon_V1_PreferencePatch()
+    func testSettingsPatchPreservesExplicitFalseAndAbsentProjectFields() throws {
+        var patch = Aria_Daemon_V1_SettingsPatch()
         patch.deliveryMode = .complete
-        let captions = try Aria_Daemon_V1_PreferencePatch(serializedBytes: patch.serializedData())
-        XCTAssertFalse(captions.hasProjectVocabulary)
-        XCTAssertFalse(captions.hasVocabularyDirectory)
+        let captions = try Aria_Daemon_V1_SettingsPatch(serializedBytes: patch.serializedData())
+        XCTAssertFalse(captions.hasVocabularyEnabled)
+        XCTAssertFalse(captions.hasVocabularyDir)
 
-        patch.projectVocabulary = false
-        patch.vocabularyDirectory = "/work/aria"
-        let selected = try Aria_Daemon_V1_PreferencePatch(serializedBytes: patch.serializedData())
-        XCTAssertTrue(selected.hasProjectVocabulary)
-        XCTAssertFalse(selected.projectVocabulary)
-        XCTAssertEqual(selected.vocabularyDirectory, "/work/aria")
+        patch.vocabularyEnabled = false
+        patch.vocabularyDir = "/work/aria"
+        let selected = try Aria_Daemon_V1_SettingsPatch(serializedBytes: patch.serializedData())
+        XCTAssertTrue(selected.hasVocabularyEnabled)
+        XCTAssertFalse(selected.vocabularyEnabled)
+        XCTAssertEqual(selected.vocabularyDir, "/work/aria")
     }
 }

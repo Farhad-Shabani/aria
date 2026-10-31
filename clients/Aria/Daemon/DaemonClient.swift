@@ -17,6 +17,9 @@ protocol DaemonControlling: Sendable {
     func hasExited() async -> Bool
     func start() async throws
     func stop() async throws
+    /// What's wrong with the settings file, read with no daemon. Nil when it
+    /// is valid or the check couldn't run.
+    func invalidSettings() async -> InvalidSettings?
 }
 
 enum DaemonClientError: LocalizedError {
@@ -117,8 +120,31 @@ struct DaemonClient: DaemonControlling {
         return bin
     }
 
+    static func settingsPath() async throws -> URL {
+        let output = try await ChildProcess.run(try ariaBinary(), ["settings", "path"])
+        guard output.status == 0 else {
+            throw exitFailed("aria settings path", status: output.status, stderr: output.stderr)
+        }
+        let path = String(decoding: output.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return URL(fileURLWithPath: path)
+    }
+
+    static func createSettingsFile() async throws {
+        try await run(try ariaBinary(), ["settings", "create"])
+    }
+
+    func invalidSettings() async -> InvalidSettings? {
+        do {
+            let output = try await ChildProcess.run(try Self.ariaBinary(), ["settings", "check", "--json"])
+            return InvalidSettings(checkOutput: output.stdout)
+        } catch {
+            log.error("Settings check failed: \(error.localizedDescription, privacy: .private)")
+            return nil
+        }
+    }
+
     static func setPhonePairing(_ enabled: Bool) async throws {
-        try await run(try ariaBinary(), ["phone", enabled ? "enable" : "disable"])
+        try await run(try ariaBinary(), ["settings", "set", "phone.enabled", enabled ? "on" : "off"])
     }
 
     /// The invitation is a secret, so it goes over stdin, never the arguments.

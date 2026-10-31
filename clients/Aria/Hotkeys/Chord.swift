@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 
 /// A key held with at least one modifier, as the daemon stores it.
 ///
-/// Modifiers arrive named rather than as a mask: the preference file is
+/// Modifiers arrive named rather than as a mask: the settings file is
 /// shared with platforms that have no Carbon constants.
 struct Chord: Equatable {
     let keyCode: UInt16

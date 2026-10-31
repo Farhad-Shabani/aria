@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct AssistantSettings: View {
-    @ObservedObject var preferences: DaemonPreferences
+    @ObservedObject var settings: DaemonSettings
     @ObservedObject var catalog: AssistantCatalog
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        SettingsForm(settings: settings) { editor in
             ItemPage(title: "Assistant", subtitle: "Ask and Prompts") {
                 SettingsIcon(symbol: "sparkles", side: SettingsMetrics.headerIconSide)
             } content: {
@@ -54,10 +54,10 @@ struct AssistantSettings: View {
                     )
                     .id(editor.snapshot.assistantID)
                 }
-                if preferences.lastError != nil {
+                if settings.lastError != nil {
                     Section {
                         NoticeText(notice: "Aria couldn’t confirm these settings.")
-                        Button("Try Again") { Task { await preferences.sync() } }
+                        Button("Try Again") { Task { await settings.sync() } }
                     }
                 }
             }

@@ -1,4 +1,4 @@
-/// Changes to the per-app list, applied through `PreferencesEditor.editLatest`
+/// Changes to the per-app list, applied through `SettingsEditor.editLatest`
 /// because the daemon replaces the whole list. An app not in the list is
 /// left alone.
 enum ApplicationOverrideEdits {

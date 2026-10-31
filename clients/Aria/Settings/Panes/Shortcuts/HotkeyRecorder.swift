@@ -3,10 +3,10 @@ import SwiftUI
 /// One action's shortcut: its Aria key combo, a recorded chord, or off.
 struct HotkeyRecorder: View {
     let title: String
-    let hotkey: Aria_Daemon_V1_Hotkey
-    let ariaKey: HotkeyKey
+    let hotkey: Aria_Daemon_V1_Shortcut
+    let ariaKey: AriaKey
     @ObservedObject var binding: ChordBinding
-    let set: (HotkeyBinding?) -> Void
+    let set: (ShortcutBinding?) -> Void
 
     var body: some View {
         if case .combo(let held) = hotkey.storedBinding {

@@ -2,15 +2,17 @@ import SwiftUI
 
 struct DonePage: View {
     @ObservedObject var state: SetupState
-    let ariaKey: HotkeyKey
+    let ariaKey: AriaKey
     /// Nil when the ask holds a chord or nothing.
-    let askCombo: Aria_Daemon_V1_HotkeyCombo?
+    let askCombo: Aria_Daemon_V1_ShortcutCombo?
 
     var body: some View {
         Form {
-            if state.selections.hotkey {
+            if state.selections.ariaKey {
                 Section("How to Use Aria") {
-                    if state.isHotkeyReady {
+                    if ariaKey == .off {
+                        LabeledContent("Aria key", value: ariaKey.title)
+                    } else if state.isHotkeyReady {
                         LabeledContent("Dictate", value: "Tap \(ariaKey.title)")
                         if let askCombo {
                             LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))

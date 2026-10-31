@@ -15,7 +15,7 @@ final class PromptRowTests: XCTestCase {
         let file = directory.appending(path: "prompt.md")
         var entry = Aria_Daemon_V1_Prompt()
         entry.name = "Prompt"
-        entry.instructionsPath = file.path
+        entry.file = file.path
 
         let host = NSHostingView(rootView: PromptRow(entry: entry, flagsMissingFile: true))
         let window = NSWindow(

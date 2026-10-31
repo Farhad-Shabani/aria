@@ -1,6 +1,6 @@
 import Foundation
 
-/// Changes to the prompt list, applied through `PreferencesEditor.editLatest`
+/// Changes to the prompt list, applied through `SettingsEditor.editLatest`
 /// because the daemon replaces the whole list. A prompt not in the list is
 /// left alone.
 enum PromptEdits {
@@ -18,7 +18,7 @@ enum PromptEdits {
         entry.id = id.uuidString
         entry.name = file.deletingPathExtension().lastPathComponent
         entry.kind = .rewrite
-        entry.instructionsPath = file.standardizedFileURL.path
+        entry.file = file.standardizedFileURL.path
         entry.enabled = true
         return entry
     }
@@ -37,7 +37,7 @@ enum PromptEdits {
     }
 }
 
-extension PreferencesEditor {
+extension SettingsEditor {
     func editPrompt(_ id: String, _ change: @escaping @MainActor (inout Aria_Daemon_V1_Prompt) -> Void) {
         editLatest(\.prompts, \.prompts) { PromptEdits.update(id, in: &$0, change: change) }
     }
