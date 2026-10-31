@@ -3,8 +3,7 @@
 # Settings
 
 Aria keeps your settings in `~/.aria/settings.toml`. Change them in the Mac
-app's Settings window, with `aria settings set`, or in a text editor. To open
-the file on a Mac, choose **Open Settings File** from Aria's menu.
+app's Settings window, with `aria settings set`, or in a text editor.
 
 ## Mac app
 

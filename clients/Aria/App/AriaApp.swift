@@ -57,10 +57,6 @@ struct AriaApp: App {
                         }
                     }
                     .keyboardShortcut(",")
-                    Button("Open Settings File") {
-                        let health = appDelegate.settingsHealth
-                        Task { await health.openSettingsFile() }
-                    }
                     CheckForUpdatesButton(updates: appDelegate.updates)
                 }
                 Divider()
