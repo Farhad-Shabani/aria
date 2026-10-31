@@ -56,7 +56,7 @@ struct AssistantSettings: View {
                 }
                 if preferences.lastError != nil {
                     Section {
-                        NoticeText(notice: "Aria couldn't confirm these preferences.")
+                        NoticeText(notice: "Aria couldn’t confirm these settings.")
                         Button("Try Again") { Task { await preferences.sync() } }
                     }
                 }
@@ -100,9 +100,9 @@ extension Aria_Daemon_V1_Assistant {
 
     fileprivate var problem: String? {
         switch status {
-        case .notInstalled: return "\(name) isn't installed"
-        case .signedOut: return "\(name) isn't signed in"
-        case .unchecked: return "Aria couldn't check \(name)"
+        case .notInstalled: return "\(name) isn’t installed"
+        case .signedOut: return "\(name) isn’t signed in"
+        case .unchecked: return "Aria couldn’t check \(name)"
         case .ready, .unspecified, .UNRECOGNIZED: return nil
         }
     }

@@ -29,7 +29,7 @@ struct AriaApp: App {
                 }
                 .padding(8)
                 if let failure = poller.failure {
-                    Text(failure.message)
+                    Text(markdown: failure.message)
                         .font(.caption)
                         .foregroundStyle(.failure)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -41,7 +41,7 @@ struct AriaApp: App {
                         openWindow(id: WindowID.dictationHistory)
                         NSApplication.shared.activate()
                     } label: {
-                        Text("Dictation History…")
+                        Text("Dictation History")
                     }
                     Button {
                         appDelegate.settings.request()

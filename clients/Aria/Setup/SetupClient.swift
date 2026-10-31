@@ -6,18 +6,11 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupClient")
 
-enum SetupClientError: LocalizedError, Equatable {
+/// Detail for the log. Callers write their own text for the user.
+enum SetupClientError: Error, Equatable {
     case cancelled
     case failed(String)
     case invalidOutput(SetupFrames.FrameError)
-
-    var errorDescription: String? {
-        switch self {
-        case .cancelled: return "Setup was cancelled."
-        case .failed(let message): return message
-        case .invalidOutput(let error): return error.localizedDescription
-        }
-    }
 }
 
 /// Aria.app's side of `aria setup`: one child per call, `aria.setup.v1`
@@ -191,15 +184,17 @@ extension SetupState.Effects {
                     try SMAppService.mainApp.register()
                     return nil
                 } catch {
-                    return "Launch at login was not enabled: \(error.localizedDescription)"
+                    log.error("Open at login not turned on: \(String(describing: error), privacy: .private)")
+                    return "Aria couldn’t set itself to open at login. Turn on Open at login in Settings > General."
                 }
             },
             installCommandLineTool: {
                 do {
                     if try CommandLineTool.install() { return nil }
-                    return "The aria command was not installed; open Aria Setup in Settings → General to add it."
+                    return CommandLineTool.notInstalled
                 } catch {
-                    return "The aria command was not installed: \(error.localizedDescription)"
+                    log.error("aria command not installed: \(String(describing: error), privacy: .private)")
+                    return (error as? CommandLineToolError)?.localizedDescription ?? CommandLineTool.notInstalled
                 }
             }
         )

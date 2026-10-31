@@ -53,6 +53,6 @@ final class SetupStatus: ObservableObject {
     }
 
     private static func explanation(_ missing: Aria_Setup_V1_Missing) -> String {
-        missing.kind == .grant ? "Dictation key needs permission." : "Speech model isn’t downloaded."
+        missing.kind == .grant ? "Aria key needs permission." : "Speech model isn’t downloaded."
     }
 }

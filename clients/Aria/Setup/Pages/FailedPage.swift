@@ -5,9 +5,11 @@ struct FailedPage: View {
 
     var body: some View {
         ContentUnavailableView {
-            Image(systemName: "exclamationmark.triangle").font(.largeTitle)
+            Image(systemName: "exclamationmark.triangle")
+                .font(.largeTitle)
+                .accessibilityHidden(true)
         } description: {
-            Text(message).textSelection(.enabled)
+            Text(markdown: message).textSelection(.enabled)
         }
     }
 }

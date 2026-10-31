@@ -288,7 +288,7 @@ final class DictationHistoryTests: XCTestCase {
         await waitUntil { state.detail != nil }
         state.copy()
         XCTAssertEqual(harness.copied, ["Text 2"])
-        XCTAssertEqual(state.notice, "Could not copy the text. Try again.")
+        XCTAssertEqual(state.notice, "Aria couldn’t copy the text. Try again.")
         state.close()
     }
 
@@ -321,7 +321,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(state.query, "")
         XCTAssertEqual(requests.last?.0, "")
         XCTAssertNil(requests.last?.1)
-        let notice = "Dictation text cleared. Some recordings could not be removed; Aria will retry."
+        let notice = "Dictation text cleared. Aria will finish removing some recordings later."
         XCTAssertEqual(state.notice, notice)
         state.refresh()
         await waitUntil { !state.isLoading }
@@ -460,7 +460,7 @@ final class DictationHistoryTests: XCTestCase {
         wire.audioAvailability = .unavailable
         let item = try DictationHistoryClient.item(wire)
         XCTAssertEqual(item.metadata.map(\.0), ["Source", "Status", "Created", "Audio"])
-        XCTAssertEqual(item.source, "Relayed dictation")
+        XCTAssertEqual(item.source, "iPhone or Apple Watch")
         XCTAssertFalse(item.isRetryable)
     }
 
@@ -472,12 +472,12 @@ final class DictationHistoryTests: XCTestCase {
         wire.audioAvailability = .unavailable
         wire.error.code = .transcriptionFailed
         XCTAssertEqual(
-            try DictationHistoryClient.item(wire).message, "Aria could not finish transcribing this recording.")
+            try DictationHistoryClient.item(wire).message, "Aria couldn’t finish transcribing this recording.")
         wire.error.code = .UNRECOGNIZED(12345)
         XCTAssertEqual(
-            try DictationHistoryClient.item(wire).message, "Aria could not finish transcribing this recording.")
+            try DictationHistoryClient.item(wire).message, "Aria couldn’t finish transcribing this recording.")
         wire.error.code = .overallTimeout
-        XCTAssertEqual(try DictationHistoryClient.item(wire).message, "Aria could not finish this recording in time.")
+        XCTAssertEqual(try DictationHistoryClient.item(wire).message, "Aria couldn’t finish this recording in time.")
     }
 
     func testAudioExpiryMatchesAvailability() throws {

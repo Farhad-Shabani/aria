@@ -54,7 +54,7 @@ struct SetupView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.step.title).font(.title2.bold())
             if let caption = state.step.caption {
-                Text(caption).foregroundStyle(.secondary)
+                Text(markdown: caption).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, Self.textInset)
@@ -99,7 +99,7 @@ struct SetupView: View {
         case .inspecting, .welcome:
             if state.step == .inspecting {
                 ProgressView().controlSize(.small)
-                Text("Checking this Mac…").foregroundStyle(.secondary)
+                Text("Checking your Mac…").foregroundStyle(.secondary)
             }
             Button("Customize…") { state.next() }
                 .disabled(state.step == .inspecting)

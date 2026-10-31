@@ -9,11 +9,11 @@ struct DonePage: View {
     var body: some View {
         Form {
             if state.selections.hotkey {
-                Section("How to use Aria") {
+                Section("How to Use Aria") {
                     if state.isHotkeyReady {
                         LabeledContent("Dictate", value: "Tap \(ariaKey.title)")
                         if let askCombo {
-                            LabeledContent("Ask your agent", value: ariaKey.gesture(for: askCombo))
+                            LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))
                         }
                     } else {
                         LabeledContent("Dictate", value: "Needs permission")
@@ -25,7 +25,7 @@ struct DonePage: View {
                     ForEach(summary.models, id: \.modelID) { model in
                         LabeledContent(state.title(ofModel: model.modelID), value: Self.outcome(model.outcome))
                     }
-                    LabeledContent("Background service", value: "Registered")
+                    LabeledContent("Background service", value: "On")
                     if let heard = state.heard {
                         LabeledContent("Heard", value: heard)
                     }

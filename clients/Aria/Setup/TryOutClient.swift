@@ -8,8 +8,8 @@ enum TryOutError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .stopped: return "The recording was stopped before anything was heard."
-        case .ended: return "The daemon ended the recording without a transcript."
+        case .stopped: return "The recording stopped before Aria heard anything. Try again."
+        case .ended: return "Aria didn’t return a transcript. Try again."
         }
     }
 }

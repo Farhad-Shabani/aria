@@ -4,6 +4,8 @@ import XCTest
 
 @MainActor
 final class SetupStateTests: XCTestCase {
+    private struct Refused: Error {}
+
     @MainActor
     private final class Harness {
         var inspection = SetupStateTests.freshMac()
@@ -16,7 +18,9 @@ final class SetupStateTests: XCTestCase {
         var armed = false
         var speakers = [Aria_Daemon_V1_EnrolledSpeaker]()
         var enrolledNames = [String]()
+        var enrollError: Error?
         var heard = "hello there"
+        var transcribeError: Error?
         var spoken = [String]()
         var launchAtLogin = 0
         var installedCommandLineTool = 0
@@ -39,11 +43,15 @@ final class SetupStateTests: XCTestCase {
                 speakers: { self.speakers },
                 enroll: { name in
                     self.enrolledNames.append(name)
+                    if let error = self.enrollError { throw error }
                     var response = Aria_Daemon_V1_EnrollSpeakerResponse()
                     response.consistency = 0.9
                     return response
                 },
-                transcribe: { self.heard },
+                transcribe: {
+                    if let error = self.transcribeError { throw error }
+                    return self.heard
+                },
                 speak: { self.spoken.append($0) },
                 launchAtLogin: {
                     self.launchAtLogin += 1
@@ -146,6 +154,13 @@ final class SetupStateTests: XCTestCase {
         state.next()
         await waitUntil { harness.applyContinuation != nil }
         XCTAssertEqual(state.step, .applying)
+        return state
+    }
+
+    private func walkToVoice(_ harness: Harness) async -> SetupState {
+        let state = await walkToApplying(harness)
+        harness.applyContinuation?.resume(returning: harness.summary)
+        await waitUntil { state.step == .voice }
         return state
     }
 
@@ -323,7 +338,7 @@ final class SetupStateTests: XCTestCase {
         let state = await welcome(harness)
         state.next()
         state.next()
-        await waitUntil { state.step == .failed("curl exited with 22") }
+        await waitUntil { state.step == .failed(SetupState.applyFailure) }
         XCTAssertEqual(harness.startedDaemon, 1, "a failed apply must restart the daemon it stopped")
 
         state.retry()
@@ -337,7 +352,7 @@ final class SetupStateTests: XCTestCase {
         let state = await welcome(harness)
         state.next()
         state.next()
-        await waitUntil { state.step == .failed("curl exited with 22") }
+        await waitUntil { state.step == .failed(SetupState.applyFailure) }
         XCTAssertEqual(harness.stoppedDaemon, 0)
         XCTAssertEqual(harness.startedDaemon, 0, "the service supervises its own daemon")
     }
@@ -487,5 +502,41 @@ final class SetupStateTests: XCTestCase {
         XCTAssertTrue(SetupState.shouldOffer(missing: [missing], offeredBefore: false))
         XCTAssertFalse(SetupState.shouldOffer(missing: [missing], offeredBefore: true))
         XCTAssertFalse(SetupState.shouldOffer(missing: [], offeredBefore: false))
+    }
+
+    func testAFailedEnrollmentShowsTheSpeakerFailure() async {
+        let harness = Harness()
+        harness.enrollError = SpeakerFailure(errorDescription: "That name is already in use.")
+        let state = await walkToVoice(harness)
+
+        state.voiceName = "Ada"
+        state.recordVoice()
+        await waitUntil { !state.isBusy }
+
+        XCTAssertEqual(state.notice, "That name is already in use.")
+        XCTAssertEqual(state.step, .voice)
+    }
+
+    func testAFailedTranscriptionShowsTheFallbackForAnUnknownError() async {
+        let harness = Harness()
+        harness.transcribeError = Refused()
+        let state = await walkToVoice(harness)
+
+        state.tryPress()
+        await waitUntil { !state.isBusy }
+
+        XCTAssertEqual(state.notice, SetupState.transcribeFailure)
+        XCTAssertNil(state.heard)
+    }
+
+    func testACanceledTryOutShowsNoNotice() async {
+        let harness = Harness()
+        harness.transcribeError = CancellationError()
+        let state = await walkToVoice(harness)
+
+        state.tryPress()
+        await waitUntil { !state.isBusy }
+
+        XCTAssertNil(state.notice)
     }
 }

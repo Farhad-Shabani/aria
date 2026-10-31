@@ -13,7 +13,7 @@ final class SpeakerClientTests: XCTestCase {
 
     func testFailureSaysWhenAriaIsNotRunning() {
         let failure = SpeakerClient.failure(RPCError(code: .unavailable, message: ""), fallback: fallback)
-        XCTAssertEqual(failure.errorDescription, "Aria isn’t running.")
+        XCTAssertEqual(failure.errorDescription, "Aria isn’t running. Turn it on in the menu bar.")
     }
 
     func testFailureUsesTheFallbackForAnErrorOutsideGRPC() {

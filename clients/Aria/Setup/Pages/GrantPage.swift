@@ -11,7 +11,7 @@ struct GrantPage: View {
                     }
                 } label: {
                     Text(paneName)
-                    Text("Lets Aria use your dictation key and type for you.")
+                    Text("Lets Aria hear the Aria key and type for you.")
                 }
             } footer: {
                 Text("Setup continues when Aria is turned on.")

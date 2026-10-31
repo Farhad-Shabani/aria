@@ -18,7 +18,7 @@ struct GeneralSettings: View {
         Form {
             Section("Startup") {
                 Toggle(
-                    "Launch at login",
+                    "Open at login",
                     isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.set(enabled: $0) })
                 )
             }
@@ -29,11 +29,11 @@ struct GeneralSettings: View {
                     Text(assistantName).foregroundStyle(.secondary)
                 }
             }
-            Section("On screen") {
+            Section("On Screen") {
                 Toggle("Show status pill", isOn: $statusPillEnabled)
                 Toggle(isOn: $ghostTextEnabled) {
                     Text("Show inline preview")
-                    Text("Words Aria hasn't typed yet appear faintly at the cursor.")
+                    Text("Words Aria hasn’t typed yet appear faintly at the cursor.")
                 }
                 Toggle(isOn: $captionsEnabled) {
                     Text("Show captions")

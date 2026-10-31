@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupState")
 
 /// The setup wizard, step by step. Decisions live here; the OS effects are
 /// injected so tests can walk every step without a daemon.
@@ -183,7 +186,7 @@ final class SetupState: ObservableObject {
             case .wakeword: "wake-word models"
             case .model: "models"
             case .service: "background service"
-            case .grant: "dictation key permission"
+            case .grant: "Aria key permission"
             case .unspecified, .UNRECOGNIZED: "unknown"
             }
         }
@@ -317,7 +320,7 @@ final class SetupState: ObservableObject {
                 enrolled = "Voice saved for \(name)."
                 step = .tryOut
             } catch {
-                notice = error.localizedDescription
+                notice = Self.notice(for: error, during: "enroll")
             }
             isBusy = false
             voicePrompt = nil
@@ -340,14 +343,19 @@ final class SetupState: ObservableObject {
         notice = nil
         heard = nil
         Task {
+            defer { isBusy = false }
             do {
                 heard = try await effects.transcribe()
+            } catch {
+                notice = Self.notice(for: error, during: "try-out transcription", otherwise: Self.transcribeFailure)
+                return
+            }
+            do {
                 try await effects.speak(Self.spokenReply)
                 finish()
             } catch {
-                notice = error.localizedDescription
+                notice = Self.notice(for: error, during: "try-out reply", otherwise: Self.speakFailure)
             }
-            isBusy = false
         }
     }
 
@@ -359,7 +367,7 @@ final class SetupState: ObservableObject {
             notice = nil
             step = .welcome
         } catch {
-            step = .failed(error.localizedDescription)
+            step = .failed(Self.message(for: error, during: "inspect", otherwise: Self.inspectFailure))
         }
     }
 
@@ -384,7 +392,7 @@ final class SetupState: ObservableObject {
             } catch SetupClientError.cancelled {
                 step = origin
             } catch {
-                step = .failed(error.localizedDescription)
+                step = .failed(Self.message(for: error, during: "apply", otherwise: Self.applyFailure))
             }
         }
     }
@@ -433,9 +441,34 @@ final class SetupState: ObservableObject {
             let speakers = try await effects.speakers()
             step = Self.offersVoice(summary, speakers: speakers) ? .voice : .tryOut
         } catch {
-            notice = error.localizedDescription
+            notice = Self.notice(for: error, during: "speaker load")
             step = .tryOut
         }
+    }
+
+    static let inspectFailure = "Aria couldn’t check your Mac. Try again, or run `aria doctor` in Terminal to see why."
+    static let applyFailure = "Setup couldn’t finish. Try again, or run `aria doctor` in Terminal to see why."
+    static let missingBinary = "Aria’s installation is incomplete. Reinstall Aria, then try again."
+    static let transcribeFailure = "Aria couldn’t transcribe that. Try again."
+    static let speakFailure = "Aria couldn’t read the reply aloud. Try again."
+    static let unknownFailure = "Something went wrong. Try again."
+
+    /// Speaker and try-out errors carry text written for the user. Any other
+    /// error's text goes to the log instead.
+    private static func message(
+        for error: any Error, during step: String, otherwise fallback: String = unknownFailure
+    ) -> String {
+        if error is SpeakerFailure || error is TryOutError { return error.localizedDescription }
+        log.error("Setup \(step, privacy: .public) failed: \(String(describing: error), privacy: .private)")
+        if case .ariaBinaryMissing? = error as? DaemonClientError { return missingBinary }
+        return fallback
+    }
+
+    /// Nil for a cancellation, which needs no notice.
+    private static func notice(
+        for error: any Error, during step: String, otherwise fallback: String = unknownFailure
+    ) -> String? {
+        DaemonTransport.isCancellation(error) ? nil : message(for: error, during: step, otherwise: fallback)
     }
 }
 
@@ -491,18 +524,18 @@ extension SetupState.Step {
         case .voice: "Your Voice"
         case .tryOut: "Try It"
         case .done: "Aria Is Ready"
-        case .failed: "Setup Did Not Finish"
+        case .failed: "Setup Didn’t Finish"
         }
     }
 
     var caption: String? {
         switch self {
-        case .inspecting, .welcome: "Dictation stays on this Mac. Ask uses your selected assistant."
-        case .choices: "Speech stays on this Mac. You can change these later."
-        case .applying: "This takes a moment. Downloads can be cancelled."
+        case .inspecting, .welcome: "Dictation stays on your Mac. Ask uses your selected assistant."
+        case .choices: "Speech stays on your Mac. You can change these later."
+        case .applying: "This takes a moment. Downloads can be canceled."
         case .grant: "Aria uses it to hear the Aria key and type what you say."
         case .voice: "Aria can tell who is speaking once it knows your voice."
-        case .tryOut: "Press Record and say a few words. Nothing is typed into other apps."
+        case .tryOut: "Click **Record** and say a few words. Nothing is typed into other apps."
         case .done: "Aria runs in the background. Find it in the menu bar."
         case .failed: nil
         }

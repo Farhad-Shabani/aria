@@ -11,12 +11,13 @@ struct PreferencesContent<Content: View>: View {
             ContentUnavailableView {
                 Label("Settings Unavailable", systemImage: "exclamationmark.triangle")
             } description: {
-                Text(failure)
+                Text(markdown: failure)
             } actions: {
                 Button("Try Again") { Task { await preferences.sync() } }
             }
         } else {
-            DaemonWaitingView()
+            // No error yet means the first load is still out.
+            DaemonWaitingView(isLoading: preferences.lastError == nil)
         }
     }
 }

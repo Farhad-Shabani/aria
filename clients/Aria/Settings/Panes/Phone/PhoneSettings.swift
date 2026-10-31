@@ -15,7 +15,7 @@ struct PhoneSettings: View {
     var body: some View {
         Group {
             if pairing.status == .daemonOff {
-                DaemonWaitingView()
+                DaemonWaitingView(isLoading: false)
             } else {
                 form
             }
@@ -34,7 +34,10 @@ struct PhoneSettings: View {
                 ) {
                     Text("Phone pairing")
                     if pairing.status == .restarting {
-                        Text("Restarting Aria…")
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Restarting Aria…")
+                        }
                     }
                 }
                 .disabled(!pairing.canSwitch)
@@ -53,7 +56,8 @@ struct PhoneSettings: View {
     private var problems: some View {
         switch pairing.status {
         case .failed:
-            Text("Aria couldn't make a pairing code. Run aria doctor in Terminal to see why.").foregroundStyle(.failure)
+            Text("Aria couldn’t make a pairing code. Run `aria doctor` in Terminal to see why.").foregroundStyle(
+                .failure)
         case .loading, .restarting, .relayOff, .daemonOff, .live:
             EmptyView()
         }
@@ -73,7 +77,7 @@ struct PhoneSettings: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 8)
-        .confirmationDialog("Revoke every paired phone?", isPresented: $isConfirmingRevoke) {
+        .confirmationDialog("Revoke Every Paired Phone?", isPresented: $isConfirmingRevoke) {
             Button("Revoke and Restart Aria", role: .destructive) {
                 Task { await pairing.revoke() }
             }

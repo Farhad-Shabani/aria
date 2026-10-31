@@ -1,3 +1,4 @@
+import GRPCCore
 import GRPCNIOTransportHTTP2
 
 enum DaemonTransport {
@@ -10,5 +11,9 @@ enum DaemonTransport {
             ),
             transportSecurity: .plaintext
         )
+    }
+
+    static func isCancellation(_ error: any Error) -> Bool {
+        error is CancellationError || (error as? RPCError)?.code == .cancelled
     }
 }

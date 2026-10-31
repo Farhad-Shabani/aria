@@ -8,7 +8,7 @@ struct Ask: Equatable {
     let since: Date
 
     var stepLabel: String {
-        step == .skill ? "skill: \(skill)" : step.label
+        step == .skill && !skill.isEmpty ? "using \(skill)" : step.label
     }
 }
 
@@ -46,8 +46,8 @@ extension Aria_Daemon_V1_ChatStep {
         case .reading: return "reading"
         case .searching: return "searching"
         case .running: return "running"
-        case .skill: return "skill"
-        case .unspecified, .UNRECOGNIZED: return "unknown"
+        case .skill: return "using a skill"
+        case .unspecified, .UNRECOGNIZED: return "working"
         }
     }
 }

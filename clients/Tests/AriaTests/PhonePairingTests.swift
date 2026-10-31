@@ -62,7 +62,7 @@ final class PhonePairingTests: XCTestCase {
 
         await pairing.turn(on: true)
 
-        XCTAssertEqual(pairing.actionError, "Phone pairing could not be turned on.")
+        XCTAssertEqual(pairing.actionError, "Aria couldn’t turn phone pairing on. Try again.")
         XCTAssertFalse(pairing.isOn)
         XCTAssertEqual(pairing.status, .daemonOff)
     }

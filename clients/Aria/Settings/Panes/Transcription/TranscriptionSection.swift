@@ -10,8 +10,8 @@ struct TranscriptionSection: View {
     var body: some View {
         Section {
             Picker("Runs on", selection: location) {
-                Text("This Mac").tag(TranscriptionLocation.thisMac)
-                Text("My server").tag(TranscriptionLocation.server)
+                Text("Your Mac").tag(TranscriptionLocation.thisMac)
+                Text("Your server").tag(TranscriptionLocation.server)
             }
             .disabled(!server.canChooseLocation)
             serverRow
@@ -19,8 +19,8 @@ struct TranscriptionSection: View {
                 LabeledContent {
                     Button("Aria Setup…") { openWindow(id: WindowID.setup) }
                 } label: {
-                    Text("Speech Model")
-                    Text("No speech model is on this Mac yet.")
+                    Text("Speech model")
+                    Text("No speech model is on your Mac yet.")
                 }
             }
         } header: {
@@ -32,7 +32,7 @@ struct TranscriptionSection: View {
             PairServerSheet(server: server, runsOnServer: setup.transcription == .server, isPresented: $isPairing)
         }
         .confirmationDialog(
-            "Forget this server?", isPresented: $isConfirmingForget, presenting: setup.server
+            "Forget This Server?", isPresented: $isConfirmingForget, presenting: setup.server
         ) { paired in
             Button("Copy Revoke Command and Forget", role: .destructive) {
                 NSPasteboard.general.clearContents()
@@ -41,7 +41,7 @@ struct TranscriptionSection: View {
             }
             Button("Forget", role: .destructive) { Task { await server.forget() } }
         } message: { _ in
-            Text("The server keeps trusting this Mac until you run the revoke command there.")
+            Text("The server keeps trusting your Mac until you run the revoke command there.")
         }
     }
 
@@ -58,7 +58,7 @@ struct TranscriptionSection: View {
                 if setup.server != nil {
                     Button("Forget…", role: .destructive) { isConfirmingForget = true }
                         .disabled(!server.canForget)
-                        .help(setup.transcription == .server ? "Set Runs on to This Mac first." : "")
+                        .help(setup.transcription == .server ? "Set Runs on to Your Mac first." : "")
                 }
                 Button(setup.server == nil ? "Pair…" : "Pair Again…") {
                     server.beginPairing()
@@ -70,7 +70,7 @@ struct TranscriptionSection: View {
             Text("Server")
             if let paired = setup.server {
                 Text(ServerTranscription.address(of: paired.endpoint) ?? paired.endpoint)
-                Text("This Mac: \(paired.clientFingerprint.prefix(4))…\(paired.clientFingerprint.suffix(4))")
+                Text("Your Mac: \(paired.clientFingerprint.prefix(4))…\(paired.clientFingerprint.suffix(4))")
                     .help(paired.clientFingerprint)
                     .contextMenu {
                         Button("Copy Fingerprint") {
@@ -85,13 +85,16 @@ struct TranscriptionSection: View {
     @ViewBuilder
     private var footer: some View {
         if server.isBusy {
-            Text("Updating Aria…")
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Updating Aria…")
+            }
         } else {
             switch server.notice {
             case .failed(let message):
                 Text(message).foregroundStyle(.failure)
             case .needsSetup, nil:
-                Text("Audio goes to the server only when Runs on is My server.")
+                Text("Audio goes to the server only when Runs on is Your server.")
             }
         }
     }
@@ -115,17 +118,23 @@ private struct PairServerSheet: View {
                 instructions
             }
             if let failure = server.pairingStep == .unreadable
-                ? "The clipboard holds no invitation." : server.pairingFailure
+                ? "The clipboard doesn’t hold an invitation. Copy it, then click **Paste Invitation**."
+                : server.pairingFailure
             {
-                Text(failure)
+                Text(markdown: failure)
                     .foregroundStyle(.failure)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Spacer()
+        }
+        .padding(SettingsMetrics.sheetPadding)
+        .frame(width: Self.width)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", role: .cancel) { isPresented = false }
                     .keyboardShortcut(.cancelAction)
+            }
+            ToolbarItem(placement: .confirmationAction) {
                 if case .confirming(let invitation, _) = server.pairingStep {
                     Button("Pair") { Task { await pair(invitation) } }
                         .keyboardShortcut(.defaultAction)
@@ -136,8 +145,6 @@ private struct PairServerSheet: View {
                 }
             }
         }
-        .padding(SettingsMetrics.sheetPadding)
-        .frame(width: Self.width)
     }
 
     private var instructions: some View {

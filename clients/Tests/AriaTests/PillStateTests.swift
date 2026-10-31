@@ -23,11 +23,11 @@ final class PillStateTests: XCTestCase {
     func testAFailedAskNamesACauseThePersonCanFix() {
         var failed = event(.failed, ticket: 1)
         failed.errorCode = .assistantSignedOut
-        XCTAssertEqual(PillState(ended: failed), .failed("Assistant not signed in"))
+        XCTAssertEqual(PillState(ended: failed), .failed("assistant signed out"))
         failed.errorCode = .assistantUnavailable
-        XCTAssertEqual(PillState(ended: failed), .failed("Assistant not installed"))
+        XCTAssertEqual(PillState(ended: failed), .failed("assistant not installed"))
         failed.errorCode = .promptUnreadable
-        XCTAssertEqual(PillState(ended: failed), .failed("File unavailable"))
+        XCTAssertEqual(PillState(ended: failed), .failed("file unavailable"))
         failed.errorCode = .assistantFailed
         XCTAssertEqual(PillState(ended: failed), .noReply)
     }
@@ -55,7 +55,7 @@ final class PillStateTests: XCTestCase {
     func testSkillStepCarriesTheSkillName() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 1, step: .skill, skill: "pair"), now: epoch)
-        XCTAssertEqual(PillState(asks: asks), .asking("skill: pair", since: epoch))
+        XCTAssertEqual(PillState(asks: asks), .asking("using pair", since: epoch))
     }
 
     func testSeveralAsksCountTheRestBehindTheOldest() {
@@ -138,7 +138,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState.transcribing.life)
         XCTAssertNotNil(PillState.delivered(.copied, words: 3).life)
         XCTAssertNotNil(PillState.cancelled.life)
-        XCTAssertNotNil(PillState.failed("No speech detected").life)
+        XCTAssertNotNil(PillState.failed("no speech").life)
     }
 
     func testAPromptsNameLeadsItsRunAndAnAskNamesNoAssistant() {

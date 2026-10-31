@@ -43,7 +43,7 @@ enum PillState: Equatable {
     }
 
     /// After a prompt's name, before or after its recording.
-    static let unreadablePrompt = "File unavailable"
+    static let unreadablePrompt = "file unavailable"
 
     /// A prompt turned down before its recording, named as its run would be.
     static func refused(prompt name: String) -> PillState {
@@ -129,7 +129,7 @@ enum PillState: Equatable {
         case .delivered(let outcome, let words):
             let count = words == 1 ? "1 word" : "\(words) words"
             return outcome == .copied ? "copied · \(count)" : count
-        case .cancelled: return "cancelled"
+        case .cancelled: return "canceled"
         case .interrupted: return "stopped · focus moved"
         case .excluded(let app): return "off in \(app ?? "this app")"
         case .failed(let message): return message
@@ -170,20 +170,20 @@ extension Aria_Daemon_V1_ErrorCode {
     /// What a failed press says. The daemon logs a code; a person reads this.
     fileprivate var dictationMessage: String {
         switch self {
-        case .noSpeech: return "No speech detected"
-        case .captureFailed: return "Recording failed — check your mic"
-        case .transcriptionFailed: return "Transcription failed"
-        case .deliveryFailed, .deliveryTimeout: return "The transcript could not be delivered"
-        case .recordingTimeout, .overallTimeout: return "The press ran past its time limit"
-        default: return "Dictation failed"
+        case .noSpeech: return "no speech"
+        case .captureFailed: return "couldn’t record"
+        case .transcriptionFailed: return "couldn’t transcribe"
+        case .deliveryFailed, .deliveryTimeout: return "couldn’t type"
+        case .recordingTimeout, .overallTimeout: return "timed out"
+        default: return "couldn’t dictate"
         }
     }
 
     /// What a failed ask says when the person can fix the cause.
     fileprivate var askMessage: String? {
         switch self {
-        case .assistantSignedOut: return "Assistant not signed in"
-        case .assistantUnavailable: return "Assistant not installed"
+        case .assistantSignedOut: return "assistant signed out"
+        case .assistantUnavailable: return "assistant not installed"
         case .promptUnreadable: return PillState.unreadablePrompt
         default: return nil
         }

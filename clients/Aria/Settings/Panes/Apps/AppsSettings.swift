@@ -47,6 +47,7 @@ private struct AppRow: View {
             Image(nsImage: app.icon)
                 .resizable()
                 .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
+                .accessibilityHidden(true)
             Text(app.name)
             if isExcluded {
                 Spacer()

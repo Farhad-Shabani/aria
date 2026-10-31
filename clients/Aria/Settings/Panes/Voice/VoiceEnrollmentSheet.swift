@@ -18,6 +18,19 @@ struct VoiceEnrollmentSheet: View {
         }
         .padding(SettingsMetrics.sheetPadding)
         .frame(width: Self.width)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", role: .cancel) { voices.cancel() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            if case .naming = enrollment.phase {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Start") { voices.start() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(voices.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
     }
 
     private var title: String {
@@ -28,7 +41,7 @@ struct VoiceEnrollmentSheet: View {
     @ViewBuilder
     private var naming: some View {
         Text(title).font(.headline)
-        Text("You’ll read \(VoiceProfiles.samples) short sentences aloud. Your voice stays on this Mac.")
+        Text("You’ll read \(VoiceProfiles.samples) short sentences aloud. Your voice stays on your Mac.")
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
         if enrollment.replacing == nil {
@@ -39,14 +52,6 @@ struct VoiceEnrollmentSheet: View {
                 .foregroundStyle(.failure)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        HStack {
-            Spacer()
-            Button("Cancel", role: .cancel) { voices.cancel() }
-                .keyboardShortcut(.cancelAction)
-            Button("Start") { voices.start() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(voices.name.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
 
@@ -61,19 +66,23 @@ struct VoiceEnrollmentSheet: View {
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             .opacity(listening ? 1 : 0.4)
-        Text(listening ? "Read it aloud, then pause." : "One moment…")
-            .foregroundStyle(.secondary)
+        Group {
+            if listening {
+                Text("Read it aloud, then pause.")
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("One moment…")
+                }
+            }
+        }
+        .foregroundStyle(.secondary)
         HStack(spacing: 8) {
             ForEach(0..<VoiceProfiles.samples, id: \.self) { index in
                 dot(done: index < taken, current: listening && index == taken)
             }
         }
         .accessibilityHidden(true)
-        HStack {
-            Spacer()
-            Button("Cancel", role: .cancel) { voices.cancel() }
-                .keyboardShortcut(.cancelAction)
-        }
     }
 
     private func dot(done: Bool, current: Bool) -> some View {
