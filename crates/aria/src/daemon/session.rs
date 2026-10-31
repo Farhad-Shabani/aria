@@ -19,15 +19,15 @@ use crate::ipc::{
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
 };
 use crate::listen::ListenStage;
-use crate::preferences::{PreferencePatch, PreferenceSnapshot, UpdateResult};
 use crate::rpc::RpcErrorCode;
 use crate::runtime::{PreparedRuntimePaths, RuntimeError};
+use crate::settings::{SettingsPatch, SettingsSnapshot, UpdateResult};
 use crate::speaker::SpeakerName;
 use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use tonic_health::pb::health_check_response::ServingStatus;
 
-use crate::config::{AssistantId, ChatConfig, Environment, WakeWordOverride};
+use crate::config::{AssistantId, ChatConfig, ConfigError, WakeWordOverride};
 
 use super::assembly::DaemonError;
 use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
@@ -195,10 +195,13 @@ impl DaemonSession {
         clarify: Clarify,
         assistant_id: AssistantId,
     ) -> Result<Routing, RouteError> {
-        let environment = Environment::capture().map_err(ProjectsError::Config)?;
-        let config = ChatConfig::load(&environment, assistant_id).map_err(ProjectsError::Config)?;
-        let projects = Projects::load_with(&environment, &config)?;
-        let request = ChatRequest::from_config(text, config)?;
+        let home = crate::config::home_directory().map_err(ProjectsError::Config)?;
+        let settings = crate::settings::load(&home)
+            .map_err(ConfigError::from)
+            .map_err(ProjectsError::Config)?;
+        let config = ChatConfig::load(&settings).map_err(ProjectsError::Config)?;
+        let projects = Projects::load_with(&home, &config)?;
+        let request = ChatRequest::from_config(text, assistant_id, config)?;
         let project = match projects.mentioned(&request.text) {
             Mention::None => {
                 let request = match projects.focused() {
@@ -299,8 +302,13 @@ impl DaemonSession {
         self.client.vocabulary_forget(directory)
     }
 
-    pub fn get_preferences(&self) -> Result<PreferenceSnapshot, ClientError> {
-        self.client.get_preferences()
+    pub fn get_settings(&self) -> Result<SettingsSnapshot, ClientError> {
+        self.client.get_settings()
+    }
+
+    /// Whether settings.toml is valid, and what waits for a restart.
+    pub fn settings_status(&self) -> Result<crate::settings::SettingsStatus, ClientError> {
+        self.client.settings_status()
     }
 
     /// Subscribes to the daemon's events on this session's connection.
@@ -308,12 +316,12 @@ impl DaemonSession {
         self.client.subscribe()
     }
 
-    pub fn update_preferences(
+    pub fn update_settings(
         &self,
         expected_revision: u64,
-        patch: PreferencePatch,
+        patch: SettingsPatch,
     ) -> Result<UpdateResult, ClientError> {
-        self.client.update_preferences(expected_revision, patch)
+        self.client.update_settings(expected_revision, patch)
     }
 
     /// Connects to a running daemon and never starts one: a ticketed ask

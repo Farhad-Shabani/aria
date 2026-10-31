@@ -1,8 +1,8 @@
 name: an unsupported wake backend fails daemon startup
-config: |
-  wake:
-    enabled: true
-    backend: porcupine
+settings: |
+  [wake]
+  enabled = true
+  backend = "porcupine"
 expect:
   daemon:
     startup: failure

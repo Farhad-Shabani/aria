@@ -42,7 +42,7 @@ use aria_kit::transcription::{
 
 use recognizer::{MIN_SAMPLES, Recognizer};
 
-/// Names this engine under `transcription.backend` and in its own errors.
+/// Names this engine under `stt.backend` and in its own errors.
 pub const NAME: &str = "moonshine";
 
 const BACKEND: &str = NAME;

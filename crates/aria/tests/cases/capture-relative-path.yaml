@@ -1,11 +1,10 @@
 name: a relative capture wav path fails daemon startup
-config: |
-  capture:
-    backend: wav-file
-    path: relative/fixture.wav
+settings: |
+  [capture]
+  backend = "wav_file"
+  path = "relative/fixture.wav"
 expect:
   daemon:
     startup: failure
     stderr_contains:
-      - "the capture WAV file cannot be used"
-      - "path must be absolute: relative/fixture.wav"
+      - "capture.path must be an absolute path or start with ~"

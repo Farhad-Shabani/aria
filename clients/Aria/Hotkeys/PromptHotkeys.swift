@@ -41,8 +41,8 @@ final class PromptHotkeys: ObservableObject {
         }
     }
 
-    func track(_ preferences: DaemonPreferences) {
-        promptsChange = preferences.$snapshot
+    func track(_ settings: DaemonSettings) {
+        promptsChange = settings.$snapshot
             .map { $0?.prompts.entries ?? [] }
             .removeDuplicates()
             .sink { [weak self] entries in

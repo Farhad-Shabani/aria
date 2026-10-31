@@ -5,15 +5,17 @@ name: enrolling a replayed voice stores a profile
 # voice in it, and ARIA_TEST_SPEAKER_MODEL to the WeSpeaker graph `aria setup`
 # fetches. A daemon will not start without a transcription model either, so
 # ARIA_TEST_WHISPER_MODEL is needed too. Any unset, the case skips.
-config: |
-  transcription:
-    backend: whisper
-    model: ${WHISPER_MODEL}
-  capture:
-    backend: wav-file
-    path: ${SPEECH_WAV}
-  speaker:
-    model: ${SPEAKER_MODEL}
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${SPEECH_WAV}"
+
+  [speaker]
+  model = "${SPEAKER_MODEL}"
 expect:
   daemon:
     startup: success

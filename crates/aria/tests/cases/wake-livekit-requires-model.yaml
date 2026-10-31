@@ -1,10 +1,10 @@
 name: the livekit wake backend requires an explicit model
-config: |
-  wake:
-    enabled: true
-    backend: livekit
+settings: |
+  [wake]
+  enabled = true
+  backend = "livekit"
 expect:
   daemon:
     startup: failure
     stderr_contains:
-      - 'the livekit backend requires wake.model'
+      - "line 1, column 1: wake.model is required by the livekit backend"

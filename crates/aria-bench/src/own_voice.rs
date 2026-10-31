@@ -207,12 +207,12 @@ pub fn write_corpus(request: &Request, directory: &Path) -> Result<Vec<u32>, Own
     let mut casts = Vec::new();
     for owner in chosen {
         let folder = directory.join(owner.id.to_string());
-        let speakers_dir = folder.join(SPEAKERS_DIR);
-        std::fs::create_dir_all(&speakers_dir).map_err(BenchError::Workspace)?;
+        let profiles_dir = folder.join(SPEAKERS_DIR);
+        std::fs::create_dir_all(&profiles_dir).map_err(BenchError::Workspace)?;
         let owner_enrolled = enrolled
             .remove(&owner.id)
             .expect("every chosen owner enrolled");
-        ProfileStore::open(&speakers_dir).save(&owner_enrolled.profile, Replace::Allowed)?;
+        ProfileStore::open(&profiles_dir).save(&owner_enrolled.profile, Replace::Allowed)?;
         let (profile, consistency) = (owner_enrolled.profile.vector, owner_enrolled.consistency);
         let other = first_readable(others(&speakers, owner), &mut |speaker| {
             readers.readable(speaker)

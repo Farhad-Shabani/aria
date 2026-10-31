@@ -13,20 +13,25 @@ use crate::vocabulary::Vocabulary;
 
 use super::{CleanupError, LlmCleanup};
 
-/// The layers configuration can add after the deterministic passes.
+/// The layers the settings can add after the deterministic passes.
 pub(crate) type ConfiguredLayers = Layered<Option<LlmCleanup>, ()>;
+
+/// The passes one dictation runs, read as it was admitted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Rewriting {
+    /// Drops fillers and doubled words, then runs any local model.
+    pub(crate) cleanup: bool,
+    /// Applies "scratch that" and the like, which need the whole text.
+    pub(crate) backtrack: bool,
+}
 
 /// The passes dictation runs on its text. Each released segment gets the
 /// cheap ones. A transcript delivered whole gets every one.
-/// The vocabulary comes with each press, since it follows the project.
+/// What each press runs and its vocabulary come with the press.
 #[derive(Default)]
 pub(crate) struct Rewrites<L = ()> {
-    /// Drops fillers and doubled words.
-    disfluencies: bool,
-    /// Applies "scratch that" and the like, which need the whole text.
-    backtrack: bool,
     /// Runs last, on the whole transcript only. A failure keeps the text
-    /// the other passes made.
+    /// the other passes made. Unused while cleanup is off.
     llm: L,
 }
 
@@ -37,20 +42,8 @@ impl Rewrites {
 }
 
 impl<L: Layer> Rewrites<L> {
-    pub(crate) fn removing_disfluencies(mut self, enabled: bool) -> Self {
-        self.disfluencies = enabled;
-        self
-    }
-
-    pub(crate) fn backtracking(mut self, enabled: bool) -> Self {
-        self.backtrack = enabled;
-        self
-    }
-
     pub(crate) fn with<N: Layer>(self, layer: N) -> Rewrites<Layered<N, L>> {
         Rewrites {
-            disfluencies: self.disfluencies,
-            backtrack: self.backtrack,
             llm: Layered::new(self.llm, layer),
         }
     }
@@ -60,11 +53,12 @@ impl<L: Layer> Rewrites<L> {
     pub(crate) fn segment(
         &self,
         text: &mut String,
+        rewriting: Rewriting,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
         check_cancelled(cancel)?;
-        if self.disfluencies {
+        if rewriting.cleanup {
             RemoveHesitations.apply(text, cancel)?;
             RemoveRepeats.apply(text, cancel)?;
         }
@@ -78,17 +72,18 @@ impl<L: Layer> Rewrites<L> {
     pub(crate) fn finish(
         &self,
         transcript: Transcript,
+        rewriting: Rewriting,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<Transcript, TranscriptionError> {
         let mut text = transcript.into_text();
-        if self.backtrack {
+        if rewriting.backtrack {
             Backtrack.apply(&mut text, cancel)?;
         }
-        self.segment(&mut text, vocabulary, cancel)?;
+        self.segment(&mut text, rewriting, vocabulary, cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
-        if !self.llm.enabled() {
+        if !rewriting.cleanup || !self.llm.enabled() {
             return Ok(transcript);
         }
         let started = Instant::now();

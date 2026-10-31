@@ -1,41 +1,41 @@
 import SwiftUI
 
 struct ShortcutsSettings: View {
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     let askChord: ChordBinding
     let promptListChord: ChordBinding
     let openPrompt: (String) -> Void
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
-            let ariaKey = editor.snapshot.storedDictationHotkey ?? .default
+        SettingsForm(settings: settings) { editor in
+            let ariaKey = editor.snapshot.storedAriaKey ?? .default
             Section {
                 Picker(
                     "Aria key",
                     selection: editor.binding(ariaKey) { key, edit in
-                        edit.dictationHotkey = key.wire
+                        edit.ariaKey = key.wire
                     }
                 ) {
-                    ForEach(HotkeyKey.allCases, id: \.self) { key in
+                    ForEach(AriaKey.allCases, id: \.self) { key in
                         Text(key.title).tag(key)
                     }
                 }
                 // An unknown stored key stays untouched rather than shown as Right Option.
-                .disabled(editor.snapshot.storedDictationHotkey == nil)
+                .disabled(editor.snapshot.storedAriaKey == nil)
             } footer: {
                 Text("Tap to dictate, or hold to talk. Requires permission in Privacy & Security.")
             }
             Section {
                 HotkeyRecorder(
                     title: "Shortcut",
-                    hotkey: editor.snapshot.askHotkey,
+                    hotkey: editor.snapshot.askShortcut,
                     ariaKey: ariaKey,
                     binding: askChord
                 ) {
-                    editor.set(\.askHotkey, to: Aria_Daemon_V1_Hotkey($0))
+                    editor.set(\.askShortcut, to: Aria_Daemon_V1_Shortcut($0))
                 }
                 // Nothing to edit until the daemon sends its ask hotkey.
-                .disabled(!editor.snapshot.hasAskHotkey)
+                .disabled(!editor.snapshot.hasAskShortcut)
             } header: {
                 Text("Ask")
             } footer: {
@@ -44,13 +44,13 @@ struct ShortcutsSettings: View {
             Section("Prompts") {
                 HotkeyRecorder(
                     title: "Prompt list shortcut",
-                    hotkey: editor.snapshot.promptListHotkey,
+                    hotkey: editor.snapshot.promptListShortcut,
                     ariaKey: ariaKey,
                     binding: promptListChord
                 ) {
-                    editor.set(\.promptListHotkey, to: Aria_Daemon_V1_Hotkey($0))
+                    editor.set(\.promptListShortcut, to: Aria_Daemon_V1_Shortcut($0))
                 }
-                .disabled(!editor.snapshot.hasPromptListHotkey)
+                .disabled(!editor.snapshot.hasPromptListShortcut)
                 ForEach(editor.snapshot.prompts.entries, id: \.id) { entry in
                     ItemLink {
                         openPrompt(entry.id)
@@ -63,8 +63,8 @@ struct ShortcutsSettings: View {
                 Spacer()
                 Button("Restore Defaults") {
                     editor.set(()) { _, edit in
-                        edit.askHotkey = Aria_Daemon_V1_Hotkey(.combo(.shift))
-                        edit.promptListHotkey = Aria_Daemon_V1_Hotkey(.combo(.command))
+                        edit.askShortcut = Aria_Daemon_V1_Shortcut(.combo(.shift))
+                        edit.promptListShortcut = Aria_Daemon_V1_Shortcut(.combo(.command))
                     }
                 }
                 .disabled(editor.snapshot.holdsDefaultShortcuts)
@@ -73,8 +73,8 @@ struct ShortcutsSettings: View {
     }
 }
 
-extension Aria_Daemon_V1_UserPreferences {
+extension Aria_Daemon_V1_Settings {
     fileprivate var holdsDefaultShortcuts: Bool {
-        askHotkey.storedBinding == .combo(.shift) && promptListHotkey.storedBinding == .combo(.command)
+        askShortcut.storedBinding == .combo(.shift) && promptListShortcut.storedBinding == .combo(.command)
     }
 }

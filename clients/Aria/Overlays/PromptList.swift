@@ -26,9 +26,9 @@ final class PromptList {
         self.prompts = prompts
     }
 
-    func track(_ preferences: DaemonPreferences) {
-        chordChange = preferences.$snapshot
-            .map { $0?.promptListHotkey.storedChord }
+    func track(_ settings: DaemonSettings) {
+        chordChange = settings.$snapshot
+            .map { $0?.promptListShortcut.storedChord }
             .sink { [weak self] chord in
                 Task { @MainActor in self?.apply(chord) }
             }

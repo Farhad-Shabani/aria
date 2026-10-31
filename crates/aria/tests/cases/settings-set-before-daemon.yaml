@@ -1,0 +1,13 @@
+name: a setting written with no daemon running is what the daemon starts with
+settings: |
+  [tts.kokoro]
+  model = "~/missing/kokoro.onnx"
+  voices = "~/missing/voices.bin"
+expect:
+  before_daemon:
+    - run: [settings, set, tts.backend, kokoro]
+      stdout_contains: ["applied"]
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "the kokoro model cannot be used"

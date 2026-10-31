@@ -13,7 +13,7 @@ use tokio_util::task::TaskTracker;
 use tonic::service::interceptor::InterceptedService;
 
 use crate::audio::remove_all_spools;
-use crate::config::{ConfigError, Environment, TranscriptionBackend};
+use crate::config::{ConfigError, TranscriptionBackend};
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -46,8 +46,10 @@ pub fn serve_inference(bind: SocketAddr) -> Result<(), InferenceHostError> {
 
 fn run(address: SocketAddr) -> Result<(), HostFailure> {
     let shutdown = ShutdownSignal::install()?;
-    let environment = Environment::capture()?;
-    let config = match TranscriptionBackend::load(&environment)? {
+    let home = crate::config::home_directory()?;
+    // A headless server reads engine keys and never writes.
+    let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+    let config = match TranscriptionBackend::load(&settings.stt, &home)? {
         TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
         TranscriptionBackend::Server { .. } => {
             return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
@@ -55,7 +57,7 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
             }));
         }
     };
-    let state = Paths::in_home(environment.home());
+    let state = Paths::in_home(&home);
     let runtime_paths = state.runtime().prepare()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

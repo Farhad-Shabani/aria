@@ -14,7 +14,7 @@ service HistoryService {
   rpc Delete(DeleteHistoryRequest) returns (DeleteHistoryResponse);
   // Delete all rows, then remove their audio and orphaned recordings. Any
   // active regeneration refuses the whole operation with BUSY. Later saves
-  // survive; preferences and active dictation are unchanged. Do not retry
+  // survive; settings and active dictation are unchanged. Do not retry
   // automatically after a timeout or disconnect: the result is uncertain.
   rpc Clear(ClearHistoryRequest) returns (ClearHistoryResponse);
   // Re-transcribe retained audio and replace saved text; never deliver it.

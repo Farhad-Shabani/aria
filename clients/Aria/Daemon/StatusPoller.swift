@@ -12,12 +12,18 @@ enum DaemonControlFailure: Equatable {
     case stillRunning
     case unresponsive
     case backgroundItemOff
+    case settingsInvalid(InvalidSettings)
 
     /// Aria turned off in Login Items is the one start failure the user can
     /// fix directly, so it gets its own message.
     static func starting(_ error: any Error, otherwise failure: Self) -> Self {
         if case DaemonClientError.agentDisabled = error { return .backgroundItemOff }
         return failure
+    }
+
+    var isSettingsInvalid: Bool {
+        if case .settingsInvalid = self { return true }
+        return false
     }
 
     var message: String {
@@ -29,6 +35,8 @@ enum DaemonControlFailure: Equatable {
         case .unresponsive: "Aria started but didn’t respond. Run `aria doctor` in Terminal to see why."
         case .backgroundItemOff:
             "Aria isn’t allowed to run in the background. Turn it on in System Settings > General > Login Items & Extensions."
+        case .settingsInvalid(let invalid):
+            "Aria couldn’t start because \(invalid.mistake). Fix it, then turn Aria on."
         }
     }
 }
@@ -99,6 +107,7 @@ final class StatusPoller: ObservableObject {
             if shouldStart {
                 try await client.start()
                 state = await awaitRunning() ? .running : .stopped
+                await explainFailedStart()
             } else {
                 try await client.stop()
                 state = .stopped
@@ -110,6 +119,16 @@ final class StatusPoller: ObservableObject {
             failure = shouldStart ? .starting(error, otherwise: .start) : .stop
             let running = await client.isRunning()
             state = running ? .running : .stopped
+            if shouldStart { await explainFailedStart() }
+        }
+    }
+
+    /// An invalid file ends the daemon at startup, and the generic failure
+    /// can't say so. Login Items keeps its own message: nothing ran to fail.
+    private func explainFailedStart() async {
+        guard state != .running, failure != .backgroundItemOff else { return }
+        if let invalid = await client.invalidSettings() {
+            failure = .settingsInvalid(invalid)
         }
     }
 
@@ -155,6 +174,7 @@ final class StatusPoller: ObservableObject {
             failure = .starting(error, otherwise: .restart)
             state = await client.isRunning() ? .running : .stopped
         }
+        await explainFailedStart()
         try stopped.get()
     }
 
@@ -167,7 +187,7 @@ final class StatusPoller: ObservableObject {
     }
 
     /// A launch returns before the daemon listens. `working` holds until
-    /// the socket accepts, so `running` means preferences can be read.
+    /// the socket accepts, so `running` means settings can be read.
     private func awaitRunning() async -> Bool {
         for _ in 0..<20 {
             if await client.isRunning() { return true }

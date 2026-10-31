@@ -20,6 +20,8 @@ pub enum RpcErrorCode {
     PayloadTooLarge,
     PermissionDenied,
     DurabilityUnconfirmed,
+    /// settings.toml is invalid, so nothing was written over it.
+    SettingsInvalid,
     OverallTimeout,
     RecordingTimeout,
     DeliveryTimeout,
@@ -84,6 +86,7 @@ impl RpcErrorCode {
             Self::PayloadTooLarge => "payload_too_large",
             Self::PermissionDenied => "permission_denied",
             Self::DurabilityUnconfirmed => "durability_unconfirmed",
+            Self::SettingsInvalid => "settings_invalid",
             Self::OverallTimeout => "overall_timeout",
             Self::RecordingTimeout => "recording_timeout",
             Self::DeliveryTimeout => "delivery_timeout",
@@ -126,6 +129,8 @@ impl RpcErrorCode {
 pub struct RpcFailure {
     pub code: RpcErrorCode,
     pub message: String,
+    /// With [`RpcErrorCode::SettingsInvalid`]: where in settings.toml.
+    pub settings_position: Option<crate::settings::Position>,
 }
 
 impl RpcFailure {
@@ -133,7 +138,16 @@ impl RpcFailure {
         Self {
             code,
             message: message.into(),
+            settings_position: None,
         }
+    }
+
+    pub(crate) fn with_settings_position(
+        mut self,
+        position: Option<crate::settings::Position>,
+    ) -> Self {
+        self.settings_position = position;
+        self
     }
 }
 

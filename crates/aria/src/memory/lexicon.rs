@@ -1,6 +1,4 @@
 use super::{DB_FILE, LEXICON_FILE};
-use crate::config::{Environment, memory_directory};
-use crate::primitives::error_chain;
 use crate::vocabulary::PersonalRules;
 #[cfg(test)]
 use crate::vocabulary::Vocabulary;
@@ -47,16 +45,6 @@ impl Lexicon {
         Self {
             terms_path: dir.join(LEXICON_FILE),
             db_path: dir.join(DB_FILE),
-        }
-    }
-
-    pub(crate) fn configured(environment: &Environment) -> Option<Self> {
-        match memory_directory(environment) {
-            Ok(dir) => Some(Self::new(&dir)),
-            Err(error) => {
-                tracing::warn!(error = %error_chain(&error), "personal correction configuration unavailable");
-                None
-            }
         }
     }
 

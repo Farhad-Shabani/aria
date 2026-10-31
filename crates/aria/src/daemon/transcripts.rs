@@ -128,33 +128,32 @@ impl History {
 
     pub(super) fn start(&mut self, settings: &DictationSettings, source: HistorySource) {
         self.oversized = false;
-        self.retain_audio = settings.history_audio_retention;
-        self.live =
-            (settings.dictation_history && !settings.transcript_only).then(|| HistoryEntry {
-                id: 0,
-                created_at_ms: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
-                source,
-                application: settings.application.clone(),
-                duration_ms: None,
-                text: String::new(),
-                complete: false,
-                status: HistoryStatus::TranscriptionFailed,
-                error: None,
-                warning: None,
-                audio: AudioAvailability::Unavailable,
-                retrying: false,
-                deletion_pending: false,
-                language: settings.recognition_language.as_str().to_owned(),
-                engine: self.engine.to_owned(),
-                own_voice_only: settings.own_voice_only,
-                project: settings
-                    .project
-                    .as_ref()
-                    .map(|path| Path::new(path.as_str()).to_path_buf()),
-            });
+        self.retain_audio = settings.history_keep_audio;
+        self.live = (settings.history_enabled && !settings.transcript_only).then(|| HistoryEntry {
+            id: 0,
+            created_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            source,
+            application: settings.application.clone(),
+            duration_ms: None,
+            text: String::new(),
+            complete: false,
+            status: HistoryStatus::TranscriptionFailed,
+            error: None,
+            warning: None,
+            audio: AudioAvailability::Unavailable,
+            retrying: false,
+            deletion_pending: false,
+            language: settings.stt_language.as_str().to_owned(),
+            engine: self.engine.to_owned(),
+            own_voice_only: settings.own_voice_only,
+            project: settings
+                .project
+                .as_ref()
+                .map(|path| Path::new(path.as_str()).to_path_buf()),
+        });
     }
     pub(super) fn transcription_failed(&mut self, recording: &mut RecordingReader) {
         if let Some(mut entry) = self.live.take() {
@@ -269,7 +268,7 @@ mod tests {
     use super::*;
     use crate::audio::RecordingReader;
     use crate::dictation::{DictationRequest, StopMode};
-    use crate::preferences::UserPreferences;
+    use crate::settings::Settings;
     use crate::transcription::TranscriptionError;
 
     fn store(directory: &Path) -> Arc<TranscriptStore> {
@@ -277,8 +276,7 @@ mod tests {
     }
 
     fn settings() -> DictationSettings {
-        UserPreferences::default()
-            .resolve_dictation(DictationRequest::new(StopMode::OnSilence), None)
+        Settings::default().resolve_dictation(DictationRequest::new(StopMode::OnSilence), None)
     }
 
     fn entries(store: &TranscriptStore) -> Vec<HistoryEntry> {
@@ -312,7 +310,7 @@ mod tests {
                 .unwrap()
                 .to_owned();
             let mut settings = settings();
-            settings.history_audio_retention = retain_audio;
+            settings.history_keep_audio = retain_audio;
             sink.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
                 .unwrap();
             sink.segment(Utterance::anonymous("hello")).unwrap();
@@ -449,7 +447,7 @@ mod tests {
             (false, false, Some(DictationError::NoSpeech)),
         ] {
             let mut settings = settings();
-            settings.dictation_history = !disabled;
+            settings.history_enabled = !disabled;
             settings.transcript_only = transcript_only;
             let mut recording =
                 RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();

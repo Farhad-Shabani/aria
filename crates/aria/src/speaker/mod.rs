@@ -88,7 +88,7 @@ pub(crate) fn tracking_models(
 /// serves every feature that recognizes a speaker.
 pub(crate) fn enrolled(config: &SpeakerConfig) -> Vec<Profile> {
     usable_profiles(
-        ProfileStore::open(&config.speakers_dir)
+        ProfileStore::open(&config.profiles_dir)
             .read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM),
     )
 }

@@ -178,7 +178,7 @@ public nonisolated enum Aria_Setup_V1_OnDisk: SwiftProtobuf.Enum, Swift.CaseIter
 public nonisolated enum Aria_Setup_V1_Step: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
-  case config // = 1
+  case settings // = 1
   case wakeword // = 2
   case models // = 3
   case service // = 4
@@ -191,7 +191,7 @@ public nonisolated enum Aria_Setup_V1_Step: SwiftProtobuf.Enum, Swift.CaseIterab
   public init?(rawValue: Int) {
     switch rawValue {
     case 0: self = .unspecified
-    case 1: self = .config
+    case 1: self = .settings
     case 2: self = .wakeword
     case 3: self = .models
     case 4: self = .service
@@ -202,7 +202,7 @@ public nonisolated enum Aria_Setup_V1_Step: SwiftProtobuf.Enum, Swift.CaseIterab
   public var rawValue: Int {
     switch self {
     case .unspecified: return 0
-    case .config: return 1
+    case .settings: return 1
     case .wakeword: return 2
     case .models: return 3
     case .service: return 4
@@ -213,7 +213,7 @@ public nonisolated enum Aria_Setup_V1_Step: SwiftProtobuf.Enum, Swift.CaseIterab
   // The compiler won't synthesize support with the UNRECOGNIZED case.
   public static let allCases: [Aria_Setup_V1_Step] = [
     .unspecified,
-    .config,
+    .settings,
     .wakeword,
     .models,
     .service,
@@ -221,7 +221,7 @@ public nonisolated enum Aria_Setup_V1_Step: SwiftProtobuf.Enum, Swift.CaseIterab
 
 }
 
-public nonisolated enum Aria_Setup_V1_ConfigWrite: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Aria_Setup_V1_SettingsWrite: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case unchanged // = 1
@@ -251,7 +251,7 @@ public nonisolated enum Aria_Setup_V1_ConfigWrite: SwiftProtobuf.Enum, Swift.Cas
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Aria_Setup_V1_ConfigWrite] = [
+  public static let allCases: [Aria_Setup_V1_SettingsWrite] = [
     .unspecified,
     .unchanged,
     .written,
@@ -437,9 +437,9 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var configPath: String {
-    get {_storage._configPath}
-    set {_uniqueStorage()._configPath = newValue}
+  public var settingsPath: String {
+    get {_storage._settingsPath}
+    set {_uniqueStorage()._settingsPath = newValue}
   }
 
   public var macos: Bool {
@@ -466,11 +466,6 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   public var synthesisChoices: [Aria_Setup_V1_Choice] {
     get {_storage._synthesisChoices}
     set {_uniqueStorage()._synthesisChoices = newValue}
-  }
-
-  public var assistantChoices: [Aria_Setup_V1_Choice] {
-    get {_storage._assistantChoices}
-    set {_uniqueStorage()._assistantChoices = newValue}
   }
 
   /// In the order setup offers them.
@@ -521,7 +516,7 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-/// Choosing the server engine writes this endpoint to the config.
+/// Choosing the server engine writes this endpoint to the settings file.
 public nonisolated struct Aria_Setup_V1_PairedServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -542,7 +537,7 @@ public nonisolated struct Aria_Setup_V1_Choice: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// What config.yaml calls it.
+  /// What settings.toml calls it.
   public var id: String = String()
 
   public var label: String = String()
@@ -582,7 +577,7 @@ public nonisolated struct Aria_Setup_V1_Model: Sendable {
 
   public var onDisk: Aria_Setup_V1_OnDisk = .unspecified
 
-  /// Config points its engine at files elsewhere, so setup has nothing to
+  /// Settings point its engine at files elsewhere, so setup has nothing to
   /// fetch.
   public var external: Bool = false
 
@@ -607,7 +602,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
   public nonisolated enum Kind: SwiftProtobuf.Enum, Swift.CaseIterable {
     public typealias RawValue = Int
     case unspecified // = 0
-    case config // = 1
+    case settings // = 1
     case wakeword // = 2
     case model // = 3
     case service // = 4
@@ -624,7 +619,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
     public init?(rawValue: Int) {
       switch rawValue {
       case 0: self = .unspecified
-      case 1: self = .config
+      case 1: self = .settings
       case 2: self = .wakeword
       case 3: self = .model
       case 4: self = .service
@@ -636,7 +631,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
     public var rawValue: Int {
       switch self {
       case .unspecified: return 0
-      case .config: return 1
+      case .settings: return 1
       case .wakeword: return 2
       case .model: return 3
       case .service: return 4
@@ -648,7 +643,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
     // The compiler won't synthesize support with the UNRECOGNIZED case.
     public static let allCases: [Aria_Setup_V1_Missing.Kind] = [
       .unspecified,
-      .config,
+      .settings,
       .wakeword,
       .model,
       .service,
@@ -660,7 +655,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
   public init() {}
 }
 
-/// The five answers, as config.yaml spells them.
+/// The four answers, as settings.toml spells them.
 public nonisolated struct Aria_Setup_V1_Selections: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -670,11 +665,9 @@ public nonisolated struct Aria_Setup_V1_Selections: Sendable {
 
   public var synthesisEngineID: String = String()
 
-  public var assistantID: String = String()
-
   public var wake: Bool = false
 
-  public var hotkey: Bool = false
+  public var ariaKey: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -795,10 +788,7 @@ public nonisolated struct Aria_Setup_V1_Summary: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var config: Aria_Setup_V1_ConfigWrite = .unspecified
-
-  /// Where the hand-written config was kept; empty when there was none.
-  public var configBackupPath: String = String()
+  public var settings: Aria_Setup_V1_SettingsWrite = .unspecified
 
   /// Where the wake-word models went; empty when none ship beside the binary.
   public var wakewordDir: String = String()
@@ -884,11 +874,11 @@ nonisolated extension Aria_Setup_V1_OnDisk: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Aria_Setup_V1_Step: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STEP_UNSPECIFIED\0\u{1}STEP_CONFIG\0\u{1}STEP_WAKEWORD\0\u{1}STEP_MODELS\0\u{1}STEP_SERVICE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STEP_UNSPECIFIED\0\u{1}STEP_SETTINGS\0\u{1}STEP_WAKEWORD\0\u{1}STEP_MODELS\0\u{1}STEP_SERVICE\0")
 }
 
-nonisolated extension Aria_Setup_V1_ConfigWrite: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CONFIG_WRITE_UNSPECIFIED\0\u{1}CONFIG_WRITE_UNCHANGED\0\u{1}CONFIG_WRITE_WRITTEN\0")
+nonisolated extension Aria_Setup_V1_SettingsWrite: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SETTINGS_WRITE_UNSPECIFIED\0\u{1}SETTINGS_WRITE_UNCHANGED\0\u{1}SETTINGS_WRITE_WRITTEN\0")
 }
 
 nonisolated extension Aria_Setup_V1_Outcome: SwiftProtobuf._ProtoNameProviding {
@@ -909,15 +899,14 @@ nonisolated extension Aria_Setup_V1_DaemonState: SwiftProtobuf._ProtoNameProvidi
 
 nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Inspection"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{1}macos\0\u{1}defaults\0\u{3}transcription_choices\0\u{3}synthesis_choices\0\u{3}assistant_choices\0\u{1}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}settings_path\0\u{1}macos\0\u{1}defaults\0\u{3}transcription_choices\0\u{3}synthesis_choices\0\u{2}\u{2}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0")
 
   fileprivate class _StorageClass {
-    var _configPath: String = String()
+    var _settingsPath: String = String()
     var _macos: Bool = false
     var _defaults: Aria_Setup_V1_Selections? = nil
     var _transcriptionChoices: [Aria_Setup_V1_Choice] = []
     var _synthesisChoices: [Aria_Setup_V1_Choice] = []
-    var _assistantChoices: [Aria_Setup_V1_Choice] = []
     var _models: [Aria_Setup_V1_Model] = []
     var _wakewordInstalled: Bool = false
     var _service: Aria_Setup_V1_ServiceStatus? = nil
@@ -934,12 +923,11 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
     private init() {}
 
     init(copying source: _StorageClass) {
-      _configPath = source._configPath
+      _settingsPath = source._settingsPath
       _macos = source._macos
       _defaults = source._defaults
       _transcriptionChoices = source._transcriptionChoices
       _synthesisChoices = source._synthesisChoices
-      _assistantChoices = source._assistantChoices
       _models = source._models
       _wakewordInstalled = source._wakewordInstalled
       _service = source._service
@@ -964,12 +952,11 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         // allocates stack space for every case branch when no optimizations are
         // enabled. https://github.com/apple/swift-protobuf/issues/1034
         switch fieldNumber {
-        case 1: try { try decoder.decodeSingularStringField(value: &_storage._configPath) }()
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._settingsPath) }()
         case 2: try { try decoder.decodeSingularBoolField(value: &_storage._macos) }()
         case 3: try { try decoder.decodeSingularMessageField(value: &_storage._defaults) }()
         case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._transcriptionChoices) }()
         case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._synthesisChoices) }()
-        case 6: try { try decoder.decodeRepeatedMessageField(value: &_storage._assistantChoices) }()
         case 7: try { try decoder.decodeRepeatedMessageField(value: &_storage._models) }()
         case 8: try { try decoder.decodeSingularBoolField(value: &_storage._wakewordInstalled) }()
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._service) }()
@@ -988,8 +975,8 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       // allocates stack space for every if/case branch local when no optimizations
       // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
       // https://github.com/apple/swift-protobuf/issues/1182
-      if !_storage._configPath.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._configPath, fieldNumber: 1)
+      if !_storage._settingsPath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._settingsPath, fieldNumber: 1)
       }
       if _storage._macos != false {
         try visitor.visitSingularBoolField(value: _storage._macos, fieldNumber: 2)
@@ -1002,9 +989,6 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       }
       if !_storage._synthesisChoices.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._synthesisChoices, fieldNumber: 5)
-      }
-      if !_storage._assistantChoices.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._assistantChoices, fieldNumber: 6)
       }
       if !_storage._models.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._models, fieldNumber: 7)
@@ -1033,12 +1017,11 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
         let _storage = _args.0
         let rhs_storage = _args.1
-        if _storage._configPath != rhs_storage._configPath {return false}
+        if _storage._settingsPath != rhs_storage._settingsPath {return false}
         if _storage._macos != rhs_storage._macos {return false}
         if _storage._defaults != rhs_storage._defaults {return false}
         if _storage._transcriptionChoices != rhs_storage._transcriptionChoices {return false}
         if _storage._synthesisChoices != rhs_storage._synthesisChoices {return false}
-        if _storage._assistantChoices != rhs_storage._assistantChoices {return false}
         if _storage._models != rhs_storage._models {return false}
         if _storage._wakewordInstalled != rhs_storage._wakewordInstalled {return false}
         if _storage._service != rhs_storage._service {return false}
@@ -1240,12 +1223,12 @@ nonisolated extension Aria_Setup_V1_Missing: SwiftProtobuf.Message, SwiftProtobu
 }
 
 nonisolated extension Aria_Setup_V1_Missing.Kind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}KIND_CONFIG\0\u{1}KIND_WAKEWORD\0\u{1}KIND_MODEL\0\u{1}KIND_SERVICE\0\u{1}KIND_GRANT\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}KIND_SETTINGS\0\u{1}KIND_WAKEWORD\0\u{1}KIND_MODEL\0\u{1}KIND_SERVICE\0\u{1}KIND_GRANT\0")
 }
 
 nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Selections"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transcription_engine_id\0\u{3}synthesis_engine_id\0\u{3}assistant_id\0\u{1}wake\0\u{1}hotkey\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transcription_engine_id\0\u{3}synthesis_engine_id\0\u{2}\u{2}wake\0\u{3}aria_key\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1255,9 +1238,8 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.transcriptionEngineID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.synthesisEngineID) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.assistantID) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.wake) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.hotkey) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.ariaKey) }()
       default: break
       }
     }
@@ -1270,14 +1252,11 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
     if !self.synthesisEngineID.isEmpty {
       try visitor.visitSingularStringField(value: self.synthesisEngineID, fieldNumber: 2)
     }
-    if !self.assistantID.isEmpty {
-      try visitor.visitSingularStringField(value: self.assistantID, fieldNumber: 3)
-    }
     if self.wake != false {
       try visitor.visitSingularBoolField(value: self.wake, fieldNumber: 4)
     }
-    if self.hotkey != false {
-      try visitor.visitSingularBoolField(value: self.hotkey, fieldNumber: 5)
+    if self.ariaKey != false {
+      try visitor.visitSingularBoolField(value: self.ariaKey, fieldNumber: 5)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1285,9 +1264,8 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
   public static func ==(lhs: Aria_Setup_V1_Selections, rhs: Aria_Setup_V1_Selections) -> Bool {
     if lhs.transcriptionEngineID != rhs.transcriptionEngineID {return false}
     if lhs.synthesisEngineID != rhs.synthesisEngineID {return false}
-    if lhs.assistantID != rhs.assistantID {return false}
     if lhs.wake != rhs.wake {return false}
-    if lhs.hotkey != rhs.hotkey {return false}
+    if lhs.ariaKey != rhs.ariaKey {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1503,7 +1481,7 @@ nonisolated extension Aria_Setup_V1_DownloadProgress: SwiftProtobuf.Message, Swi
 
 nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Summary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}config\0\u{3}config_backup_path\0\u{3}wakeword_dir\0\u{1}models\0\u{3}legacy_agent_path\0\u{1}service\0\u{1}grant\0\u{3}voice_model_present\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{4}\u{2}wakeword_dir\0\u{1}models\0\u{3}legacy_agent_path\0\u{1}service\0\u{1}grant\0\u{3}voice_model_present\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1511,8 +1489,7 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularEnumField(value: &self.config) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.configBackupPath) }()
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.settings) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.wakewordDir) }()
       case 4: try { try decoder.decodeRepeatedMessageField(value: &self.models) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.legacyAgentPath) }()
@@ -1529,11 +1506,8 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
     // allocates stack space for every if/case branch local when no optimizations
     // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
     // https://github.com/apple/swift-protobuf/issues/1182
-    if self.config != .unspecified {
-      try visitor.visitSingularEnumField(value: self.config, fieldNumber: 1)
-    }
-    if !self.configBackupPath.isEmpty {
-      try visitor.visitSingularStringField(value: self.configBackupPath, fieldNumber: 2)
+    if self.settings != .unspecified {
+      try visitor.visitSingularEnumField(value: self.settings, fieldNumber: 1)
     }
     if !self.wakewordDir.isEmpty {
       try visitor.visitSingularStringField(value: self.wakewordDir, fieldNumber: 3)
@@ -1557,8 +1531,7 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
   }
 
   public static func ==(lhs: Aria_Setup_V1_Summary, rhs: Aria_Setup_V1_Summary) -> Bool {
-    if lhs.config != rhs.config {return false}
-    if lhs.configBackupPath != rhs.configBackupPath {return false}
+    if lhs.settings != rhs.settings {return false}
     if lhs.wakewordDir != rhs.wakewordDir {return false}
     if lhs.models != rhs.models {return false}
     if lhs.legacyAgentPath != rhs.legacyAgentPath {return false}

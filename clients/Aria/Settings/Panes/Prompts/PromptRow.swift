@@ -22,7 +22,7 @@ struct PromptRow: View {
             PromptShortcutLabel(entry: entry)
         }
         .task(id: fileCheckVersion) { await refreshFileStatus() }
-        .onChange(of: entry.instructionsPath) { _, _ in
+        .onChange(of: entry.file) { _, _ in
             isMissingFile = false
             fileCheckVersion += 1
         }

@@ -150,6 +150,8 @@ enum Command {
 }
 
 pub(super) struct Worker<C: Collector> {
+    /// The settings' project folder, `None` while project vocabulary is off.
+    project: Option<tokio::sync::watch::Receiver<Option<Directory>>>,
     collector: C,
     cache_key: Option<String>,
     runtime: Arc<Runtime>,
@@ -186,6 +188,7 @@ impl Runtime {
             persistent,
         });
         let worker = Worker {
+            project: None,
             cache_key: collector.cache_key(),
             collector,
             runtime: Arc::clone(&runtime),
@@ -515,12 +518,14 @@ fn overlaps(a: &Path, b: &Path) -> bool {
 }
 
 impl<C: Collector> Supervised for Worker<C> {
-    async fn run(self, shutdown: CancellationToken) {
+    async fn run(mut self, shutdown: CancellationToken) {
         let runtime = Arc::clone(&self.runtime);
+        let project = self.project.take();
         let mut job = tokio::task::spawn_blocking(move || self.work());
         let result = tokio::select! {
             result = &mut job => result,
             () = shutdown.cancelled() => { runtime.stop(); job.await },
+            () = follow(project, Arc::clone(&runtime)) => { runtime.stop(); job.await },
         };
         runtime.stop();
         if result.is_err() {
@@ -529,9 +534,28 @@ impl<C: Collector> Supervised for Worker<C> {
     }
 }
 
+/// Prepares each folder the settings name, whether a client's write or a
+/// hand edit named it. Waits forever once the watch is gone.
+async fn follow(
+    project: Option<tokio::sync::watch::Receiver<Option<Directory>>>,
+    runtime: Arc<Runtime>,
+) {
+    if let Some(mut project) = project {
+        while project.changed().await.is_ok() {
+            let directory = project.borrow_and_update().clone();
+            runtime.prepare(directory);
+        }
+    }
+    std::future::pending::<()>().await;
+}
+
 impl<C: Collector> Worker<C> {
     pub(super) fn initialize_personal(&mut self) -> Result<(), Error> {
         self.refresh_personal()
+    }
+
+    pub(super) fn follow(&mut self, project: tokio::sync::watch::Receiver<Option<Directory>>) {
+        self.project = Some(project);
     }
 
     fn work(mut self) {

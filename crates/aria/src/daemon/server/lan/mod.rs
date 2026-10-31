@@ -13,8 +13,8 @@ use tonic::service::interceptor::InterceptedService;
 use tonic_health::pb::health_server::HealthServer;
 use tonic_health::server::{HealthReporter, HealthService};
 
-use crate::daemon::relay::{Advert, LanPreferences, Pairing, PairingCodes, Phones, require_paired};
-use crate::daemon::service::{InviteRpc, PairingRpc, PreferencesRpc, RelayRpc};
+use crate::daemon::relay::{Advert, LanSettings, Pairing, PairingCodes, Phones, require_paired};
+use crate::daemon::service::{InviteRpc, PairingRpc, RelayRpc, SettingsRpc};
 use crate::ipc::wire;
 use crate::primitives::error_chain;
 use connections::Admitted;
@@ -32,9 +32,9 @@ pub(in crate::daemon) const MAX_LAN_STREAMS: usize = 4;
 /// The largest `RelayRequest` the relay will decode. The phone ships 256 KiB
 /// chunks; this is generous for one of those and nowhere near a session.
 const MAX_RELAY_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-/// A preference patch is a few hundred bytes; this leaves room for a long
+/// A settings patch is a few hundred bytes; this leaves room for a long
 /// vocabulary path and nothing else.
-const MAX_PREFERENCES_MESSAGE_BYTES: usize = 64 * 1024;
+const MAX_SETTINGS_MESSAGE_BYTES: usize = 64 * 1024;
 /// A pairing request carries one 32-character code, and any phone on the
 /// LAN can send one while a code is live.
 const MAX_PAIR_MESSAGE_BYTES: usize = 1024;
@@ -54,7 +54,7 @@ pub(in crate::daemon) const LAN_KEEPALIVE_TIMEOUT: Duration = Duration::from_sec
 pub(in crate::daemon) struct Relay {
     pub(in crate::daemon) rpc: RelayRpc,
     pub(in crate::daemon) port: u16,
-    pub(in crate::daemon) preferences: PreferencesRpc,
+    pub(in crate::daemon) settings: SettingsRpc,
     pub(in crate::daemon) pairing: Pairing,
     pub(in crate::daemon) codes: Arc<PairingCodes>,
     pub(in crate::daemon) instance: String,
@@ -83,7 +83,7 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
     let Relay {
         rpc,
         port,
-        preferences,
+        settings,
         pairing,
         codes,
         instance,
@@ -108,7 +108,7 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
     };
     let router = router(
         rpc,
-        LanPreferences::new(preferences),
+        LanSettings::new(settings),
         Arc::clone(&codes),
         relay_health,
         Arc::clone(&pairing.phones),
@@ -130,14 +130,14 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
 /// The generic services let tests build it without a model.
 fn router<R, P>(
     relay: R,
-    preferences: P,
+    settings: P,
     codes: Arc<PairingCodes>,
     health: HealthReporter,
     phones: Arc<Phones>,
 ) -> RelayRouter
 where
     R: wire::relay_service_server::RelayService,
-    P: wire::preferences_service_server::PreferencesService,
+    P: wire::settings_service_server::SettingsService,
 {
     let paired = require_paired(Arc::clone(&phones));
     let pair = PairingRpc::new(codes, phones);
@@ -157,8 +157,8 @@ where
             paired.clone(),
         ))
         .add_service(InterceptedService::new(
-            wire::preferences_service_server::PreferencesServiceServer::new(preferences)
-                .max_decoding_message_size(MAX_PREFERENCES_MESSAGE_BYTES),
+            wire::settings_service_server::SettingsServiceServer::new(settings)
+                .max_decoding_message_size(MAX_SETTINGS_MESSAGE_BYTES),
             paired.clone(),
         ))
         .add_service(
@@ -307,22 +307,29 @@ mod tests {
 
     /// Refuses every call, like [`SilentRelay`]: an `Aborted` from it proves
     /// the pairing check passed.
-    struct SilentPreferences;
+    struct SilentSettings;
 
     #[tonic::async_trait]
-    impl wire::preferences_service_server::PreferencesService for SilentPreferences {
+    impl wire::settings_service_server::SettingsService for SilentSettings {
         async fn get(
             &self,
-            _request: tonic::Request<wire::GetPreferencesRequest>,
-        ) -> std::result::Result<tonic::Response<wire::PreferenceSnapshot>, Status> {
-            Err(Status::aborted("the stand-in preferences were reached"))
+            _request: tonic::Request<wire::GetSettingsRequest>,
+        ) -> std::result::Result<tonic::Response<wire::SettingsSnapshot>, Status> {
+            Err(Status::aborted("the stand-in settings were reached"))
         }
 
         async fn update(
             &self,
-            _request: tonic::Request<wire::UpdatePreferencesRequest>,
-        ) -> std::result::Result<tonic::Response<wire::UpdatePreferencesResponse>, Status> {
-            Err(Status::aborted("the stand-in preferences were reached"))
+            _request: tonic::Request<wire::UpdateSettingsRequest>,
+        ) -> std::result::Result<tonic::Response<wire::UpdateSettingsResponse>, Status> {
+            Err(Status::aborted("the stand-in settings were reached"))
+        }
+
+        async fn get_status(
+            &self,
+            _request: tonic::Request<wire::GetSettingsStatusRequest>,
+        ) -> std::result::Result<tonic::Response<wire::GetSettingsStatusResponse>, Status> {
+            Err(Status::aborted("the stand-in settings were reached"))
         }
     }
 
@@ -433,7 +440,7 @@ mod tests {
             let serving = tokio::spawn(
                 router(
                     SilentRelay,
-                    SilentPreferences,
+                    SilentSettings,
                     Arc::clone(&codes),
                     health,
                     Arc::clone(&pairing.phones),
@@ -499,11 +506,11 @@ mod tests {
             .code()
     }
 
-    async fn preferences(channel: &Channel) -> tonic::Code {
-        wire::preferences_service_client::PreferencesServiceClient::new(channel.clone())
-            .get(wire::GetPreferencesRequest {})
+    async fn settings(channel: &Channel) -> tonic::Code {
+        wire::settings_service_client::SettingsServiceClient::new(channel.clone())
+            .get(wire::GetSettingsRequest {})
             .await
-            .expect_err("the stand-in preferences refuse every call")
+            .expect_err("the stand-in settings refuse every call")
             .code()
     }
 
@@ -514,6 +521,68 @@ mod tests {
             })
             .await
             .map(drop)
+    }
+
+    /// Whether `path` reaches a service, by the one status a router gives a
+    /// path it does not carry. Every call sends an empty message, which each
+    /// method decodes as its default request.
+    async fn served(channel: &Channel, path: &'static str) -> bool {
+        let mut grpc = tonic::client::Grpc::new(channel.clone());
+        grpc.ready().await.expect("the channel is ready");
+        let call = grpc
+            .unary::<(), (), _>(
+                tonic::Request::new(()),
+                tonic::codegen::http::uri::PathAndQuery::from_static(path),
+                tonic_prost::ProstCodec::default(),
+            )
+            .await;
+        !matches!(call, Err(status) if status.code() == tonic::Code::Unimplemented)
+    }
+
+    /// The LAN serves exactly Relay, scoped Settings, Pairing and Health.
+    /// Nothing that records or speaks, and no reflection: one method from
+    /// every service the daemon has.
+    #[tokio::test]
+    async fn the_lan_serves_exactly_four_services() {
+        let lan = Lan::start().await;
+        let phone = Phone::mint();
+        lan.pairing.phones.admit(phone.fingerprint).unwrap();
+        let channel = lan.connect(&phone).await;
+
+        let mut reached = Vec::new();
+        for path in [
+            "/aria.daemon.v1.RelayService/Relay",
+            "/aria.daemon.v1.SettingsService/Get",
+            "/aria.daemon.v1.PairingService/Pair",
+            "/grpc.health.v1.Health/Check",
+            "/aria.daemon.v1.ChatService/Ask",
+            "/aria.daemon.v1.DictationService/Stop",
+            "/aria.daemon.v1.EventsService/Subscribe",
+            "/aria.daemon.v1.HistoryService/List",
+            "/aria.daemon.v1.InferenceService/GetInfo",
+            "/aria.daemon.v1.InferenceAdminService/IssueInvite",
+            "/aria.daemon.v1.InviteService/IssueInvite",
+            "/aria.daemon.v1.ListenService/GetStatus",
+            "/aria.daemon.v1.SpeakerService/List",
+            "/aria.daemon.v1.SpeechService/Stop",
+            "/aria.daemon.v1.VocabularyService/GetStatus",
+            "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
+        ] {
+            if served(&channel, path).await {
+                reached.push(path);
+            }
+        }
+
+        assert_eq!(
+            reached,
+            [
+                "/aria.daemon.v1.RelayService/Relay",
+                "/aria.daemon.v1.SettingsService/Get",
+                "/aria.daemon.v1.PairingService/Pair",
+                "/grpc.health.v1.Health/Check",
+            ]
+        );
+        lan.stop().await;
     }
 
     #[tokio::test]
@@ -552,7 +621,7 @@ mod tests {
             crate::rpc::RpcErrorCode::Unauthenticated
         );
         assert_eq!(relay(&channel).await, tonic::Code::Unauthenticated);
-        assert_eq!(preferences(&channel).await, tonic::Code::Unauthenticated);
+        assert_eq!(settings(&channel).await, tonic::Code::Unauthenticated);
 
         let wrong = pair(&channel, &"0".repeat(32))
             .await
@@ -565,7 +634,7 @@ mod tests {
             .await
             .expect("the live code should pair");
         assert_eq!(relay(&channel).await, tonic::Code::Aborted);
-        assert_eq!(preferences(&channel).await, tonic::Code::Aborted);
+        assert_eq!(settings(&channel).await, tonic::Code::Aborted);
         let reused = pair(&channel, code.raw())
             .await
             .expect_err("a used code must not pair again");
@@ -719,7 +788,7 @@ mod tests {
         let codes = Arc::new(PairingCodes::default());
         let router = router(
             SilentRelay,
-            SilentPreferences,
+            SilentSettings,
             Arc::clone(&codes),
             relay_health,
             Arc::clone(&pairing.phones),

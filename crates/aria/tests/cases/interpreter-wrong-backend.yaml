@@ -1,10 +1,10 @@
 name: an interpreter on the whisper backend fails daemon startup
-config: |
-  transcription:
-    backend: whisper
-    interpreter: /usr/bin/python3
+settings: |
+  [stt]
+  backend = "whisper"
+  interpreter = "/usr/bin/python3"
 expect:
   daemon:
     startup: failure
     stderr_contains:
-      - "transcription.interpreter does not apply to the parakeet-mlx backend"
+      - "line 3, column 1: stt.interpreter does not apply to the whisper backend"

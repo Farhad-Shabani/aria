@@ -19,7 +19,7 @@ cannot remove backups or snapshots.
 
 ## Server inference
 
-When you [use a server](./configuration.md#server-inference), your audio goes
+When you [use a server](./settings.md#server-inference), your audio goes
 to it for transcription. Whoever runs that server can hear the audio and read
 the text. Pairing alone sends nothing; uploads start only when you switch
 transcription to the server.
@@ -78,6 +78,12 @@ version. Turn it off in **Settings → About** with
 **Automatically check for updates**.
 
 ## Files and folders
+
+`~/.aria/settings.toml` holds engine and model choices, shortcuts, prompt names
+and paths, and per-app choices. It holds no recordings, transcripts, or
+credentials. Only your user account and administrators can read it. A paired
+phone can change only language, output, voice filtering, project vocabulary,
+and history settings.
 
 [System-audio transcripts](./listen.md#transcript-files) are separate files with
 no automatic history expiry. Choose a folder with suitable permissions and

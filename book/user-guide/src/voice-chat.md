@@ -18,10 +18,11 @@ before using private project content.
    [Codex CLI setup](https://learn.chatgpt.com/docs/codex/cli), then check that
    `claude` or `codex` works in your terminal.
 3. Choose that assistant in **Settings → General → Assistant**, or run
-   `aria assistant claude-code` or `aria assistant codex`.
+   `aria settings set assistant.id claude-code` or
+   `aria settings set assistant.id codex`.
 
 Keep Aria's background service running. If you installed the assistant after
-Aria setup, follow the [service restart steps](./configuration.md#apply-changes)
+Aria setup, follow the [service restart steps](./settings.md#apply-changes)
 so Aria can find its command.
 
 ## Try a typed question
@@ -86,7 +87,7 @@ assistant for one question. Add `--model "MODEL_ID"` to choose a model for
 that question. Neither option changes your saved settings.
 
 To see or change your usual assistant and model, follow
-[Assistant settings](./configuration.md#assistant).
+[Assistant settings](./settings.md#assistant).
 
 If Ask cannot start its assistant, check [Troubleshooting](./troubleshooting.md#ask-cannot-start).
 For names in spoken questions, [Project vocabulary](./project-spellings.md) explains

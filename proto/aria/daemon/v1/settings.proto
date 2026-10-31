@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/chat.proto";
+import "aria/daemon/v1/dictation.proto";
+import "aria/daemon/v1/errors.proto";
+
+service SettingsService {
+  rpc Get(GetSettingsRequest) returns (SettingsSnapshot);
+  // Optimistic concurrency: a stale `expected_revision` answers `conflict`
+  // with the current snapshot rather than overwriting. While settings.toml
+  // is invalid, every update fails with ERROR_CODE_SETTINGS_INVALID.
+  rpc Update(UpdateSettingsRequest) returns (UpdateSettingsResponse);
+  // What the daemon knows about settings.toml beyond its values. Changes
+  // also arrive as a `settings` event. Served on the unix socket only.
+  rpc GetStatus(GetSettingsStatusRequest) returns (GetSettingsStatusResponse);
+}
+
+message GetSettingsRequest {}
+
+message GetSettingsStatusRequest {}
+
+message GetSettingsStatusResponse {
+  SettingsStatus status = 1;
+}
+
+message SettingsStatus {
+  // Absent while settings.toml is valid. While it is set, the daemon keeps
+  // the last valid values.
+  SettingsFault fault = 1;
+  // Dotted keys, such as "stt.backend", whose file value differs
+  // from the one the daemon started with. They apply after a restart.
+  repeated string restart_required = 2;
+  // Dotted keys the daemon wrote in the 10 s before the last reload that the
+  // reload then changed: an editor saved an older copy over the write. Empty
+  // again after the next reload or write.
+  repeated string reverted = 3;
+  // The revision of the values the daemon holds, as in
+  // `SettingsSnapshot.revision`. A change means the values changed: read
+  // them again.
+  uint64 revision = 4;
+}
+
+// Why settings.toml is invalid.
+message SettingsFault {
+  string message = 1;
+  // Absent when the fault has no place in the file.
+  SettingsPosition position = 2;
+}
+
+message UpdateSettingsRequest {
+  // The revision the client last saw.
+  uint64 expected_revision = 1;
+  SettingsPatch patch = 2;
+}
+
+message UpdateSettingsResponse {
+  oneof result {
+    SettingsSnapshot snapshot = 1;
+    SettingsConflict conflict = 2;
+  }
+  // With `snapshot`: the dotted keys that apply after a restart, as in
+  // `SettingsStatus.restart_required`. Empty with `conflict`.
+  repeated string restart_required = 3;
+}
+
+message SettingsSnapshot {
+  // A hash of the file's values. A comment edit leaves it unchanged.
+  uint64 revision = 1;
+  Settings settings = 2;
+}
+
+message SettingsConflict {
+  SettingsSnapshot current = 1;
+}
+
+message AssistantModelSetting {
+  AssistantId assistant_id = 1;
+  string model_id = 2;
+}
+
+message Settings {
+  // Dictation
+
+  OutputMode output_mode = 9;
+  DeliveryMode delivery_mode = 10;
+  // Whole milliseconds, 100 to 10000 inclusive.
+  uint64 silence_duration_ms = 1;
+  // Ends a tapped or toggled recording once this long passes without speech.
+  // A held key records until release. Whole milliseconds, 3000 to 60000
+  // inclusive. Absent is off.
+  optional uint64 auto_stop_ms = 18;
+  // Mutes the Mac's sound while recording.
+  bool mute_sound = 2;
+  // Drops "um", "uh" and repeated words before delivery.
+  bool cleanup = 22;
+  // Applies a spoken self-correction. Takes effect only with delivery after
+  // recording stops.
+  bool backtrack = 20;
+  // Removing the last enrolled owner turns it off.
+  bool own_voice_only = 4;
+  bool vocabulary_enabled = 5;
+  optional string vocabulary_dir = 6;
+
+  // History
+
+  bool history_enabled = 16;
+  bool history_keep_audio = 17;
+
+  // Assistant
+
+  optional AssistantId assistant_id = 7;
+  // Each assistant ID appears at most once.
+  repeated AssistantModelSetting assistant_models = 8;
+
+  // Memory
+
+  // Asks are sent to the assistant to remember facts.
+  bool memory_enabled = 19;
+
+  // Prompts
+
+  Prompts prompts = 14;
+
+  // App overrides
+
+  ApplicationOverrides application_overrides = 15;
+
+  // Shortcuts
+
+  AriaKey aria_key = 11;
+  // Starts an ask: Aria key + Shift unless changed. The Aria key then sends
+  // and cancels it.
+  Shortcut ask_shortcut = 12;
+  // Lists the prompts that are on, so one runs without its own chord. Aria
+  // key + Command unless changed.
+  Shortcut prompt_list_shortcut = 13;
+
+  // Speech to text
+
+  // A language code such as "en" or "en-us", or "auto" to detect.
+  string stt_language = 3;
+
+  // Text to speech
+
+  // A multiplier on the voice's natural pace, 0.25 to 4 inclusive.
+  double tts_rate = 21;
+}
+
+// Absent fields are unchanged. Explicit UNSPECIFIED mode values are invalid.
+// Numbered as `Settings`.
+message SettingsPatch {
+  // Dictation
+
+  optional OutputMode output_mode = 9;
+  optional DeliveryMode delivery_mode = 10;
+  // Whole milliseconds, 100 to 10000 inclusive.
+  optional uint64 silence_duration_ms = 1;
+  // Whole milliseconds, 3000 to 60000 inclusive. 0 turns auto-stop off;
+  // absent leaves it unchanged.
+  optional uint64 auto_stop_ms = 18;
+  optional bool mute_sound = 2;
+  optional bool cleanup = 22;
+  optional bool backtrack = 20;
+  // Types only enrolled owner voices.
+  optional bool own_voice_only = 4;
+  optional bool vocabulary_enabled = 5;
+  // Empty clears the selected directory; absent leaves it unchanged.
+  optional string vocabulary_dir = 6;
+
+  // History
+
+  optional bool history_enabled = 16;
+  optional bool history_keep_audio = 17;
+
+  // Assistant
+
+  optional AssistantId assistant_id = 7;
+  // Only listed assistants change; an empty model_id resets to the default.
+  repeated AssistantModelSetting assistant_models = 8;
+
+  // Memory
+
+  optional bool memory_enabled = 19;
+
+  // Prompts
+
+  // Replaces every entry.
+  Prompts prompts = 14;
+
+  // App overrides
+
+  // Replaces every entry.
+  ApplicationOverrides application_overrides = 15;
+
+  // Shortcuts
+
+  optional AriaKey aria_key = 11;
+  Shortcut ask_shortcut = 12;
+  Shortcut prompt_list_shortcut = 13;
+
+  // Speech to text
+
+  // A language code such as "en" or "en-us", or "auto" to detect.
+  optional string stt_language = 3;
+
+  // Text to speech
+
+  // 0.25 to 4 inclusive.
+  optional double tts_rate = 21;
+}
+
+// A Markdown file that says what to make of a recording, and the chord
+// that runs it the way the ask shortcut runs an ask.
+message Prompt {
+  // Stable across renames: what RunPrompt names.
+  string id = 1;
+  string name = 2;
+  // UNSPECIFIED is invalid.
+  PromptKind kind = 3;
+  // An absolute path to the Markdown instructions, read on each run.
+  string file = 4;
+  // Off, it runs neither from the prompt list nor from its chord.
+  bool enabled = 5;
+  // Absent for a prompt run only from the prompt list.
+  Chord chord = 6;
+}
+
+// What a prompt makes of what was said. Either way the transcript is
+// material for the assistant, never instructions to it.
+enum PromptKind {
+  PROMPT_KIND_UNSPECIFIED = 0;
+  // The same words and meaning, cleaned up or restyled.
+  PROMPT_KIND_REWRITE = 1;
+  // New text made from what was said, such as a reply, a translation, or a
+  // summary.
+  PROMPT_KIND_COMPOSE = 2;
+}
+
+// At most 16 entries, each ID and each chord once.
+message Prompts {
+  repeated Prompt entries = 1;
+}
+
+// Dictation settings that replace the settings above. Each absent field
+// inherits them. The daemon drops a value equal to the setting, and the
+// delivery choice of an app set to Copy output, which cannot stream.
+message DictationOverrides {
+  optional OutputMode output_mode = 1;
+  optional DeliveryMode delivery_mode = 2;
+}
+
+// Applies while the app has keyboard focus as dictation starts. A request's
+// own modes still win.
+message ApplicationOverride {
+  // A macOS bundle ID: 1 to 255 bytes of letters, digits, '.', '-' and '_'.
+  string application_id = 1;
+  // Aria starts no recording and delivers nothing while the app is in front.
+  // The overrides stay stored for when it is switched back on.
+  bool excluded = 2;
+  DictationOverrides overrides = 3;
+}
+
+// At most 64 entries, each application ID once.
+message ApplicationOverrides {
+  repeated ApplicationOverride entries = 1;
+}
+
+// The Aria key: a bare modifier read as a tap, a hold, or a combo. A hold
+// dictates. A tap ends a recording or a run a press started, or else
+// dictates. A combo is a HotkeyEvent for a client to run.
+enum AriaKey {
+  ARIA_KEY_UNSPECIFIED = 0;
+  ARIA_KEY_RIGHT_OPTION = 1;
+  ARIA_KEY_FN = 2;
+  // No Aria key: presses of either key do nothing.
+  ARIA_KEY_OFF = 3;
+}
+
+// The Aria key held with Shift or Command alone.
+enum ShortcutCombo {
+  SHORTCUT_COMBO_UNSPECIFIED = 0;
+  SHORTCUT_COMBO_SHIFT = 1;
+  SHORTCUT_COMBO_COMMAND = 2;
+}
+
+// A key held with at least one modifier. A chord is registered rather than
+// watched, so unlike AriaKey it needs no Accessibility grant.
+message Chord {
+  // The platform virtual key code.
+  uint32 key_code = 1;
+  bool control = 2;
+  bool option = 3;
+  bool shift = 4;
+  bool command = 5;
+}
+
+// One of the Mac app's shortcuts. No binding means off, and a patch that
+// sets it with no binding turns it off.
+message Shortcut {
+  oneof binding {
+    Chord chord = 1;
+    ShortcutCombo combo = 2;
+  }
+}

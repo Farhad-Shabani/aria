@@ -22,7 +22,7 @@ use crate::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
     DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
-    Transcribed,
+    Rewriting, Transcribed,
 };
 use crate::rpc::RpcErrorCode;
 use crate::transcription::{
@@ -122,6 +122,7 @@ where
         language: &Language,
         own_voice_only: bool,
         project: Option<&Directory>,
+        rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         self.prepared(project, |vocabulary| {
@@ -130,6 +131,7 @@ where
                 language,
                 own_voice_only,
                 Some(vocabulary),
+                rewriting,
                 self.engine,
                 cancel,
             )
@@ -154,7 +156,7 @@ impl From<&DictationInitializationError> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DictationInitializationError {
-    #[error("failed to load dictation configuration")]
+    #[error("failed to resolve the dictation settings")]
     Config(#[source] ConfigError),
 
     #[error("failed to prepare dictation cleanup")]
@@ -403,8 +405,6 @@ pub(super) fn build_dictation(
                 capture,
                 transcription,
                 dictation_timeouts: timeouts,
-                cleanup: _,
-                backtrack: _,
                 cleanup_llm: _,
             },
         wake,
@@ -474,9 +474,10 @@ pub(super) fn transcribe_retry(
         .rewriting(rewrites);
     pipeline.transcribe(
         recording,
-        &settings.recognition_language,
+        &settings.stt_language,
         settings.own_voice_only,
         Some(snapshot.matcher.as_ref()),
+        settings.rewriting,
         engine,
         cancel,
     )
@@ -528,7 +529,7 @@ mod tests {
         let endpoint = server.endpoint().to_owned();
         let root = home.path().to_owned();
         let (built, _vocabulary) = tokio::task::spawn_blocking(move || {
-            let environment = crate::config::Environment::in_home(root.clone());
+            let home_dir = root.clone();
             let audio = root.join("speech.wav");
             std::fs::copy(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -544,7 +545,9 @@ mod tests {
                     crate::vocabulary::extract::LocalExtractor,
                 ),
             );
-            let mut dictation = DictationConfig::load(&environment).unwrap();
+            let mut dictation =
+                DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir)
+                    .unwrap();
             dictation.transcription = TranscriptionBackend::Server { endpoint };
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
@@ -553,7 +556,10 @@ mod tests {
             let built = build_dictation(
                 DictationSetup {
                     dictation,
-                    speaker: SpeakerConfig::load(&environment).unwrap(),
+                    speaker: SpeakerConfig::load(
+                        &crate::settings::SettingsFile::default().speaker,
+                        &home_dir,
+                    ),
                     vocabulary: Arc::clone(&vocabulary.0),
                     wake: WakeConfig::Disabled,
                 },
@@ -571,7 +577,7 @@ mod tests {
         assert_eq!(built.engine, crate::config::backend::SERVER);
         let coordinator = Arc::new(built.coordinator);
         let dictate = move || {
-            let mut settings = crate::preferences::UserPreferences::default().resolve_dictation(
+            let mut settings = crate::settings::Settings::default().resolve_dictation(
                 crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
                 None,
             );
@@ -610,8 +616,9 @@ mod tests {
     #[test]
     fn capture_is_validated_before_the_model_loads() {
         let home = tempfile::tempdir().unwrap();
-        let environment = crate::config::Environment::in_home(home.path().to_owned());
-        let mut config = DictationConfig::load(&environment).unwrap();
+        let home_dir = home.path().to_owned();
+        let mut config =
+            DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir).unwrap();
         config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
@@ -630,7 +637,10 @@ mod tests {
         let setup = DictationSetup {
             dictation: config,
             wake: WakeConfig::Disabled,
-            speaker: SpeakerConfig::load(&environment).unwrap(),
+            speaker: SpeakerConfig::load(
+                &crate::settings::SettingsFile::default().speaker,
+                &home_dir,
+            ),
             vocabulary,
         };
 
@@ -655,13 +665,15 @@ mod tests {
         let prompts = home.path().join(".aria/prompts");
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("cleanup.md"), [0xff]).unwrap();
-        let environment = crate::config::Environment::in_home(home.path().to_owned());
-        let mut config = DictationConfig::load(&environment).unwrap();
+        let home_dir = home.path().to_owned();
+        let mut config =
+            DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir).unwrap();
         config.cleanup_llm = Some(crate::config::LlmCleanupConfig {
             endpoint: "http://127.0.0.1:8080/v1/chat/completions".into(),
             model: "test".into(),
         });
-        let speaker = SpeakerConfig::load(&environment).unwrap();
+        let speaker =
+            SpeakerConfig::load(&crate::settings::SettingsFile::default().speaker, &home_dir);
         let (vocabulary, _worker) = VocabularyRuntime::new(
             home.path().join("vocabulary"),
             None,
@@ -672,7 +684,7 @@ mod tests {
         );
         let audio = crate::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
-        let settings = crate::preferences::UserPreferences::default().resolve_dictation(
+        let settings = crate::settings::Settings::default().resolve_dictation(
             crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
             None,
         );

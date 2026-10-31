@@ -16,6 +16,6 @@
 - [Voice profiles (Mac)](./speaker-verification.md)
 - [System audio (Mac)](./listen.md)
 - [Raycast and tmux](./integrations.md)
-- [Settings](./configuration.md)
+- [Settings](./settings.md)
 - [Privacy](./privacy.md)
 - [Troubleshooting](./troubleshooting.md)

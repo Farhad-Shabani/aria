@@ -2,7 +2,7 @@
 
 # Read text aloud
 
-Use `aria say` to play text through your configured voice. Complete
+Use `aria say` to play text through your chosen voice. Complete
 [setup](./installation.md#setup) first. On Linux, keep the registered
 background service running.
 
@@ -49,7 +49,7 @@ aria say \
 ```
 
 These options affect one utterance. To change the default rate, use
-[Settings](./configuration.md#voice-speed).
+[Settings](./settings.md#voice-speed).
 
 ## System voice
 
@@ -63,22 +63,23 @@ Kokoro generates speech locally from a model and voices file. Run `aria setup`
 and select Kokoro to download both. It uses English text processing.
 
 If you already have the model and voices file, edit the existing `tts` section
-in `~/.aria/config.yaml`, using their actual paths. Setup's default paths are:
+in `~/.aria/settings.toml`, using their actual paths. Setup's default paths are:
 
-```yaml
-tts:
-  backend: kokoro
-  model: ~/.aria/models/kokoro/kokoro.onnx
-  voices: ~/.aria/models/kokoro/voices.bin
-  voice: af_heart
-  rate: 1.0
+```toml
+[tts]
+backend = "kokoro"
+
+[tts.kokoro]
+model = "~/.aria/models/kokoro/kokoro.onnx"
+voices = "~/.aria/models/kokoro/voices.bin"
+voice = "af_heart"
 ```
 
-[Restart the service](./configuration.md#apply-changes), then try the first
+[Restart the service](./settings.md#apply-changes), then try the first
 sentence again. Voice names must exist in the downloaded voices file.
 
-If you want the system voice when Kokoro cannot initialize, add
-`fallback: system` to that `tts` section. Fallback is off by default and applies
-when the engine or output cannot start.
+If you want the system voice when Kokoro can't initialize, add
+`fallback = "system"` to the `[tts]` section. Fallback is off by default and
+applies when the engine or output can't start.
 
 If nothing plays, follow [speech troubleshooting](./troubleshooting.md#no-speech-output).

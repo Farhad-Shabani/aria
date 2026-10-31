@@ -1,6 +1,6 @@
 //! `aria setup`: the guided first run. `inspect` looks at what this
 //! machine has. `apply` fetches the models the chosen engines need plus the
-//! ones `aria listen` uses, writes the engines to config.yaml, and installs
+//! ones `aria listen` uses, writes the engines to settings.toml, and installs
 //! the daemon as a service. Neither asks anything. `run` is the terminal front
 //! over them; Aria.app drives the same two through `aria setup inspect` and
 //! `aria setup apply`. Every answer defaults to what is configured, and
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::config::{self, AssistantId, ConfigError, FileConfig, ServerEndpoint};
+use crate::config::{self, ServerEndpoint};
 use crate::daemon::{
     DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
     StopMode, guided,
@@ -29,6 +29,7 @@ use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
 use crate::runtime::PreparedRuntimePaths;
+use crate::settings::{SettingsError, SettingsFile};
 use crate::speech::SpeechRequest;
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
@@ -36,18 +37,18 @@ use aria_kit::backend::ModelError;
 
 mod assets;
 mod backends;
-mod config_file;
 mod download;
 pub mod models;
 mod prompt;
+mod settings_file;
 pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
 pub use backends::{Availability, Choice};
 use backends::{Backend, Host, Stt, Tts, choices, stt_choices};
-pub use config_file::{ConfigWrite, Existing, Selections};
 use models::OnDisk;
 use prompt::Prompts;
+pub use settings_file::{Existing, Selections, SettingsWrite};
 
 /// Where setup installs the wake-word models, inside the models directory.
 const WAKEWORD_DIR: &str = "wakeword";
@@ -78,12 +79,12 @@ pub struct Options {
 
 /// What this machine has, before anything is asked or changed.
 pub struct Inspection {
-    pub config_path: PathBuf,
+    /// Where the settings live: `~/.aria/settings.toml`.
+    pub settings_path: PathBuf,
     pub macos: bool,
     pub existing: Existing,
     pub stt: Vec<Choice>,
     pub tts: Vec<Choice>,
-    pub chat: Vec<Choice>,
     pub models: Vec<ModelState>,
     pub wakeword_installed: bool,
     pub service: Status,
@@ -145,7 +146,7 @@ pub struct ModelState {
     /// Whether it is fetched when nobody answers.
     pub default: bool,
     pub on_disk: OnDisk,
-    /// Config points its engine at files elsewhere, so setup has nothing to
+    /// Settings point its engine at files elsewhere, so setup has nothing to
     /// fetch.
     pub external: bool,
     asset: &'static Asset,
@@ -154,7 +155,7 @@ pub struct ModelState {
 /// One thing a run still has to put in place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Missing {
-    Config,
+    Settings,
     Wakeword,
     Model(&'static str),
     Service,
@@ -165,7 +166,7 @@ pub enum Missing {
 /// The steps `apply` announces as it starts them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    Config,
+    Settings,
     Wakeword,
     Models,
     Service,
@@ -191,7 +192,7 @@ pub struct ApplyOptions {
 
 pub struct Summary {
     pub selections: Selections,
-    pub config: ConfigWrite,
+    pub settings: SettingsWrite,
     /// Where the wake-word models went; `None` when none ship beside the binary.
     pub wakeword: Option<PathBuf>,
     pub models: Vec<(&'static str, Outcome)>,
@@ -263,26 +264,15 @@ pub enum Grant {
 /// between the check and the removal.
 pub fn forget_server() -> Result<Forgotten, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
-    forget_server_at(&home, &config_path()?)
+    forget_server_at(&home)
 }
 
-fn forget_server_at(home: &Path, config_path: &Path) -> Result<Forgotten, SetupError> {
-    let _lock = lock_setup(config_path)?;
-    if config::transcription_engine(&config_file::read(config_path)?) == config::backend::SERVER {
+fn forget_server_at(home: &Path) -> Result<Forgotten, SetupError> {
+    let _lock = lock_setup(&crate::settings::default_path(home))?;
+    if config::transcription_engine(&settings_file::read(home)?.stt) == config::backend::SERVER {
         return Err(SetupError::ServerInUse);
     }
     crate::daemon::forget_paired_server(home).map_err(SetupError::Forget)
-}
-
-pub fn set_phone_pairing(enabled: bool) -> Result<ConfigWrite, SetupError> {
-    config_file::set_phone_pairing(&config_path()?, enabled)
-}
-
-fn config_path() -> Result<PathBuf, SetupError> {
-    config::default_path().map_err(|source| SetupError::Config {
-        path: PathBuf::from("~/.aria/config.yaml"),
-        source,
-    })
 }
 
 pub fn inspect() -> Result<Inspection, SetupError> {
@@ -293,32 +283,31 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     let exe = std::env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(SetupError::CurrentExe)?;
-    let config_path = config_path()?;
+    let settings_path = crate::settings::default_path(&home);
     let host = Host::probe();
-    let file = config_file::read(&config_path)?;
+    let file = settings_file::read(&home)?;
     let pairing = Pairing::read(&home);
     let existing = Existing::of(&file);
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.status())
         .map_err(SetupError::Service)?;
-    let grant = if existing.hotkey == Some(true) {
+    let grant = if existing.aria_key == Some(true) {
         hotkey_grant(&service.socket, Duration::ZERO)
     } else {
         Grant::NotNeeded
     };
     Ok(Inspection {
-        config_path,
+        settings_path,
         macos: host.macos,
-        stt: stt_choices(&file, matches!(pairing, Pairing::Paired(_)), &host),
+        stt: stt_choices(&file.stt, matches!(pairing, Pairing::Paired(_)), &host),
         tts: choices::<Tts>(existing.tts.as_deref(), &host),
-        chat: choices::<AssistantId>(existing.chat.as_deref(), &host),
-        models: model_states(&home, &file),
+        models: model_states(&home, &file)?,
         wakeword_installed: WAKEWORD_FILES
             .iter()
             .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
-        configured_server: file.transcription.server.clone(),
+        configured_server: file.stt.server.clone(),
         existing,
         service,
         grant,
@@ -348,7 +337,7 @@ impl Inspection {
         })
     }
 
-    /// `aria remote pair` replaces the pin but not the config's copy of its
+    /// `aria remote pair` replaces the pin but not the settings file's copy of its
     /// address.
     fn server_address_is_stale(&self) -> bool {
         let Pairing::Paired(paired) = &self.pairing else {
@@ -374,11 +363,10 @@ impl Inspection {
         let mut missing = Vec::new();
         let configured = existing.stt.is_some()
             && existing.tts.is_some()
-            && existing.chat.is_some()
             && existing.wake.is_some()
-            && existing.hotkey.is_some();
+            && existing.aria_key.is_some();
         if !configured || self.server_address_is_stale() {
-            missing.push(Missing::Config);
+            missing.push(Missing::Settings);
         }
         if self.wakeword_bundled && !self.wakeword_installed {
             missing.push(Missing::Wakeword);
@@ -400,7 +388,7 @@ impl Inspection {
             missing.push(Missing::Service);
         }
         let serving = matches!(self.service.daemon, DaemonState::Ready { .. });
-        if existing.hotkey == Some(true) && serving && self.grant != Grant::Armed {
+        if existing.aria_key == Some(true) && serving && self.grant != Grant::Armed {
             missing.push(Missing::Grant);
         }
         missing
@@ -409,9 +397,9 @@ impl Inspection {
 
 /// Every model setup knows, in the order it offers them: what the speech
 /// engines want first, then what every install wants.
-fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
+fn model_states(home: &Path, file: &SettingsFile) -> Result<Vec<ModelState>, SetupError> {
     let models_dir = config::models_dir(home);
-    let loaded = config::loaded_models(file, home).models;
+    let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
     // Only the asset's own section counts. Listen's custom moonshine path
     // does not change where transcription looks.
     let external = |asset: &Asset, engine: Option<&str>, section: &str| {
@@ -430,7 +418,7 @@ fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
                 .map(move |asset| (asset, Some(backend.key()), section))
         })
     }
-    by_engine::<Stt>("transcription")
+    Ok(by_engine::<Stt>("stt")
         .chain(by_engine::<Tts>("tts"))
         .chain(EXTRAS.iter().map(|asset| (asset, None, "speaker")))
         .map(|(asset, engine, section)| ModelState {
@@ -443,7 +431,7 @@ fn model_states(home: &Path, file: &FileConfig) -> Vec<ModelState> {
             external: external(asset, engine, section),
             asset,
         })
-        .collect()
+        .collect())
 }
 
 impl Selections {
@@ -460,9 +448,8 @@ impl Selections {
         Self {
             stt: configured(&existing.stt, &inspection.stt),
             tts: configured(&existing.tts, &inspection.tts),
-            chat: configured(&existing.chat, &inspection.chat),
             wake: existing.wake.unwrap_or(false),
-            hotkey: inspection.macos && existing.hotkey.unwrap_or(true),
+            aria_key: inspection.macos && existing.aria_key.unwrap_or(true),
         }
     }
 }
@@ -475,7 +462,7 @@ fn default_choice(choices: &[Choice]) -> &Choice {
 }
 
 /// Installs the wake-word models, fetches the accepted downloads, writes the
-/// config, registers the service, and waits for the hotkey to arm.
+/// settings file, registers the service, and waits for the hotkey to arm.
 /// `observe` gets each step and download as it happens; an error from it
 /// ends the run at that point, a download included. The voice and the
 /// test press are left for the caller: each needs a person.
@@ -494,16 +481,16 @@ pub fn apply(
             name: unknown.clone(),
         });
     }
-    let _lock = lock_setup(&inspection.config_path)?;
+    let _lock = lock_setup(&inspection.settings_path)?;
     // Read again under the lock: a forget may have run since inspection.
     let pairing = Pairing::read(&inspection.home);
     let endpoint = pairing.endpoint_for(selections, &inspection.home)?;
 
-    observe(SetupEvent::Started(Step::Config))?;
-    // Staged here so a bad config fails before any download. Staged again
-    // after the models, from a fresh read, so a failed download leaves the
-    // config untouched and the write keeps edits made meanwhile.
-    selections.prepare(&inspection.config_path, endpoint)?;
+    observe(SetupEvent::Started(Step::Settings))?;
+    // Checked here so a refused write fails before any download. Written
+    // after the models, so a failed download leaves the file untouched and
+    // the write keeps edits made meanwhile.
+    selections.check(&inspection.home, endpoint)?;
 
     let models_dir = config::models_dir(&inspection.home);
     observe(SetupEvent::Started(Step::Wakeword))?;
@@ -534,9 +521,7 @@ pub fn apply(
         };
         models.push((model.name, outcome));
     }
-    let config = selections
-        .prepare(&inspection.config_path, endpoint)?
-        .commit()?;
+    let settings = selections.write(&inspection.home, endpoint)?;
 
     observe(SetupEvent::Started(Step::Service))?;
     let legacy_agent =
@@ -544,7 +529,7 @@ pub fn apply(
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.install())
         .map_err(SetupError::Service)?;
-    let grant = if selections.hotkey {
+    let grant = if selections.aria_key {
         hotkey_grant(&service.socket, GRANT_WAIT)
     } else {
         Grant::NotNeeded
@@ -552,7 +537,7 @@ pub fn apply(
 
     Ok(Summary {
         selections: selections.clone(),
-        config,
+        settings,
         wakeword,
         models,
         legacy_agent,
@@ -580,7 +565,7 @@ pub fn run(
     prompts.heading("aria setup")?;
     prompts.note(&format!(
         "Answers are written to {}; Enter keeps the current one.",
-        inspection.config_path.display()
+        inspection.settings_path.display()
     ))?;
     let selections = if options.yes {
         Selections::defaults(&inspection)
@@ -638,7 +623,6 @@ fn ask_selections(
     Ok(Selections {
         stt: prompts.pick(Stt::TITLE, &inspection.stt)?.key.to_owned(),
         tts: prompts.pick(Tts::TITLE, &inspection.tts)?.key.to_owned(),
-        chat: Selections::defaults(inspection).chat,
         // With no model to load, a yes would leave the daemon unable to start
         // dictation. A hand-written choice stays as it is.
         wake: if inspection.wakeword_bundled || inspection.wakeword_installed {
@@ -646,10 +630,10 @@ fn ask_selections(
         } else {
             existing.wake.unwrap_or(false)
         },
-        hotkey: inspection.macos
+        aria_key: inspection.macos
             && prompts.confirm(
                 "Start dictation with a hotkey (needs Accessibility access)?",
-                existing.hotkey.unwrap_or(true),
+                existing.aria_key.unwrap_or(true),
             )?,
     })
 }
@@ -702,7 +686,7 @@ fn live_daemon(
 
 /// Asks for a voice and records it through the daemon that was just
 /// installed. Every way this can go wrong is an answer, not an error —
-/// setup's job is the config, and it is already written.
+/// setup's job is the settings file, and it is already written.
 fn enroll_voice(
     prompts: &mut Prompts<'_, impl BufRead, impl Write>,
     session: &DaemonSession,
@@ -814,9 +798,9 @@ pub fn hotkey_grant(socket: &Path, wait: Duration) -> Grant {
 /// none ship beside the binary. A file already there is left alone: the
 /// classifier path is the one a user retrains, and a rerun of setup must
 /// not overwrite their model.
-/// Two runs would race on the config and the service.
-fn lock_setup(config_path: &Path) -> Result<fs::File, SetupError> {
-    let path = config_path.with_file_name("setup.lock");
+/// Two runs would race on the settings file and the service.
+fn lock_setup(settings_path: &Path) -> Result<fs::File, SetupError> {
+    let path = settings_path.with_file_name("setup.lock");
     let io_error = |source| SetupError::Io {
         action: "lock",
         path: path.clone(),
@@ -916,14 +900,14 @@ pub enum SetupError {
     #[error(transparent)]
     Forget(crate::daemon::RemoteClientError),
 
-    #[error("{name} is in use by `{section}` in config.yaml; change that section first")]
+    #[error("{name} is in use by `{section}` in settings.toml; change that table first")]
     ModelInUse {
         name: &'static str,
         section: &'static str,
     },
 
-    #[error("`{section}` in config.yaml does not load; fix it first (`aria doctor` says why)")]
-    ConfigUnresolved { section: &'static str },
+    #[error("settings.toml does not load")]
+    Config(#[source] config::ConfigError),
 
     #[error("{name} is not on disk")]
     ModelNotInstalled { name: &'static str },
@@ -982,19 +966,20 @@ pub enum SetupError {
     #[error(transparent)]
     Service(SupervisorError),
 
-    #[error("failed to read {}", path.display())]
-    Config {
-        path: PathBuf,
-        #[source]
-        source: ConfigError,
-    },
+    #[error("failed to read the settings")]
+    Settings(#[source] SettingsError),
 
-    #[error("failed to write {}", path.display())]
-    ConfigWrite {
-        path: PathBuf,
-        #[source]
-        source: serde_saphyr::ser::Error,
-    },
+    #[error("settings.toml refused the change")]
+    SettingsRefused(#[source] SettingsError),
+
+    #[error("settings.toml kept changing; run setup again")]
+    SettingsChanging,
+}
+
+impl From<SettingsError> for SetupError {
+    fn from(error: SettingsError) -> Self {
+        Self::Settings(error)
+    }
 }
 
 #[cfg(test)]
@@ -1010,22 +995,21 @@ mod tests {
     /// daemon loads them.
     #[test]
     fn shared_models_land_where_the_daemon_loads_them() {
-        use crate::config::{
-            DaemonConfig, Environment, SpeakerConfig, WakeConfig, WakeWordOverride,
-        };
+        use crate::config::{DaemonConfig, SpeakerConfig, WakeConfig, WakeWordOverride};
 
         let home = tempfile::tempdir().unwrap();
-        let config = home.path().join(".aria/config.yaml");
-        fs::create_dir_all(config.parent().unwrap()).unwrap();
-        fs::write(&config, "wake: {enabled: true}\n").unwrap();
-        let environment = Environment::in_home(home.path().to_path_buf());
+        let settings_path = crate::settings::default_path(home.path());
+        fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+        fs::write(&settings_path, "[wake]\nenabled = true\n").unwrap();
+        let home_dir = home.path().to_path_buf();
+        let settings = crate::settings::load(&home_dir).unwrap();
         let extras: Vec<PathBuf> = EXTRAS
             .iter()
             .flat_map(Asset::files)
             .map(|(relative, _)| config::models_dir(home.path()).join(relative))
             .collect();
 
-        let speaker = SpeakerConfig::load(&environment).unwrap();
+        let speaker = SpeakerConfig::load(&settings.speaker, &home_dir);
         assert!(
             extras.contains(&speaker.model),
             "{}",
@@ -1033,9 +1017,9 @@ mod tests {
         );
         assert!(extras.contains(&speaker.segmentation_model));
 
-        let daemon = DaemonConfig::load(&environment, WakeWordOverride::Inherit).unwrap();
+        let daemon = DaemonConfig::load(&settings, &home_dir, WakeWordOverride::Inherit).unwrap();
         let WakeConfig::Enabled { classifier, .. } = daemon.wake else {
-            panic!("the config enables the wake word");
+            panic!("the settings enable the wake word");
         };
         assert_eq!(
             classifier.parent(),
@@ -1150,12 +1134,11 @@ mod tests {
         let host = bare_host();
         let home = PathBuf::from("/nonexistent");
         Inspection {
-            config_path: PathBuf::from("/nonexistent/config.yaml"),
+            settings_path: PathBuf::from("/nonexistent/settings.toml"),
             macos: true,
             stt: choices::<Stt>(existing.stt.as_deref(), &host),
             tts: choices::<Tts>(existing.tts.as_deref(), &host),
-            chat: choices::<AssistantId>(existing.chat.as_deref(), &host),
-            models: model_states(&home, &FileConfig::default()),
+            models: model_states(&home, &SettingsFile::default()).unwrap(),
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
@@ -1176,8 +1159,9 @@ mod tests {
 
     fn writable_inspection(home: &Path) -> Inspection {
         let mut inspection = inspection(configured());
-        inspection.config_path = home.join(".aria/config.yaml");
+        inspection.settings_path = crate::settings::default_path(home);
         inspection.home = home.to_path_buf();
+        fs::create_dir_all(home.join(".aria")).unwrap();
         inspection
     }
 
@@ -1192,9 +1176,8 @@ mod tests {
         Existing {
             stt: Some("whisper".to_owned()),
             tts: Some("kokoro".to_owned()),
-            chat: Some("codex".to_owned()),
             wake: Some(false),
-            hotkey: Some(true),
+            aria_key: Some(true),
         }
     }
 
@@ -1232,7 +1215,7 @@ mod tests {
         assert_eq!(defaults.stt, config::backend::DEFAULT);
         assert_eq!(defaults.tts, config::tts_backend::DEFAULT);
         assert!(!defaults.wake);
-        assert!(defaults.hotkey);
+        assert!(defaults.aria_key);
     }
 
     #[test]
@@ -1242,11 +1225,11 @@ mod tests {
             tts: Some("system".to_owned()),
             ..configured()
         });
-        let file = serde_saphyr::from_str(
-            "transcription: {backend: server, server: https://example.test:9851}",
+        let file: SettingsFile = toml_edit::de::from_str(
+            "[stt]\nbackend = \"server\"\nserver = \"https://example.test:9851\"\n",
         )
         .unwrap();
-        inspection.models = model_states(&inspection.home, &file);
+        inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
         assert_eq!(selections.stt, "server");
         assert_eq!(
@@ -1303,7 +1286,7 @@ mod tests {
 
         assert_eq!(
             inspection.missing(),
-            [Missing::Config, Missing::Wakeword, Missing::Service]
+            [Missing::Settings, Missing::Wakeword, Missing::Service]
         );
     }
 
@@ -1324,7 +1307,7 @@ mod tests {
         );
     }
 
-    /// A model config points elsewhere is the user's: setup neither fetches it
+    /// A model the settings point elsewhere is the user's: setup neither fetches it
     /// nor calls it missing. Kokoro still needs its default voices, so it
     /// stays wanted.
     #[test]
@@ -1333,12 +1316,12 @@ mod tests {
             stt: Some("parakeet".to_owned()),
             ..configured()
         });
-        let file = serde_saphyr::from_str(
-            "transcription: {backend: parakeet, model: /elsewhere/tdt}\n\
-             tts: {backend: kokoro, model: /elsewhere/kokoro.onnx}",
+        let file: SettingsFile = toml_edit::de::from_str(
+            "[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n\
+             [tts]\nbackend = \"kokoro\"\n[tts.kokoro]\nmodel = \"/elsewhere/kokoro.onnx\"\n",
         )
         .unwrap();
-        inspection.models = model_states(&inspection.home, &file);
+        inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
         let wanted: Vec<_> = inspection
             .downloads_for(&selections)
@@ -1359,12 +1342,12 @@ mod tests {
             stt: Some("moonshine".to_owned()),
             ..configured()
         });
-        let file = serde_saphyr::from_str(
-            "transcription: {backend: whisper}\n\
-             listen: {backend: moonshine, model: /elsewhere/moonshine}",
+        let file: SettingsFile = toml_edit::de::from_str(
+            "[stt]\nbackend = \"whisper\"\n\
+             [listen]\nbackend = \"moonshine\"\nmodel = \"/elsewhere/moonshine\"\n",
         )
         .unwrap();
-        inspection.models = model_states(&inspection.home, &file);
+        inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
 
         let wanted: Vec<_> = inspection
@@ -1374,27 +1357,6 @@ mod tests {
             .collect();
 
         assert!(wanted.contains(&"moonshine"), "{wanted:?}");
-    }
-
-    #[test]
-    fn setup_preserves_the_assistant_without_offering_a_second_picker() {
-        let inspection = inspection(Existing {
-            chat: Some("codex".to_owned()),
-            ..Existing::default()
-        });
-        let mut input = &b"\n\nn\nn\n"[..];
-        let mut output = Vec::new();
-        let mut prompts = Prompts::new(&mut input, &mut output, false, true, false);
-        let selections = ask_selections(&mut prompts, &inspection).unwrap();
-
-        assert_eq!(selections.chat, "codex");
-        assert!(!selections.wake);
-        assert!(!selections.hotkey);
-        assert!(
-            !String::from_utf8(output)
-                .unwrap()
-                .contains(AssistantId::TITLE)
-        );
     }
 
     #[test]
@@ -1412,7 +1374,7 @@ mod tests {
         inspection.wakeword_bundled = false;
         let selections = ask(&inspection);
         assert!(!selections.wake);
-        assert!(selections.hotkey);
+        assert!(selections.aria_key);
     }
 
     /// Setup cannot install models that don't ship, so it doesn't owe them.
@@ -1497,37 +1459,37 @@ mod tests {
         let mut steps = Vec::new();
         let _ = apply(&selections, &no_downloads(), &inspection, &mut |event| {
             steps.push(event);
-            Err(SetupError::Invalid("stop after the config check"))
+            Err(SetupError::Invalid("stop after the settings check"))
         });
-        assert_eq!(steps, [SetupEvent::Started(Step::Config)]);
+        assert_eq!(steps, [SetupEvent::Started(Step::Settings)]);
     }
 
     #[test]
     fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
         let home = tempfile::tempdir().unwrap();
-        let config = home.path().join(".aria/config.yaml");
+        let config = crate::settings::default_path(home.path());
         crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
 
         let running = lock_setup(&config).unwrap();
         assert!(matches!(
-            forget_server_at(home.path(), &config),
+            forget_server_at(home.path()),
             Err(SetupError::Busy)
         ));
         drop(running);
 
         fs::write(
             &config,
-            "transcription: {backend: server, server: https://box.test:9851}\n",
+            "[stt]\nbackend = \"server\"\nserver = \"https://box.test:9851\"\n",
         )
         .unwrap();
         assert!(matches!(
-            forget_server_at(home.path(), &config),
+            forget_server_at(home.path()),
             Err(SetupError::ServerInUse)
         ));
 
-        fs::write(&config, "transcription: {backend: whisper}\n").unwrap();
+        fs::write(&config, "[stt]\nbackend = \"whisper\"\n").unwrap();
         assert!(matches!(
-            forget_server_at(home.path(), &config),
+            forget_server_at(home.path()),
             Ok(Forgotten::Server { .. })
         ));
     }
@@ -1536,7 +1498,7 @@ mod tests {
     fn a_second_apply_is_refused_while_one_runs() {
         let home = tempfile::tempdir().unwrap();
         let inspection = writable_inspection(home.path());
-        let _running = lock_setup(&inspection.config_path).unwrap();
+        let _running = lock_setup(&inspection.settings_path).unwrap();
 
         let result = apply(
             &Selections::defaults(&inspection),
@@ -1556,10 +1518,10 @@ mod tests {
         inspection.pairing = paired("https://new.test:9851");
 
         inspection.configured_server = Some("https://old.test:9851".to_owned());
-        assert!(inspection.missing().contains(&Missing::Config));
+        assert!(inspection.missing().contains(&Missing::Settings));
 
         inspection.configured_server = Some("https://new.test:9851".to_owned());
-        assert!(!inspection.missing().contains(&Missing::Config));
+        assert!(!inspection.missing().contains(&Missing::Settings));
     }
 
     fn paired(endpoint: &str) -> Pairing {
@@ -1590,8 +1552,8 @@ mod tests {
         );
 
         assert!(matches!(result, Err(SetupError::Respond(_))));
-        assert_eq!(seen, [SetupEvent::Started(Step::Config)]);
-        assert!(!inspection.config_path.exists(), "nothing was written");
+        assert_eq!(seen, [SetupEvent::Started(Step::Settings)]);
+        assert!(!inspection.settings_path.exists(), "nothing was written");
     }
 
     #[test]
@@ -1613,8 +1575,8 @@ mod tests {
 
         assert!(matches!(result, Err(SetupError::Respond(_))));
         assert!(
-            !inspection.config_path.exists(),
-            "the config waits for the models"
+            !inspection.settings_path.exists(),
+            "the settings wait for the models"
         );
     }
 
@@ -1629,7 +1591,7 @@ mod tests {
             &inspection,
             &mut |event| match event {
                 SetupEvent::Started(Step::Models) => {
-                    fs::write(&inspection.config_path, "tts:\n  rate: 1.5\n").unwrap();
+                    fs::write(&inspection.settings_path, "[tts]\nrate = 1.5\n").unwrap();
                     Ok(())
                 }
                 SetupEvent::Started(Step::Service) => Err(SetupError::Respond(io::Error::from(
@@ -1640,8 +1602,8 @@ mod tests {
         );
 
         assert!(matches!(result, Err(SetupError::Respond(_))));
-        let text = fs::read_to_string(&inspection.config_path).unwrap();
-        assert!(text.contains("rate: 1.5"), "{text}");
+        let text = fs::read_to_string(&inspection.settings_path).unwrap();
+        assert!(text.contains("rate = 1.5"), "{text}");
     }
 
     #[test]

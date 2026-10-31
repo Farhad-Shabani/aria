@@ -9,7 +9,6 @@ use aria_kit::cancel::CancelToken;
 use super::client::{ADMIN_TIMEOUT, RemoteClientError, bounded, identity_error, rpc_error, run};
 use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
 use super::{Paths, tls};
-use crate::config::Environment;
 use crate::ipc::wire;
 use crate::primitives::local_socket::ExclusiveListener;
 use crate::primitives::private_document::PrivateDocument;
@@ -19,8 +18,8 @@ use crate::primitives::private_fs::prepare_directory;
 /// secret never appears on a command line.
 pub fn remote_pair(input: impl std::io::Read) -> Result<String, RemoteClientError> {
     let invitation = read_invitation(input)?;
-    let environment = Environment::capture().map_err(RemoteClientError::Config)?;
-    pair_at(environment.home(), &invitation)
+    let home = crate::config::home_directory().map_err(RemoteClientError::Config)?;
+    pair_at(&home, &invitation)
 }
 
 fn read_invitation(input: impl std::io::Read) -> Result<String, RemoteClientError> {

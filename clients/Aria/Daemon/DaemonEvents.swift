@@ -18,7 +18,9 @@ final class DaemonEvents {
     private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
     private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
     private var levelHandlers: [(Float) -> Void] = []
-    private var hotkeyHandlers: [(Aria_Daemon_V1_HotkeyCombo) -> Void] = []
+    private var hotkeyHandlers: [(Aria_Daemon_V1_ShortcutCombo) -> Void] = []
+    private var settingsHandlers: [(Aria_Daemon_V1_SettingsStatus?) -> Void] = []
+    private var streamOpenedHandlers: [() -> Void] = []
 
     /// Called with `nil` whenever the stream is not carrying events.
     func onDictation(_ handle: @escaping (Aria_Daemon_V1_DictationEvent?) -> Void) {
@@ -55,8 +57,19 @@ final class DaemonEvents {
 
     /// Called for every Aria key combo the daemon reads. A combo is over the
     /// moment it arrives, so a lost stream leaves nothing to clear.
-    func onHotkey(_ handle: @escaping (Aria_Daemon_V1_HotkeyCombo) -> Void) {
+    func onHotkey(_ handle: @escaping (Aria_Daemon_V1_ShortcutCombo) -> Void) {
         hotkeyHandlers.append(handle)
+    }
+
+    /// Called whenever the settings status moves, and with `nil` whenever
+    /// the stream is not carrying events.
+    func onSettings(_ handle: @escaping (Aria_Daemon_V1_SettingsStatus?) -> Void) {
+        settingsHandlers.append(handle)
+    }
+
+    /// Called each time the stream connects. It doesn't replay what it missed.
+    func onStreamOpened(_ handle: @escaping () -> Void) {
+        streamOpenedHandlers.append(handle)
     }
 
     private static let retryDelay = Duration.seconds(2)
@@ -75,6 +88,7 @@ final class DaemonEvents {
                 self?.publish(speaker: nil)
                 self?.publish(caption: nil)
                 self?.publish(ghost: nil)
+                self?.publish(settings: nil)
                 try? await Task.sleep(for: Self.retryDelay)
             }
         }
@@ -100,11 +114,15 @@ final class DaemonEvents {
         for handler in ghostHandlers { handler(ghost) }
     }
 
+    private func publish(settings: Aria_Daemon_V1_SettingsStatus?) {
+        for handler in settingsHandlers { handler(settings) }
+    }
+
     private func publish(level: Float) {
         for handler in levelHandlers { handler(level) }
     }
 
-    private func publish(hotkey: Aria_Daemon_V1_HotkeyCombo) {
+    private func publish(hotkey: Aria_Daemon_V1_ShortcutCombo) {
         for handler in hotkeyHandlers { handler(hotkey) }
     }
 
@@ -113,7 +131,10 @@ final class DaemonEvents {
             try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
                 let events = Aria_Daemon_V1_EventsService.Client(wrapping: client)
                 try await events.subscribe(request: ClientRequest(message: .init())) { response in
-                    await MainActor.run { self.lastFailure = nil }
+                    await MainActor.run {
+                        self.lastFailure = nil
+                        for handler in self.streamOpenedHandlers { handler() }
+                    }
                     for try await event in response.messages {
                         switch event.payload {
                         case .dictation(let dictation):
@@ -135,6 +156,8 @@ final class DaemonEvents {
                             await MainActor.run { self.publish(speaker: speaker) }
                         case .hotkey(let hotkey):
                             await MainActor.run { self.publish(hotkey: hotkey.combo) }
+                        case .settings(let settings):
+                            await MainActor.run { self.publish(settings: settings) }
                         default:
                             continue
                         }

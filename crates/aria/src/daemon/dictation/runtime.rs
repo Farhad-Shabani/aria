@@ -18,9 +18,10 @@ use crate::dictation::{
 use crate::event::EventEmitter;
 use crate::history::{HistoryEntry, HistoryError, RetryOptions};
 use crate::microphone::Gate;
-use crate::preferences::{PreferenceStore, PreferenceStoreError};
 use crate::primitives::lazy::Lazy;
 use crate::rpc::RpcErrorCode;
+use crate::settings::SettingsCache;
+use crate::settings::{SettingsStore, StoreError};
 use crate::transcription::Language;
 
 use super::super::context::Context;
@@ -33,7 +34,7 @@ use super::assembly::{
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
 
-/// The engine a deferred runtime names before configuration is read. A retry
+/// The engine a deferred runtime names before settings are read. A retry
 /// that asks for it runs on the configured backend.
 const DEFERRED_ENGINE: &str = "local";
 
@@ -62,14 +63,14 @@ pub(in crate::daemon) struct Recorder {
 /// Whether the stored auto-stop may end a manual recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::daemon) enum AutoStopRule {
-    Preference,
+    Setting,
     /// A hold: its release is the stop.
     Off,
 }
 
 pub(in crate::daemon) struct DictationRuntime {
     emitter: EventEmitter<DaemonEvent>,
-    preferences: Arc<PreferenceStore>,
+    settings: Arc<SettingsStore>,
     coordinator: CoordinatorState,
     transcripts: Arc<TranscriptStore>,
     microphone: Arc<Gate>,
@@ -105,43 +106,46 @@ impl DictationRuntime {
     /// and a press that fails before the pipeline exists still has somewhere
     /// to announce it.
     ///
-    /// Configuration and the model are read when the coordinator is built, so
+    /// Settings and the model are read when the coordinator is built, so
     /// a fault in either reaches the press that triggered it and is announced.
     pub(in crate::daemon) fn deferred(
         context: &Context<'_>,
         subscriptions: Arc<Subscriptions>,
-        preferences: Arc<PreferenceStore>,
+        settings: Arc<SettingsStore>,
+        cache: Arc<SettingsCache>,
         transcripts: Arc<TranscriptStore>,
         microphone: Arc<Gate>,
         vocabulary: Arc<VocabularyRuntime>,
     ) -> Self {
         let spool_dir = context.paths.spool_dir().to_path_buf();
-        let config_environment = context.config_environment.clone();
-        let retry_environment = config_environment.clone();
+        let home = context.home.clone();
+        let retry_home = home.clone();
         let retry_vocabulary = Arc::clone(&vocabulary);
+        let retry_cache = Arc::clone(&cache);
         Self {
             retry: Lazy::new(move || {
+                let settings = retry_cache.effective();
                 Ok(RetrySetup {
-                    dictation: DictationConfig::load(&retry_environment)?,
-                    speaker: SpeakerConfig::load(&retry_environment)?,
+                    dictation: DictationConfig::load(&settings, &retry_home)?,
+                    speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
-                    home: retry_environment.home().to_path_buf(),
+                    home: retry_home.clone(),
                 })
             }),
             emitter: event_emitter(context, subscriptions),
             transcripts: Arc::clone(&transcripts),
             microphone: Arc::clone(&microphone),
-            preferences,
+            settings,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
-                    let config = DictationConfig::load(&config_environment)
+                    let settings = cache.effective();
+                    let config = DictationConfig::load(&settings, &home)
                         .map_err(DictationInitializationError::Config)?;
-                    let speaker = SpeakerConfig::load(&config_environment)
-                        .map_err(DictationInitializationError::Config)?;
+                    let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
                     // would have nothing to serve, so none is built whatever
-                    // the configuration says.
+                    // the settings say.
                     build_dictation(
                         DictationSetup {
                             dictation: config,
@@ -150,7 +154,7 @@ impl DictationRuntime {
                             vocabulary: Arc::clone(&vocabulary),
                         },
                         &spool_dir,
-                        config_environment.home(),
+                        &home,
                         Arc::clone(&transcripts),
                         ModelLoading::OnFirstUse,
                         Arc::clone(&microphone),
@@ -167,13 +171,13 @@ impl DictationRuntime {
     /// A runtime nobody listens to and no press can build; every call fails
     /// before it records.
     #[cfg(test)]
-    pub(in crate::daemon) fn detached(preferences: Arc<PreferenceStore>) -> Self {
+    pub(in crate::daemon) fn detached(settings: Arc<SettingsStore>) -> Self {
         Self {
             emitter: EventEmitter::unsubscribed(),
             transcripts: Arc::new(TranscriptStore::new()),
             microphone: Gate::new(),
             retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
-            preferences,
+            settings,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(|| {
                 Err(DictationInitializationError::Capture(
                     crate::audio::CaptureError::SourceGone,
@@ -198,7 +202,7 @@ impl DictationRuntime {
     pub(in crate::daemon) fn eager(
         context: &Context<'_>,
         subscriptions: Arc<Subscriptions>,
-        preferences: Arc<PreferenceStore>,
+        settings: Arc<SettingsStore>,
         transcripts: Arc<TranscriptStore>,
         setup: DictationSetup,
         microphone: Arc<Gate>,
@@ -206,7 +210,7 @@ impl DictationRuntime {
         let retry_dictation = setup.dictation.clone();
         let retry_speaker = setup.speaker.clone();
         let retry_vocabulary = Arc::clone(&setup.vocabulary);
-        let retry_home = context.config_environment.home().to_path_buf();
+        let retry_home = context.home.to_path_buf();
         let BuiltDictation {
             engine,
             coordinator,
@@ -216,14 +220,14 @@ impl DictationRuntime {
         } = build_dictation(
             setup,
             context.paths.spool_dir(),
-            context.config_environment.home(),
+            &context.home,
             Arc::clone(&transcripts),
             ModelLoading::Eager,
             Arc::clone(&microphone),
         )?;
         let runtime = Self {
             emitter: event_emitter(context, subscriptions),
-            preferences,
+            settings,
             coordinator: CoordinatorState::Ready(ReadyDictation {
                 coordinator,
                 engine,
@@ -321,14 +325,14 @@ impl DictationRuntime {
         &self,
         application: Option<crate::history::Application>,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.preferences
+        self.settings
             .snapshot()
             .map(|snapshot| {
                 snapshot
-                    .preferences
+                    .settings
                     .resolve_dictation(DictationRequest::new(StopMode::OnSilence), application)
             })
-            .map_err(DictationRuntimeError::Preferences)
+            .map_err(DictationRuntimeError::Settings)
     }
 
     pub(in crate::daemon) fn history(&self) -> History {
@@ -348,9 +352,10 @@ impl DictationRuntime {
         self.coordinator()?
             .transcribe(
                 recording,
-                &settings.recognition_language,
+                &settings.stt_language,
                 settings.own_voice_only,
                 settings.project.as_ref(),
+                settings.rewriting,
                 cancel,
             )
             .map_err(DictationRuntimeError::Execution)
@@ -390,8 +395,8 @@ impl DictationRuntime {
                     id,
                     retried.transcript.as_str(),
                     retried.engine,
-                    settings.recognition_language.as_str(),
-                    settings.history_audio_retention,
+                    settings.stt_language.as_str(),
+                    settings.history_keep_audio,
                 )?;
                 drop(lease);
                 recovered.retrying = false;
@@ -443,10 +448,10 @@ impl DictationRuntime {
             return Err(DictationRuntimeError::Execution(DictationError::Cancelled));
         }
         let snapshot = self
-            .preferences
+            .settings
             .snapshot()
-            .map_err(DictationRuntimeError::Preferences)?;
-        let events = self.operation_emitter(snapshot.preferences.mute_output, events);
+            .map_err(DictationRuntimeError::Settings)?;
+        let events = self.operation_emitter(snapshot.settings.mute_sound, events);
         let coordinator = match self.coordinator() {
             Ok(coordinator) => coordinator,
             Err(_) if cancellation.is_cancelled() => {
@@ -460,10 +465,10 @@ impl DictationRuntime {
         // Read once the coordinator is built, which may load a model, so the
         // app judged is the one in front as recording starts.
         let mut settings = snapshot
-            .preferences
+            .settings
             .resolve_dictation(request, crate::delivery::frontmost_application());
         match auto_stop {
-            AutoStopRule::Preference => {}
+            AutoStopRule::Setting => {}
             AutoStopRule::Off => settings.auto_stop = None,
         }
 
@@ -529,7 +534,7 @@ fn retry_settings(
     mut settings: DictationSettings,
     language: Option<Language>,
 ) -> Result<DictationSettings, HistoryError> {
-    settings.recognition_language = if let Some(language) = language {
+    settings.stt_language = if let Some(language) = language {
         language
     } else {
         entry
@@ -554,8 +559,8 @@ fn retry_settings(
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon) enum DictationRuntimeError {
-    #[error("failed to read preferences")]
-    Preferences(#[source] PreferenceStoreError),
+    #[error("failed to read settings")]
+    Settings(#[source] StoreError),
 
     #[error(transparent)]
     Initialization(#[from] DictationInitializationError),
@@ -567,8 +572,8 @@ pub(in crate::daemon) enum DictationRuntimeError {
 impl From<&DictationRuntimeError> for RpcErrorCode {
     fn from(error: &DictationRuntimeError) -> Self {
         match error {
-            // Reading preferences is the daemon's own fault, not the caller's.
-            DictationRuntimeError::Preferences(_) => Self::Internal,
+            // Reading settings is the daemon's own fault, not the caller's.
+            DictationRuntimeError::Settings(_) => Self::Internal,
             DictationRuntimeError::Initialization(error) => error.into(),
             DictationRuntimeError::Execution(error) => error.into(),
         }
@@ -614,7 +619,7 @@ mod event_tests {
     use std::time::Duration;
 
     use crate::daemon::subscriptions::EVENT_BUFFER;
-    use crate::preferences::PreferencePatch;
+    use crate::settings::SettingsPatch;
 
     use super::*;
 
@@ -675,9 +680,9 @@ mod event_tests {
     #[test]
     fn voice_updates_reach_subscribers_without_changing_call_progress() {
         let directory = tempfile::tempdir().unwrap();
-        let preferences =
-            Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
-        let mut runtime = DictationRuntime::detached(preferences);
+        let settings =
+            Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
+        let mut runtime = DictationRuntime::detached(settings);
         let (broadcast, received) = channel();
         runtime.emitter = EventEmitter::forwarded_by(move |message: DaemonEvent| {
             broadcast.send(message.event).unwrap();
@@ -702,9 +707,9 @@ mod event_tests {
     #[test]
     fn successive_operations_enqueue_before_returning_to_the_caller() {
         let directory = tempfile::tempdir().unwrap();
-        let preferences =
-            Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
-        let mut runtime = DictationRuntime::detached(preferences);
+        let settings =
+            Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
+        let mut runtime = DictationRuntime::detached(settings);
         let (sent, received) = channel();
         runtime.emitter = EventEmitter::forwarded_by(move |message| {
             sent.send((std::thread::current().id(), message)).unwrap();
@@ -730,18 +735,15 @@ mod event_tests {
     #[test]
     fn delayed_events_keep_operation_policy_and_reach_each_sink_once() {
         let directory = tempfile::tempdir().unwrap();
-        let preferences =
-            Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
-        preferences
-            .update(
-                0,
-                PreferencePatch {
-                    mute_output: Some(true),
-                    ..Default::default()
-                },
-            )
+        let settings =
+            Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
+        settings
+            .modify(SettingsPatch {
+                mute_sound: Some(true),
+                ..Default::default()
+            })
             .unwrap();
-        let mut runtime = DictationRuntime::detached(Arc::clone(&preferences));
+        let mut runtime = DictationRuntime::detached(Arc::clone(&settings));
         let (entered, waiting) = channel();
         let (release, blocked) = channel();
         let (daemon, daemon_events) = channel();
@@ -756,27 +758,24 @@ mod event_tests {
             runtime
                 .execute(
                     DictationRequest::new(StopMode::OnSilence),
-                    AutoStopRule::Preference,
+                    AutoStopRule::Setting,
                     CancelToken::never(),
                     Some(&events)
                 )
                 .is_err()
         );
         waiting.recv_timeout(Duration::from_secs(2)).unwrap();
-        preferences
-            .update(
-                1,
-                PreferencePatch {
-                    mute_output: Some(false),
-                    ..Default::default()
-                },
-            )
+        settings
+            .modify(SettingsPatch {
+                mute_sound: Some(false),
+                ..Default::default()
+            })
             .unwrap();
         assert!(
             runtime
                 .execute(
                     DictationRequest::new(StopMode::OnSilence),
-                    AutoStopRule::Preference,
+                    AutoStopRule::Setting,
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -845,6 +844,7 @@ mod event_tests {
             _: &Language,
             _: bool,
             _: Option<&crate::vocabulary::Directory>,
+            _: crate::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             panic!("a press never retries history");
@@ -854,13 +854,13 @@ mod event_tests {
     #[test]
     fn a_hold_runs_without_the_stored_auto_stop() {
         let directory = tempfile::tempdir().unwrap();
-        let preferences =
-            Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
-        let mut runtime = DictationRuntime::detached(preferences);
+        let settings =
+            Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
+        let mut runtime = DictationRuntime::detached(settings);
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         runtime.execute_with(Box::new(AutoStopSpy(Arc::clone(&seen))));
 
-        for rule in [AutoStopRule::Preference, AutoStopRule::Off] {
+        for rule in [AutoStopRule::Setting, AutoStopRule::Off] {
             let _no_speech = runtime.execute(
                 DictationRequest::new(StopMode::Manual),
                 rule,
@@ -884,7 +884,7 @@ mod history_tests {
 
     use crate::dictation::{DictationExecutor, DictationPolicy, DictationResult, ExecutionControl};
     use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
-    use crate::preferences::UserPreferences;
+    use crate::settings::Settings;
 
     use super::*;
 
@@ -909,6 +909,7 @@ mod history_tests {
             language: &Language,
             own_voice_only: bool,
             project: Option<&crate::vocabulary::Directory>,
+            _: crate::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());
@@ -971,8 +972,8 @@ mod history_tests {
                 .unwrap()
                 .insert(entry(), Some(&audio))
                 .unwrap();
-            let preferences =
-                Arc::new(PreferenceStore::open(directory.path().join("preferences.json")).unwrap());
+            let settings =
+                Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
             let microphone = Gate::new();
             let seen = Arc::new(Mutex::new(Vec::new()));
             let executor: RuntimeExecutor = Box::new(RetrySpy {
@@ -990,7 +991,7 @@ mod history_tests {
                 seen,
                 runtime: DictationRuntime {
                     emitter: EventEmitter::unsubscribed(),
-                    preferences,
+                    settings,
                     coordinator: CoordinatorState::Ready(ReadyDictation {
                         coordinator,
                         engine: "test",
@@ -1008,14 +1009,11 @@ mod history_tests {
         let fixture = Fixture::new(None);
         fixture
             .runtime
-            .preferences
-            .update(
-                0,
-                crate::preferences::PreferencePatch {
-                    dictation_history: Some(false),
-                    ..Default::default()
-                },
-            )
+            .settings
+            .modify(crate::settings::SettingsPatch {
+                history_enabled: Some(false),
+                ..Default::default()
+            })
             .unwrap();
         let entry = fixture
             .runtime
@@ -1041,14 +1039,11 @@ mod history_tests {
         let fixture = Fixture::new(None);
         fixture
             .runtime
-            .preferences
-            .update(
-                0,
-                crate::preferences::PreferencePatch {
-                    history_audio_retention: Some(true),
-                    ..Default::default()
-                },
-            )
+            .settings
+            .modify(crate::settings::SettingsPatch {
+                history_keep_audio: Some(true),
+                ..Default::default()
+            })
             .unwrap();
         let original_audio = fixture
             .runtime
@@ -1146,23 +1141,23 @@ mod history_tests {
                 .unwrap();
             fixture
                 .runtime
-                .preferences
-                .update(
-                    0,
-                    crate::preferences::PreferencePatch {
-                        history_audio_retention: Some(true),
-                        ..Default::default()
-                    },
-                )
+                .settings
+                .modify(crate::settings::SettingsPatch {
+                    history_keep_audio: Some(true),
+                    ..Default::default()
+                })
                 .unwrap();
-            let environment = crate::config::Environment::in_home(home.clone());
-            let mut config = DictationConfig::load(&environment).unwrap();
+            let home_dir = home.clone();
+            let mut config =
+                DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir)
+                    .unwrap();
             config.transcription = TranscriptionBackend::Server { endpoint };
             config.capture = crate::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: crate::audio::ReplayPace::Immediate,
             };
-            let speaker = SpeakerConfig::load(&environment).unwrap();
+            let speaker =
+                SpeakerConfig::load(&crate::settings::SettingsFile::default().speaker, &home_dir);
             let (vocabulary, _worker) = VocabularyRuntime::new(
                 home.join("vocabulary"),
                 None,
@@ -1297,10 +1292,10 @@ mod history_tests {
     #[test]
     fn retry_preserves_original_context_and_never_weakens_voice_restriction() {
         let directory = tempfile::tempdir().unwrap();
-        let current = UserPreferences {
+        let current = Settings {
             own_voice_only: true,
-            project_vocabulary: true,
-            vocabulary_directory: Some(
+            vocabulary_enabled: true,
+            vocabulary_dir: Some(
                 crate::vocabulary::Directory::new(directory.path().to_path_buf()).unwrap(),
             ),
             ..Default::default()

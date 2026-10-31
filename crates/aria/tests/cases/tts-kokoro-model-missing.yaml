@@ -1,9 +1,11 @@
 name: kokoro without its model fails daemon startup
-config: |
-  tts:
-    backend: kokoro
-    model: ~/missing/kokoro.onnx
-    voices: ~/missing/voices.bin
+settings: |
+  [tts]
+  backend = "kokoro"
+
+  [tts.kokoro]
+  model = "~/missing/kokoro.onnx"
+  voices = "~/missing/voices.bin"
 expect:
   daemon:
     startup: failure

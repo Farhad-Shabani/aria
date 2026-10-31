@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct PromptsSettings: View {
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     @Binding var selected: String?
     let open: (String) -> Void
 
     var body: some View {
-        PreferencesContent(preferences: preferences) { editor in
+        SettingsContent(settings: settings) { editor in
             let prompts = editor.snapshot.prompts
             ItemList(
                 items: prompts.entries,
@@ -26,7 +26,7 @@ struct PromptsSettings: View {
         }
     }
 
-    private func add(_ editor: PreferencesEditor) {
+    private func add(_ editor: SettingsEditor) {
         guard let file = PromptFile.choose() else { return }
         let entry = PromptEdits.makeEntry(for: file)
         editor.editLatest(\.prompts, \.prompts) { $0.entries.append(entry) }

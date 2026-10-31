@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class AssistantCatalogTests: XCTestCase {
     private func assistant(
-        _ id: Aria_Daemon_V1_AssistantID, name: String, status: Aria_Daemon_V1_AssistantStatus = .ready
+        _ id: Aria_Daemon_V1_AssistantId, name: String, status: Aria_Daemon_V1_AssistantStatus = .ready
     ) -> Aria_Daemon_V1_Assistant {
         var assistant = Aria_Daemon_V1_Assistant()
         assistant.id = id

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail, ensure};
 use aria::config::{TranscriptionConfig, TranscriptionDevice, backend};
-use aria_harness::{Sandbox, inputs, log, start_service, stats, yaml_string};
+use aria_harness::{Sandbox, inputs, log, start_service, stats, toml_string};
 
 mod dictation_delivery;
 mod engines;
@@ -118,7 +118,7 @@ struct BenchInputs {
 
 struct SpeakerInputs {
     model: PathBuf,
-    speakers_dir: PathBuf,
+    profiles_dir: PathBuf,
     /// Owner-only dictation refuses to run without it.
     segmentation: Option<PathBuf>,
 }
@@ -159,17 +159,17 @@ impl BenchInputs {
         Ok(format!(
             "{}:{}:{segmentation}",
             aria_harness::artifact::fingerprint(&speaker.model)?,
-            aria_harness::artifact::fingerprint(&speaker.speakers_dir)?
+            aria_harness::artifact::fingerprint(&speaker.profiles_dir)?
         ))
     }
 }
 
 fn speaker_inputs(
     model: Option<PathBuf>,
-    speakers_dir: Option<PathBuf>,
+    profiles_dir: Option<PathBuf>,
     segmentation: Option<PathBuf>,
 ) -> anyhow::Result<Option<SpeakerInputs>> {
-    match (model, speakers_dir) {
+    match (model, profiles_dir) {
         (None, None) => {
             ensure!(
                 segmentation.is_none(),
@@ -177,10 +177,10 @@ fn speaker_inputs(
             );
             Ok(None)
         }
-        (Some(model), Some(speakers_dir)) => {
+        (Some(model), Some(profiles_dir)) => {
             ensure!(model.is_file(), "speaker model must be a file");
             ensure!(
-                speakers_dir.is_dir(),
+                profiles_dir.is_dir(),
                 "the speakers directory must be a directory"
             );
             let segmentation = match segmentation {
@@ -192,7 +192,7 @@ fn speaker_inputs(
             };
             Ok(Some(SpeakerInputs {
                 model: model.canonicalize()?,
-                speakers_dir: speakers_dir.canonicalize()?,
+                profiles_dir: profiles_dir.canonicalize()?,
                 segmentation,
             }))
         }
@@ -208,14 +208,14 @@ fn require_own_voice(speaker: Option<&SpeakerInputs>) -> anyhow::Result<()> {
         speaker.segmentation.is_some(),
         "ARIA_BENCH_OWN_VOICE_ONLY=1 requires ARIA_BENCH_SEGMENTATION_MODEL"
     );
-    require_owner(&speaker.speakers_dir)
+    require_owner(&speaker.profiles_dir)
 }
 
-fn require_owner(speakers_dir: &Path) -> anyhow::Result<()> {
+fn require_owner(profiles_dir: &Path) -> anyhow::Result<()> {
     use aria::speaker::{ProfileStore, Role};
     use aria_speaker::wespeaker;
     let stored =
-        ProfileStore::open(speakers_dir).read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM)?;
+        ProfileStore::open(profiles_dir).read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM)?;
     ensure!(
         stored
             .profiles
@@ -343,23 +343,23 @@ fn bench_config(
     wav: &Path,
     speaker: Option<&SpeakerInputs>,
 ) -> anyhow::Result<String> {
-    let wav = yaml_string(&wav.to_string_lossy())?;
+    let wav = toml_string(&wav.to_string_lossy())?;
     let mut config = format!(
-        "capture:\n  backend: wav-file\n  path: {wav}\n  pace: realtime\n\
-         transcription:\n  backend: {}\n{}",
+        "[capture]\nbackend = \"wav_file\"\npath = {wav}\npace = \"realtime\"\n\
+         [stt]\nbackend = \"{}\"\n{}",
         engine.backend,
         settings(&engine.config)?
     );
     if let Some(speaker) = speaker {
         config.push_str(&format!(
-            "speaker:\n  model: {}\n  speakers_dir: {}\n",
-            yaml_string(&speaker.model.to_string_lossy())?,
-            yaml_string(&speaker.speakers_dir.to_string_lossy())?,
+            "[speaker]\nmodel = {}\nprofiles_dir = {}\n",
+            toml_string(&speaker.model.to_string_lossy())?,
+            toml_string(&speaker.profiles_dir.to_string_lossy())?,
         ));
         if let Some(segmentation) = &speaker.segmentation {
             config.push_str(&format!(
-                "  segmentation_model: {}\n",
-                yaml_string(&segmentation.to_string_lossy())?,
+                "segmentation_model = {}\n",
+                toml_string(&segmentation.to_string_lossy())?,
             ));
         }
     }
@@ -378,14 +378,14 @@ fn settings(config: &TranscriptionConfig) -> anyhow::Result<String> {
         | TranscriptionConfig::Nemotron {
             model_directory: model,
         } => {
-            format!("  model: {}\n", yaml_string(&model.display().to_string())?)
+            format!("model = {}\n", toml_string(&model.display().to_string())?)
         }
         TranscriptionConfig::Parakeet {
             model_directory,
             device,
         } => format!(
-            "  model: {}\n  device: {}\n",
-            yaml_string(&model_directory.display().to_string())?,
+            "model = {}\ndevice = \"{}\"\n",
+            toml_string(&model_directory.display().to_string())?,
             match device {
                 TranscriptionDevice::Cpu => "cpu",
                 TranscriptionDevice::Gpu => "gpu",
@@ -393,9 +393,9 @@ fn settings(config: &TranscriptionConfig) -> anyhow::Result<String> {
         ),
         TranscriptionConfig::ParakeetMlx { model, interpreter } => {
             format!(
-                "  model: {}\n  interpreter: {}\n",
-                yaml_string(model)?,
-                yaml_string(&interpreter.display().to_string())?
+                "model = {}\ninterpreter = {}\n",
+                toml_string(model)?,
+                toml_string(&interpreter.display().to_string())?
             )
         }
     })
@@ -535,13 +535,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let model = directory.path().join("speaker.onnx");
         std::fs::write(&model, []).unwrap();
-        let speakers_dir = || Some(directory.path().to_path_buf());
+        let profiles_dir = || Some(directory.path().to_path_buf());
         assert!(speaker_inputs(Some(model.clone()), None, None).is_err());
-        assert!(speaker_inputs(None, speakers_dir(), None).is_err());
+        assert!(speaker_inputs(None, profiles_dir(), None).is_err());
         assert!(speaker_inputs(Some(model.clone()), Some(model.clone()), None).is_err());
         assert!(speaker_inputs(None, None, Some(model.clone())).is_err());
-        assert!(speaker_inputs(Some(model.clone()), speakers_dir(), speakers_dir()).is_err());
-        let speaker = speaker_inputs(Some(model.clone()), speakers_dir(), Some(model))
+        assert!(speaker_inputs(Some(model.clone()), profiles_dir(), profiles_dir()).is_err());
+        let speaker = speaker_inputs(Some(model.clone()), profiles_dir(), Some(model))
             .unwrap()
             .unwrap();
         assert!(speaker.segmentation.is_some());
@@ -554,7 +554,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let speaker = SpeakerInputs {
             model: "/models/speaker.onnx".into(),
-            speakers_dir: directory.path().into(),
+            profiles_dir: directory.path().into(),
             segmentation: None,
         };
         let error = require_own_voice(Some(&speaker)).unwrap_err();
@@ -602,19 +602,19 @@ mod tests {
         };
         let speaker = SpeakerInputs {
             model: "/models/speaker.onnx".into(),
-            speakers_dir: "/speakers_dir/voice names".into(),
+            profiles_dir: "/profiles_dir/voice names".into(),
             segmentation: Some("/models/segmentation.onnx".into()),
         };
         let config = bench_config(&engine, Path::new("/speech.wav"), Some(&speaker)).unwrap();
         assert!(config.ends_with(
-            "speaker:\n  model: \"/models/speaker.onnx\"\n  \
-             speakers_dir: \"/speakers_dir/voice names\"\n  \
-             segmentation_model: \"/models/segmentation.onnx\"\n"
+            "[speaker]\nmodel = \"/models/speaker.onnx\"\n\
+             profiles_dir = \"/profiles_dir/voice names\"\n\
+             segmentation_model = \"/models/segmentation.onnx\"\n"
         ));
         assert!(
             !bench_config(&engine, Path::new("/speech.wav"), None)
                 .unwrap()
-                .contains("speaker:")
+                .contains("[speaker]")
         );
     }
 }

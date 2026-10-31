@@ -31,11 +31,11 @@ use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
 use super::listen::ListenState;
 use super::memory::MemoryBacklog;
-use super::preferences::PreferencesActor;
 use super::service::{
     ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, InviteRpc, ListenRpc,
-    PreferencesRpc, SpeakerRpc, SpeechRpc, VocabularyRpc,
+    SettingsRpc, SpeakerRpc, SpeechRpc, VocabularyRpc,
 };
+use super::settings::SettingsActor;
 use super::shutdown::ShutdownSignal;
 use super::speaker::SpeakerActor;
 use super::speech::SpeechActor;
@@ -80,12 +80,14 @@ pub(super) struct Actors {
     pub(super) dictation: DictationActor,
     pub(super) speech: SpeechActor,
     pub(super) chat: ChatActor,
-    pub(super) preferences: PreferencesActor,
+    pub(super) settings: SettingsActor,
+    pub(super) settings_status: super::settings::StatusBroadcast,
     pub(super) speaker: SpeakerActor,
     pub(super) memory: Option<MemoryBacklog>,
     pub(super) vocabulary: super::vocabulary::Worker<
         crate::vocabulary::discover::LocalCollector<crate::vocabulary::extract::LocalExtractor>,
     >,
+    pub(super) settings_poll: crate::settings::SettingsPoll,
 }
 
 impl Server {
@@ -131,6 +133,7 @@ impl Server {
             wake,
             hotkey,
         } = self;
+        let _settings_poll = actors.settings_poll;
 
         let listener = adopt_listener(&socket)?;
         let activity = Activity::new();
@@ -156,7 +159,8 @@ impl Server {
         tasks.supervise(actors.dictation);
         tasks.supervise(actors.speech);
         tasks.supervise(actors.chat);
-        tasks.supervise(actors.preferences);
+        tasks.supervise(actors.settings);
+        tasks.supervise(actors.settings_status);
         tasks.supervise(actors.speaker);
         tasks.supervise(actors.vocabulary);
         tasks.supervise(actors.history);
@@ -278,7 +282,7 @@ pub(super) struct Services {
     pub(super) speech: SpeechRpc,
     pub(super) chat: ChatRpc,
     pub(super) listen: ListenRpc,
-    pub(super) preferences: PreferencesRpc,
+    pub(super) settings: SettingsRpc,
     pub(super) vocabulary: VocabularyRpc,
     pub(super) speaker: SpeakerRpc,
     pub(super) events: EventsService,
@@ -307,7 +311,7 @@ async fn build_router(
         .set_serving::<wire::listen_service_server::ListenServiceServer<ListenRpc>>()
         .await;
     health_reporter
-        .set_serving::<wire::preferences_service_server::PreferencesServiceServer<PreferencesRpc>>()
+        .set_serving::<wire::settings_service_server::SettingsServiceServer<SettingsRpc>>()
         .await;
     health_reporter
         .set_serving::<wire::speaker_service_server::SpeakerServiceServer<SpeakerRpc>>()
@@ -355,9 +359,9 @@ async fn build_router(
         .add_service(wire::listen_service_server::ListenServiceServer::new(
             services.listen,
         ))
-        .add_service(
-            wire::preferences_service_server::PreferencesServiceServer::new(services.preferences),
-        )
+        .add_service(wire::settings_service_server::SettingsServiceServer::new(
+            services.settings,
+        ))
         .add_service(wire::speaker_service_server::SpeakerServiceServer::new(
             services.speaker,
         ))
@@ -679,7 +683,7 @@ mod tests {
                 wire::dictation_service_server::DictationServiceServer::<DictationRpc>::NAME,
                 wire::speech_service_server::SpeechServiceServer::<SpeechRpc>::NAME,
                 wire::chat_service_server::ChatServiceServer::<ChatRpc>::NAME,
-                wire::preferences_service_server::PreferencesServiceServer::<PreferencesRpc>::NAME,
+                wire::settings_service_server::SettingsServiceServer::<SettingsRpc>::NAME,
                 wire::history_service_server::HistoryServiceServer::<HistoryRpc>::NAME,
                 wire::listen_service_server::ListenServiceServer::<ListenRpc>::NAME,
                 wire::speaker_service_server::SpeakerServiceServer::<SpeakerRpc>::NAME,

@@ -11,17 +11,17 @@ final class PromptHotkeysTests: XCTestCase {
         draft.name = "Draft"
         draft.kind = .rewrite
         draft.enabled = true
-        draft.instructionsPath =
+        draft.file =
             FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathExtension("md").path
-        var loaded = Aria_Daemon_V1_PreferenceSnapshot()
-        loaded.preferences.prompts.entries = [draft]
-        let transport = FakePreferencesTransport()
+        var loaded = Aria_Daemon_V1_SettingsSnapshot()
+        loaded.settings.prompts.entries = [draft]
+        let transport = FakeSettingsTransport()
         transport.snapshots = [loaded]
-        let preferences = DaemonPreferences(transport: transport)
-        await preferences.sync()
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
         let hotkeys = PromptHotkeys(events: DaemonEvents())
-        hotkeys.track(preferences)
+        hotkeys.track(settings)
         let deadline = Date().addingTimeInterval(1)
         while hotkeys.runnable.isEmpty, Date() < deadline {
             await Task.yield()

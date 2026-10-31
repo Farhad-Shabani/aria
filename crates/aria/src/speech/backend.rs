@@ -1,4 +1,4 @@
-//! The synthesis engine an utterance runs on, chosen by configuration.
+//! The synthesis engine an utterance runs on, chosen by the settings.
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ use aria_tts::kokoro::Kokoro;
 use aria_tts::qwen::Qwen;
 use aria_tts::system::SystemVoice;
 
-use crate::config::{TtsBackend, TtsFallback, TtsModel};
+use crate::config::{TtsBackend, TtsEngine, TtsFallback, TtsModel};
 use crate::rpc::RpcErrorCode;
 use crate::synthesis::{PlaybackError, Session, SpeakerOutput, Synthesis, SynthesisError};
 
@@ -55,9 +55,18 @@ impl SpeechModel {
 }
 
 impl SpeechBackend {
+    /// The engine actually built: a fallback speaks with the system's.
+    pub(crate) fn engine(&self) -> TtsEngine {
+        match self {
+            Self::Model(SpeechModel::Kokoro(_)) => TtsEngine::Kokoro,
+            Self::Model(SpeechModel::Qwen(_)) => TtsEngine::Qwen,
+            Self::System(_) => TtsEngine::System,
+        }
+    }
+
     /// Builds the configured engine. A model-backed engine that cannot be
     /// loaded — or cannot be heard, for want of a speaker — falls back to the
-    /// platform voice only when the configuration asked for that, loudly
+    /// platform voice only when the settings asked for that, loudly
     /// either way.
     pub(crate) fn build(
         backend: TtsBackend,

@@ -1,0 +1,193 @@
+# Aria settings. Every key is optional, and a missing key takes the default shown here.
+# An unknown key or a bad value makes the whole file invalid, and Aria
+# keeps the last good settings. Check it with `aria settings check`.
+# Keys marked (restart) apply after Aria restarts.
+
+# ---- Features
+
+[dictation]
+# How text reaches the app in front: insert, insert_and_submit, insert_or_copy or copy.
+output_mode = "insert"          # copy on Linux
+# streaming types as you speak. complete types once recording stops. Copy always uses complete.
+delivery_mode = "streaming"
+# Silence, in ms, that ends a recording that stops on silence, such as a wake-word one. 100 to 10000.
+silence_duration_ms = 1500
+# Silence, in ms, that ends a tapped recording. 3000 to 60000. 0 is off.
+auto_stop_ms = 10000
+# Mutes your Mac's sound while recording. The sound comes back when recording stops.
+mute_sound = false
+# Drops "um", "uh" and repeated words before delivery.
+cleanup = false
+# Applies a spoken self-correction: "meet at 3, actually 4" becomes "meet at 4". English only.
+backtrack = false
+# Types only what your enrolled voice said. Removing your voice profile turns it off.
+own_voice_only = false
+# The longest one recording may run. (restart)
+max_recording_secs = 600.0
+# The longest a whole dictation may take, recording included. (restart)
+timeout_secs = 660.0
+
+# Cleans up the transcript with a local model as well, while cleanup is on. (restart)
+# [dictation.cleanup_llm]
+# endpoint = "http://127.0.0.1:PORT/v1/chat/completions"   # loopback only
+# model = "MODEL_ID"
+
+[dictation.vocabulary]
+# Adds terms from the project you're working in.
+enabled = false
+# The project folder to read terms from. Absent means the folder the request names.
+# dir = "~/src/writ"
+
+[history]
+# Saves dictation history.
+enabled = true
+# Keeps each recording's audio for 24 hours.
+keep_audio = false
+
+[listen]
+# Transcribes system audio: parakeet, moonshine or nemotron. Absent uses the stt engine.
+# backend = "moonshine"
+# Absent means setup's download for that engine.
+# model = "~/.aria/models/moonshine/base"
+# cpu or gpu. parakeet only.
+# device = "cpu"
+transcripts_dir = "~/.aria/transcripts"
+
+[assistant]
+# Who answers `aria ask`: claude-code or codex. `--assistant` overrides it for one question.
+id = "claude-code"
+# Where the assistant works. Absent means the caller's directory.
+# workdir = "~/src"
+# Folders whose git repos an ask may name: "in writ, why does the build fail?" runs in ROOT/Writ.
+project_roots = []
+# The longest a reply may take, at most 570.
+timeout_secs = 300.0
+
+# The model each assistant uses. A missing assistant uses its own default.
+[assistant.models]
+# claude-code = "sonnet"
+
+[memory]
+# Remembers facts you state while asking, and shows them to the assistant on later asks.
+# Only spoken asks with own_voice_only and an enrolled owner feed it.
+enabled = false
+# The model that extracts facts after an ask.
+extract_model = "sonnet"
+# The most facts kept from one ask session.
+max_facts_per_session = 10
+# Holds the facts, and lexicon.txt, the terms that fix misheard words. (restart)
+dir = "~/.aria/memory"
+
+# A prompt says what to make of a recording. At most 16, each chord once.
+# The table key is its id, which stays the same across renames.
+# The prompt list shows them in the order they appear in this file.
+# [prompts.reply]
+# name = "Reply"
+# kind = "compose"               # rewrite keeps your words and meaning. compose makes new text.
+# file = "~/Prompts/reply.md"    # Markdown instructions, read on each run
+# enabled = true
+# chord = { key_code = 15, control = true, option = true, shift = false, command = false }
+
+# Settings for one app while it's in front. At most 64. The table key is the
+# app's bundle ID, in quotes because it holds dots.
+# A missing field uses the settings above.
+# [application_overrides."com.tinyspeck.slackmacgap"]
+# output_mode = "insert_and_submit"
+# delivery_mode = "complete"
+# excluded = false               # true: no recording and no typing while this app is in front
+
+# ---- How Aria starts, and where text goes
+
+[shortcuts]
+# The Aria key: right_option, fn or off. Tap to dictate, hold to talk. Off on Linux.
+aria_key = "right_option"
+# Starts an ask: shift or command held with the Aria key, a chord, or off.
+ask = "shift"
+# Lists the prompts that are on: shift, command, a chord, or off.
+prompt_list = "command"
+# A chord is a key code with modifiers:
+# ask = { key_code = 49, control = false, option = false, shift = true, command = true }
+
+[wake]
+# Starts dictation when you say the wake word. Needs the microphone. (restart)
+enabled = false
+# openwakeword or livekit. (restart)
+backend = "openwakeword"
+# The classifier. Its folder also holds melspectrogram.onnx and embedding_model.onnx.
+# livekit has no default. (restart)
+model = "~/.aria/models/wakeword/aria.onnx"
+# Detection score from 0 to 1. Higher means fewer false starts. (restart)
+threshold = 0.5
+
+[phone]
+# Takes recordings from your paired iPhone or Apple Watch on the local network. (restart)
+enabled = false
+# The port it listens on, with mutual TLS. (restart)
+port = 9850
+
+[delivery]
+# The longest typing or pasting a result may take, for dictation, asks and the phone. (restart)
+timeout_secs = 5.0
+
+# ---- Shared engines
+
+[stt]
+# whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx or server. (restart)
+backend = "parakeet"
+# A language code such as "en" or "en-us", or "auto" to detect.
+language = "en"
+# A model file or folder. Absent means setup's download in ~/.aria/models.
+# parakeet-mlx takes a Hugging Face repo ID, by default mlx-community/parakeet-tdt-0.6b-v3. (restart)
+# model = "~/.aria/models/parakeet/parakeet-tdt-0.6b-v3"
+# cpu or gpu. parakeet only. (restart)
+device = "cpu"
+# A Python with parakeet-mlx installed. parakeet-mlx only, and required there. (restart)
+# interpreter = "~/.local/share/aria/parakeet-mlx/bin/python3"
+# Your paired server's HTTPS origin. server only, and required there. See the Privacy page in the User Guide. (restart)
+# server = "https://your-server:9851"
+
+[tts]
+# The engine that speaks `aria say` and replies: system, kokoro or qwen. (restart)
+backend = "system"
+# A multiplier on the voice's natural pace, 0.25 to 4.
+rate = 1.0
+# Speaks through the system voice if the model can't load: none or system. The system engine takes no fallback. (restart)
+# fallback = "none"
+
+# Each engine keeps its own voice, so switching engines keeps your choice.
+[tts.system]
+# One of `say`'s voices on macOS, or espeak-ng's on Linux. Absent means the system default.
+# voice = "Samantha"
+
+[tts.kokoro]
+model = "~/.aria/models/kokoro/kokoro.onnx"     # (restart)
+# The archive of every Kokoro voice. (restart)
+voices = "~/.aria/models/kokoro/voices.bin"
+# One voice from that archive.
+voice = "af_heart"
+
+[tts.qwen]
+model = "~/.aria/models/qwen/qwen3-tts-0.6b-customvoice"   # (restart)
+# The 12 Hz speech tokenizer snapshot. (restart)
+tokenizer = "~/.aria/models/qwen/qwen3-tts-tokenizer"
+# A preset voice name.
+voice = "vivian"
+
+[speaker]
+# Tells voices apart. Without it, transcripts have no speaker labels. (restart)
+model = "~/.aria/models/wespeaker/en/model.onnx"
+# Estimates who speaks in each audio frame, for Listen. (restart)
+segmentation_model = "~/.aria/models/pyannote/segmentation-3.0.onnx"
+# Enrolled voice profiles. (restart)
+profiles_dir = "~/.aria/speakers"
+
+# ---- Testing
+
+# Testing only. Replays a 16 kHz mono 16-bit WAV file instead of the microphone.
+[capture]
+# microphone or wav_file. (restart)
+backend = "microphone"
+# The WAV file. wav_file only, and required there. (restart)
+# path = "~/recordings/fixture.wav"
+# immediate or realtime. wav_file only. (restart)
+# pace = "immediate"

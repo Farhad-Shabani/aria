@@ -4,7 +4,7 @@ import Combine
 final class ChordBinding: ObservableObject {
     private let shortcut = GlobalShortcut()
     private let action: @MainActor () -> Void
-    /// What is registered, so an unchanged preference costs nothing.
+    /// What is registered, so an unchanged setting costs nothing.
     private(set) var bound: Chord?
     /// Carbon turned the chord down.
     @Published private(set) var wasRefused = false

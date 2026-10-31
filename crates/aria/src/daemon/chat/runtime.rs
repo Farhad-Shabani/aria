@@ -2,6 +2,7 @@
 //! conversation it continues, and the reply's optional delivery. Ordering
 //! between asks is the actor's job; here only the record file is shared.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use std::time::Duration;
@@ -16,14 +17,15 @@ use crate::chat::{
     PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
     read_instructions,
 };
-use crate::config::{AssistantId, ChatConfig, Environment, MemoryConfig, SpeakerConfig};
+use crate::config::{AssistantId, ChatConfig, ConfigError, MemoryConfig, SpeakerConfig};
 use crate::delivery::{
     DeliveryError, DeliveryOutcome, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
 };
 use crate::memory::{DB_FILE, Store, load_profile_block};
-use crate::preferences::{ApplicationId, PreferenceStore};
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
+use crate::settings::SettingsCache;
+use crate::settings::{ApplicationId, SettingsStore};
 use crate::speaker::{ProfileStore, Role};
 
 use super::super::context::Context;
@@ -55,31 +57,36 @@ impl ChatJob {
 
 pub(in crate::daemon) struct ChatRuntime {
     emitter: ChatEventEmitter,
-    config_environment: Environment,
+    home: PathBuf,
+    codex_home: PathBuf,
     sessions: SessionStore,
     #[cfg(test)]
     assistant_overrides: Option<tests::AssistantOverrides>,
     /// Read per ask, so a reply never types into an app with Aria off.
-    preferences: Arc<PreferenceStore>,
+    settings: Arc<SettingsStore>,
+    /// Read per ask, so an edit applies to the next ask.
+    cache: Arc<SettingsCache>,
     /// Nudges the memory backlog after a turn worth remembering. `None`
     /// in a daemon that runs no backlog.
     memory_wake: Option<mpsc::Sender<()>>,
 }
 
 impl ChatRuntime {
-    /// Reads the config file per ask, using the daemon's captured environment.
-    /// A broken chat section fails asks without preventing daemon startup.
+    /// Resolves the assistant's settings per ask.
     pub(in crate::daemon) fn new(
         context: &Context<'_>,
         subscriptions: Arc<Subscriptions>,
-        preferences: Arc<PreferenceStore>,
+        settings: Arc<SettingsStore>,
+        cache: Arc<SettingsCache>,
         memory_wake: Option<mpsc::Sender<()>>,
     ) -> Self {
         Self {
             emitter: event_emitter(context, subscriptions),
-            config_environment: context.config_environment.clone(),
-            sessions: SessionStore::open(context.preferences_path.with_file_name(SESSION_FILE)),
-            preferences,
+            home: context.home.clone(),
+            codex_home: context.codex_home.clone(),
+            sessions: SessionStore::open(context.settings_path.with_file_name(SESSION_FILE)),
+            settings,
+            cache,
             memory_wake,
             #[cfg(test)]
             assistant_overrides: None,
@@ -100,8 +107,7 @@ impl ChatRuntime {
                 ClaudeCodeAssistant::new(CLAUDE_BINARY.into()).models(cancel)
             }
             AssistantId::Codex => {
-                CodexAssistant::new(CODEX_BINARY.into(), self.config_environment.codex_home())
-                    .models(cancel)
+                CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()).models(cancel)
             }
         }
     }
@@ -125,10 +131,8 @@ impl ChatRuntime {
             AssistantId::ClaudeCode => {
                 ClaudeCodeAssistant::new(CLAUDE_BINARY.into()).check_ready(cancel)
             }
-            AssistantId::Codex => {
-                CodexAssistant::new(CODEX_BINARY.into(), self.config_environment.codex_home())
-                    .check_ready(cancel)
-            }
+            AssistantId::Codex => CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone())
+                .check_ready(cancel),
         }
     }
 
@@ -138,10 +142,10 @@ impl ChatRuntime {
     ) -> Result<ChatRequest, ChatError> {
         if request.model_id.is_none() {
             request.model_id = self
-                .preferences
+                .settings
                 .snapshot()
-                .map_err(ChatError::Preferences)?
-                .preferences
+                .map_err(ChatError::Settings)?
+                .settings
                 .model_id(request.assistant_id)
                 .map(str::to_owned);
         }
@@ -169,7 +173,7 @@ impl ChatRuntime {
                 cancellation,
             ),
             AssistantId::Codex => self.execute_with(
-                &CodexAssistant::new(CODEX_BINARY.into(), self.config_environment.codex_home()),
+                &CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()),
                 ticket,
                 job,
                 cancellation,
@@ -217,31 +221,22 @@ impl ChatRuntime {
         &self,
         call: PromptCall,
     ) -> Result<PromptRequest, ChatError> {
-        let snapshot = self
-            .preferences
-            .snapshot()
-            .map_err(ChatError::Preferences)?;
+        let snapshot = self.settings.snapshot().map_err(ChatError::Settings)?;
         let prompt = snapshot
-            .preferences
+            .settings
             .prompts
             .find(call.prompt.as_str())
             .ok_or(ChatError::UnknownPrompt)?;
         if !prompt.enabled() {
             return Err(ChatError::PromptOff);
         }
-        let assistant_id = snapshot
-            .preferences
-            .resolve_assistant_id(&self.config_environment)
-            .map_err(ChatError::Config)?;
+        let assistant_id = snapshot.settings.resolve_assistant_id();
         Ok(PromptRequest {
             text: call.text,
             kind: prompt.kind(),
             file: prompt.file().to_path_buf(),
             assistant_id,
-            model_id: snapshot
-                .preferences
-                .model_id(assistant_id)
-                .map(str::to_owned),
+            model_id: snapshot.settings.model_id(assistant_id).map(str::to_owned),
             application: call.application,
             tap_cancels: call.tap_cancels,
         })
@@ -257,22 +252,14 @@ impl ChatRuntime {
     }
 
     /// Where an ask goes for a caller with no working directory: the
-    /// project in focus, else the one configuration pins. Reading the focus
+    /// project in focus, else the one the settings pin. Reading the focus
     /// file and scanning the roots touches the disk, so callers run it off
     /// the reactor.
     pub(in crate::daemon) fn resolve_target(&self) -> Result<AskTarget, ResolveError> {
-        let snapshot = self
-            .preferences
-            .snapshot()
-            .map_err(ResolveError::Preferences)?;
-        let assistant_id = snapshot
-            .preferences
-            .resolve_assistant_id(&self.config_environment)
-            .map_err(ResolveError::Config)?;
-        let config = ChatConfig::load(&self.config_environment, assistant_id)
-            .map_err(ResolveError::Config)?;
-        let projects = Projects::load_with(&self.config_environment, &config)
-            .map_err(ResolveError::Projects)?;
+        let snapshot = self.settings.snapshot().map_err(ResolveError::Settings)?;
+        let assistant_id = snapshot.settings.resolve_assistant_id();
+        let config = self.chat_config().map_err(ResolveError::Config)?;
+        let projects = Projects::load_with(&self.home, &config).map_err(ResolveError::Projects)?;
         let workdir = match projects.focused() {
             Some(project) => project.path.clone(),
             None => config.workdir.ok_or(ResolveError::NoTarget)?,
@@ -290,8 +277,13 @@ impl ChatRuntime {
         }
         Ok(AskTarget {
             workdir,
-            assistant_id: config.assistant_id,
+            assistant_id,
         })
+    }
+
+    fn chat_config(&self) -> Result<ChatConfig, ConfigError> {
+        let settings = self.cache.effective();
+        ChatConfig::load(&settings)
     }
 
     fn ask<A: Assistant>(
@@ -301,8 +293,7 @@ impl ChatRuntime {
         request: ChatRequest,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
-        let config = ChatConfig::load(&self.config_environment, request.assistant_id)
-            .map_err(ChatError::Config)?;
+        let config = self.chat_config().map_err(ChatError::Config)?;
         if !request.workdir.is_dir() {
             return Err(ChatError::Assistant(AssistantError::NoWorkdir(
                 request.workdir,
@@ -369,8 +360,7 @@ impl ChatRuntime {
         request: PromptRequest,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
-        let config = ChatConfig::load(&self.config_environment, request.assistant_id)
-            .map_err(ChatError::Config)?;
+        let config = self.chat_config().map_err(ChatError::Config)?;
         let delivery = Delivery::prepare(
             OutputMode::InsertOrCopy,
             self.target_policy(request.application.as_ref())?,
@@ -412,10 +402,10 @@ impl ChatRuntime {
         application: Option<&ApplicationId>,
     ) -> Result<TargetPolicy, ChatError> {
         let overrides = self
-            .preferences
+            .settings
             .snapshot()
-            .map_err(ChatError::Preferences)?
-            .preferences
+            .map_err(ChatError::Settings)?
+            .settings
             .application_overrides;
         Ok(TargetPolicy {
             overridden_for: application.map(|id| id.as_str().to_owned()),
@@ -464,20 +454,11 @@ impl ChatRuntime {
         Ok(std::mem::take(&mut recorder.text))
     }
 
-    /// The memory section when it is on. One that does not resolve costs
-    /// memory, not the ask.
+    /// The memory section when it is on.
     fn memory(&self) -> Option<MemoryConfig> {
-        match MemoryConfig::load(&self.config_environment) {
-            Ok(config) if config.enabled => Some(config),
-            Ok(_) => None,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error_chain(&error),
-                    "memory configuration unreadable; the ask runs without memory"
-                );
-                None
-            }
-        }
+        let settings = self.cache.effective();
+        let config = MemoryConfig::load(&settings.memory, &self.home);
+        config.enabled.then_some(config)
     }
 
     /// Keeps what the owner said, for extraction later. Only a recording
@@ -502,14 +483,9 @@ impl ChatRuntime {
     }
 
     fn owner_name(&self) -> Option<String> {
-        let config = match SpeakerConfig::load(&self.config_environment) {
-            Ok(config) => config,
-            Err(error) => {
-                tracing::warn!(error = %error_chain(&error), "speaker configuration unreadable");
-                return None;
-            }
-        };
-        crate::speaker::usable_profiles(ProfileStore::open(&config.speakers_dir).read_all())
+        let settings = self.cache.effective();
+        let config = SpeakerConfig::load(&settings.speaker, &self.home);
+        crate::speaker::usable_profiles(ProfileStore::open(&config.profiles_dir).read_all())
             .into_iter()
             .find(|profile| profile.role == Role::Owner)
             .map(|profile| profile.name.as_str().to_owned())
@@ -825,8 +801,16 @@ pub(super) mod tests {
         let assistant_factory = Arc::new(assistant_factory);
         let for_execution = Arc::clone(&assistant_factory);
         let for_models = Arc::clone(&assistant_factory);
+        let cache = Arc::new(
+            SettingsCache::open(
+                crate::settings::default_path(directory),
+                directory.to_path_buf(),
+            )
+            .expect("test settings"),
+        );
         let runtime = ChatRuntime {
-            config_environment: Environment::in_home(directory.to_path_buf()),
+            home: directory.to_path_buf(),
+            codex_home: directory.join(".codex"),
             sessions: SessionStore::open(directory.join(SESSION_FILE)),
             emitter: ChatEventEmitter::subscribed_by("aria-test-chat-events", move |stage| {
                 let _ = events.send(stage);
@@ -842,10 +826,8 @@ pub(super) mod tests {
                     assistant_factory(assistant_id).check_ready(cancel)
                 }),
             }),
-            preferences: Arc::new(
-                PreferenceStore::open(directory.join("preferences.json"))
-                    .expect("test preferences"),
-            ),
+            settings: Arc::new(SettingsStore::new(Arc::clone(&cache))),
+            cache,
             memory_wake: Some(wake),
         };
         (runtime, received, woken)
@@ -856,10 +838,10 @@ pub(super) mod tests {
         let home = tempfile::tempdir().expect("a temp home");
         std::fs::create_dir_all(home.path().join(".aria/memory")).expect("the memory directory");
         std::fs::write(
-            home.path().join(".aria/config.yaml"),
-            "memory:\n  enabled: true\n",
+            home.path().join(".aria/settings.toml"),
+            "[memory]\nenabled = true\n",
         )
-        .expect("the config file");
+        .expect("the settings file");
         std::fs::write(
             home.path().join(".aria/memory/profile.md"),
             "## About the user\n- Is Sam\n",
@@ -901,36 +883,31 @@ pub(super) mod tests {
 
     #[test]
     fn ask_models_are_bound_at_admission_and_request_overrides_win() {
-        use crate::preferences::PreferencePatch;
+        use crate::settings::SettingsPatch;
         let home = tempfile::tempdir().unwrap();
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         runtime
-            .preferences
-            .update(
-                0,
-                PreferencePatch {
-                    assistant_models: [
-                        (AssistantId::ClaudeCode, "claude-first".to_owned()),
-                        (AssistantId::Codex, "codex-first".to_owned()),
-                    ]
-                    .into(),
-                    ..Default::default()
-                },
-            )
+            .settings
+            .modify(SettingsPatch {
+                assistant_models: [
+                    (AssistantId::ClaudeCode, "claude-first".to_owned()),
+                    (AssistantId::Codex, "codex-first".to_owned()),
+                ]
+                .into(),
+                ..Default::default()
+            })
             .unwrap();
         let admitted = runtime
             .prepare_ask(request("hello", home.path(), false))
             .unwrap();
-        runtime
-            .preferences
-            .update(
-                1,
-                PreferencePatch {
-                    assistant_models: [(AssistantId::ClaudeCode, "claude-later".to_owned())].into(),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let written = runtime
+            .settings
+            .modify(SettingsPatch {
+                assistant_models: [(AssistantId::ClaudeCode, "claude-later".to_owned())].into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .revision;
         assert_eq!(admitted.model_id.as_deref(), Some("claude-first"));
         let explicit = runtime
             .prepare_ask(ChatRequest {
@@ -947,18 +924,18 @@ pub(super) mod tests {
             })
             .unwrap();
         assert_eq!(codex.model_id.as_deref(), Some("codex-first"));
-        assert_eq!(runtime.preferences.snapshot().unwrap().revision, 2);
+        assert_eq!(runtime.settings.snapshot().unwrap().revision, written);
     }
 
     #[test]
     fn prompts_and_ask_targets_share_the_saved_assistant() {
-        use crate::preferences::{PreferencePatch, Prompt, PromptId, Prompts};
+        use crate::settings::{Prompt, PromptId, Prompts, SettingsPatch};
 
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir(home.path().join(".aria")).unwrap();
         std::fs::write(
-            home.path().join(".aria/config.yaml"),
-            "chat:\n  assistant: invalid\n  workdir: '~'\n",
+            home.path().join(".aria/settings.toml"),
+            "[assistant]\nworkdir = '~'\n",
         )
         .unwrap();
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
@@ -972,20 +949,17 @@ pub(super) mod tests {
         )
         .unwrap();
         runtime
-            .preferences
-            .update(
-                0,
-                PreferencePatch {
-                    assistant_id: Some(AssistantId::Codex),
-                    assistant_models: [
-                        (AssistantId::ClaudeCode, "claude-choice".to_owned()),
-                        (AssistantId::Codex, "codex-choice".to_owned()),
-                    ]
-                    .into(),
-                    prompts: Some(Prompts::new(vec![prompt]).unwrap()),
-                    ..Default::default()
-                },
-            )
+            .settings
+            .modify(SettingsPatch {
+                assistant_id: Some(AssistantId::Codex),
+                assistant_models: [
+                    (AssistantId::ClaudeCode, "claude-choice".to_owned()),
+                    (AssistantId::Codex, "codex-choice".to_owned()),
+                ]
+                .into(),
+                prompts: Some(Prompts::new(vec![prompt]).unwrap()),
+                ..Default::default()
+            })
             .unwrap();
         let call = || PromptCall {
             text: "hi".to_owned(),
@@ -1004,14 +978,11 @@ pub(super) mod tests {
         let admitted = runtime.prompt_request(call()).unwrap();
         assert_eq!(admitted.model_id.as_deref(), Some("codex-choice"));
         runtime
-            .preferences
-            .update(
-                1,
-                PreferencePatch {
-                    assistant_id: Some(AssistantId::ClaudeCode),
-                    ..Default::default()
-                },
-            )
+            .settings
+            .modify(SettingsPatch {
+                assistant_id: Some(AssistantId::ClaudeCode),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(
             runtime.prompt_request(call()).unwrap().assistant_id,
@@ -1031,7 +1002,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_prompt_request_names_only_a_stored_prompt_that_is_on() {
-        use crate::preferences::{PreferencePatch, Prompt, PromptId, Prompts};
+        use crate::settings::{Prompt, PromptId, Prompts, SettingsPatch};
 
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
@@ -1049,14 +1020,11 @@ pub(super) mod tests {
         let prompts =
             Prompts::new(vec![prompt("on", true), prompt("off", false)]).expect("prompts");
         runtime
-            .preferences
-            .update(
-                0,
-                PreferencePatch {
-                    prompts: Some(prompts),
-                    ..PreferencePatch::default()
-                },
-            )
+            .settings
+            .modify(SettingsPatch {
+                prompts: Some(prompts),
+                ..SettingsPatch::default()
+            })
             .expect("stored");
 
         let call = |id: &str| PromptCall {
@@ -1376,16 +1344,14 @@ pub(super) mod tests {
             FakeAssistant(Arc::clone(&log))
         };
         let (runtime, events) = runtime_with(directory.path(), assistant_factory);
-        runtime
-            .preferences
-            .update(
-                0,
-                crate::preferences::PreferencePatch {
-                    assistant_id: Some(AssistantId::Codex),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let written = runtime
+            .settings
+            .modify(crate::settings::SettingsPatch {
+                assistant_id: Some(AssistantId::Codex),
+                ..Default::default()
+            })
+            .unwrap()
+            .revision;
 
         let reply = run(
             &runtime,
@@ -1395,9 +1361,9 @@ pub(super) mod tests {
         );
 
         assert_eq!(replied(reply), "reply 1");
-        let snapshot = runtime.preferences.snapshot().unwrap();
-        assert_eq!(snapshot.preferences.assistant_id, Some(AssistantId::Codex));
-        assert_eq!(snapshot.revision, 1);
+        let snapshot = runtime.settings.snapshot().unwrap();
+        assert_eq!(snapshot.settings.assistant_id, Some(AssistantId::Codex));
+        assert_eq!(snapshot.revision, written, "the ask writes no setting");
     }
 
     #[test]
@@ -1613,7 +1579,7 @@ pub(super) mod tests {
 
     use std::os::unix::fs::PermissionsExt;
 
-    /// A home with a config file, a project root holding one git repo, and
+    /// A home with a settings file, a project root holding one git repo, and
     /// optionally that repo in focus.
     fn home_with_project(focused: bool) -> (tempfile::TempDir, PathBuf) {
         let home = tempfile::tempdir().expect("a temp home");
@@ -1625,10 +1591,10 @@ pub(super) mod tests {
         // a focus written raw would name a directory discovery never saw.
         let repo = repo.canonicalize().expect("the repo resolves");
         std::fs::write(
-            home.path().join(".aria/config.yaml"),
-            format!("chat:\n  project_roots: [{}]\n", roots.display()),
+            home.path().join(".aria/settings.toml"),
+            format!("[assistant]\nproject_roots = ['{}']\n", roots.display()),
         )
-        .expect("the config file");
+        .expect("the settings file");
         if focused {
             let focus = home.path().join(".aria/project");
             std::fs::write(&focus, repo.to_string_lossy().as_bytes()).expect("the focus file");
@@ -1659,10 +1625,10 @@ pub(super) mod tests {
         let pinned = home.path().join("pinned");
         std::fs::create_dir(&pinned).expect("the pinned directory");
         std::fs::write(
-            home.path().join(".aria/config.yaml"),
-            format!("chat:\n  workdir: {}\n", pinned.display()),
+            home.path().join(".aria/settings.toml"),
+            format!("[assistant]\nworkdir = '{}'\n", pinned.display()),
         )
-        .expect("the config file");
+        .expect("the settings file");
         let (runtime, _events) = runtime_with(
             home.path(),
             logging_assistants(&Arc::new(Mutex::new(Log::default()))),
@@ -1676,33 +1642,11 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn resolving_a_relative_directory_produces_an_absolute_recording_context() {
-        let (home, _) = home_with_project(false);
-        std::fs::write(
-            home.path().join(".aria/config.yaml"),
-            "chat:\n  workdir: .\n",
-        )
-        .unwrap();
-        let (runtime, _events) = runtime_with(
-            home.path(),
-            logging_assistants(&Arc::new(Mutex::new(Log::default()))),
-        );
-
-        let target = runtime.resolve_target().unwrap();
-
-        assert_eq!(
-            target.workdir,
-            std::env::current_dir().unwrap().canonicalize().unwrap()
-        );
-        assert!(crate::vocabulary::Directory::new(target.workdir).is_ok());
-    }
-
-    #[test]
     fn resolving_a_file_as_a_working_directory_is_an_invalid_request() {
         let (home, _) = home_with_project(false);
         std::fs::write(
-            home.path().join(".aria/config.yaml"),
-            "chat:\n  workdir: ~/.aria/config.yaml\n",
+            home.path().join(".aria/settings.toml"),
+            "[assistant]\nworkdir = '~/.aria/settings.toml'\n",
         )
         .unwrap();
         let (runtime, _events) = runtime_with(

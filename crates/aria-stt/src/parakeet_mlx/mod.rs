@@ -25,5 +25,5 @@ mod protocol;
 
 pub use engine::{ParakeetMlx, ParakeetMlxConfig};
 
-/// Names this engine under `transcription.backend` and in its own errors.
+/// Names this engine under `stt.backend` and in its own errors.
 pub const NAME: &str = "parakeet-mlx";

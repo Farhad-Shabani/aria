@@ -12,6 +12,9 @@ final class FakeDaemonControl: DaemonControlling, @unchecked Sendable {
     /// Probes that still see the process alive after `stop()` returns.
     var exitLag = 0
     var ignoresStop = false
+    var invalid: InvalidSettings?
+
+    func invalidSettings() async -> InvalidSettings? { invalid }
 
     func retireLegacyService() async throws {
         if let error = retireError { throw error }
@@ -109,6 +112,45 @@ final class StatusPollerTests: XCTestCase {
         await poller.toggle()
         XCTAssertEqual(poller.state, .stopped)
         XCTAssertEqual(poller.failure, .start)
+    }
+
+    func testAStartStoppedByAnInvalidFileNamesItsLineAndNotTheGenericFailure() async {
+        let fake = FakeDaemonControl()
+        fake.startError = DaemonClientError.commandFailed("boom")
+        fake.invalid = InvalidSettings(line: 3)
+        let poller = self.poller(fake)
+        await poller.pollOnce()
+
+        await poller.toggle()
+
+        XCTAssertEqual(poller.failure, .settingsInvalid(InvalidSettings(line: 3)))
+        XCTAssertEqual(
+            poller.failure?.message,
+            "Aria couldn’t start because your settings file has a mistake on line 3. Fix it, then turn Aria on.")
+    }
+
+    func testADaemonThatNeverListensWithAnInvalidFileNamesTheFile() async {
+        let fake = FakeDaemonControl()
+        fake.startLag = 100
+        fake.invalid = InvalidSettings(line: nil)
+        let poller = self.poller(fake)
+        await poller.pollOnce()
+
+        await poller.toggle()
+
+        XCTAssertEqual(poller.failure, .settingsInvalid(InvalidSettings(line: nil)))
+    }
+
+    func testLoginItemsKeepsItsOwnMessageOverAnInvalidFile() async {
+        let fake = FakeDaemonControl()
+        fake.startError = DaemonClientError.agentDisabled
+        fake.invalid = InvalidSettings(line: 3)
+        let poller = self.poller(fake)
+        await poller.pollOnce()
+
+        await poller.toggle()
+
+        XCTAssertEqual(poller.failure, .backgroundItemOff)
     }
 
     func testToggleNamesTheFailedActionWithoutItsDetail() async {

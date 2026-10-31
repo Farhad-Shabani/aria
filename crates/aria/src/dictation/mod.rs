@@ -36,7 +36,7 @@ pub(crate) use execution::{
 use level::Meter;
 pub(crate) use level::MicLevel;
 pub(crate) use pipeline::DictationPipeline;
-pub(crate) use rewrites::{ConfiguredLayers, Rewrites};
+pub(crate) use rewrites::{ConfiguredLayers, Rewrites, Rewriting};
 pub(crate) use transcripts::{TranscriptSink, Utterance};
 
 pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(660);
@@ -65,7 +65,7 @@ pub enum DeliveryMode {
     Streaming,
 }
 
-/// What one dictation should do; `None` means the daemon's preference.
+/// What one dictation should do; `None` means the daemon's setting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationRequest {
     pub output_mode: Option<OutputMode>,
@@ -90,16 +90,17 @@ impl DictationRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DictationSettings {
-    pub(crate) dictation_history: bool,
-    pub(crate) history_audio_retention: bool,
-    pub(crate) mute_output: bool,
-    pub(crate) recognition_language: Language,
+    pub(crate) history_enabled: bool,
+    pub(crate) history_keep_audio: bool,
+    pub(crate) mute_sound: bool,
+    pub(crate) stt_language: Language,
     pub(crate) output_mode: OutputMode,
     pub(crate) delivery_mode: DeliveryMode,
     pub(crate) stop_mode: StopMode,
     pub(crate) silence_duration: SilenceDuration,
     pub(crate) auto_stop: Option<AutoStop>,
     pub(crate) own_voice_only: bool,
+    pub(crate) rewriting: Rewriting,
     pub(crate) transcript_only: bool,
     pub(crate) project: Option<crate::vocabulary::Directory>,
     /// The app in front as dictation was admitted.

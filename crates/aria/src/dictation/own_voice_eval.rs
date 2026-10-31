@@ -220,7 +220,7 @@ fn speaker_config(corpus: &Path) -> SpeakerConfig {
     SpeakerConfig {
         model: required("ARIA_TEST_SPEAKER_MODEL"),
         segmentation_model: required("ARIA_TEST_SEGMENTATION_MODEL"),
-        speakers_dir: corpus.join(SPEAKERS_DIR),
+        profiles_dir: corpus.join(SPEAKERS_DIR),
     }
 }
 
@@ -286,7 +286,7 @@ fn cases() -> Vec<Case> {
     for owner in owners {
         let folder = corpus.join(&owner);
         let speaker = speaker_config(&folder);
-        let owner_name = ProfileStore::open(&speaker.speakers_dir)
+        let owner_name = ProfileStore::open(&speaker.profiles_dir)
             .read_all()
             .expect("the owner's profiles read")
             .profiles

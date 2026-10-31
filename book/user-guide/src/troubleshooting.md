@@ -29,7 +29,7 @@ and selected as the system's default input.
 On a Mac, check **System Settings → Privacy & Security → Microphone** for the
 app or executable requesting access. Grant permission, then retry. A model
 file that is missing or unreadable needs to be corrected in setup or
-[Settings](./configuration.md).
+[Settings](./settings.md).
 
 ## No inserted text
 
@@ -44,14 +44,14 @@ service running so clipboard text remains available.
 ## Restart
 
 After changing engine settings,
-[restart the service](./configuration.md#apply-changes). Reopening the Mac app
+[restart the service](./settings.md#apply-changes). Reopening the Mac app
 also starts it.
 
 ## No speech output
 
 Check your output device and volume. Then use `aria service status` and
-`aria config show` to inspect the voice and model paths. File changes require
-a restart. `aria doctor` does not check speech-engine files.
+`aria settings show` to inspect the voice and model paths. Engine and model
+changes need a restart. `aria doctor` doesn't check speech-engine files.
 
 Linux system speech needs `/usr/bin/espeak-ng` or `/usr/bin/espeak`. For Kokoro,
 rerun setup to obtain its model and voices file, or correct their paths.
@@ -86,4 +86,4 @@ Mac.
 
 `aria wake log` shows recent background-service errors, even when wake-word
 monitoring is off. Look for the failure associated with the operation you tried.
-After fixing a configuration error, [apply the change](./configuration.md#apply-changes).
+After fixing a settings error, [apply the change](./settings.md#apply-changes).

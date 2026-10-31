@@ -1,4 +1,4 @@
-//! Checks configuration, model paths, permissions, and daemon readiness
+//! Checks settings, model paths, permissions, and daemon readiness
 //! using this shell's environment. Models are checked without loading weights;
 //! a passing check does not guarantee that inference will succeed.
 
@@ -7,9 +7,8 @@ use std::time::Duration;
 
 use crate::audio::{WavReplayCapture, check_default_input_device};
 use crate::config::{
-    CaptureConfig, ConfigError, DaemonConfig, DictationConfig, Environment, HotkeyConfig,
-    ListenConfig, RelayConfig, SpeakerConfig, TranscriptionBackend, WakeBackend, WakeConfig,
-    WakeWordOverride,
+    CaptureConfig, ConfigError, DaemonConfig, DictationConfig, HotkeyConfig, ListenConfig,
+    RelayConfig, SpeakerConfig, TranscriptionBackend, WakeBackend, WakeConfig, WakeWordOverride,
 };
 use crate::daemon::RELAY_SERVICE_TYPE;
 use crate::delivery::{PlatformTextDelivery, TextDelivery};
@@ -18,6 +17,7 @@ use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
 use crate::runtime::{PreparedRuntimePaths, RuntimeError};
+use crate::settings::SettingsFile;
 use crate::transcription::check_model;
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
@@ -26,7 +26,7 @@ use aria_speaker::wespeaker::WeSpeaker;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
-const CONFIGURATION: &str = "configuration";
+const SETTINGS: &str = "settings";
 const RUNTIME_DIRECTORY: &str = "runtime directory";
 const AUDIO_CAPTURE: &str = "audio capture";
 const TRANSCRIPTION_MODEL: &str = "transcription model";
@@ -37,7 +37,7 @@ const LISTEN: &str = "listen";
 const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
 
-const UNCONFIGURED: &str = "not checked: the configuration failed to load";
+const SETTINGS_FAILED: &str = "not checked: the settings failed to load";
 
 /// Bounds the probe when no relay accepts connections.
 const RELAY_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -69,17 +69,23 @@ impl Report {
 }
 
 /// A check whose dependency failed is left unchecked rather than failed, so
-/// one broken configuration does not read as five broken things.
+/// one broken setting does not read as five broken things.
 pub fn diagnose() -> Report {
     // The report describes what is configured, never what a command would
     // force on top of it.
-    let config = Environment::capture()
-        .and_then(|environment| DaemonConfig::load(&environment, WakeWordOverride::Inherit));
+    let config = loaded(|settings, home| {
+        let mut config = DaemonConfig::load(settings, home, WakeWordOverride::Inherit)?;
+        // An Aria key switched off has nothing to arm, so no grant is owed.
+        if settings.aria_key().is_none() {
+            config.hotkey = HotkeyConfig::Disabled;
+        }
+        Ok(config)
+    });
     let prepared = PreparedRuntimePaths::for_current_user();
 
     Report {
         checks: vec![
-            configuration(config.as_ref()),
+            settings_check(config.as_ref()),
             runtime_directory(prepared.as_ref()),
             audio_capture(config.as_ref().ok().map(|config| &config.dictation)),
             transcription_model(config.as_ref().ok().map(|config| &config.dictation)),
@@ -97,25 +103,40 @@ pub fn diagnose() -> Report {
     }
 }
 
-fn configuration(config: Result<&DaemonConfig, &ConfigError>) -> Check {
+fn settings_check(config: Result<&DaemonConfig, &ConfigError>) -> Check {
     match config {
         Ok(config) => Check::ok(
-            CONFIGURATION,
+            SETTINGS,
             format!(
                 "{}, backend {}, wake {}",
-                configuration_file(),
+                settings_file(),
                 config.dictation.transcription.backend_name(),
                 wake_status(&config.wake),
             ),
         ),
-        Err(error) => Check::failed(CONFIGURATION, error_chain(error)),
+        Err(error) => Check::failed(SETTINGS, error_chain(error)),
     }
 }
 
-fn configuration_file() -> String {
-    match crate::config::default_path() {
-        Ok(path) if path.is_file() => path.display().to_string(),
-        Ok(path) => format!("no {}, using defaults", path.display()),
+/// Resolves one part of the config from the settings file.
+fn loaded<T>(
+    load: impl FnOnce(&SettingsFile, &Path) -> Result<T, ConfigError>,
+) -> Result<T, ConfigError> {
+    let home = crate::config::home_directory()?;
+    let settings = crate::settings::load(&home)?;
+    load(&settings, &home)
+}
+
+fn settings_file() -> String {
+    match crate::primitives::user_home::resolve() {
+        Ok(home) => {
+            let path = crate::settings::default_path(&home);
+            if path.is_file() {
+                path.display().to_string()
+            } else {
+                format!("no {}, using defaults", path.display())
+            }
+        }
         Err(error) => error_chain(&error),
     }
 }
@@ -130,7 +151,7 @@ fn runtime_directory(paths: Result<&PreparedRuntimePaths, &RuntimeError>) -> Che
 fn audio_capture(config: Option<&DictationConfig>) -> Check {
     match config {
         Some(config) => capture_source(&config.capture, config.dictation_timeouts.recording),
-        None => Check::warning(AUDIO_CAPTURE, UNCONFIGURED),
+        None => Check::warning(AUDIO_CAPTURE, SETTINGS_FAILED),
     }
 }
 
@@ -152,7 +173,7 @@ fn capture_source(capture: &CaptureConfig, recording_timeout: Duration) -> Check
 fn transcription_model(config: Option<&DictationConfig>) -> Check {
     match config {
         Some(config) => model(&config.transcription),
-        None => Check::warning(TRANSCRIPTION_MODEL, UNCONFIGURED),
+        None => Check::warning(TRANSCRIPTION_MODEL, SETTINGS_FAILED),
     }
 }
 
@@ -212,14 +233,13 @@ fn wake_word_model(wake: Option<&WakeConfig>) -> Check {
                 Err(detail) => Check::failed(WAKE_WORD_MODEL, detail),
             }
         }
-        None => Check::warning(WAKE_WORD_MODEL, UNCONFIGURED),
+        None => Check::warning(WAKE_WORD_MODEL, SETTINGS_FAILED),
     }
 }
 
 /// A missing speaker model warns because transcription still works without labels.
 fn speaker_model() -> Check {
-    let resolved = Environment::capture()
-        .and_then(|environment| SpeakerConfig::load(&environment))
+    let resolved = loaded(|settings, home| Ok(SpeakerConfig::load(&settings.speaker, home)))
         .map_err(|error| error_chain(&error))
         .and_then(|config| {
             WeSpeaker::check_from(&aria_speaker::wespeaker::Config {
@@ -239,8 +259,7 @@ fn speaker_model() -> Check {
 /// A missing segmentation model warns: Listen still names speakers, less
 /// reliably, and dictation still types every voice.
 fn segmentation_model() -> Check {
-    let resolved = Environment::capture()
-        .and_then(|environment| SpeakerConfig::load(&environment))
+    let resolved = loaded(|settings, home| Ok(SpeakerConfig::load(&settings.speaker, home)))
         .map_err(|error| error_chain(&error))
         .and_then(|config| {
             Pyannote::check_from(&aria_segmentation::pyannote::Config {
@@ -257,10 +276,10 @@ fn segmentation_model() -> Check {
     }
 }
 
-/// Listen accepts Parakeet, Moonshine, and Nemotron. Configuration failures
-/// warn because dictation can still work without Listen.
+/// Listen accepts Parakeet, Moonshine, and Nemotron. A config Listen can't use
+/// warns because dictation can still work without Listen.
 fn listen() -> Check {
-    let resolved = Environment::capture().and_then(|environment| ListenConfig::load(&environment));
+    let resolved = loaded(ListenConfig::load);
     match resolved {
         Ok(config) => Check::ok(
             LISTEN,
@@ -283,18 +302,18 @@ fn listen() -> Check {
 /// The relay is optional, so nothing here fails.
 fn relay(config: Option<RelayConfig>) -> Check {
     let Some(config) = config else {
-        return Check::warning(PHONE, UNCONFIGURED);
+        return Check::warning(PHONE, SETTINGS_FAILED);
     };
     let Some(port) = config.port() else {
         return Check::warning(
             PHONE,
-            "disabled; run `aria phone enable` to take recordings from an iPhone or Apple Watch"
+            "disabled; run `aria settings set phone.enabled on` to take recordings from an iPhone or Apple Watch"
                 .to_owned(),
         );
     };
     // Asked, not assumed: a lost port or unusable pairing file only logs, and
     // the daemon serves on happily without a relay. Reporting the
-    // configuration would call that healthy.
+    // settings would call that healthy.
     if !relay_is_listening(port) {
         return Check::warning(
             PHONE,
@@ -546,14 +565,14 @@ mod tests {
     /// A check with nothing to check against must not read as a failure of the
     /// thing it never looked at.
     #[test]
-    fn a_failed_configuration_leaves_its_dependants_unchecked() {
+    fn failed_settings_leave_its_dependants_unchecked() {
         for check in [
             audio_capture(None),
             transcription_model(None),
             wake_word_model(None),
         ] {
             assert_eq!(check.status, Status::Warning);
-            assert_eq!(check.detail, UNCONFIGURED);
+            assert_eq!(check.detail, SETTINGS_FAILED);
         }
     }
 

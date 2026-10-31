@@ -107,11 +107,9 @@ final class SetupStateTests: XCTestCase {
             engine("parakeet", default: true), engine("parakeet-mlx", unsupported: "needs MLX"),
         ]
         inspection.synthesisChoices = [engine("system", default: true), engine("kokoro")]
-        inspection.assistantChoices = [engine("claude-code", default: true)]
         inspection.defaults.transcriptionEngineID = "parakeet"
         inspection.defaults.synthesisEngineID = "system"
-        inspection.defaults.assistantID = "claude-code"
-        inspection.defaults.hotkey = true
+        inspection.defaults.ariaKey = true
         inspection.models = [
             model("parakeet", engine: "parakeet"),
             model("kokoro", engine: "kokoro"),
@@ -120,7 +118,7 @@ final class SetupStateTests: XCTestCase {
         ]
         inspection.service.job = .absent
         var missing = Aria_Setup_V1_Missing()
-        missing.kind = .config
+        missing.kind = .settings
         inspection.missing = [missing]
         return inspection
     }
@@ -173,7 +171,7 @@ final class SetupStateTests: XCTestCase {
     func testExpressAppliesTheDefaultsWithoutTheChoicePages() async {
         let harness = Harness()
         let state = await welcome(harness)
-        XCTAssertEqual(state.missingSummary, "Missing: configuration.")
+        XCTAssertEqual(state.missingSummary, "Missing: settings.")
 
         state.express()
         await waitUntil { harness.applyContinuation != nil }
@@ -247,9 +245,9 @@ final class SetupStateTests: XCTestCase {
         state.next()
         await waitUntil { harness.applyContinuation != nil }
         var started = Aria_Setup_V1_SetupEvent()
-        started.started = .config
+        started.started = .settings
         harness.onEvent?(started)
-        await waitUntil { state.applying == .config }
+        await waitUntil { state.applying == .settings }
         started.started = .wakeword
         harness.onEvent?(started)
         XCTAssertEqual(state.installRows.map(\.progress), [.running, .pending, .pending])
@@ -258,7 +256,7 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.applying == .models }
         XCTAssertEqual(state.installRows.map(\.progress), [.done, .running, .pending])
         XCTAssertEqual(
-            state.installRows.map(\.title), ["Configuration", "Models", "Background service"])
+            state.installRows.map(\.title), ["Settings", "Models", "Background service"])
     }
 
     func testFreshMacWalksEveryStepToDone() async {
@@ -268,7 +266,7 @@ final class SetupStateTests: XCTestCase {
 
         XCTAssertEqual(state.selections.transcriptionEngineID, "parakeet")
         XCTAssertEqual(state.selections.synthesisEngineID, "system")
-        XCTAssertTrue(state.selections.hotkey)
+        XCTAssertTrue(state.selections.ariaKey)
         XCTAssertFalse(state.selections.wake)
         XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"], "the speaker model is off by default")
         XCTAssertEqual(harness.stoppedDaemon, 1, "a spawned daemon must give the socket to the service")
@@ -390,8 +388,7 @@ final class SetupStateTests: XCTestCase {
     func testConfiguredMacStartsFromItsAnswersAndHasNothingToDownload() async {
         var inspection = Self.freshMac()
         inspection.defaults.transcriptionEngineID = "parakeet-mlx"
-        inspection.defaults.synthesisEngineID = "kokoro"
-        inspection.defaults.assistantID = "codex"
+        inspection.defaults.synthesisEngineID = "futuristic"
         inspection.models = inspection.models.map { model in
             var model = model
             model.onDisk = .complete

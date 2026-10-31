@@ -1,11 +1,12 @@
-name: a fresh daemon has no history, clears it with --yes, and turns on audio retention
-config: |
-  transcription:
-    backend: whisper
-    model: ${WHISPER_MODEL}
-  capture:
-    backend: wav-file
-    path: ${FIXTURES}/silence.wav
+name: a fresh daemon has no history, clears it with --yes, and turns on audio retention live
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
 expect:
   daemon:
     startup: success
@@ -16,6 +17,6 @@ expect:
     - run: [history, clear, --yes]
       stdout_contains:
         - "Dictation history cleared (0 entries)."
-    - run: [history, retain-audio, "true"]
+    - run: [settings, set, history.keep_audio, "on"]
       stdout_contains:
-        - "history audio retention: on"
+        - "applied"

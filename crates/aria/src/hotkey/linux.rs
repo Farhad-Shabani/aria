@@ -1,7 +1,7 @@
-//! No Linux hotkey listener exists. The config default keeps the hotkey
-//! disabled on Linux, so this runs only when someone enables it by hand.
+//! No Linux hotkey listener exists, and the daemon keeps the hotkey disabled
+//! on Linux.
 
-use super::{HotkeyKey, ListenerEvent, ListenerExit};
+use super::{AriaKey, ListenerEvent, ListenerExit};
 
 pub(crate) struct LinuxHotkeyListener;
 
@@ -11,7 +11,7 @@ impl LinuxHotkeyListener {
     }
 
     pub(crate) fn listen(
-        _key: HotkeyKey,
+        _key: AriaKey,
         _events: impl Fn(ListenerEvent),
         _should_stop: impl Fn() -> bool,
     ) -> ListenerExit {

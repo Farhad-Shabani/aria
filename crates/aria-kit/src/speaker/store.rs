@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_speakers_directory_means_nobody_enrolled() {
+    fn an_empty_profiles_directory_means_nobody_enrolled() {
         let home = tempfile::tempdir().expect("a temporary directory");
         assert!(profiles(&ProfileStore::open(home.path().join("absent"))).is_empty());
     }

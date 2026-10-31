@@ -56,7 +56,7 @@ final class SetupState: ObservableObject {
 
     static let spokenReply = "Aria is ready."
     private static let installSteps: [(step: Aria_Setup_V1_Step, title: String)] = [
-        (.config, "Configuration"), (.models, "Models"), (.service, "Background service"),
+        (.settings, "Settings"), (.models, "Models"), (.service, "Background service"),
     ]
 
     @Published private(set) var step: Step = .inspecting {
@@ -154,7 +154,6 @@ final class SetupState: ObservableObject {
         let chosen = [
             (selections.transcriptionEngineID, inspection.transcriptionChoices),
             (selections.synthesisEngineID, inspection.synthesisChoices),
-            (selections.assistantID, inspection.assistantChoices),
         ]
         for (key, engines) in chosen {
             guard let engine = engines.first(where: { $0.id == key }) else { continue }
@@ -182,7 +181,7 @@ final class SetupState: ObservableObject {
         guard step != .inspecting else { return nil }
         let names = inspection.missing.map { missing in
             switch missing.kind {
-            case .config: "configuration"
+            case .settings: "settings"
             case .wakeword: "wake-word models"
             case .model: "models"
             case .service: "background service"
@@ -409,8 +408,8 @@ final class SetupState: ObservableObject {
 
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
-        isHotkeyReady = selections.hotkey && summary.grant == .armed
-        if selections.hotkey && summary.grant != .armed {
+        isHotkeyReady = selections.ariaKey && summary.grant == .armed
+        if selections.ariaKey && summary.grant != .armed {
             step = .grant
             watchGrant()
         } else {

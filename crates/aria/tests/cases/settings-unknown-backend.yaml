@@ -1,0 +1,10 @@
+name: an unsupported transcription backend fails daemon startup
+settings: |
+  [stt]
+  backend = "vosk"
+  model = "~/model.bin"
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'stt.backend does not accept "vosk"; supported values are whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server'

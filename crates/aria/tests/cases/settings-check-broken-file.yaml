@@ -1,0 +1,11 @@
+name: settings check names the line and column of a broken file with no daemon, and every command warns
+settings: |
+  [transcription
+  backend = "whisper"
+expect:
+  client:
+    - run: [settings, check]
+      exit: failure
+      stderr_contains: ["line 1, column 15"]
+    - run: [settings, path]
+      stderr_contains: ["settings.toml is invalid at line 1, column 15"]

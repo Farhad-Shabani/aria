@@ -3,10 +3,10 @@ import SwiftUI
 /// One app's page inside Apps.
 struct ApplicationSettings: View {
     let bundleID: String
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
 
     var body: some View {
-        PreferencesForm(preferences: preferences) { editor in
+        SettingsForm(settings: settings) { editor in
             let apps = editor.snapshot.applicationOverrides
             if let overrides = ApplicationOverrideEdits.overrides(for: bundleID, in: apps) {
                 let app = InstalledApp.lookUp(bundleID)
@@ -33,7 +33,7 @@ struct ApplicationSettings: View {
         }
     }
 
-    private func isOn(_ excluded: Bool, _ editor: PreferencesEditor) -> Binding<Bool> {
+    private func isOn(_ excluded: Bool, _ editor: SettingsEditor) -> Binding<Bool> {
         let bundleID = bundleID
         return Binding(
             get: { !excluded },
@@ -49,7 +49,7 @@ struct ApplicationSettings: View {
     private func control(
         _ setting: AppSetting,
         overrides: Aria_Daemon_V1_DictationOverrides,
-        _ editor: PreferencesEditor
+        _ editor: SettingsEditor
     ) -> some View {
         let global = editor.snapshot
         switch setting {
@@ -87,7 +87,7 @@ struct ApplicationSettings: View {
         chosen: Mode?,
         dictation: Mode,
         title: KeyPath<Mode, String>,
-        _ editor: PreferencesEditor,
+        _ editor: SettingsEditor,
         _ edit: @escaping (Mode?, String, inout Aria_Daemon_V1_ApplicationOverrides) -> Void
     ) -> some View {
         let bundleID = bundleID

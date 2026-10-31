@@ -1,9 +1,6 @@
 //! The choices setup offers, and what this machine can run.
 
-use std::env;
-
-use crate::config::{AssistantId, FileConfig, backend, tts_backend};
-use crate::primitives::file_inspection::InspectedFile;
+use crate::config::{backend, tts_backend};
 
 use super::assets::{self, Asset};
 
@@ -20,7 +17,7 @@ pub enum Availability {
     },
 }
 
-/// One engine as setup offers it: what config.yaml calls it, what a person
+/// One engine as setup offers it: what settings.toml calls it, what a person
 /// sees, and whether this host can run it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
@@ -29,7 +26,7 @@ pub struct Choice {
     pub availability: Availability,
     /// Exactly one choice per family. The configured one wins, even with
     /// its model missing: that is a fix to show, not a reason to choose for
-    /// the user. Otherwise the one an unset config runs, if ready; else the
+    /// the user. Otherwise the one unset settings run, if ready; else the
     /// first that is ready, else the first listed.
     pub default: bool,
     pub model: ModelSource,
@@ -69,8 +66,8 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
 
 /// Applying the server choice writes the paired server's address, so a
 /// pairing alone makes it ready.
-pub(super) fn stt_choices(file: &FileConfig, paired: bool, host: &Host) -> Vec<Choice> {
-    let mut choices = choices::<Stt>(file.transcription.backend.as_deref(), host);
+pub(super) fn stt_choices(file: &crate::settings::Stt, paired: bool, host: &Host) -> Vec<Choice> {
+    let mut choices = choices::<Stt>(file.backend.as_deref(), host);
     if paired
         && let Some(server) = choices
             .iter_mut()
@@ -99,20 +96,6 @@ impl Host {
             },
         }
     }
-
-    /// The daemon spawns these by bare name, so the probe has to agree with
-    /// execvp: a file without the execute bit is not on the path.
-    fn on_path(&self, program: &str) -> bool {
-        env::var_os("PATH")
-            .map(|path| {
-                env::split_paths(&path).any(|directory| {
-                    InspectedFile::inspect(directory.join(program))
-                        .and_then(InspectedFile::require_executable)
-                        .is_ok()
-                })
-            })
-            .unwrap_or(false)
-    }
 }
 
 /// Where an engine's model comes from.
@@ -140,7 +123,7 @@ pub(super) trait Backend: Copy + Eq + 'static {
     const TITLE: &'static str;
     const ALL: &'static [Self];
     const DEFAULT: &'static str;
-    /// The value written to config.yaml.
+    /// The value written to settings.toml.
     fn key(self) -> &'static str;
     fn label(self) -> &'static str;
     fn availability(self, host: &Host) -> Availability;
@@ -206,7 +189,7 @@ impl Backend for Stt {
                 why: "needs macOS (MLX)",
             },
             Self::ParakeetMlx => Availability::Missing {
-                fix: "set transcription.interpreter to a Python with parakeet-mlx".to_owned(),
+                fix: "set stt.interpreter to a Python with parakeet-mlx".to_owned(),
             },
             Self::Server => Availability::Missing {
                 fix: "pair an inference server first".to_owned(),
@@ -272,40 +255,6 @@ impl Backend for Tts {
     }
 }
 
-impl Backend for AssistantId {
-    const TITLE: &'static str = "Assistant (for Ask and Prompts)";
-    const ALL: &'static [Self] = Self::ALL;
-    const DEFAULT: &'static str = Self::DEFAULT.name();
-
-    fn key(self) -> &'static str {
-        self.name()
-    }
-
-    fn label(self) -> &'static str {
-        self.display_name()
-    }
-
-    fn availability(self, host: &Host) -> Availability {
-        let program = match self {
-            Self::ClaudeCode => "claude",
-            Self::Codex => "codex",
-        };
-        if host.on_path(program) {
-            Availability::Ready
-        } else {
-            Availability::Missing {
-                fix: format!("install the `{program}` command"),
-            }
-        }
-    }
-
-    fn model(self) -> ModelSource {
-        match self {
-            Self::ClaudeCode | Self::Codex => ModelSource::BuiltIn,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use aria_kit::synthesis::Engine as _;
@@ -314,8 +263,9 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::config::{self, DictationConfig, Environment, TtsBackend, TtsConfig, TtsModel};
+    use crate::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
     use crate::primitives::error_chain;
+    use crate::settings::SettingsFile;
 
     #[test]
     fn server_is_ready_once_a_server_is_paired() {
@@ -323,9 +273,9 @@ mod tests {
             macos: true,
             system_voice: Availability::Ready,
         };
-        let file = FileConfig::default();
+        let file = SettingsFile::default();
         let available = |paired: bool| {
-            stt_choices(&file, paired, &host)
+            stt_choices(&file.stt, paired, &host)
                 .into_iter()
                 .find(|choice| choice.key == backend::SERVER)
                 .unwrap()
@@ -342,17 +292,23 @@ mod tests {
         let models_dir = config::models_dir(home);
         let engines = Stt::ALL
             .iter()
-            .map(|stt| ("transcription", stt.key(), stt.model().assets()))
+            .map(|stt| ("stt", stt.key(), stt.model().assets()))
             .chain(
                 Tts::ALL
                     .iter()
                     .map(|tts| ("tts", tts.key(), tts.model().assets())),
             );
         for (section, key, assets) in engines {
-            let file: FileConfig =
-                serde_saphyr::from_str(&format!("{section}: {{backend: {key}}}")).unwrap();
+            let required = match key {
+                backend::SERVER => "server = \"https://example.test\"\n",
+                backend::PARAKEET_MLX => "interpreter = \"/usr/bin/python3\"\n",
+                _ => "",
+            };
+            let file: SettingsFile =
+                toml_edit::de::from_str(&format!("[{section}]\nbackend = \"{key}\"\n{required}"))
+                    .unwrap();
             let loaded: Vec<_> = config::loaded_models(&file, home)
-                .models
+                .unwrap()
                 .into_iter()
                 .filter(|model| model.section == section)
                 .collect();
@@ -370,15 +326,15 @@ mod tests {
         }
     }
 
-    /// A home whose config picks `backend` in `section` and whose models
+    /// A home whose settings pick `backend` in `section` and whose models
     /// directory holds every file setup downloads for it.
     fn home_with_downloads(section: &str, backend: &str, assets: &[Asset]) -> tempfile::TempDir {
         let home = tempfile::tempdir().unwrap();
         let aria = home.path().join(".aria");
         fs::create_dir_all(&aria).unwrap();
         fs::write(
-            aria.join("config.yaml"),
-            format!("{section}: {{backend: {backend}}}\n"),
+            aria.join("settings.toml"),
+            format!("[{section}]\nbackend = \"{backend}\"\n"),
         )
         .unwrap();
         let models_dir = config::models_dir(home.path());
@@ -401,10 +357,12 @@ mod tests {
             .iter()
             .filter(|stt| !stt.model().assets().is_empty())
         {
-            let home = home_with_downloads("transcription", stt.key(), stt.model().assets());
-            let environment = Environment::in_home(home.path().to_path_buf());
+            let home = home_with_downloads("stt", stt.key(), stt.model().assets());
+            let home_dir = home.path().to_path_buf();
             let crate::config::TranscriptionBackend::Local(transcription) =
-                DictationConfig::load(&environment).unwrap().transcription
+                DictationConfig::load(&crate::settings::load(&home_dir).unwrap(), &home_dir)
+                    .unwrap()
+                    .transcription
             else {
                 panic!("{} is a local engine", stt.key());
             };
@@ -417,23 +375,27 @@ mod tests {
             .filter(|tts| !tts.model().assets().is_empty())
         {
             let home = home_with_downloads("tts", tts.key(), tts.model().assets());
-            let environment = Environment::in_home(home.path().to_path_buf());
-            let checked = match TtsConfig::load(&environment).unwrap().backend {
-                TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
-                    aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
-                        model,
-                        voices,
-                    })
-                }
-                TtsBackend::Model(TtsModel::Qwen {
-                    model_dir,
-                    tokenizer_dir,
-                }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
-                    model_dir,
-                    speech_tokenizer_dir: tokenizer_dir,
-                }),
-                TtsBackend::System => panic!("the system voice downloads nothing"),
-            };
+            let home_dir = home.path().to_path_buf();
+            let checked =
+                match TtsConfig::load(&crate::settings::load(&home_dir).unwrap().tts, &home_dir)
+                    .unwrap()
+                    .backend
+                {
+                    TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
+                        aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
+                            model,
+                            voices,
+                        })
+                    }
+                    TtsBackend::Model(TtsModel::Qwen {
+                        model_dir,
+                        tokenizer_dir,
+                    }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
+                        model_dir,
+                        speech_tokenizer_dir: tokenizer_dir,
+                    }),
+                    TtsBackend::System => panic!("the system voice downloads nothing"),
+                };
             if let Err(error) = checked {
                 panic!("{}: {}", tts.key(), error_chain(&error));
             }
@@ -447,15 +409,15 @@ mod tests {
             system_voice: Availability::Ready,
         };
         let default = |choices: Vec<Choice>| choices.into_iter().find(|choice| choice.default);
-        let unset = FileConfig::default();
+        let unset = SettingsFile::default();
 
         assert_eq!(
             default(choices::<Stt>(None, &host)).map(|choice| choice.key),
-            Some(config::transcription_engine(&unset))
+            Some(config::transcription_engine(&unset.stt))
         );
         assert_eq!(
             default(choices::<Tts>(None, &host)).map(|choice| choice.key),
-            Some(config::tts_engine(&unset))
+            Some(unset.tts.backend.as_deref().unwrap_or(tts_backend::DEFAULT))
         );
     }
 

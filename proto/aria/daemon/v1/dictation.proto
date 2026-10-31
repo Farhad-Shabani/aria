@@ -23,9 +23,9 @@ service DictationService {
 }
 
 message StartDictationRequest {
-  // Absent mode overrides use stored preferences; explicit UNSPECIFIED is invalid.
+  // Absent mode overrides use stored settings; explicit UNSPECIFIED is invalid.
   optional OutputMode output_mode = 1;
-  // Required: no stored preference applies, so UNSPECIFIED is invalid.
+  // Required: no stored setting applies, so UNSPECIFIED is invalid.
   StopMode stop_mode = 2;
   optional DeliveryMode delivery_mode = 3;
   // Hand the transcript back without delivering it anywhere.

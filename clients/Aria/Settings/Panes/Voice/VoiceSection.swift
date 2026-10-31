@@ -6,7 +6,7 @@ struct VoiceSection: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var voices: VoiceProfiles
     @ObservedObject var setup: SetupStatus
-    let editor: PreferencesEditor
+    let editor: SettingsEditor
     @State private var removing: Aria_Daemon_V1_EnrolledSpeaker?
 
     var body: some View {
@@ -38,7 +38,7 @@ struct VoiceSection: View {
                 Task {
                     await voices.remove(speaker.name)
                     // Removing the last owner turns "only type my voice" off.
-                    await editor.preferences.sync()
+                    await editor.settings.sync()
                 }
             }
         } message: { _ in

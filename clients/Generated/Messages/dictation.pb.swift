@@ -308,7 +308,7 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// Absent mode overrides use stored preferences; explicit UNSPECIFIED is invalid.
+  /// Absent mode overrides use stored settings; explicit UNSPECIFIED is invalid.
   public var outputMode: Aria_Daemon_V1_OutputMode {
     get {_outputMode ?? .unspecified}
     set {_outputMode = newValue}
@@ -318,7 +318,7 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {self._outputMode = nil}
 
-  /// Required: no stored preference applies, so UNSPECIFIED is invalid.
+  /// Required: no stored setting applies, so UNSPECIFIED is invalid.
   public var stopMode: Aria_Daemon_V1_StopMode = .unspecified
 
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {

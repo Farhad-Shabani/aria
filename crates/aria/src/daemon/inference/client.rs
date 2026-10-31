@@ -31,7 +31,7 @@ const AUDIO_CHUNK_SAMPLES: u64 = 1600;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteClientError {
-    #[error("cannot load remote configuration")]
+    #[error("cannot load the remote settings")]
     Config(#[source] crate::config::ConfigError),
     #[error("cannot prepare remote client storage")]
     Storage,
@@ -1481,13 +1481,17 @@ mod tests {
                     DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
                         .tracking_voices(Some(diarizer), Some(LevelSegmenter))
-                        .rewriting(crate::dictation::Rewrites::new().removing_disfluencies(true));
+                        .rewriting(crate::dictation::Rewrites::new());
                 let mut recording = crate::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(
                     &mut recording,
                     &Language::Automatic,
                     true,
                     Some(&matcher),
+                    crate::dictation::Rewriting {
+                        cleanup: true,
+                        backtrack: false,
+                    },
                     "test",
                     &CancelToken::never(),
                 );

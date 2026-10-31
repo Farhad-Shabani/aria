@@ -72,7 +72,10 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                         RpcErrorCode::Internal
                     }
                 };
-                super::failed(METHOD, RpcFailure::new(code, error_chain(&error)))
+                crate::daemon::relay::redacted(super::failed(
+                    METHOD,
+                    RpcFailure::new(code, error_chain(&error)),
+                ))
             })?;
         tracing::info!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::PairResponse {}))

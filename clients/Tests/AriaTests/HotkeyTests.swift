@@ -8,38 +8,38 @@ final class HotkeyTests: XCTestCase {
     private let other = Chord(keyCode: 35, control: true, option: false, shift: true, command: false)
 
     func testAHotkeyRoundTripsThroughTheWireAndAnUnusableBindingReadsAsNone() {
-        XCTAssertEqual(Aria_Daemon_V1_Hotkey(.chord(chord)).storedBinding, .chord(chord))
-        XCTAssertEqual(Aria_Daemon_V1_Hotkey(.chord(chord)).storedChord, chord)
-        XCTAssertEqual(Aria_Daemon_V1_Hotkey(.combo(.command)).storedBinding, .combo(.command))
-        XCTAssertNil(Aria_Daemon_V1_Hotkey(.combo(.command)).storedChord)
-        XCTAssertNil(Aria_Daemon_V1_Hotkey(nil).storedBinding)
-        XCTAssertNil(Aria_Daemon_V1_Hotkey(.combo(.unspecified)).storedBinding)
-        XCTAssertNil(Aria_Daemon_V1_Hotkey(.combo(.UNRECOGNIZED(9))).storedBinding)
+        XCTAssertEqual(Aria_Daemon_V1_Shortcut(.chord(chord)).storedBinding, .chord(chord))
+        XCTAssertEqual(Aria_Daemon_V1_Shortcut(.chord(chord)).storedChord, chord)
+        XCTAssertEqual(Aria_Daemon_V1_Shortcut(.combo(.command)).storedBinding, .combo(.command))
+        XCTAssertNil(Aria_Daemon_V1_Shortcut(.combo(.command)).storedChord)
+        XCTAssertNil(Aria_Daemon_V1_Shortcut(nil).storedBinding)
+        XCTAssertNil(Aria_Daemon_V1_Shortcut(.combo(.unspecified)).storedBinding)
+        XCTAssertNil(Aria_Daemon_V1_Shortcut(.combo(.UNRECOGNIZED(9))).storedBinding)
 
-        var bare = Aria_Daemon_V1_Hotkey(.chord(chord))
+        var bare = Aria_Daemon_V1_Shortcut(.chord(chord))
         bare.chord.control = false
         bare.chord.option = false
         XCTAssertNil(bare.storedBinding)
     }
 
     func testAComboRunsTheActionThatHoldsItAndShowsItsModifier() {
-        var preferences = Aria_Daemon_V1_UserPreferences()
-        preferences.askHotkey = Aria_Daemon_V1_Hotkey(.combo(.shift))
-        preferences.promptListHotkey = Aria_Daemon_V1_Hotkey(.combo(.command))
-        XCTAssertEqual(ComboAction(combo: .shift, in: preferences), .ask)
-        XCTAssertEqual(ComboAction(combo: .command, in: preferences), .promptList)
+        var settings = Aria_Daemon_V1_Settings()
+        settings.askShortcut = Aria_Daemon_V1_Shortcut(.combo(.shift))
+        settings.promptListShortcut = Aria_Daemon_V1_Shortcut(.combo(.command))
+        XCTAssertEqual(ComboAction(combo: .shift, in: settings), .ask)
+        XCTAssertEqual(ComboAction(combo: .command, in: settings), .promptList)
 
-        preferences.askHotkey = Aria_Daemon_V1_Hotkey(nil)
-        XCTAssertNil(ComboAction(combo: .shift, in: preferences))
-        preferences.promptListHotkey = Aria_Daemon_V1_Hotkey(nil)
-        XCTAssertNil(ComboAction(combo: .command, in: preferences))
+        settings.askShortcut = Aria_Daemon_V1_Shortcut(nil)
+        XCTAssertNil(ComboAction(combo: .shift, in: settings))
+        settings.promptListShortcut = Aria_Daemon_V1_Shortcut(nil)
+        XCTAssertNil(ComboAction(combo: .command, in: settings))
 
-        preferences.askHotkey = Aria_Daemon_V1_Hotkey(.combo(.command))
-        preferences.promptListHotkey = Aria_Daemon_V1_Hotkey(.chord(chord))
-        XCTAssertEqual(ComboAction(combo: .command, in: preferences), .ask)
+        settings.askShortcut = Aria_Daemon_V1_Shortcut(.combo(.command))
+        settings.promptListShortcut = Aria_Daemon_V1_Shortcut(.chord(chord))
+        XCTAssertEqual(ComboAction(combo: .command, in: settings), .ask)
 
-        XCTAssertEqual(HotkeyKey.rightOption.gesture(for: .shift), "Right Option + ⇧")
-        XCTAssertEqual(HotkeyKey.fn.gesture(for: .command), "Fn + ⌘")
+        XCTAssertEqual(AriaKey.rightOption.gesture(for: .shift), "Right Option + ⇧")
+        XCTAssertEqual(AriaKey.fn.gesture(for: .command), "Fn + ⌘")
     }
 
     func testAPromptWithNoChordRunsOnlyFromThePromptList() {

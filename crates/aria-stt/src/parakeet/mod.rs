@@ -38,7 +38,7 @@ use aria_kit::transcription::{
     word_timings,
 };
 
-/// Names this engine under `transcription.backend` and in its own errors.
+/// Names this engine under `stt.backend` and in its own errors.
 pub const NAME: &str = "parakeet";
 
 /// Where inference runs. Gpu means WebGPU (Metal), which needs macOS and the

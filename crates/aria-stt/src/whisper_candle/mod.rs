@@ -42,7 +42,7 @@ use aria_kit::transcription::{
 #[cfg(not(target_family = "wasm"))]
 pub use directory::WhisperCandleConfig;
 
-/// Names this engine under `transcription.backend` and in its own errors.
+/// Names this engine under `stt.backend` and in its own errors.
 pub const NAME: &str = "whisper-candle";
 
 const BACKEND: &str = NAME;

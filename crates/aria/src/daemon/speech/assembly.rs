@@ -1,33 +1,24 @@
-//! Composition of a speech capability: backend loading, the defaults a
-//! request falls back to, and the coordinator the runtime executes.
+//! Composition of a speech capability: backend loading and the coordinator
+//! the runtime executes.
 
-use aria_kit::synthesis::{SpeakingRate, Voice};
-
-use crate::config::{ConfigError, TtsConfig};
+use crate::config::{ConfigError, TtsConfig, TtsEngine};
 use crate::rpc::RpcErrorCode;
 use crate::speech::{SpeechBackend, SpeechBuildError, SpeechCoordinator};
 
-/// The coordinator plus the configured defaults a request falls back to.
 pub(super) struct BuiltSpeech {
     pub(super) coordinator: SpeechCoordinator<SpeechBackend>,
-    pub(super) default_voice: Option<Voice>,
-    pub(super) default_rate: SpeakingRate,
+    /// Whose saved voice applies, which a fallback may have changed.
+    pub(super) engine: TtsEngine,
 }
 
 pub(super) fn build_speech(config: TtsConfig) -> Result<BuiltSpeech, SpeechInitializationError> {
-    let TtsConfig {
-        backend,
-        voice,
-        rate,
-        fallback,
-    } = config;
+    let TtsConfig { backend, fallback } = config;
     tracing::info!(backend = backend.name(), "building the speech engine");
     let backend =
         SpeechBackend::build(backend, fallback).map_err(SpeechInitializationError::Backend)?;
     Ok(BuiltSpeech {
+        engine: backend.engine(),
         coordinator: SpeechCoordinator::new(backend),
-        default_voice: voice,
-        default_rate: rate,
     })
 }
 
@@ -42,7 +33,7 @@ impl From<&SpeechInitializationError> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpeechInitializationError {
-    #[error("failed to load speech configuration")]
+    #[error("failed to resolve the speech settings")]
     Config(#[source] ConfigError),
 
     #[error("failed to initialize the speech engine")]

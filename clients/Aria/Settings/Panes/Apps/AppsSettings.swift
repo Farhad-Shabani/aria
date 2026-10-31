@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct AppsSettings: View {
-    let preferences: DaemonPreferences
+    let settings: DaemonSettings
     @Binding var selected: String?
     let open: (String) -> Void
 
     var body: some View {
-        PreferencesContent(preferences: preferences) { editor in
+        SettingsContent(settings: settings) { editor in
             let apps = editor.snapshot.applicationOverrides
             ItemList(
                 items: apps.entries,
@@ -28,7 +28,7 @@ struct AppsSettings: View {
         }
     }
 
-    private func add(_ editor: PreferencesEditor) {
+    private func add(_ editor: SettingsEditor) {
         guard let bundleID = InstalledApp.choose() else { return }
         editor.editLatest(\.applicationOverrides, \.applicationOverrides) {
             ApplicationOverrideEdits.add(bundleID, to: &$0)

@@ -38,7 +38,7 @@ final class SetupStatus: ObservableObject {
             switch missing.kind {
             case .grant: true
             case .model: recognition.contains(missing.modelID)
-            case .config, .wakeword, .service, .unspecified, .UNRECOGNIZED: false
+            case .settings, .wakeword, .service, .unspecified, .UNRECOGNIZED: false
             }
         }
     }

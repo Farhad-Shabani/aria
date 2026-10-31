@@ -1,0 +1,39 @@
+name: the file names the assistant until settings set chooses another
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
+
+  [assistant]
+  id = "codex"
+expect:
+  daemon:
+    startup: success
+  client:
+    - run: [settings, show, assistant.id]
+      stdout_contains: [codex]
+    - run: [settings, set, assistant.id, claude-code]
+      stdout_contains: [applied]
+    - run: [settings, show, assistant.id]
+      stdout_contains: [claude-code]
+    - run: [settings, set, history.keep_audio, "on"]
+      stdout_contains: [applied]
+    - run: [settings, show, assistant.id]
+      stdout_contains: [claude-code]
+    - run: [settings, set, assistant.models.codex, codex-choice]
+      stdout_contains: [applied]
+    - run: [settings, set, assistant.models.claude-code, claude-choice]
+      stdout_contains: [applied]
+    - run: [settings, show, assistant.models]
+      stdout_contains: [codex-choice, claude-choice]
+    - run: [settings, reset, assistant.models.claude-code]
+      stdout_contains: [applied]
+    - run: [settings, show, assistant.models]
+      stdout_contains: [codex-choice]
+    - run: [settings, set, assistant.models, "{}"]
+      exit: failure
+      stderr_contains: ["assistant.models is a table"]

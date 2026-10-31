@@ -1,12 +1,7 @@
 //! Immutable configuration for Aria capabilities.
 
-mod file;
 mod load;
-mod show;
 
-pub(crate) use file::LlmCleanupConfig;
-
-use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,6 +9,7 @@ use std::time::Duration;
 use aria_kit::synthesis::{SpeakingRate, SpeakingRateError, Voice, VoiceError};
 
 use crate::primitives::user_home::UserHomeError;
+use crate::settings::SettingsError;
 
 pub(crate) struct DaemonConfig {
     pub(crate) dictation: DictationConfig,
@@ -23,18 +19,22 @@ pub(crate) struct DaemonConfig {
     pub(crate) tts: TtsConfig,
 }
 
-impl DaemonConfig {
-    pub(crate) fn load(
-        environment: &Environment,
-        wake_word: WakeWordOverride,
-    ) -> Result<Self, ConfigError> {
-        load::load_daemon(environment, wake_word)
+impl From<crate::settings::SettingsError> for ConfigError {
+    fn from(error: crate::settings::SettingsError) -> Self {
+        Self::Settings(error)
     }
 }
 
-/// The command's say over `wake.enabled`, outranking both the environment and
-/// the file. `aria wake` exists to listen, so it enables monitoring whatever
-/// the configuration says. Nothing here can turn monitoring off.
+/// A loopback LLM pass over the transcript, after the rule-based cleanup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LlmCleanupConfig {
+    pub(crate) endpoint: String,
+    pub(crate) model: String,
+}
+
+/// The command's say over `wake.enabled`, outranking the file. `aria wake`
+/// exists to listen, so it enables monitoring whatever the settings say.
+/// Nothing here can turn monitoring off.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WakeWordOverride {
     Inherit,
@@ -46,14 +46,11 @@ pub(crate) struct DictationConfig {
     pub(crate) capture: CaptureConfig,
     pub(crate) transcription: TranscriptionBackend,
     pub(crate) dictation_timeouts: DictationTimeouts,
-    /// Drops fillers and doubled words before delivery.
-    pub(crate) cleanup: bool,
-    pub(crate) backtrack: bool,
     pub(crate) cleanup_llm: Option<LlmCleanupConfig>,
 }
 
 /// The global dictation hotkey: one bare modifier key, tapped or held. Which
-/// key is a user preference, not config.
+/// key lives in the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HotkeyConfig {
     Disabled,
@@ -108,20 +105,28 @@ pub mod wake_backend {
     pub const DEFAULT: &str = OPEN_WAKE_WORD;
 }
 
-/// The speech defaults every utterance falls back to when its request names
-/// no voice or rate of its own.
+/// The engine a daemon builds, and what it falls back to if that fails.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TtsConfig {
     pub(crate) backend: TtsBackend,
-    pub(crate) voice: Option<Voice>,
-    pub(crate) rate: SpeakingRate,
     pub(crate) fallback: TtsFallback,
 }
 
-impl TtsConfig {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_tts(environment)
-    }
+/// An engine that speaks, which owns its saved voice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TtsEngine {
+    Kokoro,
+    Qwen,
+    System,
+}
+
+/// What an utterance falls back to when its request names no voice or rate.
+/// Live keys, so each utterance reads them anew.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SpeechDefaults {
+    /// `None` leaves the choice to the engine.
+    pub(crate) voice: Option<Voice>,
+    pub(crate) rate: SpeakingRate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,10 +185,6 @@ pub mod tts_backend {
 }
 
 impl DictationConfig {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load(environment)
-    }
-
     pub(crate) fn rewrites(
         &self,
         home: &std::path::Path,
@@ -198,10 +199,7 @@ impl DictationConfig {
                 crate::dictation::LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home)
             })
             .transpose()?;
-        Ok(crate::dictation::Rewrites::new()
-            .removing_disfluencies(self.cleanup)
-            .backtracking(self.backtrack)
-            .with(llm))
+        Ok(crate::dictation::Rewrites::new().with(llm))
     }
 }
 
@@ -254,10 +252,6 @@ pub(crate) enum TranscriptionBackend {
 }
 
 impl TranscriptionBackend {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_transcription(environment)
-    }
-
     pub(crate) fn backend_name(&self) -> &'static str {
         match self {
             Self::Local(engine) => engine.backend_name(),
@@ -266,11 +260,9 @@ impl TranscriptionBackend {
     }
 }
 
-/// The assistant `aria ask` talks to. Loaded per ask, never at daemon startup,
-/// so a broken chat section blocks nothing else.
+/// Where and how long `aria ask` runs the assistant. Loaded per ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChatConfig {
-    pub(crate) assistant_id: AssistantId,
     /// Pins the assistant's working directory; otherwise the caller's.
     pub(crate) workdir: Option<PathBuf>,
     /// Directories whose git repos an ask may name; empty turns routing off.
@@ -278,17 +270,6 @@ pub(crate) struct ChatConfig {
     pub(crate) timeout: Duration,
     /// A reply delivered like a transcript gets dictation's delivery timeout.
     pub(crate) delivery_timeout: Duration,
-}
-
-impl ChatConfig {
-    pub(crate) fn load(
-        environment: &Environment,
-        assistant_id: AssistantId,
-    ) -> Result<Self, ConfigError> {
-        let mut environment = environment.clone();
-        environment.assistant_id = Some(assistant_id.name().to_owned());
-        load::load_chat(&environment)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -300,10 +281,6 @@ pub enum AssistantId {
 impl AssistantId {
     pub const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex];
     pub const DEFAULT: Self = Self::ClaudeCode;
-
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_assistant_id(environment)
-    }
 
     pub const fn name(self) -> &'static str {
         match self {
@@ -383,13 +360,7 @@ pub(crate) struct SpeakerConfig {
     pub(crate) model: PathBuf,
     /// Segmentation model path. If unavailable, Listen labels per segment.
     pub(crate) segmentation_model: PathBuf,
-    pub(crate) speakers_dir: PathBuf,
-}
-
-impl SpeakerConfig {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_speaker(environment)
-    }
+    pub(crate) profiles_dir: PathBuf,
 }
 
 /// What the assistant remembers across sessions and how it learns it.
@@ -403,24 +374,11 @@ pub(crate) struct MemoryConfig {
     pub(crate) dir: PathBuf,
 }
 
-impl MemoryConfig {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_memory(environment)
-    }
-}
-
-impl ListenConfig {
-    pub(crate) fn load(environment: &Environment) -> Result<Self, ConfigError> {
-        load::load_listen(environment)
-    }
-}
-
-pub(crate) use file::{FileConfig, read as read_file};
 pub(crate) use load::{
-    Environment, LoadedModel, UNATTENDED_ENV, default_path, loaded_models, memory_directory,
-    model_folder, models_dir, transcription_engine, tts_engine,
+    DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, LoadedModel, UNATTENDED_ENV, codex_home,
+    home_directory, loaded_models, memory_directory, model_folder, models_dir,
+    transcription_engine, unattended,
 };
-pub use show::show;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptionConfig {
@@ -486,7 +444,7 @@ impl TranscriptionConfig {
     }
 }
 
-/// Names an engine under `transcription.backend`, and labels that engine in
+/// Names an engine under `stt.backend`, and labels that engine in
 /// its own logs and errors.
 pub mod backend {
     pub const SERVER: &str = "server";
@@ -541,67 +499,24 @@ pub(crate) struct DictationTimeouts {
 // field, so the message points at what to edit.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("unknown assistant {0:?}; use aria assistant --help to list choices")]
+    #[error("unknown assistant {0:?}; use aria ask --help to list choices")]
     UnknownAssistant(String),
 
-    #[error("transcription.server must be an HTTPS origin without credentials, query or fragment")]
+    #[error("stt.server must be an HTTPS origin without credentials, query or fragment")]
     InvalidServerEndpoint,
-
-    #[error("transcription.server requires transcription.backend: server")]
-    ServerRequiresServerBackend,
 
     #[error(
         "listen requires a local engine; set listen.backend to parakeet, moonshine, or nemotron"
     )]
     ListenRequiresLocal,
-    #[error("cannot locate the Aria configuration")]
+    #[error("cannot locate the Aria settings")]
     Home(#[source] UserHomeError),
 
-    #[error("failed to open Aria configuration at {}", path.display())]
-    Open {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("failed to inspect Aria configuration at {}", path.display())]
-    Inspect {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Aria configuration path is not a regular file: {}", path.display())]
-    NotRegularFile { path: PathBuf },
-
-    #[error("Aria configuration exceeds the maximum size of {maximum_bytes} bytes")]
-    FileTooLarge { maximum_bytes: u64 },
-
-    #[error("failed to read Aria configuration at {}", path.display())]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Aria configuration is not valid UTF-8")]
-    InvalidUtf8(#[source] std::string::FromUtf8Error),
-
-    #[error("failed to parse Aria configuration at {}", path.display())]
-    Parse {
-        path: PathBuf,
-        #[source]
-        source: ConfigParseError,
-    },
+    #[error("cannot read the settings")]
+    Settings(#[source] SettingsError),
 
     #[error("environment variable {variable} is not valid UTF-8")]
     InvalidEnvironmentEncoding { variable: &'static str },
-
-    #[error("environment variable {variable} must be a number")]
-    InvalidEnvironmentNumber { variable: &'static str },
-
-    #[error("{field} must not be empty")]
-    EmptyValue { field: &'static str },
 
     #[error("{field} must be a finite number of seconds greater than zero; got {seconds}")]
     InvalidDuration { field: &'static str, seconds: f64 },
@@ -612,9 +527,6 @@ pub enum ConfigError {
         value: String,
         supported: &'static str,
     },
-
-    #[error("chat.timeout must be at most {maximum:?}; got {actual:?}")]
-    ChatTimeoutTooLong { actual: Duration, maximum: Duration },
 
     #[error("{field} does not apply to the {backend} backend")]
     NotApplicableToBackend {
@@ -631,14 +543,8 @@ pub enum ConfigError {
     #[error("wake-word monitoring requires capture.backend to be microphone")]
     WakeRequiresMicrophone,
 
-    #[error("dictation_cleanup_llm requires dictation_cleanup to be enabled")]
-    CleanupLlmRequiresCleanup,
-
-    #[error("invalid dictation_cleanup_llm configuration")]
+    #[error("invalid dictation.cleanup_llm settings")]
     CleanupLlm(#[source] crate::dictation::CleanupError),
-
-    #[error("{field} must be finite, greater than zero, and at most one; got {value}")]
-    InvalidThreshold { field: &'static str, value: f32 },
 
     #[error("{field} is not a usable speaking rate")]
     InvalidSpeakingRate {
@@ -653,90 +559,4 @@ pub enum ConfigError {
         #[source]
         source: VoiceError,
     },
-
-    #[error("path uses unsupported home syntax: {0}")]
-    UnsupportedHomeSyntax(String),
-
-    #[error("dictation_timeouts.overall must be at most {maximum:?}; got {actual:?}")]
-    OverallTimeoutTooLong { actual: Duration, maximum: Duration },
-
-    #[error(
-        "dictation_timeouts.recording ({recording:?}) must be shorter than dictation_timeouts.overall ({overall:?})"
-    )]
-    RecordingTimeoutTooLong {
-        recording: Duration,
-        overall: Duration,
-    },
 }
-
-/// A redacted YAML error that remains safe to include in daemon diagnostics.
-pub struct ConfigParseError {
-    location: Option<(u64, u64)>,
-    unknown_field: Option<String>,
-}
-
-impl ConfigParseError {
-    pub(super) fn from_yaml(error: &serde_saphyr::Error) -> Self {
-        let location = error
-            .location()
-            .map(|location| (location.line(), location.column()));
-        let unknown_field = unknown_field(error).map(str::to_owned);
-        Self {
-            location,
-            unknown_field,
-        }
-    }
-}
-
-/// Fields the configuration no longer accepts, each with the field that
-/// replaced it, so the error names the fix instead of only the rejection.
-const RENAMED_FIELDS: [(&str, &str); 1] = [("agent", "chat.assistant")];
-
-fn replacement(field: &str) -> Option<&'static str> {
-    RENAMED_FIELDS
-        .iter()
-        .find(|(renamed, _)| *renamed == field)
-        .map(|(_, replacement)| *replacement)
-}
-
-fn unknown_field(error: &serde_saphyr::Error) -> Option<&str> {
-    match error {
-        serde_saphyr::Error::SerdeUnknownField { field, .. } => Some(field),
-        serde_saphyr::Error::WithSnippet { error, .. } => unknown_field(error),
-        _ => None,
-    }
-}
-
-impl fmt::Debug for ConfigParseError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ConfigParseError")
-            .field("location", &self.location)
-            .field("unknown_field", &self.unknown_field)
-            .finish()
-    }
-}
-
-impl fmt::Display for ConfigParseError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.unknown_field, self.location) {
-            (Some(field), Some((line, column))) => {
-                write!(
-                    formatter,
-                    "unknown configuration field {field:?} at line {line}, column {column}"
-                )?;
-            }
-            (Some(field), None) => write!(formatter, "unknown configuration field {field:?}")?,
-            (None, Some((line, column))) => {
-                write!(formatter, "invalid YAML at line {line}, column {column}")?;
-            }
-            (None, None) => formatter.write_str("invalid YAML")?,
-        }
-        if let Some(replacement) = self.unknown_field.as_deref().and_then(replacement) {
-            write!(formatter, "; it was renamed to {replacement:?}")?;
-        }
-        Ok(())
-    }
-}
-
-impl Error for ConfigParseError {}

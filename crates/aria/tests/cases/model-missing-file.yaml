@@ -1,8 +1,8 @@
 name: a missing model file fails daemon startup
-config: |
-  transcription:
-    backend: whisper
-    model: /nonexistent/model.bin
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "/nonexistent/model.bin"
 expect:
   daemon:
     startup: failure

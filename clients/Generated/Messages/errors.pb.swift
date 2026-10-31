@@ -51,6 +51,9 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
 
   /// A write landed, but whether it survives a power cut is unknown.
   case durabilityUnconfirmed // = 10
+
+  /// settings.toml is invalid as it stands, so nothing was written over it.
+  case settingsInvalid // = 11
   case overallTimeout // = 100
   case recordingTimeout // = 101
   case deliveryTimeout // = 102
@@ -121,6 +124,7 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     case 8: self = .payloadTooLarge
     case 9: self = .permissionDenied
     case 10: self = .durabilityUnconfirmed
+    case 11: self = .settingsInvalid
     case 100: self = .overallTimeout
     case 101: self = .recordingTimeout
     case 102: self = .deliveryTimeout
@@ -170,6 +174,7 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     case .payloadTooLarge: return 8
     case .permissionDenied: return 9
     case .durabilityUnconfirmed: return 10
+    case .settingsInvalid: return 11
     case .overallTimeout: return 100
     case .recordingTimeout: return 101
     case .deliveryTimeout: return 102
@@ -219,6 +224,7 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     .payloadTooLarge,
     .permissionDenied,
     .durabilityUnconfirmed,
+    .settingsInvalid,
     .overallTimeout,
     .recordingTimeout,
     .deliveryTimeout,
@@ -268,6 +274,33 @@ public nonisolated struct Aria_Daemon_V1_RpcError: Sendable {
 
   public var message: String = String()
 
+  /// With ERROR_CODE_SETTINGS_INVALID: where the fault is, when it has a place.
+  public var settingsPosition: Aria_Daemon_V1_SettingsPosition {
+    get {_settingsPosition ?? Aria_Daemon_V1_SettingsPosition()}
+    set {_settingsPosition = newValue}
+  }
+  /// Returns true if `settingsPosition` has been explicitly set.
+  public var hasSettingsPosition: Bool {self._settingsPosition != nil}
+  /// Clears the value of `settingsPosition`. Subsequent reads from it will return its default value.
+  public mutating func clearSettingsPosition() {self._settingsPosition = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _settingsPosition: Aria_Daemon_V1_SettingsPosition? = nil
+}
+
+/// A place in settings.toml. Both count from 1.
+public nonisolated struct Aria_Daemon_V1_SettingsPosition: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var line: UInt32 = 0
+
+  public var column: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -278,12 +311,12 @@ public nonisolated struct Aria_Daemon_V1_RpcError: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_INVALID_REQUEST\0\u{1}ERROR_CODE_BUSY\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNAUTHENTICATED\0\u{1}ERROR_CODE_UNSUPPORTED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_PAYLOAD_TOO_LARGE\0\u{1}ERROR_CODE_PERMISSION_DENIED\0\u{1}ERROR_CODE_DURABILITY_UNCONFIRMED\0\u{2}Z\u{1}ERROR_CODE_OVERALL_TIMEOUT\0\u{1}ERROR_CODE_RECORDING_TIMEOUT\0\u{1}ERROR_CODE_DELIVERY_TIMEOUT\0\u{1}ERROR_CODE_CAPTURE_FAILED\0\u{1}ERROR_CODE_NO_SPEECH\0\u{1}ERROR_CODE_TRANSCRIPTION_FAILED\0\u{1}ERROR_CODE_DELIVERY_FAILED\0\u{2}\u{2}ERROR_CODE_DELIVERY_TARGET_CHANGED\0\u{1}ERROR_CODE_DELIVERY_INTERRUPTED\0\u{1}ERROR_CODE_APPLICATION_EXCLUDED\0\u{2}Z\u{1}ERROR_CODE_SYNTHESIS_FAILED\0\u{1}ERROR_CODE_PLAYBACK_FAILED\0\u{1}ERROR_CODE_SPEECH_TIMEOUT\0\u{1}ERROR_CODE_VOICE_UNAVAILABLE\0\u{2}a\u{1}ERROR_CODE_ASSISTANT_UNAVAILABLE\0\u{1}ERROR_CODE_ASSISTANT_FAILED\0\u{1}ERROR_CODE_ASSISTANT_TIMEOUT\0\u{1}ERROR_CODE_ASSISTANT_SIGNED_OUT\0\u{1}ERROR_CODE_PROMPT_UNREADABLE\0\u{2}D\u{3}ERROR_CODE_SPEAKER_MODEL_MISSING\0\u{1}ERROR_CODE_SPEAKER_ALREADY_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_NOT_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES\0\u{1}ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED\0\u{1}ERROR_CODE_SPEAKER_NO_SPEECH\0\u{2}g\u{4}ERROR_CODE_LISTEN_UNSUPPORTED_OS\0\u{1}ERROR_CODE_LISTEN_PERMISSION_DENIED\0\u{1}ERROR_CODE_LISTEN_CAPTURE_FAILED\0\u{2}b\u{1}ERROR_CODE_HISTORY_MISSING\0\u{1}ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_INVALID_REQUEST\0\u{1}ERROR_CODE_BUSY\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNAUTHENTICATED\0\u{1}ERROR_CODE_UNSUPPORTED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_PAYLOAD_TOO_LARGE\0\u{1}ERROR_CODE_PERMISSION_DENIED\0\u{1}ERROR_CODE_DURABILITY_UNCONFIRMED\0\u{1}ERROR_CODE_SETTINGS_INVALID\0\u{2}Y\u{1}ERROR_CODE_OVERALL_TIMEOUT\0\u{1}ERROR_CODE_RECORDING_TIMEOUT\0\u{1}ERROR_CODE_DELIVERY_TIMEOUT\0\u{1}ERROR_CODE_CAPTURE_FAILED\0\u{1}ERROR_CODE_NO_SPEECH\0\u{1}ERROR_CODE_TRANSCRIPTION_FAILED\0\u{1}ERROR_CODE_DELIVERY_FAILED\0\u{2}\u{2}ERROR_CODE_DELIVERY_TARGET_CHANGED\0\u{1}ERROR_CODE_DELIVERY_INTERRUPTED\0\u{1}ERROR_CODE_APPLICATION_EXCLUDED\0\u{2}Z\u{1}ERROR_CODE_SYNTHESIS_FAILED\0\u{1}ERROR_CODE_PLAYBACK_FAILED\0\u{1}ERROR_CODE_SPEECH_TIMEOUT\0\u{1}ERROR_CODE_VOICE_UNAVAILABLE\0\u{2}a\u{1}ERROR_CODE_ASSISTANT_UNAVAILABLE\0\u{1}ERROR_CODE_ASSISTANT_FAILED\0\u{1}ERROR_CODE_ASSISTANT_TIMEOUT\0\u{1}ERROR_CODE_ASSISTANT_SIGNED_OUT\0\u{1}ERROR_CODE_PROMPT_UNREADABLE\0\u{2}D\u{3}ERROR_CODE_SPEAKER_MODEL_MISSING\0\u{1}ERROR_CODE_SPEAKER_ALREADY_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_NOT_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES\0\u{1}ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED\0\u{1}ERROR_CODE_SPEAKER_NO_SPEECH\0\u{2}g\u{4}ERROR_CODE_LISTEN_UNSUPPORTED_OS\0\u{1}ERROR_CODE_LISTEN_PERMISSION_DENIED\0\u{1}ERROR_CODE_LISTEN_CAPTURE_FAILED\0\u{2}b\u{1}ERROR_CODE_HISTORY_MISSING\0\u{1}ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE\0")
 }
 
 nonisolated extension Aria_Daemon_V1_RpcError: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RpcError"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0\u{3}settings_position\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -293,24 +326,68 @@ nonisolated extension Aria_Daemon_V1_RpcError: SwiftProtobuf.Message, SwiftProto
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.code) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._settingsPosition) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.code != .unspecified {
       try visitor.visitSingularEnumField(value: self.code, fieldNumber: 1)
     }
     if !self.message.isEmpty {
       try visitor.visitSingularStringField(value: self.message, fieldNumber: 2)
     }
+    try { if let v = self._settingsPosition {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_RpcError, rhs: Aria_Daemon_V1_RpcError) -> Bool {
     if lhs.code != rhs.code {return false}
     if lhs.message != rhs.message {return false}
+    if lhs._settingsPosition != rhs._settingsPosition {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_SettingsPosition: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SettingsPosition"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}line\0\u{1}column\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.line) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.column) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.line != 0 {
+      try visitor.visitSingularUInt32Field(value: self.line, fieldNumber: 1)
+    }
+    if self.column != 0 {
+      try visitor.visitSingularUInt32Field(value: self.column, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_SettingsPosition, rhs: Aria_Daemon_V1_SettingsPosition) -> Bool {
+    if lhs.line != rhs.line {return false}
+    if lhs.column != rhs.column {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

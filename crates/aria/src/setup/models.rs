@@ -1,20 +1,21 @@
 //! Lists the models setup downloads, and removes unused ones. A model
-//! config.yaml loads is never removed.
+//! settings.toml loads is never removed.
 
 use std::path::Path;
 
-use crate::config::{self, FileConfig, LoadedModel};
+use crate::config::{self, LoadedModel};
 use crate::primitives::user_home;
+use crate::settings::SettingsFile;
 
 use super::assets::{self, Asset};
-use super::{SetupError, config_file, config_path, model_states};
+use super::{SetupError, model_states, settings_file};
 
 /// One model setup can download.
 pub struct Model {
     pub name: &'static str,
     pub bytes: u64,
     pub on_disk: OnDisk,
-    /// The config.yaml section that loads it.
+    /// The settings table that loads it.
     pub used_by: Option<&'static str>,
 }
 
@@ -48,21 +49,21 @@ impl OnDisk {
 
 pub fn list() -> Result<Vec<Model>, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
-    let file = config_file::read(&config_path()?)?;
-    Ok(listed(&home, &file))
+    let file = settings_file::read(&home)?;
+    listed(&home, &file)
 }
 
 /// Deletes one model's files and returns the bytes freed.
 pub fn remove(name: &str) -> Result<u64, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
-    let file = config_file::read(&config_path()?)?;
+    let file = settings_file::read(&home)?;
     removed(&home, &file, name)
 }
 
-fn listed(home: &Path, file: &FileConfig) -> Vec<Model> {
+fn listed(home: &Path, file: &SettingsFile) -> Result<Vec<Model>, SetupError> {
     let models_dir = config::models_dir(home);
-    let loaded = config::loaded_models(file, home).models;
-    model_states(home, file)
+    let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
+    Ok(model_states(home, file)?
         .into_iter()
         .map(|model| Model {
             name: model.name,
@@ -70,23 +71,19 @@ fn listed(home: &Path, file: &FileConfig) -> Vec<Model> {
             on_disk: model.on_disk,
             used_by: user(&loaded, &models_dir, model.asset),
         })
-        .collect()
+        .collect())
 }
 
-fn removed(home: &Path, file: &FileConfig, name: &str) -> Result<u64, SetupError> {
-    let model = model_states(home, file)
+fn removed(home: &Path, file: &SettingsFile, name: &str) -> Result<u64, SetupError> {
+    let model = model_states(home, file)?
         .into_iter()
         .find(|model| model.name == name)
         .ok_or_else(|| SetupError::UnknownModel {
             name: name.to_owned(),
         })?;
     let models_dir = config::models_dir(home);
-    let loaded = config::loaded_models(file, home);
-    // A broken section might use this model, so keep it.
-    if let Some(&section) = loaded.unresolved.first() {
-        return Err(SetupError::ConfigUnresolved { section });
-    }
-    if let Some(section) = user(&loaded.models, &models_dir, model.asset) {
+    let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
+    if let Some(section) = user(&loaded, &models_dir, model.asset) {
         return Err(SetupError::ModelInUse {
             name: model.name,
             section,
@@ -114,18 +111,21 @@ mod tests {
 
     use super::*;
 
-    fn config(yaml: &str) -> FileConfig {
-        serde_saphyr::from_str(yaml).unwrap()
+    /// The typed values of `text`, before validation, so a test can reach a
+    /// table that does not resolve.
+    fn config(text: &str) -> SettingsFile {
+        toml_edit::de::from_str(text).unwrap()
     }
 
-    fn model(home: &Path, file: &FileConfig, name: &str) -> Model {
+    fn model(home: &Path, file: &SettingsFile, name: &str) -> Model {
         listed(home, file)
+            .unwrap()
             .into_iter()
             .find(|model| model.name == name)
             .unwrap()
     }
 
-    fn used_by(file: &FileConfig, name: &str) -> Option<&'static str> {
+    fn used_by(file: &SettingsFile, name: &str) -> Option<&'static str> {
         model(Path::new("/home/someone"), file, name).used_by
     }
 
@@ -143,12 +143,9 @@ mod tests {
 
     #[test]
     fn an_empty_config_uses_the_default_models() {
-        let file = config("{}");
+        let file = config("");
 
-        assert_eq!(
-            used_by(&file, config::backend::DEFAULT),
-            Some("transcription")
-        );
+        assert_eq!(used_by(&file, config::backend::DEFAULT), Some("stt"));
         assert_eq!(used_by(&file, "kokoro"), None);
         assert_eq!(used_by(&file, "speaker"), Some("speaker"));
         assert_eq!(used_by(&file, "segmentation"), Some("speaker"));
@@ -157,12 +154,12 @@ mod tests {
     #[test]
     fn each_section_uses_the_model_of_its_engine() {
         let file = config(
-            "transcription: {backend: parakeet}\n\
-             listen: {backend: moonshine}\n\
-             tts: {backend: qwen}",
+            "[stt]\nbackend = \"parakeet\"\n\
+             [listen]\nbackend = \"moonshine\"\n\
+             [tts]\nbackend = \"qwen\"\n",
         );
 
-        assert_eq!(used_by(&file, "parakeet"), Some("transcription"));
+        assert_eq!(used_by(&file, "parakeet"), Some("stt"));
         assert_eq!(used_by(&file, "moonshine"), Some("listen"));
         assert_eq!(used_by(&file, "qwen"), Some("tts"));
         assert_eq!(used_by(&file, "whisper"), None);
@@ -170,7 +167,7 @@ mod tests {
 
     #[test]
     fn a_model_kept_elsewhere_leaves_the_download_unused() {
-        let file = config("transcription: {backend: parakeet, model: /elsewhere/tdt}");
+        let file = config("[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n");
 
         assert_eq!(used_by(&file, "parakeet"), None);
     }
@@ -179,7 +176,7 @@ mod tests {
     fn an_unfinished_download_lists_as_partial() {
         let (home, models) = home();
         touch(&models.join("moonshine/base/tokenizer.json.part"));
-        let file = config("{}");
+        let file = config("");
 
         assert_eq!(
             model(home.path(), &file, "moonshine").on_disk,
@@ -204,7 +201,7 @@ mod tests {
         }
         touch(&models.join("parakeet/mine.onnx"));
 
-        let freed = removed(home.path(), &config("{}"), "moonshine").unwrap();
+        let freed = removed(home.path(), &config(""), "moonshine").unwrap();
 
         assert_eq!(freed, 3 * b"model".len() as u64);
         assert!(!models.join("moonshine").exists());
@@ -218,28 +215,23 @@ mod tests {
         touch(&model.join("tokenizer.json"));
         touch(&model.join("notes.txt"));
 
-        removed(home.path(), &config("{}"), "moonshine").unwrap();
+        removed(home.path(), &config(""), "moonshine").unwrap();
 
         assert!(!model.join("tokenizer.json").exists());
         assert!(model.join("notes.txt").exists());
     }
 
-    /// Nothing is removed while a broken config section might use it.
+    /// Nothing is removed while a table that does not resolve might use it.
     #[test]
     fn remove_waits_for_a_config_that_resolves() {
         let (home, models) = home();
         let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
         touch(&parakeet);
-        let file = config("transcription: {backend: parakeet, device: gpu0}");
+        let file = config("[stt]\nbackend = \"parakeet-mlx\"\n");
 
         let refused = removed(home.path(), &file, "parakeet").unwrap_err();
 
-        assert!(matches!(
-            refused,
-            SetupError::ConfigUnresolved {
-                section: "transcription"
-            }
-        ));
+        assert!(matches!(refused, SetupError::Config(_)));
         assert!(parakeet.exists());
     }
 
@@ -248,15 +240,12 @@ mod tests {
         let (home, models) = home();
         let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
         touch(&parakeet);
-        let file = config("transcription: {backend: parakeet}");
+        let file = config("[stt]\nbackend = \"parakeet\"\n");
         let refused = |name| removed(home.path(), &file, name).unwrap_err();
 
         assert!(matches!(
             refused("parakeet"),
-            SetupError::ModelInUse {
-                section: "transcription",
-                ..
-            }
+            SetupError::ModelInUse { section: "stt", .. }
         ));
         assert!(matches!(
             refused("speaker"),

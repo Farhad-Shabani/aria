@@ -22,7 +22,7 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
-public nonisolated enum Aria_Daemon_V1_AssistantID: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case claudeCode // = 1
@@ -52,7 +52,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantID: SwiftProtobuf.Enum, Swift.Ca
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Aria_Daemon_V1_AssistantID] = [
+  public static let allCases: [Aria_Daemon_V1_AssistantId] = [
     .unspecified,
     .claudeCode,
     .codex,
@@ -236,7 +236,7 @@ public nonisolated struct Aria_Daemon_V1_ListAssistantModelsRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var assistantID: Aria_Daemon_V1_AssistantID = .unspecified
+  public var assistantID: Aria_Daemon_V1_AssistantId = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -260,9 +260,9 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var assistantID: Aria_Daemon_V1_AssistantID = .unspecified
+  public var assistantID: Aria_Daemon_V1_AssistantId = .unspecified
 
-  /// A CLI model ID; empty uses the saved preference, then the assistant's default.
+  /// A CLI model ID; empty uses the saved setting, then the assistant's default.
   public var modelID: String = String()
 
   /// The directory the assistant works in.
@@ -381,7 +381,7 @@ public nonisolated struct Aria_Daemon_V1_ResolveAskResponse: Sendable {
   /// unspecified assistant.
   public var workdir: String = String()
 
-  public var assistantID: Aria_Daemon_V1_AssistantID = .unspecified
+  public var assistantID: Aria_Daemon_V1_AssistantId = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -396,7 +396,7 @@ public nonisolated struct Aria_Daemon_V1_ChatEvent: Sendable {
   public var ticket: UInt64 = 0
 
   /// The assistant serving this ticket.
-  public var assistantID: Aria_Daemon_V1_AssistantID = .unspecified
+  public var assistantID: Aria_Daemon_V1_AssistantId = .unspecified
 
   public var stage: Aria_Daemon_V1_ChatStage = .unspecified
 
@@ -429,7 +429,7 @@ public nonisolated struct Aria_Daemon_V1_Assistant: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var id: Aria_Daemon_V1_AssistantID = .unspecified
+  public var id: Aria_Daemon_V1_AssistantId = .unspecified
 
   public var name: String = String()
 
@@ -462,7 +462,7 @@ public nonisolated struct Aria_Daemon_V1_AssistantModel: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
-nonisolated extension Aria_Daemon_V1_AssistantID: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Aria_Daemon_V1_AssistantId: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0")
 }
 

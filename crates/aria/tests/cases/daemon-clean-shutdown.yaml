@@ -1,11 +1,12 @@
-name: valid config starts the daemon and stops cleanly on SIGTERM
-config: |
-  transcription:
-    backend: whisper
-    model: ${WHISPER_MODEL}
-  capture:
-    backend: wav-file
-    path: ${FIXTURES}/silence.wav
+name: valid settings start the daemon and stop cleanly on SIGTERM
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
 expect:
   daemon:
     startup: success
