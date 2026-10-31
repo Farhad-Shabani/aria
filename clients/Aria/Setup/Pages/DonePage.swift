@@ -16,7 +16,7 @@ struct DonePage: View {
                             LabeledContent("Ask your agent", value: ariaKey.gesture(for: askCombo))
                         }
                     } else {
-                        LabeledContent("Dictate", value: "Works once Accessibility access is given")
+                        LabeledContent("Dictate", value: "Needs permission")
                     }
                 }
             }

@@ -13,7 +13,7 @@ struct EnginesPage: View {
                 if state.inspection.macos {
                     Toggle(isOn: $state.selections.hotkey) {
                         Text("Start dictation with a hotkey")
-                        Text("Needs Accessibility access. Setup asks for it next.")
+                        Text("Setup asks for permission next.")
                     }
                 }
             }

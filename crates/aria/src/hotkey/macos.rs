@@ -74,7 +74,7 @@ impl TapState {
 impl MacOsHotkeyListener {
     pub(crate) fn unarmed_reason() -> String {
         format!(
-            "the dictation hotkey is waiting for the Accessibility grant: System Settings → \
+            "the dictation hotkey is waiting for permission: System Settings → \
              Privacy & Security → {} → + → {}; it arms within ~3s",
             accessibility::settings_pane(),
             accessibility::target_label()

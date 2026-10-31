@@ -183,7 +183,7 @@ final class SetupState: ObservableObject {
             case .wakeword: "wake-word models"
             case .model: "models"
             case .service: "background service"
-            case .grant: "Accessibility access"
+            case .grant: "dictation key permission"
             case .unspecified, .UNRECOGNIZED: "unknown"
             }
         }
@@ -487,7 +487,7 @@ extension SetupState.Step {
         case .inspecting, .welcome: "Welcome to Aria"
         case .choices: "Choose Your Engines"
         case .applying: "Setting Up…"
-        case .grant: "Allow Accessibility"
+        case .grant: "Allow Access"
         case .voice: "Your Voice"
         case .tryOut: "Try It"
         case .done: "Aria Is Ready"

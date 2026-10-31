@@ -10,12 +10,19 @@ struct GrantPage: View {
                         Text("Waiting").foregroundStyle(.secondary)
                     }
                 } label: {
-                    Text("Accessibility")
-                    Text("Choose Open System Settings, then switch on Aria.")
+                    Text(paneName)
+                    Text("Lets Aria use your dictation key and type for you.")
                 }
             } footer: {
-                Text("Setup continues on its own once Aria is on.")
+                Text("Setup continues when Aria is turned on.")
             }
         }
+    }
+
+    private var paneName: String {
+        if #available(macOS 27, *) {
+            return "Device Control and Data Access"
+        }
+        return "Accessibility"
     }
 }
