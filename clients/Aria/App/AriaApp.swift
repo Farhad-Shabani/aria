@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct AriaApp: App {
+    private static let userGuide = "https://ariacue.pages.dev/user-guide/"
+
     @Environment(\.openWindow) private var openWindow
     @StateObject private var poller = StatusPoller(
         client: DaemonClient()
@@ -98,16 +100,12 @@ struct AriaApp: App {
                 setupStatus: appDelegate.setupStatus,
                 voices: appDelegate.voices,
                 serverTranscription: appDelegate.serverTranscription,
-                settingsHealth: appDelegate.settingsHealth
+                settingsHealth: appDelegate.settingsHealth,
+                paneRequest: appDelegate.settingsPaneRequest
             )
         }
         .sidebarWindowScene()
-        .commands {
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { appDelegate.settings.request() }
-                    .keyboardShortcut(",")
-            }
-        }
+        .commandsRemoved()
 
         Window("Dictation History", id: WindowID.dictationHistory) {
             DictationHistoryView()
@@ -116,11 +114,45 @@ struct AriaApp: App {
         .restorationBehavior(.disabled)
         .defaultSize(width: 800, height: 520)
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Aria") {
+                    appDelegate.settingsPaneRequest.pane = .about
+                    appDelegate.settings.request()
+                }
+                CheckForUpdatesCommand(updates: appDelegate.updates)
+            }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { appDelegate.settings.request() }
+                    .keyboardShortcut(",")
+            }
+            CommandGroup(replacing: .newItem) {
+                Button("Open Settings File") {
+                    let health = appDelegate.settingsHealth
+                    let settings = appDelegate.settings
+                    Task {
+                        await health.openSettingsFile()
+                        // A failed open reports inside Settings, so bring it up.
+                        if health.openFailure != nil { settings.request() }
+                    }
+                }
+            }
+            CommandGroup(replacing: .sidebar) {}
+            CommandGroup(replacing: .toolbar) {}
+            CommandGroup(replacing: .help) {
+                Button("Aria User Guide") {
+                    if let url = URL(string: Self.userGuide) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        }
 
         Window("Aria Setup", id: WindowID.setup) {
             SetupView(state: appDelegate.setupState, settings: settings)
         }
         .sidebarWindowScene()
+        .commandsRemoved()
     }
 }
 
@@ -181,6 +213,15 @@ private struct CheckForUpdatesButton: View {
             }
         }
         .disabled(!updates.canCheck)
+    }
+}
+
+private struct CheckForUpdatesCommand: View {
+    @ObservedObject var updates: UpdateController
+
+    var body: some View {
+        Button(updates.actionTitle) { updates.checkForUpdates() }
+            .disabled(!updates.canCheck)
     }
 }
 
