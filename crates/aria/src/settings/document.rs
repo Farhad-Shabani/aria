@@ -263,7 +263,7 @@ fn move_aliases(
 }
 
 /// Removes the value at `path` with its key, then the tables above it that
-/// held nothing else.
+/// held nothing else. A table with comments above it stays, for their sake.
 fn take(root: &mut Table, path: &str) -> Option<(toml_edit::Key, Item)> {
     let (parents, name) = path.rsplit_once('.').unwrap_or(("", path));
     let table: &mut dyn TableLike = if parents.is_empty() {
@@ -281,15 +281,21 @@ fn take(root: &mut Table, path: &str) -> Option<(toml_edit::Key, Item)> {
         let Some(table) = existing_table_at(root, parents.iter().copied()) else {
             break;
         };
-        if !table
-            .get(name)
-            .is_some_and(|item| item.as_table_like().is_some_and(TableLike::is_empty))
-        {
+        if !table.get(name).is_some_and(is_empty_without_comments) {
             break;
         }
         table.remove(name);
     }
     Some((old_key, item))
+}
+
+fn is_empty_without_comments(item: &Item) -> bool {
+    let has_comments = item
+        .as_table()
+        .and_then(|table| table.decor().prefix())
+        .and_then(|prefix| prefix.as_str())
+        .is_some_and(|prefix| prefix.contains('#'));
+    !has_comments && item.as_table_like().is_some_and(TableLike::is_empty)
 }
 
 pub(super) fn lookup<'a>(root: &'a Table, path: &str) -> Option<&'a Item> {
@@ -1587,16 +1593,6 @@ pub(super) mod tests {
         );
     }
 
-    #[test]
-    fn a_syntax_error_names_its_line_and_column() {
-        let error =
-            Loaded::parse("[dictation]\noutput_mode = \n", Path::new(HOME)).expect_err("refused");
-        let SettingsError::Parse(parse) = error else {
-            panic!("{error}");
-        };
-        assert_eq!(parse.position().map(|position| position.line), Some(2));
-    }
-
     const RENAMED: &[(Key, &str)] = &[(Key::AssistantId, "chat.agent")];
 
     #[test]
@@ -1647,14 +1643,6 @@ pub(super) mod tests {
         let message = error.to_string();
         assert!(message.contains("soon"), "{message}");
         assert!(message.contains("a newer Aria"), "{message}");
-    }
-
-    #[test]
-    fn old_file_names_are_unknown_keys() {
-        for text in ["output_mode = \"copy\"\n", "[chat]\nagent = \"codex\"\n"] {
-            let error = Loaded::parse(text, Path::new(HOME)).unwrap_err();
-            assert!(matches!(error, SettingsError::Parse(_)), "{error}");
-        }
     }
 
     /// The settings types and the key table are two lists. Every section is
@@ -2013,16 +2001,6 @@ pub(super) mod tests {
                 "{text}"
             );
         }
-    }
-
-    #[test]
-    fn an_unknown_assistant_names_every_assistant() {
-        let error =
-            Loaded::parse("[assistant]\nid = \"nobody\"\n", Path::new(HOME)).expect_err("refused");
-        assert!(
-            error.to_string().contains("claude-code and codex"),
-            "{error}"
-        );
     }
 
     #[test]

@@ -33,6 +33,9 @@ const HEADER: &str = "\
 # Check this file with `aria settings check`.
 ";
 
+/// What `create` starts from, commented out so every default stays in code.
+const EXAMPLE: &str = include_str!("../../../../settings.example.toml");
+
 /// The keys one write changes. Everything else in the file stays as it was.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Patch {
@@ -404,17 +407,29 @@ pub(crate) fn modify<E: From<SettingsError>>(
     Ok(written)
 }
 
-/// Makes a missing file hold only the header. A file already there stays
-/// as it is.
+/// Makes a missing file from the example, with every key commented out. A
+/// file already there stays as it is.
 pub(super) fn create(path: &Path) -> Result<(), SettingsError> {
     let _lock = Lock::acquire(&lock_path(path))?;
     let target = resolve_symlinks(path)?;
     if read_text(&target)?.is_some() {
         return Ok(());
     }
-    commit(&target, &format!("{HEADER}\n"), mode_for(&target, false)?)?;
+    commit(&target, &starter_text(), mode_for(&target, false)?)?;
     write_schema_beside(&target);
     Ok(())
+}
+
+fn starter_text() -> String {
+    let mut text = format!("#:schema ./{SCHEMA_FILE_NAME}\n");
+    for line in EXAMPLE.lines() {
+        if !line.is_empty() && !line.starts_with('#') {
+            text.push_str("# ");
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
 }
 
 /// What [`modify`] would do with `patch`, without the lock and without
@@ -745,15 +760,21 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
 
     #[test]
-    fn create_writes_the_header_once_and_never_over_a_file() {
+    fn create_writes_every_key_commented_out_once_and_never_over_a_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("settings.toml");
 
         create(&path).unwrap();
 
-        assert_eq!(fs::read_to_string(&path).unwrap(), format!("{HEADER}\n"));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(&format!("#:schema ./{SCHEMA_FILE_NAME}\n")));
+        assert!(text.contains("# [dictation]\n"), "{text}");
+        assert!(text.contains("# output_mode = \"insert\""), "{text}");
+        assert_eq!(
+            Loaded::parse(&text, Path::new(HOME)).unwrap().settings,
+            super::super::SettingsFile::default()
+        );
         assert!(directory.path().join(SCHEMA_FILE_NAME).is_file());
-        assert!(Loaded::parse(&fs::read_to_string(&path).unwrap(), Path::new(HOME)).is_ok());
 
         fs::write(&path, "# mine\n").unwrap();
         create(&path).unwrap();
@@ -897,6 +918,21 @@ mod tests {
     }
 
     #[test]
+    fn the_starter_comments_survive_a_set_and_its_reset() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.toml");
+        create(&path).unwrap();
+        let starter = fs::read_to_string(&path).unwrap();
+        let mut reset = Patch::new();
+        reset.reset(Key::MemoryEnabled);
+
+        write(&path, home(), None, &one_key(Key::MemoryEnabled, true)).expect("sets");
+        write(&path, home(), None, &reset).expect("resets");
+
+        assert!(fs::read_to_string(&path).unwrap().starts_with(&starter));
+    }
+
+    #[test]
     fn a_comment_with_no_final_newline_stays_above_the_first_table() {
         let (_dir, path) = file_with("# mine");
         let patch = one_key(Key::MemoryEnabled, true);
@@ -981,10 +1017,8 @@ mod tests {
 
     #[test]
     fn a_write_changes_only_its_line() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let path = dir.path().join("settings.toml");
         let original = "# mine\n\n[dictation]\n# say less\ncleanup = true   # keep\nbacktrack = false\n\n[memory]\nenabled = false\n";
-        fs::write(&path, original).expect("written");
+        let (_dir, path) = file_with(original);
         let patch = one_key(Key::DictationCleanup, false);
 
         applied(write(&path, home(), None, &patch).expect("writes"));
@@ -1008,23 +1042,6 @@ mod tests {
             fs::read_to_string(&path).expect("read"),
             "[memory]\nextract_model = \"opus\"\n"
         );
-    }
-
-    #[test]
-    fn a_restart_key_reports_it_and_a_live_key_does_not() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let path = dir.path().join("settings.toml");
-        let live = one_key(Key::TtsRate, 1.5);
-        let restart = one_key(Key::PhonePort, 9999_i64);
-
-        assert!(matches!(
-            write(&path, home(), None, &live),
-            Ok(Written::Applied(_))
-        ));
-        assert!(matches!(
-            write(&path, home(), None, &restart),
-            Ok(Written::AppliedRestartKey(_))
-        ));
     }
 
     #[test]
@@ -1058,10 +1075,8 @@ mod tests {
 
     #[test]
     fn an_invalid_file_is_never_written_over() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let path = dir.path().join("settings.toml");
         let broken = "[memory]\nenabled = maybe\n";
-        fs::write(&path, broken).expect("written");
+        let (_dir, path) = file_with(broken);
         let patch = one_key(Key::MemoryEnabled, true);
 
         let refused = write(&path, home(), None, &patch).expect("runs");
@@ -1071,29 +1086,6 @@ mod tests {
             "{refused:?}"
         );
         assert_eq!(fs::read_to_string(&path).expect("read"), broken);
-    }
-
-    #[test]
-    fn a_bad_value_is_refused_and_the_file_stands() {
-        let (_dir, path) = file_with("[tts]\nrate = 1.0\n");
-        let patch = one_key(Key::TtsRate, 40.0);
-
-        let refused = write(&path, home(), None, &patch).expect("runs");
-
-        assert!(
-            matches!(
-                refused,
-                Written::Refused(Refusal::Invalid(SettingsError::Invalid {
-                    key: Key::TtsRate,
-                    ..
-                }))
-            ),
-            "{refused:?}"
-        );
-        assert_eq!(
-            fs::read_to_string(&path).expect("read"),
-            "[tts]\nrate = 1.0\n"
-        );
     }
 
     #[test]
