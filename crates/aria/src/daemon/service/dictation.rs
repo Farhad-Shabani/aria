@@ -18,7 +18,7 @@ use super::super::dictation::{
 };
 use super::super::operation::CallError;
 use super::super::server::ActivityGuard;
-use super::{invalid_request, preferences};
+use super::{invalid_request, settings};
 
 /// Buffers progress without blocking the daemon. Full queues drop stages;
 /// clients use `Recording` to enable stop and `Transcribing` to release input.
@@ -71,7 +71,7 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
         });
         let pending = self
             .dictation
-            .submit(request, AutoStopRule::Preference, Some(events))
+            .submit(request, AutoStopRule::Setting, Some(events))
             .await
             .map_err(|error| super::failed(METHOD, failure(error)))?;
 
@@ -134,8 +134,8 @@ fn failure(error: DictationCallError) -> RpcFailure {
             RpcErrorCode::Internal,
             "the dictation operation ended unexpectedly",
         ),
-        CallError::Runtime(DictationRuntimeError::Preferences(error)) => {
-            preferences::store_error("read", error)
+        CallError::Runtime(DictationRuntimeError::Settings(error)) => {
+            settings::store_error("read", error)
         }
         CallError::Runtime(DictationRuntimeError::Initialization(error)) => {
             RpcFailure::new((&error).into(), error_chain(&error))
@@ -182,7 +182,7 @@ mod tests {
 
     fn missing_model(home: &Path, capture: &Path) -> String {
         format!(
-            "transcription:\n  backend: whisper\n  model: {}\ncapture:\n  backend: wav-file\n  path: {}\n",
+            "[stt]\nbackend = \"whisper\"\nmodel = \"{}\"\n[capture]\nbackend = \"wav_file\"\npath = \"{}\"\n",
             home.join("missing-model.bin").display(),
             capture.display(),
         )
@@ -211,7 +211,7 @@ mod tests {
             .find(|event| matches!(event, DaemonEvent::Dictation(DictationStage::Failed(_))));
         assert!(broadcast.is_some(), "other sessions hear the failure");
         session
-            .get_preferences()
+            .get_settings()
             .expect("a failed press leaves the daemon usable");
         drop(session);
         daemon.stop();

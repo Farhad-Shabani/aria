@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::Chord;
 use crate::chat::PromptKind;
 
-// Sized so a full list fits the preference file's byte cap beside a full
+// Sized so a full list fits the settings file's byte cap beside a full
 // list of app overrides, with every name and path escaped at worst.
 const MAX_PROMPTS: usize = 16;
 const MAX_ID_BYTES: usize = 64;
@@ -150,7 +150,7 @@ fn has_control(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preferences::Modifiers;
+    use crate::settings::Modifiers;
 
     fn prompt(id: &str, chord: Option<Chord>) -> Prompt {
         Prompt::new(

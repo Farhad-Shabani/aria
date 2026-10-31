@@ -41,12 +41,12 @@ const JOINING: u64 = SHIFT | CONTROL | COMMAND;
 
 /// The Aria key: the bare modifier the daemon watches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HotkeyKey {
+pub enum AriaKey {
     RightOption,
     Fn,
 }
 
-impl HotkeyKey {
+impl AriaKey {
     /// Virtual keycode carried in the key's flags-changed event.
     fn key_code(self) -> i64 {
         match self {
@@ -69,7 +69,7 @@ impl HotkeyKey {
 }
 
 /// The Aria key held with Shift or Command alone. What a combo runs is the
-/// client's choice, read off the preferences.
+/// client's choice, read off the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Combo {
     Shift,
@@ -138,12 +138,12 @@ enum State {
 /// Press grammar over the raw key stream. Time passes for it only through
 /// `tick`, so a hold starts when the caller looks, never sooner.
 pub(crate) struct PressDetector {
-    key: HotkeyKey,
+    key: AriaKey,
     state: State,
 }
 
 impl PressDetector {
-    pub(crate) fn new(key: HotkeyKey) -> Self {
+    pub(crate) fn new(key: AriaKey) -> Self {
         Self {
             key,
             state: State::Up,
@@ -312,7 +312,7 @@ mod tests {
     }
 
     impl Keyboard {
-        fn new(key: HotkeyKey) -> Self {
+        fn new(key: AriaKey) -> Self {
             Self {
                 detector: PressDetector::new(key),
                 now: Instant::now(),
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn a_short_press_is_a_tap() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         assert_eq!(keyboard.down(0), None);
         assert_eq!(keyboard.tick_after(A_TAP), None);
         assert_eq!(keyboard.up_after(Duration::ZERO, 0), Some(Press::Tap));
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn a_press_becomes_a_hold_at_the_threshold_and_ends_on_release() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         assert_eq!(keyboard.down(0), None);
         assert_eq!(
             keyboard.detector.hold_deadline(),
@@ -378,14 +378,14 @@ mod tests {
 
     #[test]
     fn a_release_past_the_threshold_before_any_tick_reports_nothing() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         assert_eq!(keyboard.up_after(HOLD_THRESHOLD, 0), None);
     }
 
     #[test]
     fn other_input_before_the_threshold_spends_the_press_silently() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         assert_eq!(keyboard.other_key(), None);
         assert_eq!(keyboard.detector.hold_deadline(), None);
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn other_input_during_a_hold_cancels_it() {
         for other_input in [Keyboard::other_key, Keyboard::mouse] {
-            let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+            let mut keyboard = Keyboard::new(AriaKey::RightOption);
             keyboard.down(0);
             keyboard.tick_after(HOLD_THRESHOLD);
             assert_eq!(other_input(&mut keyboard), Some(Press::HoldCancelled));
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn a_lost_release_cancels_the_hold_and_starts_a_fresh_press() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.tick_after(HOLD_THRESHOLD);
         assert_eq!(keyboard.down(0), Some(Press::HoldCancelled));
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_reset_cancels_a_hold_and_forgets_a_press() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.tick_after(HOLD_THRESHOLD);
         assert_eq!(keyboard.detector.reset(), Some(Press::HoldCancelled));
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn a_spent_press_does_not_poison_the_next_one() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.other_key();
         keyboard.up_after(A_TAP, 0);
@@ -437,14 +437,14 @@ mod tests {
 
     #[test]
     fn left_option_held_across_the_release_still_counts() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         assert_eq!(keyboard.down(LEFT_OPTION), None);
         assert_eq!(keyboard.up_after(A_TAP, LEFT_OPTION), Some(Press::Tap));
     }
 
     #[test]
     fn other_modifier_keys_are_ignored() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         for (key_code, flags) in [(58, LEFT_OPTION), (56, 0x0002_0000)] {
             assert_eq!(keyboard.flags(key_code, flags), None);
             assert_eq!(keyboard.flags(key_code, 0), None);
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn input_while_the_key_is_up_is_ignored() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         assert_eq!(keyboard.other_key(), None);
         assert_eq!(keyboard.mouse(), None);
         assert_eq!(keyboard.down(0), None);
@@ -467,7 +467,7 @@ mod tests {
             (LEFT_SHIFT_KEY, SHIFT, Combo::Shift),
             (LEFT_COMMAND_KEY, COMMAND, Combo::Command),
         ] {
-            let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+            let mut keyboard = Keyboard::new(AriaKey::RightOption);
             keyboard.down(0);
             assert_eq!(keyboard.flags(key_code, RIGHT_OPTION | mask), None);
             assert_eq!(keyboard.flags(key_code, RIGHT_OPTION), None);
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn a_modifier_held_before_the_press_makes_a_combo() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         assert_eq!(keyboard.down(SHIFT), None);
         assert_eq!(
             keyboard.up_after(A_TAP, SHIFT),
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn a_combo_never_becomes_a_hold() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.flags(LEFT_SHIFT_KEY, RIGHT_OPTION | SHIFT);
         assert_eq!(keyboard.detector.hold_deadline(), None);
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn a_key_typed_during_a_combo_voids_it() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.flags(LEFT_COMMAND_KEY, RIGHT_OPTION | COMMAND);
         assert_eq!(keyboard.other_key(), None);
@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn a_second_modifier_voids_a_combo_even_past_the_threshold() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.flags(LEFT_SHIFT_KEY, RIGHT_OPTION | SHIFT);
         keyboard.now += HOLD_THRESHOLD;
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn a_synthetic_modifier_does_not_join_the_press() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         let posted_shift = KeyEvent::FlagsChanged {
             key_code: LEFT_SHIFT_KEY,
@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn control_or_two_modifiers_make_no_combo() {
         for held in [CONTROL, SHIFT | COMMAND, SHIFT | CONTROL] {
-            let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+            let mut keyboard = Keyboard::new(AriaKey::RightOption);
             keyboard.down(held);
             assert_eq!(keyboard.up_after(A_TAP, held), None, "{held:#x}");
         }
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn a_modifier_past_the_threshold_leaves_the_hold_to_start() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.now += HOLD_THRESHOLD;
         assert_eq!(keyboard.flags(LEFT_SHIFT_KEY, RIGHT_OPTION | SHIFT), None);
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn a_modifier_during_a_hold_is_ignored() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(0);
         keyboard.tick_after(HOLD_THRESHOLD);
         assert_eq!(keyboard.flags(LEFT_SHIFT_KEY, RIGHT_OPTION | SHIFT), None);
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn a_reset_forgets_a_combo() {
-        let mut keyboard = Keyboard::new(HotkeyKey::RightOption);
+        let mut keyboard = Keyboard::new(AriaKey::RightOption);
         keyboard.down(SHIFT);
         assert_eq!(keyboard.detector.reset(), None);
         assert_eq!(keyboard.up_after(A_TAP, 0), None);
@@ -575,7 +575,7 @@ mod tests {
 
     #[test]
     fn the_fn_binding_is_honored() {
-        let mut keyboard = Keyboard::new(HotkeyKey::Fn);
+        let mut keyboard = Keyboard::new(AriaKey::Fn);
         assert_eq!(keyboard.flags(63, SECONDARY_FN), None);
         assert_eq!(keyboard.flags(63, 0), Some(Press::Tap));
     }

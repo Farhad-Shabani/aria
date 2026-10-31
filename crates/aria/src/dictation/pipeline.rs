@@ -30,7 +30,7 @@ use super::{
     DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, HeardSpeaker, StopMode,
     Transcribed, TranscriptSink, Utterance,
 };
-use super::{Meter, Rewrites};
+use super::{Meter, Rewrites, Rewriting};
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
@@ -217,12 +217,17 @@ where
     /// Transcribes caller-provided audio with the shared engine and speaker
     /// filter, without publishing it to sinks. The result names `engine`, or
     /// the remote engine when the operation was delegated.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "what one caller's recording asks for, which no other caller shares"
+    )]
     pub(crate) fn transcribe(
         &self,
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
         vocabulary: Option<&Vocabulary>,
+        rewriting: Rewriting,
         engine: &'static str,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -270,7 +275,9 @@ where
             }
         };
         Ok(Transcribed {
-            transcript: self.rewrites.finish(transcript, vocabulary, cancel)?,
+            transcript: self
+                .rewrites
+                .finish(transcript, rewriting, vocabulary, cancel)?,
             engine: served_by.unwrap_or(engine),
         })
     }
@@ -557,7 +564,7 @@ where
         };
         let operation = self
             .transcription
-            .start_with(&settings.recognition_language, &cancel)
+            .start_with(&settings.stt_language, &cancel)
             .map_err(started)?;
         let streaming = settings.delivery_mode == DeliveryMode::Streaming;
         if (!settings.own_voice_only || streaming)
@@ -598,7 +605,7 @@ where
             let Released { heard, speaker, .. } = released;
             let mut text = heard.segment.as_str().to_owned();
             self.rewrites
-                .segment(&mut text, vocabulary, &cancel)
+                .segment(&mut text, settings.rewriting, vocabulary, &cancel)
                 .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
             let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
             published.segment(heard, &text, speaker, sinks)
@@ -656,7 +663,7 @@ where
         let transcript = match settings.delivery_mode {
             DeliveryMode::Complete => self
                 .rewrites
-                .finish(ended.transcript, vocabulary, &cancel)
+                .finish(ended.transcript, settings.rewriting, vocabulary, &cancel)
                 .map_err(started)?,
             DeliveryMode::Streaming => ended.transcript,
         };
@@ -689,7 +696,7 @@ where
                 recording,
                 &timeline,
                 operation,
-                &settings.recognition_language,
+                &settings.stt_language,
                 cancel,
             )
             .map_err(|error| match error {
@@ -698,7 +705,7 @@ where
             })?;
         let transcript = self
             .rewrites
-            .finish(decoded.transcript, vocabulary, cancel)
+            .finish(decoded.transcript, settings.rewriting, vocabulary, cancel)
             .map_err(started)?;
         if let Some(engine) = decoded.served_by {
             sinks.served_by(engine);
@@ -713,7 +720,7 @@ where
             .cloned();
             let mut text = heard.segment.as_str().to_owned();
             self.rewrites
-                .segment(&mut text, vocabulary, cancel)
+                .segment(&mut text, settings.rewriting, vocabulary, cancel)
                 .map_err(started)?;
             published.segment(heard, &text, speaker, sinks)?;
         }
@@ -1565,6 +1572,20 @@ mod tests {
         ]
     }
 
+    const BACKTRACK: Rewriting = Rewriting {
+        cleanup: false,
+        backtrack: true,
+    };
+
+    fn rewriting(
+        mut settings: DictationSettings,
+        cleanup: bool,
+        backtrack: bool,
+    ) -> DictationSettings {
+        settings.rewriting = Rewriting { cleanup, backtrack };
+        settings
+    }
+
     fn own_voice_only(mut settings: DictationSettings) -> DictationSettings {
         settings.own_voice_only = true;
         settings
@@ -2381,10 +2402,13 @@ mod tests {
                         capture,
                         Transcription::stream(Stream::Native, Parts(parts)),
                         (log.history(), log.cursor()),
-                    )
-                    .rewriting(Rewrites::new().backtracking(enabled).with(()));
+                    );
                     let result = pipeline
-                        .run(settings(mode, OutputMode::InsertAndSubmit))
+                        .run(rewriting(
+                            settings(mode, OutputMode::InsertAndSubmit),
+                            false,
+                            enabled,
+                        ))
                         .unwrap();
                     let expected = if enabled && mode == DeliveryMode::Complete {
                         corrected
@@ -2425,9 +2449,10 @@ mod tests {
                 capture,
                 Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 (log.history(), log.cursor()),
-            )
-            .rewriting(Rewrites::new().backtracking(true));
-            let result = pipeline.run(settings(mode, OutputMode::Insert)).unwrap();
+            );
+            let result = pipeline
+                .run(rewriting(settings(mode, OutputMode::Insert), false, true))
+                .unwrap();
             let expected = if mode == DeliveryMode::Complete {
                 "meet at 3"
             } else {
@@ -2442,19 +2467,49 @@ mod tests {
         }
     }
 
+    /// Both choices come with each press, and a model configured
+    /// at startup runs only while cleanup is on.
+    #[test]
+    fn each_press_follows_the_rewriting_it_was_admitted_with() {
+        let ran = FinalLayer(move |text: &mut String, _: &CancelToken| {
+            *text = "from the model".to_owned();
+            Ok(())
+        });
+        let rewrites = Rewrites::new().with(ran);
+        let finish = |cleanup, backtrack| {
+            rewrites
+                .finish(
+                    Transcript::new("um meet at 2 actually 3").unwrap(),
+                    Rewriting { cleanup, backtrack },
+                    None,
+                    &CancelToken::never(),
+                )
+                .unwrap()
+                .into_text()
+        };
+
+        assert_eq!(finish(false, false), "um meet at 2 actually 3");
+        assert_eq!(finish(false, true), "um meet at 3");
+        assert_eq!(finish(true, false), "from the model");
+    }
+
     #[test]
     fn backtracking_is_local_to_each_completed_transcript() {
         let pipeline = DictationPipeline::new(
             (),
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
-        )
-        .rewriting(Rewrites::new().backtracking(true));
+        );
         for text in ["meet at 2", "actually 3", "scratch", "that to Sara"] {
             assert_eq!(
                 pipeline
                     .rewrites
-                    .finish(Transcript::new(text).unwrap(), None, &CancelToken::never())
+                    .finish(
+                        Transcript::new(text).unwrap(),
+                        BACKTRACK,
+                        None,
+                        &CancelToken::never()
+                    )
                     .unwrap()
                     .as_str(),
                 text
@@ -2465,6 +2520,7 @@ mod tests {
         assert!(matches!(
             pipeline.rewrites.finish(
                 Transcript::new("meet at 2 actually 3").unwrap(),
+                BACKTRACK,
                 None,
                 &cancel
             ),
@@ -2495,11 +2551,12 @@ mod tests {
                 )
                 .rewriting(
                     Rewrites::new()
-                        .removing_disfluencies(true)
                         .with(enabled.then_some(layer))
                         .with(enabled.then_some(punctuation)),
                 );
-                let result = pipeline.run(settings(mode, OutputMode::Insert)).unwrap();
+                let result = pipeline
+                    .run(rewriting(settings(mode, OutputMode::Insert), true, false))
+                    .unwrap();
                 let applied = enabled && mode == DeliveryMode::Complete;
                 let expected = if applied {
                     "Meet at 3."
@@ -2538,12 +2595,11 @@ mod tests {
             Transcription::complete_samples(Answering("um meet at 2 actually 3")),
             UnreachableSink,
         )
-        .rewriting(
-            Rewrites::new()
-                .removing_disfluencies(true)
-                .backtracking(true)
-                .with(layer),
-        );
+        .rewriting(Rewrites::new().with(layer));
+        let every_pass = Rewriting {
+            cleanup: true,
+            backtrack: true,
+        };
         let mut recording =
             RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
         let cancel = CancelToken::new();
@@ -2554,6 +2610,7 @@ mod tests {
                     &Language::Automatic,
                     false,
                     None,
+                    every_pass,
                     "test",
                     &cancel,
                 )
@@ -2569,6 +2626,7 @@ mod tests {
                 &Language::Automatic,
                 false,
                 None,
+                every_pass,
                 "test",
                 &cancel,
             ),
@@ -2594,10 +2652,11 @@ mod tests {
                 Transcription::complete_samples(Answering("meet at 2 actually 3")),
                 (log.history(), log.cursor()),
             )
-            .rewriting(Rewrites::new().backtracking(true).with(layer));
-            let result = pipeline.run(settings(
-                DeliveryMode::Complete,
-                OutputMode::InsertAndSubmit,
+            .rewriting(Rewrites::new().with(layer));
+            let result = pipeline.run(rewriting(
+                settings(DeliveryMode::Complete, OutputMode::InsertAndSubmit),
+                true,
+                true,
             ));
             if cancelled {
                 assert!(matches!(result, Err(DictationError::Cancelled)));
@@ -2626,13 +2685,21 @@ mod tests {
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
-        .rewriting(Rewrites::new().backtracking(true).with(Some(cleanup)));
+        .rewriting(Rewrites::new().with(Some(cleanup)));
         for bytes in [4097, 65537] {
             let prefix = "a".repeat(bytes);
             let text = format!("{prefix} meet at 2 actually 3");
             let transcript = pipeline
                 .rewrites
-                .finish(Transcript::new(&text).unwrap(), None, &CancelToken::never())
+                .finish(
+                    Transcript::new(&text).unwrap(),
+                    Rewriting {
+                        cleanup: true,
+                        backtrack: true,
+                    },
+                    None,
+                    &CancelToken::never(),
+                )
                 .unwrap();
             assert_eq!(transcript.as_str(), format!("{prefix} meet at 3"));
         }
@@ -2675,14 +2742,13 @@ mod tests {
             Transcription::complete_samples(Answering("um meet Alice at 2 actually 3")),
             (log.history(), log.cursor()),
         )
-        .rewriting(
-            Rewrites::new()
-                .removing_disfluencies(true)
-                .backtracking(true)
-                .with(layer),
-        );
+        .rewriting(Rewrites::new().with(layer));
         let result = pipeline
-            .run(settings(DeliveryMode::Complete, OutputMode::Insert))
+            .run(rewriting(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                true,
+                true,
+            ))
             .unwrap();
         assert_eq!(result.text, "meet Alice at 3");
         let log = log.entries();
@@ -2711,8 +2777,7 @@ mod tests {
                     Answering(heard),
                 ),
                 (log.history(), log.cursor()),
-            )
-            .rewriting(Rewrites::new().removing_disfluencies(true));
+            );
             let matcher = crate::vocabulary::Vocabulary::compile(
                 &[crate::vocabulary::Term {
                     canonical: "aria-kit".into(),
@@ -2725,7 +2790,11 @@ mod tests {
             )
             .unwrap();
             let control = ExecutionControl::for_test(StopMode::Manual);
-            let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+            let settings = rewriting(
+                settings(DeliveryMode::Streaming, OutputMode::Insert),
+                true,
+                false,
+            );
 
             let result = pipeline.execute(
                 settings,
@@ -2801,13 +2870,16 @@ mod tests {
                 (),
                 Transcription::complete_samples(Answering("")),
                 UnreachableSink,
-            )
-            .rewriting(Rewrites::new().removing_disfluencies(enabled));
+            );
 
             let transcript = pipeline
                 .rewrites
                 .finish(
                     Transcript::new("send the the um report").unwrap(),
+                    Rewriting {
+                        cleanup: enabled,
+                        backtrack: false,
+                    },
                     None,
                     &CancelToken::never(),
                 )
@@ -2823,13 +2895,17 @@ mod tests {
             (),
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
-        )
-        .rewriting(Rewrites::new().removing_disfluencies(true));
+        );
 
-        let result =
-            pipeline
-                .rewrites
-                .finish(Transcript::new("um").unwrap(), None, &CancelToken::never());
+        let result = pipeline.rewrites.finish(
+            Transcript::new("um").unwrap(),
+            Rewriting {
+                cleanup: true,
+                backtrack: false,
+            },
+            None,
+            &CancelToken::never(),
+        );
 
         assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
@@ -3116,14 +3192,14 @@ mod tests {
                 ))
             })),
             (log.history(), log.cursor()),
-        )
-        .rewriting(Rewrites::new().removing_disfluencies(true));
+        );
 
         let result = pipeline
-            .run(own_voice_only(settings(
-                DeliveryMode::Complete,
-                OutputMode::Insert,
-            )))
+            .run(rewriting(
+                own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
+                true,
+                false,
+            ))
             .unwrap();
 
         assert_eq!(result.text, "first second");
@@ -3158,6 +3234,7 @@ mod tests {
                     &Language::Automatic,
                     true,
                     None,
+                    Rewriting::default(),
                     "test",
                     &CancelToken::never()
                 )
@@ -3251,6 +3328,7 @@ mod tests {
                         &Language::Automatic,
                         true,
                         None,
+                        Rewriting::default(),
                         "test",
                         &CancelToken::never(),
                     )
@@ -3576,6 +3654,7 @@ mod tests {
                             &Language::Automatic,
                             true,
                             None,
+                            Rewriting::default(),
                             "test",
                             &cancel,
                         )
@@ -3638,6 +3717,7 @@ mod tests {
                         &Language::Automatic,
                         true,
                         None,
+                        Rewriting::default(),
                         "test",
                         &CancelToken::never(),
                     )
@@ -3694,6 +3774,7 @@ mod tests {
                     &Language::Automatic,
                     true,
                     None,
+                    Rewriting::default(),
                     "test",
                     &CancelToken::never()
                 )
@@ -3731,15 +3812,14 @@ mod tests {
                 Transcription::complete_samples(levels(Arc::default())),
                 (log.history(), log.cursor()),
             )
-            .rewriting(
-                Rewrites::new()
-                    .backtracking(true)
-                    .removing_disfluencies(true)
-                    .with(layer),
-            );
+            .rewriting(Rewrites::new().with(layer));
             let (events, captions) = caption_events();
             let result = pipeline.run_observed(
-                own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
+                rewriting(
+                    own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
+                    true,
+                    true,
+                ),
                 &events,
             );
             assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -3853,6 +3933,7 @@ mod tests {
                 &Language::Automatic,
                 true,
                 None,
+                Rewriting::default(),
                 "test",
                 &CancelToken::never(),
             );
@@ -4277,6 +4358,7 @@ mod tests {
             &Language::Automatic,
             false,
             None,
+            Rewriting::default(),
             "test",
             &CancelToken::never(),
         );
@@ -4285,6 +4367,7 @@ mod tests {
             &Language::Automatic,
             false,
             None,
+            Rewriting::default(),
             "test",
             &CancelToken::never(),
         );
@@ -4383,6 +4466,7 @@ mod tests {
                 &Language::Automatic,
                 true,
                 None,
+                Rewriting::default(),
                 "test",
                 &CancelToken::never(),
             );
@@ -4414,6 +4498,7 @@ mod tests {
                 &Language::Automatic,
                 false,
                 None,
+                Rewriting::default(),
                 "test",
                 &cancel
             ),

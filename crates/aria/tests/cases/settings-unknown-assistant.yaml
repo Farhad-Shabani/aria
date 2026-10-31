@@ -1,0 +1,9 @@
+name: an unknown assistant in settings fails daemon startup
+settings: |
+  [assistant]
+  id = "gemini"
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - 'line 2, column 1: assistant.id does not accept "gemini"; supported values are claude-code and codex'

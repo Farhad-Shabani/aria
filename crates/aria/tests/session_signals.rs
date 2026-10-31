@@ -73,7 +73,7 @@ fn probe() {
 
     assert!(delivered.load(Ordering::SeqCst), "the caller saw Ctrl-C");
     session
-        .get_preferences()
+        .get_settings()
         .expect("the daemon should still serve after Ctrl-C");
 }
 

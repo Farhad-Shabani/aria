@@ -9,8 +9,8 @@ just rust-acceptance -- history-fresh   # only cases whose name contains this
 ```
 
 Each case starts from scratch. It gets a temporary home directory holding
-only its config, and its own runtime directory. Your `ARIA_*` variables are
-cleared, sounds and banners are off, and the global hotkey is off. A command
+only its settings, and its own runtime directory. Your `ARIA_*` variables are
+cleared, sounds and banners are off, and the Aria key is off. A command
 that would ask for input reads nothing, so it fails instead of waiting.
 
 ## Writing a case
@@ -18,17 +18,20 @@ that would ask for input reads nothing, so it fails instead of waiting.
 ```yaml
 name: what the case shows, as a sentence
 platform: macos            # optional; other systems skip the case
-config: |                  # written to ~/.aria/config.yaml
-  transcription:
-    backend: whisper
-    model: ${WHISPER_MODEL}
-  capture:
-    backend: wav-file
-    path: ${FIXTURES}/silence.wav
+settings: |                # written to ~/.aria/settings.toml
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
 expect:
   daemon:                  # optional; leave it out to start no daemon
     startup: success       # or failure
     stderr_contains: ["text"]   # every entry must appear
+  before_daemon:           # optional; `aria` commands run before any daemon starts
+    - run: [settings, set, assistant.id, codex]
   client:                  # `aria` commands, run in order
     - run: [history, list]
       exit: success        # the default; or failure
@@ -48,7 +51,7 @@ A case runs one of three ways:
   commands that never need one, and for the error a command gives when it
   needs one and none is running.
 
-A running daemon opens its audio input. Give it `capture: wav-file`, as
+A running daemon opens its audio input. Give it a `wav_file` capture backend, as
 above, or it opens your microphone.
 
 ## Placeholders

@@ -1,8 +1,8 @@
 name: a missing parakeet model directory fails daemon startup
-config: |
-  transcription:
-    backend: parakeet
-    model: /nonexistent/parakeet
+settings: |
+  [stt]
+  backend = "parakeet"
+  model = "/nonexistent/parakeet"
 expect:
   daemon:
     startup: failure

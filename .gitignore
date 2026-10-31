@@ -34,7 +34,7 @@ htmlcov/
 # Local overrides
 .env
 .envrc
-config.yaml
+settings.toml
 *.local.*
 *.local/
 

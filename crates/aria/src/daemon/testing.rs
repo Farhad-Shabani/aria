@@ -23,13 +23,13 @@ pub(in crate::daemon) struct HostedDaemon {
 }
 
 impl HostedDaemon {
-    /// The real assembly, reading `config(home)` as its `config.yaml`.
+    /// The real assembly, reading `config(home)` as its `settings.toml`.
     pub(in crate::daemon) fn configured(config: impl FnOnce(&Path) -> String) -> Self {
         Self::serve(|paths| {
             let home = paths.spool_dir();
-            std::fs::create_dir_all(home.join(".aria")).expect("the config directory is created");
-            std::fs::write(home.join(".aria/config.yaml"), config(home))
-                .expect("the config is written");
+            std::fs::create_dir_all(home.join(".aria")).expect("the settings directory is created");
+            std::fs::write(crate::settings::default_path(home), config(home))
+                .expect("the settings are written");
             assembly::build(paths, DaemonLifetime::OnDemand, WakeWordOverride::Inherit)
         })
     }
@@ -59,6 +59,10 @@ impl HostedDaemon {
 
     pub(in crate::daemon) fn session(&self) -> DaemonSession {
         DaemonSession::connect_at(&self.paths).expect("a session connects")
+    }
+
+    pub(in crate::daemon) fn settings_path(&self) -> std::path::PathBuf {
+        crate::settings::default_path(self.paths.spool_dir())
     }
 
     pub(in crate::daemon) fn socket_path(&self) -> &Path {

@@ -1,10 +1,9 @@
 name: a speaking rate outside its range fails daemon startup
-config: |
-  tts:
-    rate: 9.0
+settings: |
+  [tts]
+  rate = 9.0
 expect:
   daemon:
     startup: failure
     stderr_contains:
-      - 'tts.rate is not a usable speaking rate'
-      - 'speaking rate must be between 0.25 and 4; got 9'
+      - "line 2, column 1: tts.rate is not usable: speaking rate must be between 0.25 and 4; got 9"

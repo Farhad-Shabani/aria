@@ -17,7 +17,7 @@ use objc2_core_graphics::{
     CGEventTapProxy, CGEventType,
 };
 
-use super::{HotkeyKey, KeyEvent, ListenerEvent, ListenerExit, Press, PressDetector};
+use super::{AriaKey, KeyEvent, ListenerEvent, ListenerExit, Press, PressDetector};
 use crate::accessibility::{self, Trust};
 
 const PERMISSION_RETRY: Duration = Duration::from_secs(3);
@@ -82,7 +82,7 @@ impl MacOsHotkeyListener {
     }
 
     pub(crate) fn listen(
-        key: HotkeyKey,
+        key: AriaKey,
         events: impl Fn(ListenerEvent),
         should_stop: impl Fn() -> bool,
     ) -> ListenerExit {

@@ -1,0 +1,9 @@
+name: a settings file that is not valid TOML fails daemon startup with its line and column
+settings: |
+  [transcription
+  backend = "whisper"
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "settings.toml is invalid: unclosed table, expected `]` at line 1, column 15"

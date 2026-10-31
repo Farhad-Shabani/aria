@@ -60,11 +60,11 @@ impl Preparation {
         Ok(())
     }
 
-    fn preference_patch(&self) -> anyhow::Result<wire::PreferencePatch> {
-        Ok(wire::PreferencePatch {
+    fn settings_patch(&self) -> anyhow::Result<wire::SettingsPatch> {
+        Ok(wire::SettingsPatch {
             own_voice_only: Some(self.own_voice_only),
-            project_vocabulary: self.project.as_ref().map(|_| true),
-            vocabulary_directory: self
+            vocabulary_enabled: self.project.as_ref().map(|_| true),
+            vocabulary_dir: self
                 .project
                 .as_ref()
                 .map(|project| {
@@ -79,36 +79,34 @@ impl Preparation {
     }
 
     pub(super) async fn prepare(&self, channel: Channel) -> anyhow::Result<Option<Value>> {
-        let patch = self.preference_patch()?;
-        let mut preferences =
-            wire::preferences_service_client::PreferencesServiceClient::new(channel.clone());
-        let snapshot = preferences
-            .get(wire::GetPreferencesRequest {})
+        let patch = self.settings_patch()?;
+        let mut settings =
+            wire::settings_service_client::SettingsServiceClient::new(channel.clone());
+        let snapshot = settings
+            .get(wire::GetSettingsRequest {})
             .await?
             .into_inner();
-        let updated = preferences
-            .update(wire::UpdatePreferencesRequest {
+        let updated = settings
+            .update(wire::UpdateSettingsRequest {
                 expected_revision: snapshot.revision,
                 patch: Some(patch),
             })
             .await?
             .into_inner();
-        let Some(wire::update_preferences_response::Result::Snapshot(snapshot)) = updated.result
+        let Some(wire::update_settings_response::Result::Snapshot(snapshot)) = updated.result
         else {
-            anyhow::bail!("benchmark preference update conflicted");
+            anyhow::bail!("benchmark settings update conflicted");
         };
-        let preferences = snapshot
-            .preferences
-            .context("daemon returned no preferences")?;
+        let settings = snapshot.settings.context("daemon returned no settings")?;
         ensure!(
-            preferences.own_voice_only == self.own_voice_only,
-            "daemon did not apply own-voice preference"
+            settings.own_voice_only == self.own_voice_only,
+            "daemon did not apply own-voice setting"
         );
         let Some(project) = &self.project else {
             return Ok(None);
         };
         ensure!(
-            preferences.project_vocabulary,
+            settings.vocabulary_enabled,
             "daemon did not enable vocabulary"
         );
         let directory = project
@@ -280,23 +278,23 @@ fn clipboard_text() -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn own_voice_preference_does_not_depend_on_vocabulary() {
+    fn own_voice_setting_does_not_depend_on_vocabulary() {
         for own_voice_only in [false, true] {
             let mut preparation = super::Preparation {
                 project: None,
                 personal: None,
                 own_voice_only,
             };
-            let patch = preparation.preference_patch().unwrap();
+            let patch = preparation.settings_patch().unwrap();
             assert_eq!(patch.own_voice_only, Some(own_voice_only));
-            assert_eq!(patch.project_vocabulary, None);
-            assert_eq!(patch.vocabulary_directory, None);
+            assert_eq!(patch.vocabulary_enabled, None);
+            assert_eq!(patch.vocabulary_dir, None);
             preparation.project = Some("/benchmark/vocabulary".into());
-            let patch = preparation.preference_patch().unwrap();
+            let patch = preparation.settings_patch().unwrap();
             assert_eq!(patch.own_voice_only, Some(own_voice_only));
-            assert_eq!(patch.project_vocabulary, Some(true));
+            assert_eq!(patch.vocabulary_enabled, Some(true));
             assert_eq!(
-                patch.vocabulary_directory.as_deref(),
+                patch.vocabulary_dir.as_deref(),
                 Some("/benchmark/vocabulary")
             );
         }

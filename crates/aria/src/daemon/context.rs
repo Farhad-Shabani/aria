@@ -2,16 +2,18 @@
 
 use std::path::PathBuf;
 
-use crate::config::{ConfigError, Environment, UNATTENDED_ENV};
-use crate::preferences::PreferenceStore;
+#[cfg(not(test))]
+use crate::config::home_directory;
+use crate::config::{ConfigError, UNATTENDED_ENV, codex_home, unattended};
 use crate::runtime::PreparedRuntimePaths;
 
 use super::host::DaemonLifetime;
 
 pub(super) struct Context<'runtime> {
     pub(super) paths: &'runtime PreparedRuntimePaths,
-    pub(super) preferences_path: PathBuf,
-    pub(super) config_environment: Environment,
+    pub(super) settings_path: PathBuf,
+    pub(super) home: PathBuf,
+    pub(super) codex_home: PathBuf,
     pub(super) lifetime: DaemonLifetime,
     pub(super) attended: bool,
 }
@@ -24,16 +26,17 @@ impl<'runtime> Context<'runtime> {
         lifetime: DaemonLifetime,
     ) -> Result<Self, ConfigError> {
         #[cfg(not(test))]
-        let config_environment = Environment::capture()?;
+        let home = home_directory()?;
         // A unit-test daemon must never expire or delete the user's history.
         #[cfg(test)]
-        let config_environment = Environment::in_home(paths.spool_dir().to_path_buf());
+        let home = paths.spool_dir().to_path_buf();
         // Nor may it play cues or show banners on the developer's machine.
-        let attended = !cfg!(test) && attended(config_environment.unattended());
+        let attended = !cfg!(test) && attended(unattended()?.as_deref());
         Ok(Self {
             paths,
-            preferences_path: PreferenceStore::default_path(config_environment.home()),
-            config_environment,
+            settings_path: crate::settings::default_path(&home),
+            codex_home: codex_home(&home),
+            home,
             lifetime,
             attended,
         })

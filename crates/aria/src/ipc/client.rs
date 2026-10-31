@@ -13,8 +13,9 @@ use crate::config::AssistantId;
 use crate::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage};
 use crate::listen::ListenStage;
-use crate::preferences::{PreferencePatch, PreferenceSnapshot, UpdateResult};
 use crate::rpc::{RpcErrorCode, RpcFailure};
+use crate::settings::SettingsStatus;
+use crate::settings::{SettingsPatch, SettingsSnapshot, UpdateResult};
 use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 
 use super::{protocol, wire};
@@ -28,7 +29,7 @@ const DICTATION_TIMEOUT: Duration = Duration::from_secs(670);
 /// Base client deadline for one utterance; grows with the text.
 const SPEECH_BASE_TIMEOUT: Duration = Duration::from_secs(45);
 const SPEECH_TIMEOUT_BYTES_PER_SECOND: u64 = 10;
-/// For everything that answers immediately: preferences, subscriptions.
+/// For everything that answers immediately: settings, subscriptions.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MODEL_LIST_TIMEOUT: Duration = Duration::from_secs(40);
 /// Stop waits for the listen session's final decode to drain.
@@ -594,37 +595,56 @@ impl DaemonClient {
             })
     }
 
-    pub(crate) fn get_preferences(&self) -> Result<PreferenceSnapshot, ClientError> {
-        let mut preferences =
-            wire::preferences_service_client::PreferencesServiceClient::new(self.channel.clone());
+    pub(crate) fn get_settings(&self) -> Result<SettingsSnapshot, ClientError> {
+        let mut settings =
+            wire::settings_service_client::SettingsServiceClient::new(self.channel.clone());
         let response = self
             .runtime
             .block_on(with_deadline(
                 REQUEST_TIMEOUT,
-                preferences.get(request_with_timeout(
-                    wire::GetPreferencesRequest {},
+                settings.get(request_with_timeout(
+                    wire::GetSettingsRequest {},
                     REQUEST_TIMEOUT,
                 )),
             ))?
             .map_err(status_error)?;
 
-        PreferenceSnapshot::try_from(response.into_inner())
+        SettingsSnapshot::try_from(response.into_inner())
             .map_err(|error| ClientError::MalformedResponse(error.to_string()))
     }
 
-    pub(crate) fn update_preferences(
-        &self,
-        expected_revision: u64,
-        patch: PreferencePatch,
-    ) -> Result<UpdateResult, ClientError> {
-        let mut preferences =
-            wire::preferences_service_client::PreferencesServiceClient::new(self.channel.clone());
-        let request = wire::UpdatePreferencesRequest::from((expected_revision, patch));
+    pub(crate) fn settings_status(&self) -> Result<SettingsStatus, ClientError> {
+        let mut settings =
+            wire::settings_service_client::SettingsServiceClient::new(self.channel.clone());
         let response = self
             .runtime
             .block_on(with_deadline(
                 REQUEST_TIMEOUT,
-                preferences.update(request_with_timeout(request, REQUEST_TIMEOUT)),
+                settings.get_status(request_with_timeout(
+                    wire::GetSettingsStatusRequest {},
+                    REQUEST_TIMEOUT,
+                )),
+            ))?
+            .map_err(status_error)?;
+        let status = response.into_inner().status.ok_or_else(|| {
+            ClientError::MalformedResponse("the settings status is missing".to_owned())
+        })?;
+        Ok(status.into())
+    }
+
+    pub(crate) fn update_settings(
+        &self,
+        expected_revision: u64,
+        patch: SettingsPatch,
+    ) -> Result<UpdateResult, ClientError> {
+        let mut settings =
+            wire::settings_service_client::SettingsServiceClient::new(self.channel.clone());
+        let request = wire::UpdateSettingsRequest::from((expected_revision, patch));
+        let response = self
+            .runtime
+            .block_on(with_deadline(
+                REQUEST_TIMEOUT,
+                settings.update(request_with_timeout(request, REQUEST_TIMEOUT)),
             ))?
             .map_err(status_error)?;
 
@@ -852,6 +872,7 @@ pub enum DaemonEvent {
     Speech(SpeechStage),
     Listen(ListenStage),
     Enrollment(EnrollmentStage),
+    Settings(SettingsStatus),
 }
 
 /// A newer daemon's event kinds must not end the stream. An older daemon's
@@ -900,6 +921,9 @@ fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> 
                 None
             }
         },
+        Some(wire::event::Payload::Settings(status)) => {
+            Some(Ok(DaemonEvent::Settings(status.into())))
+        }
         Some(wire::event::Payload::Listen(event)) => match ListenStage::try_from(&event) {
             Ok(stage) => Some(Ok(DaemonEvent::Listen(stage))),
             Err(error) => {
@@ -934,7 +958,7 @@ fn request_with_timeout<T>(message: T, deadline: Duration) -> tonic::Request<T> 
 /// otherwise.
 fn status_error(status: tonic::Status) -> ClientError {
     match protocol::rpc_failure(&status) {
-        Some(RpcFailure { code, message }) => ClientError::Rpc { code, message },
+        Some(RpcFailure { code, message, .. }) => ClientError::Rpc { code, message },
         None => ClientError::Status(status),
     }
 }

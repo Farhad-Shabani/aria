@@ -23,14 +23,15 @@ use crate::dictation::{
     DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, OutputMode, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
-use crate::hotkey::{Combo, HotkeyKey};
+use crate::hotkey::{AriaKey, Combo};
 use crate::listen::ListenStage;
-use crate::preferences::{
-    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
-    DictationOverrides, Hotkey, Modifiers, OverrideError, PreferencePatch, PreferenceSnapshot,
-    Prompt, PromptError, PromptId, Prompts, UpdateResult, UserPreferences,
-};
 use crate::rpc::{RpcErrorCode, RpcFailure};
+use crate::settings::{
+    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
+    DictationOverrides, Modifiers, OverrideError, Prompt, PromptError, PromptId, Prompts, Settings,
+    SettingsPatch, SettingsSnapshot, Shortcut, UpdateResult,
+};
+use crate::settings::{Position, SettingsFault, SettingsStatus};
 use crate::speaker::{Role, SpeakerName, SpeakerNameError};
 use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use crate::transcription::LanguageCodeError;
@@ -68,6 +69,7 @@ impl From<RpcFailure> for wire::RpcError {
         Self {
             code: failure.code.into(),
             message: failure.message,
+            settings_position: failure.settings_position.map(wire::SettingsPosition::from),
         }
     }
 }
@@ -76,10 +78,10 @@ impl TryFrom<wire::RpcError> for RpcFailure {
     type Error = ProtocolError;
 
     fn try_from(error: wire::RpcError) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            RpcErrorCode::try_from(error.code)?,
-            error.message,
-        ))
+        Ok(
+            Self::new(RpcErrorCode::try_from(error.code)?, error.message)
+                .with_settings_position(error.settings_position.map(Position::from)),
+        )
     }
 }
 
@@ -106,7 +108,8 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::AssistantUnavailable
         | RpcErrorCode::AssistantSignedOut
         | RpcErrorCode::PromptUnreadable
-        | RpcErrorCode::ApplicationExcluded => tonic::Code::FailedPrecondition,
+        | RpcErrorCode::ApplicationExcluded
+        | RpcErrorCode::SettingsInvalid => tonic::Code::FailedPrecondition,
         RpcErrorCode::SpeakerAlreadyEnrolled => tonic::Code::AlreadyExists,
         RpcErrorCode::HistoryMissing
         | RpcErrorCode::SpeakerNotEnrolled
@@ -171,39 +174,100 @@ impl From<DictationStage> for wire::StartDictationResponse {
     }
 }
 
-impl From<UpdateResult> for wire::UpdatePreferencesResponse {
+impl From<UpdateResult> for wire::UpdateSettingsResponse {
     fn from(update: UpdateResult) -> Self {
-        let result = match update {
-            UpdateResult::Updated(snapshot) => {
-                wire::update_preferences_response::Result::Snapshot((&snapshot).into())
-            }
-            UpdateResult::Conflict(current) => {
-                wire::update_preferences_response::Result::Conflict(wire::PreferenceConflict {
+        let (result, restart_required) = match update {
+            UpdateResult::Updated {
+                snapshot,
+                restart_required,
+            } => (
+                wire::update_settings_response::Result::Snapshot((&snapshot).into()),
+                restart_required,
+            ),
+            UpdateResult::Conflict(current) => (
+                wire::update_settings_response::Result::Conflict(wire::SettingsConflict {
                     current: Some((&current).into()),
-                })
-            }
+                }),
+                Vec::new(),
+            ),
         };
         Self {
             result: Some(result),
+            restart_required,
         }
     }
 }
 
-impl TryFrom<wire::UpdatePreferencesResponse> for UpdateResult {
+impl TryFrom<wire::UpdateSettingsResponse> for UpdateResult {
     type Error = ProtocolError;
 
-    fn try_from(response: wire::UpdatePreferencesResponse) -> Result<Self, Self::Error> {
+    fn try_from(response: wire::UpdateSettingsResponse) -> Result<Self, Self::Error> {
         match response.result {
-            Some(wire::update_preferences_response::Result::Snapshot(snapshot)) => {
-                Ok(Self::Updated(snapshot.try_into()?))
-            }
-            Some(wire::update_preferences_response::Result::Conflict(conflict)) => {
+            Some(wire::update_settings_response::Result::Snapshot(snapshot)) => Ok(Self::Updated {
+                snapshot: snapshot.try_into()?,
+                restart_required: response.restart_required,
+            }),
+            Some(wire::update_settings_response::Result::Conflict(conflict)) => {
                 let current = conflict
                     .current
-                    .ok_or(ProtocolError::MissingBody("preference conflict snapshot"))?;
+                    .ok_or(ProtocolError::MissingBody("settings conflict snapshot"))?;
                 Ok(Self::Conflict(current.try_into()?))
             }
-            None => Err(ProtocolError::MissingBody("preferences update response")),
+            None => Err(ProtocolError::MissingBody("settings update response")),
+        }
+    }
+}
+
+impl From<Position> for wire::SettingsPosition {
+    fn from(position: Position) -> Self {
+        Self {
+            line: u32::try_from(position.line).unwrap_or(u32::MAX),
+            column: u32::try_from(position.column).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl From<wire::SettingsPosition> for Position {
+    fn from(position: wire::SettingsPosition) -> Self {
+        Self {
+            line: usize::try_from(position.line).unwrap_or(usize::MAX),
+            column: usize::try_from(position.column).unwrap_or(usize::MAX),
+        }
+    }
+}
+
+impl From<&SettingsStatus> for wire::SettingsStatus {
+    fn from(status: &SettingsStatus) -> Self {
+        Self {
+            fault: status.fault.as_ref().map(|fault| wire::SettingsFault {
+                message: fault.message.clone(),
+                position: fault.position.map(Into::into),
+            }),
+            restart_required: status.restart_required.clone(),
+            reverted: status.reverted.clone(),
+            revision: status.revision,
+        }
+    }
+}
+
+impl From<wire::SettingsStatus> for SettingsStatus {
+    fn from(status: wire::SettingsStatus) -> Self {
+        Self {
+            fault: status.fault.map(|fault| SettingsFault {
+                message: fault.message,
+                position: fault.position.map(Into::into),
+            }),
+            restart_required: status.restart_required,
+            reverted: status.reverted,
+            revision: status.revision,
+        }
+    }
+}
+
+impl From<&SettingsStatus> for wire::Event {
+    fn from(status: &SettingsStatus) -> Self {
+        Self {
+            payload: Some(wire::event::Payload::Settings(status.into())),
         }
     }
 }
@@ -212,13 +276,13 @@ impl From<Combo> for wire::Event {
     fn from(combo: Combo) -> Self {
         Self {
             payload: Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
-                combo: wire::HotkeyCombo::from(combo).into(),
+                combo: wire::ShortcutCombo::from(combo).into(),
             })),
         }
     }
 }
 
-impl From<Combo> for wire::HotkeyCombo {
+impl From<Combo> for wire::ShortcutCombo {
     fn from(combo: Combo) -> Self {
         match combo {
             Combo::Shift => Self::Shift,
@@ -227,7 +291,7 @@ impl From<Combo> for wire::HotkeyCombo {
     }
 }
 
-impl WireEnum for wire::HotkeyCombo {
+impl WireEnum for wire::ShortcutCombo {
     type Domain = Combo;
 
     fn into_domain(self) -> Option<Self::Domain> {
@@ -1304,29 +1368,32 @@ impl WireEnum for wire::DeliveryMode {
     }
 }
 
-impl From<HotkeyKey> for wire::HotkeyKey {
-    fn from(key: HotkeyKey) -> Self {
+/// `None` is the Aria key switched off.
+impl From<Option<AriaKey>> for wire::AriaKey {
+    fn from(key: Option<AriaKey>) -> Self {
         match key {
-            HotkeyKey::RightOption => Self::RightOption,
-            HotkeyKey::Fn => Self::Fn,
+            Some(AriaKey::RightOption) => Self::RightOption,
+            Some(AriaKey::Fn) => Self::Fn,
+            None => Self::Off,
         }
     }
 }
 
-impl WireEnum for wire::HotkeyKey {
-    type Domain = HotkeyKey;
+impl WireEnum for wire::AriaKey {
+    type Domain = Option<AriaKey>;
 
     fn into_domain(self) -> Option<Self::Domain> {
         match self {
-            Self::RightOption => Some(HotkeyKey::RightOption),
-            Self::Fn => Some(HotkeyKey::Fn),
+            Self::RightOption => Some(Some(AriaKey::RightOption)),
+            Self::Fn => Some(Some(AriaKey::Fn)),
+            Self::Off => Some(None),
             Self::Unspecified => None,
         }
     }
 }
 
-impl From<(u64, PreferencePatch)> for wire::UpdatePreferencesRequest {
-    fn from((expected_revision, patch): (u64, PreferencePatch)) -> Self {
+impl From<(u64, SettingsPatch)> for wire::UpdateSettingsRequest {
+    fn from((expected_revision, patch): (u64, SettingsPatch)) -> Self {
         Self {
             expected_revision,
             patch: Some(patch.into()),
@@ -1334,17 +1401,17 @@ impl From<(u64, PreferencePatch)> for wire::UpdatePreferencesRequest {
     }
 }
 
-impl TryFrom<wire::UpdatePreferencesRequest> for (u64, PreferencePatch) {
+impl TryFrom<wire::UpdateSettingsRequest> for (u64, SettingsPatch) {
     type Error = ProtocolError;
 
-    fn try_from(update: wire::UpdatePreferencesRequest) -> Result<Self, Self::Error> {
-        let patch = update.patch.ok_or(ProtocolError::MissingPreferencePatch)?;
+    fn try_from(update: wire::UpdateSettingsRequest) -> Result<Self, Self::Error> {
+        let patch = update.patch.ok_or(ProtocolError::MissingSettingsPatch)?;
         Ok((update.expected_revision, patch.try_into()?))
     }
 }
 
 fn decode_assistant_models(
-    entries: Vec<wire::AssistantModelPreference>,
+    entries: Vec<wire::AssistantModelSetting>,
 ) -> Result<BTreeMap<AssistantId, String>, ProtocolError> {
     let mut models = BTreeMap::new();
     for entry in entries {
@@ -1361,78 +1428,75 @@ fn decode_assistant_models(
 
 fn encode_assistant_models(
     models: &BTreeMap<AssistantId, String>,
-) -> Vec<wire::AssistantModelPreference> {
+) -> Vec<wire::AssistantModelSetting> {
     models
         .iter()
-        .map(|(assistant_id, model_id)| wire::AssistantModelPreference {
+        .map(|(assistant_id, model_id)| wire::AssistantModelSetting {
             assistant_id: wire::AssistantId::from(*assistant_id) as i32,
             model_id: model_id.clone(),
         })
         .collect()
 }
 
-impl TryFrom<wire::PreferenceSnapshot> for PreferenceSnapshot {
+impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
     type Error = ProtocolError;
 
-    fn try_from(snapshot: wire::PreferenceSnapshot) -> Result<Self, Self::Error> {
-        let preferences = snapshot
-            .preferences
-            .ok_or(ProtocolError::MissingPreferences)?;
+    fn try_from(snapshot: wire::SettingsSnapshot) -> Result<Self, Self::Error> {
+        let settings = snapshot.settings.ok_or(ProtocolError::MissingSettings)?;
         Ok(Self {
             revision: snapshot.revision,
-            preferences: UserPreferences {
-                assistant_models: decode_assistant_models(preferences.assistant_models)?,
-                assistant_id: preferences
-                    .assistant_id
-                    .map(|value| decode_enum::<wire::AssistantId>(value, "assistant_id"))
-                    .transpose()?,
-                recognition_language: preferences.recognition_language.parse()?,
-                output_mode: decode_enum::<wire::OutputMode>(
-                    preferences.output_mode,
-                    "output mode",
-                )?,
+            settings: Settings {
+                output_mode: decode_enum::<wire::OutputMode>(settings.output_mode, "output mode")?,
                 delivery_mode: decode_enum::<wire::DeliveryMode>(
-                    preferences.delivery_mode,
+                    settings.delivery_mode,
                     "delivery mode",
                 )?,
                 silence_duration: SilenceDuration::new(Duration::from_millis(
-                    preferences.silence_duration_ms,
+                    settings.silence_duration_ms,
                 ))?,
-                auto_stop: preferences
+                auto_stop: settings
                     .auto_stop_ms
                     .map(|milliseconds| AutoStop::new(Duration::from_millis(milliseconds)))
                     .transpose()?,
-                own_voice_only: preferences.own_voice_only,
-                dictation_history: preferences.dictation_history,
-                history_audio_retention: preferences.history_audio_retention,
-                mute_output: preferences.mute_output,
-                project_vocabulary: preferences.project_vocabulary,
-                vocabulary_directory: preferences
-                    .vocabulary_directory
+                mute_sound: settings.mute_sound,
+                cleanup: settings.cleanup,
+                backtrack: settings.backtrack,
+                own_voice_only: settings.own_voice_only,
+                vocabulary_enabled: settings.vocabulary_enabled,
+                vocabulary_dir: settings
+                    .vocabulary_dir
                     .map(|path| crate::vocabulary::Directory::new(path.into()))
                     .transpose()?,
-                dictation_hotkey: decode_enum::<wire::HotkeyKey>(
-                    preferences.dictation_hotkey,
-                    "hotkey key",
-                )?,
-                ask_hotkey: Option::<Hotkey>::try_from(
-                    preferences
-                        .ask_hotkey
-                        .ok_or(ProtocolError::MissingBody("ask hotkey"))?,
-                )?,
-                prompt_list_hotkey: Option::<Hotkey>::try_from(
-                    preferences
-                        .prompt_list_hotkey
-                        .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
-                )?,
-                application_overrides: preferences
-                    .application_overrides
-                    .ok_or(ProtocolError::MissingBody("application overrides"))?
-                    .try_into()?,
-                prompts: preferences
+                history_enabled: settings.history_enabled,
+                history_keep_audio: settings.history_keep_audio,
+                assistant_id: settings
+                    .assistant_id
+                    .map(|value| decode_enum::<wire::AssistantId>(value, "assistant_id"))
+                    .transpose()?,
+                assistant_models: decode_assistant_models(settings.assistant_models)?,
+                memory_enabled: settings.memory_enabled,
+                prompts: settings
                     .prompts
                     .ok_or(ProtocolError::MissingBody("prompts"))?
                     .try_into()?,
+                application_overrides: settings
+                    .application_overrides
+                    .ok_or(ProtocolError::MissingBody("application overrides"))?
+                    .try_into()?,
+                aria_key: decode_enum::<wire::AriaKey>(settings.aria_key, "hotkey key")?,
+                ask_shortcut: Option::<Shortcut>::try_from(
+                    settings
+                        .ask_shortcut
+                        .ok_or(ProtocolError::MissingBody("ask hotkey"))?,
+                )?,
+                prompt_list_shortcut: Option::<Shortcut>::try_from(
+                    settings
+                        .prompt_list_shortcut
+                        .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
+                )?,
+                stt_language: settings.stt_language.parse()?,
+                tts_rate: SpeakingRate::new(settings.tts_rate as f32)
+                    .map_err(ProtocolError::InvalidSpeakingRate)?,
             },
         })
     }
@@ -1468,16 +1532,9 @@ impl TryFrom<wire::ListAssistantModelsRequest> for AssistantId {
     }
 }
 
-impl From<PreferencePatch> for wire::PreferencePatch {
-    fn from(patch: PreferencePatch) -> Self {
+impl From<SettingsPatch> for wire::SettingsPatch {
+    fn from(patch: SettingsPatch) -> Self {
         Self {
-            assistant_models: encode_assistant_models(&patch.assistant_models),
-            assistant_id: patch
-                .assistant_id
-                .map(|assistant_id| wire::AssistantId::from(assistant_id) as i32),
-            recognition_language: patch
-                .recognition_language
-                .map(|language| language.as_str().to_owned()),
             output_mode: patch
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
@@ -1490,66 +1547,74 @@ impl From<PreferencePatch> for wire::PreferencePatch {
             auto_stop_ms: patch.auto_stop.map(|auto_stop| {
                 auto_stop.map_or(0, |auto_stop| auto_stop.get().as_millis() as u64)
             }),
+            mute_sound: patch.mute_sound,
+            cleanup: patch.cleanup,
+            backtrack: patch.backtrack,
             own_voice_only: patch.own_voice_only,
-            dictation_history: patch.dictation_history,
-            history_audio_retention: patch.history_audio_retention,
-            mute_output: patch.mute_output,
-            dictation_hotkey: patch
-                .dictation_hotkey
-                .map(|key| wire::HotkeyKey::from(key) as i32),
-            ask_hotkey: patch.ask_hotkey.map(wire::Hotkey::from),
-            prompt_list_hotkey: patch.prompt_list_hotkey.map(wire::Hotkey::from),
-            prompts: patch.prompts.as_ref().map(wire::Prompts::from),
-            project_vocabulary: patch.project_vocabulary,
-            vocabulary_directory: patch
-                .vocabulary_directory
+            vocabulary_enabled: patch.vocabulary_enabled,
+            vocabulary_dir: patch
+                .vocabulary_dir
                 .map(|path| path.map_or_else(String::new, |path| path.as_str().to_owned())),
+            history_enabled: patch.history_enabled,
+            history_keep_audio: patch.history_keep_audio,
+            assistant_id: patch
+                .assistant_id
+                .map(|assistant_id| wire::AssistantId::from(assistant_id) as i32),
+            assistant_models: encode_assistant_models(&patch.assistant_models),
+            memory_enabled: patch.memory_enabled,
+            prompts: patch.prompts.as_ref().map(wire::Prompts::from),
             application_overrides: patch
                 .application_overrides
                 .as_ref()
                 .map(wire::ApplicationOverrides::from),
+            aria_key: patch.aria_key.map(|key| wire::AriaKey::from(key) as i32),
+            ask_shortcut: patch.ask_shortcut.map(wire::Shortcut::from),
+            prompt_list_shortcut: patch.prompt_list_shortcut.map(wire::Shortcut::from),
+            stt_language: patch
+                .stt_language
+                .map(|language| language.as_str().to_owned()),
+            tts_rate: patch.tts_rate.map(|rate| f64::from(rate.get())),
         }
     }
 }
 
-impl From<&PreferenceSnapshot> for wire::PreferenceSnapshot {
-    fn from(snapshot: &PreferenceSnapshot) -> Self {
+impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
+    fn from(snapshot: &SettingsSnapshot) -> Self {
         Self {
             revision: snapshot.revision,
-            preferences: Some(wire::UserPreferences {
-                assistant_models: encode_assistant_models(&snapshot.preferences.assistant_models),
-                assistant_id: snapshot
-                    .preferences
-                    .assistant_id
-                    .map(|assistant_id| wire::AssistantId::from(assistant_id) as i32),
-                recognition_language: snapshot
-                    .preferences
-                    .recognition_language
-                    .as_str()
-                    .to_owned(),
-                output_mode: wire::OutputMode::from(snapshot.preferences.output_mode) as i32,
-                delivery_mode: wire::DeliveryMode::from(snapshot.preferences.delivery_mode) as i32,
-                silence_duration_ms: snapshot.preferences.silence_duration.get().as_millis() as u64,
+            settings: Some(wire::Settings {
+                output_mode: wire::OutputMode::from(snapshot.settings.output_mode) as i32,
+                delivery_mode: wire::DeliveryMode::from(snapshot.settings.delivery_mode) as i32,
+                silence_duration_ms: snapshot.settings.silence_duration.get().as_millis() as u64,
                 auto_stop_ms: snapshot
-                    .preferences
+                    .settings
                     .auto_stop
                     .map(|auto_stop| auto_stop.get().as_millis() as u64),
-                own_voice_only: snapshot.preferences.own_voice_only,
-                dictation_history: snapshot.preferences.dictation_history,
-                history_audio_retention: snapshot.preferences.history_audio_retention,
-                mute_output: snapshot.preferences.mute_output,
-                project_vocabulary: snapshot.preferences.project_vocabulary,
-                vocabulary_directory: snapshot
-                    .preferences
-                    .vocabulary_directory
+                mute_sound: snapshot.settings.mute_sound,
+                cleanup: snapshot.settings.cleanup,
+                backtrack: snapshot.settings.backtrack,
+                own_voice_only: snapshot.settings.own_voice_only,
+                vocabulary_enabled: snapshot.settings.vocabulary_enabled,
+                vocabulary_dir: snapshot
+                    .settings
+                    .vocabulary_dir
                     .as_ref()
                     .map(|path| path.as_str().to_owned()),
-                dictation_hotkey: wire::HotkeyKey::from(snapshot.preferences.dictation_hotkey)
-                    as i32,
-                ask_hotkey: Some(snapshot.preferences.ask_hotkey.into()),
-                prompt_list_hotkey: Some(snapshot.preferences.prompt_list_hotkey.into()),
-                application_overrides: Some((&snapshot.preferences.application_overrides).into()),
-                prompts: Some((&snapshot.preferences.prompts).into()),
+                history_enabled: snapshot.settings.history_enabled,
+                history_keep_audio: snapshot.settings.history_keep_audio,
+                assistant_id: snapshot
+                    .settings
+                    .assistant_id
+                    .map(|assistant_id| wire::AssistantId::from(assistant_id) as i32),
+                assistant_models: encode_assistant_models(&snapshot.settings.assistant_models),
+                memory_enabled: snapshot.settings.memory_enabled,
+                prompts: Some((&snapshot.settings.prompts).into()),
+                application_overrides: Some((&snapshot.settings.application_overrides).into()),
+                aria_key: wire::AriaKey::from(snapshot.settings.aria_key) as i32,
+                ask_shortcut: Some(snapshot.settings.ask_shortcut.into()),
+                prompt_list_shortcut: Some(snapshot.settings.prompt_list_shortcut.into()),
+                stt_language: snapshot.settings.stt_language.as_str().to_owned(),
+                tts_rate: f64::from(snapshot.settings.tts_rate.get()),
             }),
         }
     }
@@ -1576,21 +1641,11 @@ impl WireEnum for wire::StopMode {
     }
 }
 
-impl TryFrom<wire::PreferencePatch> for PreferencePatch {
+impl TryFrom<wire::SettingsPatch> for SettingsPatch {
     type Error = ProtocolError;
 
-    fn try_from(patch: wire::PreferencePatch) -> Result<Self, Self::Error> {
+    fn try_from(patch: wire::SettingsPatch) -> Result<Self, Self::Error> {
         Ok(Self {
-            assistant_models: decode_assistant_models(patch.assistant_models)?,
-            assistant_id: patch
-                .assistant_id
-                .map(|value| decode_enum::<wire::AssistantId>(value, "assistant_id"))
-                .transpose()?,
-            recognition_language: patch
-                .recognition_language
-                .as_deref()
-                .map(str::parse)
-                .transpose()?,
             output_mode: patch
                 .output_mode
                 .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
@@ -1610,26 +1665,13 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
                     _ => AutoStop::new(Duration::from_millis(milliseconds)).map(Some),
                 })
                 .transpose()?,
+            mute_sound: patch.mute_sound,
+            cleanup: patch.cleanup,
+            backtrack: patch.backtrack,
             own_voice_only: patch.own_voice_only,
-            dictation_history: patch.dictation_history,
-            history_audio_retention: patch.history_audio_retention,
-            mute_output: patch.mute_output,
-            dictation_hotkey: patch
-                .dictation_hotkey
-                .map(|value| decode_enum::<wire::HotkeyKey>(value, "hotkey key"))
-                .transpose()?,
-            ask_hotkey: patch
-                .ask_hotkey
-                .map(Option::<Hotkey>::try_from)
-                .transpose()?,
-            prompt_list_hotkey: patch
-                .prompt_list_hotkey
-                .map(Option::<Hotkey>::try_from)
-                .transpose()?,
-            prompts: patch.prompts.map(Prompts::try_from).transpose()?,
-            project_vocabulary: patch.project_vocabulary,
-            vocabulary_directory: patch
-                .vocabulary_directory
+            vocabulary_enabled: patch.vocabulary_enabled,
+            vocabulary_dir: patch
+                .vocabulary_dir
                 .map(|path| {
                     if path.is_empty() {
                         Ok(None)
@@ -1638,9 +1680,37 @@ impl TryFrom<wire::PreferencePatch> for PreferencePatch {
                     }
                 })
                 .transpose()?,
+            history_enabled: patch.history_enabled,
+            history_keep_audio: patch.history_keep_audio,
+            assistant_id: patch
+                .assistant_id
+                .map(|value| decode_enum::<wire::AssistantId>(value, "assistant_id"))
+                .transpose()?,
+            assistant_models: decode_assistant_models(patch.assistant_models)?,
+            memory_enabled: patch.memory_enabled,
+            prompts: patch.prompts.map(Prompts::try_from).transpose()?,
             application_overrides: patch
                 .application_overrides
                 .map(ApplicationOverrides::try_from)
+                .transpose()?,
+            aria_key: patch
+                .aria_key
+                .map(|value| decode_enum::<wire::AriaKey>(value, "hotkey key"))
+                .transpose()?,
+            ask_shortcut: patch
+                .ask_shortcut
+                .map(Option::<Shortcut>::try_from)
+                .transpose()?,
+            prompt_list_shortcut: patch
+                .prompt_list_shortcut
+                .map(Option::<Shortcut>::try_from)
+                .transpose()?,
+            stt_language: patch.stt_language.as_deref().map(str::parse).transpose()?,
+            tts_rate: patch
+                .tts_rate
+                .map(|rate| {
+                    SpeakingRate::new(rate as f32).map_err(ProtocolError::InvalidSpeakingRate)
+                })
                 .transpose()?,
         })
     }
@@ -1773,28 +1843,30 @@ impl From<Chord> for wire::Chord {
     }
 }
 
-impl TryFrom<wire::Hotkey> for Option<Hotkey> {
+impl TryFrom<wire::Shortcut> for Option<Shortcut> {
     type Error = ProtocolError;
 
-    fn try_from(hotkey: wire::Hotkey) -> Result<Self, Self::Error> {
-        use wire::hotkey::Binding;
+    fn try_from(hotkey: wire::Shortcut) -> Result<Self, Self::Error> {
+        use wire::shortcut::Binding;
         match hotkey.binding {
             None => Ok(None),
-            Some(Binding::Chord(chord)) => Chord::try_from(chord).map(Hotkey::Chord).map(Some),
-            Some(Binding::Combo(combo)) => decode_enum::<wire::HotkeyCombo>(combo, "hotkey combo")
-                .map(Hotkey::Combo)
-                .map(Some),
+            Some(Binding::Chord(chord)) => Chord::try_from(chord).map(Shortcut::Chord).map(Some),
+            Some(Binding::Combo(combo)) => {
+                decode_enum::<wire::ShortcutCombo>(combo, "hotkey combo")
+                    .map(Shortcut::Combo)
+                    .map(Some)
+            }
         }
     }
 }
 
-impl From<Option<Hotkey>> for wire::Hotkey {
-    fn from(hotkey: Option<Hotkey>) -> Self {
-        use wire::hotkey::Binding;
+impl From<Option<Shortcut>> for wire::Shortcut {
+    fn from(hotkey: Option<Shortcut>) -> Self {
+        use wire::shortcut::Binding;
         Self {
             binding: hotkey.map(|hotkey| match hotkey {
-                Hotkey::Chord(chord) => Binding::Chord(chord.into()),
-                Hotkey::Combo(combo) => Binding::Combo(wire::HotkeyCombo::from(combo).into()),
+                Shortcut::Chord(chord) => Binding::Chord(chord.into()),
+                Shortcut::Combo(combo) => Binding::Combo(wire::ShortcutCombo::from(combo).into()),
             }),
         }
     }
@@ -1830,7 +1902,7 @@ impl TryFrom<wire::Prompt> for Prompt {
             PromptId::new(prompt.id)?,
             prompt.name,
             decode_enum::<wire::PromptKind>(prompt.kind, "prompt kind")?,
-            prompt.instructions_path.into(),
+            prompt.file.into(),
             prompt.enabled,
             chord,
         )?)
@@ -1843,7 +1915,7 @@ impl From<&Prompt> for wire::Prompt {
             id: prompt.id().as_str().to_owned(),
             name: prompt.name().to_owned(),
             kind: wire::PromptKind::from(prompt.kind()) as i32,
-            instructions_path: prompt.file().to_string_lossy().into_owned(),
+            file: prompt.file().to_string_lossy().into_owned(),
             enabled: prompt.enabled(),
             chord: prompt.chord().map(wire::Chord::from),
         }
@@ -2025,6 +2097,7 @@ impl From<RpcErrorCode> for i32 {
             RpcErrorCode::PayloadTooLarge => wire::ErrorCode::PayloadTooLarge,
             RpcErrorCode::PermissionDenied => wire::ErrorCode::PermissionDenied,
             RpcErrorCode::DurabilityUnconfirmed => wire::ErrorCode::DurabilityUnconfirmed,
+            RpcErrorCode::SettingsInvalid => wire::ErrorCode::SettingsInvalid,
             RpcErrorCode::OverallTimeout => wire::ErrorCode::OverallTimeout,
             RpcErrorCode::RecordingTimeout => wire::ErrorCode::RecordingTimeout,
             RpcErrorCode::DeliveryTimeout => wire::ErrorCode::DeliveryTimeout,
@@ -2078,6 +2151,7 @@ impl TryFrom<i32> for RpcErrorCode {
             Ok(wire::ErrorCode::PayloadTooLarge) => Self::PayloadTooLarge,
             Ok(wire::ErrorCode::PermissionDenied) => Self::PermissionDenied,
             Ok(wire::ErrorCode::DurabilityUnconfirmed) => Self::DurabilityUnconfirmed,
+            Ok(wire::ErrorCode::SettingsInvalid) => Self::SettingsInvalid,
             Ok(wire::ErrorCode::OverallTimeout) => Self::OverallTimeout,
             Ok(wire::ErrorCode::RecordingTimeout) => Self::RecordingTimeout,
             Ok(wire::ErrorCode::DeliveryTimeout) => Self::DeliveryTimeout,
@@ -2126,7 +2200,7 @@ impl TryFrom<i32> for RpcErrorCode {
 pub enum ProtocolError {
     #[error("invalid assistant model ID")]
     InvalidModelId,
-    #[error("duplicate assistant model preference")]
+    #[error("duplicate assistant model setting")]
     DuplicateAssistantModel,
     #[error("invalid inference message")]
     InvalidInference,
@@ -2135,7 +2209,7 @@ pub enum ProtocolError {
     #[error("invalid vocabulary term count {0}")]
     InvalidVocabularyTerms(u64),
     #[error(transparent)]
-    InvalidVocabularyDirectory(#[from] crate::vocabulary::DirectoryError),
+    InvalidVocabularyDir(#[from] crate::vocabulary::DirectoryError),
     #[error("invalid {field} value {value}")]
     InvalidEnum { field: &'static str, value: i32 },
 
@@ -2148,11 +2222,11 @@ pub enum ProtocolError {
     #[error("the prompt must not be empty")]
     EmptyPrompt,
 
-    #[error("preference update is missing its patch")]
-    MissingPreferencePatch,
+    #[error("settings update is missing its patch")]
+    MissingSettingsPatch,
 
-    #[error("preference snapshot is missing its preferences")]
-    MissingPreferences,
+    #[error("the settings snapshot is missing its settings")]
+    MissingSettings,
 
     #[error("the speaker name is not usable")]
     SpeakerName {
@@ -2198,6 +2272,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_aria_key_that_is_off_round_trips_and_unspecified_is_refused() {
+        for key in [None, Some(AriaKey::RightOption), Some(AriaKey::Fn)] {
+            let snapshot = SettingsSnapshot {
+                revision: 1,
+                settings: Settings {
+                    aria_key: key,
+                    ..Settings::default()
+                },
+            };
+            let decoded =
+                SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&snapshot)).unwrap();
+            assert_eq!(decoded.settings.aria_key, key);
+            let patch = SettingsPatch::try_from(wire::SettingsPatch::from(SettingsPatch {
+                aria_key: Some(key),
+                ..SettingsPatch::default()
+            }))
+            .unwrap();
+            assert_eq!(patch.aria_key, Some(key));
+        }
+        let mut snapshot = wire::SettingsSnapshot::from(&SettingsSnapshot::default());
+        if let Some(settings) = snapshot.settings.as_mut() {
+            settings.aria_key = wire::AriaKey::Unspecified as i32;
+        }
+        assert!(SettingsSnapshot::try_from(snapshot).is_err());
+    }
+
+    #[test]
+    fn a_settings_fault_keeps_its_position_on_the_wire() {
+        let failure = RpcFailure::new(RpcErrorCode::SettingsInvalid, "fix settings.toml first")
+            .with_settings_position(Some(Position { line: 3, column: 7 }));
+        let status = tonic::Status::from(failure.clone());
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(rpc_failure(&status), Some(failure));
+
+        let settings = SettingsStatus {
+            fault: Some(SettingsFault {
+                message: "unknown field `bogus`".to_owned(),
+                position: Some(Position { line: 2, column: 1 }),
+            }),
+            restart_required: vec!["phone.port".to_owned()],
+            reverted: vec!["memory.enabled".to_owned()],
+            revision: 7,
+        };
+        assert_eq!(
+            SettingsStatus::from(wire::SettingsStatus::from(&settings)),
+            settings
+        );
+        let update = UpdateResult::Updated {
+            snapshot: SettingsSnapshot::default(),
+            restart_required: vec!["tts.backend".to_owned()],
+        };
+        assert_eq!(
+            UpdateResult::try_from(wire::UpdateSettingsResponse::from(update.clone())).unwrap(),
+            update
+        );
+    }
+
+    #[test]
     fn model_list_requires_a_known_assistant() {
         assert_eq!(
             AssistantId::try_from(wire::ListAssistantModelsRequest {
@@ -2220,7 +2352,7 @@ mod tests {
             Some(String::new()),
             Some("provider/model:revision".to_owned()),
         ] {
-            let patch = PreferencePatch {
+            let patch = SettingsPatch {
                 assistant_models: model_id
                     .map(|id| (AssistantId::Codex, id))
                     .into_iter()
@@ -2228,12 +2360,12 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                PreferencePatch::try_from(wire::PreferencePatch::from(patch.clone())).unwrap(),
+                SettingsPatch::try_from(wire::SettingsPatch::from(patch.clone())).unwrap(),
                 patch
             );
         }
-        let snapshot = PreferenceSnapshot {
-            preferences: UserPreferences {
+        let snapshot = SettingsSnapshot {
+            settings: Settings {
                 assistant_models: [
                     (AssistantId::ClaudeCode, "claude-example".to_owned()),
                     (AssistantId::Codex, "codex-example".to_owned()),
@@ -2244,79 +2376,79 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            PreferenceSnapshot::try_from(wire::PreferenceSnapshot::from(&snapshot)).unwrap(),
+            SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&snapshot)).unwrap(),
             snapshot
         );
-        let valid = wire::AssistantModelPreference {
+        let valid = wire::AssistantModelSetting {
             assistant_id: wire::AssistantId::Codex as i32,
             model_id: "example".to_owned(),
         };
         for entries in [
-            vec![wire::AssistantModelPreference {
+            vec![wire::AssistantModelSetting {
                 model_id: "--bad".to_owned(),
                 ..valid.clone()
             }],
-            vec![wire::AssistantModelPreference {
+            vec![wire::AssistantModelSetting {
                 assistant_id: 0,
                 ..valid.clone()
             }],
-            vec![wire::AssistantModelPreference {
+            vec![wire::AssistantModelSetting {
                 assistant_id: 99,
                 ..valid.clone()
             }],
             vec![valid.clone(), valid],
         ] {
             assert!(
-                PreferencePatch::try_from(wire::PreferencePatch {
+                SettingsPatch::try_from(wire::SettingsPatch {
                     assistant_models: entries.clone(),
                     ..Default::default()
                 })
                 .is_err()
             );
-            let mut wire = wire::PreferenceSnapshot::from(&snapshot);
-            wire.preferences.as_mut().unwrap().assistant_models = entries;
-            assert!(PreferenceSnapshot::try_from(wire).is_err());
+            let mut wire = wire::SettingsSnapshot::from(&snapshot);
+            wire.settings.as_mut().unwrap().assistant_models = entries;
+            assert!(SettingsSnapshot::try_from(wire).is_err());
         }
     }
 
     #[test]
-    fn chat_assistant_preferences_preserve_presence_and_reject_unknown_values() {
+    fn chat_assistant_settings_preserve_presence_and_reject_unknown_values() {
         for assistant_id in [
             None,
             Some(AssistantId::ClaudeCode),
             Some(AssistantId::Codex),
         ] {
-            let patch = PreferencePatch {
+            let patch = SettingsPatch {
                 assistant_id,
                 ..Default::default()
             };
             assert_eq!(
-                PreferencePatch::try_from(wire::PreferencePatch::from(patch.clone())).unwrap(),
+                SettingsPatch::try_from(wire::SettingsPatch::from(patch.clone())).unwrap(),
                 patch
             );
-            let snapshot = PreferenceSnapshot {
-                preferences: UserPreferences {
+            let snapshot = SettingsSnapshot {
+                settings: Settings {
                     assistant_id,
                     ..Default::default()
                 },
                 ..Default::default()
             };
             assert_eq!(
-                PreferenceSnapshot::try_from(wire::PreferenceSnapshot::from(&snapshot)).unwrap(),
+                SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&snapshot)).unwrap(),
                 snapshot
             );
         }
         for value in [0, 99] {
             assert!(
-                PreferencePatch::try_from(wire::PreferencePatch {
+                SettingsPatch::try_from(wire::SettingsPatch {
                     assistant_id: Some(value),
                     ..Default::default()
                 })
                 .is_err()
             );
-            let mut snapshot = wire::PreferenceSnapshot::from(&PreferenceSnapshot::default());
-            snapshot.preferences.as_mut().unwrap().assistant_id = Some(value);
-            assert!(PreferenceSnapshot::try_from(snapshot).is_err());
+            let mut snapshot = wire::SettingsSnapshot::from(&SettingsSnapshot::default());
+            snapshot.settings.as_mut().unwrap().assistant_id = Some(value);
+            assert!(SettingsSnapshot::try_from(snapshot).is_err());
         }
     }
 
@@ -2693,56 +2825,53 @@ mod tests {
     }
 
     #[test]
-    fn history_audio_retention_preserves_wire_presence() {
-        for history_audio_retention in [None, Some(false), Some(true)] {
-            let patch = PreferencePatch {
-                history_audio_retention,
+    fn history_keep_audio_preserves_wire_presence() {
+        for history_keep_audio in [None, Some(false), Some(true)] {
+            let patch = SettingsPatch {
+                history_keep_audio,
                 ..Default::default()
             };
             assert_eq!(
-                PreferencePatch::try_from(wire::PreferencePatch::from(patch.clone())).unwrap(),
+                SettingsPatch::try_from(wire::SettingsPatch::from(patch.clone())).unwrap(),
                 patch
             );
-            let mut snapshot = wire::PreferenceSnapshot::from(&PreferenceSnapshot::default());
-            snapshot
-                .preferences
-                .as_mut()
-                .unwrap()
-                .history_audio_retention = history_audio_retention.unwrap_or(false);
-            let decoded = PreferenceSnapshot::try_from(snapshot).unwrap();
+            let mut snapshot = wire::SettingsSnapshot::from(&SettingsSnapshot::default());
+            snapshot.settings.as_mut().unwrap().history_keep_audio =
+                history_keep_audio.unwrap_or(false);
+            let decoded = SettingsSnapshot::try_from(snapshot).unwrap();
             assert_eq!(
-                decoded.preferences.history_audio_retention,
-                history_audio_retention.unwrap_or(false)
+                decoded.settings.history_keep_audio,
+                history_keep_audio.unwrap_or(false)
             );
             assert_eq!(
-                PreferenceSnapshot::try_from(wire::PreferenceSnapshot::from(&decoded)).unwrap(),
+                SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&decoded)).unwrap(),
                 decoded
             );
         }
     }
 
     #[test]
-    fn mute_output_preserves_snapshot_value_and_patch_presence_on_the_wire() {
-        for mute_output in [false, true] {
-            let snapshot = PreferenceSnapshot {
+    fn mute_sound_preserves_snapshot_value_and_patch_presence_on_the_wire() {
+        for mute_sound in [false, true] {
+            let snapshot = SettingsSnapshot {
                 revision: 4,
-                preferences: UserPreferences {
-                    mute_output,
+                settings: Settings {
+                    mute_sound,
                     ..Default::default()
                 },
             };
-            let encoded = wire::PreferenceSnapshot::from(&snapshot).encode_to_vec();
-            let decoded = wire::PreferenceSnapshot::decode(encoded.as_slice()).unwrap();
-            assert_eq!(PreferenceSnapshot::try_from(decoded).unwrap(), snapshot);
+            let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
+            let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
         }
-        for mute_output in [None, Some(false), Some(true)] {
-            let patch = PreferencePatch {
-                mute_output,
+        for mute_sound in [None, Some(false), Some(true)] {
+            let patch = SettingsPatch {
+                mute_sound,
                 ..Default::default()
             };
-            let encoded = wire::PreferencePatch::from(patch.clone()).encode_to_vec();
-            let decoded = wire::PreferencePatch::decode(encoded.as_slice()).unwrap();
-            assert_eq!(PreferencePatch::try_from(decoded).unwrap(), patch);
+            let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::SettingsPatch::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
         }
     }
 
@@ -2750,25 +2879,25 @@ mod tests {
     fn auto_stop_off_and_values_survive_the_wire() {
         let ten_seconds = Some(AutoStop::new(Duration::from_secs(10)).unwrap());
         for auto_stop in [None, ten_seconds] {
-            let snapshot = PreferenceSnapshot {
+            let snapshot = SettingsSnapshot {
                 revision: 4,
-                preferences: UserPreferences {
+                settings: Settings {
                     auto_stop,
                     ..Default::default()
                 },
             };
-            let encoded = wire::PreferenceSnapshot::from(&snapshot).encode_to_vec();
-            let decoded = wire::PreferenceSnapshot::decode(encoded.as_slice()).unwrap();
-            assert_eq!(PreferenceSnapshot::try_from(decoded).unwrap(), snapshot);
+            let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
+            let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
         }
         for auto_stop in [None, Some(None), Some(ten_seconds)] {
-            let patch = PreferencePatch {
+            let patch = SettingsPatch {
                 auto_stop,
                 ..Default::default()
             };
-            let encoded = wire::PreferencePatch::from(patch.clone()).encode_to_vec();
-            let decoded = wire::PreferencePatch::decode(encoded.as_slice()).unwrap();
-            assert_eq!(PreferencePatch::try_from(decoded).unwrap(), patch);
+            let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::SettingsPatch::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
         }
     }
 
@@ -2785,26 +2914,26 @@ mod tests {
             },
         )])
         .unwrap();
-        let snapshot = PreferenceSnapshot {
+        let snapshot = SettingsSnapshot {
             revision: 2,
-            preferences: UserPreferences {
+            settings: Settings {
                 application_overrides: overrides.clone(),
                 ..Default::default()
             },
         };
-        let encoded = wire::PreferenceSnapshot::from(&snapshot).encode_to_vec();
-        let decoded = wire::PreferenceSnapshot::decode(encoded.as_slice()).unwrap();
-        assert_eq!(PreferenceSnapshot::try_from(decoded).unwrap(), snapshot);
+        let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
+        let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
+        assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
 
         for application_overrides in [None, Some(ApplicationOverrides::default()), Some(overrides)]
         {
-            let patch = PreferencePatch {
+            let patch = SettingsPatch {
                 application_overrides,
                 ..Default::default()
             };
-            let encoded = wire::PreferencePatch::from(patch.clone()).encode_to_vec();
-            let decoded = wire::PreferencePatch::decode(encoded.as_slice()).unwrap();
-            assert_eq!(PreferencePatch::try_from(decoded).unwrap(), patch);
+            let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::SettingsPatch::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
         }
 
         let spaced_id = wire::ApplicationOverrides {
@@ -2863,17 +2992,14 @@ mod tests {
             };
             assert!(DictationRequest::try_from(request).is_err());
         }
-        let patch = PreferencePatch {
-            project_vocabulary: Some(false),
-            vocabulary_directory: Some(None),
+        let patch = SettingsPatch {
+            vocabulary_enabled: Some(false),
+            vocabulary_dir: Some(None),
             ..Default::default()
         };
         assert_eq!(
-            <(u64, PreferencePatch)>::try_from(wire::UpdatePreferencesRequest::from((
-                3,
-                patch.clone()
-            )))
-            .unwrap(),
+            <(u64, SettingsPatch)>::try_from(wire::UpdateSettingsRequest::from((3, patch.clone())))
+                .unwrap(),
             (3, patch)
         );
     }
@@ -3081,8 +3207,8 @@ mod tests {
     #[test]
     fn each_combo_keeps_its_modifier_on_the_wire() {
         for (combo, expected) in [
-            (Combo::Shift, wire::HotkeyCombo::Shift),
-            (Combo::Command, wire::HotkeyCombo::Command),
+            (Combo::Shift, wire::ShortcutCombo::Shift),
+            (Combo::Command, wire::ShortcutCombo::Command),
         ] {
             assert_eq!(
                 wire::Event::from(combo).payload,
@@ -3122,7 +3248,7 @@ mod tests {
         assert_eq!(decoded, prompts);
 
         let mut wire = wire::Prompts::from(&prompts);
-        wire.entries[0].instructions_path = "relative.md".to_owned();
+        wire.entries[0].file = "relative.md".to_owned();
         assert!(matches!(
             Prompts::try_from(wire),
             Err(ProtocolError::InvalidPrompt(_))
@@ -3165,7 +3291,7 @@ mod tests {
 
     #[test]
     fn a_hotkey_round_trips_and_needs_a_chord_with_a_modifier() {
-        use wire::hotkey::Binding;
+        use wire::shortcut::Binding;
         let chord = wire::Chord {
             key_code: 13,
             control: true,
@@ -3175,21 +3301,21 @@ mod tests {
         };
         for binding in [
             Some(Binding::Chord(chord)),
-            Some(Binding::Combo(wire::HotkeyCombo::Command.into())),
+            Some(Binding::Combo(wire::ShortcutCombo::Command.into())),
             None,
         ] {
-            let hotkey = Option::<Hotkey>::try_from(wire::Hotkey { binding }).expect("decodes");
-            assert_eq!(wire::Hotkey::from(hotkey).binding, binding);
+            let hotkey = Option::<Shortcut>::try_from(wire::Shortcut { binding }).expect("decodes");
+            assert_eq!(wire::Shortcut::from(hotkey).binding, binding);
         }
-        let cleared = PreferencePatch::try_from(wire::PreferencePatch {
-            ask_hotkey: Some(wire::Hotkey::default()),
+        let cleared = SettingsPatch::try_from(wire::SettingsPatch {
+            ask_shortcut: Some(wire::Shortcut::default()),
             ..Default::default()
         })
         .expect("decodes");
-        assert_eq!(cleared.ask_hotkey, Some(None));
+        assert_eq!(cleared.ask_shortcut, Some(None));
         assert!(matches!(
-            Option::<Hotkey>::try_from(wire::Hotkey {
-                binding: Some(Binding::Combo(wire::HotkeyCombo::Unspecified.into())),
+            Option::<Shortcut>::try_from(wire::Shortcut {
+                binding: Some(Binding::Combo(wire::ShortcutCombo::Unspecified.into())),
             }),
             Err(ProtocolError::InvalidEnum {
                 field: "hotkey combo",

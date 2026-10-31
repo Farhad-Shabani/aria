@@ -16,7 +16,7 @@ use super::output::OutputMute;
 
 use super::{
     DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings, DictationStage,
-    MAX_DICTATION_TIMEOUT, RecordingId, StopMode,
+    MAX_DICTATION_TIMEOUT, RecordingId, Rewriting, StopMode,
 };
 
 /// What a recording said, and the engine that heard it.
@@ -44,6 +44,7 @@ pub(crate) trait DictationExecutor: Send + Sync + 'static {
         language: &Language,
         own_voice_only: bool,
         project: Option<&crate::vocabulary::Directory>,
+        rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
 }
@@ -64,9 +65,17 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         language: &Language,
         own_voice_only: bool,
         project: Option<&crate::vocabulary::Directory>,
+        rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
-        (**self).transcribe(recording, language, own_voice_only, project, cancel)
+        (**self).transcribe(
+            recording,
+            language,
+            own_voice_only,
+            project,
+            rewriting,
+            cancel,
+        )
     }
 }
 
@@ -264,7 +273,7 @@ pub(crate) struct ExecutionControl {
     /// scope's late end says nothing after it.
     capture_abandoned: AtomicBool,
     #[cfg(target_os = "macos")]
-    mute_output: bool,
+    mute_sound: bool,
     #[cfg(target_os = "macos")]
     output: std::sync::Mutex<Option<OutputMute>>,
 }
@@ -275,7 +284,7 @@ impl ExecutionControl {
         stop_mode: StopMode,
         cancellation: CancelToken,
         deadline: Deadline,
-        _mute_output: bool,
+        _mute_sound: bool,
     ) -> Self {
         Self {
             id,
@@ -286,7 +295,7 @@ impl ExecutionControl {
             capture_polled: AtomicBool::new(false),
             capture_abandoned: AtomicBool::new(false),
             #[cfg(target_os = "macos")]
-            mute_output: _mute_output,
+            mute_sound: _mute_sound,
             #[cfg(target_os = "macos")]
             output: std::sync::Mutex::new(None),
         }
@@ -378,7 +387,7 @@ impl ExecutionControl {
             events: events.clone(),
         };
         #[cfg(target_os = "macos")]
-        if self.mute_output {
+        if self.mute_sound {
             *self.output() = OutputMute::acquire();
         }
         events.emit(DictationStage::Recording(self.id));
@@ -549,7 +558,7 @@ where
             settings.stop_mode,
             cancellation,
             self.policy.deadline(),
-            settings.mute_output,
+            settings.mute_sound,
         ));
         match self
             .microphone
@@ -603,10 +612,17 @@ where
         language: &Language,
         own_voice_only: bool,
         project: Option<&crate::vocabulary::Directory>,
+        rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
-        self.executor
-            .transcribe(recording, language, own_voice_only, project, cancel)
+        self.executor.transcribe(
+            recording,
+            language,
+            own_voice_only,
+            project,
+            rewriting,
+            cancel,
+        )
     }
 
     /// Ends one recording, whatever stop mode started it. The execution
@@ -664,16 +680,17 @@ mod tests {
 
     fn settings(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
-            dictation_history: true,
-            history_audio_retention: false,
-            mute_output: false,
-            recognition_language: Language::Specific(LanguageCode::english()),
+            history_enabled: true,
+            history_keep_audio: false,
+            mute_sound: false,
+            stt_language: Language::Specific(LanguageCode::english()),
             output_mode: OutputMode::Copy,
             delivery_mode: DeliveryMode::Complete,
             stop_mode,
             silence_duration: SilenceDuration::default(),
             auto_stop: None,
             own_voice_only: false,
+            rewriting: Rewriting::default(),
             transcript_only: true,
             project: None,
             application: None,
@@ -1035,6 +1052,7 @@ mod tests {
                 _: &Language,
                 _: bool,
                 _: Option<&crate::vocabulary::Directory>,
+                _: Rewriting,
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {
                 panic!("this test executes local recording");

@@ -11,6 +11,14 @@ package aria.daemon.v1;
 message RpcError {
   ErrorCode code = 1;
   string message = 2;
+  // With ERROR_CODE_SETTINGS_INVALID: where the fault is, when it has a place.
+  SettingsPosition settings_position = 3;
+}
+
+// A place in settings.toml. Both count from 1.
+message SettingsPosition {
+  uint32 line = 1;
+  uint32 column = 2;
 }
 
 // One flat vocabulary, ranges per capability: 1-99 generic, 100-199
@@ -35,6 +43,8 @@ enum ErrorCode {
   ERROR_CODE_PERMISSION_DENIED = 9;
   // A write landed, but whether it survives a power cut is unknown.
   ERROR_CODE_DURABILITY_UNCONFIRMED = 10;
+  // settings.toml is invalid as it stands, so nothing was written over it.
+  ERROR_CODE_SETTINGS_INVALID = 11;
   ERROR_CODE_OVERALL_TIMEOUT = 100;
   ERROR_CODE_RECORDING_TIMEOUT = 101;
   ERROR_CODE_DELIVERY_TIMEOUT = 102;

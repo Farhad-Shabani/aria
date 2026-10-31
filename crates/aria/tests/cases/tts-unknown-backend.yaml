@@ -1,7 +1,7 @@
 name: an unsupported tts backend fails daemon startup
-config: |
-  tts:
-    backend: elevenlabs
+settings: |
+  [tts]
+  backend = "elevenlabs"
 expect:
   daemon:
     startup: failure

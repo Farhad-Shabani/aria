@@ -2,6 +2,7 @@
 //! whatever the last daemon left, then after each lull in the owner's
 //! asks. Extraction runs on the blocking pool and stops with the daemon.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
@@ -9,9 +10,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::tasks::Supervised;
-use crate::config::Environment;
 use crate::memory::run_backlog;
 use crate::primitives::error_chain;
+use crate::settings::SettingsCache;
 
 /// How long the asks have to go quiet before their turns are extracted.
 const QUIET: Duration = Duration::from_secs(120);
@@ -22,19 +23,22 @@ pub(super) fn wake_channel() -> (mpsc::Sender<()>, mpsc::Receiver<()>) {
 }
 
 pub(super) struct MemoryBacklog {
-    environment: Environment,
+    home: PathBuf,
+    cache: std::sync::Arc<SettingsCache>,
     wake: mpsc::Receiver<()>,
     vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
 }
 
 impl MemoryBacklog {
     pub(super) fn new(
-        environment: Environment,
+        home: PathBuf,
+        cache: std::sync::Arc<SettingsCache>,
         wake: mpsc::Receiver<()>,
         vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
     ) -> Self {
         Self {
-            environment,
+            home,
+            cache,
             wake,
             vocabulary,
         }
@@ -43,8 +47,13 @@ impl MemoryBacklog {
     async fn consolidate(&self, shutdown: &CancellationToken) {
         let shutdown = shutdown.clone();
         let cancel = CancelToken::from_fn(move || shutdown.is_cancelled());
-        let environment = self.environment.clone();
-        match tokio::task::spawn_blocking(move || run_backlog(&environment, &cancel)).await {
+        let home = self.home.clone();
+        let cache = std::sync::Arc::clone(&self.cache);
+        let backlog = move || {
+            let settings = cache.effective();
+            run_backlog(&settings, &home, &cancel)
+        };
+        match tokio::task::spawn_blocking(backlog).await {
             Ok(Ok(_)) => self.vocabulary.prepare(None),
             Ok(Err(error)) => {
                 tracing::warn!(error = %error_chain(&error), "the memory backlog did not run");

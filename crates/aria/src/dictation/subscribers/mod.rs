@@ -71,6 +71,7 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::Internal
         | RpcErrorCode::Cancelled
         | RpcErrorCode::DurabilityUnconfirmed
+        | RpcErrorCode::SettingsInvalid
         | RpcErrorCode::SynthesisFailed
         | RpcErrorCode::PlaybackFailed
         | RpcErrorCode::SpeechTimeout

@@ -14,14 +14,13 @@ package aria.setup.v1;
 
 // What the machine has before anything is asked or changed.
 message Inspection {
-  string config_path = 1;
+  string settings_path = 1;
   bool macos = 2;
   // What `aria setup --yes` would answer: a configured value verbatim,
   // even one setup does not know, else the default engine.
   Selections defaults = 3;
   repeated Choice transcription_choices = 4;
   repeated Choice synthesis_choices = 5;
-  repeated Choice assistant_choices = 6;
   // In the order setup offers them.
   repeated Model models = 7;
   bool wakeword_installed = 8;
@@ -33,7 +32,7 @@ message Inspection {
   PairedServer server = 12;
 }
 
-// Choosing the server engine writes this endpoint to the config.
+// Choosing the server engine writes this endpoint to the settings file.
 message PairedServer {
   string endpoint = 1;
   // Hex, the form `aria remote revoke` takes on the server.
@@ -41,7 +40,7 @@ message PairedServer {
 }
 
 message Choice {
-  // What config.yaml calls it.
+  // What settings.toml calls it.
   string id = 1;
   string label = 2;
   Availability availability = 3;
@@ -83,7 +82,7 @@ message Model {
   // Whether it is fetched when nobody answers.
   bool download_by_default = 5;
   OnDisk on_disk = 6;
-  // Config points its engine at files elsewhere, so setup has nothing to
+  // Settings point its engine at files elsewhere, so setup has nothing to
   // fetch.
   bool external = 7;
 }
@@ -101,7 +100,7 @@ enum OnDisk {
 message Missing {
   enum Kind {
     KIND_UNSPECIFIED = 0;
-    KIND_CONFIG = 1;
+    KIND_SETTINGS = 1;
     KIND_WAKEWORD = 2;
     KIND_MODEL = 3;
     KIND_SERVICE = 4;
@@ -114,13 +113,12 @@ message Missing {
   string model_id = 2;
 }
 
-// The five answers, as config.yaml spells them.
+// The four answers, as settings.toml spells them.
 message Selections {
   string transcription_engine_id = 1;
   string synthesis_engine_id = 2;
-  string assistant_id = 3;
   bool wake = 4;
-  bool hotkey = 5;
+  bool aria_key = 5;
 }
 
 message ApplyRequest {
@@ -146,7 +144,7 @@ message SetupEvent {
 
 enum Step {
   STEP_UNSPECIFIED = 0;
-  STEP_CONFIG = 1;
+  STEP_SETTINGS = 1;
   STEP_WAKEWORD = 2;
   STEP_MODELS = 3;
   STEP_SERVICE = 4;
@@ -159,9 +157,7 @@ message DownloadProgress {
 }
 
 message Summary {
-  ConfigWrite config = 1;
-  // Where the hand-written config was kept; empty when there was none.
-  string config_backup_path = 2;
+  SettingsWrite settings = 1;
   // Where the wake-word models went; empty when none ship beside the binary.
   string wakeword_dir = 3;
   repeated ModelOutcome models = 4;
@@ -178,10 +174,10 @@ message ModelOutcome {
   Outcome outcome = 2;
 }
 
-enum ConfigWrite {
-  CONFIG_WRITE_UNSPECIFIED = 0;
-  CONFIG_WRITE_UNCHANGED = 1;
-  CONFIG_WRITE_WRITTEN = 2;
+enum SettingsWrite {
+  SETTINGS_WRITE_UNSPECIFIED = 0;
+  SETTINGS_WRITE_UNCHANGED = 1;
+  SETTINGS_WRITE_WRITTEN = 2;
 }
 
 enum Outcome {

@@ -7,7 +7,7 @@ package aria.daemon.v1;
 import "aria/daemon/v1/chat.proto";
 import "aria/daemon/v1/dictation.proto";
 import "aria/daemon/v1/listen.proto";
-import "aria/daemon/v1/preferences.proto";
+import "aria/daemon/v1/settings.proto";
 import "aria/daemon/v1/speaker.proto";
 import "aria/daemon/v1/speech.proto";
 
@@ -32,6 +32,9 @@ message Event {
     MicLevel level = 7;
     GhostSnapshot ghost = 8;
     HotkeyEvent hotkey = 9;
+    // Whenever the status changes: a change of values from a reload or a
+    // write, a restart key, a revert, or a fault.
+    SettingsStatus settings = 10;
   }
 }
 
@@ -39,5 +42,5 @@ message Event {
 // with no other key or click. The daemon only reports it; a client decides
 // what each combo runs.
 message HotkeyEvent {
-  HotkeyCombo combo = 1;
+  ShortcutCombo combo = 1;
 }

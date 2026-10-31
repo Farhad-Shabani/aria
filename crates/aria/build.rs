@@ -11,7 +11,7 @@ const PROTOS: &[&str] = &[
     "../../proto/aria/daemon/v1/history.proto",
     "../../proto/aria/daemon/v1/inference.proto",
     "../../proto/aria/daemon/v1/listen.proto",
-    "../../proto/aria/daemon/v1/preferences.proto",
+    "../../proto/aria/daemon/v1/settings.proto",
     "../../proto/aria/daemon/v1/relay.proto",
     "../../proto/aria/daemon/v1/speaker.proto",
     "../../proto/aria/daemon/v1/speech.proto",

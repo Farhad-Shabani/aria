@@ -39,7 +39,7 @@ impl Borrow<str> for ApplicationId {
     }
 }
 
-/// Dictation settings that replace shared preferences. Each `None` inherits.
+/// Dictation settings that replace shared settings. Each `None` inherits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DictationOverrides {
     pub output_mode: Option<OutputMode>,
@@ -92,9 +92,9 @@ impl ApplicationOverrides {
     }
 
     /// Drops choices that change nothing. A value equal to the shared
-    /// preference goes, so the app follows that preference when it changes.
+    /// setting goes, so the app follows that setting when it changes.
     /// An app's own Copy drops its delivery choice, because Copy cannot
-    /// stream. A shared Copy keeps it for when that preference changes.
+    /// stream. A shared Copy keeps it for when that setting changes.
     pub(crate) fn without_inert(self, output: OutputMode, delivery: DeliveryMode) -> Self {
         let map = self
             .0

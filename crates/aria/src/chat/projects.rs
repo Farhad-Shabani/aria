@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use rustix::fs::{Mode, OFlags};
 
-use crate::config::{ChatConfig, ConfigError, Environment};
+use crate::config::{ChatConfig, ConfigError};
 use crate::primitives::private_fs::{self, PRIVATE_FILE_MODE};
 
 const FOCUS_DIRECTORY: &str = ".aria";
@@ -32,17 +32,14 @@ pub struct Projects {
 }
 
 impl Projects {
-    pub(crate) fn load_with(
-        environment: &Environment,
-        config: &ChatConfig,
-    ) -> Result<Self, ProjectsError> {
+    pub(crate) fn load_with(home: &Path, config: &ChatConfig) -> Result<Self, ProjectsError> {
         let known = discover(&config.project_roots)?;
-        let focused = load_focus(environment.home())
+        let focused = load_focus(home)
             .map_err(ProjectsError::Focus)?
             .and_then(|path| known.iter().find(|project| project.path == path))
             .cloned();
         Ok(Self {
-            home: environment.home().to_path_buf(),
+            home: home.to_path_buf(),
             known,
             focused,
         })
@@ -68,7 +65,7 @@ impl Projects {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectsError {
-    #[error("failed to read the chat configuration")]
+    #[error("failed to read the chat settings")]
     Config(#[from] ConfigError),
 
     #[error(transparent)]

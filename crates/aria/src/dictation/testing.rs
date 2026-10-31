@@ -270,16 +270,17 @@ pub(crate) fn timed(text: &str, words: &[(f32, f32)]) -> Hypothesis {
 /// optional behavior off.
 pub(crate) fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> DictationSettings {
     DictationSettings {
-        dictation_history: true,
-        history_audio_retention: false,
-        mute_output: false,
-        recognition_language: Language::Automatic,
+        history_enabled: true,
+        history_keep_audio: false,
+        mute_sound: false,
+        stt_language: Language::Automatic,
         output_mode,
         delivery_mode,
         stop_mode: StopMode::Manual,
         silence_duration: SilenceDuration::default(),
         auto_stop: None,
         own_voice_only: false,
+        rewriting: Default::default(),
         project: None,
         transcript_only: false,
         application: None,
@@ -349,6 +350,7 @@ impl DictationExecutor for RecordsUntilStopped {
         _language: &Language,
         _own_voice_only: bool,
         _project: Option<&crate::vocabulary::Directory>,
+        _rewriting: super::Rewriting,
         _cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         Ok(Transcribed {

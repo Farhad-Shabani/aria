@@ -1,9 +1,9 @@
 name: the parakeet-mlx backend requires an interpreter
-config: |
-  transcription:
-    backend: parakeet-mlx
+settings: |
+  [stt]
+  backend = "parakeet-mlx"
 expect:
   daemon:
     startup: failure
     stderr_contains:
-      - "the parakeet-mlx backend requires transcription.interpreter"
+      - "line 1, column 1: stt.interpreter is required by the parakeet-mlx backend"

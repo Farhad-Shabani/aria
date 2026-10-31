@@ -1,0 +1,12 @@
+name: an unknown settings key fails daemon startup
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "~/model.bin"
+  bogus = true
+expect:
+  daemon:
+    startup: failure
+    stderr_contains:
+      - "unknown field `bogus`, expected one of `backend`, `language`, `model`, `device`, `interpreter`, `server`; a newer Aria may have written it"
+      - "at line 4, column 1"

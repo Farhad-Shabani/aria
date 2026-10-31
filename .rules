@@ -26,10 +26,11 @@ macOS. The scoped recipes use default features.
 
 - The source-built CLI is `target/release/aria`. A running daemon outlives a
   rebuild; restart it using the intended binary before checking live behavior.
-- `aria config show` reflects the invoking shell. The service has its own
-  environment; restart it after changing `~/.aria/config.yaml`.
-- Keep immutable daemon configuration, daemon-owned shared preferences, and
-  client-local presentation choices separate. Reject unknown configuration keys.
+- The service reloads `~/.aria/settings.toml` within a second, and keys marked
+  restart wait for a restart.
+- Every setting goes through `settings::modify`, and every key through the table
+  in `settings/keys.rs`. Keep client-local presentation choices with the client.
+  Reject unknown keys.
 - Listen transcription and voice tracking read separate
   `RecordingReader::fork()` readers. Preserve the lag and drain bounds in
   `crates/aria/src/listen/track.rs`.

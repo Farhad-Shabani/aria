@@ -1,4 +1,4 @@
-//! The capture source the daemon's configuration selects.
+//! The capture source the daemon's settings select.
 
 use std::path::Path;
 use std::time::{Duration, Instant};

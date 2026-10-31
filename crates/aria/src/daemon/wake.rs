@@ -1,4 +1,4 @@
-//! Wake-word detection in the daemon: the detector the configuration selects,
+//! Wake-word detection in the daemon: the detector the settings select,
 //! how it rides the microphone, and the trigger that turns a detection into a
 //! dictation.
 
@@ -191,7 +191,7 @@ impl WakeTrigger {
                     "wake-word dictation finished"
                 );
                 // A failure before the pipeline's suspension guard existed —
-                // a preferences read, a coordinator build, a panic in that
+                // a settings read, a coordinator build, a panic in that
                 // window — leaves the monitor triggered and deaf. Resuming an
                 // armed monitor is harmless, so every failure re-arms.
                 self.resume_monitor();

@@ -1,4 +1,4 @@
-//! Receives LAN audio, transcribes it, and delivers text using dictation preferences.
+//! Receives LAN audio, transcribes it, and delivers text using dictation settings.
 //! [`crate::daemon::relay`] validates and collects the upload.
 
 use std::path::Path;
@@ -78,22 +78,24 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         // than from an event it has to interpret.
         let opening = relay::open(&mut requests)
             .await
-            .map_err(|error| super::failed(METHOD, error.failure()))?;
+            .map_err(|error| relay::redacted(super::failed(METHOD, error.failure())))?;
         let claim = self
             .microphone
             .admit_relay()
-            .ok_or_else(|| super::failed(METHOD, RelayError::Busy.failure()))?;
+            .ok_or_else(|| relay::redacted(super::failed(METHOD, RelayError::Busy.failure())))?;
 
-        let settings = self
-            .dictation
-            .relay_settings()
-            .map_err(|error| super::failed(METHOD, failure(RpcErrorCode::Internal, &error)))?;
+        let settings = self.dictation.relay_settings().map_err(|error| {
+            relay::redacted(super::failed(
+                METHOD,
+                failure(RpcErrorCode::Internal, &error),
+            ))
+        })?;
         if settings.application_excluded() {
             let excluded = DictationError::ApplicationExcluded;
-            return Err(super::failed(
+            return Err(relay::redacted(super::failed(
                 METHOD,
                 failure((&excluded).into(), &excluded),
-            ));
+            )));
         }
         let mut history = self.dictation.history();
         history.start(&settings, HistorySource::Relay);
@@ -152,7 +154,7 @@ impl Session {
                     message = failure.message,
                     "request failed"
                 );
-                self.emit(Err(Status::from(failure))).await;
+                self.emit(Err(relay::redacted(Status::from(failure)))).await;
                 return;
             }
         };
@@ -190,7 +192,7 @@ impl Session {
                     "request failed"
                 );
                 announcer.announce(DictationStage::ended_by(failure.code));
-                Err(Status::from(failure))
+                Err(relay::redacted(Status::from(failure)))
             }
             Err(_join) => {
                 tracing::error!(method = METHOD, "the relay job panicked");
@@ -265,7 +267,7 @@ fn hear(
         .completed(Utterance::anonymous(&text))
         .map_err(|error| failure(RpcErrorCode::Internal, &error))?;
 
-    // Honor the same output preference as local dictation.
+    // Honor the same output setting as local dictation.
     dictation.announce(DictationStage::Delivering);
     let delivered = deliver(&*delivery, &settings, &text, cancel).map_err(DictationError::from);
     history.recording_finished(&mut recording, delivered.as_ref().map(|_| ()));

@@ -17,7 +17,7 @@ use crate::enrollment::{
     EnrollError, EnrolledSpeaker, Enroller, EnrollmentEventEmitter, EnrollmentRequest,
     EnrollmentResult, Speakers,
 };
-use crate::preferences::{PreferencePatch, PreferenceStore, UpdateResult};
+use crate::settings::{SettingsPatch, SettingsStore};
 use crate::speaker::SpeakerName;
 
 use super::operation::{self, CallError, Pending, call, cancellable_call, operation_cancellation};
@@ -55,14 +55,13 @@ pub(super) type SpeakerCallError = CallError<EnrollError>;
 
 /// Enrollment and the profile directory, as the services see them.
 pub(super) struct SpeakerRuntime {
-    /// Absent when the speaker configuration would not load.
     speakers: Option<Arc<Speakers>>,
     /// Absent on a daemon that builds its microphone for the one press it was
     /// started to serve; there is nothing for an enrollment to record with.
     /// Listing and forgetting still work.
     enroller: Option<Enroller<CaptureBackend>>,
     events: EnrollmentEventEmitter,
-    preferences: Arc<PreferenceStore>,
+    settings: Arc<SettingsStore>,
 }
 
 impl SpeakerRuntime {
@@ -70,13 +69,13 @@ impl SpeakerRuntime {
         speakers: Option<Arc<Speakers>>,
         enroller: Option<Enroller<CaptureBackend>>,
         events: EnrollmentEventEmitter,
-        preferences: Arc<PreferenceStore>,
+        settings: Arc<SettingsStore>,
     ) -> Self {
         Self {
             speakers,
             enroller,
             events,
-            preferences,
+            settings,
         }
     }
 
@@ -85,37 +84,21 @@ impl SpeakerRuntime {
     }
 
     /// With no owner left, "only type my voice" would refuse every press.
-    /// The voice is already gone, so a failure here is only logged.
+    /// The voice is already gone, so a failure here is only logged. The
+    /// write is the daemon's own, made against the file as it stands under
+    /// the lock, so no edit in between can make it stale.
     fn release_own_voice(&self) {
-        const ATTEMPTS: usize = 3;
-        let off = PreferencePatch {
+        let off = SettingsPatch {
             own_voice_only: Some(false),
-            ..PreferencePatch::default()
+            ..SettingsPatch::default()
         };
-        for _ in 0..ATTEMPTS {
-            let snapshot = match self.preferences.snapshot() {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    tracing::warn!(error = %crate::primitives::error_chain(&error), "own-voice filtering stayed on");
-                    return;
-                }
-            };
-            if !snapshot.preferences.own_voice_only {
-                return;
-            }
-            match self.preferences.update(snapshot.revision, off.clone()) {
-                Ok(UpdateResult::Updated(_)) => {
-                    tracing::info!("own-voice filtering turned off with the last owner");
-                    return;
-                }
-                Ok(UpdateResult::Conflict(_)) => {}
-                Err(error) => {
-                    tracing::warn!(error = %crate::primitives::error_chain(&error), "own-voice filtering stayed on");
-                    return;
-                }
-            }
+        match self.settings.modify(off) {
+            Ok(_) => tracing::info!("own-voice filtering is off with the last owner"),
+            Err(error) => tracing::warn!(
+                error = %crate::primitives::error_chain(&error),
+                "own-voice filtering stayed on"
+            ),
         }
-        tracing::warn!("own-voice filtering stayed on: preferences kept changing");
     }
 
     fn enroller(&self) -> Result<&Enroller<CaptureBackend>, EnrollError> {
@@ -294,27 +277,27 @@ mod tests {
         let config = SpeakerConfig {
             model: home.path().join("absent.onnx"),
             segmentation_model: home.path().join("absent-segmentation.onnx"),
-            speakers_dir: profiles,
+            profiles_dir: profiles,
         };
-        let preferences = PreferenceStore::open(home.path().join("preferences.json"))
-            .expect("the preferences open");
-        let on = PreferencePatch {
+        let settings =
+            SettingsStore::open(home.path().join("settings.toml")).expect("the settings open");
+        let on = SettingsPatch {
             own_voice_only: Some(true),
-            ..PreferencePatch::default()
+            ..SettingsPatch::default()
         };
-        preferences.update(0, on).expect("own-voice turns on");
+        settings.modify(on).expect("own-voice turns on");
         let runtime = SpeakerRuntime::new(
             Some(Arc::new(Speakers::open(&config))),
             None,
             EnrollmentEventEmitter::unsubscribed(),
-            Arc::new(preferences),
+            Arc::new(settings),
         );
         (home, runtime)
     }
 
     fn own_voice_only(runtime: &SpeakerRuntime) -> bool {
-        let snapshot = runtime.preferences.snapshot().expect("a snapshot");
-        snapshot.preferences.own_voice_only
+        let snapshot = runtime.settings.snapshot().expect("a snapshot");
+        snapshot.settings.own_voice_only
     }
 
     fn name(value: &str) -> SpeakerName {

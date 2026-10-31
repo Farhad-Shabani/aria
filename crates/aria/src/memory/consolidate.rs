@@ -14,8 +14,9 @@ use super::profile::write_profile;
 use super::store::{Store, StoreError};
 use super::{DB_FILE, LEXICON_FILE, MemoryError};
 use crate::chat::AssistantError;
-use crate::config::{Environment, MemoryConfig};
+use crate::config::MemoryConfig;
 use crate::primitives::error_chain;
+use crate::settings::SettingsFile;
 
 #[derive(Debug, Default)]
 pub struct ConsolidationReport {
@@ -97,19 +98,20 @@ fn consolidate_one(
 
 /// The backlog as the memory section configures it: nothing when memory is
 /// off. A session that fails is logged and left for the next run; a store
-/// or configuration that cannot be opened is the caller's to report.
+/// that cannot be opened is the caller's to report.
 pub(crate) fn run_backlog(
-    environment: &Environment,
+    settings: &SettingsFile,
+    home: &Path,
     cancel: &CancelToken,
 ) -> Result<ConsolidationReport, MemoryError> {
-    let config = MemoryConfig::load(environment)?;
+    let config = MemoryConfig::load(&settings.memory, home);
     if !config.enabled {
         return Ok(ConsolidationReport::default());
     }
     let store = Store::open(&config.dir.join(DB_FILE))?;
     let extractor = ClaudeExtractor::new(
         config.extract_model,
-        build_system_prompt(environment.home()),
+        build_system_prompt(home),
         config.dir.clone(),
     );
     let report = consolidate_backlog(
@@ -347,12 +349,15 @@ mod tests {
     #[test]
     fn memory_off_runs_nothing() {
         let home = tempfile::tempdir().expect("temp home");
-        let environment = Environment::in_home(home.path().to_owned());
         assert!(
-            run_backlog(&environment, &CancelToken::never())
-                .expect("runs")
-                .results
-                .is_empty()
+            run_backlog(
+                &crate::settings::SettingsFile::default(),
+                home.path(),
+                &CancelToken::never()
+            )
+            .expect("runs")
+            .results
+            .is_empty()
         );
         assert!(!home.path().join(".aria/memory").exists());
     }

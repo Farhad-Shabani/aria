@@ -3,23 +3,20 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use crate::preferences::PreferenceStore;
 use crate::rpc::{RpcErrorCode, RpcFailure};
+use crate::settings::SettingsStore;
 use crate::vocabulary::{Directory, State};
 
 use super::super::vocabulary::{Error, Runtime};
 
 pub(in crate::daemon) struct VocabularyRpc {
     runtime: Arc<Runtime>,
-    preferences: Arc<PreferenceStore>,
+    settings: Arc<SettingsStore>,
 }
 
 impl VocabularyRpc {
-    pub(in crate::daemon) fn new(runtime: Arc<Runtime>, preferences: Arc<PreferenceStore>) -> Self {
-        Self {
-            runtime,
-            preferences,
-        }
+    pub(in crate::daemon) fn new(runtime: Arc<Runtime>, settings: Arc<SettingsStore>) -> Self {
+        Self { runtime, settings }
     }
 
     fn directory(&self, request: wire::VocabularyRequest) -> Result<Option<Directory>, Status> {
@@ -28,9 +25,9 @@ impl VocabularyRpc {
         {
             Some(directory) => Ok(Some(directory)),
             None => self
-                .preferences
+                .settings
                 .snapshot()
-                .map(|snapshot| snapshot.preferences.vocabulary_directory)
+                .map(|snapshot| snapshot.settings.vocabulary_dir)
                 .map_err(|_| failure(Error::Unavailable)),
         }
     }
@@ -62,11 +59,11 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         let directory = self.directory(request.into_inner())?;
         let mut status = self.runtime.status(directory.as_ref());
         let enabled = self
-            .preferences
+            .settings
             .snapshot()
             .map_err(|_| failure(Error::Unavailable))?
-            .preferences
-            .project_vocabulary;
+            .settings
+            .vocabulary_enabled;
         if !enabled {
             status.state = State::Disabled;
         }

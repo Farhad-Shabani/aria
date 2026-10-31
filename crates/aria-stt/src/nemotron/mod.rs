@@ -40,7 +40,7 @@ use aria_kit::transcription::{
     validate_model_directory, word_timings,
 };
 
-/// Names this engine under `transcription.backend` and in its own errors.
+/// Names this engine under `stt.backend` and in its own errors.
 pub const NAME: &str = "nemotron";
 
 const BACKEND: &str = NAME;

@@ -62,7 +62,7 @@ impl DictationHandle {
     ) -> Result<DictationOutcome, DictationCallError> {
         // The guard in `pending` cancels the operation if this future is
         // dropped after the command went out.
-        self.submit(request, AutoStopRule::Preference, None)
+        self.submit(request, AutoStopRule::Setting, None)
             .await?
             .wait()
             .await
@@ -99,7 +99,7 @@ impl DictationHandle {
     ) -> Result<DictationOutcome, DictationCallError> {
         let (command, pending) = cancellable_call(|cancellation, reply| DictationCommand {
             request,
-            auto_stop: AutoStopRule::Preference,
+            auto_stop: AutoStopRule::Setting,
             cancellation,
             events: None,
             reply,

@@ -8,16 +8,16 @@ use tonic::transport::{Channel, Endpoint};
 use super::Paths;
 use super::client::{ADMIN_TIMEOUT, RemoteClientError, bounded, rpc_error, run};
 use super::identity::MAX_DOCUMENT_BYTES;
-use crate::config::{Environment, ServerEndpoint};
+use crate::config::ServerEndpoint;
 use crate::daemon::relay::fingerprint_from_hex;
 use crate::ipc::{protocol, wire};
 use crate::rpc::RpcErrorCode;
 
 pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
     let endpoint = ServerEndpoint::parse(endpoint).ok_or(RemoteClientError::InvalidEndpoint)?;
-    let environment = Environment::capture().map_err(RemoteClientError::Config)?;
+    let home = crate::config::home_directory().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
-        let channel = admin_channel(environment.home()).await?;
+        let channel = admin_channel(&home).await?;
         let response =
             wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)
                 .max_decoding_message_size(MAX_DOCUMENT_BYTES as usize + 1024)
@@ -34,9 +34,9 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
 pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
     let fingerprint =
         fingerprint_from_hex(fingerprint).ok_or(RemoteClientError::InvalidFingerprint)?;
-    let environment = Environment::capture().map_err(RemoteClientError::Config)?;
+    let home = crate::config::home_directory().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
-        let channel = admin_channel(environment.home()).await?;
+        let channel = admin_channel(&home).await?;
         wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)
             .max_decoding_message_size(1024)
             .revoke(wire::InferenceRevokeRequest {

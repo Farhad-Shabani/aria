@@ -23,7 +23,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AssistantId, ChatConfig, ConfigError, Environment};
+use crate::config::{AssistantId, ChatConfig, ConfigError};
 use crate::delivery::{DeliveryError, OutputMode};
 use crate::event::EventEmitter;
 use crate::primitives::error_chain;
@@ -68,7 +68,7 @@ pub struct ChatRequest {
     pub text: String,
     pub workdir: PathBuf,
     pub assistant_id: AssistantId,
-    /// A model ID the assistant's CLI accepts; `None` uses the shared preference.
+    /// A model ID the assistant's CLI accepts; `None` uses the shared setting.
     pub model_id: Option<String>,
     /// Names the conversation to continue; `None` means the directory's.
     pub session: Option<String>,
@@ -85,11 +85,17 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     pub fn configured(text: String, assistant_id: AssistantId) -> Result<Self, ChatRequestError> {
-        let config = ChatConfig::load(&Environment::capture()?, assistant_id)?;
-        Self::from_config(text, config)
+        let home = crate::config::home_directory()?;
+        let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+        let config = ChatConfig::load(&settings)?;
+        Self::from_config(text, assistant_id, config)
     }
 
-    pub(crate) fn from_config(text: String, config: ChatConfig) -> Result<Self, ChatRequestError> {
+    pub(crate) fn from_config(
+        text: String,
+        assistant_id: AssistantId,
+        config: ChatConfig,
+    ) -> Result<Self, ChatRequestError> {
         let workdir = match config.workdir {
             Some(workdir) => workdir,
             None => std::env::current_dir().map_err(ChatRequestError::CurrentDir)?,
@@ -97,7 +103,7 @@ impl ChatRequest {
         Ok(Self {
             text,
             workdir,
-            assistant_id: config.assistant_id,
+            assistant_id,
             model_id: None,
             session: None,
             new: false,
@@ -143,10 +149,10 @@ impl std::fmt::Display for SessionKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PromptCall {
     pub(crate) text: String,
-    pub(crate) prompt: crate::preferences::PromptId,
+    pub(crate) prompt: crate::settings::PromptId,
     /// The app in front when the chord was pressed, the only one the result
     /// may be typed into. None when the caller could not tell.
-    pub(crate) application: Option<crate::preferences::ApplicationId>,
+    pub(crate) application: Option<crate::settings::ApplicationId>,
     /// A tap of the Aria key cancels this run while it is in flight.
     pub(crate) tap_cancels: bool,
 }
@@ -161,13 +167,13 @@ pub(crate) struct PromptRequest {
     pub(crate) file: PathBuf,
     pub(crate) assistant_id: AssistantId,
     pub(crate) model_id: Option<String>,
-    pub(crate) application: Option<crate::preferences::ApplicationId>,
+    pub(crate) application: Option<crate::settings::ApplicationId>,
     pub(crate) tap_cancels: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChatRequestError {
-    #[error("failed to read the chat configuration")]
+    #[error("failed to read the chat settings")]
     Config(#[from] ConfigError),
 
     #[error("failed to read the working directory")]
@@ -384,10 +390,10 @@ pub struct AskTarget {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ResolveError {
-    #[error("failed to read preferences")]
-    Preferences(#[source] crate::preferences::PreferenceStoreError),
+    #[error("failed to read settings")]
+    Settings(#[source] crate::settings::StoreError),
 
-    #[error("failed to load chat configuration")]
+    #[error("failed to resolve the chat settings")]
     Config(#[source] ConfigError),
 
     #[error("failed to read the known projects")]
@@ -397,8 +403,8 @@ pub(crate) enum ResolveError {
     Directory(#[source] std::io::Error),
 
     #[error(
-        "no project is in focus and chat.workdir is unset; ask from a project once, \
-         or set chat.workdir in the config"
+        "no project is in focus and assistant.workdir is unset; ask from a project once, \
+         or set assistant.workdir"
     )]
     NoTarget,
 }
@@ -406,7 +412,7 @@ pub(crate) enum ResolveError {
 impl From<&ResolveError> for RpcErrorCode {
     fn from(error: &ResolveError) -> Self {
         match error {
-            ResolveError::Config(_) | ResolveError::Projects(_) | ResolveError::Preferences(_) => {
+            ResolveError::Config(_) | ResolveError::Projects(_) | ResolveError::Settings(_) => {
                 Self::Internal
             }
             ResolveError::NoTarget | ResolveError::Directory(_) => Self::InvalidRequest,
@@ -416,7 +422,7 @@ impl From<&ResolveError> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ChatError {
-    #[error("failed to load chat configuration")]
+    #[error("failed to resolve the chat settings")]
     Config(#[source] ConfigError),
 
     #[error(transparent)]
@@ -428,8 +434,8 @@ pub(crate) enum ChatError {
     #[error(transparent)]
     Session(#[from] SessionStoreError),
 
-    #[error("failed to read shared preferences")]
-    Preferences(#[source] crate::preferences::PreferenceStoreError),
+    #[error("failed to read shared settings")]
+    Settings(#[source] crate::settings::StoreError),
 
     #[error("no stored prompt has that ID")]
     UnknownPrompt,
@@ -444,9 +450,7 @@ pub(crate) enum ChatError {
 impl From<&ChatError> for RpcErrorCode {
     fn from(error: &ChatError) -> Self {
         match error {
-            ChatError::Config(_) | ChatError::Session(_) | ChatError::Preferences(_) => {
-                Self::Internal
-            }
+            ChatError::Config(_) | ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
             ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
             ChatError::Assistant(AssistantError::NoWorkdir(_))
             | ChatError::UnknownPrompt

@@ -131,7 +131,7 @@ pub(crate) struct Speakers {
 impl Speakers {
     pub(crate) fn open(speaker: &SpeakerConfig) -> Self {
         Self {
-            store: ProfileStore::open(&speaker.speakers_dir),
+            store: ProfileStore::open(&speaker.profiles_dir),
             writing: Mutex::new(()),
         }
     }
@@ -552,7 +552,7 @@ mod tests {
         SpeakerConfig {
             model: directory.join("absent.onnx"),
             segmentation_model: directory.join("absent-segmentation.onnx"),
-            speakers_dir: directory.to_path_buf(),
+            profiles_dir: directory.to_path_buf(),
         }
     }
 

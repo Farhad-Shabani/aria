@@ -1,9 +1,9 @@
 name: a missing sidecar interpreter fails daemon startup
 platform: macos
-config: |
-  transcription:
-    backend: parakeet-mlx
-    interpreter: /nonexistent/python3
+settings: |
+  [stt]
+  backend = "parakeet-mlx"
+  interpreter = "/nonexistent/python3"
 expect:
   daemon:
     startup: failure

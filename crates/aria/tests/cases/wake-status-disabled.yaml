@@ -1,11 +1,12 @@
 name: wake status on a daemon without a wake word says it is disabled
-config: |
-  transcription:
-    backend: whisper
-    model: ${WHISPER_MODEL}
-  capture:
-    backend: wav-file
-    path: ${FIXTURES}/silence.wav
+settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
 expect:
   daemon:
     startup: success

@@ -37,11 +37,9 @@ fn run(sandbox: &Sandbox, command: &mut Command, input: &[u8]) -> Vec<u8> {
 fn desktop_dictates_through_a_server_without_local_stt() {
     let model = std::env::var_os("ARIA_TEST_WHISPER_MODEL")
         .expect("set ARIA_TEST_WHISPER_MODEL to the test model");
-    let model = aria_harness::yaml_string(&Path::new(&model).display().to_string()).unwrap();
-    let server = Sandbox::create(&format!(
-        "transcription:\n  backend: whisper\n  model: {model}\n"
-    ))
-    .unwrap();
+    let model = aria_harness::toml_string(&Path::new(&model).display().to_string()).unwrap();
+    let server =
+        Sandbox::create(&format!("[stt]\nbackend = \"whisper\"\nmodel = {model}\n")).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
@@ -74,9 +72,9 @@ fn desktop_dictates_through_a_server_without_local_stt() {
     );
     let audio =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../aria-wake/tests/fixtures/negative.wav");
-    let audio = aria_harness::yaml_string(&audio.display().to_string()).unwrap();
+    let audio = aria_harness::toml_string(&audio.display().to_string()).unwrap();
     let device = Sandbox::create(&format!(
-        "transcription:\n  backend: server\n  server: {endpoint}\ncapture:\n  backend: wav-file\n  path: {audio}\nwake:\n  enabled: false\nhotkey:\n  enabled: false\n"
+        "[stt]\nbackend = \"server\"\nserver = \"{endpoint}\"\n[capture]\nbackend = \"wav_file\"\npath = {audio}\n[wake]\nenabled = false\n"
     ))
     .unwrap();
     run(

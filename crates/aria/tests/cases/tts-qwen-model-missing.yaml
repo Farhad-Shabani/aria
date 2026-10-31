@@ -1,8 +1,10 @@
 name: qwen without its talker weights fails daemon startup
-config: |
-  tts:
-    backend: qwen
-    model: ~/missing/qwen-tts
+settings: |
+  [tts]
+  backend = "qwen"
+
+  [tts.qwen]
+  model = "~/missing/qwen-tts"
 expect:
   daemon:
     startup: failure

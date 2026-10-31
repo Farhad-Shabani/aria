@@ -7,7 +7,7 @@ use std::process::Output;
 use aria_primitives::error_chain;
 use libtest_mimic::{Arguments, Conclusion, Failed, Trial};
 
-use crate::catalog::{self, Case, CatalogError, ResolvedConfig, Startup};
+use crate::catalog::{self, Case, CatalogError, ClientStep, ResolvedSettings, Startup};
 use crate::daemon::{self, ServiceStart};
 use crate::sandbox::Sandbox;
 
@@ -64,15 +64,15 @@ fn trial(binary: &Path, path: PathBuf, fixtures_directory: &Path) -> Trial {
     if let Some(platform) = case.platform.filter(|platform| !platform.is_current()) {
         return skipped(name, format!("{} only", platform.name()));
     }
-    let config = match case.resolve_config(fixtures_directory) {
-        Ok(ResolvedConfig::Ready(config)) => config,
-        Ok(ResolvedConfig::MissingEnvironment(variable)) => {
+    let settings = match case.resolve_settings(fixtures_directory) {
+        Ok(ResolvedSettings::Ready(settings)) => settings,
+        Ok(ResolvedSettings::MissingEnvironment(variable)) => {
             return skipped(name, format!("needs {variable}"));
         }
         Err(error) => return Trial::test(name, move || Err(error_chain(&error).into())),
     };
     let binary = binary.to_path_buf();
-    Trial::test(name, move || run_case(&binary, &case, &config))
+    Trial::test(name, move || run_case(&binary, &case, &settings))
 }
 
 /// Ignored, with the reason shown beside the name. Under `--ignored` the case
@@ -86,21 +86,27 @@ fn skipped(name: String, reason: String) -> Trial {
     .with_ignored_flag(true)
 }
 
-fn run_case(binary: &Path, case: &Case, config: &str) -> Result<(), Failed> {
-    let sandbox = Sandbox::create(config).map_err(|error| error_chain(&error))?;
-    let outcome = match case.expect.daemon_startup() {
-        None => run_clients(binary, &sandbox, case),
-        Some(Startup::Failure) => daemon::run_to_exit(binary, &sandbox)
-            .map_err(|error| error_chain(&error))
-            .and_then(|output| case.expect.check_daemon(&output)),
-        Some(Startup::Success) => serve_clients(binary, &sandbox, case)
-            .and_then(|output| case.expect.check_daemon(&output)),
-    };
+fn run_case(binary: &Path, case: &Case, settings: &str) -> Result<(), Failed> {
+    let sandbox = Sandbox::create(settings).map_err(|error| error_chain(&error))?;
+    let outcome = run_steps(binary, &sandbox, case.expect.steps_before_daemon()).and_then(|()| {
+        match case.expect.daemon_startup() {
+            None => run_clients(binary, &sandbox, case),
+            Some(Startup::Failure) => daemon::run_to_exit(binary, &sandbox)
+                .map_err(|error| error_chain(&error))
+                .and_then(|output| case.expect.check_daemon(&output)),
+            Some(Startup::Success) => serve_clients(binary, &sandbox, case)
+                .and_then(|output| case.expect.check_daemon(&output)),
+        }
+    });
     outcome.map_err(|failure| with_log_tail(&failure, &sandbox).into())
 }
 
 fn run_clients(binary: &Path, sandbox: &Sandbox, case: &Case) -> Result<(), String> {
-    for client in case.expect.client_steps() {
+    run_steps(binary, sandbox, case.expect.client_steps())
+}
+
+fn run_steps(binary: &Path, sandbox: &Sandbox, steps: &[ClientStep]) -> Result<(), String> {
+    for client in steps {
         client.check(&run_client(binary, sandbox, &client.run)?)?;
     }
     Ok(())

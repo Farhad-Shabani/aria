@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 use aria_kit::cancel::CancelToken;
 
 use crate::audio::Stopper;
-use crate::config::{Environment, ListenConfig, SpeakerConfig};
+use crate::config::{ListenConfig, SpeakerConfig};
 use crate::listen::{
     ListenError, ListenEventEmitter, SystemAudioCapture, TranscriptFile, spawn_session,
 };
@@ -21,7 +21,8 @@ use super::host::DaemonLifetime;
 
 pub(super) struct ListenState {
     lifetime: DaemonLifetime,
-    environment: Environment,
+    home: PathBuf,
+    cache: Arc<crate::settings::SettingsCache>,
     events: ListenEventEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
     active: Mutex<Slot>,
@@ -61,13 +62,15 @@ pub(super) struct StopOutcome {
 impl ListenState {
     pub(super) fn new(
         lifetime: DaemonLifetime,
-        environment: Environment,
+        home: PathBuf,
+        cache: Arc<crate::settings::SettingsCache>,
         events: ListenEventEmitter,
         vocabulary: Arc<super::vocabulary::Runtime>,
     ) -> Self {
         Self {
             lifetime,
-            environment,
+            home,
+            cache,
             events,
             vocabulary,
             active: Mutex::new(Slot::Idle),
@@ -90,11 +93,12 @@ impl ListenState {
             return Ok((active.transcript.clone(), true));
         }
 
-        // Read per Start, so a broken listen section never blocks the daemon.
-        let config = ListenConfig::load(&self.environment)
-            .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
-        let speaker = SpeakerConfig::load(&self.environment)
-            .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
+        let internal = |error: crate::config::ConfigError| {
+            RpcFailure::new(RpcErrorCode::Internal, error_chain(&error))
+        };
+        let settings = self.cache.effective();
+        let config = ListenConfig::load(&settings, &self.home).map_err(internal)?;
+        let speaker = SpeakerConfig::load(&settings.speaker, &self.home);
         let (sink, transcript) = match output {
             Some(path) => TranscriptFile::create_at(path),
             None => TranscriptFile::create(&config.transcripts_dir),

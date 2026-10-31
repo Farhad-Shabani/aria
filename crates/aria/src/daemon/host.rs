@@ -104,7 +104,7 @@ impl DaemonBuilder {
         self
     }
 
-    /// Monitors for the wake word whatever the configuration says.
+    /// Monitors for the wake word whatever the settings say.
     pub fn enabling_wake_word(mut self) -> Self {
         self.wake_word = WakeWordOverride::Enable;
         self

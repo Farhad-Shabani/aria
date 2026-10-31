@@ -14,7 +14,7 @@ mod advert;
 mod code;
 mod decode;
 mod pairing;
-mod preferences;
+mod settings;
 
 use std::time::Duration;
 
@@ -33,7 +33,7 @@ pub(super) use pairing::{
     Pairing, PairingError, Phones, fingerprint, fingerprint_from_hex,
     load_or_create as load_pairing, mint, presented, require_paired, to_hex,
 };
-pub(super) use preferences::LanPreferences;
+pub(super) use settings::LanSettings;
 
 /// The longest recording's PCM, so an oversized upload stops as it streams.
 const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;
@@ -216,6 +216,68 @@ impl RelayError {
         }
     }
 }
+
+/// What a phone learns of a settings fault: that the Mac needs it fixed.
+const SETTINGS_NEED_FIXING: &str = "Settings need fixing on your Mac";
+
+/// A failure as it may cross the network. Messages can name paths and quote
+/// files, so a code keeps its own only when every message under it is known
+/// to be fixed text or the phone's own input. Every code is named, so a new
+/// one can't cross until someone has checked its messages.
+pub(in crate::daemon) fn redacted(status: Status) -> Status {
+    let Some(failure) = crate::ipc::protocol::rpc_failure(&status) else {
+        return RpcFailure::new(RpcErrorCode::Internal, SOMETHING_WENT_WRONG).into();
+    };
+    let message = match failure.code {
+        RpcErrorCode::InvalidRequest
+        | RpcErrorCode::Unauthenticated
+        | RpcErrorCode::PayloadTooLarge
+        | RpcErrorCode::ApplicationExcluded => failure.message,
+        RpcErrorCode::SettingsInvalid => SETTINGS_NEED_FIXING.to_owned(),
+        RpcErrorCode::Busy => "Your Mac is busy".to_owned(),
+        RpcErrorCode::PermissionDenied => "Your Mac refused this change".to_owned(),
+        RpcErrorCode::Internal
+        | RpcErrorCode::Cancelled
+        | RpcErrorCode::Unsupported
+        | RpcErrorCode::ShuttingDown
+        | RpcErrorCode::DurabilityUnconfirmed
+        | RpcErrorCode::OverallTimeout
+        | RpcErrorCode::RecordingTimeout
+        | RpcErrorCode::DeliveryTimeout
+        | RpcErrorCode::CaptureFailed
+        | RpcErrorCode::NoSpeech
+        | RpcErrorCode::TranscriptionFailed
+        | RpcErrorCode::DeliveryFailed
+        | RpcErrorCode::DeliveryTargetChanged
+        | RpcErrorCode::DeliveryInterrupted
+        | RpcErrorCode::SynthesisFailed
+        | RpcErrorCode::PlaybackFailed
+        | RpcErrorCode::SpeechTimeout
+        | RpcErrorCode::VoiceUnavailable
+        | RpcErrorCode::AssistantUnavailable
+        | RpcErrorCode::AssistantFailed
+        | RpcErrorCode::AssistantTimeout
+        | RpcErrorCode::AssistantSignedOut
+        | RpcErrorCode::PromptUnreadable
+        | RpcErrorCode::SpeakerModelMissing
+        | RpcErrorCode::SpeakerAlreadyEnrolled
+        | RpcErrorCode::SpeakerNotEnrolled
+        | RpcErrorCode::SpeakerInconsistentSamples
+        | RpcErrorCode::SpeakerProfileWriteFailed
+        | RpcErrorCode::SpeakerNoSpeech
+        | RpcErrorCode::ListenUnsupportedOs
+        | RpcErrorCode::ListenPermissionDenied
+        | RpcErrorCode::ListenCaptureFailed
+        | RpcErrorCode::HistoryMissing
+        | RpcErrorCode::HistoryAudioUnavailable
+        | RpcErrorCode::HistoryUnavailable
+        | RpcErrorCode::HistoryProjectUnavailable
+        | RpcErrorCode::Unknown(_) => SOMETHING_WENT_WRONG.to_owned(),
+    };
+    RpcFailure::new(failure.code, message).into()
+}
+
+const SOMETHING_WENT_WRONG: &str = "Something went wrong on your Mac";
 
 #[cfg(test)]
 mod tests {

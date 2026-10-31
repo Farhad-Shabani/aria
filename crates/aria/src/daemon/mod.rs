@@ -13,14 +13,16 @@ mod host;
 mod hotkey;
 mod inference;
 mod listen;
+#[cfg(test)]
+mod live_keys;
 mod log;
 mod memory;
 mod operation;
-mod preferences;
 mod relay;
 mod server;
 mod service;
 mod session;
+mod settings;
 #[cfg(target_os = "macos")]
 mod shell;
 mod shutdown;

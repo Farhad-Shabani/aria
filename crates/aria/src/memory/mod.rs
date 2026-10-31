@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use aria_kit::cancel::CancelToken;
 
-use crate::config::{ConfigError, Environment, memory_directory};
+use crate::config::{ConfigError, memory_directory};
 
 pub use consolidate::ConsolidationReport;
 pub(crate) use consolidate::run_backlog;
@@ -36,20 +36,24 @@ pub(crate) const PROFILE_FILE: &str = "profile.md";
 
 #[derive(Debug, thiserror::Error)]
 pub enum MemoryError {
-    #[error("failed to read the memory configuration")]
+    #[error("failed to read the memory settings")]
     Config(#[from] ConfigError),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
 
-/// The store and its directory as this shell's configuration finds them.
+/// The store and its directory as the settings find them.
 pub fn open() -> Result<(Store, PathBuf), MemoryError> {
-    let dir = memory_directory(&Environment::capture()?)?;
+    let home = crate::config::home_directory()?;
+    let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+    let dir = memory_directory(&settings.memory, &home);
     let store = Store::open(&dir.join(DB_FILE))?;
     Ok((store, dir))
 }
 
 /// Extracts from every session with new turns, now, in this process.
 pub fn consolidate_now() -> Result<ConsolidationReport, MemoryError> {
-    run_backlog(&Environment::capture()?, &CancelToken::never())
+    let home = crate::config::home_directory()?;
+    let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+    run_backlog(&settings, &home, &CancelToken::never())
 }

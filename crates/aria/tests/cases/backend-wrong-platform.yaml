@@ -1,9 +1,9 @@
 name: parakeet-mlx is refused off apple hardware
 platform: linux
-config: |
-  transcription:
-    backend: parakeet-mlx
-    interpreter: /nonexistent/python3
+settings: |
+  [stt]
+  backend = "parakeet-mlx"
+  interpreter = "/nonexistent/python3"
 expect:
   daemon:
     startup: failure

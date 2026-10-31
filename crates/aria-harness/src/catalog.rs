@@ -13,6 +13,9 @@ pub(crate) struct Expectations {
     /// with no daemon.
     #[serde(default)]
     daemon: Option<DaemonExpectations>,
+    /// Client steps that run before the daemon starts.
+    #[serde(default)]
+    before_daemon: Vec<ClientStep>,
     #[serde(default)]
     client: Vec<ClientStep>,
 }
@@ -72,6 +75,10 @@ pub(crate) enum Startup {
 impl Expectations {
     pub(crate) fn daemon_startup(&self) -> Option<Startup> {
         self.daemon.as_ref().map(|daemon| daemon.startup)
+    }
+
+    pub(crate) fn steps_before_daemon(&self) -> &[ClientStep] {
+        &self.before_daemon
     }
 
     pub(crate) fn client_steps(&self) -> &[ClientStep] {
@@ -136,7 +143,7 @@ pub(crate) struct Case {
     #[serde(default)]
     pub(crate) platform: Option<Platform>,
     #[serde(default)]
-    pub(crate) config: String,
+    pub(crate) settings: String,
     pub(crate) expect: Expectations,
 }
 
@@ -206,14 +213,14 @@ pub enum CatalogError {
     #[error("case {} expects neither a daemon nor a client step", path.display())]
     NothingToCheck { path: PathBuf },
 
-    #[error("unclosed {PLACEHOLDER_OPEN} placeholder in the config of case {name:?}")]
+    #[error("unclosed {PLACEHOLDER_OPEN} placeholder in the settings of case {name:?}")]
     UnclosedPlaceholder { name: String },
 }
 
-/// The config with each `${NAME}` filled from `ARIA_TEST_NAME` and
+/// The settings with each `${NAME}` filled from `ARIA_TEST_NAME` and
 /// `${FIXTURES}` from the fixtures directory, or the first variable that is
 /// unset. The runner ignores such a case instead of failing it.
-pub(crate) enum ResolvedConfig {
+pub(crate) enum ResolvedSettings {
     Ready(String),
     MissingEnvironment(String),
 }
@@ -221,9 +228,12 @@ pub(crate) enum ResolvedConfig {
 impl Case {
     /// Placeholders let a case name machine-local inputs (a model file)
     /// without hard-coding paths into the catalog.
-    pub(crate) fn resolve_config(&self, fixtures: &Path) -> Result<ResolvedConfig, CatalogError> {
+    pub(crate) fn resolve_settings(
+        &self,
+        fixtures: &Path,
+    ) -> Result<ResolvedSettings, CatalogError> {
         let mut resolved = String::new();
-        let mut rest = self.config.as_str();
+        let mut rest = self.settings.as_str();
         while let Some(start) = rest.find(PLACEHOLDER_OPEN) {
             resolved.push_str(&rest[..start]);
             let after = &rest[start + PLACEHOLDER_OPEN.len()..];
@@ -241,11 +251,11 @@ impl Case {
             let variable = format!("{PLACEHOLDER_ENV_PREFIX}{name}");
             match std::env::var(&variable) {
                 Ok(value) => resolved.push_str(&value),
-                Err(_) => return Ok(ResolvedConfig::MissingEnvironment(variable)),
+                Err(_) => return Ok(ResolvedSettings::MissingEnvironment(variable)),
             }
         }
         resolved.push_str(rest);
-        Ok(ResolvedConfig::Ready(resolved))
+        Ok(ResolvedSettings::Ready(resolved))
     }
 }
 

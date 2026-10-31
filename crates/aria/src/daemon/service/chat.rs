@@ -127,10 +127,7 @@ impl wire::chat_service_server::ChatService for ChatRpc {
             .map_err(|_panicked| {
                 super::failed(
                     METHOD,
-                    RpcFailure::new(
-                        RpcErrorCode::Internal,
-                        "reading assistant preferences failed",
-                    ),
+                    RpcFailure::new(RpcErrorCode::Internal, "reading assistant settings failed"),
                 )
             })?
             .map_err(|error| {

@@ -1,8 +1,0 @@
-name: malformed config YAML fails daemon startup
-config: |
-  transcription: [broken
-expect:
-  daemon:
-    startup: failure
-    stderr_contains:
-      - "invalid YAML at line 1, column 16"

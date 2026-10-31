@@ -12,7 +12,7 @@ use tonic_health::server::HealthReporter;
 use crate::dictation::{
     DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
 };
-use crate::hotkey::{Combo, HotkeyKey, ListenerEvent, ListenerExit, PlatformHotkeyListener, Press};
+use crate::hotkey::{AriaKey, Combo, ListenerEvent, ListenerExit, PlatformHotkeyListener, Press};
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
 
 use super::chat::{ChatCallError, ChatHandle};
@@ -23,10 +23,11 @@ use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 
 /// The blocking platform listener; tests swap in a fake.
-type Listener = fn(HotkeyKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool) -> ListenerExit;
+type Listener = fn(AriaKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool) -> ListenerExit;
 
 pub(super) struct HotkeyTrigger {
-    key: watch::Receiver<HotkeyKey>,
+    /// `None` while the Aria key is off: the trigger then waits for one.
+    key: watch::Receiver<Option<AriaKey>>,
     dictation: DictationHandle,
     /// Cancels a run a client's press started, so a tap does not dictate
     /// over it.
@@ -50,7 +51,7 @@ enum HoldEnd {
 enum HotkeyExit {
     Shutdown,
     Failed,
-    /// The key preference changed; a fresh listener takes over.
+    /// The Aria key setting changed; a fresh listener takes over.
     Rearm,
 }
 
@@ -62,9 +63,28 @@ impl Supervised for HotkeyTrigger {
     }
 }
 
+/// With the Aria key off nothing listens, so presses reach nothing. The
+/// next change of the key re-arms.
+async fn wait_for_a_key(
+    key: &mut watch::Receiver<Option<AriaKey>>,
+    shutdown: &CancellationToken,
+) -> HotkeyExit {
+    tracing::info!(trigger = "hotkey", "the Aria key is off");
+    tokio::select! {
+        () = shutdown.cancelled() => HotkeyExit::Shutdown,
+        changed = key.changed() => match changed {
+            Ok(()) => HotkeyExit::Rearm,
+            Err(_) => {
+                tracing::error!("hotkey listener lost the settings store");
+                HotkeyExit::Failed
+            }
+        },
+    }
+}
+
 impl HotkeyTrigger {
     pub(super) fn new(
-        key: watch::Receiver<HotkeyKey>,
+        key: watch::Receiver<Option<AriaKey>>,
         dictation: DictationHandle,
         chat: ChatHandle,
         runtime: Arc<DictationRuntime>,
@@ -93,7 +113,7 @@ impl HotkeyTrigger {
             .await;
     }
 
-    /// A change to the key preference re-arms the listener: the running one
+    /// A change to the Aria key setting re-arms the listener: the running one
     /// is told to stop and a fresh one starts on the new key.
     async fn listen(&self, shutdown: CancellationToken) -> HotkeyExit {
         let mut key = self.key.clone();
@@ -109,14 +129,16 @@ impl HotkeyTrigger {
 
     async fn listen_once(
         &self,
-        key: &mut watch::Receiver<HotkeyKey>,
+        key: &mut watch::Receiver<Option<AriaKey>>,
         shutdown: &CancellationToken,
     ) -> HotkeyExit {
+        let Some(current) = *key.borrow_and_update() else {
+            return wait_for_a_key(key, shutdown).await;
+        };
         // Bounded, and fed with try_send: the listener thread must never
         // block, and a full channel just means a press was already queued.
         let (events, mut incoming) = tokio::sync::mpsc::channel::<ListenerEvent>(8);
         let stop = shutdown.clone();
-        let current = *key.borrow_and_update();
         // A clone shares the seen version, so has_changed flips only on a
         // change made after this listener started.
         let rearm = key.clone();
@@ -179,7 +201,7 @@ impl HotkeyTrigger {
     fn classify(
         &self,
         exit: HotkeyExit,
-        key: &watch::Receiver<HotkeyKey>,
+        key: &watch::Receiver<Option<AriaKey>>,
         shutdown: &CancellationToken,
     ) -> HotkeyExit {
         if exit != HotkeyExit::Shutdown || shutdown.is_cancelled() {
@@ -189,7 +211,7 @@ impl HotkeyTrigger {
             Ok(true) => HotkeyExit::Rearm,
             Ok(false) => exit,
             Err(_) => {
-                tracing::error!("hotkey listener lost the preference store");
+                tracing::error!("hotkey listener lost the settings store");
                 HotkeyExit::Failed
             }
         }
@@ -394,8 +416,8 @@ mod tests {
     use crate::dictation::testing::{RecordsUntilStopped, recording_started};
     use crate::hotkey::Combo;
     use crate::ipc::wire;
-    use crate::preferences::PreferenceStore;
     use crate::runtime::RuntimePaths;
+    use crate::settings::SettingsStore;
 
     use super::super::chat::{ChatRuntime, channel as chat_channel};
     use super::super::context::Context;
@@ -404,7 +426,7 @@ mod tests {
     use super::*;
 
     /// Keys each fake listener was armed on; a fn pointer cannot capture.
-    static ARMED: Mutex<Vec<HotkeyKey>> = Mutex::new(Vec::new());
+    static ARMED: Mutex<Vec<AriaKey>> = Mutex::new(Vec::new());
 
     /// Holds the listener thread open, as the platform listener does, until
     /// the trigger asks it to stop.
@@ -416,7 +438,7 @@ mod tests {
     }
 
     fn fake_listener(
-        key: HotkeyKey,
+        key: AriaKey,
         _events: &dyn Fn(ListenerEvent),
         should_stop: &dyn Fn() -> bool,
     ) -> ListenerExit {
@@ -425,7 +447,7 @@ mod tests {
     }
 
     fn shift_combo_listener(
-        _key: HotkeyKey,
+        _key: AriaKey,
         events: &dyn Fn(ListenerEvent),
         should_stop: &dyn Fn() -> bool,
     ) -> ListenerExit {
@@ -434,7 +456,7 @@ mod tests {
     }
 
     fn tap_listener(
-        _key: HotkeyKey,
+        _key: AriaKey,
         events: &dyn Fn(ListenerEvent),
         should_stop: &dyn Fn() -> bool,
     ) -> ListenerExit {
@@ -443,9 +465,9 @@ mod tests {
     }
 
     /// A trigger with no dictation behind it. The directory holds its
-    /// preferences and must outlive it.
+    /// settings and must outlive it.
     fn trigger(
-        key: watch::Receiver<HotkeyKey>,
+        key: watch::Receiver<Option<AriaKey>>,
         subscriptions: Arc<Subscriptions>,
         listener: Listener,
         directory: &tempfile::TempDir,
@@ -456,8 +478,8 @@ mod tests {
             dictation: DictationHandle::detached(),
             chat: ChatHandle::detached(),
             runtime: Arc::new(DictationRuntime::detached(Arc::new(
-                PreferenceStore::open(directory.path().join("preferences.json"))
-                    .expect("the preference store should open"),
+                SettingsStore::open(directory.path().join("settings.toml"))
+                    .expect("the settings store should open"),
             ))),
             subscriptions,
             health,
@@ -477,7 +499,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_key_change_rearms_on_the_new_key() {
-        let (key, watch) = watch::channel(HotkeyKey::RightOption);
+        let (key, watch) = watch::channel(Some(AriaKey::RightOption));
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
         let trigger = trigger(
             watch,
@@ -489,20 +511,74 @@ mod tests {
         let running = tokio::spawn(trigger.run(shutdown.clone()));
 
         armed_count_reaches(1).await;
-        key.send(HotkeyKey::Fn).expect("the trigger is listening");
+        key.send(Some(AriaKey::Fn))
+            .expect("the trigger is listening");
         armed_count_reaches(2).await;
         shutdown.cancel();
         running.await.expect("the trigger should stop cleanly");
 
         assert_eq!(
             *ARMED.lock().expect("armed keys"),
-            [HotkeyKey::RightOption, HotkeyKey::Fn]
+            [AriaKey::RightOption, AriaKey::Fn]
+        );
+    }
+
+    /// Its own record, so it never races the re-arm test over [`ARMED`].
+    static ARMED_FROM_OFF: Mutex<Vec<AriaKey>> = Mutex::new(Vec::new());
+
+    fn listener_from_off(
+        key: AriaKey,
+        _events: &dyn Fn(ListenerEvent),
+        should_stop: &dyn Fn() -> bool,
+    ) -> ListenerExit {
+        ARMED_FROM_OFF.lock().expect("armed keys").push(key);
+        park_until(should_stop)
+    }
+
+    async fn armed_from_off(count: usize) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while ARMED_FROM_OFF.lock().expect("armed keys").len() < count {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the listener should arm in time");
+    }
+
+    #[tokio::test]
+    async fn an_aria_key_that_is_off_arms_nothing_until_it_is_on() {
+        let (key, watch) = watch::channel(None);
+        let directory = tempfile::TempDir::new().expect("the test directory should be created");
+        let trigger = trigger(
+            watch,
+            Arc::new(Subscriptions::new()),
+            listener_from_off,
+            &directory,
+        );
+        let shutdown = CancellationToken::new();
+        let running = tokio::spawn(trigger.run(shutdown.clone()));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(ARMED_FROM_OFF.lock().expect("armed keys").is_empty());
+        key.send(Some(AriaKey::Fn)).expect("the trigger is waiting");
+        armed_from_off(1).await;
+        key.send(None).expect("the trigger is listening");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        key.send(Some(AriaKey::RightOption))
+            .expect("the trigger is waiting");
+        armed_from_off(2).await;
+        shutdown.cancel();
+        running.await.expect("the trigger should stop cleanly");
+
+        assert_eq!(
+            *ARMED_FROM_OFF.lock().expect("armed keys"),
+            [AriaKey::Fn, AriaKey::RightOption]
         );
     }
 
     #[tokio::test]
     async fn a_combo_reaches_subscribers() {
-        let (_key, watch) = watch::channel(HotkeyKey::RightOption);
+        let (_key, watch) = watch::channel(Some(AriaKey::RightOption));
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
         let subscriptions = Arc::new(Subscriptions::new());
         let mut events = subscriptions.subscribe().expect("a subscriber fits");
@@ -521,7 +597,7 @@ mod tests {
         assert_eq!(
             event.payload,
             Some(wire::event::Payload::Hotkey(wire::HotkeyEvent {
-                combo: wire::HotkeyCombo::Shift.into(),
+                combo: wire::ShortcutCombo::Shift.into(),
             }))
         );
     }
@@ -536,23 +612,30 @@ mod tests {
             .expect("the runtime paths should prepare");
         let context = Context::detect(&paths, DaemonLifetime::OnDemand).expect("a test context");
         let subscriptions = Arc::new(Subscriptions::new());
-        let preferences = Arc::new(
-            PreferenceStore::open(directory.path().join("preferences.json"))
-                .expect("the preference store should open"),
+        let settings = Arc::new(
+            SettingsStore::open(directory.path().join("settings.toml"))
+                .expect("the settings store should open"),
         );
         let chat = ChatRuntime::new(
             &context,
             Arc::clone(&subscriptions),
-            Arc::clone(&preferences),
+            Arc::clone(&settings),
+            Arc::new(
+                crate::settings::SettingsCache::open(
+                    directory.path().join("chat-settings.toml"),
+                    directory.path().to_path_buf(),
+                )
+                .expect("the settings store should open"),
+            ),
             None,
         );
         let (chat, chat_actor) = chat_channel(Arc::new(chat));
-        let mut dictation = DictationRuntime::detached(preferences);
+        let mut dictation = DictationRuntime::detached(settings);
         let (executor, edges) = RecordsUntilStopped::new();
         dictation.execute_with(Box::new(executor));
         let dictation = Arc::new(dictation);
         let (handle, dictation_actor) = dictation_channel(Arc::clone(&dictation));
-        let (_key, watch) = watch::channel(HotkeyKey::RightOption);
+        let (_key, watch) = watch::channel(Some(AriaKey::RightOption));
         let (health, _server) = tonic_health::server::health_reporter();
         let trigger = HotkeyTrigger {
             key: watch,

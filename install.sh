@@ -73,6 +73,9 @@ if [ -n "$remote" ]; then
 fi
 (cd "$dist" && grep " $file\$" SHA256SUMS | sha256sum --check --quiet -)
 
+upgrade=false
+[ -d "$lib_dir" ] && upgrade=true
+
 # Unpacks beside the old install, so a failed extract leaves it in place.
 rm -rf "$lib_dir.new"
 mkdir -p "$bin_dir" "$lib_dir.new"
@@ -92,7 +95,9 @@ if [ -n "$resolved" ] && [ "$resolved" != "$bin_dir/aria" ]; then
     echo "note: PATH resolves aria to $resolved; put $bin_dir first"
 fi
 
-if [ -f "$HOME/.aria/config.yaml" ]; then
+# A settings file alone may come from dotfiles, so only an upgrade skips setup's
+# questions.
+if [ "$upgrade" = true ] && [ -f "$HOME/.aria/settings.toml" ]; then
     case " $* " in *" --yes "*) ;; *) set -- --yes "$@" ;; esac
     case " $* " in *" --skip-models "*) ;; *) set -- --skip-models "$@" ;; esac
 fi

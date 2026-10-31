@@ -37,7 +37,7 @@ message ListAssistantsResponse {
 }
 
 message ListAssistantModelsRequest {
-  AssistantID assistant_id = 1;
+  AssistantId assistant_id = 1;
 }
 
 message ListAssistantModelsResponse {
@@ -45,8 +45,8 @@ message ListAssistantModelsResponse {
 }
 
 message AskRequest {
-  AssistantID assistant_id = 1;
-  // A CLI model ID; empty uses the saved preference, then the assistant's default.
+  AssistantId assistant_id = 1;
+  // A CLI model ID; empty uses the saved setting, then the assistant's default.
   string model_id = 2;
 
   // The directory the assistant works in.
@@ -101,13 +101,13 @@ message ResolveAskResponse {
   // Both are what `Ask` wants: it takes no empty workdir and no
   // unspecified assistant.
   string workdir = 1;
-  AssistantID assistant_id = 2;
+  AssistantId assistant_id = 2;
 }
 
 message ChatEvent {
   uint64 ticket = 1;
   // The assistant serving this ticket.
-  AssistantID assistant_id = 2;
+  AssistantId assistant_id = 2;
   ChatStage stage = 3;
   // What the assistant is doing; only on WORKING.
   ChatStep step = 4;
@@ -125,7 +125,7 @@ message ChatEvent {
 }
 
 message Assistant {
-  AssistantID id = 1;
+  AssistantId id = 1;
   string name = 2;
   AssistantStatus status = 3;
   // What makes it ready, or why the check failed when UNCHECKED; empty
@@ -138,7 +138,7 @@ message AssistantModel {
   string name = 2;
 }
 
-enum AssistantID {
+enum AssistantId {
   ASSISTANT_ID_UNSPECIFIED = 0;
   ASSISTANT_ID_CLAUDE_CODE = 1;
   ASSISTANT_ID_CODEX = 2;

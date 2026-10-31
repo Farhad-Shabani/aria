@@ -12,8 +12,8 @@ use crate::supervisor::{DaemonState, Job, Status};
 use super::backends::ModelSource;
 use super::models::OnDisk;
 use super::{
-    ApplyOptions, Availability, Choice, ConfigWrite, Grant, Inspection, Missing, ModelState,
-    Outcome, Pairing, Selections, SetupError, SetupEvent, Step, Summary, voice_model_present,
+    ApplyOptions, Availability, Choice, Grant, Inspection, Missing, ModelState, Outcome, Pairing,
+    Selections, SettingsWrite, SetupError, SetupEvent, Step, Summary, voice_model_present,
 };
 
 #[allow(unreachable_pub, reason = "Prost generates public types")]
@@ -69,7 +69,6 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
         if [
             &selections.transcription_engine_id,
             &selections.synthesis_engine_id,
-            &selections.assistant_id,
         ]
         .iter()
         .any(|key| key.is_empty())
@@ -80,9 +79,8 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
             Selections {
                 stt: selections.transcription_engine_id,
                 tts: selections.synthesis_engine_id,
-                chat: selections.assistant_id,
                 wake: selections.wake,
-                hotkey: selections.hotkey,
+                aria_key: selections.aria_key,
             },
             ApplyOptions {
                 downloads: request.downloads,
@@ -95,14 +93,13 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
 impl From<&Inspection> for generated::Inspection {
     fn from(inspection: &Inspection) -> Self {
         Self {
-            config_path: inspection.config_path.display().to_string(),
+            settings_path: inspection.settings_path.display().to_string(),
             macos: inspection.macos,
             defaults: Some(generated::Selections::from(&Selections::defaults(
                 inspection,
             ))),
             transcription_choices: inspection.stt.iter().map(Into::into).collect(),
             synthesis_choices: inspection.tts.iter().map(Into::into).collect(),
-            assistant_choices: inspection.chat.iter().map(Into::into).collect(),
             models: inspection.models.iter().map(Into::into).collect(),
             wakeword_installed: inspection.wakeword_installed,
             service: Some((&inspection.service).into()),
@@ -130,9 +127,8 @@ impl From<&Selections> for generated::Selections {
         Self {
             transcription_engine_id: selections.stt.clone(),
             synthesis_engine_id: selections.tts.clone(),
-            assistant_id: selections.chat.clone(),
             wake: selections.wake,
-            hotkey: selections.hotkey,
+            aria_key: selections.aria_key,
         }
     }
 }
@@ -175,7 +171,7 @@ impl From<&Missing> for generated::Missing {
     fn from(missing: &Missing) -> Self {
         use generated::missing::Kind;
         let (kind, model) = match missing {
-            Missing::Config => (Kind::Config, ""),
+            Missing::Settings => (Kind::Settings, ""),
             Missing::Wakeword => (Kind::Wakeword, ""),
             Missing::Model(name) => (Kind::Model, *name),
             Missing::Service => (Kind::Service, ""),
@@ -245,7 +241,7 @@ impl From<Grant> for generated::Grant {
 impl From<Step> for generated::Step {
     fn from(step: Step) -> Self {
         match step {
-            Step::Config => Self::Config,
+            Step::Settings => Self::Settings,
             Step::Wakeword => Self::Wakeword,
             Step::Models => Self::Models,
             Step::Service => Self::Service,
@@ -274,19 +270,12 @@ impl From<SetupEvent> for generated::SetupEvent {
 
 impl From<&Summary> for generated::Summary {
     fn from(summary: &Summary) -> Self {
-        let (config, config_backup) = match &summary.config {
-            ConfigWrite::Unchanged => (generated::ConfigWrite::Unchanged, String::new()),
-            ConfigWrite::Written { backup } => (
-                generated::ConfigWrite::Written,
-                backup
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_default(),
-            ),
+        let settings = match summary.settings {
+            SettingsWrite::Unchanged => generated::SettingsWrite::Unchanged,
+            SettingsWrite::Written => generated::SettingsWrite::Written,
         };
         Self {
-            config: config as i32,
-            config_backup_path: config_backup,
+            settings: settings as i32,
             wakeword_dir: summary
                 .wakeword
                 .as_ref()
@@ -343,9 +332,8 @@ mod tests {
         let empty = generated::Selections {
             transcription_engine_id: String::new(),
             synthesis_engine_id: "system".to_owned(),
-            assistant_id: "codex".to_owned(),
             wake: false,
-            hotkey: true,
+            aria_key: true,
         };
         let error = <(Selections, ApplyOptions)>::try_from(request(Some(empty))).unwrap_err();
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
@@ -356,16 +344,15 @@ mod tests {
         let selections = generated::Selections {
             transcription_engine_id: "whisper".to_owned(),
             synthesis_engine_id: "system".to_owned(),
-            assistant_id: "codex".to_owned(),
             wake: false,
-            hotkey: true,
+            aria_key: true,
         };
 
         let (selections, options) =
             <(Selections, ApplyOptions)>::try_from(request(Some(selections))).unwrap();
 
         assert_eq!(selections.stt, "whisper");
-        assert!(selections.hotkey);
+        assert!(selections.aria_key);
         assert_eq!(options.downloads, ["whisper"]);
         assert!(
             !options.transfer_meter,
