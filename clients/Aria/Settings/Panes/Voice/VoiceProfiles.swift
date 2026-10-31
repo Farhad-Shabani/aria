@@ -92,7 +92,7 @@ final class VoiceProfiles: ObservableObject {
         recording = Task {
             do {
                 try await effects.enroll(name, enrollment.role, enrollment.replacing != nil)
-                self.enrollment = nil
+                if !Task.isCancelled { self.enrollment = nil }
                 // The voice is saved even when Cancel came too late, so the
                 // list refreshes outside this possibly cancelled task.
                 Task { await self.refresh() }

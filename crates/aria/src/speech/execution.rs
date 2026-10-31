@@ -165,7 +165,13 @@ where
         // slot to another replacement must still displace that one, or it
         // would wait out the grace on an utterance nobody told to stop.
         let deadline = Instant::now() + REPLACE_GRACE;
-        while let Some(running) = active.as_ref() {
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(SpeechError::Cancelled);
+            }
+            let Some(running) = active.as_ref() else {
+                break;
+            };
             running.interrupt();
             tracing::info!(status = "replacing", "interrupting the playing utterance");
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
@@ -354,6 +360,50 @@ mod tests {
             .join()
             .expect("the second utterance is admitted")
             .expect("the slot frees within the grace");
+    }
+
+    #[test]
+    fn a_cancelled_replacement_leaves_the_playing_utterance_alone() {
+        let coordinator = SpeechCoordinator::new(SpeakUntilStopped::new());
+        let playing = coordinator
+            .admit(&settings("playing"), CancelToken::new())
+            .expect("the utterance is admitted");
+        let cancellation = CancelToken::new();
+        cancellation.cancel();
+
+        let result = coordinator.admit(&settings("cancelled"), cancellation);
+
+        assert!(!playing.control().is_interrupted());
+        assert!(matches!(result, Err(SpeechError::Cancelled)));
+    }
+
+    #[test]
+    fn a_replacement_cancelled_while_waiting_does_not_claim_the_slot() {
+        let coordinator = Arc::new(SpeechCoordinator::new(SpeakUntilStopped::new()));
+        let playing = coordinator
+            .admit(&settings("playing"), CancelToken::new())
+            .expect("the utterance is admitted");
+        let cancellation = CancelToken::new();
+        let replacement = {
+            let coordinator = Arc::clone(&coordinator);
+            let cancellation = cancellation.clone();
+            std::thread::spawn(move || {
+                coordinator
+                    .admit(&settings("replacement"), cancellation)
+                    .map(|_guard| ())
+            })
+        };
+        wait_until("the replacement requests the slot", || {
+            playing.control().is_interrupted()
+        });
+
+        cancellation.cancel();
+        drop(playing);
+
+        assert!(matches!(
+            replacement.join().expect("the replacement finishes"),
+            Err(SpeechError::Cancelled)
+        ));
     }
 
     #[test]

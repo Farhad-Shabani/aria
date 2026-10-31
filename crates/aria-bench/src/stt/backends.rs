@@ -732,52 +732,63 @@ mod tests {
 
     #[test]
     fn provisional_trace_records_order_without_extra_decodes_or_final_changes() {
+        const STRIDE_SAMPLES: usize = 1600;
+        const STRIDES: usize = 10;
+
         let run = |enabled: bool| {
-            let directory = tempfile::tempdir().expect("tempdir");
-            let fixture = aria_kit::audio::canonical_fixture(directory.path());
-            let (advance, gate) = mpsc::channel();
-            let mut recording = crate::stt::stepped_replay(&fixture, 1600, gate).expect("replays");
-            let engine = trace_engine(false);
-            let calls = Arc::clone(&engine.timing.decode_calls);
-            *engine.timing.step.lock().expect("no poison") = Some(advance);
-            let composed = Composed::Streaming(Transcription::agreement(
-                Cadence::from_millis(100, 20_000),
-                engine,
-            ));
-            let mut segments = Vec::new();
-            let mut previews = Vec::new();
-            let transcript = composed
-                .transcribe(
-                    &mut recording,
-                    &Language::Automatic,
-                    Instant::now(),
-                    &mut segments,
-                    enabled.then_some(&mut previews),
-                )
-                .expect("transcribes");
-            let segments = segments
-                .into_iter()
-                .map(|segment| {
-                    (
-                        segment.text,
-                        segment.span_samples,
-                        segment.available_samples,
+            std::thread::scope(|threads| {
+                let (advance, gate) = mpsc::channel();
+                let (mut recording, mut writer) = aria_kit::audio::Recording::open();
+                threads.spawn(move || {
+                    // EOF follows the final decode so its clearing preview is a separate update.
+                    for _ in 0..STRIDES {
+                        writer.push(&[0.5; STRIDE_SAMPLES]);
+                        gate.recv().expect("each stride is decoded");
+                    }
+                    writer.finish();
+                });
+                let engine = trace_engine(false);
+                let calls = Arc::clone(&engine.timing.decode_calls);
+                *engine.timing.step.lock().expect("no poison") = Some(advance);
+                let composed = Composed::Streaming(Transcription::agreement(
+                    Cadence::from_millis(100, 20_000),
+                    engine,
+                ));
+                let mut segments = Vec::new();
+                let mut previews = Vec::new();
+                let transcript = composed
+                    .transcribe(
+                        &mut recording,
+                        &Language::Automatic,
+                        Instant::now(),
+                        &mut segments,
+                        enabled.then_some(&mut previews),
                     )
-                })
-                .collect::<Vec<_>>();
-            (
-                transcript.into_text(),
-                segments,
-                previews,
-                calls.load(Ordering::Relaxed),
-            )
+                    .expect("transcribes");
+                let segments = segments
+                    .into_iter()
+                    .map(|segment| {
+                        (
+                            segment.text,
+                            segment.span_samples,
+                            segment.available_samples,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    transcript.into_text(),
+                    segments,
+                    previews,
+                    calls.load(Ordering::Relaxed),
+                )
+            })
         };
         let (baseline, baseline_segments, _, baseline_calls) = run(false);
         let (captioned, captioned_segments, previews, captioned_calls) = run(true);
         assert_eq!(captioned, baseline);
         assert_eq!(captioned_segments, baseline_segments);
         assert_eq!(captioned_calls, baseline_calls);
-        assert_eq!(captioned_calls, 10);
+        assert_eq!(captioned_calls, STRIDES as u64);
         assert_eq!(
             previews
                 .iter()
@@ -797,6 +808,7 @@ mod tests {
                 ("", 1, 11200),
                 ("", 1, 12800),
                 ("", 1, 14400),
+                ("", 1, 16000),
                 ("", 1, 16000),
             ]
         );

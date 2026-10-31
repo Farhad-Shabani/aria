@@ -26,7 +26,7 @@ fn run(sandbox: &Sandbox, command: &mut Command, input: &[u8]) -> Vec<u8> {
     .unwrap();
     assert!(
         output.status.success(),
-        "child failed: {}",
+        "{command:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     output.stdout
@@ -44,22 +44,27 @@ fn desktop_dictates_through_a_server_without_local_stt() {
     let address = listener.local_addr().unwrap();
     drop(listener);
     let endpoint = format!("https://{address}");
+    let server_log = server.home_path().join("inference.log");
     let mut command = Command::new(env!("CARGO_BIN_EXE_aria"));
     server.apply(&mut command);
     command
         .args(["serve", "--bind", &address.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(std::fs::File::create(&server_log).unwrap());
     let mut host = ChildProcess::spawn(&mut command).unwrap();
-    let socket = server
-        .home_path()
-        .join(".aria/inference/runtime/daemon.sock");
-    assert!(matches!(
-        host.wait_until(Instant::now() + TIMEOUT, || socket.exists())
-            .unwrap(),
-        WaitOutcome::Cancelled
-    ));
+    let startup = host
+        .wait_until(Instant::now() + TIMEOUT, || {
+            std::fs::read_to_string(&server_log)
+                .unwrap()
+                .contains("inference server ready")
+        })
+        .unwrap();
+    assert!(
+        matches!(startup, WaitOutcome::Cancelled),
+        "server did not become ready:\n{}",
+        std::fs::read_to_string(&server_log).unwrap()
+    );
     let invitation = run(
         &server,
         Command::new(env!("CARGO_BIN_EXE_aria")).args([

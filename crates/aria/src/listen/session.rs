@@ -147,21 +147,19 @@ impl Session<'_> {
         // Forked before the model loads, because loading is seconds of audio the
         // track would otherwise never hear.
         let track_audio = recording.fork();
-        let result = E::load_from(config, cancel)
-            .map_err(ListenError::Transcription)
-            .and_then(|engine| {
-                self.transcribe_all(
-                    recording,
-                    &Transcription::streaming(engine),
-                    Listening::load(speaker),
-                    track_audio,
-                    &mut sink,
-                    || capture.stopper().stop(),
-                )
-            });
-        if result.is_err() {
-            capture.stopper().stop();
-        }
+        let result = match E::load_from(config, cancel) {
+            Ok(engine) => self.transcribe_all(
+                recording,
+                &Transcription::streaming(engine),
+                Listening::load(speaker),
+                track_audio,
+                &mut sink,
+                || capture.stopper().stop(),
+            ),
+            Err(TranscriptionError::Cancelled) if cancel.is_cancelled() => Ok(()),
+            Err(error) => Err(ListenError::Transcription(error)),
+        };
+        capture.stopper().stop();
         result.and(capture.finish())
     }
 
@@ -400,6 +398,54 @@ mod tests {
     use crate::vocabulary::{PersonalRules, Term};
 
     use super::*;
+
+    #[test]
+    fn stopping_during_model_loading_finishes_capture() {
+        for (cancelled, capture_failed) in [(true, false), (true, true), (false, false)] {
+            let directory = tempfile::tempdir().unwrap();
+            let (sink, _) = TranscriptFile::create(directory.path()).unwrap();
+            let capture_outcome = if capture_failed {
+                Err(ListenError::PermissionDenied)
+            } else {
+                Ok(())
+            };
+            let (capture, recording) = SystemAudioCapture::spawn_fake(capture_outcome).unwrap();
+            let stopped = capture.stopper();
+            let cancel = CancelToken::new();
+            if cancelled {
+                cancel.cancel();
+            }
+            let speaker = SpeakerConfig {
+                model: directory.path().join("speaker"),
+                segmentation_model: directory.path().join("segmentation"),
+                profiles_dir: directory.path().join("profiles"),
+            };
+            let vocabulary = Vocabulary::default();
+            let events = ListenEventEmitter::unsubscribed();
+            let session = Session {
+                vocabulary: &vocabulary,
+                events: &events,
+            };
+
+            let result = session.run_with::<Parakeet>(
+                ParakeetConfig::new(directory.path(), aria_stt::parakeet::Device::Cpu),
+                &cancel,
+                &speaker,
+                capture,
+                recording,
+                sink,
+            );
+
+            assert!(stopped.is_stopped());
+            if !cancelled {
+                assert!(matches!(result, Err(ListenError::Transcription(_))));
+            } else if capture_failed {
+                assert!(matches!(result, Err(ListenError::PermissionDenied)));
+            } else {
+                assert!(result.is_ok(), "stop returned {result:?}");
+            }
+        }
+    }
 
     struct Answering(&'static str);
 
