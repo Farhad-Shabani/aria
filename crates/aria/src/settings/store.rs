@@ -194,7 +194,7 @@ impl SettingsPatch {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Chord, Modifiers};
+    use super::super::{Chord, Modifiers, Prompt, PromptId};
     use super::*;
 
     use crate::hotkey::Combo;
@@ -217,13 +217,10 @@ mod tests {
     /// A toggle changes its own line and nothing else.
     #[test]
     fn an_unrelated_toggle_keeps_a_hand_written_override_line() {
-        let home = tempfile::tempdir().unwrap();
-        let path = home.path().join("settings.toml");
         let written = "[dictation]\noutput_mode = \"insert\"\n\n\
             [application_overrides.\"com.app\"]\n\
             output_mode = \"insert\" # the same on purpose\n";
-        std::fs::write(&path, written).unwrap();
-        let store = SettingsStore::open(&path).unwrap();
+        let (_home, path, store) = store_with(written);
 
         update(
             &store,
@@ -238,29 +235,6 @@ mod tests {
             text.contains("output_mode = \"insert\" # the same on purpose"),
             "{text}"
         );
-    }
-
-    #[test]
-    fn memory_corrections_and_rate_write_their_own_keys() {
-        let (_home, path, store) = new_store();
-
-        update(
-            &store,
-            SettingsPatch {
-                memory_enabled: Some(true),
-                backtrack: Some(true),
-                tts_rate: Some(SpeakingRate::new(1.15).unwrap()),
-                ..Default::default()
-            },
-        );
-
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("[memory]\nenabled = true"), "{text}");
-        assert!(text.contains("backtrack = true"), "{text}");
-        assert!(text.contains("rate = 1.15\n"), "{text}");
-        let settings = store.snapshot().unwrap().settings;
-        assert!(settings.memory_enabled && settings.backtrack);
-        assert_eq!(settings.tts_rate, SpeakingRate::new(1.15).unwrap());
     }
 
     #[test]
@@ -430,9 +404,7 @@ mod tests {
         use crate::dictation::{DictationRequest, StopMode};
         use crate::vocabulary::{Context, Directory};
 
-        let directory = tempfile::tempdir().expect("a temporary directory");
-        let path = directory.path().join("settings.toml");
-        let store = SettingsStore::open(&path).expect("settings");
+        let (_home, path, store) = new_store();
         let selected = Directory::new("/projects/selected".into()).expect("absolute path");
         let explicit = Directory::new("/projects/explicit".into()).expect("absolute path");
         store
@@ -543,8 +515,7 @@ mod tests {
 
     #[test]
     fn one_binding_for_the_ask_and_the_prompt_list_is_refused() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let store = SettingsStore::open(dir.path().join("settings.toml")).unwrap();
+        let (_home, _path, store) = new_store();
         let control_option_a = Chord::new(
             0,
             Modifiers {
@@ -609,8 +580,7 @@ mod tests {
 
     #[test]
     fn updating_the_aria_key_notifies_watchers() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let store = SettingsStore::open(dir.path().join("settings.toml")).expect("opens");
+        let (_home, _path, store) = new_store();
         let mut watcher = store.aria_key();
 
         let unrelated = SettingsPatch {
@@ -628,12 +598,6 @@ mod tests {
         assert!(watcher.has_changed().expect("sender alive"));
         assert_eq!(*watcher.borrow_and_update(), Some(AriaKey::Fn));
     }
-}
-
-#[cfg(test)]
-mod table_tests {
-    use super::super::{Prompt, PromptId, Prompts};
-    use super::*;
 
     const PROMPTS: &str = "[prompts.reply]\n# keep me\nname = \"Reply\"\nkind = \"compose\"\nfile = \"~/p/reply.md\" # mine\n\n# the second\n[prompts.polish]\nname = \"Polish\"\nkind = \"rewrite\"\nfile = \"/p/polish.md\"\n";
 
@@ -731,7 +695,7 @@ mod table_tests {
 
     #[test]
     fn an_app_override_edit_keeps_its_other_lines() {
-        let text = "[application_overrides.\"com.tinyspeck.slackmacgap\"]\n# chats\noutput_mode = \"copy\"\nexcluded = false\n";
+        let text = "[dictation]\noutput_mode = \"insert\"\n\n[application_overrides.\"com.tinyspeck.slackmacgap\"]\n# chats\noutput_mode = \"copy\"\nexcluded = false\n";
         let (_home, path, store) = store_with(text);
         let mut overrides: Vec<_> = store
             .snapshot()

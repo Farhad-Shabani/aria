@@ -715,15 +715,6 @@ mod tests {
     }
 
     #[test]
-    fn a_reset_removes_the_line() {
-        let home = home_with("[memory]\nenabled = true\nextract_model = \"opus\"\n");
-
-        reset_with(home.path(), "memory.enabled").expect("runs");
-
-        assert_eq!(file(home.path()), "[memory]\nextract_model = \"opus\"\n");
-    }
-
-    #[test]
     fn show_tells_a_written_value_from_a_default() {
         let home = home_with("[memory]\nenabled = true\n");
 

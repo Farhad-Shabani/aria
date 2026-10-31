@@ -24,7 +24,12 @@ use crate::speech::SpeechRequest;
 
 use super::speech::next_utterance;
 
+/// Names the output mode because its default differs by platform, and each
+/// case must change what this file holds.
 const BASE: &str = "\
+[dictation]
+output_mode = \"insert\"
+
 [dictation.vocabulary]
 enabled = true
 dir = \"/project\"

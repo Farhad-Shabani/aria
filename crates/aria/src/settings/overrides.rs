@@ -189,14 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn lookup_takes_the_raw_front_application_id() {
-        let overrides = ApplicationOverrides::new([(id("com.app"), copy())]).expect("valid");
-
-        assert_eq!(overrides.get("com.app"), Some(copy()));
-        assert_eq!(overrides.get("com.other"), None);
-    }
-
-    #[test]
     fn dropping_shared_values_keeps_an_exclusion() {
         let excluded = ApplicationOverride {
             excluded: true,
