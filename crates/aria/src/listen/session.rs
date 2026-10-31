@@ -328,6 +328,7 @@ impl Session<'_> {
                 speaker: label.as_ref(),
                 at: heard.window.start,
                 span: heard.span,
+                defers_ending: false,
             },
             released.embedding.as_deref(),
         )

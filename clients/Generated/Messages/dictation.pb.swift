@@ -483,8 +483,10 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
 
   public var stage: Aria_Daemon_V1_DictationStage = .unspecified
 
-  /// The segment just transcribed, and only then. A live caption joins
-  /// these; the press ends at delivered, cancelled, or failed.
+  /// A segment's text, and only then. While streaming it is the text
+  /// typed, so it can open with the mark the segment before owed, or be
+  /// that mark alone. A live caption joins these spaced as typed; the
+  /// press ends at delivered, cancelled, or failed.
   public var text: String = String()
 
   /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED, and on

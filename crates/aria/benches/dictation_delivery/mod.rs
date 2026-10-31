@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria_harness::{Sandbox, artifact, inputs};
+use aria_kit::transcription::Caret;
 use serde_json::{Value, json};
 use tonic::transport::{Channel, Endpoint};
 
@@ -233,13 +234,13 @@ fn segment_metrics(
         .0
         .checked_sub(recording_ms)
         .context("segment preceded recording")?;
+    let mut caret = Caret::default();
+    let reconstructed: String = segments
+        .iter()
+        .map(|(_, text)| caret.insert(text))
+        .collect();
     ensure!(
-        segments
-            .iter()
-            .map(|(_, text)| text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
-            == result,
+        reconstructed == result,
         "corrected segment reconstruction differs from completed result"
     );
     let mut previous = None;
