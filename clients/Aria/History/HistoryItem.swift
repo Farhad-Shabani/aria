@@ -13,8 +13,8 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
         var title: String {
             switch self {
             case .success: "Success"
-            case .transcriptionFailed: "Transcription failed"
-            case .deliveryFailed: "Delivery failed"
+            case .transcriptionFailed: "Couldn’t transcribe"
+            case .deliveryFailed: "Couldn’t type"
             case .recovered: "Recovered"
             case .deletionPending: "Deletion pending"
             }

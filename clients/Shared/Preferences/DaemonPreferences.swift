@@ -14,8 +14,8 @@ final class DaemonPreferences: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .conflict: "Preferences kept changing. Pending edits will retry on the next sync."
-            case .invalidResponse: "The daemon returned no preference update result."
+            case .conflict: "Settings kept changing. Aria will save your changes on the next sync."
+            case .invalidResponse: "Aria didn’t confirm your changes. Try again."
             }
         }
     }

@@ -131,7 +131,7 @@ final class PhonePairing: ObservableObject {
             log.error(
                 "Turning phone pairing \(on ? "on" : "off", privacy: .public) failed: \(error.localizedDescription, privacy: .private)"
             )
-            actionError = "Phone pairing could not be turned \(on ? "on" : "off")."
+            actionError = "Aria couldn’t turn phone pairing \(on ? "on" : "off"). Try again."
             status = .loading
             await poll()
             return
@@ -142,7 +142,7 @@ final class PhonePairing: ObservableObject {
         // port or pairing file is unusable.
         if on, status == .relayOff {
             log.error("Phone pairing is on but the relay did not start")
-            actionError = "Phone pairing is on but couldn't start. Run aria doctor in Terminal to see why."
+            actionError = "Phone pairing is on but couldn’t start. Run `aria doctor` in Terminal to see why."
         }
     }
 
@@ -157,10 +157,10 @@ final class PhonePairing: ObservableObject {
             actionError = nil
         } catch let failure as StatusPoller.RestartFailure {
             log.error("Revoking phones failed: \(failure.localizedDescription, privacy: .private)")
-            actionError = "Phones could not be revoked: \(failure.localizedDescription)"
+            actionError = "Aria couldn’t revoke the phones. \(failure.localizedDescription)"
         } catch {
             log.error("Revoking phones failed: \(error.localizedDescription, privacy: .private)")
-            actionError = "Phones could not be revoked."
+            actionError = "Aria couldn’t revoke the phones. Try again."
         }
         status = .loading
         await poll()
@@ -177,7 +177,8 @@ final class PhonePairing: ObservableObject {
             actionError = "Aria is busy. The change applies when it next starts."
         } catch {
             log.error("Restart failed: \(error.localizedDescription, privacy: .private)")
-            actionError = error.localizedDescription
+            actionError =
+                (error as? StatusPoller.RestartFailure)?.localizedDescription ?? "Something went wrong. Try again."
         }
         status = .loading
         await poll()

@@ -42,7 +42,7 @@ struct AboutSettings: View {
                     Link("Terms of Service", destination: url)
                 }
                 if let licenses, FileManager.default.fileExists(atPath: licenses.path) {
-                    Button("Licenses") { NSWorkspace.shared.open(licenses) }
+                    Button("Show Licenses") { NSWorkspace.shared.open(licenses) }
                         .buttonStyle(.link)
                 }
             }

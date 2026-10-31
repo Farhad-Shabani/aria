@@ -12,7 +12,15 @@ struct NoticeText: View {
 
     var body: some View {
         if let notice {
-            Text(notice).foregroundStyle(.failure)
+            Text(markdown: notice).foregroundStyle(.failure)
         }
+    }
+}
+
+extension Text {
+    /// Shows `**bold**` button names and `code` commands in a message
+    /// built at run time, which a plain string would print literally.
+    init(markdown: String) {
+        self.init((try? AttributedString(markdown: markdown)) ?? AttributedString(markdown))
     }
 }

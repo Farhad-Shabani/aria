@@ -15,6 +15,7 @@ struct ApplicationSettings: View {
                     Image(nsImage: app.icon)
                         .resizable()
                         .frame(width: SettingsMetrics.headerIconSide, height: SettingsMetrics.headerIconSide)
+                        .accessibilityHidden(true)
                 } accessory: {
                     Toggle("Aria in \(app.name)", isOn: isOn(excluded, editor))
                         .labelsHidden()

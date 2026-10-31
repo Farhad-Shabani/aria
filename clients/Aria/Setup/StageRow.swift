@@ -21,7 +21,7 @@ struct StageRow: View {
         case .current: "Current step"
         case .upcoming: "Not started"
         case .skipped: "Skipped"
-        case .failed: "Failed"
+        case .failed: "Didn’t finish"
         }
     }
 }

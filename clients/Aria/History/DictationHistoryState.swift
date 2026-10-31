@@ -152,7 +152,7 @@ final class DictationHistoryState: ObservableObject {
 
     func copy() {
         guard !isClearing, let detail, !detail.text.isEmpty else { return }
-        notice = effects.copy(detail.text) ? "Copied" : "Could not copy the text. Try again."
+        notice = effects.copy(detail.text) ? "Copied" : "Aria couldn’t copy the text. Try again."
     }
 
     func retry() {
@@ -225,7 +225,7 @@ final class DictationHistoryState: ObservableObject {
                 query = ""
                 clearNotice =
                     result.isCleanupPending
-                    ? "Dictation text cleared. Some recordings could not be removed; Aria will retry." : nil
+                    ? "Dictation text cleared. Aria will finish removing some recordings later." : nil
                 notice = clearNotice
                 isClearing = false
                 refresh()

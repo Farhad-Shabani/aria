@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "ServerTranscription")
 
 enum TranscriptionLocation: Equatable {
     case thisMac
@@ -75,8 +78,42 @@ final class ServerTranscription: ObservableObject {
             }
             try await apply(engine, from: inspection)
         } catch {
-            notice = .failed(error.localizedDescription)
+            log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
+            notice = .failed(Self.switchFailure)
         }
+    }
+
+    static let switchFailure = "Aria couldn’t change where transcription runs. Try again."
+    static let forgetFailure = "Aria couldn’t forget the server. Try again."
+    static let readBackFailure = "Saved, but Aria couldn’t show the change. Reopen Settings to see it."
+    static let pairFailure = "Aria couldn’t pair with the server. Try again."
+    static let invitationFailure = "That invitation didn’t work. Make a new invitation and try again."
+
+    /// The first line of each `aria remote pair` failure the user can act on,
+    /// without its `error: ` prefix.
+    private static let pairCauses: [(cliMessage: String, message: String)] = [
+        ("remote invitation is invalid", invitationFailure),
+        ("remote operation failed (unauthenticated)", invitationFailure),
+        ("remote operation failed (invalid_request)", invitationFailure),
+        (
+            "another pairing operation is active",
+            "Another pairing is in progress. Wait for it to finish, then try again."
+        ),
+        (
+            "cannot establish the authenticated remote connection",
+            "Aria couldn’t reach the server. Make sure it’s on and reachable, then try again."
+        ),
+        ("remote operation timed out", "The server didn’t respond in time. Try again."),
+        (
+            "remote operation failed (permission_denied)",
+            "The server can’t pair more devices. Run `aria remote revoke` on the server to remove one, then try again."
+        ),
+    ]
+
+    static func pairingMessage(for error: any Error) -> String {
+        guard case .commandFailed(let detail)? = error as? DaemonClientError else { return pairFailure }
+        let cause = detail.lowercased()
+        return pairCauses.first { cause.hasPrefix($0.cliMessage) }?.message ?? pairFailure
     }
 
     func beginPairing() {
@@ -90,7 +127,7 @@ final class ServerTranscription: ObservableObject {
             Self.invitationAddress(clipboard).map { .confirming(invitation: clipboard, address: $0) } ?? .unreadable
     }
 
-    /// Only from This Mac: forgetting the server in use would fail every dictation.
+    /// Only while transcription runs on your Mac: forgetting the server in use would fail every dictation.
     var canForget: Bool {
         !isBusy && setup.server != nil && setup.transcription == .thisMac
     }
@@ -103,7 +140,8 @@ final class ServerTranscription: ObservableObject {
         do {
             try await effects.forget()
         } catch {
-            notice = .failed(error.localizedDescription)
+            log.error("Forgetting the server failed: \(String(describing: error), privacy: .private)")
+            notice = .failed(Self.forgetFailure)
             return
         }
         await showChanges()
@@ -135,8 +173,8 @@ final class ServerTranscription: ObservableObject {
         do {
             try await effects.pair(invitation)
         } catch {
-            pairingFailure = error.localizedDescription
-            // The invitation works once; a retry needs a fresh one.
+            log.error("Pairing failed: \(String(describing: error), privacy: .private)")
+            pairingFailure = Self.pairingMessage(for: error)
             pairingStep = .instructions
             return false
         }
@@ -148,7 +186,8 @@ final class ServerTranscription: ObservableObject {
                 setup.show(inspection)
             }
         } catch {
-            notice = .failed(error.localizedDescription)
+            log.error("Applying the paired server failed: \(String(describing: error), privacy: .private)")
+            notice = .failed(Self.switchFailure)
         }
         return true
     }
@@ -185,7 +224,8 @@ final class ServerTranscription: ObservableObject {
         do {
             setup.show(try await effects.inspect())
         } catch {
-            notice = .failed("Saved, but Aria couldn’t read it back: \(error.localizedDescription)")
+            log.error("Reading back the change failed: \(String(describing: error), privacy: .private)")
+            notice = .failed(Self.readBackFailure)
         }
     }
 }

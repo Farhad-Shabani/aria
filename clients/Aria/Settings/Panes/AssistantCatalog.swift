@@ -52,7 +52,7 @@ final class AssistantCatalog: ObservableObject {
         } catch {
             guard !Task.isCancelled, self.loadID == loadID else { return }
             Self.log.error("Assistant catalog failed: \(String(describing: error), privacy: .private)")
-            failure = "Assistants couldn't be loaded. Try again."
+            failure = "Aria couldn’t load the assistants. Try again."
         }
     }
 }

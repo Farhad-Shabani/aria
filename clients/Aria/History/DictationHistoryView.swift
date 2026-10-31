@@ -62,7 +62,7 @@ struct DictationHistoryView: View {
             if isVisible { state.refresh() }
         }
         .confirmationDialog(
-            "Delete this dictation?",
+            "Delete This Dictation?",
             isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }),
             titleVisibility: .visible,
             presenting: deletion
@@ -77,14 +77,14 @@ struct DictationHistoryView: View {
             )
         }
         .confirmationDialog(
-            "Clear all dictation history?", isPresented: $isConfirmingClear, titleVisibility: .visible
+            "Clear All Dictation History?", isPresented: $isConfirmingClear, titleVisibility: .visible
         ) {
             Button("Clear History", role: .destructive) { state.clear() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "All saved dictations and their retained recordings will be deleted. This cannot be undone. "
-                    + "Your history saving setting will not change."
+                "All saved dictations and their recordings will be deleted. This can’t be undone. "
+                    + "Your history setting won’t change."
             )
         }
     }
@@ -145,15 +145,15 @@ struct DictationHistoryView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         if entry.status == .transcriptionFailed {
-                            Label("Transcription failed", systemImage: "exclamationmark.triangle")
+                            Label("Couldn’t Transcribe", systemImage: "exclamationmark.triangle")
                                 .font(.headline)
-                            Text(entry.message ?? "Aria could not finish transcribing this recording.")
+                            Text(entry.message ?? "Aria couldn’t finish transcribing this recording.")
                                 .foregroundStyle(.secondary)
                             if !entry.text.isEmpty {
                                 Text("Incomplete transcript").font(.caption).foregroundStyle(.secondary)
                             }
                         } else if entry.status == .deliveryFailed {
-                            Text("The text could not be inserted. You can copy it below.")
+                            Text("Aria couldn’t type the text. You can copy it below.")
                                 .foregroundStyle(.secondary)
                         } else if entry.status == .deletionPending {
                             Text("Deletion is pending. Aria will finish removing this entry and its recording.")
@@ -205,7 +205,7 @@ struct DictationHistoryView: View {
                         .disabled(state.isClearing)
                 }
                 if entry.isRetryable || isRetrying {
-                    Button(isRetrying ? "Retrying…" : "Retry Transcription") { state.retry() }
+                    Button(isRetrying ? "Transcribing…" : "Transcribe Again") { state.retry() }
                         .buttonStyle(.borderedProminent)
                         .disabled(
                             state.isClearing || entry.isRetrying || state.retryingID != nil

@@ -7,15 +7,21 @@ enum CommandLineToolError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notInApplications(let path): return "Aria runs from \(path); move it to Applications first."
-        case .occupied(let path): return "\(path) already exists and is not Aria's. Remove it first."
-        case .failed(let message): return message
+        case .notInApplications:
+            return
+                "The `aria` command needs Aria in your Applications folder. Move Aria there, then open Aria Setup again."
+        case .occupied(let path):
+            return "\(path) already exists and isn’t Aria’s. Remove it, then open Aria Setup again."
+        case .failed: return CommandLineTool.notInstalled
         }
     }
 }
 
 /// The command links into the bundle so it follows the app through updates.
 enum CommandLineTool {
+    static let notInstalled =
+        "The `aria` command isn’t installed. To add it, open Aria Setup in Settings > General."
+
     private static let link = URL(fileURLWithPath: "/usr/local/bin/aria")
     private static let bundledCommand = "Contents/Helpers/aria"
     private static let userCancelled = -128

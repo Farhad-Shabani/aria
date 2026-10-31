@@ -30,7 +30,7 @@ struct VoiceSection: View {
             }
         }
         .confirmationDialog(
-            "Remove \(removing?.name ?? "")’s voice?",
+            "Remove \(removing?.name ?? "")’s Voice?",
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             presenting: removing
         ) { speaker in
@@ -75,20 +75,7 @@ struct VoiceSection: View {
     }
 
     private func row(_ speaker: Aria_Daemon_V1_EnrolledSpeaker) -> some View {
-        HStack(spacing: 10) {
-            Text(speaker.name.prefix(1).uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(width: Self.monogramSide, height: Self.monogramSide)
-                .background(Circle().fill(.gray))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(speaker.name)
-                Text(speaker.role == .owner ? "Owner" : "Guest")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+        LabeledContent {
             Menu {
                 if speaker.role != .owner {
                     Button("Make Owner") { Task { await voices.makeOwner(speaker.name) } }
@@ -102,6 +89,18 @@ struct VoiceSection: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("\(speaker.name) options")
+        } label: {
+            Label {
+                Text(speaker.name)
+                Text(speaker.role == .owner ? "Owner" : "Guest")
+            } icon: {
+                Text(speaker.name.prefix(1).uppercased())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: Self.monogramSide, height: Self.monogramSide)
+                    .background(Circle().fill(.gray))
+                    .accessibilityHidden(true)
+            }
         }
     }
 

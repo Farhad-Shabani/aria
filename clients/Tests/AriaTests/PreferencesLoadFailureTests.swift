@@ -26,6 +26,6 @@ final class PreferencesLoadFailureTests: XCTestCase {
         await preferences.sync()
 
         XCTAssertEqual(
-            preferences.loadFailure, "Aria couldn't load its settings. Run aria doctor in Terminal to see why.")
+            preferences.loadFailure, "Aria couldn’t load its settings. Run `aria doctor` in Terminal to see why.")
     }
 }

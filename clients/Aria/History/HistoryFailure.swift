@@ -4,19 +4,19 @@ enum HistoryFailure: Error, Equatable {
 
     var message: String {
         switch self {
-        case .offline: "Aria is unavailable. Start the daemon and try again."
-        case .storage: "Dictation history storage is unavailable."
+        case .offline: "Aria isn’t running. Turn it on in the menu bar, then try again."
+        case .storage: "Aria can’t open your dictation history. Try again later."
         case .missing: "This dictation is no longer available. Refresh history."
-        case .audioUnavailable: "The recording is no longer available for retry."
-        case .projectUnavailable: "The original project directory is unavailable. Restore it before retrying."
+        case .audioUnavailable: "The recording is gone, so Aria can’t transcribe it again."
+        case .projectUnavailable: "This dictation’s project folder is missing. Restore it, then transcribe again."
         case .tooLarge: "The transcript is too large for history to store."
-        case .busy: "Aria is busy. Try again when the current operation finishes."
-        case .cancelled: "Retry was cancelled."
-        case .timeout: "The operation took too long. Try again."
-        case .queryTooLong: "Use a shorter search (up to 256 bytes)."
+        case .busy: "Aria is busy. Try again in a moment."
+        case .cancelled: "Transcribing again was canceled."
+        case .timeout: "Aria took too long to respond. Try again."
+        case .queryTooLong: "Use a shorter search."
         case .unsupported: "Update and restart Aria to clear dictation history."
-        case .clearUncertain: "Aria could not confirm whether history was cleared. Refresh history, then try again."
-        case .failed: "The operation failed. Please try again."
+        case .clearUncertain: "Aria couldn’t confirm that history was cleared. Refresh history, then try again."
+        case .failed: "Something went wrong. Try again."
         }
     }
 }

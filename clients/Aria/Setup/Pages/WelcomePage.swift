@@ -6,7 +6,7 @@ struct WelcomePage: View {
     var body: some View {
         Form {
             Section {
-                Label("Pick speech and chat engines", systemImage: "waveform")
+                Label("Choose speech engines", systemImage: "waveform")
                 Label("Download the models they need", systemImage: "arrow.down.circle")
                 Label("Run Aria in the background", systemImage: "gearshape")
             } footer: {

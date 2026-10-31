@@ -41,7 +41,7 @@ final class AssistantModels: ObservableObject {
         } catch {
             guard !Task.isCancelled, self.loadID == loadID else { return }
             Self.log.error("Model list failed: \(String(describing: error), privacy: .private)")
-            failure = "Models couldn't be loaded. Try again or enter a model ID."
+            failure = "Aria couldn’t load the models. Try again, or enter a model ID."
         }
     }
 }

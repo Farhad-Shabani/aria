@@ -120,7 +120,7 @@ enum DictationHistoryClient {
         let source: String
         switch wire.source {
         case .local: source = "Dictation"
-        case .relay: source = "Relayed dictation"
+        case .relay: source = "iPhone or Apple Watch"
         default: throw HistoryFailure.failed
         }
         return HistoryItem(
@@ -143,17 +143,17 @@ enum DictationHistoryClient {
     private static func transcriptionMessage(_ code: Aria_Daemon_V1_ErrorCode) -> String {
         switch code {
         case .recordingTimeout, .overallTimeout:
-            return "Aria could not finish this recording in time."
+            return "Aria couldn’t finish this recording in time."
         case .captureFailed:
-            return "Audio capture failed before transcription finished."
+            return "Aria couldn’t record audio, so transcription didn’t finish."
         case .cancelled:
-            return "The last retry was cancelled."
+            return "Transcribing again was canceled."
         case .historyProjectUnavailable:
             return HistoryFailure.projectUnavailable.message
         case .historyAudioUnavailable:
             return HistoryFailure.audioUnavailable.message
         default:
-            return "Aria could not finish transcribing this recording."
+            return "Aria couldn’t finish transcribing this recording."
         }
     }
 

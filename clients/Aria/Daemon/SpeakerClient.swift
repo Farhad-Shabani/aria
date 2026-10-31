@@ -16,7 +16,7 @@ enum SpeakerClient {
     static let samples: UInt32 = 5
 
     static func list() async throws -> [Aria_Daemon_V1_EnrolledSpeaker] {
-        try await withClient(failing: "Aria couldn’t load its voices.") { client in
+        try await withClient(failing: "Aria couldn’t load its voices. Try again.") { client in
             try await client.list(request: ClientRequest(message: .init())) { try $0.message.speakers }
         }
     }
@@ -43,7 +43,7 @@ enum SpeakerClient {
     }
 
     static func remove(name: String) async throws {
-        try await withClient(failing: "Aria couldn’t remove the voice.") { client in
+        try await withClient(failing: "Aria couldn’t remove the voice. Try again.") { client in
             var request = Aria_Daemon_V1_RemoveSpeakerRequest()
             request.name = name
             _ = try await client.remove(request: ClientRequest(message: request)) { try $0.message }
@@ -51,7 +51,7 @@ enum SpeakerClient {
     }
 
     static func setOwner(name: String) async throws {
-        try await withClient(failing: "Aria couldn’t change the owner.") { client in
+        try await withClient(failing: "Aria couldn’t change the owner. Try again.") { client in
             var request = Aria_Daemon_V1_SetOwnerRequest()
             request.name = name
             _ = try await client.setOwner(request: ClientRequest(message: request)) { try $0.message }
@@ -71,7 +71,7 @@ enum SpeakerClient {
             }
         } catch {
             // Cancellation passes through untouched so callers can tell it apart.
-            if error is CancellationError || (error as? RPCError)?.code == .cancelled { throw error }
+            if DaemonTransport.isCancellation(error) { throw error }
             log.error("Speaker call failed: \(String(describing: error), privacy: .private)")
             throw failure(error, fallback: fallback)
         }
@@ -80,13 +80,16 @@ enum SpeakerClient {
     /// The daemon's own message is detail for the log; `fallback` names what failed.
     static func failure(_ error: any Error, fallback: String) -> SpeakerFailure {
         guard let rpc = error as? RPCError else { return SpeakerFailure(errorDescription: fallback) }
-        if rpc.code == .unavailable { return SpeakerFailure(errorDescription: "Aria isn’t running.") }
+        if rpc.code == .unavailable {
+            return SpeakerFailure(errorDescription: "Aria isn’t running. Turn it on in the menu bar.")
+        }
         let description: String =
             switch daemonCode(rpc) {
             case .speakerAlreadyEnrolled: "That name is already in use."
             case .speakerInconsistentSamples: "The sentences didn’t sound like one voice. Try again somewhere quiet."
             case .speakerNoSpeech: "Aria didn’t hear anything. Try again."
-            case .speakerModelMissing: "The speaker verification model isn’t downloaded."
+            case .speakerModelMissing:
+                "The speaker verification model isn’t downloaded. Open Aria Setup to download it."
             case .busy: "The microphone is in use. Try again when dictation ends."
             default: fallback
             }

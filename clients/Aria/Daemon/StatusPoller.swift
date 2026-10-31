@@ -22,13 +22,13 @@ enum DaemonControlFailure: Equatable {
 
     var message: String {
         switch self {
-        case .start: "Aria couldn't start. Run aria doctor in Terminal to see why."
-        case .stop: "Aria couldn't stop. Run aria doctor in Terminal to see why."
-        case .restart: "Aria couldn't restart. Run aria doctor in Terminal to see why."
-        case .stillRunning: "Aria didn't stop in time."
-        case .unresponsive: "Aria started but didn't respond."
+        case .start: "Aria couldn’t start. Run `aria doctor` in Terminal to see why."
+        case .stop: "Aria couldn’t stop. Run `aria doctor` in Terminal to see why."
+        case .restart: "Aria couldn’t restart. Run `aria doctor` in Terminal to see why."
+        case .stillRunning: "Aria didn’t stop in time. Try again."
+        case .unresponsive: "Aria started but didn’t respond. Run `aria doctor` in Terminal to see why."
         case .backgroundItemOff:
-            "Aria is off in the background. Turn it on in System Settings → General → Login Items."
+            "Aria isn’t allowed to run in the background. Turn it on in System Settings > General > Login Items & Extensions."
         }
     }
 }
@@ -119,7 +119,7 @@ final class StatusPoller: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .busy: return "Aria is busy starting or stopping."
+            case .busy: return "Aria is busy starting or stopping. Try again in a moment."
             case .stillRunning: return DaemonControlFailure.stillRunning.message
             }
         }

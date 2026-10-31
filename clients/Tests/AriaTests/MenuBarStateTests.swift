@@ -27,7 +27,7 @@ final class MenuBarStateTests: XCTestCase {
     }
 
     func testAFailureNeedsThePerson() {
-        XCTAssertEqual(state(pill: .failed("Dictation failed")), .attention)
+        XCTAssertEqual(state(pill: .failed("couldn’t dictate")), .attention)
         XCTAssertEqual(state(pill: .noReply), .attention)
     }
 

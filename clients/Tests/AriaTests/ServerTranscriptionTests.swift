@@ -161,7 +161,7 @@ final class ServerTranscriptionTests: XCTestCase {
         await server.use(.server)
 
         XCTAssertEqual(spy.daemon, ["stop", "start"])
-        XCTAssertEqual(server.notice, .failed("Refused."))
+        XCTAssertEqual(server.notice, .failed(ServerTranscription.switchFailure))
         XCTAssertFalse(server.isBusy)
     }
 
@@ -173,7 +173,7 @@ final class ServerTranscriptionTests: XCTestCase {
         await server.use(.server)
 
         XCTAssertEqual(spy.applied, ["server"])
-        XCTAssertEqual(server.notice, .failed("Saved, but Aria couldn’t read it back: Refused."))
+        XCTAssertEqual(server.notice, .failed(ServerTranscription.readBackFailure))
     }
 
     func testPairingReappliesOnlyAServerAlreadyInUse() async {
@@ -202,10 +202,10 @@ final class ServerTranscriptionTests: XCTestCase {
 
         XCTAssertTrue(paired)
         XCTAssertNil(server.pairingFailure)
-        XCTAssertEqual(server.notice, .failed("Refused."))
+        XCTAssertEqual(server.notice, .failed(ServerTranscription.switchFailure))
     }
 
-    func testAFailedPairingShowsTheReasonAndAppliesNothing() async {
+    func testAFailedPairingShowsTheFallbackAndAppliesNothing() async {
         let spy = Spy(Self.mac(runningOn: "server"))
         spy.pairFails = true
         let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
@@ -213,10 +213,25 @@ final class ServerTranscriptionTests: XCTestCase {
         let paired = await server.pair(invitation: "{}")
 
         XCTAssertFalse(paired)
-        XCTAssertEqual(server.pairingFailure, "Refused.")
+        XCTAssertEqual(server.pairingFailure, ServerTranscription.pairFailure)
         XCTAssertNil(server.notice)
         XCTAssertEqual(spy.applied, [])
         XCTAssertFalse(server.isBusy)
+    }
+
+    func testAKnownPairingFailureSaysWhatToDo() {
+        func message(forCLI stderr: String) -> String {
+            let detail = DaemonClient.cliFailure(stderr: Data(stderr.utf8), fallback: "")
+            return ServerTranscription.pairingMessage(for: DaemonClientError.commandFailed(detail))
+        }
+
+        XCTAssertEqual(
+            message(forCLI: "error: remote operation failed (permission_denied)\n"),
+            "The server can’t pair more devices. Run `aria remote revoke` on the server to remove one, then try again.")
+        XCTAssertEqual(
+            message(forCLI: "error: remote operation failed (unauthenticated)\n"), ServerTranscription.invitationFailure
+        )
+        XCTAssertEqual(message(forCLI: "error: cannot load remote configuration\n"), ServerTranscription.pairFailure)
     }
 
     func testAnInvitationShowsItsAddressBeforePairing() {
@@ -258,7 +273,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
         await server.forget()
 
-        XCTAssertEqual(server.notice, .failed("Refused."))
+        XCTAssertEqual(server.notice, .failed(ServerTranscription.forgetFailure))
         XCTAssertNotNil(setup.server)
         XCTAssertFalse(server.isBusy)
     }
@@ -277,7 +292,7 @@ final class ServerTranscriptionTests: XCTestCase {
         let paired = await server.pair(invitation: invitation)
         XCTAssertFalse(paired)
         XCTAssertEqual(server.pairingStep, .instructions)
-        XCTAssertEqual(server.pairingFailure, "Refused.")
+        XCTAssertEqual(server.pairingFailure, ServerTranscription.pairFailure)
 
         server.paste(invitation)
         XCTAssertNil(server.pairingFailure, "a fresh invitation starts without the old error")
