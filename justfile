@@ -34,7 +34,7 @@ rust-check package="aria":
 
 # Quickly lint one Rust package
 rust-lint package="aria":
-    cargo clippy --locked -p {{ package }} -- -D warnings
+    cargo clippy --locked -p {{ package }} --all-targets -- -D warnings
 
 # Quickly test one Rust package, optionally with a test filter
 rust-test package="aria" *args:
@@ -187,14 +187,17 @@ swift-test: swift-project
 version := `sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1`
 
 # Build Aria.app with the daemon inside, into clients/build/mac
-app profile="dist": swift-project
+app profile="dist" configuration="Release": swift-project
     cargo build --locked --profile {{ profile }} --bin aria
     cd clients && xcodebuild -project Aria.xcodeproj -scheme Aria \
-        -configuration Release -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
+        -configuration {{ configuration }} -derivedDataPath build/mac -onlyUsePackageVersionsFromResolvedFile \
         ARCHS=$(uname -m) \
         CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={{ version }} CURRENT_PROJECT_VERSION={{ version }} -quiet build
-    scripts/macos/bundle.sh clients/build/mac/Build/Products/Release/Aria.app {{ profile }}
-    scripts/macos/check-minos.sh clients/build/mac/Build/Products/Release/Aria.app
+    scripts/macos/bundle.sh clients/build/mac/Build/Products/{{ configuration }}/Aria.app {{ profile }}
+    scripts/macos/check-minos.sh clients/build/mac/Build/Products/{{ configuration }}/Aria.app
+
+# Build Aria.app faster for local testing, without fat LTO or Swift optimization
+app-dev: (app "release" "Debug")
 
 swift_resolved := "clients/Aria.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 swift_plugins := "clients/build/protoc-plugins"

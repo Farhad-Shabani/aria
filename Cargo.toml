@@ -36,6 +36,12 @@ strip    = true
 [profile.dev]
 debug = "line-tables-only"
 
+# Cargo strips release builds by default. That breaks a proc-macro dylib when
+# a macOS minimum is set: `dlopen` rejects it with "mis-aligned LINKEDIT string
+# pool".
+[profile.release.build-override]
+strip = "none"
+
 # Shared by more than one workspace member. A dependency only one member needs
 # stays in that member's manifest.
 [workspace.dependencies]
