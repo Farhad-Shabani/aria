@@ -81,8 +81,8 @@ impl wire::settings_service_server::SettingsService for LanSettings {
     }
 }
 
-/// A path and an app's bundle ID can name the person. An empty folder still
-/// tells the phone that one is set, so it can offer to clear it.
+/// Paths and app bundle IDs can identify a person.
+/// Keep the folder field present so the phone can offer to clear it.
 fn without_mac_choices(snapshot: &mut wire::SettingsSnapshot) {
     if let Some(settings) = &mut snapshot.settings {
         if settings.vocabulary_dir.is_some() {

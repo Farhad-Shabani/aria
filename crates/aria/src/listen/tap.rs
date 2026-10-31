@@ -37,6 +37,16 @@ impl SystemAudioCapture {
         Ok((tap, recording))
     }
 
+    #[cfg(test)]
+    pub(super) fn spawn_fake(
+        outcome: Result<(), ListenError>,
+    ) -> Result<(Self, RecordingReader), ListenError> {
+        Self::spawn_with(move |writer, _| {
+            writer.finish();
+            outcome
+        })
+    }
+
     pub(crate) fn stopper(&self) -> Stopper {
         self.stop.clone()
     }

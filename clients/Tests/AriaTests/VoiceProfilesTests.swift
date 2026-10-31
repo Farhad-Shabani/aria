@@ -186,4 +186,25 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertNil(voices.enrollment)
         XCTAssertNil(voices.failure)
     }
+
+    func testLateEnrollmentSuccessKeepsTheNextSheetAndRefreshesSavedVoices() async {
+        let harness = Harness()
+        harness.suspendsEnroll = true
+        let voices = VoiceProfiles(effects: harness.effects)
+        voices.beginAdding()
+        voices.name = "alex"
+        voices.start()
+        await waitUntil { harness.enrollContinuation != nil }
+
+        voices.cancel()
+        voices.beginAdding()
+        voices.name = "sam"
+        harness.speakers = [Self.speaker("alex", .owner)]
+        harness.enrollContinuation?.resume()
+        await waitUntil { voices.speakers?.map(\.name) == ["alex"] }
+
+        XCTAssertEqual(voices.enrollment?.phase, .naming)
+        XCTAssertEqual(voices.name, "sam")
+        XCTAssertNil(voices.failure)
+    }
 }
