@@ -6,15 +6,16 @@ and the speech toolkit crates they are built from.
 ## Commands
 
 Run from the repository root. `justfile` owns commands; Cargo manifests own
-package names and engine features. Select the features the changed code needs.
+package names and engine features. `just check` enables all features on
+macOS. The scoped recipes use default features.
 
 | Task | Command |
 |------|---------|
-| Full local gate | `just check` |
-| Check / lint one Cargo package | `just rust-check <package>` / `just rust-lint <package>` |
+| Gate, before committing | `just check` = `proto-check` + `rust-native` + `support-check` |
+| Check then lint one package, while editing | `just rust-check <package>`, `just rust-lint <package>` |
 | Test one package | `just rust-test <package> [filter]` |
-| Complete native Rust gate | `just rust-native` |
-| Shell integration and sidecar lint/tests | `just support-check` |
+| Rust part of the gate, every package | `just rust-native` |
+| Shell and sidecar part of the gate | `just support-check` |
 | macOS app formatting and tests | `just swift-check` |
 | Build `Aria.app` with the daemon inside | `just app` |
 | Affected cross-target gate | `just rust-wasm` / `just rust-linux` |
