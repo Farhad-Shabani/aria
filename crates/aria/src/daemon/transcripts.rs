@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::audio::RecordingReader;
+use crate::delivery::Caret;
 use crate::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
 };
@@ -202,13 +203,11 @@ impl TranscriptSink for History {
             && !entry.complete
             && !self.oversized
         {
-            if entry.text.len() + utterance.text.len() + 1 > storage::MAX_ENTRY_BYTES {
+            let spaced = Caret::between(&entry.text, "").insert(utterance.text);
+            if entry.text.len() + spaced.len() > storage::MAX_ENTRY_BYTES {
                 self.oversized = true;
             } else {
-                if !entry.text.is_empty() {
-                    entry.text.push(' ');
-                }
-                entry.text.push_str(utterance.text);
+                entry.text.push_str(&spaced);
             }
         }
         Ok(())
@@ -398,6 +397,23 @@ mod tests {
         let mut lease = saved.storage().unwrap().begin_retry(found[0].id).unwrap();
         let audio = lease.recording.finished_audio().unwrap();
         assert_ne!(audio.path(), Some(original.as_path()));
+    }
+
+    #[test]
+    fn partial_text_is_spaced_as_it_was_typed() {
+        let directory = tempfile::tempdir().unwrap();
+        let saved = store(directory.path());
+        let mut sink = History::new(Arc::clone(&saved), "test");
+        let mut recording =
+            RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+        sink.dictation_started(&settings(), &ExecutionControl::for_test(StopMode::Manual))
+            .unwrap();
+        for text in ["we should", ". Ship it", "."] {
+            sink.segment(Utterance::anonymous(text)).unwrap();
+        }
+        sink.recording_finished(&mut recording, Err(&DictationError::DeliveryTargetChanged));
+
+        assert_eq!(entries(&saved)[0].text, "we should. Ship it.");
     }
 
     #[test]

@@ -6,12 +6,12 @@ use aria_kit::segmentation::Segmenter;
 use aria_kit::speaker::Embedder;
 use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
-use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::Layer;
+use aria_kit::transcription::{Punctuated, SentenceEnds, check_cancelled};
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
-use crate::delivery::{DeliveryOutcome, Placement};
+use crate::delivery::{Caret, DeliveryOutcome, Placement};
 use crate::hearing::{
     Board, Decoding, Event, Hearing, HearingError, TrackingError, hear_saved, hear_to_end,
 };
@@ -644,7 +644,15 @@ where
                 act(event, &mut published, sinks)?;
             }
             Ok::<_, DictationError>(ended)
-        })?;
+        });
+        // A press that ends early still owes the last segment its mark.
+        let ended = match ended {
+            Ok(ended) => ended,
+            Err(error) => {
+                published.close_last_sentence(sinks);
+                return Err(error);
+            }
+        };
         let transcript = match settings.delivery_mode {
             DeliveryMode::Complete => self
                 .rewrites
@@ -717,9 +725,15 @@ where
 /// step owes.
 struct Published<'a> {
     streaming: bool,
-    kept: Vec<String>,
+    /// Every segment's text so far, spaced as the cursor typed it. Text
+    /// that failed to type counts too, so no word is lost.
+    written: String,
     /// The ghost text shown, until the next segment lands.
     ghost: Option<Arc<str>>,
+    sentences: SentenceEnds,
+    /// Where the last segment was decoded through: where its held mark
+    /// lands.
+    heard_to: u64,
     failure: Option<DictationError>,
     caption: Option<CaptionSnapshot>,
     completion: Completion,
@@ -737,8 +751,10 @@ impl<'a> Published<'a> {
     ) -> Self {
         Self {
             streaming: settings.delivery_mode == DeliveryMode::Streaming,
-            kept: Vec::new(),
+            written: String::new(),
             ghost: None,
+            sentences: SentenceEnds::default(),
+            heard_to: 0,
             failure: None,
             caption: (!settings.transcript_only)
                 .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
@@ -770,19 +786,32 @@ impl<'a> Published<'a> {
         if corrected.is_empty() {
             return Ok(());
         }
-        let first = self.kept.is_empty();
-        self.kept.push(corrected.to_owned());
+        let first = self.written.is_empty();
+        // Complete delivery types the decoder's own transcript, so joining
+        // here would only make the caption disagree with it.
+        let punctuated = if self.streaming {
+            self.sentences
+                .punctuate(corrected, heard.segment.sentence_ended_before())
+        } else {
+            Punctuated {
+                text: corrected.to_owned(),
+                defers_ending: false,
+            }
+        };
+        self.heard_to = heard.window.end;
+        self.keep(&punctuated.text);
         if self.failure.is_some() {
             return Ok(());
         }
         // History keeps no names for dictation: the ring shows them.
-        let published = sinks.segment(Utterance {
-            text: corrected,
+        let utterance = Utterance {
+            text: &punctuated.text,
             speaker: None,
             at: heard.window.start,
             span: heard.span,
-        });
-        if let Err(error) = published {
+            defers_ending: punctuated.defers_ending,
+        };
+        if let Err(error) = sinks.segment(utterance) {
             let error = match map_sink_error(error, self.control) {
                 // Text already landed, so typing stopped partway.
                 DictationError::DeliveryTargetChanged if self.streaming && !first => {
@@ -809,17 +838,57 @@ impl<'a> Published<'a> {
                 "dictation first segment transcribed"
             );
         }
+        self.announce(&punctuated.text, speaker);
+        Ok(())
+    }
+
+    /// Types the mark the last segment owes. Every word has landed by
+    /// then, so a failure here is logged, not fatal.
+    fn close_last_sentence<S>(&mut self, sinks: &mut S)
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Some(closing) = self.sentences.finish() else {
+            return;
+        };
+        self.keep(&closing);
+        if self.failure.is_some() {
+            return;
+        }
+        let utterance = Utterance {
+            text: &closing,
+            speaker: None,
+            at: self.heard_to,
+            span: None,
+            defers_ending: false,
+        };
+        if let Err(error) = sinks.segment(utterance) {
+            let error: DictationError = error.into();
+            tracing::warn!(
+                error = %error_chain(&error),
+                "closing period not typed"
+            );
+            return;
+        }
+        self.announce(&closing, None);
+    }
+
+    fn keep(&mut self, text: &str) {
+        let spaced = Caret::between(&self.written, "").insert(text);
+        self.written.push_str(&spaced);
+    }
+
+    /// Tells clients what was published, and when streaming, that it was
+    /// typed.
+    fn announce(&mut self, text: &str, speaker: Option<SpeakerName>) {
         if let Some(caption) = &mut self.caption {
-            let joined = if caption.committed.is_empty() {
-                corrected.to_owned()
-            } else {
-                format!("{} {corrected}", caption.committed)
-            };
-            caption.committed = caption_suffix(&joined);
+            let spaced = Caret::between(&caption.committed, "").insert(text);
+            caption.committed = caption_suffix(&format!("{}{spaced}", caption.committed));
             self.events.emit(caption.clone());
         }
         self.events.emit(DictationStage::SegmentTranscribed {
-            text: Arc::from(corrected),
+            text: Arc::from(text),
             speaker,
         });
         if self.streaming {
@@ -827,7 +896,6 @@ impl<'a> Published<'a> {
             self.events
                 .emit(GhostSnapshot::empty(self.control.recording_id()));
         }
-        Ok(())
     }
 
     fn finish<S>(
@@ -847,7 +915,8 @@ impl<'a> Published<'a> {
                 own_voice,
             });
         }
-        let transcript = Transcript::new(self.kept.join(" "))
+        self.close_last_sentence(sinks);
+        let transcript = Transcript::new(std::mem::take(&mut self.written))
             .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
         let completed = self.completion.publish(Some(&transcript), sinks);
         if let Some(error) = self.failure.take() {
@@ -3937,6 +4006,109 @@ mod tests {
                 "yeah"
             );
         }
+    }
+
+    #[test]
+    fn a_short_silence_does_not_end_a_streamed_sentence() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let (events, stages) = stage_events();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        sinks.dictation_started(&settings, &control).unwrap();
+        // Each segment after the first was decoded with the audio before
+        // its cut, so the model heard the sentence so far.
+        for (text, ended_before) in [
+            ("with the capital character.", None),
+            ("while it shouldn't.", Some(false)),
+            ("Ship it.", Some(true)),
+        ] {
+            let mut heard = heard(directory.path(), text);
+            heard.segment = heard.segment.with_sentence_ended_before(ended_before);
+            published.segment(heard, text, None, &mut sinks).unwrap();
+        }
+        let whole = Transcript::new("unused").unwrap();
+
+        let result = published.finish(whole, false, &mut sinks).unwrap();
+
+        let said = "with the capital character while it shouldn't. Ship it.";
+        assert_eq!(result.transcript.as_str(), said);
+        assert_eq!(delivered(&log.entries()), said);
+        let announced: Vec<_> = stages
+            .try_iter()
+            .filter_map(|stage| match stage {
+                DictationStage::SegmentTranscribed { text, .. } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            announced,
+            [
+                "with the capital character",
+                "while it shouldn't",
+                ". Ship it",
+                "."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_closing_period_that_fails_to_type_does_not_fail_the_press() {
+        /// Rejects the closing period alone, as the cursor does once focus
+        /// moved after the last segment.
+        struct FailingPeriod;
+
+        impl TranscriptSink for FailingPeriod {
+            type Error = DictationError;
+
+            fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
+                if utterance.text == "." {
+                    return Err(DictationError::DeliveryTargetChanged);
+                }
+                Ok(())
+            }
+
+            fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let heard = heard(directory.path(), "we should.");
+        published
+            .segment(heard, "we should.", None, &mut FailingPeriod)
+            .unwrap();
+        let whole = Transcript::new("unused").unwrap();
+
+        let result = published.finish(whole, false, &mut FailingPeriod).unwrap();
+
+        assert_eq!(result.transcript.as_str(), "we should.");
+    }
+
+    #[test]
+    fn complete_delivery_publishes_segments_unjoined() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        for text in ["we should.", "And ship it."] {
+            let heard = heard(directory.path(), text);
+            published.segment(heard, text, None, &mut sinks).unwrap();
+        }
+
+        assert_eq!(
+            log.entries(),
+            ["segment:we should.", "segment:And ship it."]
+        );
     }
 
     #[test]

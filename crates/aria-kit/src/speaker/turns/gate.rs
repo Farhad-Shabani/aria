@@ -37,6 +37,9 @@ pub struct Gate {
     /// of speech still passes when this was enough: decode windows lag the
     /// words at a boundary.
     previous_speech: u64,
+    /// An owner-only release dropped a whole segment, so the next one's
+    /// reading describes words that never went out.
+    dropped_since_release: bool,
 }
 
 /// The decoder's latest provisional text.
@@ -85,6 +88,7 @@ impl Gate {
             held: VecDeque::new(),
             provisional: None,
             previous_speech: 0,
+            dropped_since_release: false,
         }
     }
 
@@ -171,20 +175,25 @@ impl Gate {
             if timeline.is_broken() {
                 tracing::debug!("segment not delivered: nothing can be judged");
                 decision.dropped.push(heard);
+                self.dropped_since_release = true;
                 continue;
             }
             let Some(keep) = word_admissions(timeline, &heard, self.from) else {
                 self.held.push_front(heard);
                 break;
             };
-            let Some(segment) = heard.segment.keeping(&keep) else {
+            let Some(mut segment) = heard.segment.keeping(&keep) else {
                 tracing::debug!("segment in another voice not delivered");
                 decision.dropped.push(heard);
+                self.dropped_since_release = true;
                 continue;
             };
             if segment.word_spans().is_some() {
                 heard.span = segment.span();
                 heard.window = segment.span().unwrap_or(heard.window);
+            }
+            if std::mem::take(&mut self.dropped_since_release) {
+                segment = segment.with_sentence_ended_before(None);
             }
             heard.segment = segment;
             decision.released.push(Released::new(heard, timeline));

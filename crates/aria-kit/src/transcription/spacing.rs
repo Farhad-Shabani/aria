@@ -40,14 +40,25 @@ impl Caret {
     /// To retry a failed typing, insert again from a copy taken before.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert(&mut self, text: &str) -> String {
+        let trailing = self.needs_trailing_space(text);
+        let mut spaced = self.insert_open(text);
+        if trailing {
+            spaced.push(' ');
+            self.before_that = self.before;
+            self.before = Some(' ');
+        }
+        spaced
+    }
+
+    /// Like [`Caret::insert`], but leaves `text`'s end open so the next
+    /// insertion can attach to it. A later insert supplies the space.
+    #[must_use = "the caret has moved past text that must be typed"]
+    pub fn insert_open(&mut self, text: &str) -> String {
         let mut spaced = String::with_capacity(text.len() + 2);
         if self.needs_leading_space(text) {
             spaced.push(' ');
         }
         spaced.push_str(text);
-        if self.needs_trailing_space(text) {
-            spaced.push(' ');
-        }
         let mut typed = spaced.chars().rev();
         if let Some(last) = typed.next() {
             self.before_that = typed.next().or(self.before);
@@ -210,6 +221,19 @@ mod tests {
         assert_eq!(spaced("", "Hello", " "), "Hello");
         assert_eq!(spaced("", "Hello", "."), "Hello");
         assert_eq!(spaced("", "(", "w"), "(");
+    }
+
+    #[test]
+    fn an_open_insert_lets_the_next_text_attach_before_the_caret() {
+        let mut caret = Caret::between("foo", "bar");
+
+        let typed = [
+            caret.insert_open("we should"),
+            caret.insert_open(". Ship it"),
+            caret.insert("."),
+        ];
+
+        assert_eq!(typed, [" we should", ". Ship it", ". "]);
     }
 
     #[test]

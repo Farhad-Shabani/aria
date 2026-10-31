@@ -33,9 +33,13 @@ impl<D: TextDelivery> Cursor<D> {
         }
     }
 
-    /// Types `text` where the press landed, or nowhere when the press
-    /// asked only for its transcript.
-    fn deliver(&mut self, mode: DeliveryMode, text: &str) -> Result<(), DeliveryError> {
+    /// Types the utterance where the press landed, if that place still
+    /// takes text.
+    fn deliver(
+        &mut self,
+        mode: DeliveryMode,
+        utterance: &Utterance<'_>,
+    ) -> Result<(), DeliveryError> {
         let Some(target) = self.target.as_mut() else {
             return Ok(());
         };
@@ -46,10 +50,14 @@ impl<D: TextDelivery> Cursor<D> {
             target.finished = true;
             return Err(error);
         }
-        let spaced = target
+        let caret = target
             .caret
-            .get_or_insert_with(|| self.delivery.caret(&target.prepared))
-            .insert(text);
+            .get_or_insert_with(|| self.delivery.caret(&target.prepared));
+        let spaced = if utterance.defers_ending {
+            caret.insert_open(utterance.text)
+        } else {
+            caret.insert(utterance.text)
+        };
         let outcome =
             match self
                 .delivery
@@ -104,14 +112,14 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
     }
 
     fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DeliveryError> {
-        self.deliver(DeliveryMode::Streaming, utterance.text)
+        self.deliver(DeliveryMode::Streaming, &utterance)
     }
 
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DeliveryError> {
         if self.target.as_ref().is_none_or(|target| target.finished) {
             return Ok(());
         }
-        self.deliver(DeliveryMode::Complete, utterance.text)?;
+        self.deliver(DeliveryMode::Complete, &utterance)?;
         let Some(target) = self.target.as_mut() else {
             return Ok(());
         };
@@ -475,7 +483,11 @@ mod tests {
         }
     }
 
-    fn streamed_into(before: &str, after: &str, segments: &[&str]) -> Vec<String> {
+    fn streamed_into<'a>(
+        before: &str,
+        after: &str,
+        utterances: impl IntoIterator<Item = Utterance<'a>>,
+    ) -> Vec<String> {
         let log = CallLog::default();
         let mut cursor = Cursor::new(FieldWithText {
             delivery: RecordingDelivery {
@@ -492,8 +504,8 @@ mod tests {
                 &control,
             )
             .unwrap();
-        for segment in segments {
-            cursor.segment(Utterance::anonymous(segment)).unwrap();
+        for utterance in utterances {
+            cursor.segment(utterance).unwrap();
         }
         log.entries()[1..].to_vec()
     }
@@ -525,7 +537,7 @@ mod tests {
     #[test]
     fn text_after_a_sentence_starts_with_a_space() {
         assert_eq!(
-            streamed_into("Hello.", "", &["How are you"]),
+            streamed_into("Hello.", "", ["How are you"].map(Utterance::anonymous)),
             ["deliver: How are you"]
         );
     }
@@ -533,11 +545,11 @@ mod tests {
     #[test]
     fn later_segments_are_spaced_by_what_was_typed() {
         assert_eq!(
-            streamed_into("(", "", &["hello", "there"]),
+            streamed_into("(", "", ["hello", "there"].map(Utterance::anonymous)),
             ["deliver:hello", "deliver: there"]
         );
         assert_eq!(
-            streamed_into("", "", &["你好", "世界"]),
+            streamed_into("", "", ["你好", "世界"].map(Utterance::anonymous)),
             ["deliver:你好", "deliver:世界"]
         );
     }
@@ -545,8 +557,26 @@ mod tests {
     #[test]
     fn a_word_after_the_caret_keeps_its_distance() {
         assert_eq!(
-            streamed_into("", "w", &["hello", "there"]),
+            streamed_into("", "w", ["hello", "there"].map(Utterance::anonymous)),
             ["deliver:hello ", "deliver:there "]
+        );
+    }
+
+    #[test]
+    fn a_deferred_period_attaches_before_the_text_after_the_caret() {
+        let deferring = |text| Utterance {
+            defers_ending: true,
+            ..Utterance::anonymous(text)
+        };
+        let utterances = [
+            deferring("we should"),
+            deferring(". Ship it"),
+            Utterance::anonymous("."),
+        ];
+
+        assert_eq!(
+            streamed_into("foo", "bar", utterances),
+            ["deliver: we should", "deliver:. Ship it", "deliver:. "]
         );
     }
 }

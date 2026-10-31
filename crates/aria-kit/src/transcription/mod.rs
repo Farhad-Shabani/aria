@@ -4,11 +4,13 @@ mod agreement;
 mod heard;
 pub mod layer;
 mod native;
+mod sentences;
 mod session;
 mod spacing;
 
 pub use heard::{Heard, HeardUpdate, next_heard, next_heard_update};
 pub use layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats, Vocabulary};
+pub use sentences::{Punctuated, SentenceEnds};
 pub use spacing::Caret;
 
 use std::path::PathBuf;
@@ -1041,6 +1043,9 @@ pub struct TranscriptSegment {
     /// Where each word of `text` sits, in order, when every word was timed.
     /// Cleared whenever the text is rewritten.
     word_spans: Option<Vec<std::ops::Range<u64>>>,
+    /// Whether the word before this segment ended a sentence. `None` when
+    /// no decode read that boundary.
+    sentence_ended_before: Option<bool>,
 }
 
 impl TranscriptSegment {
@@ -1057,6 +1062,7 @@ impl TranscriptSegment {
             span,
             word_spans: None,
             source_window: None,
+            sentence_ended_before: None,
         })
     }
 
@@ -1067,6 +1073,7 @@ impl TranscriptSegment {
             span,
             word_spans: None,
             source_window: None,
+            sentence_ended_before: None,
         })
     }
 
@@ -1079,6 +1086,7 @@ impl TranscriptSegment {
             span: Some(span),
             word_spans: Some(words.iter().map(|(_, span)| span.clone()).collect()),
             source_window: None,
+            sentence_ended_before: None,
         })
     }
 
@@ -1095,6 +1103,19 @@ impl TranscriptSegment {
     /// Where each word sits, in order, when every word was timed.
     pub fn word_spans(&self) -> Option<&[std::ops::Range<u64>]> {
         self.word_spans.as_deref()
+    }
+
+    /// Whether the word before this segment ended a sentence, as the decode
+    /// that delivered it heard. A streamed segment decoded with the audio
+    /// before its cut carries the model's own reading. `None` when unknown.
+    pub fn sentence_ended_before(&self) -> Option<bool> {
+        self.sentence_ended_before
+    }
+
+    #[must_use]
+    pub fn with_sentence_ended_before(mut self, ended: Option<bool>) -> Self {
+        self.sentence_ended_before = ended;
+        self
     }
 
     pub fn source_window(&self) -> Option<std::ops::Range<u64>> {
@@ -1170,6 +1191,8 @@ impl TranscriptSegment {
             .collect();
         let mut segment = Self::timed(&words)?;
         segment.source_window.clone_from(&self.source_window);
+        // The reading describes the word before the first one.
+        segment.sentence_ended_before = self.sentence_ended_before.filter(|_| keep[0]);
         Some(segment)
     }
 

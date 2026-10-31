@@ -26,6 +26,8 @@ pub(super) struct Segment {
     pub(super) span_samples: Option<std::ops::Range<u64>>,
     pub(super) emitted_ms: u128,
     pub(super) available_samples: u64,
+    /// The decoder's reading of the boundary before the segment.
+    pub(super) sentence_ended_before: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -16,12 +16,16 @@ use crate::speaker::Label;
 /// stamp. `span` is which audio these words are, and only an engine that
 /// times its words can say — without it a sink has text to write but nothing
 /// to attribute a voice by.
+///
+/// `defers_ending` holds `text`'s closing mark back for the next
+/// utterance, so a sink that types must leave `text`'s end open.
 #[derive(Clone)]
 pub(crate) struct Utterance<'a> {
     pub(crate) text: &'a str,
     pub(crate) speaker: Option<&'a Label>,
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,
+    pub(crate) defers_ending: bool,
 }
 
 impl<'a> Utterance<'a> {
@@ -33,6 +37,7 @@ impl<'a> Utterance<'a> {
             speaker: None,
             at: 0,
             span: None,
+            defers_ending: false,
         }
     }
 }

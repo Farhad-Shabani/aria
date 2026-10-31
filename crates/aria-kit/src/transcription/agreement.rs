@@ -7,6 +7,7 @@ use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::cancel::CancelToken;
 use crate::primitives::error_chain;
 
+use super::sentences::ends_sentence;
 use super::{
     ChunkStep, Hypothesis, SILENCE_FLOOR, Transcript, TranscriptSegment, TranscriptUpdate,
     TranscriptionError, check_cancelled,
@@ -88,6 +89,16 @@ const RESTORE_ANCHOR_WORDS: usize = 4;
 const RESTORE_MIN_MISSING_WORDS: usize = 3;
 const RESTORE_TIMING_TOLERANCE_SAMPLES: u64 = canonical_samples(Duration::from_millis(240));
 const RESTORE_MARGIN_SAMPLES: u64 = canonical_samples(Duration::from_millis(96));
+/// Audio before a cut, decoded again with the buffer. Alone, a buffer
+/// always opens a new sentence.
+const LOOKBACK_SAMPLES: u64 = canonical_samples(Duration::from_secs(3));
+
+/// A cut the decodes still reach back past.
+#[derive(Default)]
+struct Lookback {
+    /// How the latest decode wrote the last word before the cut.
+    sentence_ended_at_cut: Option<bool>,
+}
 
 /// Drives a growing buffer of audio through [`Agreement`] and delivers what
 /// it confirms, one segment per step.
@@ -109,6 +120,10 @@ pub struct AgreementState {
     pending_segment: Option<TranscriptSegment>,
     pending_preview: Option<(String, std::ops::Range<u64>)>,
     finished: bool,
+    lookback: Option<Lookback>,
+    /// The engine times no words, so a lookback can't be split off. Every
+    /// buffer from here on decodes alone.
+    untimed: bool,
 }
 
 impl AgreementState {
@@ -123,21 +138,35 @@ impl AgreementState {
             pending_segment: None,
             pending_preview: None,
             finished: false,
+            lookback: None,
+            untimed: false,
         }
     }
 
-    /// The earliest position a reader may still need. Usually the buffer's
-    /// opening, but a cap-forced trim moves that past a segment it has not
-    /// handed over yet — and that segment's reader still wants its audio.
+    /// The earliest position a reader may still need. Never decreases: a
+    /// cut lands at or after the opening, so the next lookback starts no
+    /// earlier. A cap-forced trim moves the opening past a segment nobody
+    /// has taken yet, whose reader still wants its audio.
     pub(super) fn retained_from(&self) -> u64 {
         let pending = self
             .pending_segment
             .as_ref()
             .and_then(TranscriptSegment::source_window)
             .map(|span| span.start);
+        let opening = self.lookback_from();
         match pending {
-            Some(start) => start.min(self.buffer_start),
-            None => self.buffer_start,
+            Some(start) => start.min(opening),
+            None => opening,
+        }
+    }
+
+    /// Where a lookback starts. The buffer's opening when the engine times
+    /// no words.
+    fn lookback_from(&self) -> u64 {
+        if self.untimed {
+            self.buffer_start
+        } else {
+            self.buffer_start.saturating_sub(LOOKBACK_SAMPLES)
         }
     }
 
@@ -254,16 +283,26 @@ impl AgreementState {
         let behind =
             available.saturating_sub(self.decoded_end + self.cadence.stride_samples as u64);
         self.decoded_end = available;
+        // The decode opens on the lookback until the buffer has delivered
+        // its first words.
+        let decode_from = if self.lookback.is_some() {
+            self.lookback_from()
+        } else {
+            self.buffer_start
+        };
         // The width this step handed the model, read before the trim moves
         // the buffer on.
-        let decoded = available - self.buffer_start;
+        let decoded = available - decode_from;
 
         let buffer = recording.span(self.buffer_start..available);
-        let (hypothesis, decode_ms) = timed(|| decode(buffer));
+        let (hypothesis, decode_ms) = timed(|| decode(recording.span(decode_from..available)));
         let hypothesis = hypothesis?;
         check_cancelled(cancel)?;
+        if hypothesis.words().is_empty() && !hypothesis.as_str().trim().is_empty() {
+            self.untimed = true;
+        }
         let loudness = Loudness::of(buffer);
-        let heard = self.hear(&hypothesis, &loudness);
+        let heard = self.hear(&hypothesis, &loudness, decode_from);
         let heard_count = heard.len();
         let skipped = self.skipped_speech(&loudness, &heard);
         let (confirmed, settled) = self.agreement.agree(heard, skipped);
@@ -292,15 +331,38 @@ impl AgreementState {
         }))
     }
 
-    /// The decode's words at their stream positions, untimed when timings do
-    /// not align. Empty when the buffer holds only the last pause, or when
-    /// the words come too dense to be real.
-    fn hear(&self, hypothesis: &Hypothesis, loudness: &Loudness) -> Vec<Word> {
+    /// The decode's words at their stream positions, untimed when timings
+    /// do not align. A lookback decode keeps only the buffer's own words,
+    /// and reads the cut from the one before them. Empty when none can go
+    /// out.
+    fn hear(&mut self, hypothesis: &Hypothesis, loudness: &Loudness, from: u64) -> Vec<Word> {
         if self.opened_in_pause && loudness.silent() {
             tracing::debug!("buffer holds only the pause; decode ignored");
             return Vec::new();
         }
-        let words = self.words_of(hypothesis);
+        let mut words = self.words_of(hypothesis, from);
+        if let Some(lookback) = &mut self.lookback
+            && from < self.buffer_start
+        {
+            if words.iter().any(|word| word.span.is_none()) {
+                tracing::debug!("lookback decode has an untimed word; buffers decode alone");
+                self.untimed = true;
+                self.lookback = None;
+                return Vec::new();
+            }
+            let buffer_words = words
+                .iter()
+                .position(|word| {
+                    word.span
+                        .as_ref()
+                        .is_some_and(|span| span.start >= self.buffer_start)
+                })
+                .unwrap_or(words.len());
+            let mut heard_before = words.drain(..buffer_words);
+            lookback.sentence_ended_at_cut = heard_before
+                .next_back()
+                .map(|word| ends_sentence(&word.text));
+        }
         if crammed(&words) {
             tracing::debug!(words = words.len(), "decode invented words");
             return Vec::new();
@@ -308,9 +370,11 @@ impl AgreementState {
         words
     }
 
-    fn words_of(&self, hypothesis: &Hypothesis) -> Vec<Word> {
+    fn words_of(&self, hypothesis: &Hypothesis, from: u64) -> Vec<Word> {
         let texts: Vec<&str> = hypothesis.as_str().split_whitespace().collect();
-        let mut spans = self.spans_of(hypothesis, texts.len()).map(Vec::into_iter);
+        let mut spans = self
+            .spans_of(hypothesis, from, texts.len())
+            .map(Vec::into_iter);
         texts
             .iter()
             .map(|text| Word {
@@ -320,16 +384,22 @@ impl AgreementState {
             .collect()
     }
 
-    /// Where each word sits in the decoded audio. A decode with any
-    /// impossible timing counts as untimed: its text still agrees.
-    fn spans_of(&self, hypothesis: &Hypothesis, words: usize) -> Option<Vec<std::ops::Range<u64>>> {
+    /// Where each word sits in the decoded audio, which opened at `from`.
+    /// A decode with any impossible timing counts as untimed: its text
+    /// still agrees.
+    fn spans_of(
+        &self,
+        hypothesis: &Hypothesis,
+        from: u64,
+        words: usize,
+    ) -> Option<Vec<std::ops::Range<u64>>> {
         if hypothesis.words().len() != words {
             return None;
         }
         let spans: Result<Vec<_>, TranscriptionError> = hypothesis
             .words()
             .iter()
-            .map(|word| super::bounded_span(word.span_from(self.buffer_start)?, self.decoded_end))
+            .map(|word| super::bounded_span(word.span_from(from)?, self.decoded_end))
             .collect();
         spans
             .inspect_err(|error| {
@@ -338,8 +408,17 @@ impl AgreementState {
             .ok()
     }
 
+    /// A segment carries its own reading of the boundary before it, or the
+    /// lookback's reading of the cut.
     fn commit(&mut self, segment: Option<TranscriptSegment>) -> Option<TranscriptSegment> {
-        let mut segment = segment;
+        let mut segment = segment.map(|segment| {
+            let at_cut = self
+                .lookback
+                .take()
+                .and_then(|lookback| lookback.sentence_ended_at_cut);
+            let ended_before = segment.sentence_ended_before().or(at_cut);
+            segment.with_sentence_ended_before(ended_before)
+        });
         if let Some(segment) = &mut segment {
             segment.source_window = Some(self.buffer_start..self.decoded_end);
             self.transcript.push(segment.as_str().to_owned());
@@ -417,6 +496,7 @@ impl AgreementState {
     ) -> Option<TranscriptSegment> {
         self.buffer_start = cut;
         self.opened_in_pause = in_pause;
+        self.lookback = Some(Lookback::default());
         self.agreement = self.agreement.next_buffer();
         tail
     }
@@ -556,7 +636,7 @@ impl Agreement {
             None => agreed,
         };
         let confirmed = if deliverable > start {
-            self.deliver(&current[start..deliverable])
+            self.deliver(&current[start..deliverable], ended_before(&current, start))
         } else {
             None
         };
@@ -824,11 +904,12 @@ impl Agreement {
         lost > TOLERATED_LOSS
     }
 
-    /// Hands `words` over, and remembers them.
-    fn deliver(&mut self, words: &[Word]) -> Option<TranscriptSegment> {
+    /// Hands `words` over, and remembers them. `ended_before` is how the
+    /// decode heard the word before them.
+    fn deliver(&mut self, words: &[Word], ended_before: Option<bool>) -> Option<TranscriptSegment> {
         self.delivered_through = ends_at(words, self.delivered_through);
         self.delivered.extend_from_slice(words);
-        segment_of(words)
+        segment_of(words).map(|segment| segment.with_sentence_ended_before(ended_before))
     }
 
     fn tail_range(&self, skipped: Option<u64>) -> std::ops::Range<usize> {
@@ -856,8 +937,9 @@ impl Agreement {
     fn take_tail(&mut self, skipped: Option<u64>) -> Option<TranscriptSegment> {
         let range = self.tail_range(skipped);
         self.emitted = range.end;
+        let ended_before = ended_before(&self.candidate, range.start);
         let tail: Vec<Word> = self.candidate.drain(range).collect();
-        self.deliver(&tail)
+        self.deliver(&tail, ended_before)
     }
 }
 
@@ -901,6 +983,13 @@ fn lcp(previous: &[Word], current: &[Word]) -> usize {
         .zip(current)
         .take_while(|(left, right)| spoken(&left.text) == spoken(&right.text))
         .count()
+}
+
+/// Whether the word before `at` ended a sentence. `None` when `at` opens
+/// `words`.
+fn ended_before(words: &[Word], at: usize) -> Option<bool> {
+    at.checked_sub(1)
+        .map(|before| ends_sentence(&words[before].text))
 }
 
 /// Ignores case and punctuation when comparing successive decodes.
@@ -1122,6 +1211,8 @@ mod tests {
     /// steps it took.
     struct Run {
         segments: Vec<String>,
+        /// Each segment's reading of the boundary before it.
+        ended_before: Vec<Option<bool>>,
         final_transcript: Option<String>,
         windows: Vec<usize>,
         steps: usize,
@@ -1149,6 +1240,7 @@ mod tests {
         let cancel = CancelToken::new();
         let mut run = Run {
             segments: Vec::new(),
+            ended_before: Vec::new(),
             final_transcript: None,
             windows: Vec::new(),
             steps: 0,
@@ -1168,6 +1260,7 @@ mod tests {
             let Some(step) = step else { break };
             run.steps += 1;
             if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                run.ended_before.push(segment.sentence_ended_before());
                 run.segments.push(segment.into_text());
             }
             // A trailing pending-tail step carries no transcript; like
@@ -2094,15 +2187,19 @@ mod tests {
             .unwrap();
             pending.source_window = Some(STRIDE as u64..2 * STRIDE as u64);
             state.pending_segment = Some(pending);
-            assert_eq!(state.retained_from(), STRIDE as u64);
+            assert_eq!(state.retained_from(), 0);
 
             state.pending_segment = None;
+            // The lookback reaches back to the start of the recording.
+            assert_eq!(state.retained_from(), 0);
+            state.untimed = true;
             assert_eq!(state.retained_from(), 10 * STRIDE as u64);
         }
 
         #[test]
         fn an_untimed_cap_tail_keeps_the_decode_window_after_trim() {
             let mut state = AgreementState::new(cadence(5_000));
+            state.untimed = true;
             state.buffer_start = STRIDE as u64;
             state.decoded_end = 10 * STRIDE as u64;
             let confirmed = state.commit(TranscriptSegment::spanned(&["owner".into()], None));
@@ -2386,6 +2483,64 @@ mod tests {
         }
 
         #[test]
+        fn a_buffer_after_a_cut_hears_its_lookback_and_reads_the_boundary() {
+            // Alone, the second buffer is a sentence: "Two." With "one"
+            // before it, the model hears the sentence go on. The words
+            // before the cut are not delivered again.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, timings) = whole_words(&SPOKEN, window);
+                    let text = match words.as_slice() {
+                        ["one"] => "one.",
+                        ["one", "two"] => "one two",
+                        ["two"] => "Two.",
+                        _ => "",
+                    };
+                    Hypothesis::with_words(text, timings)
+                },
+                |_| {},
+            );
+
+            // Only a decode that heard "one" too writes "two" that way.
+            assert_eq!(run.segments, ["one.", "two"]);
+            assert_eq!(run.ended_before, [None, Some(false)]);
+        }
+
+        #[test]
+        fn an_untimed_lookback_decode_makes_the_buffers_decode_alone() {
+            // The decode that opens on the lookback comes back without
+            // timings, so its words can't be split at the cut. Nothing is
+            // lost: the buffer decodes alone from then on.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, timings) = whole_words(&SPOKEN, window);
+                    match words.as_slice() {
+                        ["one", "two"] => Hypothesis::new("one two"),
+                        ["one"] => Hypothesis::with_words("one.", timings),
+                        ["two"] => Hypothesis::with_words("Two.", timings),
+                        _ => Hypothesis::new(""),
+                    }
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.segments, ["one.", "Two."]);
+            assert_eq!(run.ended_before, [None, None]);
+        }
+
+        #[test]
         fn a_pause_that_outlives_the_cap_is_still_a_pause() {
             // A pause cut, then nothing but silence past the cap: the cap
             // cut must not make the next buffer hear the hallucination.
@@ -2561,13 +2716,17 @@ mod tests {
             ];
             let audio = spoken_audio(&SPOKEN, 3.0);
             let (_directory, mut recording, pace) = paced(strides(&audio));
+            // Only the first buffer misses the words after "a". The cap
+            // bounds its windows; the windows after the cut open on the
+            // lookback and are longer.
+            let cap = sample_at(2.0);
             let run = run(
                 AgreementState::new(cadence(2_000)),
                 &mut recording,
                 Some(&pace),
                 |window| {
                     let (mut words, mut timings) = whole_words(&SPOKEN, window);
-                    if words.first() == Some(&"a") {
+                    if window.len() <= cap && words.first() == Some(&"a") {
                         words.truncate(1);
                         timings.truncate(1);
                     }
@@ -3001,7 +3160,9 @@ mod tests {
             let speech = Speech::random(&mut rng, noise.timed);
             let truth = speech.names.clone();
             let max_buffer_ms = [1_500, 3_000, 20_000][rng.below(3) as usize];
-            let max_window = max_buffer_ms * CANONICAL_SAMPLE_RATE as usize / 1000 + 2 * STRIDE;
+            let max_window = max_buffer_ms * CANONICAL_SAMPLE_RATE as usize / 1000
+                + 2 * STRIDE
+                + LOOKBACK_SAMPLES as usize;
             let (_directory, mut recording, pace) = match arrival {
                 Arrival::Live => {
                     let (directory, recording, pace) = paced(speech.batches);
