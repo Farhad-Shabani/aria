@@ -727,7 +727,7 @@ struct Published<'a> {
     streaming: bool,
     /// Every segment's text so far, spaced as the cursor typed it. Text
     /// that failed to type counts too, so no word is lost.
-    kept: String,
+    written: String,
     /// The ghost text shown, until the next segment lands.
     ghost: Option<Arc<str>>,
     sentences: SentenceEnds,
@@ -751,7 +751,7 @@ impl<'a> Published<'a> {
     ) -> Self {
         Self {
             streaming: settings.delivery_mode == DeliveryMode::Streaming,
-            kept: String::new(),
+            written: String::new(),
             ghost: None,
             sentences: SentenceEnds::default(),
             heard_to: 0,
@@ -786,7 +786,7 @@ impl<'a> Published<'a> {
         if corrected.is_empty() {
             return Ok(());
         }
-        let first = self.kept.is_empty();
+        let first = self.written.is_empty();
         // Complete delivery types the decoder's own transcript, so joining
         // here would only make the caption disagree with it.
         let punctuated = if self.streaming {
@@ -875,8 +875,8 @@ impl<'a> Published<'a> {
     }
 
     fn keep(&mut self, text: &str) {
-        let spaced = Caret::between(&self.kept, "").insert(text);
-        self.kept.push_str(&spaced);
+        let spaced = Caret::between(&self.written, "").insert(text);
+        self.written.push_str(&spaced);
     }
 
     /// Tells clients what was published, and when streaming, that it was
@@ -916,7 +916,7 @@ impl<'a> Published<'a> {
             });
         }
         self.close_last_sentence(sinks);
-        let transcript = Transcript::new(std::mem::take(&mut self.kept))
+        let transcript = Transcript::new(std::mem::take(&mut self.written))
             .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
         let completed = self.completion.publish(Some(&transcript), sinks);
         if let Some(error) = self.failure.take() {
