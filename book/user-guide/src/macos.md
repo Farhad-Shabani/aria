@@ -12,11 +12,13 @@ It appears in the menu bar. To run setup again, open **Aria Setup** in
 Aria needs two permissions:
 
 - **Microphone** to hear you. Allow access when macOS asks. If you previously
-  denied it, switch on **Aria** in
+  denied it, turn on **Aria** in
   **System Settings → Privacy & Security → Microphone**.
 - **Accessibility** to read the hotkey and type into other apps. When macOS
-  asks, choose **Open System Settings** and switch on **Aria**. If it isn't
-  listed, click **+** and choose
+  asks, choose **Open System Settings** and turn on **Aria**. The switch is
+  under **System Settings → Privacy & Security → Device Control and Data
+  Access** (**Accessibility** before macOS 27). If Aria isn't listed, click **+**
+  and choose
   `/Applications/Aria.app/Contents/Helpers/Aria.app`. Use **⌘⇧G** in the
   file picker to enter that path.
 

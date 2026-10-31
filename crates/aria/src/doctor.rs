@@ -13,6 +13,7 @@ use crate::config::{
 };
 use crate::daemon::RELAY_SERVICE_TYPE;
 use crate::delivery::{PlatformTextDelivery, TextDelivery};
+use crate::hotkey::PlatformHotkeyListener;
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
@@ -364,11 +365,9 @@ fn running_daemon(
         return Check::warning(
             DAEMON,
             format!(
-                "running at {}, but the dictation hotkey is waiting for the Accessibility \
-                 grant: System Settings → Privacy & Security → Accessibility → + → {}; \
-                 it arms within ~3s",
+                "running at {}, but {}",
                 socket.display(),
-                accessibility_target_label()
+                hotkey_unarmed_reason()
             ),
         );
     }
@@ -391,24 +390,9 @@ fn serving_suffix(wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> &'
     }
 }
 
-/// What to add under Accessibility: the bundle around the real binary, not a
-/// symlink an installer put on PATH.
-pub fn accessibility_target_label() -> String {
-    std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .map(|exe| accessibility_target(&exe).display().to_string())
-        .unwrap_or_else(|_| "the aria binary".to_owned())
-}
-
-fn accessibility_target(exe: &Path) -> &Path {
-    let bundle = exe
-        .parent()
-        .filter(|dir| dir.ends_with("Contents/MacOS"))
-        .and_then(|dir| dir.parent()?.parent());
-    match bundle {
-        Some(bundle) if bundle.extension().is_some_and(|ext| ext == "app") => bundle,
-        _ => exe,
-    }
+/// Why the dictation hotkey is not armed, and the fix when one exists.
+pub fn hotkey_unarmed_reason() -> String {
+    PlatformHotkeyListener::unarmed_reason()
 }
 
 fn wake_is_enabled(wake: Option<&WakeConfig>) -> bool {
@@ -610,18 +594,5 @@ mod tests {
 
         assert!(!healthy.has_failure());
         assert!(broken.has_failure());
-    }
-
-    #[test]
-    fn a_bundled_binary_is_granted_through_its_bundle() {
-        let bundled =
-            Path::new("/Applications/Aria.app/Contents/Helpers/Aria.app/Contents/MacOS/aria");
-        let loose = Path::new("/usr/local/bin/aria");
-
-        assert_eq!(
-            accessibility_target(bundled),
-            Path::new("/Applications/Aria.app/Contents/Helpers/Aria.app")
-        );
-        assert_eq!(accessibility_target(loose), loose);
     }
 }

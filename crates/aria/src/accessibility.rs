@@ -4,11 +4,12 @@
 //! A new process always asks tccd.
 
 use std::io;
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use cidre::ax;
+use cidre::{ax, ns};
 
 use crate::primitives::error_chain;
 use crate::primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
@@ -18,6 +19,8 @@ pub const CHECK_SUBCOMMAND: &str = "accessibility-check";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 /// Matches the hotkey health check, so delivery seldom waits on a check.
 const REUSE_ANSWER_FOR: Duration = Duration::from_secs(3);
+
+const PANE_RENAMED_IN_MACOS: isize = 27;
 
 static LAST_ANSWER: Mutex<Option<Answer>> = Mutex::new(None);
 
@@ -101,6 +104,40 @@ impl Trust {
     }
 }
 
+/// The Privacy & Security list in System Settings that holds this grant.
+pub fn settings_pane() -> &'static str {
+    static PANE: OnceLock<&str> = OnceLock::new();
+    PANE.get_or_init(|| settings_pane_for(ns::ProcessInfo::current().os_version().major))
+}
+
+fn settings_pane_for(macos_major: isize) -> &'static str {
+    if macos_major >= PANE_RENAMED_IN_MACOS {
+        "Device Control and Data Access"
+    } else {
+        "Accessibility"
+    }
+}
+
+/// What to add to the grant's Settings list: the app bundle around the
+/// binary, else the binary itself, with symlinks resolved.
+pub fn target_label() -> String {
+    std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .map(|exe| target(&exe).display().to_string())
+        .unwrap_or_else(|_| "the aria binary".to_owned())
+}
+
+fn target(exe: &Path) -> &Path {
+    let bundle = exe
+        .parent()
+        .filter(|dir| dir.ends_with("Contents/MacOS"))
+        .and_then(|dir| dir.parent()?.parent());
+    match bundle {
+        Some(bundle) if bundle.extension().is_some_and(|ext| ext == "app") => bundle,
+        _ => exe,
+    }
+}
+
 fn runs_from_bundle() -> bool {
     std::env::current_exe().is_ok_and(|exe| is_bundle_executable(&exe))
 }
@@ -172,6 +209,25 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.arg("-c").arg(script);
         command
+    }
+
+    #[test]
+    fn settings_pane_follows_the_macos_27_rename() {
+        assert_eq!(settings_pane_for(26), "Accessibility");
+        assert_eq!(settings_pane_for(27), "Device Control and Data Access");
+    }
+
+    #[test]
+    fn a_bundled_binary_is_granted_through_its_bundle() {
+        let bundled =
+            Path::new("/Applications/Aria.app/Contents/Helpers/Aria.app/Contents/MacOS/aria");
+        let loose = Path::new("/usr/local/bin/aria");
+
+        assert_eq!(
+            target(bundled),
+            Path::new("/Applications/Aria.app/Contents/Helpers/Aria.app")
+        );
+        assert_eq!(target(loose), loose);
     }
 
     #[test]

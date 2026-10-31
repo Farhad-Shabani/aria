@@ -23,9 +23,7 @@ struct ShortcutsSettings: View {
                 // An unknown stored key stays untouched rather than shown as Right Option.
                 .disabled(editor.snapshot.storedDictationHotkey == nil)
             } footer: {
-                Text(
-                    "Tap to dictate, or hold to talk. Requires Accessibility access."
-                )
+                Text("Tap to dictate, or hold to talk. Requires permission in Privacy & Security.")
             }
             Section {
                 HotkeyRecorder(
