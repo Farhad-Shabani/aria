@@ -892,11 +892,7 @@ fn run_setup(yes: bool, skip_models: bool) -> anyhow::Result<()> {
         println!("test press   {press}");
     }
     if summary.grant == Grant::Waiting {
-        println!(
-            "next         grant Accessibility: System Settings → Privacy & Security → \
-             Accessibility → + → {}; the hotkey arms within ~3s",
-            aria::doctor::accessibility_target_label()
-        );
+        println!("next         {}", aria::doctor::hotkey_unarmed_reason());
     }
     if cfg!(target_os = "macos") {
         println!("next         open Aria for the menu bar, then run `aria doctor`");

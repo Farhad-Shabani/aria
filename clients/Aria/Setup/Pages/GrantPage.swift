@@ -11,7 +11,7 @@ struct GrantPage: View {
                     }
                 } label: {
                     Text("Accessibility")
-                    Text("Turn on Aria in Privacy & Security → Accessibility.")
+                    Text("Choose Open System Settings, then switch on Aria.")
                 }
             } footer: {
                 Text("Setup continues on its own once Aria is on.")

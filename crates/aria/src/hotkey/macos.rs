@@ -18,7 +18,7 @@ use objc2_core_graphics::{
 };
 
 use super::{HotkeyKey, KeyEvent, ListenerEvent, ListenerExit, Press, PressDetector};
-use crate::accessibility::Trust;
+use crate::accessibility::{self, Trust};
 
 const PERMISSION_RETRY: Duration = Duration::from_secs(3);
 /// One run-loop slice: bounds shutdown latency, not press latency — the
@@ -72,6 +72,15 @@ impl TapState {
 }
 
 impl MacOsHotkeyListener {
+    pub(crate) fn unarmed_reason() -> String {
+        format!(
+            "the dictation hotkey is waiting for the Accessibility grant: System Settings → \
+             Privacy & Security → {} → + → {}; it arms within ~3s",
+            accessibility::settings_pane(),
+            accessibility::target_label()
+        )
+    }
+
     pub(crate) fn listen(
         key: HotkeyKey,
         events: impl Fn(ListenerEvent),

@@ -233,7 +233,8 @@ pub enum DeliveryError {
     #[cfg(target_os = "macos")]
     #[error(
         "insertion needs the Accessibility grant: System Settings → Privacy & Security \
-         → Accessibility → switch on Aria"
+         → {} → switch on Aria",
+        crate::accessibility::settings_pane()
     )]
     InsertionNotPermitted,
 

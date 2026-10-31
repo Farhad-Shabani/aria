@@ -6,6 +6,10 @@ use super::{HotkeyKey, ListenerEvent, ListenerExit};
 pub(crate) struct LinuxHotkeyListener;
 
 impl LinuxHotkeyListener {
+    pub(crate) fn unarmed_reason() -> String {
+        "the dictation hotkey is not implemented on linux".to_owned()
+    }
+
     pub(crate) fn listen(
         _key: HotkeyKey,
         _events: impl Fn(ListenerEvent),
