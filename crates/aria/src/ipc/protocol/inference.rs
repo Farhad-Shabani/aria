@@ -145,6 +145,7 @@ impl From<Event> for wire::InferenceResponse {
                     }
                     TranscriptUpdate::Finalized(segment) => {
                         wire::inference_update::Body::Finalized(wire::InferenceSegment {
+                            sentence_ended_before: segment.sentence_ended_before(),
                             source_window: segment.source_window().map(wire_span),
                             words: segment
                                 .word_spans()
@@ -261,7 +262,7 @@ fn finalized(
             .with_source_window(window.start_sample..window.end_sample)
             .map_err(|_| ProtocolError::InvalidInference)?;
     }
-    Ok(finalized)
+    Ok(finalized.with_sentence_ended_before(segment.sentence_ended_before))
 }
 
 fn valid_engine(engine: &str) -> bool {
@@ -410,7 +411,8 @@ mod tests {
                     .with_word_spans(vec![12..16, 18..24])
                     .unwrap()
                     .with_source_window(8..32)
-                    .unwrap(),
+                    .unwrap()
+                    .with_sentence_ended_before(Some(false)),
             ),
             retained_from: 8,
             read_to: 32,
@@ -426,6 +428,7 @@ mod tests {
         };
         assert_eq!(segment.word_spans(), Some(&[12..16, 18..24][..]));
         assert_eq!(segment.source_window(), Some(8..32));
+        assert_eq!(segment.sentence_ended_before(), Some(false));
 
         let mut one_word_short = response.clone();
         finalized_mut(&mut one_word_short).words = vec![wire_span(12..16)];
@@ -448,6 +451,7 @@ mod tests {
             body: Some(wire::inference_update::Body::Finalized(
                 wire::InferenceSegment {
                     text: "private words".into(),
+                    sentence_ended_before: None,
                     source_window: None,
                     words: Vec::new(),
                     span: Some(wire::InferenceSpan {
