@@ -1,7 +1,7 @@
 //! The settings a paired phone may change: the ones a relayed recording
 //! reads. Everything else is refused here, so pairing grants no Aria key, no
-//! Mac-side audio control, and no folder path on this Mac. Prompt paths and
-//! per-app choices stay on the Mac in reads too.
+//! Mac-side audio control, and no folder path on this Mac. Prompt paths, the
+//! vocabulary folder and per-app choices stay on the Mac in reads too.
 
 use tonic::{Request, Response, Status};
 
@@ -81,9 +81,13 @@ impl wire::settings_service_server::SettingsService for LanSettings {
     }
 }
 
-/// A prompt's path and an app's bundle ID can name the person.
+/// A path and an app's bundle ID can name the person. An empty folder still
+/// tells the phone that one is set, so it can offer to clear it.
 fn without_mac_choices(snapshot: &mut wire::SettingsSnapshot) {
     if let Some(settings) = &mut snapshot.settings {
+        if settings.vocabulary_dir.is_some() {
+            settings.vocabulary_dir = Some(String::new());
+        }
         settings.prompts = Some(wire::Prompts::default());
         settings.application_overrides = Some(wire::ApplicationOverrides::default());
     }
@@ -339,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn a_phone_snapshot_holds_no_prompts_or_app_choices() {
+    fn a_phone_snapshot_holds_no_paths_or_app_choices() {
         let mut snapshot = wire::SettingsSnapshot {
             revision: 1,
             settings: Some(wire::Settings {
@@ -349,6 +353,7 @@ mod tests {
                         ..Default::default()
                     }],
                 }),
+                vocabulary_dir: Some("/Users/you/project".to_owned()),
                 ..Default::default()
             }),
         };
@@ -357,6 +362,7 @@ mod tests {
 
         let settings = snapshot.settings.unwrap();
         assert_eq!(settings.prompts, Some(wire::Prompts::default()));
+        assert_eq!(settings.vocabulary_dir.as_deref(), Some(""));
         assert_eq!(
             settings.application_overrides,
             Some(wire::ApplicationOverrides::default())
