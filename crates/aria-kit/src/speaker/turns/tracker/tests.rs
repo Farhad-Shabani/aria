@@ -426,7 +426,9 @@ fn a_later_verified_owner_resolves_the_earlier_pending_prefix() {
     assert!(!judgments(&voices).contains(&Judgment::Pending));
     let mut held = Gate::new(Admission::OwnerOnly, 0);
     held.hold(heard_text("before", seconds(5.0, 5.5)));
-    held.hold(heard_text("owner", seconds(6.0, 7.0)));
+    let mut owner = heard_text("owner", seconds(6.0, 7.0));
+    owner.segment = owner.segment.with_sentence_ended_before(Some(false));
+    held.hold(owner);
     let decision = held.decide(&voices.timeline, None);
     let released: Vec<&str> = decision
         .released
@@ -440,6 +442,11 @@ fn a_later_verified_owner_resolves_the_earlier_pending_prefix() {
         .collect();
     assert_eq!(released, ["owner"]);
     assert_eq!(dropped, ["before"]);
+    // The verdict read the dropped words, which never went out.
+    assert_eq!(
+        decision.released[0].heard.segment.sentence_ended_before(),
+        None
+    );
 }
 
 #[test]
