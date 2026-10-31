@@ -167,6 +167,7 @@ private struct CheckForUpdatesButton: View {
                 Spacer()
                 if updates.isUpdateAvailable {
                     Circle().fill(.tint).frame(width: Self.dotSide, height: Self.dotSide)
+                        .accessibilityHidden(true)
                 }
             }
         }
