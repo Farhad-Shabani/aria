@@ -13,6 +13,7 @@ struct SettingsView: View {
     let voices: VoiceProfiles
     let serverTranscription: ServerTranscription
     let settingsHealth: SettingsHealth
+    @ObservedObject var paneRequest: SettingsPaneRequest
     @StateObject private var assistantCatalog = AssistantCatalog()
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
@@ -47,6 +48,11 @@ struct SettingsView: View {
         }
         .onChange(of: history.current.pane) { _, pane in
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
+        }
+        .onChange(of: paneRequest.pane, initial: true) { _, pane in
+            guard let pane else { return }
+            history.open(.pane(pane))
+            paneRequest.pane = nil
         }
         .task { await settings.sync() }
         .task { await assistantCatalog.load() }

@@ -8,6 +8,7 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = WindowPresentation()
+    let settingsPaneRequest = SettingsPaneRequest()
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
     let setupStatus = SetupStatus()
@@ -19,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let areCaptionsEnabledByDefault = false
     private static let setupOfferedKey = "setupOffered"
 
+    private let dockPresence = DockPresence()
     private let events = DaemonEvents()
     private let panel = FloatingPanel(
         width: OverlayStyle.captionWidth, bottomMargin: OverlayStyle.captionBottomMargin)
@@ -93,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        dockPresence.start()
         let launchKind = NSAppleEventManager.shared().currentAppleEvent?
             .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
         settings.didLaunch(atLogin: launchKind == keyAELaunchedAsLogInItem)
@@ -158,6 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // AppKit restores a minimized window only when this returns true.
+        if DockPresence.needsDockIcon(windows: sender.windows) { return true }
         settings.request()
         return false
     }
