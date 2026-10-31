@@ -208,6 +208,7 @@ impl Composed {
                     let emitted_ms = started.elapsed().as_millis();
                     segments.push(Segment {
                         span_samples: segment.span(),
+                        sentence_ended_before: segment.sentence_ended_before(),
                         text: segment.into_text(),
                         emitted_ms,
                         available_samples: recording.held_to(),
