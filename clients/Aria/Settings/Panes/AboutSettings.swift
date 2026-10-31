@@ -17,7 +17,7 @@ struct AboutSettings: View {
                     if let copyright = Bundle.main.copyright {
                         Text(copyright).font(.caption).foregroundStyle(.secondary)
                     }
-                    Button("Check for Updates…") { updates.checkForUpdates() }
+                    Button(updates.actionTitle) { updates.checkForUpdates() }
                         .disabled(!updates.canCheck)
                         .padding(.top, 8)
                 }

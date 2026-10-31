@@ -71,7 +71,13 @@ struct AriaApp: App {
             .padding(8)
             .frame(width: 280)
         } label: {
-            MenuBarLabel(poller: poller, status: appDelegate.status, preferences: preferences, controller: appDelegate)
+            MenuBarLabel(
+                poller: poller,
+                status: appDelegate.status,
+                updates: appDelegate.updates,
+                preferences: preferences,
+                controller: appDelegate
+            )
         }
         .menuBarExtraStyle(.window)
 
@@ -117,11 +123,13 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var poller: StatusPoller
     @ObservedObject var status: StatusController
+    @ObservedObject var updates: UpdateController
     let preferences: DaemonPreferences
     let controller: AppDelegate
 
     var body: some View {
-        let state = MenuBarState(daemon: poller.state, pill: status.live)
+        let state = MenuBarState(
+            daemon: poller.state, pill: status.live, isUpdateAvailable: updates.isUpdateAvailable)
         Image(nsImage: MenuBarMark.image(state))
             .accessibilityLabel(state.accessibilityLabel)
             .onAppear {
@@ -147,13 +155,21 @@ private struct MenuBarLabel: View {
 }
 
 private struct CheckForUpdatesButton: View {
+    private static let dotSide: CGFloat = 6
     @ObservedObject var updates: UpdateController
 
     var body: some View {
         Button {
             updates.checkForUpdates()
         } label: {
-            Text("Check for Updates…")
+            HStack {
+                Text(updates.actionTitle)
+                Spacer()
+                if updates.isUpdateAvailable {
+                    Circle().fill(.tint).frame(width: Self.dotSide, height: Self.dotSide)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .disabled(!updates.canCheck)
     }

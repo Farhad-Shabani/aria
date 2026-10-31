@@ -11,9 +11,10 @@ final class UpdateController: ObservableObject {
     @Published private(set) var canCheck = false
     @Published private(set) var checksAutomatically = false
     @Published private(set) var installsAutomatically = false
+    @Published private(set) var availableVersion: String?
 
     private let updaterDelegate = AbortLoggingDelegate()
-    private let driverDelegate = ForegroundDriverDelegate()
+    private let driverDelegate = ReminderDriverDelegate()
     private let controller: SPUStandardUpdaterController
 
     init() {
@@ -31,6 +32,13 @@ final class UpdateController: ObservableObject {
         controller.updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck)
         controller.updater.publisher(for: \.automaticallyChecksForUpdates).assign(to: &$checksAutomatically)
         controller.updater.publisher(for: \.automaticallyDownloadsUpdates).assign(to: &$installsAutomatically)
+        driverDelegate.setAvailableVersion = { [weak self] version in self?.availableVersion = version }
+    }
+
+    var isUpdateAvailable: Bool { availableVersion != nil }
+
+    var actionTitle: String {
+        availableVersion.map { "Update to \($0)…" } ?? "Check for Updates…"
     }
 
     func setChecksAutomatically(_ on: Bool) {
@@ -42,23 +50,46 @@ final class UpdateController: ObservableObject {
     }
 
     func checkForUpdates() {
+        NSApplication.shared.activate()
         controller.checkForUpdates(nil)
     }
 }
 
-// Without a Dock icon, Sparkle's window opens behind the front app.
-private final class ForegroundDriverDelegate: NSObject, SPUStandardUserDriverDelegate {
+// Sparkle calls its user driver's delegate on the main thread.
+private final class ReminderDriverDelegate: NSObject, SPUStandardUserDriverDelegate {
+    var setAvailableVersion: @MainActor (String?) -> Void = { _ in }
+
     var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    // Sparkle asks for focus only just after launch.
+    // Otherwise it puts its alert behind other apps, where nobody sees it.
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        immediateFocus
+    }
 
     func standardUserDriverWillHandleShowingUpdate(
         _ handleShowingUpdate: Bool,
         forUpdate update: SUAppcastItem,
         state: SPUUserUpdateState
     ) {
-        // Sparkle calls its user driver's delegate on the main thread.
-        MainActor.assumeIsolated {
-            if handleShowingUpdate { NSApplication.shared.activate() }
+        if handleShowingUpdate {
+            MainActor.assumeIsolated { NSApplication.shared.activate() }
+        } else {
+            publishAvailableVersion(update.displayVersionString)
         }
+    }
+
+    // Sparkle's alert can fall behind other apps, so the reminder stays until the session ends.
+    func standardUserDriverWillFinishUpdateSession() {
+        publishAvailableVersion(nil)
+    }
+
+    private func publishAvailableVersion(_ version: String?) {
+        let setAvailableVersion = setAvailableVersion
+        MainActor.assumeIsolated { setAvailableVersion(version) }
     }
 }
 

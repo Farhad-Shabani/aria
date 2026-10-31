@@ -8,8 +8,9 @@ enum MenuBarState: Equatable {
     case switching
     case stopped
     case attention
+    case updateAvailable
 
-    init(daemon: DaemonState, pill: PillState?) {
+    init(daemon: DaemonState, pill: PillState?, isUpdateAvailable: Bool) {
         switch (daemon, pill) {
         case (.stopped, _): self = .stopped
         case (.working, _): self = .switching
@@ -18,7 +19,7 @@ enum MenuBarState: Equatable {
         case (.running, .delivered), (.running, .replied): self = .done
         case (.running, .failed), (.running, .noReply): self = .attention
         case (.running, .cancelled), (.running, .interrupted), (.running, .excluded), (.running, nil):
-            self = .ready
+            self = isUpdateAvailable ? .updateAvailable : .ready
         }
     }
 
@@ -31,6 +32,7 @@ enum MenuBarState: Equatable {
         case .switching: return "Aria, starting or stopping"
         case .stopped: return "Aria, stopped"
         case .attention: return "Aria, needs attention"
+        case .updateAvailable: return "Aria, update available"
         }
     }
 }

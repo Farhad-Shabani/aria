@@ -37,7 +37,7 @@ enum MenuBarMark {
         switch state {
         case .switching: return switchingAlpha
         case .stopped: return stoppedAlpha
-        case .ready, .listening, .working, .done, .attention: return 1
+        case .ready, .listening, .working, .done, .attention, .updateAvailable: return 1
         }
     }
 
@@ -57,7 +57,7 @@ enum MenuBarMark {
         case .done:
             ring(in: context)
             stroke(SmallMark.check, width: SmallMark.checkWidth, in: context)
-        case .attention:
+        case .attention, .updateAvailable:
             ringAndRibbon(in: context)
             context.setBlendMode(.clear)
             fill(SmallMark.badgeGap, in: context)
