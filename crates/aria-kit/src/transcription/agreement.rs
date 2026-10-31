@@ -89,18 +89,14 @@ const RESTORE_ANCHOR_WORDS: usize = 4;
 const RESTORE_MIN_MISSING_WORDS: usize = 3;
 const RESTORE_TIMING_TOLERANCE_SAMPLES: u64 = canonical_samples(Duration::from_millis(240));
 const RESTORE_MARGIN_SAMPLES: u64 = canonical_samples(Duration::from_millis(96));
-/// Audio from before a cut that the model hears again until the new buffer
-/// delivers its first words. Decoded alone, a buffer always opens a new
-/// sentence; with the words before it, the model decides whether the cut
-/// ended one. Three seconds covers a clause; more costs decode time.
+/// Audio before a cut, decoded again with the buffer. Alone, a buffer
+/// always opens a new sentence.
 const LOOKBACK_SAMPLES: u64 = canonical_samples(Duration::from_secs(3));
 
-/// A buffer that still decodes with the audio before its cut: nothing has
-/// been delivered since.
+/// A cut the decodes still reach back past.
 #[derive(Default)]
 struct Lookback {
-    /// Whether the last word heard before the cut ended a sentence, as the
-    /// latest decode wrote it.
+    /// How the latest decode wrote the last word before the cut.
     sentence_ended_at_cut: Option<bool>,
 }
 
@@ -125,10 +121,8 @@ pub struct AgreementState {
     pending_preview: Option<(String, std::ops::Range<u64>)>,
     finished: bool,
     lookback: Option<Lookback>,
-    /// The engine times no words, so a lookback can't be told from the
-    /// buffer's own audio. Set by the first decode that returns words
-    /// without timings, so a lookback is never attempted; a lookback decode
-    /// with an untimed word sets it too, and costs that one decode.
+    /// The engine times no words, so a lookback can't be split off. Every
+    /// buffer from here on decodes alone.
     untimed: bool,
 }
 
@@ -149,11 +143,10 @@ impl AgreementState {
         }
     }
 
-    /// The earliest position a reader may still need. Never decreases.
-    /// Usually the lookback before the buffer's opening: the next cut lands
-    /// at or after that opening, so its lookback starts no earlier. A
-    /// cap-forced trim moves the opening past a segment it has not handed
-    /// over yet — and that segment's reader still wants its audio.
+    /// The earliest position a reader may still need. Never decreases: a
+    /// cut lands at or after the opening, so the next lookback starts no
+    /// earlier. A cap-forced trim moves the opening past a segment nobody
+    /// has taken yet, whose reader still wants its audio.
     pub(super) fn retained_from(&self) -> u64 {
         let pending = self
             .pending_segment
@@ -167,8 +160,8 @@ impl AgreementState {
         }
     }
 
-    /// Where a lookback before the buffer's opening starts. The opening
-    /// itself for an engine whose lookback can't be told apart.
+    /// Where a lookback starts. The buffer's opening when the engine times
+    /// no words.
     fn lookback_from(&self) -> u64 {
         if self.untimed {
             self.buffer_start
@@ -290,8 +283,6 @@ impl AgreementState {
         let behind =
             available.saturating_sub(self.decoded_end + self.cadence.stride_samples as u64);
         self.decoded_end = available;
-        // The width this step handed the model, read before the trim moves
-        // the buffer on.
         // The decode opens on the lookback until the buffer has delivered
         // its first words.
         let decode_from = if self.lookback.is_some() {
@@ -299,6 +290,8 @@ impl AgreementState {
         } else {
             self.buffer_start
         };
+        // The width this step handed the model, read before the trim moves
+        // the buffer on.
         let decoded = available - decode_from;
 
         let buffer = recording.span(self.buffer_start..available);
@@ -338,11 +331,10 @@ impl AgreementState {
         }))
     }
 
-    /// The decode's words at their stream positions, untimed when timings do
-    /// not align. Empty when the buffer holds only the last pause, or when
-    /// the words come too dense to be real. A decode that opened on the
-    /// lookback keeps only the words from the buffer on, and notes whether
-    /// the word before them ended a sentence.
+    /// The decode's words at their stream positions, untimed when timings
+    /// do not align. A lookback decode keeps only the buffer's own words,
+    /// and reads the cut from the one before them. Empty when none can go
+    /// out.
     fn hear(&mut self, hypothesis: &Hypothesis, loudness: &Loudness, from: u64) -> Vec<Word> {
         if self.opened_in_pause && loudness.silent() {
             tracing::debug!("buffer holds only the pause; decode ignored");
@@ -416,9 +408,8 @@ impl AgreementState {
             .ok()
     }
 
-    /// A delivered segment's own reading of its boundary comes from the
-    /// decode that delivered it; the first one after a cut reads the cut
-    /// from the lookback instead, which ends with it.
+    /// A segment carries its own reading of the boundary before it, or the
+    /// lookback's reading of the cut.
     fn commit(&mut self, segment: Option<TranscriptSegment>) -> Option<TranscriptSegment> {
         let mut segment = segment.map(|segment| {
             let at_cut = self
@@ -913,9 +904,8 @@ impl Agreement {
         lost > TOLERATED_LOSS
     }
 
-    /// Hands `words` over, and remembers them. `ended_before` is whether the
-    /// word before them ended a sentence, as the decode delivering them
-    /// heard it; `None` when they opened the decode.
+    /// Hands `words` over, and remembers them. `ended_before` is how the
+    /// decode heard the word before them.
     fn deliver(&mut self, words: &[Word], ended_before: Option<bool>) -> Option<TranscriptSegment> {
         self.delivered_through = ends_at(words, self.delivered_through);
         self.delivered.extend_from_slice(words);
@@ -996,7 +986,7 @@ fn lcp(previous: &[Word], current: &[Word]) -> usize {
 }
 
 /// Whether the word before `at` ended a sentence. `None` when `at` opens
-/// `words`: nothing before it was heard.
+/// `words`.
 fn ended_before(words: &[Word], at: usize) -> Option<bool> {
     at.checked_sub(1)
         .map(|before| ends_sentence(&words[before].text))

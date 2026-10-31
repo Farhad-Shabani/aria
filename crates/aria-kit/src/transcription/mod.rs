@@ -1043,9 +1043,8 @@ pub struct TranscriptSegment {
     /// Where each word of `text` sits, in order, when every word was timed.
     /// Cleared whenever the text is rewritten.
     word_spans: Option<Vec<std::ops::Range<u64>>>,
-    /// Whether the word before this segment ended a sentence, as heard by
-    /// the decode that delivered the segment. `None` when that decode did
-    /// not hear the word before, or when nothing came before.
+    /// Whether the word before this segment ended a sentence. `None` when
+    /// no decode read that boundary.
     sentence_ended_before: Option<bool>,
 }
 
@@ -1107,9 +1106,8 @@ impl TranscriptSegment {
     }
 
     /// Whether the word before this segment ended a sentence, as the decode
-    /// that delivered the segment heard it. A streamed segment decoded with
-    /// the audio before its cut carries the model's own reading of that
-    /// boundary; `None` means the model never heard the word before.
+    /// that delivered it heard. A streamed segment decoded with the audio
+    /// before its cut carries the model's own reading. `None` when unknown.
     pub fn sentence_ended_before(&self) -> Option<bool> {
         self.sentence_ended_before
     }
@@ -1193,8 +1191,7 @@ impl TranscriptSegment {
             .collect();
         let mut segment = Self::timed(&words)?;
         segment.source_window.clone_from(&self.source_window);
-        // The verdict describes the word before the first one; dropping
-        // that one leaves nothing it can describe.
+        // The reading describes the word before the first one.
         segment.sentence_ended_before = self.sentence_ended_before.filter(|_| keep[0]);
         Some(segment)
     }

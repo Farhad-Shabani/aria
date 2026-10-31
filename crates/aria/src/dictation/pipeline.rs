@@ -645,8 +645,7 @@ where
             }
             Ok::<_, DictationError>(ended)
         });
-        // A press that ends early still owes the last segment its mark, and
-        // the field the space after it.
+        // A press that ends early still owes the last segment its mark.
         let ended = match ended {
             Ok(ended) => ended,
             Err(error) => {
@@ -726,13 +725,14 @@ where
 /// step owes.
 struct Published<'a> {
     streaming: bool,
-    /// Every segment's text so far, joined with the cursor's spacing. Text
-    /// that failed to type still counts, so the transcript keeps every word.
+    /// Every segment's text so far, spaced as the cursor typed it. Text
+    /// that failed to type counts too, so no word is lost.
     kept: String,
     /// The ghost text shown, until the next segment lands.
     ghost: Option<Arc<str>>,
     sentences: SentenceEnds,
-    /// Where the last segment's audio ends: where a deferred period lands.
+    /// Where the last segment was decoded through: where its held mark
+    /// lands.
     heard_to: u64,
     failure: Option<DictationError>,
     caption: Option<CaptionSnapshot>,
@@ -842,9 +842,8 @@ impl<'a> Published<'a> {
         Ok(())
     }
 
-    /// Types the period the last segment still owes, once nothing follows
-    /// it. Every word has landed by then, so a failure here is logged
-    /// rather than failing the press.
+    /// Types the mark the last segment owes. Every word has landed by
+    /// then, so a failure here is logged, not fatal.
     fn close_last_sentence<S>(&mut self, sinks: &mut S)
     where
         S: TranscriptSink,
@@ -880,8 +879,8 @@ impl<'a> Published<'a> {
         self.kept.push_str(&spaced);
     }
 
-    /// Tells clients about published text: the caption and the text, and
-    /// when streaming, that it was typed.
+    /// Tells clients what was published, and when streaming, that it was
+    /// typed.
     fn announce(&mut self, text: &str, speaker: Option<SpeakerName>) {
         if let Some(caption) = &mut self.caption {
             let spaced = Caret::between(&caption.committed, "").insert(text);
@@ -4020,8 +4019,7 @@ mod tests {
         let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
         // Each segment after the first was decoded with the audio before
-        // its cut, so its text and its reading of the boundary come from a
-        // model that heard the sentence so far.
+        // its cut, so the model heard the sentence so far.
         for (text, ended_before) in [
             ("with the capital character.", None),
             ("while it shouldn't.", Some(false)),

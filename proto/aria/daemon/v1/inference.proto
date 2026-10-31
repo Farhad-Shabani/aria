@@ -88,8 +88,7 @@ message InferenceSegment {
   // source audio is unknown.
   InferenceSpan source_window = 4;
   // Whether the word before the segment ended a sentence, as the decode
-  // that delivered the segment heard it. Absent when that decode did not
-  // hear the word before.
+  // that delivered it heard. Absent when unknown.
   optional bool sentence_ended_before = 5;
 }
 

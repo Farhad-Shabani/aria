@@ -1,14 +1,13 @@
 //! Sentence endings across streamed segments.
 
-/// Defers the mark that ends a streamed segment until the next one shows
-/// whether the sentence went on.
+/// Holds back the mark that ends a streamed segment until the next one
+/// shows whether the sentence went on.
 ///
-/// A recognizer that decodes a segment alone ends it as a sentence, so a
-/// pause mid-sentence types "should. While it". The next segment's decode
-/// hears the words before the pause too, and
-/// [`TranscriptSegment::sentence_ended_before`] carries its reading of that
-/// boundary. Type what [`SentenceEnds::punctuate`] returns for each segment,
-/// then what [`SentenceEnds::finish`] returns when nothing follows.
+/// A segment decoded alone ends as a sentence, so a pause mid-sentence
+/// types "should. While it". The next decode hears the words before that
+/// pause, and [`TranscriptSegment::sentence_ended_before`] carries its
+/// reading. Type [`SentenceEnds::punctuate`] per segment, then
+/// [`SentenceEnds::finish`] when nothing follows.
 ///
 /// ```
 /// use aria_kit::transcription::SentenceEnds;
@@ -27,30 +26,27 @@
 /// [`TranscriptSegment::sentence_ended_before`]: super::TranscriptSegment::sentence_ended_before
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SentenceEnds {
-    /// The mark the last segment ended with, not yet typed.
+    /// The last segment's closing mark, not yet typed.
     deferred: Option<char>,
 }
 
 /// One segment's text, ready to type after the text before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Punctuated {
-    /// Opens with the mark that closes the sentence before, when one is
-    /// owed.
+    /// Opens with the mark the segment before held back.
     pub text: String,
-    /// The mark that ends `text` waits for the next segment. Type `text`
-    /// with nothing after it, so that mark can still attach.
+    /// `text`'s own closing mark is held back. Type `text` with nothing
+    /// after it, so the mark can still attach.
     pub defers_ending: bool,
 }
 
-/// Abbreviations whose period is not a sentence ending, as in "etc. and
-/// more".
+/// Abbreviations whose period ends no sentence, as in "etc. and more".
 const ABBREVIATIONS: [&str; 2] = ["etc", "vs"];
 
 impl SentenceEnds {
-    /// Returns `text` as it should be typed after the segment before.
-    /// `sentence_ended_before` is the recognizer's reading of the boundary:
-    /// `Some(false)` drops the deferred mark, anything else types it. An
-    /// unknown boundary leaves the text as the recognizer wrote it.
+    /// Returns `text` to type after the segment before, its own closing
+    /// mark held back. `Some(false)` drops the mark that segment owes;
+    /// anything else opens `text` with it.
     #[must_use = "the deferred ending is owed to the previous segment"]
     pub fn punctuate(&mut self, text: &str, sentence_ended_before: Option<bool>) -> Punctuated {
         let mut text = match (self.deferred.take(), sentence_ended_before) {
@@ -71,19 +67,19 @@ impl SentenceEnds {
         }
     }
 
-    /// The mark the last segment still owes, once nothing follows it.
+    /// The mark the last segment owes, once nothing follows it.
     pub fn finish(&mut self) -> Option<String> {
         self.deferred.take().map(char::into)
     }
 }
 
-/// Whether `word` ends a sentence: a lone closing mark, not "U.S." or "etc.".
+/// Whether `word` ends a sentence: a lone mark, not "U.S." or "etc.".
 pub(crate) fn ends_sentence(word: &str) -> bool {
     closing_mark(word).is_some()
 }
 
-/// The one mark that ends `text` as a sentence. `None` for a mark inside the
-/// last word, as in "U.S." or "...", and for a listed abbreviation.
+/// The one mark that ends `text` as a sentence. `None` for a mark inside
+/// the last word, as in "U.S." or "...", and for anything else.
 fn closing_mark(text: &str) -> Option<char> {
     let mark = text
         .chars()

@@ -442,7 +442,7 @@ fn a_later_verified_owner_resolves_the_earlier_pending_prefix() {
         .collect();
     assert_eq!(released, ["owner"]);
     assert_eq!(dropped, ["before"]);
-    // The verdict read the dropped words, which never went out.
+    // The reading describes the dropped words, which never went out.
     assert_eq!(
         decision.released[0].heard.segment.sentence_ended_before(),
         None

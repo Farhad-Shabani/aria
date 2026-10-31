@@ -37,9 +37,8 @@ pub struct Gate {
     /// of speech still passes when this was enough: decode windows lag the
     /// words at a boundary.
     previous_speech: u64,
-    /// A whole segment was dropped since the last release, so the next
-    /// released segment's reading of its boundary describes words that
-    /// never went out.
+    /// An owner-only release dropped a whole segment, so the next one's
+    /// reading describes words that never went out.
     dropped_since_release: bool,
 }
 

@@ -69,11 +69,12 @@ message StopDictationResponse {
 message DictationEvent {
   // Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
   uint64 recording_id = 4;
+  // The press ends at delivered, cancelled, or failed.
   DictationStage stage = 1;
-  // A segment's text, and only then. While streaming it is the text
-  // typed, so it can open with the mark the segment before owed, or be
-  // that mark alone. A live caption joins these spaced as typed; the
-  // press ends at delivered, cancelled, or failed.
+  // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: what that segment put out.
+  // While streaming it is the typed text, so it may open with the mark the
+  // segment before held back, or be that mark alone. A caption joins these
+  // with one space, except before a mark.
   string text = 2;
   // Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED, and on
   // DICTATION_STAGE_SPEAKER_CHANGED when heard is HEARD_SPEAKER_TYPED: the

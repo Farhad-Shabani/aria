@@ -50,9 +50,8 @@ impl Caret {
         spaced
     }
 
-    /// Like [`Caret::insert`], but leaves out the space before the text
-    /// after the caret, so the next insertion can attach to `text`'s end.
-    /// A later [`Caret::insert`] supplies that space.
+    /// Like [`Caret::insert`], but leaves `text`'s end open so the next
+    /// insertion can attach to it. A later insert supplies the space.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert_open(&mut self, text: &str) -> String {
         let mut spaced = String::with_capacity(text.len() + 2);

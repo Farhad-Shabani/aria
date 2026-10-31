@@ -17,7 +17,7 @@ use crate::speaker::Label;
 /// times its words can say — without it a sink has text to write but nothing
 /// to attribute a voice by.
 ///
-/// `defers_ending` says the mark ending `text` may come with the next
+/// `defers_ending` holds `text`'s closing mark back for the next
 /// utterance, so a sink that types must leave `text`'s end open.
 #[derive(Clone)]
 pub(crate) struct Utterance<'a> {

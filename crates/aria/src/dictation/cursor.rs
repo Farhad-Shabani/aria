@@ -33,8 +33,8 @@ impl<D: TextDelivery> Cursor<D> {
         }
     }
 
-    /// Types the utterance where the press landed, or nowhere when the
-    /// press asked only for its transcript.
+    /// Types the utterance where the press landed, if that place still
+    /// takes text.
     fn deliver(
         &mut self,
         mode: DeliveryMode,
