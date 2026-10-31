@@ -20,8 +20,8 @@ the words.
 
 Copying replaces the clipboard.
 
-Plain `aria dictate` uses your saved output preference. `--mode copy` chooses
-the clipboard for this recording without changing that preference.
+Plain `aria dictate` uses your saved output setting. `--mode copy` chooses
+the clipboard for this recording without changing that setting.
 
 ## Stop by hand
 
@@ -41,9 +41,9 @@ ends the recording once you stop speaking, after 10 seconds by default. Change
 it under **Settings → Dictation**, or from the terminal:
 
 ```sh
-aria dictate auto-stop       # show the setting
-aria dictate auto-stop 20    # stop after 20 seconds of silence
-aria dictate auto-stop off   # stop on Esc or a second run
+aria settings show dictation.auto_stop_ms       # show the setting
+aria settings set dictation.auto_stop_ms 20000  # stop after 20 seconds of silence
+aria settings set dictation.auto_stop_ms 0      # stop on Esc or a second run
 ```
 
 Recordings stop after ten minutes at most.
@@ -67,11 +67,11 @@ Aria adds a space where the text needs one. Dictating “Hello.” and then
 
 ## Spoken corrections
 
-To correct a simple change of mind in the completed text, add this setting to
-`~/.aria/config.yaml` and [restart the service](./configuration.md#apply-changes):
+To correct a simple change of mind in the completed text, turn on
+**Settings → Dictation → Spoken corrections**, or run:
 
-```yaml
-dictation_backtrack: true
+```sh
+aria settings set dictation.backtrack on
 ```
 
 For example, “meet me at 3, actually 4” can become “meet me at 4”.

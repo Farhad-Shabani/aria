@@ -18,7 +18,8 @@ In the Mac app, enable **Settings → Recognition → Use project vocabulary**
 and choose the folder. Or open a terminal in that folder:
 
 ```sh
-aria vocabulary use "$PWD"
+aria settings set dictation.vocabulary.enabled on
+aria settings set dictation.vocabulary.dir "$PWD"
 aria vocabulary status
 ```
 
@@ -40,8 +41,8 @@ Refresh runs in the background. Aria does not watch the folder for changes.
 ## Which folder applies?
 
 Terminal dictation uses the directory you run it from. Hotkey dictation uses
-the folder selected with `vocabulary use`. A folder includes its descendants;
-Aria does not search upward for a project root.
+the folder in `dictation.vocabulary.dir`. A folder includes its descendants.
+Aria doesn't search upward for a project root.
 
 For a spoken question, `aria ask --project "$PWD"` looks up spellings in that
 folder and gives the assistant the same folder to work in. The assistant may
@@ -54,7 +55,8 @@ unchanged.
 
 ## Disable or forget
 
-Run `aria vocabulary disable` to stop corrections while keeping cached names.
+Run `aria settings set dictation.vocabulary.enabled off` to stop corrections
+while keeping cached names.
 Use `aria dictate --no-project` to skip corrections for just one dictation.
 
 To remove names cached for a folder:

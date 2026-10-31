@@ -28,16 +28,17 @@ does not download it for you.
    curl -fLO "$base/tokenizer.json"
    ```
 
-2. Add this section to `~/.aria/config.yaml`, or edit its existing `listen` section:
+2. Add this section to `~/.aria/settings.toml`, or edit its existing `listen`
+   section:
 
-```yaml
-listen:
-  backend: moonshine
-  model: ~/.aria/models/moonshine/base
-  transcripts_dir: ~/.aria/transcripts
+```toml
+[listen]
+backend = "moonshine"
+model = "~/.aria/models/moonshine/base"
+transcripts_dir = "~/.aria/transcripts"
 ```
 
-Check it with `aria config show`. The next `aria listen start` reads it; no
+Check it with `aria settings check`. The next `aria listen start` reads it; no
 restart is needed. Keep Aria's background service running.
 
 ## Record

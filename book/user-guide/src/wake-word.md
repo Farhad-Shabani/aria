@@ -4,10 +4,10 @@
 
 Wake-word monitoring starts dictation when a local model detects its trained
 phrase. The recording stops on silence and delivers one complete transcript
-using your output preference. It does not ask an assistant a question.
+using your output setting. It does not ask an assistant a question.
 
 This keeps microphone monitoring active while the daemon runs. Wake-triggered
-dictation follows the same [history preference](./history.md)
+dictation follows the same [history setting](./history.md)
 as other dictation. Turning wake monitoring off does not close a microphone
 stream already used by the daemon; stop the daemon to stop its capture.
 
@@ -19,14 +19,14 @@ Aria ships no wake-word model. Place an openWakeWord classifier in
 `~/.aria/models/wakeword` as `aria.onnx`, beside `melspectrogram.onnx` and
 `embedding_model.onnx`.
 
-Enable monitoring in `~/.aria/config.yaml`:
+Turn on monitoring in `~/.aria/settings.toml`:
 
-```yaml
-wake:
-  enabled: true
-  backend: openwakeword
-  model: ~/.aria/models/wakeword/aria.onnx
-  threshold: 0.5
+```toml
+[wake]
+enabled = true
+backend = "openwakeword"
+model = "~/.aria/models/wakeword/aria.onnx"
+threshold = 0.5
 ```
 
 Restart the registered service and check monitoring:
@@ -52,7 +52,7 @@ builder.
 `aria wake status` distinguishes `listening`, `degraded`, `disabled`, and
 `stopped`; only `listening` returns success. If it is degraded, inspect
 `aria wake log` and use `aria doctor` to check the model files. If it is disabled,
-check the configuration and restart after changing it.
+check the settings and restart after changing it.
 
 The threshold must be greater than zero and at most one. A higher value
 requires a stronger match and can reduce accidental triggers; it may also

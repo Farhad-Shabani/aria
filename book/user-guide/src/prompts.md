@@ -18,7 +18,7 @@ Read [Privacy](./privacy.md#prompts) before using a prompt.
 Set up Claude Code or Codex by following
 [Ask a question](./voice-chat.md#before-you-start). Prompts use the same
 assistant and model as Ask. You can change both in
-[Assistant settings](./configuration.md#assistant).
+[Assistant settings](./settings.md#assistant).
 
 Keep Aria.app running while you use prompt shortcuts.
 

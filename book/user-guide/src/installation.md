@@ -80,11 +80,10 @@ defaults.
 You only need a Claude Code or Codex account if you want to use
 [Ask](./voice-chat.md) or [Prompts](./prompts.md). Choose your assistant later
 in **Settings → General → Assistant**, or from the
-[terminal](./configuration.md#assistant).
+[terminal](./settings.md#assistant).
 
-Setup saves `~/.aria/config.yaml`, downloads the models you select, and starts
-Aria's background service. It backs up a hand-written configuration as
-`config.yaml.bak` before updating it. If a model download is interrupted,
+Setup saves `~/.aria/settings.toml`, downloads the models you select, and
+starts Aria's background service. If a model download is interrupted,
 rerun setup to resume it.
 
 To check the result:
@@ -93,7 +92,7 @@ To check the result:
 aria doctor
 ```
 
-Doctor reports configuration, model-path, and service problems. It does not
+Doctor reports settings, model-path, and service problems. It doesn't
 record audio to test microphone permission.
 
 ### Free model space
@@ -106,7 +105,7 @@ aria models list
 aria models remove parakeet
 ```
 
-Aria keeps a model your configuration still uses. Setup downloads a removed
+Aria keeps a model your settings still use. Setup downloads a removed
 model again if you choose its engine later.
 
 ## Update or remove

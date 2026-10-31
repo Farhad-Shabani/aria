@@ -4,7 +4,7 @@
 
 Start with a small Cargo project: add the dependencies for your task, check
 that they build, then run an example. You can use the same dependencies in an
-existing project. No Aria service or configuration file is required.
+existing project. No Aria service or settings file is required.
 
 ## Build tools
 

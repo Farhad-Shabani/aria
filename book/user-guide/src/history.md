@@ -11,7 +11,7 @@ transcripts are separate.
 Saving is on by default. In the Mac app, turn it off under
 **Settings → Privacy → Save dictation history**. This stops future saves and
 leaves existing entries until you delete them or they expire. The CLI has no
-control for this preference.
+control for this setting.
 
 Text is kept for up to 30 days, with limits of 1,000 entries and 8 MiB total.
 Older entries can disappear sooner when those limits are reached.
@@ -49,7 +49,7 @@ Retry replaces the entry's text without keeping the previous version. It does
 not type or copy the result into another app. A failed retry leaves the
 previous text in place.
 
-Retries use the same [local or server setting](./configuration.md#server-inference)
+Retries use the same [local or server setting](./settings.md#server-inference)
 as dictation. Enabled voice filtering runs locally before upload. The
 server must provide the requested engine. A failed retry leaves the saved
 text unchanged and never falls back to a local model.
@@ -61,7 +61,7 @@ To make future successful dictations available for retry, enable
 or run:
 
 ```sh
-aria history retain-audio true
+aria settings set history.keep_audio on
 ```
 
 The same 24-hour and 128 MiB limits apply. Originals can include background
@@ -70,7 +70,7 @@ speech and voices excluded from the transcript.
 To stop keeping future successful recordings:
 
 ```sh
-aria history retain-audio false
+aria settings set history.keep_audio off
 ```
 
 Existing recordings continue to expire.

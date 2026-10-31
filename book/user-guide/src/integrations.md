@@ -39,7 +39,7 @@ from Raycast, check the script-directory path. If it runs but fails, check
 ## tmux
 
 The tmux integration shows recording and processing activity in its status bar.
-It needs both a configuration line and a running watcher.
+It needs both a tmux configuration line and a running watcher.
 
 For a checkout at `~/aria`, add this to `~/.tmux.conf`. Replace the path if yours
 is elsewhere:

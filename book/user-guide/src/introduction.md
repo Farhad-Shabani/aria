@@ -26,7 +26,7 @@ If setup or recording fails, start with [Troubleshooting](./troubleshooting.md).
 ## Your data
 
 Dictation and speech generation run locally by default. You can move
-transcription to a [personal server](./configuration.md#server-inference).
+transcription to a [personal server](./settings.md#server-inference).
 Downloading models needs network access. Ask uses an external assistant, which
 may send your question and project content to cloud services.
 
