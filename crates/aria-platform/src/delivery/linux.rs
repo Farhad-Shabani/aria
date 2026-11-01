@@ -16,7 +16,7 @@ use super::{
 };
 
 /// The portal uses this ID to find the desktop entry installed by `aria service install`.
-pub(crate) const APP_ID: &str = "io.github.farhad_shabani.aria";
+pub const APP_ID: &str = "io.github.farhad_shabani.aria";
 
 /// Shares one desktop across deliveries.
 #[derive(Clone)]
@@ -72,13 +72,13 @@ impl DisplayServer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LinuxDeliveryTarget {
+pub enum LinuxDeliveryTarget {
     Application,
     ApplicationOrClipboard,
     Clipboard,
 }
 
-pub(crate) struct LinuxTextDelivery {
+pub struct LinuxTextDelivery {
     desktop: Arc<Desktop>,
     timeout: Duration,
 }

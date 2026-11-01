@@ -11,11 +11,11 @@ mod linux;
 mod macos;
 
 #[cfg(target_os = "ios")]
-pub(crate) use ios::IosTextDelivery as PlatformTextDelivery;
+pub use ios::IosTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::APP_ID;
+pub use linux::APP_ID;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::LinuxTextDelivery as PlatformTextDelivery;
+pub use linux::LinuxTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "macos")]
 pub use macos::MacOsTextDelivery as PlatformTextDelivery;
 

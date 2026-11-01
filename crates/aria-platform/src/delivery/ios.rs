@@ -10,7 +10,7 @@ use super::{
     DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
 };
 
-pub(crate) struct IosTextDelivery;
+pub struct IosTextDelivery;
 
 impl IosTextDelivery {
     // The pasteboard write returns immediately, so nothing here waits on a

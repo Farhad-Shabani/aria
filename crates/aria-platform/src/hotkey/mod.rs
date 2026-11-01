@@ -13,7 +13,7 @@ mod linux;
 mod macos;
 
 #[cfg(target_os = "linux")]
-pub(crate) use linux::LinuxHotkeyListener as PlatformHotkeyListener;
+pub use linux::LinuxHotkeyListener as PlatformHotkeyListener;
 #[cfg(target_os = "macos")]
 pub use macos::MacOsHotkeyListener as PlatformHotkeyListener;
 

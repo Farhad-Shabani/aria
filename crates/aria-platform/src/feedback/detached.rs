@@ -12,7 +12,7 @@ const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// The thread is what lets the caller move on: `ChildProcess` kills its group
 /// when it drops, so the handle has to outlive the helper rather than the call.
-pub(crate) fn run_detached(purpose: &'static str, mut command: Command) {
+pub fn run_detached(purpose: &'static str, mut command: Command) {
     spawn_detached(purpose, move || run(purpose, &mut command));
 }
 

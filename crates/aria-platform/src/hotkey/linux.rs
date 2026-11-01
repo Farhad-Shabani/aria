@@ -85,12 +85,12 @@ impl AriaKey {
     }
 }
 
-pub(crate) struct LinuxHotkeyListener;
+pub struct LinuxHotkeyListener;
 
 impl LinuxHotkeyListener {
-    pub(crate) const PERMISSION: &str = "access to your keyboard";
+    pub const PERMISSION: &str = "access to your keyboard";
 
-    pub(crate) fn unarmed_reason(key: AriaKey) -> String {
+    pub fn unarmed_reason(key: AriaKey) -> String {
         let Some(aria_key) = key.key_code() else {
             return "the dictation hotkey is set to Fn, which Linux cannot see; \
                 set `shortcuts.aria_key` to right_option, the Right Alt key"
@@ -112,11 +112,7 @@ impl LinuxHotkeyListener {
         }
     }
 
-    pub(crate) fn listen(
-        key: AriaKey,
-        events: impl Fn(ListenerEvent),
-        should_stop: impl Fn() -> bool,
-    ) {
+    pub fn listen(key: AriaKey, events: impl Fn(ListenerEvent), should_stop: impl Fn() -> bool) {
         let Some(aria_key) = key.key_code() else {
             tracing::warn!(trigger = "hotkey", ?key, "this key is invisible to Linux");
             events(ListenerEvent::KeyUnavailable);

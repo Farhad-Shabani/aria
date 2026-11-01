@@ -337,6 +337,7 @@ dependencies = [
  "aria-primitives",
  "ashpd",
  "cidre",
+ "futures-util",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -348,6 +349,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
  "x11rb",
 ]

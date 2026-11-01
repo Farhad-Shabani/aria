@@ -32,9 +32,11 @@ objc2-ui-kit     = { version = "0.3.2", default-features = false, features = [ "
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.6", default-features = false, features = [ "wayland-data-control" ] }
 # RemoteDesktop uses types from the screencast feature.
-ashpd  = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "3ea494564e48bf0f351a13da1e18abb5a9dd45e6", default-features = false, features = [ "remote_desktop", "screencast", "tokio" ] }
-rustix = { workspace = true, features = [ "event", "time" ] }
-x11rb  = { version = "0.13", features = [ "xtest" ] }
+ashpd        = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "3ea494564e48bf0f351a13da1e18abb5a9dd45e6", default-features = false, features = [ "remote_desktop", "screencast", "tokio" ] }
+futures-util = { version = "0.3", default-features = false, features = [ "alloc" ] }
+rustix       = { workspace = true, features = [ "event", "time" ] }
+tokio-util   = { version = "0.7", features = [ "rt" ] }
+x11rb        = { version = "0.13", features = [ "xtest" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cidre                 = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
