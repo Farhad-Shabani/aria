@@ -825,6 +825,14 @@ impl From<ListenStage> for wire::Event {
 impl From<ListenStage> for wire::ListenEvent {
     fn from(stage: ListenStage) -> Self {
         match stage {
+            ListenStage::Started => Self {
+                stage: wire::ListenStage::Started as i32,
+                text: String::new(),
+                speaker_label: String::new(),
+                merged_from_label: String::new(),
+                offset_seconds: 0,
+                error_code: 0,
+            },
             ListenStage::SegmentTranscribed {
                 text,
                 label,
@@ -870,6 +878,7 @@ impl TryFrom<&wire::ListenEvent> for ListenStage {
 
     fn try_from(event: &wire::ListenEvent) -> Result<Self, Self::Error> {
         match wire::ListenStage::try_from(event.stage) {
+            Ok(wire::ListenStage::Started) => Ok(Self::Started),
             Ok(wire::ListenStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
                 text: Arc::from(event.text.as_str()),
                 label: (!event.speaker_label.is_empty())
@@ -3032,6 +3041,7 @@ mod tests {
                 from: Arc::from("Speaker 3"),
                 into: Arc::from("Speaker 1"),
             },
+            ListenStage::Started,
             ListenStage::Stopped,
             ListenStage::Failed(RpcErrorCode::ListenPermissionDenied),
         ];

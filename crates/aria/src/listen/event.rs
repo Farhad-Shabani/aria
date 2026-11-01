@@ -7,6 +7,9 @@ use crate::rpc::RpcErrorCode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListenStage {
+    /// The session was accepted. Capture may still fail to start, which
+    /// `Failed` reports.
+    Started,
     SegmentTranscribed {
         text: Arc<str>,
         /// The tentative live speaker label; the transcript's final rewrite

@@ -6,9 +6,11 @@ final class MenuBarStateTests: XCTestCase {
     private let epoch = Date(timeIntervalSince1970: 1_000)
 
     private func state(
-        _ daemon: DaemonState = .running, pill: PillState? = nil, isUpdateAvailable: Bool = false
+        _ daemon: DaemonState = .running, pill: PillState? = nil, isListenRunning: Bool = false,
+        isUpdateAvailable: Bool = false
     ) -> MenuBarState {
-        MenuBarState(daemon: daemon, pill: pill, isUpdateAvailable: isUpdateAvailable)
+        MenuBarState(
+            daemon: daemon, pill: pill, isListenRunning: isListenRunning, isUpdateAvailable: isUpdateAvailable)
     }
 
     func testTheDaemonComesFirst() {
@@ -36,6 +38,17 @@ final class MenuBarStateTests: XCTestCase {
         XCTAssertEqual(state(pill: .cancelled), .ready)
         XCTAssertEqual(state(pill: .interrupted), .ready)
         XCTAssertEqual(state(pill: .excluded("Slack")), .ready)
+    }
+
+    func testAListenSessionOutranksAnIdleMark() {
+        XCTAssertEqual(state(isListenRunning: true), .transcribingSystemAudio)
+        XCTAssertEqual(state(isListenRunning: true, isUpdateAvailable: true), .transcribingSystemAudio)
+        XCTAssertEqual(state(pill: .cancelled, isListenRunning: true), .transcribingSystemAudio)
+    }
+
+    func testAPressAndAStoppedDaemonOutrankAListenSession() {
+        XCTAssertEqual(state(pill: .recording(since: epoch), isListenRunning: true), .listening)
+        XCTAssertEqual(state(.stopped, isListenRunning: true), .stopped)
     }
 
     func testAWaitingUpdateShowsOnlyWhenIdle() {

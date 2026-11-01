@@ -67,7 +67,9 @@ You need two terminals: one to show the transcript and one to stop recording.
 
 **Ctrl-C stops the terminal display, not the recording.** Always use
 `aria listen stop` to end capture. Use `aria listen follow` to show live text
-again during a session.
+again during a session. On a Mac, the Aria menu shows **Transcribing your Mac's
+audio** while a session runs, whatever started it. Click the stop button beside
+it to end capture.
 
 ## Transcript files
 

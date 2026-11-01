@@ -37,7 +37,7 @@ enum MenuBarMark {
         switch state {
         case .switching: return switchingAlpha
         case .stopped: return stoppedAlpha
-        case .ready, .listening, .working, .done, .attention, .updateAvailable: return 1
+        case .ready, .listening, .transcribingSystemAudio, .working, .done, .attention, .updateAvailable: return 1
         }
     }
 
@@ -46,10 +46,15 @@ enum MenuBarMark {
         case .ready, .switching, .stopped:
             ringAndRibbon(in: context)
         case .listening:
-            // Inverted, so a live microphone is unmistakable at a glance.
+            // Inverted, so it stands out at a glance.
             fill(SmallMark.disc, in: context)
             context.setBlendMode(.clear)
             ribbon(in: context)
+            context.setBlendMode(.normal)
+        case .transcribingSystemAudio:
+            fill(SmallMark.disc, in: context)
+            context.setBlendMode(.clear)
+            for index in -1...1 { fill(SmallMark.dot(index), in: context) }
             context.setBlendMode(.normal)
         case .working:
             ring(in: context)

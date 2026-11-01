@@ -2,6 +2,7 @@
 enum MenuBarState: Equatable {
     case ready
     case listening
+    case transcribingSystemAudio
     case working
     case done
     /// The daemon starting or stopping.
@@ -10,7 +11,7 @@ enum MenuBarState: Equatable {
     case attention
     case updateAvailable
 
-    init(daemon: DaemonState, pill: PillState?, isUpdateAvailable: Bool) {
+    init(daemon: DaemonState, pill: PillState?, isListenRunning: Bool, isUpdateAvailable: Bool) {
         switch (daemon, pill) {
         case (.stopped, _): self = .stopped
         case (.working, _): self = .switching
@@ -19,7 +20,11 @@ enum MenuBarState: Equatable {
         case (.running, .delivered), (.running, .replied): self = .done
         case (.running, .failed), (.running, .noReply): self = .attention
         case (.running, .cancelled), (.running, .interrupted), (.running, .excluded), (.running, nil):
-            self = isUpdateAvailable ? .updateAvailable : .ready
+            if isListenRunning {
+                self = .transcribingSystemAudio
+            } else {
+                self = isUpdateAvailable ? .updateAvailable : .ready
+            }
         }
     }
 
@@ -27,6 +32,7 @@ enum MenuBarState: Equatable {
         switch self {
         case .ready: return "Aria"
         case .listening: return "Aria, listening"
+        case .transcribingSystemAudio: return "Aria, transcribing your Mac’s audio"
         case .working: return "Aria, working"
         case .done: return "Aria, done"
         case .switching: return "Aria, starting or stopping"

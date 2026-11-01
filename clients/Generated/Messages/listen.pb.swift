@@ -29,6 +29,11 @@ public nonisolated enum Aria_Daemon_V1_ListenStage: SwiftProtobuf.Enum, Swift.Ca
   case stopped // = 2
   case failed // = 3
   case speakerMerged // = 4
+
+  /// The session was accepted. Capture may still fail to start, which FAILED
+  /// reports. A subscriber that connects later misses this stage and reads
+  /// GetStatus instead.
+  case started // = 5
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -42,6 +47,7 @@ public nonisolated enum Aria_Daemon_V1_ListenStage: SwiftProtobuf.Enum, Swift.Ca
     case 2: self = .stopped
     case 3: self = .failed
     case 4: self = .speakerMerged
+    case 5: self = .started
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -53,6 +59,7 @@ public nonisolated enum Aria_Daemon_V1_ListenStage: SwiftProtobuf.Enum, Swift.Ca
     case .stopped: return 2
     case .failed: return 3
     case .speakerMerged: return 4
+    case .started: return 5
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -64,6 +71,7 @@ public nonisolated enum Aria_Daemon_V1_ListenStage: SwiftProtobuf.Enum, Swift.Ca
     .stopped,
     .failed,
     .speakerMerged,
+    .started,
   ]
 
 }
@@ -191,7 +199,7 @@ public nonisolated struct Aria_Daemon_V1_ListenEvent: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_ListenStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LISTEN_STAGE_UNSPECIFIED\0\u{1}LISTEN_STAGE_SEGMENT_TRANSCRIBED\0\u{1}LISTEN_STAGE_STOPPED\0\u{1}LISTEN_STAGE_FAILED\0\u{1}LISTEN_STAGE_SPEAKER_MERGED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LISTEN_STAGE_UNSPECIFIED\0\u{1}LISTEN_STAGE_SEGMENT_TRANSCRIBED\0\u{1}LISTEN_STAGE_STOPPED\0\u{1}LISTEN_STAGE_FAILED\0\u{1}LISTEN_STAGE_SPEAKER_MERGED\0\u{1}LISTEN_STAGE_STARTED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_StartListenRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
