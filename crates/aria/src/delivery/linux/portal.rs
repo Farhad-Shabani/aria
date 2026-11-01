@@ -66,8 +66,7 @@ fn runtime() -> Result<&'static Runtime, Refusal> {
         .ok_or(Refusal::Failed)
 }
 
-/// Connects in the background. Shutdown stops the wait for consent but leaves
-/// any dialog open.
+/// Connects in the background. Shutdown closes any pending consent dialog.
 /// `on_closed` runs if the session later ends without this process closing it.
 pub(super) fn connect_in_background(
     home: &Path,
@@ -82,10 +81,7 @@ pub(super) fn connect_in_background(
     let token = RestoreToken::at(home);
     let shutdown = shutdown.clone();
     runtime.spawn(async move {
-        let started = tokio::select! {
-            started = start(&token) => started,
-            () = shutdown.cancelled() => Err(Refusal::Failed),
-        };
+        let started = start(&token, &shutdown).await;
         done(started.map(|(portal, session)| {
             let session = Arc::new(session);
             PortalKeyboard {
@@ -175,7 +171,30 @@ async fn close(session: &Session<RemoteDesktop>) {
     }
 }
 
-async fn start(token: &RestoreToken) -> Result<(RemoteDesktop, Session<RemoteDesktop>), Refusal> {
+async fn start(
+    token: &RestoreToken,
+    shutdown: &CancellationToken,
+) -> Result<(RemoteDesktop, Session<RemoteDesktop>), Refusal> {
+    let (portal, session) = tokio::select! {
+        opened = open_session() => opened?,
+        () = shutdown.cancelled() => return Err(Refusal::Failed),
+    };
+    let granted = tokio::select! {
+        granted = grant_keyboard(&portal, &session, token) => granted,
+        () = shutdown.cancelled() => Err(Refusal::Failed),
+    };
+    match granted {
+        Ok(()) => Ok((portal, session)),
+        Err(refusal) => {
+            // Ends any open dialog. A retry would otherwise leave one open
+            // session per ask.
+            close(&session).await;
+            Err(refusal)
+        }
+    }
+}
+
+async fn open_session() -> Result<(RemoteDesktop, Session<RemoteDesktop>), Refusal> {
     register().await;
     let portal = RemoteDesktop::new().await.map_err(|error| {
         tracing::info!(%error, "no RemoteDesktop portal");
@@ -185,14 +204,7 @@ async fn start(token: &RestoreToken) -> Result<(RemoteDesktop, Session<RemoteDes
         .create_session(Default::default())
         .await
         .map_err(failed)?;
-    match grant_keyboard(&portal, &session, token).await {
-        Ok(()) => Ok((portal, session)),
-        Err(refusal) => {
-            // A retry would otherwise leave one open session per ask.
-            close(&session).await;
-            Err(refusal)
-        }
-    }
+    Ok((portal, session))
 }
 
 async fn grant_keyboard(

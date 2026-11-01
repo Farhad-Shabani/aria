@@ -142,7 +142,7 @@ impl LinuxTextDelivery {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FailedPaste {
-    /// As far as Aria can tell, the text is on the clipboard and no paste went out.
+    /// The text is on the clipboard and no paste went out.
     AlreadyCopied,
     /// Nothing was written yet.
     CopyInstead(Refusal),
@@ -157,7 +157,8 @@ fn failed_paste(failure: JobError) -> FailedPaste {
         JobError::ClipboardRejected
         | JobError::TimedOut
         | JobError::Cancelled
-        | JobError::Unconfirmed => FailedPaste::Fail(failure),
+        | JobError::Unconfirmed
+        | JobError::Stalled => FailedPaste::Fail(failure),
     }
 }
 
@@ -244,7 +245,7 @@ fn delivery_error(failure: JobError, timeout: Duration) -> DeliveryError {
         JobError::NotSent => DeliveryError::TargetUnavailable,
         JobError::TimedOut => DeliveryError::Timeout(timeout),
         JobError::Cancelled => DeliveryError::Cancelled,
-        JobError::Unconfirmed => DeliveryError::PasteUnconfirmed,
+        JobError::Unconfirmed | JobError::Stalled => DeliveryError::PasteUnconfirmed,
     }
 }
 
@@ -347,6 +348,7 @@ mod tests {
     fn a_paste_that_may_have_landed_is_never_copied_again() {
         for failure in [
             JobError::Unconfirmed,
+            JobError::Stalled,
             JobError::TimedOut,
             JobError::Cancelled,
             JobError::ClipboardRejected,

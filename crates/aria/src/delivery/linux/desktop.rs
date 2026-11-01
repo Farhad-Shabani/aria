@@ -30,6 +30,8 @@ const JOIN_POLL: Duration = Duration::from_millis(10);
 /// would paste the previous clipboard.
 const READ_BACK_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_BACK_POLL: Duration = Duration::from_millis(10);
+const BOTH_SELECTIONS: [LinuxClipboardKind; 2] =
+    [LinuxClipboardKind::Clipboard, LinuxClipboardKind::Primary];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Refusal {
@@ -69,6 +71,24 @@ pub(super) enum JobError {
     Cancelled,
     /// Keys may have reached the focused app, and nothing confirms it.
     Unconfirmed,
+    /// The thread stopped answering after it may have sent keys.
+    Stalled,
+}
+
+impl JobError {
+    /// Whether the thread can no longer be trusted with another job. A thread
+    /// that answered stays, because it owns the text on the selections.
+    fn is_stall(self) -> bool {
+        match self {
+            Self::TimedOut | Self::Stalled => true,
+            Self::Refused(_)
+            | Self::ClipboardRejected
+            | Self::PrimaryRejected
+            | Self::NotSent
+            | Self::Cancelled
+            | Self::Unconfirmed => false,
+        }
+    }
 }
 
 impl From<SendFailure> for JobError {
@@ -122,6 +142,11 @@ pub(super) struct Desktop {
 impl Desktop {
     pub(super) fn new(home: &Path, server: DisplayServer) -> Self {
         tracing::info!(?server, "display server");
+        if server == DisplayServer::Absent {
+            tracing::warn!(
+                "no display in the service environment; restart the service from a desktop session"
+            );
+        }
         Self {
             server,
             home: home.to_path_buf(),
@@ -177,6 +202,7 @@ impl Desktop {
                 return Ok(Arc::clone(worker));
             }
             if !worker.has_stopped() {
+                tracing::warn!("the input thread is stuck on the display; restart the service");
                 return Err(Refusal::Failed);
             }
         }
@@ -366,7 +392,7 @@ impl Worker {
         })
         .map_err(JobError::Refused)?;
         let result = await_job(&replies, &claim, budget);
-        if matches!(result, Err(JobError::TimedOut | JobError::Unconfirmed)) {
+        if result.is_err_and(JobError::is_stall) {
             self.retire();
         }
         result
@@ -428,7 +454,7 @@ fn await_job(
             Err(RecvTimeoutError::Disconnected) if claim.abandon() => {
                 return Err(JobError::Refused(Refusal::Failed));
             }
-            Err(RecvTimeoutError::Disconnected) => return Err(JobError::Unconfirmed),
+            Err(RecvTimeoutError::Disconnected) => return Err(JobError::Stalled),
             Err(RecvTimeoutError::Timeout) => {}
         }
         let stop = if budget.is_cancelled() {
@@ -443,7 +469,7 @@ fn await_job(
         }
         return replies
             .recv_timeout(POSTING_GRACE)
-            .unwrap_or(Err(JobError::Unconfirmed));
+            .unwrap_or(Err(JobError::Stalled));
     }
 }
 
@@ -531,7 +557,7 @@ fn run_job(
             return Some(Err(JobError::ClipboardRejected));
         }
         if !claim.post() {
-            selections.clear();
+            selections.clear(&[LinuxClipboardKind::Clipboard]);
             return None;
         }
         return Some(Ok(()));
@@ -539,25 +565,37 @@ fn run_job(
     let Some(keys) = link.keys() else {
         return Some(Err(JobError::Refused(Refusal::Failed)));
     };
-    let withdraw_after = |selections: &mut Selections, error: JobError| {
-        if after_failure == AfterFailure::Withdraw {
-            selections.clear();
-        }
-        error
-    };
-    if let Err(error) = selections.write_both(text) {
-        return Some(Err(withdraw_after(selections, error)));
+    let withdraw_after =
+        |selections: &mut Selections, written: &[LinuxClipboardKind], error: JobError| {
+            if after_failure == AfterFailure::Withdraw {
+                selections.clear(written);
+            }
+            error
+        };
+    if selections
+        .write(text, LinuxClipboardKind::Clipboard)
+        .is_err()
+    {
+        return Some(Err(JobError::ClipboardRejected));
     }
-    if !selections.reads_back(text) {
-        return Some(Err(withdraw_after(selections, JobError::NotSent)));
+    if selections.write(text, LinuxClipboardKind::Primary).is_err() {
+        let written = [LinuxClipboardKind::Clipboard];
+        return Some(Err(withdraw_after(
+            selections,
+            &written,
+            JobError::PrimaryRejected,
+        )));
+    }
+    if let Err(error) = selections.read_back(text) {
+        return Some(Err(withdraw_after(selections, &BOTH_SELECTIONS, error)));
     }
     if !claim.post() {
-        selections.clear();
+        selections.clear(&BOTH_SELECTIONS);
         return None;
     }
     Some(keys.send().map_err(|failure| {
         link.lose();
-        withdraw_after(selections, failure.into())
+        withdraw_after(selections, &BOTH_SELECTIONS, failure.into())
     }))
 }
 
@@ -582,26 +620,25 @@ impl Selections {
             })
     }
 
-    fn write_both(&mut self, text: &str) -> Result<(), JobError> {
-        self.write(text, LinuxClipboardKind::Clipboard)
-            .map_err(|_| JobError::ClipboardRejected)?;
-        self.write(text, LinuxClipboardKind::Primary)
-            .map_err(|_| JobError::PrimaryRejected)
-    }
-
-    /// Whether both selections serve `text` yet. On X11 and XWayland, `arboard`
+    /// Waits for both selections to serve `text`. On X11 and XWayland, `arboard`
     /// answers from its own copy, so this proves only that it owns them.
-    fn reads_back(&mut self, text: &str) -> bool {
+    fn read_back(&mut self, text: &str) -> Result<(), JobError> {
         let deadline = Instant::now() + READ_BACK_TIMEOUT;
         loop {
-            if self.holds(text, LinuxClipboardKind::Clipboard)
-                && self.holds(text, LinuxClipboardKind::Primary)
-            {
-                return true;
+            let on_clipboard = self.holds(text, LinuxClipboardKind::Clipboard);
+            if on_clipboard && self.holds(text, LinuxClipboardKind::Primary) {
+                return Ok(());
             }
             if Instant::now() >= deadline {
-                tracing::warn!("the selections did not read back; the paste keys were not sent");
-                return false;
+                tracing::warn!(
+                    on_clipboard,
+                    "the selections did not read back; the paste keys were not sent"
+                );
+                return Err(if on_clipboard {
+                    JobError::NotSent
+                } else {
+                    JobError::ClipboardRejected
+                });
             }
             thread::sleep(READ_BACK_POLL);
         }
@@ -613,8 +650,8 @@ impl Selections {
             .is_ok_and(|held| held == text)
     }
 
-    fn clear(&mut self) {
-        for selection in [LinuxClipboardKind::Clipboard, LinuxClipboardKind::Primary] {
+    fn clear(&mut self, written: &[LinuxClipboardKind]) {
+        for &selection in written {
             let cleared = self
                 .connected()
                 .and_then(|clipboard| clipboard.clear_with().clipboard(selection));
@@ -865,14 +902,22 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_gone_after_claiming_the_job_leaves_the_paste_unconfirmed() {
+    fn a_thread_that_answered_is_not_retired() {
+        assert!(!JobError::Unconfirmed.is_stall());
+        assert!(!JobError::NotSent.is_stall());
+        assert!(JobError::TimedOut.is_stall());
+        assert!(JobError::Stalled.is_stall());
+    }
+
+    #[test]
+    fn a_thread_gone_after_claiming_the_job_counts_as_stalled() {
         let (reply, replies) = mpsc::channel();
         drop(reply);
         let claim = Claim::default();
         assert!(claim.post());
         assert_eq!(
             await_job(&replies, &claim, &budget(SHORT)),
-            Err(JobError::Unconfirmed)
+            Err(JobError::Stalled)
         );
     }
 
