@@ -16,7 +16,7 @@ Aria needs two permissions:
   input too. To add the rule later, run `aria doctor` and follow its steps.
 - **Keyboard control** to paste into other apps on Wayland. Aria asks the
   desktop for permission and saves the grant when the desktop supports it.
-  If you decline, Aria copies instead until the service restarts.
+  If you decline, Aria copies instead; restarting the service asks again.
 
 X11 desktops need only keyboard access.
 

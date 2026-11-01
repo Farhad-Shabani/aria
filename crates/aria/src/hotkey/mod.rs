@@ -259,8 +259,8 @@ pub(crate) enum ListenerEvent {
     Armed,
     /// The platform refused the watch until the user grants a permission.
     AwaitingPermission,
-    /// No device the listener can read has the key. A different key, or a
-    /// keyboard plugged in, arms it again.
+    /// The listener has no usable device with the key, or cannot watch the
+    /// key at all. Changing the key or the devices can arm it again.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     KeyUnavailable,
     Press(Press),

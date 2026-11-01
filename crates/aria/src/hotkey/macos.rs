@@ -71,7 +71,7 @@ fn held_modifiers(flags: u64) -> Modifiers {
     .fold(Modifiers::NONE, |held, (_, modifier)| held | modifier)
 }
 
-/// Software-generated modifiers cannot join an Aria-key press.
+/// A software-generated modifier change is dropped.
 fn translate(key: AriaKey, key_code: i64, flags: u64, synthetic: bool) -> Option<KeyEvent> {
     let held = held_modifiers(flags);
     if key_code == key.key_code() {

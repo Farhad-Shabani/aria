@@ -36,7 +36,7 @@ pub(super) enum Refusal {
     NoDisplay,
     /// The display server offers no way to send keys.
     Unsupported,
-    /// The user declined keyboard control. Asked again after a restart.
+    /// The user declined keyboard control. Not asked again while this thread runs.
     NotPermitted,
     Failed,
 }
@@ -48,7 +48,6 @@ pub(super) enum KeyboardState {
     Refused(Refusal),
 }
 
-/// How a failed attempt to send the paste keys ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SendFailure {
     /// The chord cannot have reached the focused app.
@@ -197,8 +196,7 @@ enum LinkState {
     Refused(Refusal),
 }
 
-/// The connection to whatever sends the paste keys. Every change of its state
-/// goes through a method here.
+/// The connection to whatever sends the paste keys.
 struct KeyboardLink {
     state: Mutex<LinkState>,
     changed: Condvar,
@@ -249,7 +247,7 @@ impl KeyboardLink {
         self.changed.notify_all();
     }
 
-    /// The connection died. The next delivery asks for another.
+    /// The connection died or failed a key. The next delivery asks for another.
     fn lose(&self) {
         let mut state = lock(&self.state);
         if matches!(&*state, LinkState::Ready(_)) {
@@ -306,12 +304,11 @@ enum Request {
     Stop,
 }
 
-/// The display thread and the queue that feeds it.
 struct Worker {
     link: Arc<KeyboardLink>,
     // Dropped before the join, so the thread sees the queue close.
     requests: Option<SyncSender<Request>>,
-    /// Stops queued jobs and interrupts portal consent. Once cancelled, this
+    /// Stops queued jobs and the wait for portal consent. Once cancelled, this
     /// thread is not trusted with another job.
     shutdown: CancellationToken,
     thread: Option<JoinHandle<()>>,
@@ -496,8 +493,8 @@ fn connect(
             );
         }
         DisplayServer::Wayland => {
-            // Weak: the session's keys keep this watcher alive, and the link
-            // keeps the keys.
+            // Weak: the link holds the keys, and only dropping the keys ends
+            // this watcher.
             let watched = Arc::downgrade(link);
             let link = Arc::clone(link);
             portal::connect_in_background(
@@ -564,8 +561,8 @@ fn run_job(
     }))
 }
 
-/// The clipboard connection stays open once made. The owner serves every
-/// paste, so the transcript lasts only as long as this thread.
+/// The clipboard connection stays open once made: on X11, dropping the last
+/// one gives up the selections.
 #[derive(Default)]
 struct Selections {
     clipboard: Option<Clipboard>,
@@ -592,8 +589,8 @@ impl Selections {
             .map_err(|_| JobError::PrimaryRejected)
     }
 
-    /// Whether both selections serve `text` yet. Under XWayland this proves
-    /// the X server has it, not that Wayland apps do.
+    /// Whether both selections serve `text` yet. On X11 and XWayland, `arboard`
+    /// answers from its own copy, so this proves only that it owns them.
     fn reads_back(&mut self, text: &str) -> bool {
         let deadline = Instant::now() + READ_BACK_TIMEOUT;
         loop {

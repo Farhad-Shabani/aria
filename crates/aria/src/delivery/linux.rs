@@ -140,14 +140,13 @@ impl LinuxTextDelivery {
     }
 }
 
-/// What insert-or-copy does about a paste that failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FailedPaste {
-    /// The text is on the clipboard and no keys went out.
+    /// As far as Aria can tell, the text is on the clipboard and no paste went out.
     AlreadyCopied,
     /// Nothing was written yet.
     CopyInstead(Refusal),
-    /// Copying now could deliver the text twice, or the caller gave up.
+    /// A copy now could deliver the text twice, could not succeed, or is unwanted.
     Fail(JobError),
 }
 

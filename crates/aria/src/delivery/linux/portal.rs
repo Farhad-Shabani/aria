@@ -66,7 +66,8 @@ fn runtime() -> Result<&'static Runtime, Refusal> {
         .ok_or(Refusal::Failed)
 }
 
-/// Connects in the background; shutdown interrupts a pending consent request.
+/// Connects in the background. Shutdown stops the wait for consent but leaves
+/// any dialog open.
 /// `on_closed` runs if the session later ends without this process closing it.
 pub(super) fn connect_in_background(
     home: &Path,

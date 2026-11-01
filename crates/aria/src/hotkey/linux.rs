@@ -76,7 +76,7 @@ const RULES_DIRECTORY: &str = "/etc/udev/rules.d";
 const APPLY_RULE: &str = "sudo udevadm trigger --subsystem-match=input --action=change";
 
 impl AriaKey {
-    /// `None` for a key the kernel does not report.
+    /// `None` for a key the listener cannot watch.
     fn key_code(self) -> Option<u16> {
         match self {
             Self::RightOption => Some(KEY_RIGHTALT),
@@ -128,7 +128,6 @@ impl LinuxHotkeyListener {
     }
 }
 
-/// Uses the input rule shipped with this executable.
 fn grant_steps() -> String {
     let shipped = std::env::current_exe()
         .and_then(fs::canonicalize)
@@ -215,12 +214,12 @@ fn report(readiness: Readiness, devices: usize, events: &impl Fn(ListenerEvent))
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Readiness {
-    /// At least one keyboard with the key is open.
+    /// A keyboard with the key can be read.
     Reading,
     /// A keyboard with the key exists, but the user may not read it.
     Denied,
     NoKeyboard,
-    /// A keyboard opened, but which keys it holds could not be read.
+    /// A device opened, but its clock or held keys could not be set up.
     StateUnavailable,
 }
 
@@ -238,7 +237,7 @@ struct Devices {
     aria_key: u16,
     open: Vec<Device>,
     state_unavailable: bool,
-    /// A rescan dropped a keyboard; the next batch reports it.
+    /// A keyboard went away or a device failed to start; the next batch reports it.
     lost_keyboard: bool,
 }
 
@@ -281,7 +280,7 @@ impl Devices {
         }
     }
 
-    /// What a rescan would find, without opening anything.
+    /// What a rescan should find, judged by access checks alone.
     fn probe(&self) -> Readiness {
         let mut denied = false;
         for (name, kind) in candidates(&self.class_directory, self.aria_key) {
@@ -438,7 +437,6 @@ impl Devices {
         batch
     }
 
-    /// Waits up to `timeout` for any device to have events.
     fn any_ready(&self, timeout: Duration) -> bool {
         if self.open.is_empty() {
             thread::sleep(timeout);
@@ -669,7 +667,6 @@ impl HeldKeys {
     }
 }
 
-/// Combines this device's modifiers with those held on other devices.
 fn translate(
     aria_key: u16,
     event: InputEvent,
