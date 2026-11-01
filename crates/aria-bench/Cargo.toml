@@ -12,6 +12,7 @@ publish              = false
 workspace = true
 
 [dependencies]
+aria-assistant     = { workspace = true }
 aria-settings      = { workspace = true }
 aria-voice         = { workspace = true }
 aria-bench-speaker = { path = "../aria-bench-speaker" }

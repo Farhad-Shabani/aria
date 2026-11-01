@@ -33,6 +33,8 @@ pub use profile::write_profile;
 pub use store::{DerivedPair, Fact, Store, StoreError};
 
 pub const DB_FILE: &str = "memory.db";
+/// The extraction and lexicon cases the memory eval and the bench score.
+pub const EVAL_CASES: &str = include_str!("eval_cases.json");
 pub const LEXICON_FILE: &str = "lexicon.txt";
 pub(crate) const PROFILE_FILE: &str = "profile.md";
 
