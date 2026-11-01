@@ -444,29 +444,6 @@ mod tests {
         }
     }
 
-    fn fake_listener(
-        key: AriaKey,
-        _events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) {
-        ARMED.lock().expect("armed keys").push(key);
-        park_until(should_stop);
-    }
-
-    fn shift_combo_listener(
-        _key: AriaKey,
-        events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) {
-        events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
-        park_until(should_stop);
-    }
-
-    fn tap_listener(_key: AriaKey, events: &dyn Fn(ListenerEvent), should_stop: &dyn Fn() -> bool) {
-        events(ListenerEvent::Press(Press::Tap));
-        park_until(should_stop);
-    }
-
     /// A trigger with no dictation behind it. The directory holds its
     /// settings and must outlive it.
     fn trigger(
@@ -507,7 +484,10 @@ mod tests {
         let trigger = trigger(
             watch,
             Arc::new(Subscriptions::new()),
-            fake_listener,
+            |key, _events, should_stop| {
+                ARMED.lock().expect("armed keys").push(key);
+                park_until(should_stop);
+            },
             &directory,
         );
         let shutdown = CancellationToken::new();
@@ -529,15 +509,6 @@ mod tests {
     /// Its own record, so it never races the re-arm test over [`ARMED`].
     static ARMED_FROM_OFF: Mutex<Vec<AriaKey>> = Mutex::new(Vec::new());
 
-    fn listener_from_off(
-        key: AriaKey,
-        _events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) {
-        ARMED_FROM_OFF.lock().expect("armed keys").push(key);
-        park_until(should_stop);
-    }
-
     async fn armed_from_off(count: usize) {
         tokio::time::timeout(Duration::from_secs(2), async {
             while ARMED_FROM_OFF.lock().expect("armed keys").len() < count {
@@ -555,7 +526,10 @@ mod tests {
         let trigger = trigger(
             watch,
             Arc::new(Subscriptions::new()),
-            listener_from_off,
+            |key, _events, should_stop| {
+                ARMED_FROM_OFF.lock().expect("armed keys").push(key);
+                park_until(should_stop);
+            },
             &directory,
         );
         let shutdown = CancellationToken::new();
@@ -585,7 +559,15 @@ mod tests {
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
         let subscriptions = Arc::new(Subscriptions::new());
         let mut events = subscriptions.subscribe().expect("a subscriber fits");
-        let trigger = trigger(watch, subscriptions, shift_combo_listener, &directory);
+        let trigger = trigger(
+            watch,
+            subscriptions,
+            |_key, events, should_stop| {
+                events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
+                park_until(should_stop);
+            },
+            &directory,
+        );
         let shutdown = CancellationToken::new();
         let running = tokio::spawn(trigger.run(shutdown.clone()));
 
@@ -648,7 +630,10 @@ mod tests {
             runtime: dictation,
             subscriptions,
             health,
-            listener: tap_listener,
+            listener: |_key, events, should_stop| {
+                events(ListenerEvent::Press(Press::Tap));
+                park_until(should_stop);
+            },
         };
         let shutdown = CancellationToken::new();
         let chat_actor = tokio::spawn(chat_actor.run(shutdown.clone()));

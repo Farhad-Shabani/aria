@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn the_runtime_runs_spawned_tasks_and_timers_between_calls() {
+    fn the_portal_runtime_drives_timers_while_blocking() {
         let runtime = runtime().expect("a runtime");
         let task = runtime.spawn(async {
             tokio::time::sleep(Duration::from_millis(1)).await;

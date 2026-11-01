@@ -744,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn keys_being_posted_answer_past_the_cancel() {
+    fn a_ready_result_wins_over_cancellation() {
         let (reply, replies) = mpsc::channel();
         let claim = Claim::default();
         assert!(claim.post());
