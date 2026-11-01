@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use super::DeliveryMode;
-use crate::delivery::OutputMode;
+use aria_platform::delivery::OutputMode;
 
 const MAX_APPLICATIONS: usize = 64;
 const MAX_ID_BYTES: usize = 255;

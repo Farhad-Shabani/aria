@@ -84,7 +84,7 @@ fn translate(key: AriaKey, key_code: i64, flags: u64, synthetic: bool) -> Option
     (!synthetic).then_some(KeyEvent::Modifiers { held })
 }
 
-pub(crate) struct MacOsHotkeyListener;
+pub struct MacOsHotkeyListener;
 
 /// Shared between `listen` and the tap callback, same thread only — the
 /// callback runs inside the run-loop slices `listen` drives.
@@ -127,9 +127,9 @@ impl TapState {
 }
 
 impl MacOsHotkeyListener {
-    pub(crate) const PERMISSION: &str = "Accessibility access";
+    pub const PERMISSION: &str = "Accessibility access";
 
-    pub(crate) fn unarmed_reason(_key: AriaKey) -> String {
+    pub fn unarmed_reason(_key: AriaKey) -> String {
         format!(
             "the dictation hotkey is waiting for permission: System Settings → \
              Privacy & Security → {} → + → {}; it arms within ~3s",
@@ -138,11 +138,7 @@ impl MacOsHotkeyListener {
         )
     }
 
-    pub(crate) fn listen(
-        key: AriaKey,
-        events: impl Fn(ListenerEvent),
-        should_stop: impl Fn() -> bool,
-    ) {
+    pub fn listen(key: AriaKey, events: impl Fn(ListenerEvent), should_stop: impl Fn() -> bool) {
         let state = TapState {
             key,
             detector: RefCell::new(PressDetector::new()),

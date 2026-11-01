@@ -11,8 +11,8 @@ use super::SettingsError;
 use super::{ApplicationOverrides, Chord, Prompts};
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
-use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
-use crate::hotkey::{AriaKey, Combo};
+use aria_platform::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
+use aria_platform::hotkey::{AriaKey, Combo};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {

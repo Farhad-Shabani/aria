@@ -69,7 +69,6 @@ pub use crate::chat::{
     Focus, Project, ProjectsError, Step, Ticket,
 };
 pub use crate::config::AssistantId;
-pub use crate::delivery::OutputMode;
 pub use crate::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -81,3 +80,4 @@ pub use crate::listen::ListenStage;
 pub use crate::settings::DeliveryMode;
 pub use crate::speaker::{Role, SpeakerName, SpeakerNameError};
 pub use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+pub use aria_platform::delivery::OutputMode;

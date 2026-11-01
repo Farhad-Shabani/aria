@@ -23,7 +23,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// UTF-16 units of the last segment compared with the text before the caret.
 const ENDING_UNITS: usize = 16;
 
-pub(crate) enum Anchoring {
+pub enum Anchoring {
     Pending,
     Anchored(Anchor),
     /// The field or caret was unreadable, so only the frontmost-app check
@@ -85,7 +85,7 @@ impl Anchoring {
     }
 }
 
-pub(crate) struct Anchor {
+pub struct Anchor {
     application: arc::R<ax::UiElement>,
     field: arc::R<ax::UiElement>,
     /// The caret's UTF-16 offset once everything typed so far has landed.

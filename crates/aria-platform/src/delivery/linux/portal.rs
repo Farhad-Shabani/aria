@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::APP_ID;
 use super::desktop::{Refusal, SendFailure};
-use crate::primitives::private_document::PrivateDocument;
+use aria_primitives::private_document::PrivateDocument;
 
 const RELATIVE_PATH: &str = ".aria/desktop/remote-desktop.json";
 const MAX_TOKEN_BYTES: u64 = 4096;

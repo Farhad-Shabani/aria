@@ -15,7 +15,6 @@ use crate::audio::{
     WavReplayCapture,
 };
 use crate::config::SpeakerConfig;
-use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
 use crate::speaker::Diarizer;
 use crate::transcription::Transcription;
 use aria_harness::own_voice::{ArtifactKind, Placed, SPEAKERS_DIR, Truth};
@@ -25,6 +24,7 @@ use aria_kit::transcription::{
     Hypothesis, Language, StreamingEngine as _, Transcriber, TranscriptionAudio, TranscriptionError,
 };
 use aria_kit::voice_activity::SileroVad;
+use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
 use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_stt::parakeet::{Device, Parakeet};
@@ -97,7 +97,7 @@ impl TextDelivery for TimedDelivery {
 
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::delivery::Application> {
+    fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
         None
     }
 

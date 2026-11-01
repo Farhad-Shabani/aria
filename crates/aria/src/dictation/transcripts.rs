@@ -4,8 +4,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
-use crate::delivery::{DeliveryOutcome, Placement};
 use crate::speaker::Label;
+use aria_platform::delivery::{DeliveryOutcome, Placement};
 
 /// What the pipeline heard in one stretch of speech.
 ///

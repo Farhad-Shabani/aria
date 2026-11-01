@@ -10,7 +10,7 @@ use std::process::Command;
 use std::{fs, io};
 
 use super::{Job, SupervisorError, UnitSpec, run_command};
-use crate::delivery::APP_ID;
+use aria_platform::delivery::APP_ID;
 
 const UNIT: &str = "aria-daemon.service";
 pub(super) const UNIT_FILE: &str = UNIT;

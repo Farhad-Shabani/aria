@@ -1,5 +1,7 @@
 use super::{DeliveryMode, DictationSettings, ExecutionControl, TranscriptSink, Utterance};
-use crate::delivery::{Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery};
+use aria_platform::delivery::{
+    Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery,
+};
 use std::sync::Arc;
 
 /// The frontmost app as a transcript sink. Streaming types each segment as
@@ -12,7 +14,7 @@ pub(crate) struct Cursor<D: TextDelivery> {
 
 /// Where the dictation under way lands, picked before any text.
 struct Target<P> {
-    policy: crate::delivery::TargetPolicy,
+    policy: aria_platform::delivery::TargetPolicy,
     mode: DeliveryMode,
     control: Arc<ExecutionControl>,
     prepared: P,
@@ -261,7 +263,7 @@ mod tests {
             const DEFAULT_MODE: OutputMode = OutputMode::Copy;
             const OUTLIVES_PROCESS: bool = true;
 
-            fn frontmost(&self) -> Option<crate::delivery::Application> {
+            fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
                 None
             }
 
@@ -423,7 +425,7 @@ mod tests {
         const OUTLIVES_PROCESS: bool = false;
         const STREAMS: bool = false;
 
-        fn frontmost(&self) -> Option<crate::delivery::Application> {
+        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
             None
         }
 
@@ -498,7 +500,7 @@ mod tests {
     struct FieldWithText {
         delivery: RecordingDelivery,
         caret: Caret,
-        front: Option<crate::delivery::Application>,
+        front: Option<aria_platform::delivery::Application>,
     }
 
     impl TextDelivery for FieldWithText {
@@ -507,7 +509,7 @@ mod tests {
 
         const OUTLIVES_PROCESS: bool = true;
 
-        fn frontmost(&self) -> Option<crate::delivery::Application> {
+        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
             self.front.clone()
         }
 
@@ -577,7 +579,7 @@ mod tests {
                 fail: false,
             },
             caret: Caret::between("", ""),
-            front: Some(crate::delivery::Application {
+            front: Some(aria_platform::delivery::Application {
                 name: "Vault".into(),
                 bundle_id: Some("com.secret".into()),
             }),

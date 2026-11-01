@@ -6,13 +6,15 @@ use super::{
     TranscriptSink, Utterance,
 };
 use crate::audio::{RecordingReader, SilenceDuration};
-use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery};
 use crate::transcription::{
     Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
 };
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
+use aria_platform::delivery::{
+    DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery,
+};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -86,7 +88,7 @@ impl TextDelivery for RecordingDelivery {
 
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::delivery::Application> {
+    fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
         None
     }
 
@@ -146,7 +148,7 @@ impl TextDelivery for PlacedDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::delivery::Application> {
+    fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
         None
     }
 
@@ -281,7 +283,7 @@ pub(crate) fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> 
         project: None,
         transcript_only: false,
         application: None,
-        target: crate::delivery::TargetPolicy::default(),
+        target: aria_platform::delivery::TargetPolicy::default(),
     }
 }
 

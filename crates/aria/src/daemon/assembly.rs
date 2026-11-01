@@ -3,15 +3,15 @@
 use crate::audio::{WakeWordMonitor, remove_all_spools};
 use crate::config::{ConfigError, memory_directory};
 use crate::config::{DaemonConfig, HotkeyConfig, RelayConfig, SpeakerConfig, WakeWordOverride};
-use crate::delivery::PlatformTextDelivery;
 use crate::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use crate::memory::Lexicon;
 use crate::microphone::Gate;
 use crate::primitives::error_chain;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
-use crate::runtime::PreparedRuntimePaths;
 use crate::settings::{SettingsCache, SettingsError, SettingsFile};
 use crate::settings::{SettingsStore, StoreError};
+use aria_platform::delivery::PlatformTextDelivery;
+use aria_platform::runtime::PreparedRuntimePaths;
 
 use std::sync::Arc;
 
@@ -523,7 +523,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::runtime::RuntimePaths;
+    use aria_platform::runtime::RuntimePaths;
 
     /// Runtime paths whose spool directory is the test daemon's home.
     fn prepared() -> (tempfile::TempDir, PreparedRuntimePaths) {

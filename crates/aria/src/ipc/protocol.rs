@@ -7,13 +7,11 @@ use crate::chat::{
     Ticket,
 };
 use crate::config::AssistantId;
-use crate::delivery::{DeliveryOutcome, OutputMode, Placement, Rect};
 use crate::dictation::{
     CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationStage,
     GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
-use crate::hotkey::{AriaKey, Combo};
 use crate::listen::ListenStage;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::settings::{
@@ -28,6 +26,8 @@ use crate::transcription::LanguageCodeError;
 use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
 };
+use aria_platform::delivery::{DeliveryOutcome, OutputMode, Placement, Rect};
+use aria_platform::hotkey::{AriaKey, Combo};
 use prost::Message;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1164,8 +1164,8 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
     type Error = ProtocolError;
 
     fn try_from(entry: wire::HistoryEntry) -> Result<Self, Self::Error> {
-        use crate::delivery::Application;
         use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
+        use aria_platform::delivery::Application;
         if entry.id == 0 || entry.id > i64::MAX as u64 {
             return Err(ProtocolError::InvalidHistory("id"));
         }
@@ -2579,7 +2579,7 @@ mod tests {
                     height: 16.0,
                 },
                 field: None,
-                font: Some(crate::delivery::Font {
+                font: Some(aria_platform::delivery::Font {
                     name: "Helvetica".to_owned(),
                     size: 13.0,
                 }),

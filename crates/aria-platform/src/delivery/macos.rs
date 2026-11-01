@@ -49,11 +49,11 @@ const RETURN_VIRTUAL_KEY: u16 = 0x24;
 /// Carbon's `noErr`.
 const NO_ERR: i32 = 0;
 
-pub(crate) struct MacOsTextDelivery {
+pub struct MacOsTextDelivery {
     timeout: Duration,
 }
 
-pub(crate) enum MacOsDeliveryTarget {
+pub enum MacOsDeliveryTarget {
     Application {
         process: u32,
         anchoring: RefCell<Anchoring>,
@@ -382,7 +382,7 @@ fn frontmost_process() -> Result<u32, DeliveryError> {
         .ok_or(DeliveryError::TargetUnavailable)
 }
 
-pub(crate) fn frontmost_application() -> Option<super::Application> {
+pub fn frontmost_application() -> Option<super::Application> {
     autoreleasepool(|_| {
         let pid = i32::try_from(frontmost_process().ok()?).ok()?;
         let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;

@@ -149,16 +149,15 @@ name = "aria"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "arboard",
  "aria-harness",
  "aria-kit",
+ "aria-platform",
  "aria-primitives",
  "aria-segmentation",
  "aria-speaker",
  "aria-stt",
  "aria-tts",
  "aria-wake",
- "ashpd",
  "cidre",
  "clap",
  "futures-util",
@@ -166,10 +165,7 @@ dependencies = [
  "ignore",
  "objc2",
  "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
  "objc2-foundation",
- "objc2-ui-kit",
  "prost",
  "prost-types",
  "protox",
@@ -202,7 +198,6 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "ureq",
- "x11rb",
 ]
 
 [[package]]
@@ -278,6 +273,31 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "aria-platform"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "aria-kit",
+ "aria-primitives",
+ "ashpd",
+ "cidre",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-ui-kit",
+ "rustix",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "x11rb",
 ]
 
 [[package]]

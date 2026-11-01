@@ -27,8 +27,8 @@ use crate::config::{
     DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, ServerEndpoint, backend, tts_backend,
     wake_backend,
 };
-use crate::delivery::OutputMode;
-use crate::hotkey::{AriaKey, Combo};
+use aria_platform::delivery::OutputMode;
+use aria_platform::hotkey::{AriaKey, Combo};
 
 /// What a reader saw of the file's identity. Two equal stamps around a read
 /// say the bytes between them were one version.

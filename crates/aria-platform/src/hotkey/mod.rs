@@ -15,7 +15,7 @@ mod macos;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::LinuxHotkeyListener as PlatformHotkeyListener;
 #[cfg(target_os = "macos")]
-pub(crate) use macos::MacOsHotkeyListener as PlatformHotkeyListener;
+pub use macos::MacOsHotkeyListener as PlatformHotkeyListener;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("no hotkey listener exists for this target");
@@ -96,7 +96,7 @@ pub(crate) enum KeyEvent {
 /// What the key's press stream means. Other input while the key is down
 /// makes the press a shortcut, never a trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Press {
+pub enum Press {
     /// A clean press shorter than the hold threshold.
     Tap,
     /// The key has been held past the threshold with no other input.
@@ -254,7 +254,7 @@ impl PressDetector {
 
 /// What a platform listener reports while it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ListenerEvent {
+pub enum ListenerEvent {
     /// The key is being watched.
     Armed,
     /// The platform refused the watch until the user grants a permission.

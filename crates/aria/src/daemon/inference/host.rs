@@ -28,8 +28,8 @@ use crate::daemon::shutdown::{ShutdownError, ShutdownSignal};
 use crate::ipc::wire;
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
-use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::transcription::TranscriptionError;
+use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 
 use super::engine::Engine;
 use super::identity::{self, ServerAccess};
@@ -451,10 +451,11 @@ pub(in crate::daemon) mod tests {
             observed: Arc<Observed>,
         ) -> Self {
             let directory = tempfile::tempdir().unwrap();
-            let paths =
-                crate::runtime::RuntimePaths::in_directory(directory.path().join("runtime"))
-                    .prepare()
-                    .unwrap();
+            let paths = aria_platform::runtime::RuntimePaths::in_directory(
+                directory.path().join("runtime"),
+            )
+            .prepare()
+            .unwrap();
             let ownership =
                 Arc::new(ExclusiveListener::bind(paths.socket_path(), paths.lock_path()).unwrap());
             let access =

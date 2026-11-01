@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use super::level::MicLevel;
-use crate::delivery::{DeliveryOutcome, Placement};
 use crate::event::EventEmitter;
 use crate::rpc::RpcErrorCode;
 use crate::speaker::SpeakerName;
+use aria_platform::delivery::{DeliveryOutcome, Placement};
 
 use super::RecordingId;
 

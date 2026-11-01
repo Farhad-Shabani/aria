@@ -23,11 +23,11 @@ use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AssistantId, ChatConfig, ConfigError};
-use crate::delivery::{DeliveryError, OutputMode};
 use crate::event::EventEmitter;
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 use crate::settings::PromptKind;
+use aria_platform::delivery::{DeliveryError, OutputMode};
 
 pub(crate) use assistants::{
     CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant, claude_command, parse_claude,

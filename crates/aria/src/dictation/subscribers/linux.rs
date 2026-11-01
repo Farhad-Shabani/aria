@@ -6,8 +6,8 @@
 use std::process::{Command, Stdio};
 
 use crate::dictation::DictationStage;
-use crate::feedback::run_detached;
-use crate::feedback::{self, SYSTEM_SOUNDS};
+use aria_platform::feedback::run_detached;
+use aria_platform::feedback::{self, SYSTEM_SOUNDS};
 
 use super::message;
 

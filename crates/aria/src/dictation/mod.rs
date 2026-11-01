@@ -23,7 +23,7 @@ pub(crate) mod subscribers;
 pub(crate) mod testing;
 mod transcripts;
 
-pub use crate::delivery::{DeliveryOutcome, OutputMode};
+pub use aria_platform::delivery::{DeliveryOutcome, OutputMode};
 pub use cleanup::{CleanupError, LlmCleanup};
 pub(crate) use cursor::Cursor;
 pub(crate) use event::{
@@ -96,8 +96,8 @@ pub(crate) struct DictationSettings {
     pub(crate) transcript_only: bool,
     pub(crate) project: Option<crate::settings::Directory>,
     /// The app in front as dictation was admitted.
-    pub(crate) application: Option<crate::delivery::Application>,
-    pub(crate) target: crate::delivery::TargetPolicy,
+    pub(crate) application: Option<aria_platform::delivery::Application>,
+    pub(crate) target: aria_platform::delivery::TargetPolicy,
 }
 
 impl DictationSettings {

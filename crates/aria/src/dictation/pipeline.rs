@@ -11,7 +11,6 @@ use aria_kit::transcription::{Punctuated, SentenceEnds, check_cancelled};
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
 use crate::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
-use crate::delivery::{Caret, DeliveryOutcome, Placement};
 use crate::hearing::{
     Board, Decoding, Event, Hearing, HearingError, TrackingError, hear_saved, hear_to_end,
 };
@@ -22,6 +21,7 @@ use crate::transcription::{
     TranscriptionError,
 };
 use crate::vocabulary::Vocabulary;
+use aria_platform::delivery::{Caret, DeliveryOutcome, Placement};
 use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 
@@ -1343,7 +1343,6 @@ mod tests {
     use crate::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
     };
-    use crate::delivery::{DeliveryError, OutputMode, TextDelivery};
     use crate::dictation::testing::{
         CallLog, Hypotheses, Loud, Operations, PLACED, PlacedDelivery, RecordingDelivery, settings,
         timed,
@@ -1359,6 +1358,7 @@ mod tests {
     use aria_kit::speaker::Embedder;
     use aria_kit::speaker::LevelSegmenter;
     use aria_kit::speaker::{Diarizer, SpeakerError};
+    use aria_platform::delivery::{DeliveryError, OutputMode, TextDelivery};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -3956,7 +3956,7 @@ mod tests {
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
         const OUTLIVES_PROCESS: bool = true;
 
-        fn frontmost(&self) -> Option<crate::delivery::Application> {
+        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
             None
         }
 

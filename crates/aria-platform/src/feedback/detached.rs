@@ -3,7 +3,7 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::primitives::process::{ChildProcess, WaitOutcome};
+use aria_primitives::process::{ChildProcess, WaitOutcome};
 
 /// Only bounds a helper that hangs; a healthy one finishes in under a second.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);

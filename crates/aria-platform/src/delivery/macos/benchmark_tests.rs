@@ -3,7 +3,7 @@ use crate::accessibility::Trust;
 use anyhow::Context;
 use std::time::Duration;
 
-#[path = "../../../benches/dictation_delivery/target.rs"]
+#[path = "../../../../aria/benches/dictation_delivery/target.rs"]
 mod target;
 
 #[test]

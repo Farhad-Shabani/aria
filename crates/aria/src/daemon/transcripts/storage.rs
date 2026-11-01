@@ -13,12 +13,12 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
 use crate::audio::RecordingReader;
-use crate::delivery::Application;
 use crate::history::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
     HistorySource, HistoryStatus,
 };
 use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_platform::delivery::Application;
 
 const MAX_ENTRIES: usize = 1_000;
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;

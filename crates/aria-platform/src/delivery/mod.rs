@@ -17,26 +17,26 @@ pub(crate) use linux::APP_ID;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::LinuxTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "macos")]
-pub(crate) use macos::MacOsTextDelivery as PlatformTextDelivery;
+pub use macos::MacOsTextDelivery as PlatformTextDelivery;
 
 #[cfg(not(any(target_os = "ios", target_os = "linux", target_os = "macos")))]
 compile_error!("no text-delivery adapter exists for this target");
 
 #[derive(Clone)]
-pub(crate) struct DeliveryFactory {
+pub struct DeliveryFactory {
     #[cfg(target_os = "linux")]
     session: linux::Session,
 }
 
 impl DeliveryFactory {
-    pub(crate) fn detect(_home: &Path) -> Self {
+    pub fn detect(_home: &Path) -> Self {
         Self {
             #[cfg(target_os = "linux")]
             session: linux::Session::detect(_home),
         }
     }
 
-    pub(crate) fn create(&self, timeout: Duration) -> Result<PlatformTextDelivery, DeliveryError> {
+    pub fn create(&self, timeout: Duration) -> Result<PlatformTextDelivery, DeliveryError> {
         #[cfg(target_os = "linux")]
         {
             self.session.create(timeout)
@@ -48,7 +48,7 @@ impl DeliveryFactory {
     }
 }
 
-pub(crate) use aria_kit::transcription::Caret;
+pub use aria_kit::transcription::Caret;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -75,7 +75,7 @@ pub enum DeliveryOutcome {
     Copied,
 }
 
-pub(crate) trait TextDelivery: Send + Sync + 'static {
+pub trait TextDelivery: Send + Sync + 'static {
     type Prepared: Send;
 
     const DEFAULT_MODE: OutputMode;
@@ -127,7 +127,7 @@ pub(crate) trait TextDelivery: Send + Sync + 'static {
 
 /// The caret of the field being typed into, so text can be drawn beside it.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Placement {
+pub struct Placement {
     pub caret: Rect,
     pub field: Option<Rect>,
     pub font: Option<Font>,
@@ -135,7 +135,7 @@ pub(crate) struct Placement {
 
 /// Screen points measured from the primary display's top-left corner.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Rect {
+pub struct Rect {
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -143,16 +143,16 @@ pub(crate) struct Rect {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Font {
+pub struct Font {
     pub name: String,
     pub size: f64,
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) use macos::frontmost_application;
+pub use macos::frontmost_application;
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn frontmost_application() -> Option<Application> {
+pub fn frontmost_application() -> Option<Application> {
     None
 }
 
@@ -163,20 +163,20 @@ pub(crate) fn frontmost_application() -> Option<Application> {
 /// before each write. A pinned target must still be in front to receive
 /// text, so a front app that passes here is the one written to.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct TargetPolicy {
-    pub(crate) overridden_for: Option<String>,
-    pub(crate) excluded: Vec<String>,
+pub struct TargetPolicy {
+    pub overridden_for: Option<String>,
+    pub excluded: Vec<String>,
 }
 
 impl TargetPolicy {
-    pub(crate) fn excludes(&self, application: Option<&Application>) -> bool {
+    pub fn excludes(&self, application: Option<&Application>) -> bool {
         application
             .and_then(|application| application.bundle_id.as_deref())
             .is_some_and(|id| self.excluded.iter().any(|excluded| excluded == id))
     }
 
     /// Checks the application `delivery` would type into now.
-    pub(crate) fn confirm_front(&self, delivery: &impl TextDelivery) -> Result<(), DeliveryError> {
+    pub fn confirm_front(&self, delivery: &impl TextDelivery) -> Result<(), DeliveryError> {
         self.confirm(delivery.frontmost().as_ref())
     }
 

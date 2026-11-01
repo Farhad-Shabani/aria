@@ -325,9 +325,9 @@ fn prompt_list(entries: &Keyed<super::PromptEntry>) -> Result<Prompts, InvalidVa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delivery::OutputMode;
-    use crate::hotkey::AriaKey;
     use crate::settings::{Chord, Modifiers, Shortcut};
+    use aria_platform::delivery::OutputMode;
+    use aria_platform::hotkey::AriaKey;
 
     fn settings(text: &str) -> SettingsFile {
         crate::settings::Loaded::parse(text, std::path::Path::new("/Users/you"))

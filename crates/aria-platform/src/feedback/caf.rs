@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::audio::{Clip, ClipError};
+use aria_kit::audio::{Clip, ClipError};
 
 /// Cue files are tens of kilobytes; a reader with no cap would follow a
 /// replaced path into anything.
@@ -21,7 +21,7 @@ const FORMAT_FLAG_LITTLE_ENDIAN: u32 = 1 << 1;
 
 #[derive(Debug, thiserror::Error)]
 #[error("CAF file {}", path.display())]
-pub(crate) struct CafError {
+pub struct CafError {
     path: PathBuf,
     #[source]
     problem: Problem,
@@ -54,7 +54,7 @@ enum Problem {
     SampleRate(ClipError),
 }
 
-pub(crate) fn read_caf(path: impl AsRef<Path>) -> Result<Clip, CafError> {
+pub fn read_caf(path: impl AsRef<Path>) -> Result<Clip, CafError> {
     let path = path.as_ref();
     clip_at(path).map_err(|problem| CafError {
         path: path.to_path_buf(),

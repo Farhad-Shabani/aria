@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-pub use crate::delivery::Application;
 use crate::rpc::{RpcErrorCode, RpcFailure};
+pub use aria_platform::delivery::Application;
 
 #[derive(Clone)]
 pub struct HistoryEntry {

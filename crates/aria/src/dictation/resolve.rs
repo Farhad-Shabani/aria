@@ -1,7 +1,9 @@
 use super::{DictationRequest, DictationSettings, Rewriting};
-use crate::delivery::{Application, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery};
 use crate::settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
 use crate::vocabulary::Context;
+use aria_platform::delivery::{
+    Application, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
+};
 
 impl DictationSettings {
     /// `application` is the app in front as dictation is admitted. Each

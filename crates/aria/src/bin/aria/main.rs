@@ -15,10 +15,10 @@ use aria::daemon::{
 use aria::doctor::Status;
 use aria::primitives::error_chain;
 use aria::rpc::RpcErrorCode;
-use aria::runtime::PreparedRuntimePaths;
 use aria::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
 use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
 use aria::synthesis::{SpeakingRate, SpeechText, Voice};
+use aria_platform::runtime::PreparedRuntimePaths;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod cli;
@@ -58,7 +58,7 @@ enum Command {
         command: RemoteCommand,
     },
     #[cfg(target_os = "macos")]
-    #[command(name = aria::accessibility::CHECK_SUBCOMMAND, hide = true)]
+    #[command(name = aria_platform::accessibility::CHECK_SUBCOMMAND, hide = true)]
     AccessibilityCheck,
     /// Check the settings, models, and daemon on this machine
     Doctor,
@@ -501,7 +501,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Remote { command } => run_remote(command),
         #[cfg(target_os = "macos")]
         Command::AccessibilityCheck => {
-            std::process::exit(aria::accessibility::Trust::in_process().exit_code())
+            std::process::exit(aria_platform::accessibility::Trust::in_process().exit_code())
         }
         Command::Doctor => run_doctor(),
         Command::Settings { command } => run_settings(command),

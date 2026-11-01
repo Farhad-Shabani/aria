@@ -10,8 +10,8 @@ use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view}
 use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
-use crate::delivery::OutputMode;
-use crate::hotkey::AriaKey;
+use aria_platform::delivery::OutputMode;
+use aria_platform::hotkey::AriaKey;
 
 /// `revision` is the hash of the file's values, so a comment edit keeps it.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -221,7 +221,7 @@ impl SettingsPatch {
 mod tests {
     use super::super::{Chord, Modifiers, Prompt, PromptId};
     use super::*;
-    use crate::hotkey::Combo;
+    use aria_platform::hotkey::Combo;
 
     fn revision(store: &SettingsStore) -> u64 {
         store.snapshot().expect("a snapshot").revision

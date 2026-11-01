@@ -16,21 +16,21 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::synthesis::{PlaybackError, SpeakerOutput, StreamClosed, stream};
 
 #[cfg(target_os = "macos")]
-use crate::audio::Clip;
+use aria_kit::audio::Clip;
 
 #[cfg(target_os = "macos")]
 mod caf;
 mod detached;
 
 #[cfg(target_os = "macos")]
-pub(crate) use caf::read_caf;
+pub use caf::read_caf;
 pub(crate) use detached::run_detached;
 
 /// Plays the clip on the default output device from its own thread. The
 /// player waits a drain grace after the last sample, so the thread outlives
 /// the sound by over half a second.
 #[cfg(target_os = "macos")]
-pub(crate) fn play_clip(purpose: &'static str, clip: Arc<Clip>) {
+pub fn play_clip(purpose: &'static str, clip: Arc<Clip>) {
     detached::spawn_detached(purpose, move || {
         if let Err(error) = play_clip_now(&clip) {
             tracing::warn!(%error, purpose, "the sound did not play");
@@ -63,12 +63,12 @@ const PLAYER: &str = "/usr/bin/afplay";
 const PLAYER: &str = "/usr/bin/paplay";
 
 #[cfg(target_os = "macos")]
-pub(crate) const SYSTEM_SOUNDS: &str = "/System/Library/Components/CoreAudio.component\
+pub const SYSTEM_SOUNDS: &str = "/System/Library/Components/CoreAudio.component\
 /Contents/SharedSupport/SystemSounds/system";
 #[cfg(target_os = "linux")]
 pub(crate) const SYSTEM_SOUNDS: &str = "/usr/share/sounds/freedesktop/stereo";
 
-pub(crate) fn play(purpose: &'static str, sound_path: &str) {
+pub fn play(purpose: &'static str, sound_path: &str) {
     run_detached(purpose, player(sound_path));
 }
 

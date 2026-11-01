@@ -11,8 +11,8 @@ use super::tasks::Supervised;
 use crate::dictation::{
     DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
 };
-use crate::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
+use aria_platform::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
 use std::sync::Arc;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
@@ -419,10 +419,10 @@ mod tests {
     use tonic_health::server::HealthService;
 
     use crate::dictation::testing::{RecordsUntilStopped, recording_started};
-    use crate::hotkey::Combo;
     use crate::ipc::wire;
-    use crate::runtime::RuntimePaths;
     use crate::settings::SettingsStore;
+    use aria_platform::hotkey::Combo;
+    use aria_platform::runtime::RuntimePaths;
 
     use super::super::chat::{ChatRuntime, channel as chat_channel};
     use super::super::context::Context;

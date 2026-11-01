@@ -8,7 +8,6 @@ use crate::chat::{
     ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
 use crate::config::{AssistantId, ChatConfig, ConfigError, WakeWordOverride};
-use crate::delivery::{PlatformTextDelivery, TextDelivery};
 use crate::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -19,11 +18,12 @@ use crate::ipc::{
 };
 use crate::listen::ListenStage;
 use crate::rpc::RpcErrorCode;
-use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
 use crate::speaker::SpeakerName;
 use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
+use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
+use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -743,8 +743,8 @@ mod tests {
     use crate::chat::Step;
     use crate::config::AssistantId;
     use crate::daemon::Daemon;
-    use crate::runtime::RuntimePaths;
     use crate::speech::SpeechStage;
+    use aria_platform::runtime::RuntimePaths;
 
     use super::*;
 

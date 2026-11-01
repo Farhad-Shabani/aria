@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use cidre::{ax, ns};
 
-use crate::primitives::error_chain;
-use crate::primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
+use aria_primitives::error_chain;
+use aria_primitives::process::{ChildProcess, ChildProcessError, WaitOutcome};
 
 /// A hidden subcommand that exits with [`Trust::exit_code`].
 pub const CHECK_SUBCOMMAND: &str = "accessibility-check";

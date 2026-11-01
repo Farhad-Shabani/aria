@@ -158,12 +158,12 @@ pub(crate) enum DictationError {
     Transcription(#[source] crate::transcription::TranscriptionError),
 
     #[error("text delivery failed: {0}")]
-    Delivery(#[source] crate::delivery::DeliveryError),
+    Delivery(#[source] aria_platform::delivery::DeliveryError),
 }
 
-impl From<crate::delivery::DeliveryError> for DictationError {
-    fn from(error: crate::delivery::DeliveryError) -> Self {
-        use crate::delivery::DeliveryError;
+impl From<aria_platform::delivery::DeliveryError> for DictationError {
+    fn from(error: aria_platform::delivery::DeliveryError) -> Self {
+        use aria_platform::delivery::DeliveryError;
         match error {
             DeliveryError::Timeout(timeout) => Self::DeliveryTimeout(timeout),
             DeliveryError::Cancelled => Self::Cancelled,
@@ -672,10 +672,10 @@ mod tests {
     use std::thread;
 
     use crate::audio::SilenceDuration;
-    use crate::delivery::OutputMode;
     use crate::dictation::testing::{Edge, HEARD, RecordsUntilStopped, recording_started};
     use crate::settings::DeliveryMode;
     use crate::transcription::LanguageCode;
+    use aria_platform::delivery::OutputMode;
 
     use super::*;
 
@@ -695,7 +695,7 @@ mod tests {
             transcript_only: true,
             project: None,
             application: None,
-            target: crate::delivery::TargetPolicy::default(),
+            target: aria_platform::delivery::TargetPolicy::default(),
         }
     }
 
@@ -833,11 +833,11 @@ mod tests {
 
     fn excluded(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
-            application: Some(crate::delivery::Application {
+            application: Some(aria_platform::delivery::Application {
                 name: "1Password".into(),
                 bundle_id: Some("com.1password.1password".into()),
             }),
-            target: crate::delivery::TargetPolicy {
+            target: aria_platform::delivery::TargetPolicy {
                 overridden_for: None,
                 excluded: vec!["com.1password.1password".into()],
             },

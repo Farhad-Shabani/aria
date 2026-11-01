@@ -4,12 +4,12 @@ use std::fs::DirBuilder;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
-use crate::primitives::private_fs::{PrivateDirectoryError, prepare_directory};
-use crate::primitives::user_home::{self, UserHomeError};
+use aria_primitives::private_fs::{PrivateDirectoryError, prepare_directory};
+use aria_primitives::user_home::{self, UserHomeError};
 
 type Result<T> = std::result::Result<T, RuntimeError>;
 
-pub(crate) const RUNTIME_DIR_ENV: &str = "ARIA_RUNTIME_DIR";
+pub const RUNTIME_DIR_ENV: &str = "ARIA_RUNTIME_DIR";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePaths {
@@ -37,7 +37,7 @@ impl RuntimePaths {
     }
 
     /// The socket a client connects to without preparing the directory.
-    pub(crate) fn socket_path(&self) -> &Path {
+    pub fn socket_path(&self) -> &Path {
         &self.socket
     }
 
@@ -63,7 +63,7 @@ impl RuntimePaths {
         Ok(PreparedRuntimePaths { paths: self })
     }
 
-    pub(crate) fn in_directory(directory: PathBuf) -> Self {
+    pub fn in_directory(directory: PathBuf) -> Self {
         let spool_dir = directory.join("recordings");
         let socket = directory.join("daemon.sock");
         let lock = directory.join("daemon.lock");
@@ -85,12 +85,12 @@ impl PreparedRuntimePaths {
         RuntimePaths::for_current_user()?.prepare()
     }
 
-    pub(crate) fn directory(&self) -> &Path {
+    pub fn directory(&self) -> &Path {
         &self.paths.directory
     }
 
     /// Directory for temporary recordings owned by the daemon.
-    pub(crate) fn spool_dir(&self) -> &Path {
+    pub fn spool_dir(&self) -> &Path {
         &self.paths.spool_dir
     }
 
@@ -100,7 +100,7 @@ impl PreparedRuntimePaths {
     }
 
     /// Advisory lock that protects exclusive daemon ownership.
-    pub(crate) fn lock_path(&self) -> &Path {
+    pub fn lock_path(&self) -> &Path {
         &self.paths.lock
     }
 
@@ -111,7 +111,7 @@ impl PreparedRuntimePaths {
 
     /// What the daemon is doing, for an external indicator to read. Empty
     /// contents mean idle.
-    pub(crate) fn status_path(&self) -> &Path {
+    pub fn status_path(&self) -> &Path {
         &self.paths.status
     }
 }

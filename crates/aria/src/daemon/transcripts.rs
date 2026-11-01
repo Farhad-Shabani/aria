@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::audio::RecordingReader;
-use crate::delivery::Caret;
 use crate::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
 };
@@ -12,6 +11,7 @@ use crate::history::{
     HistorySource, HistoryStatus,
 };
 use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_platform::delivery::Caret;
 
 pub(in crate::daemon) mod storage;
 

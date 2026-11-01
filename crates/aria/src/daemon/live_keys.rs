@@ -11,10 +11,10 @@
 
 use super::speech::next_utterance;
 use crate::config::{ChatConfig, ListenConfig, MemoryConfig, TtsEngine};
-use crate::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use crate::dictation::{DictationRequest, StopMode};
 use crate::settings::{Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify};
 use crate::speech::SpeechRequest;
+use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;

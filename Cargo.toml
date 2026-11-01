@@ -11,6 +11,7 @@ members = [
   "crates/aria-bench-speaker",
   "crates/aria-harness",
   "crates/aria-kit",
+  "crates/aria-platform",
   "crates/aria-primitives",
   "crates/aria-stt",
   "crates/aria-tts",
@@ -48,6 +49,7 @@ strip = "none"
 # crates.io requires a version beside each internal path.
 aria-harness      = { path = "crates/aria-harness", version = "0.7.0" }
 aria-kit          = { path = "crates/aria-kit", version = "0.7.0" }
+aria-platform     = { path = "crates/aria-platform", version = "0.7.0" }
 aria-primitives   = { path = "crates/aria-primitives", version = "0.7.0" }
 aria-segmentation = { path = "crates/aria-segmentation", version = "0.7.0" }
 aria-speaker      = { path = "crates/aria-speaker", version = "0.7.0" }

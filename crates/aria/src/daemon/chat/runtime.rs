@@ -12,16 +12,16 @@ use crate::chat::{
     read_instructions,
 };
 use crate::config::{AssistantId, ChatConfig, ConfigError, MemoryConfig, SpeakerConfig};
-use crate::delivery::{
-    DeliveryError, DeliveryFactory, DeliveryOutcome, OutputMode, PlatformTextDelivery,
-    TargetPolicy, TextDelivery,
-};
 use crate::memory::{DB_FILE, Store, load_profile_block};
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
 use crate::settings::{ApplicationId, SettingsCache, SettingsStore};
 use crate::speaker::{ProfileStore, Role};
 use aria_kit::cancel::CancelToken;
+use aria_platform::delivery::{
+    DeliveryError, DeliveryFactory, DeliveryOutcome, OutputMode, PlatformTextDelivery,
+    TargetPolicy, TextDelivery,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

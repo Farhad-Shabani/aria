@@ -17,7 +17,6 @@ use crate::config::{
     ConfigError, DictationConfig, ServerEndpoint, SpeakerConfig, TranscriptionBackend,
     TranscriptionConfig,
 };
-use crate::delivery::{DeliveryError, PlatformTextDelivery};
 use crate::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
@@ -31,6 +30,7 @@ use crate::transcription::{
     TranscriptionError, Whole,
 };
 use crate::vocabulary::Vocabulary;
+use aria_platform::delivery::{DeliveryError, PlatformTextDelivery};
 
 use super::super::transcripts::{History, TranscriptStore};
 use super::model_load::ModelLoad;
@@ -562,7 +562,7 @@ mod tests {
                     ),
                     vocabulary: Arc::clone(&vocabulary.0),
                     wake: WakeConfig::Disabled,
-                    delivery: crate::delivery::DeliveryFactory::detect(&root),
+                    delivery: aria_platform::delivery::DeliveryFactory::detect(&root),
                 },
                 &root,
                 &root,
@@ -644,7 +644,7 @@ mod tests {
                 &home_dir,
             ),
             vocabulary,
-            delivery: crate::delivery::DeliveryFactory::detect(home.path()),
+            delivery: aria_platform::delivery::DeliveryFactory::detect(home.path()),
         };
 
         let outcome = build_dictation(

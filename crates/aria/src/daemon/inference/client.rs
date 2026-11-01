@@ -873,13 +873,13 @@ mod tests {
     #[tokio::test]
     async fn normal_streaming_dictation_previews_delivers_and_keeps_history() {
         use crate::audio::{ReplayPace, WavReplayCapture, fixture_of};
-        use crate::delivery::OutputMode;
         use crate::dictation::testing::{CallLog, Loud, settings};
         use crate::dictation::{
             DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
             ExecutionControl, StopMode,
         };
         use crate::settings::DeliveryMode;
+        use aria_platform::delivery::OutputMode;
 
         let server = Fixture::with_model(
             "whisper",
@@ -966,13 +966,13 @@ mod tests {
     async fn a_whole_only_server_serves_streaming_dictation_under_its_own_engine() {
         use std::sync::Mutex;
 
-        use crate::delivery::OutputMode;
         use crate::dictation::testing::{CallLog, Loud, settings};
         use crate::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
         use crate::settings::DeliveryMode;
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
+        use aria_platform::delivery::OutputMode;
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {
@@ -1027,7 +1027,6 @@ mod tests {
     async fn later_speech_does_not_validate_a_delayed_silence_guess() {
         use std::sync::Mutex;
 
-        use crate::delivery::OutputMode;
         use crate::dictation::testing::{CallLog, Loud, settings};
         use crate::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
@@ -1035,6 +1034,7 @@ mod tests {
         use crate::settings::DeliveryMode;
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
+        use aria_platform::delivery::OutputMode;
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {

@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use crate::audio::Clip;
 use crate::dictation::DictationStage;
-use crate::feedback::{self, SYSTEM_SOUNDS};
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
+use aria_platform::feedback::{self, SYSTEM_SOUNDS};
 
 /// The cues, read once from the system sounds. One that did not read stays
 /// silent; the press goes on without it.

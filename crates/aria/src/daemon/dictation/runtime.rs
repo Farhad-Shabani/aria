@@ -12,7 +12,6 @@ use crate::audio::{RecordingReader, WakeWordMonitor};
 use crate::config::{
     ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
 };
-use crate::delivery::DeliveryFactory;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
@@ -26,6 +25,7 @@ use crate::rpc::RpcErrorCode;
 use crate::settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use crate::transcription::Language;
 use aria_kit::cancel::{CancelToken, Deadline};
+use aria_platform::delivery::DeliveryFactory;
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -317,12 +317,12 @@ impl DictationRuntime {
     pub(in crate::daemon) fn relay_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(crate::delivery::frontmost_application())
+        self.settings_for(aria_platform::delivery::frontmost_application())
     }
 
     fn settings_for(
         &self,
-        application: Option<crate::delivery::Application>,
+        application: Option<aria_platform::delivery::Application>,
     ) -> Result<DictationSettings, DictationRuntimeError> {
         self.settings
             .snapshot()
@@ -468,7 +468,7 @@ impl DictationRuntime {
         let mut settings = DictationSettings::resolve(
             snapshot.settings,
             request,
-            crate::delivery::frontmost_application(),
+            aria_platform::delivery::frontmost_application(),
         );
         match auto_stop {
             AutoStopRule::Setting => {}

@@ -1,0 +1,48 @@
+[package]
+name                 = "aria-platform"
+version.workspace    = true
+edition.workspace    = true
+description          = "Aria's operating system integration: text delivery, the Aria key, sound cues, and per-user paths"
+license              = "GPL-3.0-only"
+repository.workspace = true
+readme.workspace     = true
+publish              = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aria-kit        = { workspace = true, features = [ "playback" ] }
+aria-primitives = { workspace = true }
+rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+serde           = { workspace = true }
+tempfile        = { workspace = true }
+thiserror       = { workspace = true }
+tokio           = { version = "1", features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
+tracing         = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2            = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [ "NSArray", "NSItemProvider", "NSString", "std" ] }
+objc2-ui-kit     = { version = "0.3.2", default-features = false, features = [ "UIPasteboard", "std" ] }
+
+# `image-data` is on by default and pulls an image codec the clipboard never
+# needs. Wayland support is the opposite: off unless asked for, and without it
+# the clipboard is X11 only.
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3.6", default-features = false, features = [ "wayland-data-control" ] }
+# RemoteDesktop uses types from the screencast feature.
+ashpd  = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "3ea494564e48bf0f351a13da1e18abb5a9dd45e6", default-features = false, features = [ "remote_desktop", "screencast", "tokio" ] }
+rustix = { workspace = true, features = [ "event", "time" ] }
+x11rb  = { version = "0.13", features = [ "xtest" ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cidre                 = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+objc2                 = "0.6"
+objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
+objc2-core-graphics   = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
+objc2-foundation      = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
+
+[dev-dependencies]
+anyhow = { workspace = true }

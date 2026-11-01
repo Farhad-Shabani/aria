@@ -12,7 +12,6 @@ use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::delivery::{DeliveryError, DeliveryOutcome, PlatformTextDelivery, TextDelivery};
 use crate::dictation::{
     DictationError, DictationSettings, DictationStage, TranscriptSink, Utterance,
 };
@@ -20,6 +19,7 @@ use crate::history::HistorySource;
 use crate::ipc::wire;
 use crate::microphone::{Claim, Gate};
 use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_platform::delivery::{DeliveryError, DeliveryOutcome, PlatformTextDelivery, TextDelivery};
 
 use super::super::dictation::DictationRuntime;
 use super::super::relay::{self, Collected, Opening, RelayError};
@@ -314,7 +314,7 @@ fn is_silence(error: &super::super::dictation::DictationRuntimeError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delivery::{Caret, OutputMode};
+    use aria_platform::delivery::{Caret, OutputMode};
     use std::sync::Mutex;
 
     /// Inserts everything at `caret` and writes down each step it was
@@ -331,7 +331,7 @@ mod tests {
 
         const OUTLIVES_PROCESS: bool = true;
 
-        fn frontmost(&self) -> Option<crate::delivery::Application> {
+        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
             None
         }
 
@@ -407,7 +407,7 @@ mod tests {
     fn settings_chosen_for_another_app_are_not_delivered() {
         let steps = Steps::default();
         let settings = DictationSettings {
-            target: crate::delivery::TargetPolicy {
+            target: aria_platform::delivery::TargetPolicy {
                 overridden_for: Some("com.example.not-in-front".into()),
                 excluded: Vec::new(),
             },

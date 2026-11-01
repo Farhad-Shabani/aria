@@ -11,16 +11,16 @@ use crate::config::{
     RelayConfig, SpeakerConfig, TranscriptionBackend, WakeBackend, WakeConfig, WakeWordOverride,
 };
 use crate::daemon::RELAY_SERVICE_TYPE;
-use crate::delivery::{PlatformTextDelivery, TextDelivery};
-use crate::hotkey::PlatformHotkeyListener;
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
-use crate::runtime::{PreparedRuntimePaths, RuntimeError};
 use crate::settings::SettingsFile;
 use crate::transcription::check_model;
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
+use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
+use aria_platform::hotkey::PlatformHotkeyListener;
+use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};

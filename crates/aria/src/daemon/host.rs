@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use crate::runtime::{PreparedRuntimePaths, RuntimeError, RuntimePaths};
+use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError, RuntimePaths};
 
 use super::assembly::{self, DaemonError};
 use super::shutdown::ShutdownSignal;

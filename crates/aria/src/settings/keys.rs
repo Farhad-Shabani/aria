@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 use crate::config::{backend, tts_backend, wake_backend};
-use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
+use aria_platform::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
 
 /// When a change takes effect: on the next operation, or after a restart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

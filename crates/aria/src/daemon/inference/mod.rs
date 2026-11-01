@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::config::ServerEndpoint;
-use crate::runtime::RuntimePaths;
+use aria_platform::runtime::RuntimePaths;
 
 /// Leaves room past the audio bound for the final decode.
 pub(crate) const OVERALL_TIMEOUT: Duration = Duration::from_secs(720);

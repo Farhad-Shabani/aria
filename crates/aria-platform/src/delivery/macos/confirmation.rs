@@ -7,7 +7,7 @@ use crate::delivery::DeliveryError;
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_FIELD_UNITS: usize = 1024 * 1024;
 
-pub(crate) struct Confirmation {
+pub struct Confirmation {
     application: arc::R<ax::UiElement>,
     element: arc::R<ax::UiElement>,
     timeout: Duration,

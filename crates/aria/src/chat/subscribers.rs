@@ -9,7 +9,7 @@ impl ChatSubscribers {
     pub(crate) fn observe(&self, stage: &ChatStage) {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(sound) = sound_for(&stage.kind) {
-            crate::feedback::play("chat-cue", &sound);
+            aria_platform::feedback::play("chat-cue", &sound);
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let _ = stage;
@@ -19,7 +19,7 @@ impl ChatSubscribers {
 /// Distinct from dictation's end cue, so an ask and a press tell apart by ear.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sound_for(kind: &ChatStageKind) -> Option<String> {
-    use crate::feedback::SYSTEM_SOUNDS;
+    use aria_platform::feedback::SYSTEM_SOUNDS;
 
     #[cfg(target_os = "macos")]
     const REPLY: &str = "/System/Library/Sounds/Glass.aiff";
@@ -61,6 +61,6 @@ mod tests {
         let reply_sound = sound_for(&replied).expect("a reply sounds");
         let error_sound = sound_for(&failed).expect("a failure sounds");
         assert_ne!(reply_sound, error_sound);
-        assert!(error_sound.starts_with(crate::feedback::SYSTEM_SOUNDS));
+        assert!(error_sound.starts_with(aria_platform::feedback::SYSTEM_SOUNDS));
     }
 }

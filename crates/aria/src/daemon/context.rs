@@ -5,8 +5,8 @@ use std::path::PathBuf;
 #[cfg(not(test))]
 use crate::config::home_directory;
 use crate::config::{ConfigError, UNATTENDED_ENV, codex_home, unattended};
-use crate::delivery::DeliveryFactory;
-use crate::runtime::PreparedRuntimePaths;
+use aria_platform::delivery::DeliveryFactory;
+use aria_platform::runtime::PreparedRuntimePaths;
 
 use super::host::DaemonLifetime;
 
