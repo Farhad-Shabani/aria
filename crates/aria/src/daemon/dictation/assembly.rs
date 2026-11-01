@@ -410,8 +410,10 @@ pub(super) fn build_dictation(
         wake,
         speaker,
         vocabulary,
+        delivery,
     } = setup;
-    let delivery = PlatformTextDelivery::new(timeouts.delivery)
+    let delivery = delivery
+        .create(timeouts.delivery)
         .map_err(DictationInitializationError::Delivery)?;
     let policy =
         DictationPolicy::new(timeouts.overall).map_err(DictationInitializationError::Policy)?;
@@ -562,6 +564,7 @@ mod tests {
                     ),
                     vocabulary: Arc::clone(&vocabulary.0),
                     wake: WakeConfig::Disabled,
+                    delivery: crate::delivery::DeliveryFactory::detect(&root),
                 },
                 &root,
                 &root,
@@ -642,6 +645,7 @@ mod tests {
                 &home_dir,
             ),
             vocabulary,
+            delivery: crate::delivery::DeliveryFactory::detect(home.path()),
         };
 
         let outcome = build_dictation(

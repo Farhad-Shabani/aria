@@ -1,0 +1,7 @@
+# Gives the user at the active seat read and write access to keyboards, mice
+# and touchpads, so Aria's hotkey can watch a bare modifier key. Aria only
+# reads. Every program that user runs can read every key and inject input too.
+# Sorts before 73-seat-late.rules, which applies uaccess.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"

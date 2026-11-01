@@ -9,6 +9,7 @@ use crate::audio::{RecordingReader, WakeWordMonitor};
 use crate::config::{
     ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
 };
+use crate::delivery::DeliveryFactory;
 use crate::dictation::subscribers::DictationSubscribers;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
@@ -51,6 +52,7 @@ pub(in crate::daemon) struct DictationSetup {
     pub(in crate::daemon) wake: WakeConfig,
     pub(in crate::daemon) speaker: SpeakerConfig,
     pub(in crate::daemon) vocabulary: Arc<VocabularyRuntime>,
+    pub(in crate::daemon) delivery: DeliveryFactory,
 }
 
 /// The microphone parts every other recording operation borrows: the one
@@ -117,6 +119,7 @@ impl DictationRuntime {
         microphone: Arc<Gate>,
         vocabulary: Arc<VocabularyRuntime>,
     ) -> Self {
+        let delivery = context.delivery.clone();
         let spool_dir = context.paths.spool_dir().to_path_buf();
         let home = context.home.clone();
         let retry_home = home.clone();
@@ -152,6 +155,7 @@ impl DictationRuntime {
                             wake: WakeConfig::Disabled,
                             speaker,
                             vocabulary: Arc::clone(&vocabulary),
+                            delivery: delivery.clone(),
                         },
                         &spool_dir,
                         &home,
@@ -1172,6 +1176,7 @@ mod history_tests {
                     speaker: speaker.clone(),
                     vocabulary: Arc::clone(&vocabulary),
                     wake: WakeConfig::Disabled,
+                    delivery: DeliveryFactory::detect(&home),
                 },
                 &home,
                 &home,

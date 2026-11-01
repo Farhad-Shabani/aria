@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime};
 use toml_edit::Value;
 
 use crate::config::{ChatConfig, ListenConfig, MemoryConfig, TtsEngine};
+use crate::delivery::{PlatformTextDelivery, TextDelivery};
 use crate::dictation::{DictationRequest, StopMode};
 use crate::history::Application;
 use crate::settings::SettingsStore;
@@ -281,7 +282,9 @@ fn the_next_operation_sees_every_live_key_change() {
     let live = Key::ALL
         .iter()
         .copied()
-        .filter(|key| key.apply() == Apply::Live);
+        .filter(|key| key.apply() == Apply::Live)
+        // Pasting forces complete delivery regardless of this setting.
+        .filter(|key| PlatformTextDelivery::STREAMS || *key != Key::DictationDeliveryMode);
     for key in live {
         let home = tempfile::tempdir().unwrap();
         let harness = LiveHarness::start(home.path());

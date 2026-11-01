@@ -22,6 +22,7 @@ if [ -z "$dist" ] && [ -n "$script" ] && [ -f "$(dirname "$script")/SHA256SUMS" 
 fi
 bin_dir="$HOME/.local/bin"
 lib_dir="$HOME/.local/lib/aria"
+input_rule=/etc/udev/rules.d/70-aria-input.rules
 
 # A running daemon keeps the socket and would make the service install
 # refuse. Its pid is in the lock file.
@@ -48,6 +49,9 @@ if [ "${1:-}" = --uninstall ]; then
     rm -rf "$lib_dir"
     rm -f "$bin_dir/aria"
     echo "removed aria; ~/.aria and its models were left alone"
+    if [ -e "$input_rule" ]; then
+        echo "note: remove the hotkey's input rule with \`sudo rm $input_rule\`"
+    fi
     exit 0
 fi
 
@@ -93,6 +97,27 @@ esac
 resolved=$(command -v aria || true)
 if [ -n "$resolved" ] && [ "$resolved" != "$bin_dir/aria" ]; then
     echo "note: PATH resolves aria to $resolved; put $bin_dir first"
+fi
+
+rule="$lib_dir/share/udev/70-aria-input.rules"
+if [ -f "$rule" ] && ! cmp -s "$rule" "$input_rule"; then
+    echo "The hotkey reads your keyboard directly. A udev rule gives the logged-in"
+    echo "user access to keyboards, mice and touchpads. Aria only reads them, but"
+    echo "every program you run could read every key and inject input."
+    answer=
+    if (: </dev/tty) 2>/dev/null; then
+        printf 'Install %s with sudo? [y/N] ' "$input_rule"
+        read -r answer </dev/tty || answer=
+    fi
+    case "$answer" in
+        [yY]*)
+            if ! { sudo install -m 0644 "$rule" "$input_rule" \
+                && sudo udevadm trigger --subsystem-match=input --action=change; }; then
+                echo "the input rule was not installed; \`aria doctor\` shows how to add it later" >&2
+            fi
+            ;;
+        *) echo "skipped the input rule; \`aria doctor\` shows how to add it later" ;;
+    esac
 fi
 
 # A settings file alone may come from dotfiles, so only an upgrade skips setup's

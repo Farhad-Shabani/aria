@@ -24,6 +24,7 @@ use crate::daemon::{
     DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
     StopMode, guided,
 };
+use crate::hotkey::PlatformHotkeyListener;
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
@@ -250,8 +251,7 @@ impl Outcome {
     }
 }
 
-/// Whether the daemon's hotkey listener armed, which needs the macOS
-/// Accessibility grant.
+/// Hotkey readiness after requesting Accessibility access on macOS or keyboard access on Linux.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grant {
     NotNeeded,
@@ -449,7 +449,7 @@ impl Selections {
             stt: configured(&existing.stt, &inspection.stt),
             tts: configured(&existing.tts, &inspection.tts),
             wake: existing.wake.unwrap_or(false),
-            aria_key: inspection.macos && existing.aria_key.unwrap_or(true),
+            aria_key: existing.aria_key.unwrap_or(true),
         }
     }
 }
@@ -630,11 +630,13 @@ fn ask_selections(
         } else {
             existing.wake.unwrap_or(false)
         },
-        aria_key: inspection.macos
-            && prompts.confirm(
-                "Start dictation with a hotkey (needs Accessibility access)?",
-                existing.aria_key.unwrap_or(true),
-            )?,
+        aria_key: prompts.confirm(
+            &format!(
+                "Start dictation with a hotkey (needs {})?",
+                PlatformHotkeyListener::PERMISSION
+            ),
+            existing.aria_key.unwrap_or(true),
+        )?,
     })
 }
 
@@ -1611,26 +1613,6 @@ mod tests {
         assert_eq!(size(874_188_075), "875 MB");
         assert_eq!(size(1_500_000_000), "1.5 GB");
         assert_eq!(size(6_958_444), "7 MB");
-    }
-
-    fn options(yes: bool, interactive: bool) -> Options {
-        Options {
-            yes,
-            skip_models: false,
-            interactive,
-            color: false,
-        }
-    }
-
-    /// Recording needs someone to speak, so every unattended shape skips
-    /// both hands-on steps on their behalf.
-    #[test]
-    fn nobody_is_asked_to_speak_without_a_terminal_to_ask_at() {
-        let hands_on = |options: Options| options.interactive && !options.yes;
-
-        assert!(hands_on(options(false, true)));
-        assert!(!hands_on(options(false, false)), "a pipe");
-        assert!(!hands_on(options(true, true)), "--yes");
     }
 
     #[test]

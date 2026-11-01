@@ -1,7 +1,8 @@
 //! systemd: a user unit under `~/.config/systemd/user`.
 //!
-//! Surviving logout needs `loginctl enable-linger`, which install leaves to
-//! the user.
+//! The unit belongs to the graphical session: delivery needs its display,
+//! and the desktop sets the display variables in the user manager before
+//! `graphical-session.target` starts. It stops at logout with the session.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use std::process::Command;
 use std::{fs, io};
 
 use super::{Job, SupervisorError, UnitSpec, run_command};
+use crate::delivery::APP_ID;
 
 const UNIT: &str = "aria-daemon.service";
 pub(super) const UNIT_FILE: &str = UNIT;
@@ -28,9 +30,47 @@ pub(super) fn render(spec: &UnitSpec) -> String {
         environment.push_str(&format!("Environment=\"{name}={}\"\n", quote(value)));
     }
     format!(
-        "[Unit]\nDescription=Aria daemon\n\n[Service]\nExecStart=\"{}\" daemon\nRestart=on-failure\n{environment}\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Aria daemon\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\n[Service]\nExecStart=\"{}\" daemon\nRestart=on-failure\n{environment}\n[Install]\nWantedBy=graphical-session.target\n",
         quote(spec.exe.as_os_str())
     )
+}
+
+/// The portal uses this hidden desktop entry to name Aria in its permission dialog.
+pub(super) fn companion(spec: &UnitSpec) -> Option<(PathBuf, String)> {
+    let data_home = spec
+        .environment
+        .iter()
+        .find(|(name, _)| *name == "XDG_DATA_HOME")
+        .map(|(_, value)| PathBuf::from(value))
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| spec.home.join(".local/share"));
+    let path = data_home
+        .join("applications")
+        .join(format!("{APP_ID}.desktop"));
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Aria\nComment=Local voice dictation\n\
+         Exec={} daemon\nNoDisplay=true\n",
+        exec_argument(spec.exe.as_os_str())
+    );
+    Some((path, entry))
+}
+
+/// Desktop entries unescape the value before parsing the quoted Exec argument,
+/// so backslashes need a second escape.
+fn exec_argument(value: &OsStr) -> String {
+    let mut quoted = String::from("\"");
+    for character in value.to_string_lossy().chars() {
+        match character {
+            '"' | '`' | '$' | '\\' => {
+                quoted.push('\\');
+                quoted.push(character);
+            }
+            '%' => quoted.push_str("%%"),
+            character => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted.replace('\\', "\\\\")
 }
 
 pub(super) fn load(_unit: &Path) -> Result<(), SupervisorError> {
@@ -131,17 +171,67 @@ mod tests {
             environment: vec![
                 ("PATH", OsString::from("/usr/local/bin:/usr/bin")),
                 ("ARIA_RUNTIME_DIR", OsString::from("/run/user/1000/a\\b")),
+                ("XDG_DATA_HOME", OsString::from("/home/tester/data")),
             ],
         };
 
         assert_eq!(
             render(&spec),
-            "[Unit]\nDescription=Aria daemon\n\n[Service]\n\
+            "[Unit]\nDescription=Aria daemon\n\
+             PartOf=graphical-session.target\nAfter=graphical-session.target\n\n[Service]\n\
              ExecStart=\"/opt/aria 100%%/ar\\\"ia\" daemon\nRestart=on-failure\n\
              Environment=\"PATH=/usr/local/bin:/usr/bin\"\n\
-             Environment=\"ARIA_RUNTIME_DIR=/run/user/1000/a\\\\b\"\n\n\
-             [Install]\nWantedBy=default.target\n"
+             Environment=\"ARIA_RUNTIME_DIR=/run/user/1000/a\\\\b\"\n\
+             Environment=\"XDG_DATA_HOME=/home/tester/data\"\n\n\
+             [Install]\nWantedBy=graphical-session.target\n"
         );
+    }
+
+    #[test]
+    fn the_desktop_entry_uses_an_absolute_xdg_data_home() {
+        for (value, directory) in [
+            (None, "/home/tester/.local/share"),
+            (Some(""), "/home/tester/.local/share"),
+            (Some("relative/data"), "/home/tester/.local/share"),
+            (Some("/home/tester/custom data"), "/home/tester/custom data"),
+        ] {
+            let spec = UnitSpec {
+                exe: PathBuf::from("/opt/aria"),
+                home: PathBuf::from("/home/tester"),
+                environment: value
+                    .map(|value| ("XDG_DATA_HOME", OsString::from(value)))
+                    .into_iter()
+                    .collect(),
+            };
+
+            assert_eq!(
+                companion(&spec).map(|(path, _)| path),
+                Some(Path::new(directory).join(format!("applications/{APP_ID}.desktop"))),
+                "XDG_DATA_HOME={value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_desktop_entry_quotes_the_binary_for_exec() {
+        let spec = UnitSpec {
+            exe: PathBuf::from("/opt/a\"b $c%d\\e/aria"),
+            home: PathBuf::from("/home/tester"),
+            environment: Vec::new(),
+        };
+
+        let (path, entry) = companion(&spec).expect("Linux has a desktop entry");
+        assert_eq!(
+            path,
+            PathBuf::from(
+                "/home/tester/.local/share/applications/io.github.farhad_shabani.aria.desktop"
+            )
+        );
+        assert!(
+            entry.contains("Exec=\"/opt/a\\\\\"b \\\\$c%%d\\\\\\\\e/aria\" daemon\n"),
+            "{entry}"
+        );
+        assert!(entry.contains("NoDisplay=true\n"));
     }
 
     #[test]

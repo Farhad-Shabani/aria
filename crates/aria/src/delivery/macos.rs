@@ -77,7 +77,7 @@ impl MacOsDeliveryTarget {
 }
 
 impl MacOsTextDelivery {
-    pub(crate) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
+    pub(super) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
         Ok(Self { timeout })
     }

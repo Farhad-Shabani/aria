@@ -86,7 +86,7 @@ impl DaemonConfig {
         Ok(Self {
             dictation,
             wake,
-            hotkey: hotkey(),
+            hotkey: HotkeyConfig::Enabled,
             relay: relay(&settings.phone),
             tts,
         })
@@ -105,18 +105,6 @@ fn relay(phone: &Phone) -> RelayConfig {
         }
     } else {
         RelayConfig::Disabled
-    }
-}
-
-/// The hotkey listener costs nothing while its permission is missing, so it
-/// runs wherever a listener exists.
-const DEFAULT_HOTKEY_ENABLED: bool = cfg!(target_os = "macos");
-
-fn hotkey() -> HotkeyConfig {
-    if DEFAULT_HOTKEY_ENABLED {
-        HotkeyConfig::Enabled
-    } else {
-        HotkeyConfig::Disabled
     }
 }
 

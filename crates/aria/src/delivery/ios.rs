@@ -16,7 +16,7 @@ impl IosTextDelivery {
     // The pasteboard write returns immediately, so nothing here waits on a
     // deadline. The bound is still checked to keep one meaning for the
     // configured timeout across platforms.
-    pub(crate) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
+    pub(super) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
         Ok(Self)
     }

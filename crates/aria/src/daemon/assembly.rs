@@ -398,13 +398,13 @@ fn eager_workers(
         tts,
     } = DaemonConfig::load(startup, &context.home, wake_word)
         .map_err(DaemonError::Configuration)?;
-    // Its own adapter, not the dictation pipeline's: that one is wrapped in a
-    // press's lifecycle, and a relayed recording has no press around it. The
-    // adapter is stateless, so a second costs a timeout and nothing else.
+    // Relayed recordings have no key press, so they need a separate delivery adapter.
     let relay_delivery = match relay {
         RelayConfig::Disabled => None,
         RelayConfig::Enabled { port } => Some((
-            PlatformTextDelivery::new(dictation_config.dictation_timeouts.delivery)
+            context
+                .delivery
+                .create(dictation_config.dictation_timeouts.delivery)
                 .map_err(DictationInitializationError::Delivery)
                 .map_err(DaemonError::Dictation)?,
             port,
@@ -423,6 +423,7 @@ fn eager_workers(
             wake,
             speaker: speaker_config.clone(),
             vocabulary,
+            delivery: context.delivery.clone(),
         },
         Arc::clone(&microphone),
     )

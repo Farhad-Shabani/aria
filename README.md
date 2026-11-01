@@ -29,8 +29,7 @@ own projects, even in the browser through WebAssembly.
 
 ## What it does
 
-- **Dictate** into the Mac app you're working in. On Linux, Aria copies the
-  text.
+- **Dictate** into the app you're working in, on a Mac or a Linux desktop.
 - **Ask** Claude Code or Codex by voice, and keep the conversation going.
 - **Rewrite** what you say with your own prompts, such as polishing or
   translating it.

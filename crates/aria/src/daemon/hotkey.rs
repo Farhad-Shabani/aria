@@ -12,7 +12,7 @@ use tonic_health::server::HealthReporter;
 use crate::dictation::{
     DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
 };
-use crate::hotkey::{AriaKey, Combo, ListenerEvent, ListenerExit, PlatformHotkeyListener, Press};
+use crate::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
 
 use super::chat::{ChatCallError, ChatHandle};
@@ -23,7 +23,7 @@ use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 
 /// The blocking platform listener; tests swap in a fake.
-type Listener = fn(AriaKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool) -> ListenerExit;
+type Listener = fn(AriaKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
 
 pub(super) struct HotkeyTrigger {
     /// `None` while the Aria key is off: the trigger then waits for one.
@@ -99,14 +99,13 @@ impl HotkeyTrigger {
             subscriptions,
             health,
             listener: |key, events, should_stop| {
-                PlatformHotkeyListener::listen(key, events, should_stop)
+                PlatformHotkeyListener::listen(key, events, should_stop);
             },
         }
     }
 
-    /// Registers the hotkey as NotServing until the listener reports Armed:
-    /// the Accessibility grant is unknown at spawn. Awaited before the daemon
-    /// serves, so a health check never finds the hotkey service unregistered.
+    /// Register before the daemon serves so health checks always find the hotkey.
+    /// Permission is unknown until the listener reports Armed.
     pub(super) async fn announce(&self) {
         self.health
             .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::NotServing)
@@ -150,7 +149,7 @@ impl HotkeyTrigger {
                 }
             };
             let should_stop = || stop.is_cancelled() || rearm.has_changed().unwrap_or(true);
-            listener(current, &events, &should_stop)
+            listener(current, &events, &should_stop);
         });
 
         let mut waiting = false;
@@ -178,9 +177,19 @@ impl HotkeyTrigger {
                             waiting = true;
                             tracing::info!(
                                 trigger = "hotkey",
-                                "the hotkey needs the Accessibility grant; run `aria doctor` for steps"
+                                "the hotkey is waiting for permission; run `aria doctor` for steps"
                             );
                         }
+                    }
+                    ListenerEvent::KeyUnavailable => {
+                        waiting = false;
+                        self.health
+                            .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::NotServing)
+                            .await;
+                        tracing::warn!(
+                            trigger = "hotkey",
+                            "the hotkey's key is unavailable; run `aria doctor` for steps"
+                        );
                     }
                     ListenerEvent::Press(Press::Tap) => self.tap(),
                     ListenerEvent::Press(Press::HoldStarted) => hold = Some(self.hold()),
@@ -383,10 +392,9 @@ fn log_chat_unreached(error: ChatCallError) {
     }
 }
 
-fn listener_exit(result: Result<ListenerExit, tokio::task::JoinError>) -> HotkeyExit {
+fn listener_exit(result: Result<(), tokio::task::JoinError>) -> HotkeyExit {
     match result {
-        Ok(ListenerExit::Shutdown) => HotkeyExit::Shutdown,
-        Ok(ListenerExit::Unsupported) => HotkeyExit::Failed,
+        Ok(()) => HotkeyExit::Shutdown,
         Err(error) => {
             tracing::error!(%error, "hotkey listener ended unexpectedly");
             HotkeyExit::Failed
@@ -430,38 +438,10 @@ mod tests {
 
     /// Holds the listener thread open, as the platform listener does, until
     /// the trigger asks it to stop.
-    fn park_until(should_stop: &dyn Fn() -> bool) -> ListenerExit {
+    fn park_until(should_stop: &dyn Fn() -> bool) {
         while !should_stop() {
             std::thread::sleep(Duration::from_millis(1));
         }
-        ListenerExit::Shutdown
-    }
-
-    fn fake_listener(
-        key: AriaKey,
-        _events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) -> ListenerExit {
-        ARMED.lock().expect("armed keys").push(key);
-        park_until(should_stop)
-    }
-
-    fn shift_combo_listener(
-        _key: AriaKey,
-        events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) -> ListenerExit {
-        events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
-        park_until(should_stop)
-    }
-
-    fn tap_listener(
-        _key: AriaKey,
-        events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) -> ListenerExit {
-        events(ListenerEvent::Press(Press::Tap));
-        park_until(should_stop)
     }
 
     /// A trigger with no dictation behind it. The directory holds its
@@ -504,7 +484,10 @@ mod tests {
         let trigger = trigger(
             watch,
             Arc::new(Subscriptions::new()),
-            fake_listener,
+            |key, _events, should_stop| {
+                ARMED.lock().expect("armed keys").push(key);
+                park_until(should_stop);
+            },
             &directory,
         );
         let shutdown = CancellationToken::new();
@@ -526,15 +509,6 @@ mod tests {
     /// Its own record, so it never races the re-arm test over [`ARMED`].
     static ARMED_FROM_OFF: Mutex<Vec<AriaKey>> = Mutex::new(Vec::new());
 
-    fn listener_from_off(
-        key: AriaKey,
-        _events: &dyn Fn(ListenerEvent),
-        should_stop: &dyn Fn() -> bool,
-    ) -> ListenerExit {
-        ARMED_FROM_OFF.lock().expect("armed keys").push(key);
-        park_until(should_stop)
-    }
-
     async fn armed_from_off(count: usize) {
         tokio::time::timeout(Duration::from_secs(2), async {
             while ARMED_FROM_OFF.lock().expect("armed keys").len() < count {
@@ -552,7 +526,10 @@ mod tests {
         let trigger = trigger(
             watch,
             Arc::new(Subscriptions::new()),
-            listener_from_off,
+            |key, _events, should_stop| {
+                ARMED_FROM_OFF.lock().expect("armed keys").push(key);
+                park_until(should_stop);
+            },
             &directory,
         );
         let shutdown = CancellationToken::new();
@@ -582,7 +559,15 @@ mod tests {
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
         let subscriptions = Arc::new(Subscriptions::new());
         let mut events = subscriptions.subscribe().expect("a subscriber fits");
-        let trigger = trigger(watch, subscriptions, shift_combo_listener, &directory);
+        let trigger = trigger(
+            watch,
+            subscriptions,
+            |_key, events, should_stop| {
+                events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
+                park_until(should_stop);
+            },
+            &directory,
+        );
         let shutdown = CancellationToken::new();
         let running = tokio::spawn(trigger.run(shutdown.clone()));
 
@@ -644,7 +629,10 @@ mod tests {
             runtime: dictation,
             subscriptions,
             health,
-            listener: tap_listener,
+            listener: |_key, events, should_stop| {
+                events(ListenerEvent::Press(Press::Tap));
+                park_until(should_stop);
+            },
         };
         let shutdown = CancellationToken::new();
         let chat_actor = tokio::spawn(chat_actor.run(shutdown.clone()));

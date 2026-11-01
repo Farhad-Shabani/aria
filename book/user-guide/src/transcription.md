@@ -5,7 +5,7 @@
 Use `aria dictate` to record one utterance and copy the recognized words.
 Complete [setup](./installation.md#setup) and keep the background service
 running. On Linux, the service also keeps copied text available for pasting.
-Run it in your graphical desktop session so Aria can access the clipboard.
+It runs with your graphical desktop session so Aria can reach the clipboard.
 
 ## Copy a sentence
 
@@ -48,7 +48,7 @@ aria settings set dictation.auto_stop_ms 0      # stop on Esc or a second run
 
 Recordings stop after ten minutes at most.
 
-## Mac insertion
+## Insert into an app
 
 On a Mac, [hotkey dictation](./macos.md#try-it) is the easiest way to speak into
 another app. A command launched in Terminal starts with Terminal focused.
@@ -59,10 +59,13 @@ stay focused.
 segments while you speak. Switching apps stops it. So does clicking or typing,
 in apps that report their text cursor. What you said so far stays in
 [history](./history.md#saving) when saving is on. Use `--mode insert-or-copy`
-if you want copying when insertion cannot begin. Linux uses the clipboard and
-does not support insertion-only modes.
+if you want copying when insertion cannot begin.
 
-Aria adds a space where the text needs one. Dictating “Hello.” and then
+On Linux, [hotkey dictation](./linux.md#try-it) pastes into the focused app.
+`--mode insert` pastes the completed transcript, and `--stream` is refused:
+Aria pastes once recording stops.
+
+On a Mac, Aria adds a space where the text needs one. Dictating “Hello.” and then
 “How are you” types “Hello. How are you”.
 
 ## Spoken corrections

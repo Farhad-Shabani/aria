@@ -411,7 +411,11 @@ fn serving_suffix(wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> &'
 
 /// Why the dictation hotkey is not armed, and the fix when one exists.
 pub fn hotkey_unarmed_reason() -> String {
-    PlatformHotkeyListener::unarmed_reason()
+    match loaded(|settings, _home| Ok(settings.aria_key())) {
+        Ok(Some(key)) => PlatformHotkeyListener::unarmed_reason(key),
+        Ok(None) => "the Aria key is off in the settings file".to_owned(),
+        Err(error) => format!("the settings file could not be read: {error}"),
+    }
 }
 
 fn wake_is_enabled(wake: Option<&WakeConfig>) -> bool {

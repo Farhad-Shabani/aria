@@ -838,9 +838,7 @@ fn run_setup(yes: bool, skip_models: bool) -> anyhow::Result<()> {
     if cfg!(target_os = "macos") {
         println!("next         open Aria for the menu bar, then run `aria doctor`");
     } else {
-        println!(
-            "next         `loginctl enable-linger` keeps the daemon across logouts; run `aria doctor`"
-        );
+        println!("next         run `aria doctor`");
     }
     Ok(())
 }

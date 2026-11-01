@@ -17,7 +17,7 @@ use objc2_core_graphics::{
     CGEventTapProxy, CGEventType,
 };
 
-use super::{AriaKey, KeyEvent, ListenerEvent, ListenerExit, Press, PressDetector};
+use super::{AriaKey, KeyEvent, ListenerEvent, Modifiers, Press, PressDetector};
 use crate::accessibility::{self, Trust};
 
 const PERMISSION_RETRY: Duration = Duration::from_secs(3);
@@ -30,11 +30,66 @@ const RUN_LOOP_SLICE_SECONDS: f64 = 0.1;
 const REARM_INTERVAL: Duration = Duration::from_secs(3);
 const STOP_POLL: Duration = Duration::from_millis(100);
 
+// Generic flag masks, so either side's key counts.
+/// kCGEventFlagMaskShift
+const SHIFT: u64 = 0x0002_0000;
+/// kCGEventFlagMaskControl
+const CONTROL: u64 = 0x0004_0000;
+/// kCGEventFlagMaskCommand
+const COMMAND: u64 = 0x0010_0000;
+
+impl AriaKey {
+    /// Virtual keycode carried in the key's flags-changed event.
+    fn key_code(self) -> i64 {
+        match self {
+            Self::RightOption => 61,
+            Self::Fn => 63,
+        }
+    }
+
+    /// Whether this key is DOWN per the event's flags. Sided keys use the raw
+    /// device-specific bit — the generic mask stays set while the
+    /// opposite-side twin is held, which would swallow the release.
+    fn is_down(self, flags: u64) -> bool {
+        match self {
+            // NX_DEVICERALTKEYMASK
+            Self::RightOption => flags & 0x40 != 0,
+            // kCGEventFlagMaskSecondaryFn
+            Self::Fn => flags & 0x0080_0000 != 0,
+        }
+    }
+}
+
+fn held_modifiers(flags: u64) -> Modifiers {
+    [
+        (SHIFT, Modifiers::SHIFT),
+        (CONTROL, Modifiers::CONTROL),
+        (COMMAND, Modifiers::COMMAND),
+    ]
+    .into_iter()
+    .filter(|(mask, _)| flags & mask != 0)
+    .fold(Modifiers::NONE, |held, (_, modifier)| held | modifier)
+}
+
+/// A software-generated modifier change is dropped.
+fn translate(key: AriaKey, key_code: i64, flags: u64, synthetic: bool) -> Option<KeyEvent> {
+    let held = held_modifiers(flags);
+    if key_code == key.key_code() {
+        return Some(if key.is_down(flags) {
+            KeyEvent::AriaDown { held }
+        } else {
+            KeyEvent::AriaUp
+        });
+    }
+    (!synthetic).then_some(KeyEvent::Modifiers { held })
+}
+
 pub(crate) struct MacOsHotkeyListener;
 
 /// Shared between `listen` and the tap callback, same thread only — the
 /// callback runs inside the run-loop slices `listen` drives.
 struct TapState {
+    key: AriaKey,
     detector: RefCell<PressDetector>,
     /// The live tap, so the callback can re-enable it on a disable event.
     tap: RefCell<Option<CFRetained<CFMachPort>>>,
@@ -72,7 +127,9 @@ impl TapState {
 }
 
 impl MacOsHotkeyListener {
-    pub(crate) fn unarmed_reason() -> String {
+    pub(crate) const PERMISSION: &str = "Accessibility access";
+
+    pub(crate) fn unarmed_reason(_key: AriaKey) -> String {
         format!(
             "the dictation hotkey is waiting for permission: System Settings → \
              Privacy & Security → {} → + → {}; it arms within ~3s",
@@ -85,16 +142,17 @@ impl MacOsHotkeyListener {
         key: AriaKey,
         events: impl Fn(ListenerEvent),
         should_stop: impl Fn() -> bool,
-    ) -> ListenerExit {
+    ) {
         let state = TapState {
-            detector: RefCell::new(PressDetector::new(key)),
+            key,
+            detector: RefCell::new(PressDetector::new()),
             tap: RefCell::new(None),
             presses: RefCell::new(Vec::new()),
         };
         let mut grant_requested = false;
         loop {
             if should_stop() {
-                return ListenerExit::Shutdown;
+                return;
             }
             let Some(tap) = arm(&state) else {
                 if !grant_requested {
@@ -103,7 +161,7 @@ impl MacOsHotkeyListener {
                 }
                 events(ListenerEvent::AwaitingPermission);
                 if wait(PERMISSION_RETRY, &should_stop) {
-                    return ListenerExit::Shutdown;
+                    return;
                 }
                 continue;
             };
@@ -117,7 +175,7 @@ impl MacOsHotkeyListener {
                 events(ListenerEvent::Press(press));
             }
             if stopped {
-                return ListenerExit::Shutdown;
+                return;
             }
         }
     }
@@ -288,11 +346,9 @@ unsafe extern "C-unwind" fn tap_callback(
             let flags = CGEvent::flags(Some(event)).0;
             let source_pid =
                 CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID);
-            state.feed(KeyEvent::FlagsChanged {
-                key_code,
-                flags,
-                synthetic: source_pid != 0,
-            });
+            if let Some(event) = translate(state.key, key_code, flags, source_pid != 0) {
+                state.feed(event);
+            }
         }
         CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown => {
             state.feed(KeyEvent::MouseDown);
@@ -300,4 +356,83 @@ unsafe extern "C-unwind" fn tap_callback(
         _ => {}
     }
     std::ptr::from_ref(event).cast_mut()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RIGHT_OPTION: u64 = 0x40;
+    const LEFT_OPTION: u64 = 0x0008_0020;
+    const SECONDARY_FN: u64 = 0x0080_0000;
+    const RIGHT_OPTION_KEY: i64 = 61;
+    const LEFT_OPTION_KEY: i64 = 58;
+    const LEFT_SHIFT_KEY: i64 = 56;
+    const FN_KEY: i64 = 63;
+
+    fn hardware(key: AriaKey, key_code: i64, flags: u64) -> Option<KeyEvent> {
+        translate(key, key_code, flags, false)
+    }
+
+    #[test]
+    fn left_option_held_across_the_release_still_counts() {
+        let key = AriaKey::RightOption;
+        assert!(matches!(
+            hardware(key, RIGHT_OPTION_KEY, RIGHT_OPTION | LEFT_OPTION),
+            Some(KeyEvent::AriaDown {
+                held: Modifiers::NONE
+            })
+        ));
+        assert!(matches!(
+            hardware(key, RIGHT_OPTION_KEY, LEFT_OPTION),
+            Some(KeyEvent::AriaUp)
+        ));
+    }
+
+    #[test]
+    fn the_aria_key_carries_the_modifiers_held_with_it() {
+        assert!(matches!(
+            hardware(AriaKey::RightOption, RIGHT_OPTION_KEY, RIGHT_OPTION | SHIFT | COMMAND),
+            Some(KeyEvent::AriaDown { held }) if held == Modifiers::SHIFT | Modifiers::COMMAND
+        ));
+    }
+
+    #[test]
+    fn option_and_fn_are_not_watched_modifiers() {
+        assert!(matches!(
+            hardware(
+                AriaKey::RightOption,
+                LEFT_OPTION_KEY,
+                LEFT_OPTION | SECONDARY_FN
+            ),
+            Some(KeyEvent::Modifiers {
+                held: Modifiers::NONE
+            })
+        ));
+    }
+
+    #[test]
+    fn a_synthetic_modifier_is_dropped() {
+        let posted_shift = translate(
+            AriaKey::RightOption,
+            LEFT_SHIFT_KEY,
+            RIGHT_OPTION | SHIFT,
+            true,
+        );
+        assert!(posted_shift.is_none());
+    }
+
+    #[test]
+    fn the_fn_binding_is_honored() {
+        let key = AriaKey::Fn;
+        assert!(matches!(
+            hardware(key, FN_KEY, SECONDARY_FN),
+            Some(KeyEvent::AriaDown { .. })
+        ));
+        assert!(matches!(hardware(key, FN_KEY, 0), Some(KeyEvent::AriaUp)));
+        assert!(matches!(
+            hardware(key, RIGHT_OPTION_KEY, RIGHT_OPTION),
+            Some(KeyEvent::Modifiers { .. })
+        ));
+    }
 }

@@ -38,8 +38,12 @@ field focused. Check [Accessibility permission](./macos.md#permissions). For a
 terminal recording, try `aria dictate --mode copy` and paste to separate
 insertion from recognition.
 
-On Linux, use copying rather than insertion-only modes. Keep the background
-service running so clipboard text remains available.
+On Linux, run `aria doctor` if the hotkey does nothing; it shows how to grant
+[keyboard access](./linux.md#permissions). If text is copied but not pasted,
+your desktop may lack a remote desktop portal, or you declined its dialog;
+restart the service to be asked again. Keep the background service running so
+clipboard text remains available. If the service started outside your desktop,
+such as over SSH, restart it from the desktop so it can reach the display.
 
 ## Restart
 

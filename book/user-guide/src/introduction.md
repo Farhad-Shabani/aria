@@ -3,13 +3,13 @@
 # Welcome to Aria
 
 Aria lets you type by speaking, hear text read aloud, and ask questions about a
-project. On a Mac, you can dictate into other apps with a hotkey. On Linux,
-use the terminal to record speech and copy the text.
+project. On a Mac or a Linux desktop, you can dictate into other apps with a
+hotkey.
 
 ## Start here
 
-[Install Aria](./installation.md), then try [Mac dictation](./macos.md) or
-[terminal dictation](./transcription.md). Start with one short sentence so you
+[Install Aria](./installation.md), then try [Mac dictation](./macos.md),
+[Linux dictation](./linux.md), or [terminal dictation](./transcription.md). Start with one short sentence so you
 can check the microphone, recognition, and output together.
 
 Once that works, choose what you need next:

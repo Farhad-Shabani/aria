@@ -1,5 +1,6 @@
 //! Delivery of completed text to user-facing platform destinations.
 
+use std::path::Path;
 use std::time::Duration;
 
 #[cfg(target_os = "ios")]
@@ -12,12 +13,40 @@ mod macos;
 #[cfg(target_os = "ios")]
 pub(crate) use ios::IosTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "linux")]
+pub(crate) use linux::APP_ID;
+#[cfg(target_os = "linux")]
 pub(crate) use linux::LinuxTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::MacOsTextDelivery as PlatformTextDelivery;
 
 #[cfg(not(any(target_os = "ios", target_os = "linux", target_os = "macos")))]
 compile_error!("no text-delivery adapter exists for this target");
+
+#[derive(Clone)]
+pub(crate) struct DeliveryFactory {
+    #[cfg(target_os = "linux")]
+    session: linux::Session,
+}
+
+impl DeliveryFactory {
+    pub(crate) fn detect(_home: &Path) -> Self {
+        Self {
+            #[cfg(target_os = "linux")]
+            session: linux::Session::detect(_home),
+        }
+    }
+
+    pub(crate) fn create(&self, timeout: Duration) -> Result<PlatformTextDelivery, DeliveryError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.session.create(timeout)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            PlatformTextDelivery::new(timeout)
+        }
+    }
+}
 
 pub(crate) use aria_kit::transcription::Caret;
 
@@ -48,6 +77,11 @@ pub(crate) trait TextDelivery: Send + Sync + 'static {
     // False where the display server serves the clipboard from the process
     // that set it.
     const OUTLIVES_PROCESS: bool;
+
+    // Whether segments may arrive one by one while recording. False where
+    // delivery pastes: the next segment would replace the clipboard before
+    // the app has read the last one.
+    const STREAMS: bool = true;
 
     fn prepare(
         &self,
@@ -220,6 +254,22 @@ pub enum DeliveryError {
     #[error("insertion is not available on {}", std::env::consts::OS)]
     InsertionUnsupported,
 
+    #[error(
+        "delivery on {} pastes the whole transcript once recording stops; it cannot stream",
+        std::env::consts::OS
+    )]
+    StreamingUnsupported,
+
+    #[cfg(target_os = "linux")]
+    #[error(
+        "pressing Return after a paste is not available on linux: nothing confirms the paste landed"
+    )]
+    SubmissionUnsupported,
+
+    #[cfg(target_os = "linux")]
+    #[error("could not confirm the paste; the text may or may not have reached the app")]
+    PasteUnconfirmed,
+
     #[error("text delivery was cancelled")]
     Cancelled,
 
@@ -235,6 +285,13 @@ pub enum DeliveryError {
         "insertion needs permission: System Settings → Privacy & Security \
          → {} → turn on Aria",
         crate::accessibility::settings_pane()
+    )]
+    InsertionNotPermitted,
+
+    #[cfg(target_os = "linux")]
+    #[error(
+        "insertion needs permission: allow Aria to control the keyboard when the \
+         desktop asks; restart the service to be asked again"
     )]
     InsertionNotPermitted,
 

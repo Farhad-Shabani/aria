@@ -6,6 +6,7 @@
 
 - [Install Aria](./installation.md)
 - [Mac dictation](./macos.md)
+- [Linux dictation](./linux.md)
 - [Terminal dictation](./transcription.md)
 - [Dictation history](./history.md)
 - [Read text aloud](./tts.md)

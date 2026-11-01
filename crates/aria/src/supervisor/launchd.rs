@@ -70,6 +70,10 @@ pub(super) fn render(spec: &UnitSpec) -> String {
     )
 }
 
+pub(super) fn companion(_spec: &UnitSpec) -> Option<(PathBuf, String)> {
+    None
+}
+
 pub(super) fn load(unit: &Path) -> Result<(), SupervisorError> {
     let mut command = launchctl();
     command.arg("bootstrap").arg(domain()).arg(unit);
