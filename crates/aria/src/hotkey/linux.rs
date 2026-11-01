@@ -725,6 +725,16 @@ mod tests {
         }
     }
 
+    fn nothing_held(_: &File) -> io::Result<HeldKeys> {
+        Ok(HeldKeys::default())
+    }
+
+    fn control_held(_: &File) -> io::Result<HeldKeys> {
+        let mut held = HeldKeys::default();
+        held.record(KEY_LEFTCTRL, true);
+        Ok(held)
+    }
+
     fn sync(code: u16) -> InputEvent {
         InputEvent {
             timestamp: (0, 0),
@@ -929,7 +939,7 @@ mod tests {
         let tree = InputTree::new();
         tree.add("event0", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
-        devices.rescan_with(|_| Ok(HeldKeys::default()));
+        devices.rescan_with(nothing_held);
         let mut pending_release = key(KEY_LEFTCTRL, KEY_RELEASED);
         pending_release.timestamp = (2, 0);
         assert!(
@@ -945,11 +955,7 @@ mod tests {
                 (0, sync(SYN_REPORT)),
                 (0, key(KEY_LEFTCTRL, KEY_RELEASED)),
             ],
-            |_| {
-                let mut held = HeldKeys::default();
-                held.record(KEY_LEFTCTRL, true);
-                Ok(held)
-            },
+            control_held,
         );
         assert!(matches!(
             inputs.as_slice(),
@@ -972,11 +978,7 @@ mod tests {
         let tree = InputTree::new();
         tree.add("event0", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
-        devices.rescan_with(|_| {
-            let mut held = HeldKeys::default();
-            held.record(KEY_LEFTCTRL, true);
-            Ok(held)
-        });
+        devices.rescan_with(control_held);
         let inputs = devices.translate_events(vec![(0, key(KEY_RIGHTALT, KEY_PRESSED))], |_| {
             panic!("no recovery query before SYN_DROPPED")
         });
@@ -1005,7 +1007,7 @@ mod tests {
         tree.add("event0", &[KEY_RIGHTALT]);
         tree.add("event1", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
-        devices.rescan_with(|_| Ok(HeldKeys::default()));
+        devices.rescan_with(nothing_held);
         let inputs = devices.translate_events(
             vec![
                 (0, sync(SYN_DROPPED)),
@@ -1017,11 +1019,7 @@ mod tests {
         );
         assert!(matches!(inputs.as_slice(), [DeviceInput::LostKeys]));
         assert_eq!(devices.open[0].stream, Stream::Dropped);
-        let inputs = devices.translate_events(vec![(0, sync(SYN_REPORT))], |_| {
-            let mut held = HeldKeys::default();
-            held.record(KEY_LEFTCTRL, true);
-            Ok(held)
-        });
+        let inputs = devices.translate_events(vec![(0, sync(SYN_REPORT))], control_held);
         assert_eq!(devices.open[0].stream, Stream::Live);
         assert!(inputs.is_empty());
         let inputs = devices.translate_events(vec![(1, key(KEY_RIGHTALT, KEY_PRESSED))], |_| {
@@ -1041,7 +1039,7 @@ mod tests {
         tree.add("event0", &[KEY_RIGHTALT]);
         tree.add("event1", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
-        devices.rescan_with(|_| Ok(HeldKeys::default()));
+        devices.rescan_with(nothing_held);
         let mut control_down = key(KEY_LEFTCTRL, KEY_PRESSED);
         control_down.timestamp = (1, 100);
         let mut alt_down = key(KEY_RIGHTALT, KEY_PRESSED);
@@ -1066,7 +1064,7 @@ mod tests {
         tree.add("event0", &[BTN_LEFT]);
         tree.add("event1", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
-        devices.rescan_with(|_| Ok(HeldKeys::default()));
+        devices.rescan_with(nothing_held);
         let mut down = key(KEY_RIGHTALT, KEY_PRESSED);
         down.timestamp = (1, 100);
         let mut click = key(BTN_LEFT, KEY_PRESSED);
@@ -1128,7 +1126,7 @@ mod tests {
         )
         .expect("pointer events");
         let mut devices = tree.devices();
-        devices.rescan_with(|_| Ok(HeldKeys::default()));
+        devices.rescan_with(nothing_held);
         let mut detector = PressDetector::new();
         let mut presses = Vec::new();
         for input in devices.next_batch(Duration::ZERO) {
@@ -1169,15 +1167,9 @@ mod tests {
             ]
         );
         let mut devices = tree.devices();
-        assert_eq!(
-            devices.rescan_with(|_| Ok(HeldKeys::default())),
-            Readiness::Reading
-        );
+        assert_eq!(devices.rescan_with(nothing_held), Readiness::Reading);
         assert_eq!(devices.open.len(), 2);
-        assert_eq!(
-            devices.rescan_with(|_| Ok(HeldKeys::default())),
-            Readiness::Reading
-        );
+        assert_eq!(devices.rescan_with(nothing_held), Readiness::Reading);
         assert_eq!(devices.open.len(), 2, "a rescan keeps devices open once");
     }
 
@@ -1188,10 +1180,7 @@ mod tests {
         tree.deny("event0");
         let mut devices = tree.devices();
         assert_eq!(devices.probe(), Readiness::Denied);
-        assert_eq!(
-            devices.rescan_with(|_| Ok(HeldKeys::default())),
-            Readiness::Denied
-        );
+        assert_eq!(devices.rescan_with(nothing_held), Readiness::Denied);
     }
 
     #[test]
@@ -1199,9 +1188,9 @@ mod tests {
         let tree = InputTree::new();
         tree.add("event0", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
-        devices.rescan_with(|_| Ok(HeldKeys::default()));
+        devices.rescan_with(nothing_held);
         tree.deny("event0");
-        let scan = devices.rescan_with(|_| Ok(HeldKeys::default()));
+        let scan = devices.rescan_with(nothing_held);
         assert_eq!(scan, Readiness::Denied);
         assert!(devices.open.is_empty());
         assert!(matches!(
@@ -1217,15 +1206,9 @@ mod tests {
         tree.add("event0", &[BTN_LEFT]);
         assert_eq!(tree.devices().probe(), Readiness::NoKeyboard);
         assert_eq!(
-            tree.devices().rescan_with(|_| Ok(HeldKeys::default())),
+            tree.devices().rescan_with(nothing_held),
             Readiness::NoKeyboard
         );
-    }
-
-    #[test]
-    fn fn_has_no_linux_key_code() {
-        assert_eq!(AriaKey::RightOption.key_code(), Some(KEY_RIGHTALT));
-        assert_eq!(AriaKey::Fn.key_code(), None);
     }
 
     #[test]

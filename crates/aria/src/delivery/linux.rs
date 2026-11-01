@@ -357,15 +357,11 @@ mod tests {
     }
 
     #[test]
-    fn insert_reports_a_paste_that_sent_no_keys_as_unavailable() {
+    fn each_failure_keeps_its_own_error() {
         assert!(matches!(
             delivery_error(JobError::NotSent, TIMEOUT),
             DeliveryError::TargetUnavailable
         ));
-    }
-
-    #[test]
-    fn each_failure_keeps_its_own_error() {
         assert!(matches!(
             delivery_error(JobError::TimedOut, TIMEOUT),
             DeliveryError::Timeout(TIMEOUT)

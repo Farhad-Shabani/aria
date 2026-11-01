@@ -692,10 +692,6 @@ mod tests {
         Budget::new(timeout, &|| false)
     }
 
-    fn unconnectable() -> Result<(), Refusal> {
-        Err(Refusal::Failed)
-    }
-
     #[test]
     fn a_link_under_way_is_not_asked_for_again() {
         let link = KeyboardLink::new();
@@ -713,7 +709,7 @@ mod tests {
     fn a_failed_request_leaves_the_link_able_to_retry() {
         let link = KeyboardLink::new();
         assert_eq!(
-            link.request(unconnectable),
+            link.request(|| Err(Refusal::Failed)),
             KeyboardState::Refused(Refusal::Failed)
         );
         assert_eq!(link.request(|| Ok(())), KeyboardState::Connecting);
