@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
-use crate::delivery::{Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery};
-
 use super::{DeliveryMode, DictationSettings, ExecutionControl, TranscriptSink, Utterance};
+use crate::delivery::{Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery};
+use std::sync::Arc;
 
 /// The frontmost app as a transcript sink. Streaming types each segment as
 /// it arrives; complete types the whole transcript once. A transcript-only
@@ -263,7 +261,7 @@ mod tests {
             const DEFAULT_MODE: OutputMode = OutputMode::Copy;
             const OUTLIVES_PROCESS: bool = true;
 
-            fn frontmost(&self) -> Option<crate::history::Application> {
+            fn frontmost(&self) -> Option<crate::delivery::Application> {
                 None
             }
 
@@ -420,12 +418,12 @@ mod tests {
 
     impl TextDelivery for PastingDelivery {
         type Prepared = OutputMode;
-
         const DEFAULT_MODE: OutputMode = OutputMode::InsertOrCopy;
+
         const OUTLIVES_PROCESS: bool = false;
         const STREAMS: bool = false;
 
-        fn frontmost(&self) -> Option<crate::history::Application> {
+        fn frontmost(&self) -> Option<crate::delivery::Application> {
             None
         }
 
@@ -500,16 +498,16 @@ mod tests {
     struct FieldWithText {
         delivery: RecordingDelivery,
         caret: Caret,
-        front: Option<crate::history::Application>,
+        front: Option<crate::delivery::Application>,
     }
 
     impl TextDelivery for FieldWithText {
         type Prepared = OutputMode;
-
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+
         const OUTLIVES_PROCESS: bool = true;
 
-        fn frontmost(&self) -> Option<crate::history::Application> {
+        fn frontmost(&self) -> Option<crate::delivery::Application> {
             self.front.clone()
         }
 
@@ -579,7 +577,7 @@ mod tests {
                 fail: false,
             },
             caret: Caret::between("", ""),
-            front: Some(crate::history::Application {
+            front: Some(crate::delivery::Application {
                 name: "Vault".into(),
                 bundle_id: Some("com.secret".into()),
             }),

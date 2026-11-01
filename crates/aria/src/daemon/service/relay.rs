@@ -313,10 +313,9 @@ fn is_silence(error: &super::super::dictation::DictationRuntimeError) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
     use crate::delivery::{Caret, OutputMode};
+    use std::sync::Mutex;
 
     /// Inserts everything at `caret` and writes down each step it was
     /// asked for.
@@ -328,11 +327,11 @@ mod tests {
 
     impl TextDelivery for Steps {
         type Prepared = OutputMode;
-
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+
         const OUTLIVES_PROCESS: bool = true;
 
-        fn frontmost(&self) -> Option<crate::history::Application> {
+        fn frontmost(&self) -> Option<crate::delivery::Application> {
             None
         }
 
@@ -423,6 +422,6 @@ mod tests {
     }
 
     fn settings(output_mode: OutputMode) -> DictationSettings {
-        crate::dictation::testing::settings(crate::dictation::DeliveryMode::Complete, output_mode)
+        crate::dictation::testing::settings(crate::settings::DeliveryMode::Complete, output_mode)
     }
 }

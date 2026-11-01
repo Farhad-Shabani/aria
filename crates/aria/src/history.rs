@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+pub use crate::delivery::Application;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 
 #[derive(Clone)]
@@ -21,12 +22,6 @@ pub struct HistoryEntry {
     pub(crate) own_voice_only: bool,
     pub(crate) project: Option<PathBuf>,
     pub warning: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Application {
-    pub name: String,
-    pub bundle_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

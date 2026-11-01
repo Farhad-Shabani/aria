@@ -873,11 +873,13 @@ mod tests {
     #[tokio::test]
     async fn normal_streaming_dictation_previews_delivers_and_keeps_history() {
         use crate::audio::{ReplayPace, WavReplayCapture, fixture_of};
+        use crate::delivery::OutputMode;
         use crate::dictation::testing::{CallLog, Loud, settings};
         use crate::dictation::{
-            DeliveryMode, DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
-            ExecutionControl, OutputMode, StopMode,
+            DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
+            ExecutionControl, StopMode,
         };
+        use crate::settings::DeliveryMode;
 
         let server = Fixture::with_model(
             "whisper",
@@ -964,11 +966,12 @@ mod tests {
     async fn a_whole_only_server_serves_streaming_dictation_under_its_own_engine() {
         use std::sync::Mutex;
 
+        use crate::delivery::OutputMode;
         use crate::dictation::testing::{CallLog, Loud, settings};
         use crate::dictation::{
-            DeliveryMode, DictationEventEmitter, DictationPipeline, ExecutionControl, OutputMode,
-            StopMode,
+            DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
+        use crate::settings::DeliveryMode;
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
 
         struct Capture(Mutex<Option<RecordingReader>>);
@@ -1024,11 +1027,12 @@ mod tests {
     async fn later_speech_does_not_validate_a_delayed_silence_guess() {
         use std::sync::Mutex;
 
+        use crate::delivery::OutputMode;
         use crate::dictation::testing::{CallLog, Loud, settings};
         use crate::dictation::{
-            DeliveryMode, DictationEventEmitter, DictationPipeline, ExecutionControl, OutputMode,
-            StopMode,
+            DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
+        use crate::settings::DeliveryMode;
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
 
@@ -1440,8 +1444,7 @@ mod tests {
 
     #[tokio::test]
     async fn own_voice_rejection_precedes_upload_and_corrections_stay_on_device() {
-        use crate::dictation::DictationPipeline;
-        use crate::dictation::testing::Loud;
+        use crate::dictation::{DictationPipeline, testing::Loud};
         use crate::transcription::Transcription;
         use crate::vocabulary::{PersonalRules, Vocabulary};
         use aria_kit::speaker::{Diarizer, Embedder, LevelSegmenter, SpeakerError};

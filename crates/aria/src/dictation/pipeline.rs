@@ -1339,12 +1339,7 @@ fn map_sink_error(error: impl Into<DictationError>, control: &ExecutionControl) 
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    use aria_kit::cancel::CancelToken;
-    use aria_kit::speaker::{Diarizer, SpeakerError};
-
+    use super::*;
     use crate::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
     };
@@ -1360,10 +1355,12 @@ mod tests {
         Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcription,
         TranscriptionAudio,
     };
-    use aria_kit::speaker::LevelSegmenter;
-
-    use super::*;
+    use aria_kit::cancel::CancelToken;
     use aria_kit::speaker::Embedder;
+    use aria_kit::speaker::LevelSegmenter;
+    use aria_kit::speaker::{Diarizer, SpeakerError};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     struct Answering(&'static str);
 
@@ -3959,7 +3956,7 @@ mod tests {
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
         const OUTLIVES_PROCESS: bool = true;
 
-        fn frontmost(&self) -> Option<crate::history::Application> {
+        fn frontmost(&self) -> Option<crate::delivery::Application> {
             None
         }
 

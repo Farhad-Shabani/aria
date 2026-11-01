@@ -6,6 +6,7 @@ use aria_kit::cancel::CancelToken;
 use serde::{Deserialize, Serialize};
 
 use super::{AssistantError, run_cli};
+use crate::settings::is_valid_model_id;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_REQUEST_ID: &str = "aria-model-list";
@@ -24,15 +25,6 @@ impl AssistantModel {
             && self.name.len() <= 200
             && !self.name.chars().any(char::is_control)
     }
-}
-
-pub(crate) fn is_valid_model_id(model_id: &str) -> bool {
-    const MAX_MODEL_ID_BYTES: usize = 200;
-    model_id.len() <= MAX_MODEL_ID_BYTES
-        && !model_id.starts_with('-')
-        && !model_id
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
 }
 
 pub(super) fn discover(

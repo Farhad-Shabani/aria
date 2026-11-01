@@ -9,6 +9,7 @@ use crate::audio::{CaptureError, RecordingReader};
 use crate::microphone::{Admitted, Claim, Gate};
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
+use crate::settings::MAX_DICTATION_TIMEOUT;
 use crate::transcription::{Language, Transcript, TranscriptionError};
 
 #[cfg(target_os = "macos")]
@@ -16,7 +17,7 @@ use super::output::OutputMute;
 
 use super::{
     DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings, DictationStage,
-    MAX_DICTATION_TIMEOUT, RecordingId, Rewriting, StopMode,
+    RecordingId, Rewriting, StopMode,
 };
 
 /// What a recording said, and the engine that heard it.
@@ -43,7 +44,7 @@ pub(crate) trait DictationExecutor: Send + Sync + 'static {
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&crate::vocabulary::Directory>,
+        project: Option<&crate::settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
@@ -64,7 +65,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&crate::vocabulary::Directory>,
+        project: Option<&crate::settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -611,7 +612,7 @@ where
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&crate::vocabulary::Directory>,
+        project: Option<&crate::settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -672,8 +673,8 @@ mod tests {
 
     use crate::audio::SilenceDuration;
     use crate::delivery::OutputMode;
-    use crate::dictation::DeliveryMode;
     use crate::dictation::testing::{Edge, HEARD, RecordsUntilStopped, recording_started};
+    use crate::settings::DeliveryMode;
     use crate::transcription::LanguageCode;
 
     use super::*;
@@ -832,7 +833,7 @@ mod tests {
 
     fn excluded(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
-            application: Some(crate::history::Application {
+            application: Some(crate::delivery::Application {
                 name: "1Password".into(),
                 bundle_id: Some("com.1password.1password".into()),
             }),
@@ -1051,7 +1052,7 @@ mod tests {
                 _: &mut RecordingReader,
                 _: &Language,
                 _: bool,
-                _: Option<&crate::vocabulary::Directory>,
+                _: Option<&crate::settings::Directory>,
                 _: Rewriting,
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {

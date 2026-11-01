@@ -1,23 +1,20 @@
-use std::collections::{HashMap, VecDeque};
-
-use aria_kit::cancel::{CancelToken, Deadline};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak, mpsc};
-use std::time::{Duration, Instant};
-
-use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
-
+use super::tasks::Supervised;
 use crate::memory::Lexicon;
-use crate::vocabulary::{Directory, MatchError, PersonalRules, State, Status, Term, Vocabulary};
+use crate::settings::Directory;
 use crate::vocabulary::{
+    MatchError, PersonalRules, State, Status, Term, Vocabulary,
     catalog::{self, Catalog},
     collection::{self, Collector},
     discover, select,
 };
-
-use super::tasks::Supervised;
+use aria_kit::cancel::{CancelToken, Deadline};
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Weak, mpsc};
+use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 const QUEUE_CAPACITY: usize = 32;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
@@ -994,9 +991,10 @@ impl<C: Collector> Worker<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocabulary::discover::LocalCollector;
     use crate::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
-    use crate::vocabulary::{Candidate, Coverage, Discovery, Source, SourceKind, cache_key};
+    use crate::vocabulary::{
+        Candidate, Coverage, Discovery, Source, SourceKind, cache_key, discover::LocalCollector,
+    };
     use std::ops::Range;
 
     fn directory(path: &Path) -> Directory {

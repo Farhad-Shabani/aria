@@ -25,11 +25,12 @@ use crate::dictation::{
     Rewriting, Transcribed,
 };
 use crate::rpc::RpcErrorCode;
+use crate::settings::Directory;
 use crate::transcription::{
     Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcription,
     TranscriptionError, Whole,
 };
-use crate::vocabulary::{Directory, Vocabulary};
+use crate::vocabulary::Vocabulary;
 
 use super::super::transcripts::{History, TranscriptStore};
 use super::model_load::ModelLoad;
@@ -395,10 +396,8 @@ pub(super) fn build_dictation(
     loading: ModelLoading,
     microphone: Arc<Gate>,
 ) -> Result<BuiltDictation, DictationInitializationError> {
-    let rewrites = setup
-        .dictation
-        .rewrites(home)
-        .map_err(DictationInitializationError::Cleanup)?;
+    let rewrites =
+        Rewrites::load(&setup.dictation, home).map_err(DictationInitializationError::Cleanup)?;
     let DictationSetup {
         dictation:
             DictationConfig {
@@ -460,8 +459,7 @@ pub(super) fn transcribe_retry(
     cancel: &CancelToken,
 ) -> Result<Transcribed, DictationError> {
     let config = &setup.dictation;
-    let rewrites = config
-        .rewrites(&setup.home)
+    let rewrites = Rewrites::load(config, &setup.home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
     let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
@@ -580,13 +578,14 @@ mod tests {
         assert_eq!(built.engine, crate::config::backend::SERVER);
         let coordinator = Arc::new(built.coordinator);
         let dictate = move || {
-            let mut settings = crate::settings::Settings::default().resolve_dictation(
+            let mut settings = DictationSettings::resolve(
+                crate::settings::Settings::default(),
                 crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
                 None,
             );
             settings.own_voice_only = false;
             settings.transcript_only = true;
-            settings.delivery_mode = crate::dictation::DeliveryMode::Complete;
+            settings.delivery_mode = crate::settings::DeliveryMode::Complete;
             let coordinator = Arc::clone(&coordinator);
             tokio::task::spawn_blocking(move || {
                 coordinator.execute(
@@ -688,7 +687,8 @@ mod tests {
         );
         let audio = crate::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
-        let settings = crate::settings::Settings::default().resolve_dictation(
+        let settings = DictationSettings::resolve(
+            crate::settings::Settings::default(),
             crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
             None,
         );

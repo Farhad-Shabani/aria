@@ -8,12 +8,12 @@ use super::{ApplicationId, ApplicationOverride, ApplicationOverrides, Prompt, Pr
 use super::{DictationOverrides, Settings};
 use aria_kit::synthesis::SpeakingRate;
 
-use crate::audio::{AutoStop, SilenceDuration};
-use crate::config::AssistantId;
-use crate::settings::{
+use super::{
     AriaKeyName, DeliveryModeName, InvalidValue, Key, Keyed, OutputModeName, Patch, SettingsError,
     SettingsFile, ShortcutEntry, invalid,
 };
+use crate::audio::{AutoStop, SilenceDuration};
+use crate::config::AssistantId;
 
 impl Settings {
     pub(crate) fn from_file(settings: &SettingsFile) -> Result<Self, SettingsError> {
@@ -63,7 +63,7 @@ impl Settings {
                 .vocabulary
                 .dir
                 .clone()
-                .map(crate::vocabulary::Directory::new)
+                .map(super::Directory::new)
                 .transpose()
                 .map_err(|source| {
                     invalid(Key::DictationVocabularyDir, InvalidValue::Directory(source))
@@ -284,7 +284,7 @@ fn shortcut(
 }
 
 fn overrides(
-    entries: &Keyed<crate::settings::ApplicationOverrideEntry>,
+    entries: &Keyed<super::ApplicationOverrideEntry>,
 ) -> Result<ApplicationOverrides, InvalidValue> {
     let entries = entries
         .iter()
@@ -303,7 +303,7 @@ fn overrides(
     ApplicationOverrides::new(entries).map_err(InvalidValue::Override)
 }
 
-fn prompt_list(entries: &Keyed<crate::settings::PromptEntry>) -> Result<Prompts, InvalidValue> {
+fn prompt_list(entries: &Keyed<super::PromptEntry>) -> Result<Prompts, InvalidValue> {
     let prompts = entries
         .iter()
         .map(|(id, entry)| {
@@ -365,7 +365,7 @@ mod tests {
             mute_sound: true,
             stt_language: "de".parse().expect("a language"),
             output_mode: OutputMode::Copy,
-            delivery_mode: crate::dictation::DeliveryMode::Complete,
+            delivery_mode: crate::settings::DeliveryMode::Complete,
             silence_duration: SilenceDuration::new(Duration::from_millis(2000)).expect("valid"),
             auto_stop: None,
             own_voice_only: true,
@@ -374,7 +374,7 @@ mod tests {
             prompt_list_shortcut: None,
             vocabulary_enabled: true,
             vocabulary_dir: Some(
-                crate::vocabulary::Directory::new("/src/writ".into()).expect("valid"),
+                crate::settings::Directory::new("/src/writ".into()).expect("valid"),
             ),
             application_overrides: ApplicationOverrides::new([(
                 ApplicationId::new("com.tinyspeck.slackmacgap").expect("valid"),
@@ -388,7 +388,7 @@ mod tests {
                 Prompt::new(
                     PromptId::new("reply").expect("id"),
                     "Reply".to_owned(),
-                    crate::chat::PromptKind::Compose,
+                    crate::settings::PromptKind::Compose,
                     "/p/reply.md".into(),
                     true,
                     None,

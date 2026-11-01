@@ -56,32 +56,16 @@ pub enum CommandError {
 
     #[error(transparent)]
     Settings(#[from] SettingsError),
-
-    #[error("cannot read the running daemon's settings status")]
-    Status(#[source] crate::ipc::ClientError),
 }
 
 fn home() -> Result<PathBuf, CommandError> {
     user_home::resolve().map_err(CommandError::Home)
 }
 
-/// Every key, or the one `key` names.
-pub fn show(key: Option<&str>) -> Result<Vec<Row>, CommandError> {
-    let pending = restart_required_keys()?;
-    show_with(&home()?, &pending, key)
-}
-
-/// What the running daemon waits on a restart for; nothing when no daemon
-/// runs.
-fn restart_required_keys() -> Result<Vec<String>, CommandError> {
-    let Ok(paths) = crate::runtime::PreparedRuntimePaths::for_current_user() else {
-        return Ok(Vec::new());
-    };
-    let Ok(session) = crate::daemon::DaemonSession::connect_at(&paths) else {
-        return Ok(Vec::new());
-    };
-    let status = session.settings_status().map_err(CommandError::Status)?;
-    Ok(status.restart_required)
+/// Every key, or the one `key` names. `pending` lists the keys the running
+/// daemon waits on a restart for.
+pub fn show(pending: &[String], key: Option<&str>) -> Result<Vec<Row>, CommandError> {
+    show_with(&home()?, pending, key)
 }
 
 fn show_with(home: &Path, pending: &[String], key: Option<&str>) -> Result<Vec<Row>, CommandError> {
@@ -463,12 +447,12 @@ fn defaults_text() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
-    use crate::config::TtsConfig;
-    use crate::config::{ChatConfig, DictationConfig, ListenConfig, MemoryConfig, SpeakerConfig};
+    use crate::config::{
+        ChatConfig, DictationConfig, ListenConfig, MemoryConfig, SpeakerConfig, TtsConfig,
+    };
     use crate::settings::Loaded;
+    use std::fs;
 
     fn home_with(text: &str) -> tempfile::TempDir {
         let home = tempfile::tempdir().expect("a temp home");

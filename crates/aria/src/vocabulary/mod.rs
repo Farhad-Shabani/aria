@@ -1,5 +1,5 @@
 mod context;
-pub use context::{Context, Directory, DirectoryError, State, Status};
+pub use context::{Context, State, Status};
 pub(crate) mod catalog;
 pub(crate) mod collection;
 pub(crate) mod discover;

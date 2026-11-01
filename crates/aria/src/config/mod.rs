@@ -184,25 +184,6 @@ pub mod tts_backend {
     pub const DEFAULT: &str = SYSTEM;
 }
 
-impl DictationConfig {
-    pub(crate) fn rewrites(
-        &self,
-        home: &std::path::Path,
-    ) -> Result<
-        crate::dictation::Rewrites<crate::dictation::ConfiguredLayers>,
-        crate::dictation::CleanupError,
-    > {
-        let llm = self
-            .cleanup_llm
-            .as_ref()
-            .map(|cleanup| {
-                crate::dictation::LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home)
-            })
-            .transpose()?;
-        Ok(crate::dictation::Rewrites::new().with(llm))
-    }
-}
-
 /// An HTTPS origin with no credentials, path, query, or fragment. Pairing
 /// matches endpoints exactly, so spellings of one origin share one form.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -544,7 +525,7 @@ pub enum ConfigError {
     WakeRequiresMicrophone,
 
     #[error("invalid dictation.cleanup_llm settings")]
-    CleanupLlm(#[source] crate::dictation::CleanupError),
+    CleanupLlm(#[source] crate::settings::CleanupConfigError),
 
     #[error("{field} is not a usable speaking rate")]
     InvalidSpeakingRate {

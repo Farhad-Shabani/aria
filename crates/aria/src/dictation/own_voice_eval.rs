@@ -5,25 +5,6 @@
 
 mod tracker;
 
-use std::collections::{BTreeMap, HashMap};
-use std::ops::Range;
-use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
-
-use aria_harness::own_voice::{ArtifactKind, Placed, SPEAKERS_DIR, Truth};
-use aria_kit::cancel::CancelToken;
-use aria_kit::speaker::{ProfileStore, Role};
-use aria_kit::transcription::{
-    Hypothesis, Language, StreamingEngine as _, Transcriber, TranscriptionAudio, TranscriptionError,
-};
-use aria_kit::voice_activity::SileroVad;
-use aria_segmentation::pyannote::Pyannote;
-use aria_speaker::wespeaker::WeSpeaker;
-use aria_stt::parakeet::{Device, Parakeet};
-use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
-
 use super::testing::settings;
 use super::{
     Cursor, DeliveryMode, DictationError, DictationEvent, DictationEventEmitter, DictationPipeline,
@@ -37,6 +18,23 @@ use crate::config::SpeakerConfig;
 use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
 use crate::speaker::Diarizer;
 use crate::transcription::Transcription;
+use aria_harness::own_voice::{ArtifactKind, Placed, SPEAKERS_DIR, Truth};
+use aria_kit::cancel::CancelToken;
+use aria_kit::speaker::{ProfileStore, Role};
+use aria_kit::transcription::{
+    Hypothesis, Language, StreamingEngine as _, Transcriber, TranscriptionAudio, TranscriptionError,
+};
+use aria_kit::voice_activity::SileroVad;
+use aria_segmentation::pyannote::Pyannote;
+use aria_speaker::wespeaker::WeSpeaker;
+use aria_stt::parakeet::{Device, Parakeet};
+use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// Share of a turn's own words that must be typed before the turn counts as
 /// typed. Below all of them, so one misheard word does not hide the delay.
@@ -95,11 +93,11 @@ struct TimedDelivery {
 
 impl TextDelivery for TimedDelivery {
     type Prepared = ();
-
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::history::Application> {
+    fn frontmost(&self) -> Option<crate::delivery::Application> {
         None
     }
 

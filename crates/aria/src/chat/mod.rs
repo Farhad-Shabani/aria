@@ -7,7 +7,6 @@
 mod assistants;
 mod models;
 pub use models::AssistantModel;
-pub(crate) use models::is_valid_model_id;
 mod process;
 mod projects;
 mod prompt_run;
@@ -28,21 +27,18 @@ use crate::delivery::{DeliveryError, OutputMode};
 use crate::event::EventEmitter;
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
+use crate::settings::PromptKind;
 
 pub(crate) use assistants::{
     CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant, claude_command, parse_claude,
 };
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
-pub use prompt_run::PromptKind;
 pub(crate) use prompt_run::{InstructionsError, PromptRun, read_instructions};
 pub(crate) use sessions::{SessionStore, SessionStoreError};
 pub(crate) use subscribers::ChatSubscribers;
 
 pub(crate) const EVENT_THREAD: &str = "aria-chat-events";
-
-/// The most `chat.timeout` may ask for.
-pub(crate) const MAX_TIMEOUT: Duration = Duration::from_secs(570);
 
 /// Names one ask for as long as the daemon that took it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

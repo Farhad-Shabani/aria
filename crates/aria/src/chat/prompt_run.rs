@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::AssistantError;
+use crate::settings::PromptKind;
 
 const REWRITE_FRAME: &str = include_str!("../../../../prompts/rewrite.md");
 const COMPOSE_FRAME: &str = include_str!("../../../../prompts/compose.md");
@@ -25,16 +26,6 @@ const MAX_TEXT_BYTES: usize = 64 * 1024;
 
 /// Room for a long prompt, not a document.
 const MAX_INSTRUCTIONS_BYTES: u64 = 16 * 1024;
-
-/// What a prompt makes of what was said, which sets how the assistant is told to
-/// treat the transcript.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PromptKind {
-    /// The same words and meaning, cleaned up or restyled.
-    Rewrite,
-    /// New text made from what was said, such as a reply or a summary.
-    Compose,
-}
 
 pub(crate) struct PromptRun<'a> {
     pub(crate) model_id: Option<&'a str>,

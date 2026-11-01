@@ -42,7 +42,7 @@ impl<E: Extractor> Collector for LocalCollector<E> {
 
     fn collect(
         &mut self,
-        selected: &super::Directory,
+        selected: &crate::settings::Directory,
         previous: &[Source],
         cancel: &CancelToken,
     ) -> Result<Discovery, Error<Self::Error>> {

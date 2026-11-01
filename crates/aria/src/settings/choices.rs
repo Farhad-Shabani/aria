@@ -1,18 +1,18 @@
 //! The checked settings the app, the phone and operations read.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::time::Duration;
 
 use aria_kit::synthesis::SpeakingRate;
+use aria_kit::transcription::{Language, LanguageCode};
 
 use super::SettingsError;
-use super::{ApplicationOverride, ApplicationOverrides, Chord, DictationOverrides, Prompts};
+use super::{ApplicationOverrides, Chord, Prompts};
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
 use crate::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
-use crate::dictation::{DeliveryMode, DictationRequest, DictationSettings};
-use crate::history::Application;
 use crate::hotkey::{AriaKey, Combo};
-use crate::transcription::{Language, LanguageCode};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
@@ -29,7 +29,7 @@ pub struct Settings {
     /// Dictation types only what an enrolled voice said.
     pub own_voice_only: bool,
     pub vocabulary_enabled: bool,
-    pub vocabulary_dir: Option<crate::vocabulary::Directory>,
+    pub vocabulary_dir: Option<super::Directory>,
     pub history_enabled: bool,
     pub history_keep_audio: bool,
     pub assistant_id: Option<AssistantId>,
@@ -57,7 +57,7 @@ impl Settings {
 
     pub(crate) fn validate_assistant_models(&self) -> Result<(), StoreError> {
         for model_id in self.assistant_models.values() {
-            if !crate::chat::is_valid_model_id(model_id) {
+            if !is_valid_model_id(model_id) {
                 return Err(StoreError::InvalidModelId);
             }
         }
@@ -139,78 +139,64 @@ impl Default for Settings {
     }
 }
 
-impl Settings {
-    /// `application` is the app in front as dictation is admitted. Each
-    /// setting comes from the request, else that app's overrides, else these
-    /// settings.
-    pub(crate) fn resolve_dictation(
-        self,
-        request: DictationRequest,
-        application: Option<Application>,
-    ) -> DictationSettings {
-        let application_id = application
-            .as_ref()
-            .and_then(|application| application.bundle_id.clone());
-        let application_overrides = application_id
-            .as_deref()
-            .and_then(|id| self.application_overrides.get(id));
-        let target = crate::delivery::TargetPolicy {
-            overridden_for: application_overrides.and(application_id),
-            excluded: self.application_overrides.excluded_ids(),
-        };
-        // Exclusion of every app, not just this one, travels in `target`.
-        let ApplicationOverride {
-            excluded: _,
-            overrides,
-        } = application_overrides.unwrap_or_default();
-        // Destructured so a new override field left unused here fails lint.
-        let DictationOverrides {
-            output_mode: application_output,
-            delivery_mode: application_delivery,
-        } = overrides;
-        let output_mode = request
-            .output_mode
-            .or(application_output)
-            .unwrap_or(self.output_mode);
-        // Copy cannot stream, nor can a platform that pastes, so they deliver
-        // after recording stops. A request that asks to stream keeps its
-        // choice, and delivery refuses it.
-        let delivery_mode = match (output_mode, request.delivery_mode) {
-            (OutputMode::Copy, None) => DeliveryMode::Complete,
-            (_, None) if !PlatformTextDelivery::STREAMS => DeliveryMode::Complete,
-            (_, requested) => requested
-                .or(application_delivery)
-                .unwrap_or(self.delivery_mode),
-        };
-        DictationSettings {
-            history_enabled: self.history_enabled,
-            history_keep_audio: self.history_keep_audio,
-            mute_sound: self.mute_sound,
-            stt_language: self.stt_language,
-            output_mode,
-            delivery_mode,
-            stop_mode: request.stop_mode,
-            silence_duration: self.silence_duration,
-            auto_stop: self.auto_stop,
-            own_voice_only: self.own_voice_only,
-            rewriting: crate::dictation::Rewriting {
-                cleanup: self.cleanup,
-                backtrack: self.backtrack,
-            },
-            transcript_only: request.transcript_only,
-            project: if self.vocabulary_enabled {
-                match request.project {
-                    crate::vocabulary::Context::Default => self.vocabulary_dir,
-                    crate::vocabulary::Context::Directory(directory) => Some(directory),
-                    crate::vocabulary::Context::Disabled => None,
-                }
-            } else {
-                None
-            },
-            application,
-            target,
-        }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DeliveryMode {
+    #[default]
+    Complete,
+    Streaming,
+}
+
+/// What a prompt makes of what was said, which sets how the assistant is told to
+/// treat the transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    /// The same words and meaning, cleaned up or restyled.
+    Rewrite,
+    /// New text made from what was said, such as a reply or a summary.
+    Compose,
+}
+
+pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(660);
+
+/// The most `chat.timeout` may ask for.
+pub(super) const MAX_CHAT_TIMEOUT: Duration = Duration::from_secs(570);
+
+pub(crate) fn is_valid_model_id(model_id: &str) -> bool {
+    const MAX_MODEL_ID_BYTES: usize = 200;
+    model_id.len() <= MAX_MODEL_ID_BYTES
+        && !model_id.starts_with('-')
+        && !model_id
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+}
+
+/// Why a `dictation.cleanup_llm` table cannot be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CleanupConfigError {
+    #[error(
+        "cleanup endpoint must be HTTP with a literal loopback address, explicit nonzero port, and /v1/chat/completions path"
+    )]
+    Endpoint,
+    #[error("cleanup model must contain 1–256 bytes without whitespace or control characters")]
+    Model,
+}
+
+pub(crate) fn validate_cleanup_llm(endpoint: &str, model: &str) -> Result<(), CleanupConfigError> {
+    let address = endpoint
+        .strip_prefix("http://")
+        .and_then(|rest| rest.strip_suffix("/v1/chat/completions"))
+        .and_then(|authority| authority.parse::<SocketAddr>().ok())
+        .filter(|address| address.ip().is_loopback() && address.port() != 0);
+    if address.is_none() {
+        return Err(CleanupConfigError::Endpoint);
     }
+    if model.is_empty()
+        || model.len() > 256
+        || model.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(CleanupConfigError::Model);
+    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -236,201 +222,41 @@ pub enum StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ApplicationId;
     use super::*;
-    use crate::dictation::StopMode;
 
-    const SLACK: &str = "com.tinyspeck.slackmacgap";
-
-    fn front(bundle_id: &str) -> Option<Application> {
-        Some(Application {
-            name: "App".into(),
-            bundle_id: Some(bundle_id.into()),
-        })
-    }
-
-    fn with_slack(overrides: DictationOverrides) -> Settings {
-        Settings {
-            output_mode: OutputMode::Insert,
-            delivery_mode: DeliveryMode::Streaming,
-            application_overrides: ApplicationOverrides::new([(
-                ApplicationId::new(SLACK).expect("valid"),
-                ApplicationOverride {
-                    excluded: false,
-                    overrides,
-                },
-            )])
-            .expect("valid"),
-            ..Settings::default()
+    #[test]
+    fn configuration_accepts_only_explicit_loopback_chat_endpoints() {
+        for endpoint in [
+            "http://127.0.0.1:8080/v1/chat/completions",
+            "http://[::1]:8080/v1/chat/completions",
+        ] {
+            validate_cleanup_llm(endpoint, "local/model:1").unwrap();
         }
-    }
-
-    const STREAMING: DeliveryMode = if PlatformTextDelivery::STREAMS {
-        DeliveryMode::Streaming
-    } else {
-        DeliveryMode::Complete
-    };
-
-    fn modes(settings: DictationSettings) -> (OutputMode, DeliveryMode) {
-        (settings.output_mode, settings.delivery_mode)
-    }
-
-    #[test]
-    fn the_front_apps_overrides_replace_settings() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::InsertAndSubmit),
-            delivery_mode: Some(DeliveryMode::Complete),
-        });
-        let request = DictationRequest::new(StopMode::OnSilence);
-
-        assert_eq!(
-            modes(
-                settings
-                    .clone()
-                    .resolve_dictation(request.clone(), front(SLACK))
-            ),
-            (OutputMode::InsertAndSubmit, DeliveryMode::Complete)
-        );
-        assert_eq!(
-            modes(
-                settings
-                    .clone()
-                    .resolve_dictation(request.clone(), front("com.apple.Notes"))
-            ),
-            (OutputMode::Insert, STREAMING)
-        );
-        assert_eq!(
-            modes(settings.resolve_dictation(request, None)),
-            (OutputMode::Insert, STREAMING)
-        );
-    }
-
-    #[test]
-    fn unset_overrides_inherit_and_requests_win() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::InsertAndSubmit),
-            delivery_mode: None,
-        });
-        let request = DictationRequest {
-            output_mode: Some(OutputMode::InsertOrCopy),
-            ..DictationRequest::new(StopMode::OnSilence)
-        };
-
-        assert_eq!(
-            modes(settings.resolve_dictation(request, front(SLACK))),
-            (OutputMode::InsertOrCopy, STREAMING)
-        );
-    }
-
-    #[test]
-    fn copy_delivers_after_recording_unless_the_request_asks_to_stream() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::Copy),
-            delivery_mode: Some(DeliveryMode::Streaming),
-        });
-
-        assert_eq!(
-            modes(
-                settings
-                    .clone()
-                    .resolve_dictation(DictationRequest::new(StopMode::OnSilence), front(SLACK))
-            ),
-            (OutputMode::Copy, DeliveryMode::Complete)
-        );
-        let streaming = DictationRequest {
-            delivery_mode: Some(DeliveryMode::Streaming),
-            ..DictationRequest::new(StopMode::OnSilence)
-        };
-        assert_eq!(
-            modes(settings.resolve_dictation(streaming, front(SLACK))),
-            (OutputMode::Copy, DeliveryMode::Streaming)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_platform_that_pastes_streams_only_when_asked() {
-        let settings = Settings {
-            output_mode: OutputMode::InsertOrCopy,
-            delivery_mode: DeliveryMode::Streaming,
-            ..Settings::default()
-        };
-        let streaming = DictationRequest {
-            delivery_mode: Some(DeliveryMode::Streaming),
-            ..DictationRequest::new(StopMode::OnSilence)
-        };
-
-        assert_eq!(
-            modes(
-                settings
-                    .clone()
-                    .resolve_dictation(DictationRequest::new(StopMode::OnSilence), None)
-            ),
-            (OutputMode::InsertOrCopy, DeliveryMode::Complete)
-        );
-        assert_eq!(
-            modes(settings.resolve_dictation(streaming, None)),
-            (OutputMode::InsertOrCopy, DeliveryMode::Streaming)
-        );
-    }
-
-    #[test]
-    fn the_front_app_is_kept_for_history() {
-        let settings = Settings::default()
-            .resolve_dictation(DictationRequest::new(StopMode::OnSilence), front(SLACK));
-
-        assert_eq!(settings.application, front(SLACK));
-    }
-
-    #[test]
-    fn only_the_front_app_with_aria_off_is_excluded() {
-        let mut settings = with_slack(DictationOverrides::default());
-        settings.application_overrides = ApplicationOverrides::new([(
-            ApplicationId::new(SLACK).expect("valid"),
-            ApplicationOverride {
-                excluded: true,
-                overrides: DictationOverrides::default(),
-            },
-        )])
-        .expect("valid");
-        let request = DictationRequest::new(StopMode::OnSilence);
-
-        assert!(
-            settings
-                .clone()
-                .resolve_dictation(request.clone(), front(SLACK))
-                .application_excluded()
-        );
-        assert!(
-            !settings
-                .resolve_dictation(request, front("com.apple.Notes"))
-                .application_excluded()
-        );
-    }
-
-    #[test]
-    fn delivery_is_pinned_only_to_an_app_with_overrides() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::Copy),
-            delivery_mode: None,
-        });
-        let request = DictationRequest::new(StopMode::OnSilence);
-
-        assert_eq!(
-            settings
-                .clone()
-                .resolve_dictation(request.clone(), front(SLACK))
-                .target
-                .overridden_for
-                .as_deref(),
-            Some(SLACK)
-        );
-        assert_eq!(
-            settings
-                .resolve_dictation(request, front("com.apple.Notes"))
-                .target
-                .overridden_for,
-            None
-        );
+        for endpoint in [
+            "http://localhost:8080/v1/chat/completions",
+            "https://127.0.0.1:8080/v1/chat/completions",
+            "http://192.168.0.1:8080/v1/chat/completions",
+            "http://127.0.0.1/v1/chat/completions",
+            "http://127.0.0.1:0/v1/chat/completions",
+            "http://user@127.0.0.1:80/v1/chat/completions",
+            "http://127.0.0.1:80/v1/chat/completions?key=secret",
+            "http://127.0.0.1:80/v1/chat/completions#x",
+            "http://127.0.0.1:80/other",
+            "http://[::ffff:127.0.0.1]:80/v1/chat/completions",
+        ] {
+            assert!(
+                matches!(
+                    validate_cleanup_llm(endpoint, "local"),
+                    Err(CleanupConfigError::Endpoint)
+                ),
+                "{endpoint}"
+            );
+        }
+        for model in ["", " ", "model\nsecret", &"a".repeat(257)] {
+            assert!(matches!(
+                validate_cleanup_llm("http://127.0.0.1:80/v1/chat/completions", model),
+                Err(CleanupConfigError::Model)
+            ));
+        }
     }
 }

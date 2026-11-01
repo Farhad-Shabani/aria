@@ -1,9 +1,9 @@
 //! Domain types for push-to-talk operations.
 
 use std::fmt;
-use std::time::Duration;
 
 use crate::audio::{AutoStop, SilenceDuration};
+use crate::settings::DeliveryMode;
 use crate::transcription::Language;
 
 pub(crate) mod cleanup;
@@ -16,6 +16,7 @@ mod output;
 #[cfg(test)]
 mod own_voice_eval;
 mod pipeline;
+mod resolve;
 mod rewrites;
 pub(crate) mod subscribers;
 #[cfg(test)]
@@ -39,8 +40,6 @@ pub(crate) use pipeline::DictationPipeline;
 pub(crate) use rewrites::{ConfiguredLayers, Rewrites, Rewriting};
 pub(crate) use transcripts::{TranscriptSink, Utterance};
 
-pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(660);
-
 /// Names one recording for as long as the daemon that took it runs. What
 /// `Stop` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,13 +55,6 @@ impl fmt::Display for RecordingId {
 pub enum StopMode {
     OnSilence,
     Manual,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum DeliveryMode {
-    #[default]
-    Complete,
-    Streaming,
 }
 
 /// What one dictation should do; `None` means the daemon's setting.
@@ -102,9 +94,9 @@ pub(crate) struct DictationSettings {
     pub(crate) own_voice_only: bool,
     pub(crate) rewriting: Rewriting,
     pub(crate) transcript_only: bool,
-    pub(crate) project: Option<crate::vocabulary::Directory>,
+    pub(crate) project: Option<crate::settings::Directory>,
     /// The app in front as dictation was admitted.
-    pub(crate) application: Option<crate::history::Application>,
+    pub(crate) application: Option<crate::delivery::Application>,
     pub(crate) target: crate::delivery::TargetPolicy,
 }
 
