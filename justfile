@@ -125,6 +125,10 @@ rust-wake-features:
 rust-wasm:
     cargo check --locked -p aria-kit -p aria-stt -p aria-web --features aria-stt/whisper-candle --target wasm32-unknown-unknown
 
+# Check iOS text delivery and its platform dependencies
+rust-ios:
+    cargo check --release --locked -p aria-platform --lib --target aarch64-apple-ios
+
 # Rosetta loses spawn errors. Native ARM needs Clang and FP16 for its kernels.
 rust_linux_platform := if arch() == "aarch64" { "linux/arm64" } else { "linux/amd64" }
 
