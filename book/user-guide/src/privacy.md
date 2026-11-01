@@ -46,6 +46,12 @@ Copying exposes text to apps and clipboard managers that can read your
 clipboard. Typing inserts it into the focused app, which controls its own
 saving and sharing. Cancelling Aria cannot recall text already delivered.
 
+On Linux, Aria pastes through the clipboard and the selection, so a
+transcript it inserts stays on both. Aria asks clipboard managers to skip it,
+but they may not. The udev rule that lets the hotkey read your keyboard lets
+every program you run read every key and inject input too. Aria reads key presses only to tell its
+hotkey apart from typing, and never records what you type.
+
 On a Mac, Aria reads two characters before the cursor and one after it, to
 decide where spaces go. It skips password fields, and never saves or logs
 these characters.

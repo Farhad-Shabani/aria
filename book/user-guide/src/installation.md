@@ -51,15 +51,28 @@ The installer checks the download, installs the `aria` command in
 `~/.local/bin`, and starts [setup](#setup). If it reports that `~/.local/bin`
 is not on your `PATH`, add it in your shell's startup file.
 
+Before setup, the installer offers a udev rule so the hotkey can read your
+keyboard. Installing it asks for your password. See
+[Linux dictation](./linux.md#permissions) for what it allows.
+
 Aria needs a systemd user session for its background service and ALSA
-(`libasound2`) for audio. For copying text, run it in your graphical desktop
-session. For speech output, install a system voice:
+(`libasound2`) for audio. The service starts and stops with your graphical
+session through `graphical-session.target`. GNOME and KDE Plasma start that
+target. On a desktop that doesn't, start the service from your session's
+autostart:
+
+```sh
+systemctl --user import-environment DISPLAY WAYLAND_DISPLAY
+systemctl --user start aria-daemon
+```
+
+For speech output, install a system voice:
 
 ```sh
 sudo apt-get install espeak-ng
 ```
 
-Continue to [terminal dictation](./transcription.md).
+Continue to [Linux dictation](./linux.md).
 
 ## Setup
 
@@ -69,7 +82,7 @@ The Mac app and the Linux installer both start setup. To run it again:
 aria setup
 ```
 
-Keep the default **Parakeet** engine. It types text as you speak. Setup
+Keep the default **Parakeet** engine. Setup
 downloads the model for the engine you choose and shows its size first.
 Parakeet (MLX) is the exception: it needs its own Python and downloads its
 model on first use.

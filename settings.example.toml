@@ -7,8 +7,8 @@
 
 [dictation]
 # How text reaches the app in front: insert, insert_and_submit, insert_or_copy or copy.
-output_mode = "insert"          # copy on Linux
-# streaming types as you speak. complete types once recording stops. Copy always uses complete.
+output_mode = "insert"          # insert_or_copy on Linux
+# streaming types as you speak. complete types once recording stops. Copy and Linux always use complete.
 delivery_mode = "streaming"
 # Silence, in ms, that ends a recording that stops on silence, such as a wake-word one. 100 to 10000.
 silence_duration_ms = 1500
@@ -94,12 +94,12 @@ dir = "~/.aria/memory"
 # [application_overrides."com.tinyspeck.slackmacgap"]
 # output_mode = "insert_and_submit"
 # delivery_mode = "complete"
-# excluded = false               # true: no recording and no typing while this app is in front
+# excluded = false               # true: no recording and no typing while this app is in front. Mac only.
 
 # ---- How Aria starts, and where text goes
 
 [shortcuts]
-# The Aria key: right_option, fn or off. Tap to dictate, hold to talk. Off on Linux.
+# The Aria key: right_option, fn or off. Tap to dictate, hold to talk. On Linux, right_option is the Right Alt key, and fn is unavailable.
 aria_key = "right_option"
 # Starts an ask: shift or command held with the Aria key, a chord, or off.
 ask = "shift"

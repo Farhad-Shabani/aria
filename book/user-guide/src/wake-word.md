@@ -39,7 +39,8 @@ aria wake status
 
 Status must report `listening` before you try the phrase. On macOS, leave an
 editable field focused and ensure [Accessibility access](./macos.md#permissions)
-is granted for insertion. On Linux, delivery uses the clipboard.
+is granted for insertion. On Linux, Aria [pastes](./linux.md#how-text-arrives)
+into the focused app.
 
 Speak the phrase trained into your classifier, then the sentence you want to
 dictate, and pause. The resulting text should arrive after recording stops.
