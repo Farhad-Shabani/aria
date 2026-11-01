@@ -2,6 +2,7 @@
 //! One private file holds both. Deleting it and restarting the daemon
 //! revokes every phone.
 
+use crate::ipc::protocol::failure_status;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -252,7 +253,7 @@ pub(in crate::daemon) fn require_paired(
         Some(fingerprint) if phones.contains(&fingerprint) => Ok(request),
         _ => {
             tracing::debug!("refused a request from a phone that is not paired");
-            Err(crate::ipc::protocol::failure_status(RpcFailure::new(
+            Err(failure_status(RpcFailure::new(
                 RpcErrorCode::Unauthenticated,
                 "pair this device with the Mac first",
             )))

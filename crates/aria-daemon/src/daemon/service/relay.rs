@@ -1,6 +1,7 @@
 //! Receives LAN audio, transcribes it, and delivers text using dictation settings.
 //! [`crate::daemon::relay`] validates and collects the upload.
 
+use crate::ipc::protocol::failure_status;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -154,10 +155,8 @@ impl Session {
                     message = failure.message,
                     "request failed"
                 );
-                self.emit(Err(relay::redacted(crate::ipc::protocol::failure_status(
-                    failure,
-                ))))
-                .await;
+                self.emit(Err(relay::redacted(failure_status(failure))))
+                    .await;
                 return;
             }
         };
@@ -195,14 +194,12 @@ impl Session {
                     "request failed"
                 );
                 announcer.announce(DictationStage::ended_by(failure.code));
-                Err(relay::redacted(crate::ipc::protocol::failure_status(
-                    failure,
-                )))
+                Err(relay::redacted(failure_status(failure)))
             }
             Err(_join) => {
                 tracing::error!(method = METHOD, "the relay job panicked");
                 announcer.announce(DictationStage::Failed(RpcErrorCode::Internal));
-                Err(crate::ipc::protocol::failure_status(RpcFailure::new(
+                Err(failure_status(RpcFailure::new(
                     RpcErrorCode::Internal,
                     "the relay operation ended unexpectedly",
                 )))

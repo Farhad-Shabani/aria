@@ -18,6 +18,7 @@ mod speaker;
 mod speech;
 mod vocabulary;
 
+use crate::ipc::protocol::failure_status;
 use tonic::Status;
 
 use aria_primitives::error_chain;
@@ -47,7 +48,7 @@ fn invalid_request(method: &'static str, error: &dyn std::error::Error) -> Statu
 
 fn failed(method: &'static str, failure: RpcFailure) -> Status {
     log_failure(method, &failure);
-    crate::ipc::protocol::failure_status(failure)
+    failure_status(failure)
 }
 
 /// A settings fault's message can quote the file, so only its place is

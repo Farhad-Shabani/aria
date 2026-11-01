@@ -1,3 +1,4 @@
+use crate::ipc::protocol::failure_status;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -234,5 +235,5 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
 }
 
 fn failure(error: HistoryError) -> Status {
-    crate::ipc::protocol::failure_status(RpcFailure::from(error))
+    failure_status(RpcFailure::from(error))
 }

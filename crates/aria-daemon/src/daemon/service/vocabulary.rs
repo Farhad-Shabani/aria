@@ -1,4 +1,5 @@
 use super::super::vocabulary::{Error, Runtime};
+use crate::ipc::protocol::failure_status;
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::settings::{Directory, SettingsStore};
@@ -39,7 +40,7 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         let directory = self
             .directory(request.into_inner())?
             .ok_or_else(|| -> Status {
-                crate::ipc::protocol::failure_status(RpcFailure::new(
+                failure_status(RpcFailure::new(
                     RpcErrorCode::InvalidRequest,
                     "select a vocabulary directory first",
                 ))
@@ -73,7 +74,7 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         let directory = self
             .directory(request.into_inner())?
             .ok_or_else(|| -> Status {
-                crate::ipc::protocol::failure_status(RpcFailure::new(
+                failure_status(RpcFailure::new(
                     RpcErrorCode::InvalidRequest,
                     "select a vocabulary directory first",
                 ))
@@ -90,5 +91,5 @@ fn failure(error: Error) -> Status {
         Error::Unsupported => RpcErrorCode::Unsupported,
         Error::TooLarge => RpcErrorCode::PayloadTooLarge,
     };
-    crate::ipc::protocol::failure_status(RpcFailure::new(code, error.to_string()))
+    failure_status(RpcFailure::new(code, error.to_string()))
 }

@@ -1,6 +1,7 @@
 //! Pairing a phone: the Mac app shows a one-time code, and the phone
 //! presents it to have its certificate pinned.
 
+use crate::ipc::protocol::failure_status;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -45,7 +46,7 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                 status = failure.code.label(),
                 "request failed"
             );
-            return Err(crate::ipc::protocol::failure_status(failure));
+            return Err(failure_status(failure));
         };
         let phones = Arc::clone(&self.phones);
         tokio::task::spawn_blocking(move || phones.admit(phone))

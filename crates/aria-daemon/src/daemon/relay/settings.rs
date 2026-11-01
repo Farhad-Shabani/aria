@@ -3,6 +3,7 @@
 //! Mac-side audio control, and no folder path on this Mac. Prompt paths, the
 //! vocabulary folder and per-app choices stay on the Mac in reads too.
 
+use crate::ipc::protocol::failure_status;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
@@ -74,7 +75,7 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         &self,
         _request: Request<wire::CheckSettingsRequest>,
     ) -> Result<Response<wire::CheckSettingsResponse>, Status> {
-        Err(crate::ipc::protocol::failure_status(RpcFailure::new(
+        Err(failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             "a patch is checked on the Mac",
         )))
@@ -85,7 +86,7 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         &self,
         _request: Request<wire::GetSettingsStatusRequest>,
     ) -> Result<Response<wire::GetSettingsStatusResponse>, Status> {
-        Err(crate::ipc::protocol::failure_status(RpcFailure::new(
+        Err(failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             "the settings status is read on the Mac",
         )))
@@ -168,7 +169,7 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         .iter()
         .find(|(key, set)| *set && key.scope() != Scope::Phone)
     {
-        return Err(crate::ipc::protocol::failure_status(RpcFailure::new(
+        return Err(failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             format!("{key} is only changed on the Mac"),
         )));
@@ -177,7 +178,7 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         .as_deref()
         .is_some_and(|path| !path.is_empty())
     {
-        return Err(crate::ipc::protocol::failure_status(RpcFailure::new(
+        return Err(failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             "choose the vocabulary folder on the Mac; a phone can only clear it",
         )));
@@ -315,12 +316,10 @@ mod tests {
             RpcErrorCode::TranscriptionFailed,
             RpcErrorCode::Unknown(999),
         ] {
-            let status = redacted(crate::ipc::protocol::failure_status(RpcFailure::new(
-                code, path,
-            )));
+            let status = redacted(failure_status(RpcFailure::new(code, path)));
             assert!(!status.message().contains(path), "{code:?}");
         }
-        let kept = redacted(crate::ipc::protocol::failure_status(RpcFailure::new(
+        let kept = redacted(failure_status(RpcFailure::new(
             RpcErrorCode::InvalidRequest,
             "memory.enabled is refused",
         )));

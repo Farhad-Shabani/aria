@@ -1,3 +1,4 @@
+use crate::ipc::protocol::failure_status;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -57,23 +58,19 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         &self,
         request: Request<tonic::Streaming<wire::InferenceRequest>>,
     ) -> Result<Response<Self::TranscribeStream>, Status> {
-        let deadline = Instant::now()
-            + request_timeout(&request).map_err(crate::ipc::protocol::failure_status)?;
+        let deadline = Instant::now() + request_timeout(&request).map_err(failure_status)?;
         let peer = presented(&request).ok_or_else(unauthenticated)?;
         let admission = self
             .access
             .admit(peer)
-            .map_err(|error| crate::ipc::protocol::failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| failure_status(RpcFailure::from(error)))?;
         let cancel = admission.async_cancel().clone();
         let cancel_on_drop = cancel.clone().drop_guard();
         let mut requests = request.into_inner();
         let start = until(&cancel, deadline, read_start(&mut requests))
             .await
-            .map_err(crate::ipc::protocol::failure_status)?;
-        let (prepared, input) = self
-            .engine
-            .prepare(start)
-            .map_err(crate::ipc::protocol::failure_status)?;
+            .map_err(failure_status)?;
+        let (prepared, input) = self.engine.prepare(start).map_err(failure_status)?;
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         let (finish, terminal) = oneshot::channel();
         let engine = Arc::clone(&self.engine);
@@ -207,7 +204,7 @@ impl Stream for Output {
                         self.stage = Stage::Done;
                         self.updates.close();
                         let error = match failure {
-                            Ok(Err(error)) => crate::ipc::protocol::failure_status(error),
+                            Ok(Err(error)) => failure_status(error),
                             _ => internal("the inference supervisor stopped unexpectedly"),
                         };
                         return Poll::Ready(Some(Err(error)));
@@ -368,7 +365,7 @@ impl wire::pairing_service_server::PairingService for InferencePairingRpc {
             .spawn_blocking(move || access.pair(peer, &code))
             .await
             .map_err(|_| internal("pairing stopped unexpectedly"))?
-            .map_err(|error| crate::ipc::protocol::failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| failure_status(RpcFailure::from(error)))?;
         Ok(Response::new(wire::PairResponse {}))
     }
 }
@@ -392,11 +389,11 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
     ) -> Result<Response<wire::InferenceInviteResponse>, Status> {
         let endpoint = ServerEndpoint::parse(&request.into_inner().endpoint)
             .ok_or(identity::Error::InvalidEndpoint)
-            .map_err(|error| crate::ipc::protocol::failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| failure_status(RpcFailure::from(error)))?;
         let invitation = self
             .access
             .issue(&endpoint)
-            .map_err(|error| crate::ipc::protocol::failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| failure_status(RpcFailure::from(error)))?;
         let invitation_json = serde_json::to_vec(&invitation)
             .map_err(|_| internal("encoding the invitation failed"))?;
         Ok(Response::new(wire::InferenceInviteResponse {
@@ -408,15 +405,17 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
         &self,
         request: Request<wire::InferenceRevokeRequest>,
     ) -> Result<Response<wire::InferenceRevokeResponse>, Status> {
-        let pin: [u8; 32] = request.into_inner().fingerprint.try_into().map_err(|_| {
-            crate::ipc::protocol::failure_status(invalid("a fingerprint must contain 32 bytes"))
-        })?;
+        let pin: [u8; 32] = request
+            .into_inner()
+            .fingerprint
+            .try_into()
+            .map_err(|_| failure_status(invalid("a fingerprint must contain 32 bytes")))?;
         let access = Arc::clone(&self.access);
         self.jobs
             .spawn_blocking(move || access.revoke(pin))
             .await
             .map_err(|_| internal("revocation stopped unexpectedly"))?
-            .map_err(|error| crate::ipc::protocol::failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| failure_status(RpcFailure::from(error)))?;
         Ok(Response::new(wire::InferenceRevokeResponse {}))
     }
 }
@@ -433,7 +432,7 @@ pub(in crate::daemon) fn authenticate<T>(
 }
 
 fn unauthenticated() -> Status {
-    crate::ipc::protocol::failure_status(RpcFailure::new(
+    failure_status(RpcFailure::new(
         RpcErrorCode::Unauthenticated,
         "pair this client with the inference server first",
     ))
@@ -446,7 +445,7 @@ fn timeout(message: &'static str) -> RpcFailure {
     RpcFailure::new(RpcErrorCode::OverallTimeout, message)
 }
 fn internal(message: &'static str) -> Status {
-    crate::ipc::protocol::failure_status(RpcFailure::new(RpcErrorCode::Internal, message))
+    failure_status(RpcFailure::new(RpcErrorCode::Internal, message))
 }
 
 #[cfg(test)]

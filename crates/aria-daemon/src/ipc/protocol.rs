@@ -1058,33 +1058,29 @@ impl TryFrom<wire::StartDictationRequest> for DictationRequest {
 fn project_to_wire(
     context: aria_voice::vocabulary::Context,
 ) -> Option<wire::start_dictation_request::Project> {
-    {
-        use aria_voice::vocabulary::Context;
-        use wire::start_dictation_request::Project;
-        match context {
-            Context::Default => None,
-            Context::Directory(path) => Some(Project::ProjectDirectory(path.as_str().to_owned())),
-            Context::Disabled => Some(Project::ProjectVocabularyDisabled(
-                wire::ProjectVocabularyDisabled {},
-            )),
-        }
+    use aria_voice::vocabulary::Context;
+    use wire::start_dictation_request::Project;
+    match context {
+        Context::Default => None,
+        Context::Directory(path) => Some(Project::ProjectDirectory(path.as_str().to_owned())),
+        Context::Disabled => Some(Project::ProjectVocabularyDisabled(
+            wire::ProjectVocabularyDisabled {},
+        )),
     }
 }
 
 fn project_from_wire(
     project: Option<wire::start_dictation_request::Project>,
 ) -> Result<aria_voice::vocabulary::Context, ProtocolError> {
-    {
-        use aria_voice::vocabulary::Context;
-        use wire::start_dictation_request::Project;
-        Ok(match project {
-            None => Context::Default,
-            Some(Project::ProjectDirectory(path)) => {
-                Context::Directory(aria_settings::settings::Directory::new(path.into())?)
-            }
-            Some(Project::ProjectVocabularyDisabled(_)) => Context::Disabled,
-        })
-    }
+    use aria_voice::vocabulary::Context;
+    use wire::start_dictation_request::Project;
+    Ok(match project {
+        None => Context::Default,
+        Some(Project::ProjectDirectory(path)) => {
+            Context::Directory(aria_settings::settings::Directory::new(path.into())?)
+        }
+        Some(Project::ProjectVocabularyDisabled(_)) => Context::Disabled,
+    })
 }
 
 impl From<aria_voice::vocabulary::Status> for wire::VocabularyStatus {
@@ -2309,7 +2305,7 @@ mod tests {
     fn a_settings_fault_keeps_its_position_on_the_wire() {
         let failure = RpcFailure::new(RpcErrorCode::SettingsInvalid, "fix settings.toml first")
             .with_settings_position(Some(Position { line: 3, column: 7 }));
-        let status = crate::ipc::protocol::failure_status(failure.clone());
+        let status = failure_status(failure.clone());
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
         assert_eq!(rpc_failure(&status), Some(failure));
 
@@ -2511,7 +2507,7 @@ mod tests {
     fn a_failure_round_trips_through_the_status_details() {
         let failure = RpcFailure::new(RpcErrorCode::NoSpeech, "no speech was detected");
 
-        let status = crate::ipc::protocol::failure_status(failure.clone());
+        let status = failure_status(failure.clone());
 
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
         assert_eq!(status.message(), failure.message);
@@ -3536,7 +3532,7 @@ mod history_tests {
                 code
             );
             assert_eq!(
-                crate::ipc::protocol::failure_status(RpcFailure::new(code, "safe message")).code(),
+                failure_status(RpcFailure::new(code, "safe message")).code(),
                 grpc
             );
         }

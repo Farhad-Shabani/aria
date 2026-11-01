@@ -16,6 +16,7 @@ mod decode;
 mod pairing;
 mod settings;
 
+use crate::ipc::protocol::failure_status;
 use std::time::Duration;
 
 use tokio_stream::{Stream, StreamExt};
@@ -226,7 +227,7 @@ const SETTINGS_NEED_FIXING: &str = "Settings need fixing on your Mac";
 /// one can't cross until someone has checked its messages.
 pub(in crate::daemon) fn redacted(status: Status) -> Status {
     let Some(failure) = crate::ipc::protocol::rpc_failure(&status) else {
-        return crate::ipc::protocol::failure_status(RpcFailure::new(
+        return failure_status(RpcFailure::new(
             RpcErrorCode::Internal,
             SOMETHING_WENT_WRONG,
         ));
@@ -277,7 +278,7 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::HistoryProjectUnavailable
         | RpcErrorCode::Unknown(_) => SOMETHING_WENT_WRONG.to_owned(),
     };
-    crate::ipc::protocol::failure_status(RpcFailure::new(failure.code, message))
+    failure_status(RpcFailure::new(failure.code, message))
 }
 
 const SOMETHING_WENT_WRONG: &str = "Something went wrong on your Mac";

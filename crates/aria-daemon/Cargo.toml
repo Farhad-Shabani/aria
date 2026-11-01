@@ -57,14 +57,11 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # The MLX sidecar requires child processes, which iOS forbids.
-
-# The MLX sidecar requires child processes, which iOS forbids.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
 
 [dev-dependencies]
-aria-assistant = { workspace = true, features = [ "test-support" ] }
-aria-kit       = { workspace = true, features = [ "test-support" ] }
+aria-kit = { workspace = true, features = [ "test-support" ] }
 aria-settings  = { workspace = true, features = [ "test-support" ] }
 aria-voice     = { workspace = true, features = [ "test-support" ] }
 # The relay's timeouts are minutes long; its tests advance the clock instead.

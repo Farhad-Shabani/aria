@@ -1,5 +1,6 @@
 //! The listen service: wire translation over the daemon's listen slot.
 
+use crate::ipc::protocol::failure_status;
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
@@ -33,7 +34,7 @@ impl ListenRpc {
         tokio::task::spawn_blocking(move || operation(&state))
             .await
             .map_err(|_join| {
-                crate::ipc::protocol::failure_status(aria_settings::rpc::RpcFailure::new(
+                failure_status(aria_settings::rpc::RpcFailure::new(
                     aria_settings::rpc::RpcErrorCode::Internal,
                     "the listen operation panicked",
                 ))
