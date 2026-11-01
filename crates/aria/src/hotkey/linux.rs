@@ -22,6 +22,9 @@ use rustix::time::{ClockId, clock_gettime};
 
 use super::{AriaKey, KeyEvent, ListenerEvent, Modifiers, Press, PressDetector};
 
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("`EVENT_SIZE` assumes the kernel's 64-bit `struct input_event`");
+
 const DEVICE_DIRECTORY: &str = "/dev/input";
 const CLASS_DIRECTORY: &str = "/sys/class/input";
 /// How often to open new devices and drop ones the user may no longer read.
@@ -72,18 +75,28 @@ const INPUT_RULE: &str = "share/udev/70-aria-input.rules";
 const RULES_DIRECTORY: &str = "/etc/udev/rules.d";
 const APPLY_RULE: &str = "sudo udevadm trigger --subsystem-match=input --action=change";
 
+impl AriaKey {
+    /// `None` for a key the kernel does not report.
+    fn key_code(self) -> Option<u16> {
+        match self {
+            Self::RightOption => Some(KEY_RIGHTALT),
+            Self::Fn => None,
+        }
+    }
+}
+
 pub(crate) struct LinuxHotkeyListener;
 
 impl LinuxHotkeyListener {
     pub(crate) const PERMISSION: &str = "access to your keyboard";
 
     pub(crate) fn unarmed_reason(key: AriaKey) -> String {
-        let Some(aria_key) = key_code(key) else {
+        let Some(aria_key) = key.key_code() else {
             return "the dictation hotkey is set to Fn, which Linux cannot see; \
                 set `shortcuts.aria_key` to right_option, the Right Alt key"
                 .to_owned();
         };
-        match Devices::system(aria_key).rescan().readiness {
+        match Devices::system(aria_key).probe() {
             Readiness::Denied => format!(
                 "the dictation hotkey cannot read the keyboard; {}; it arms within ~2s",
                 grant_steps()
@@ -94,6 +107,10 @@ impl LinuxHotkeyListener {
             Readiness::Reading => {
                 "the keyboard is readable, so the hotkey arms within ~2s".to_owned()
             }
+            Readiness::StateUnavailable => {
+                "the dictation hotkey cannot read which keys are held; it retries within ~2s"
+                    .to_owned()
+            }
         }
     }
 
@@ -102,7 +119,7 @@ impl LinuxHotkeyListener {
         events: impl Fn(ListenerEvent),
         should_stop: impl Fn() -> bool,
     ) {
-        let Some(aria_key) = key_code(key) else {
+        let Some(aria_key) = key.key_code() else {
             tracing::warn!(trigger = "hotkey", ?key, "this key is invisible to Linux");
             events(ListenerEvent::KeyUnavailable);
             return wait_for_stop(&should_stop);
@@ -134,13 +151,6 @@ fn shell_quoted(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
 }
 
-fn key_code(key: AriaKey) -> Option<u16> {
-    match key {
-        AriaKey::RightOption => Some(KEY_RIGHTALT),
-        AriaKey::Fn => None,
-    }
-}
-
 fn wait_for_stop(should_stop: &impl Fn() -> bool) {
     while !should_stop() {
         thread::sleep(POLL_SLICE);
@@ -160,13 +170,10 @@ fn watch(devices: &mut Devices, events: &impl Fn(ListenerEvent), should_stop: &i
         let now = Instant::now();
         if now >= next_scan {
             next_scan = now + RESCAN_INTERVAL;
-            let scan = devices.rescan();
-            if scan.lost_keyboard {
-                report_press(detector.reset());
-            }
-            if reported != Some(scan.readiness) {
-                reported = Some(scan.readiness);
-                report(scan.readiness, devices.open.len(), events);
+            let readiness = devices.rescan();
+            if reported != Some(readiness) {
+                reported = Some(readiness);
+                report(readiness, devices.open.len(), events);
             }
         }
         let slice = detector.hold_deadline().map_or(POLL_SLICE, |deadline| {
@@ -199,6 +206,10 @@ fn report(readiness: Readiness, devices: usize, events: &impl Fn(ListenerEvent))
             tracing::info!(trigger = "hotkey", "no keyboard has the key");
             events(ListenerEvent::KeyUnavailable);
         }
+        Readiness::StateUnavailable => {
+            tracing::warn!(trigger = "hotkey", "held keys are unreadable");
+            events(ListenerEvent::KeyUnavailable);
+        }
     }
 }
 
@@ -209,11 +220,8 @@ enum Readiness {
     /// A keyboard with the key exists, but the user may not read it.
     Denied,
     NoKeyboard,
-}
-
-struct Scan {
-    readiness: Readiness,
-    lost_keyboard: bool,
+    /// A keyboard opened, but which keys it holds could not be read.
+    StateUnavailable,
 }
 
 /// One step of what the devices reported, in stream order.
@@ -230,6 +238,8 @@ struct Devices {
     aria_key: u16,
     open: Vec<Device>,
     state_unavailable: bool,
+    /// A rescan dropped a keyboard; the next batch reports it.
+    lost_keyboard: bool,
 }
 
 struct Device {
@@ -237,10 +247,18 @@ struct Device {
     file: File,
     kind: Kind,
     held: HeldKeys,
-    /// Events were dropped; skip to the next report before reading again.
-    resyncing: bool,
-    recovery_report: bool,
+    stream: Stream,
     pending: Vec<InputEvent>,
+}
+
+/// Where a device's event stream stands after `SYN_DROPPED`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stream {
+    Live,
+    /// Events were dropped; skip to the next report.
+    Dropped,
+    /// The report arrived, so the held keys can be read again.
+    ReportSeen,
 }
 
 impl Devices {
@@ -259,17 +277,37 @@ impl Devices {
             aria_key,
             open: Vec::new(),
             state_unavailable: false,
+            lost_keyboard: false,
         }
     }
 
-    fn rescan(&mut self) -> Scan {
+    /// What a rescan would find, without opening anything.
+    fn probe(&self) -> Readiness {
+        let mut denied = false;
+        for (name, kind) in candidates(&self.class_directory, self.aria_key) {
+            if kind != Kind::Keyboard {
+                continue;
+            }
+            match access(self.device_directory.join(name), Access::READ_OK) {
+                Ok(()) => return Readiness::Reading,
+                Err(error) => denied |= error == rustix::io::Errno::ACCESS,
+            }
+        }
+        if denied {
+            Readiness::Denied
+        } else {
+            Readiness::NoKeyboard
+        }
+    }
+
+    fn rescan(&mut self) -> Readiness {
         self.rescan_with(initialize_device)
     }
 
-    fn rescan_with(&mut self, initialize: impl Fn(&File) -> io::Result<HeldKeys>) -> Scan {
+    fn rescan_with(&mut self, initialize: impl Fn(&File) -> io::Result<HeldKeys>) -> Readiness {
         self.state_unavailable = false;
         let before = self.open.len();
-        let mut lost_keyboard = false;
+        let mut lost_keyboard = self.lost_keyboard;
         self.open.retain(|device| {
             let readable = access(&device.node, Access::READ_OK).is_ok();
             if !readable {
@@ -291,8 +329,7 @@ impl Devices {
                         file,
                         kind,
                         held,
-                        resyncing: false,
-                        recovery_report: false,
+                        stream: Stream::Live,
                         pending: Vec::new(),
                     }),
                     Err(error) => {
@@ -316,24 +353,22 @@ impl Devices {
                 "input devices rescanned"
             );
         }
-        let readiness = if self.state_unavailable {
-            Readiness::NoKeyboard
+        self.lost_keyboard = lost_keyboard;
+        if self.state_unavailable {
+            Readiness::StateUnavailable
         } else if self.open.iter().any(|device| device.kind == Kind::Keyboard) {
             Readiness::Reading
         } else if denied {
             Readiness::Denied
         } else {
             Readiness::NoKeyboard
-        };
-        Scan {
-            readiness,
-            lost_keyboard,
         }
     }
 
     fn next_batch(&mut self, timeout: Duration) -> Vec<DeviceInput> {
+        let lost_keyboard = std::mem::take(&mut self.lost_keyboard);
         let has_pending = self.open.iter().any(|device| !device.pending.is_empty());
-        if !has_pending && self.poll_ready(timeout).is_empty() {
+        if !lost_keyboard && !has_pending && !self.any_ready(timeout) {
             return Vec::new();
         }
         let now = clock_gettime(ClockId::Monotonic);
@@ -354,7 +389,11 @@ impl Devices {
                 }
             }
         }
-        let mut batch = self.translate_events(records, held_keys);
+        let mut batch = Vec::new();
+        if lost_keyboard {
+            batch.push(DeviceInput::LostKeys);
+        }
+        batch.extend(self.translate_events(records, held_keys));
         for index in lost.into_iter().rev() {
             if self.open.remove(index).kind == Kind::Keyboard {
                 batch.push(DeviceInput::LostKeys);
@@ -373,22 +412,22 @@ impl Devices {
         for (index, event) in records {
             let others = self.held_except(index);
             if let Some(input) = self.open[index].feed(event, self.aria_key, others) {
-                let recovering =
-                    self.state_unavailable || self.open.iter().any(|device| device.resyncing);
+                let recovering = self.state_unavailable
+                    || self.open.iter().any(|device| device.stream != Stream::Live);
                 if matches!(input, DeviceInput::LostKeys) || !recovering {
                     batch.push(input);
                 }
             }
         }
         for device in &mut self.open {
-            if device.recovery_report {
-                device.recovery_report = false;
+            if device.stream == Stream::ReportSeen {
+                device.stream = Stream::Dropped;
                 device.pending.clear();
                 // EVIOCGKEY flushes the kernel queue; discard already-read events too.
                 match query(&device.file) {
                     Ok(held) => {
                         device.held = held;
-                        device.resyncing = false;
+                        device.stream = Stream::Live;
                     }
                     Err(error) => {
                         tracing::warn!(trigger = "hotkey", node = %device.node.display(), %error, "input device state unavailable");
@@ -399,10 +438,11 @@ impl Devices {
         batch
     }
 
-    fn poll_ready(&self, timeout: Duration) -> Vec<usize> {
+    /// Waits up to `timeout` for any device to have events.
+    fn any_ready(&self, timeout: Duration) -> bool {
         if self.open.is_empty() {
             thread::sleep(timeout);
-            return Vec::new();
+            return false;
         }
         let mut fds: Vec<PollFd<'_>> = self
             .open
@@ -414,17 +454,12 @@ impl Devices {
             tv_nsec: 0,
         });
         match poll(&mut fds, Some(&timeout)) {
-            Ok(0) | Err(rustix::io::Errno::INTR) => Vec::new(),
-            Ok(_) => fds
-                .iter()
-                .enumerate()
-                .filter(|(_, fd)| !fd.revents().is_empty())
-                .map(|(index, _)| index)
-                .collect(),
+            Ok(0) | Err(rustix::io::Errno::INTR) => false,
+            Ok(_) => true,
             Err(error) => {
                 tracing::warn!(trigger = "hotkey", %error, "waiting on input devices failed");
                 thread::sleep(POLL_SLICE);
-                Vec::new()
+                false
             }
         }
     }
@@ -459,13 +494,12 @@ impl Device {
     fn feed(&mut self, event: InputEvent, aria_key: u16, others: Modifiers) -> Option<DeviceInput> {
         if event.kind == EV_SYN && event.code == SYN_DROPPED {
             self.held = HeldKeys::default();
-            self.resyncing = true;
-            self.recovery_report = false;
+            self.stream = Stream::Dropped;
             return Some(DeviceInput::LostKeys);
         }
-        if self.resyncing {
+        if self.stream != Stream::Live {
             if event.kind == EV_SYN && event.code == SYN_REPORT {
-                self.recovery_report = true;
+                self.stream = Stream::ReportSeen;
             }
             return None;
         }
@@ -960,7 +994,7 @@ mod tests {
         tree.add("event0", &[KEY_RIGHTALT]);
         let mut devices = tree.devices();
         let scan = devices.rescan_with(|_| Err(io::ErrorKind::Other.into()));
-        assert_eq!(scan.readiness, Readiness::NoKeyboard);
+        assert_eq!(scan, Readiness::StateUnavailable);
         assert!(devices.open.is_empty());
         assert!(devices.state_unavailable);
     }
@@ -982,13 +1016,13 @@ mod tests {
             |_| Err(io::ErrorKind::Other.into()),
         );
         assert!(matches!(inputs.as_slice(), [DeviceInput::LostKeys]));
-        assert!(devices.open[0].resyncing);
+        assert_eq!(devices.open[0].stream, Stream::Dropped);
         let inputs = devices.translate_events(vec![(0, sync(SYN_REPORT))], |_| {
             let mut held = HeldKeys::default();
             held.record(KEY_LEFTCTRL, true);
             Ok(held)
         });
-        assert!(!devices.open[0].resyncing);
+        assert_eq!(devices.open[0].stream, Stream::Live);
         assert!(inputs.is_empty());
         let inputs = devices.translate_events(vec![(1, key(KEY_RIGHTALT, KEY_PRESSED))], |_| {
             panic!("only query after a recovery report")
@@ -1136,12 +1170,12 @@ mod tests {
         );
         let mut devices = tree.devices();
         assert_eq!(
-            devices.rescan_with(|_| Ok(HeldKeys::default())).readiness,
+            devices.rescan_with(|_| Ok(HeldKeys::default())),
             Readiness::Reading
         );
         assert_eq!(devices.open.len(), 2);
         assert_eq!(
-            devices.rescan_with(|_| Ok(HeldKeys::default())).readiness,
+            devices.rescan_with(|_| Ok(HeldKeys::default())),
             Readiness::Reading
         );
         assert_eq!(devices.open.len(), 2, "a rescan keeps devices open once");
@@ -1153,8 +1187,9 @@ mod tests {
         tree.add("event0", &[KEY_RIGHTALT]);
         tree.deny("event0");
         let mut devices = tree.devices();
+        assert_eq!(devices.probe(), Readiness::Denied);
         assert_eq!(
-            devices.rescan_with(|_| Ok(HeldKeys::default())).readiness,
+            devices.rescan_with(|_| Ok(HeldKeys::default())),
             Readiness::Denied
         );
     }
@@ -1167,26 +1202,38 @@ mod tests {
         devices.rescan_with(|_| Ok(HeldKeys::default()));
         tree.deny("event0");
         let scan = devices.rescan_with(|_| Ok(HeldKeys::default()));
-        assert!(scan.lost_keyboard);
-        assert_eq!(scan.readiness, Readiness::Denied);
+        assert_eq!(scan, Readiness::Denied);
         assert!(devices.open.is_empty());
+        assert!(matches!(
+            devices.next_batch(Duration::ZERO).as_slice(),
+            [DeviceInput::LostKeys]
+        ));
+        assert!(devices.next_batch(Duration::ZERO).is_empty());
     }
 
     #[test]
     fn without_a_keyboard_the_key_is_unavailable() {
         let tree = InputTree::new();
         tree.add("event0", &[BTN_LEFT]);
+        assert_eq!(tree.devices().probe(), Readiness::NoKeyboard);
         assert_eq!(
-            tree.devices()
-                .rescan_with(|_| Ok(HeldKeys::default()))
-                .readiness,
+            tree.devices().rescan_with(|_| Ok(HeldKeys::default())),
             Readiness::NoKeyboard
         );
     }
 
     #[test]
     fn fn_has_no_linux_key_code() {
-        assert_eq!(key_code(AriaKey::RightOption), Some(KEY_RIGHTALT));
-        assert_eq!(key_code(AriaKey::Fn), None);
+        assert_eq!(AriaKey::RightOption.key_code(), Some(KEY_RIGHTALT));
+        assert_eq!(AriaKey::Fn.key_code(), None);
+    }
+
+    #[test]
+    fn a_readable_keyboard_probes_as_reading_without_being_opened() {
+        let tree = InputTree::new();
+        tree.add("event0", &[KEY_RIGHTALT]);
+        let devices = tree.devices();
+        assert_eq!(devices.probe(), Readiness::Reading);
+        assert!(devices.open.is_empty());
     }
 }
