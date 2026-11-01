@@ -3,18 +3,13 @@ import XCTest
 @testable import Aria
 
 final class DictationEditsTests: XCTestCase {
-    func testCopyOutputForcesCompleteDelivery() {
-        var patch = Aria_Daemon_V1_SettingsPatch()
-        DictationEdits.setOutput(.copy, in: &patch)
-        XCTAssertEqual(patch.outputMode, .copy)
-        XCTAssertEqual(patch.deliveryMode, .complete)
-    }
-
-    func testInsertOutputLeavesDeliveryAlone() {
-        var patch = Aria_Daemon_V1_SettingsPatch()
-        DictationEdits.setOutput(.insert, in: &patch)
-        XCTAssertEqual(patch.outputMode, .insert)
-        XCTAssertFalse(patch.hasDeliveryMode)
+    func testCopyDeliversCompleteWhateverIsStored() {
+        var settings = Aria_Daemon_V1_Settings()
+        settings.deliveryMode = .streaming
+        settings.outputMode = .copy
+        XCTAssertEqual(DictationEdits.effectiveDelivery(in: settings), .complete)
+        settings.outputMode = .insert
+        XCTAssertEqual(DictationEdits.effectiveDelivery(in: settings), .streaming)
     }
 
     func testSilenceMillisecondsRoundsToWholeMilliseconds() {

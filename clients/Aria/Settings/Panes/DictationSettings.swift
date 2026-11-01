@@ -15,7 +15,8 @@ struct DictationSettings: View {
             }
             Section {
                 Toggle("Spoken corrections", isOn: editor.binding(\.backtrack, \.backtrack))
-                    .disabled(!DictationEdits.allowsSpokenCorrections(editor.snapshot.deliveryMode))
+                    .disabled(
+                        !DictationEdits.allowsSpokenCorrections(DictationEdits.effectiveDelivery(in: editor.snapshot)))
             } footer: {
                 Text("Applies corrections you say as you dictate. Needs **Deliver** set to After recording stops.")
             }
@@ -31,7 +32,7 @@ struct DictationSettings: View {
     }
 
     private func output(_ editor: SettingsEditor) -> some View {
-        Picker(selection: editor.binding(editor.snapshot.outputMode, edit: DictationEdits.setOutput)) {
+        Picker(selection: editor.binding(\.outputMode, \.outputMode)) {
             ForEach(DictationEdits.outputModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
@@ -44,7 +45,12 @@ struct DictationSettings: View {
     }
 
     private func delivery(_ editor: SettingsEditor) -> some View {
-        Picker("Deliver", selection: editor.binding(\.deliveryMode, \.deliveryMode)) {
+        Picker(
+            "Deliver",
+            selection: editor.binding(DictationEdits.effectiveDelivery(in: editor.snapshot)) { mode, edit in
+                edit.deliveryMode = mode
+            }
+        ) {
             ForEach(DictationEdits.deliveryModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
