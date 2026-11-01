@@ -43,6 +43,9 @@ final class VoiceProfiles: ObservableObject {
 
     private let effects: Effects
     private var recording: Task<Void, Never>?
+    /// The newest refresh wins: a list read before a removal must not bring
+    /// the voice back when it lands after.
+    private var refreshID: UUID?
 
     init(effects: Effects) {
         self.effects = effects
@@ -61,12 +64,15 @@ final class VoiceProfiles: ObservableObject {
 
     /// A refresh cancelled by leaving the pane is not a failure worth showing.
     func refresh() async {
+        let refreshID = UUID()
+        self.refreshID = refreshID
         do {
             let speakers = try await effects.list()
+            guard self.refreshID == refreshID else { return }
             self.speakers = speakers
             failure = nil
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.refreshID == refreshID else { return }
             failure = error.localizedDescription
         }
     }

@@ -28,6 +28,24 @@ final class SetupStatusTests: XCTestCase {
         )
     }
 
+    func testAnInspectionStartedBeforeAChangeDoesNotLandOverIt() async {
+        var onServer = SetupStateTests.freshMac()
+        onServer.defaults.transcriptionEngineID = SetupStatus.serverEngine
+        let gate = Gate()
+        let status = SetupStatus { [onThisMac = SetupStateTests.freshMac()] in
+            await gate.wait()
+            return onThisMac
+        }
+        let stale = Task { await status.refresh() }
+        await gate.reached()
+
+        status.show(onServer)
+        gate.open()
+        await stale.value
+
+        XCTAssertEqual(status.transcription, .server)
+    }
+
     func testTheSpeakerModelCountsWhenCompleteOrExternal() {
         func inspection(_ change: (inout Aria_Setup_V1_Model) -> Void) -> Aria_Setup_V1_Inspection {
             var inspection = SetupStateTests.freshMac()
