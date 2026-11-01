@@ -44,7 +44,6 @@ const UNIT_FILE_MODE: u32 = 0o644;
 
 pub struct Supervisor {
     paths: PreparedRuntimePaths,
-    directory: PathBuf,
     unit: PathBuf,
     spec: UnitSpec,
 }
@@ -58,7 +57,7 @@ struct UnitSpec {
 }
 
 impl Supervisor {
-    /// Reads the environment once: the binary, home, PATH, and runtime dir.
+    /// Reads the installing environment once.
     /// Prepares the runtime directory like every other daemon client.
     pub fn open() -> Result<Self, SupervisorError> {
         // macOS keys the Accessibility grant to the real binary, so a unit
@@ -68,11 +67,15 @@ impl Supervisor {
             .map_err(SupervisorError::CurrentExe)?;
         let home = user_home::resolve().map_err(SupervisorError::Home)?;
         let paths = PreparedRuntimePaths::for_current_user().map_err(SupervisorError::Runtime)?;
-        let environment = [("PATH", std::env::var_os("PATH"))]
-            .into_iter()
-            .chain([(RUNTIME_DIR_ENV, std::env::var_os(RUNTIME_DIR_ENV))])
-            .filter_map(|(name, value)| Some((name, value?)))
-            .collect();
+        let environment = [
+            ("PATH", std::env::var_os("PATH")),
+            (RUNTIME_DIR_ENV, std::env::var_os(RUNTIME_DIR_ENV)),
+            #[cfg(target_os = "linux")]
+            ("XDG_DATA_HOME", std::env::var_os("XDG_DATA_HOME")),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect();
         let spec = UnitSpec {
             exe,
             home,
@@ -83,7 +86,6 @@ impl Supervisor {
         Ok(Self {
             paths,
             unit: directory.join(platform::UNIT_FILE),
-            directory,
             spec,
         })
     }
@@ -99,7 +101,10 @@ impl Supervisor {
         }
         platform::unload()?;
         self.refuse_foreign_owner()?;
-        self.write_unit()?;
+        write_file(&self.unit, &platform::render(&self.spec))?;
+        if let Some(path) = platform::companion_path(&self.spec) {
+            write_file(&path, &platform::render_companion(&self.spec))?;
+        }
         platform::load(&self.unit)?;
         self.await_bind()
     }
@@ -110,14 +115,12 @@ impl Supervisor {
         if !platform::app_owns_job(&self.unit)? {
             platform::unload()?;
         }
-        match fs::remove_file(&self.unit) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(SupervisorError::RemoveUnit {
-                    path: self.unit.clone(),
-                    source,
-                });
+        let companion = platform::companion_path(&self.spec);
+        for path in std::iter::once(self.unit.clone()).chain(companion) {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => return Err(SupervisorError::RemoveUnit { path, source }),
             }
         }
         self.status()
@@ -206,33 +209,35 @@ impl Supervisor {
             Err(ProbeError::Readiness(error)) => Err(SupervisorError::Readiness(error)),
         }
     }
+}
 
-    /// Lands the unit atomically: a crash mid-write leaves the old unit, and a
-    /// symlink at the unit path is replaced rather than followed.
-    fn write_unit(&self) -> Result<(), SupervisorError> {
-        let error = |action: &'static str| {
-            let path = self.unit.clone();
-            move |source: io::Error| SupervisorError::WriteUnit {
-                action,
-                path,
-                source,
-            }
-        };
-        fs::create_dir_all(&self.directory).map_err(error("create the directory of"))?;
-        let mut temporary =
-            tempfile::NamedTempFile::new_in(&self.directory).map_err(error("create"))?;
-        temporary
-            .as_file()
-            .set_permissions(Permissions::from_mode(UNIT_FILE_MODE))
-            .map_err(error("set permissions on"))?;
-        temporary
-            .write_all(platform::render(&self.spec).as_bytes())
-            .map_err(error("write"))?;
-        temporary
-            .persist(&self.unit)
-            .map_err(|failure| error("replace")(failure.error))?;
-        Ok(())
-    }
+/// Replaces the file atomically: a crash during writing leaves the old file,
+/// and a symlink at the path is replaced rather than followed.
+fn write_file(path: &Path, contents: &str) -> Result<(), SupervisorError> {
+    let error = |action: &'static str| {
+        let path = path.to_path_buf();
+        move |source: io::Error| SupervisorError::WriteUnit {
+            action,
+            path,
+            source,
+        }
+    };
+    let directory = path
+        .parent()
+        .ok_or_else(|| error("find the directory of")(io::ErrorKind::InvalidInput.into()))?;
+    fs::create_dir_all(directory).map_err(error("create the directory of"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(error("create"))?;
+    temporary
+        .as_file()
+        .set_permissions(Permissions::from_mode(UNIT_FILE_MODE))
+        .map_err(error("set permissions on"))?;
+    temporary
+        .write_all(contents.as_bytes())
+        .map_err(error("write"))?;
+    temporary
+        .persist(path)
+        .map_err(|failure| error("replace")(failure.error))?;
+    Ok(())
 }
 
 impl UnitSpec {
