@@ -47,11 +47,7 @@ enum SetupClient {
             // child; it must not finish setup on its own.
             if !readable { child.interrupt() }
         }
-        let output = await withTaskCancellationHandler {
-            await child.exit()
-        } onCancel: {
-            child.interrupt()
-        }
+        let output = await child.exit()
         let finished = try frames.withLock { try $0.run(output) }
         return try outcome(finished, cancelled: Task.isCancelled).get()
     }
