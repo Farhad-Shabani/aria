@@ -6,7 +6,7 @@ use aria_kit::cancel::CancelToken;
 use serde::{Deserialize, Serialize};
 
 use super::{AssistantError, run_cli};
-use crate::settings::is_valid_model_id;
+use aria_settings::settings::is_valid_model_id;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_REQUEST_ID: &str = "aria-model-list";

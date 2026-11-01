@@ -13,16 +13,16 @@ use tonic::transport::Channel;
 
 use super::identity::{ClientIdentity, MAX_DOCUMENT_BYTES};
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, tls};
-use crate::config::ServerEndpoint;
 use crate::inference::{
     Completion, Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES,
     MAX_TEXT_BYTES, Start, Strategy,
 };
 use crate::ipc::{protocol, wire};
-use crate::rpc::RpcErrorCode;
 use crate::transcription::{
     Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
 };
+use aria_settings::config::ServerEndpoint;
+use aria_settings::rpc::RpcErrorCode;
 
 pub(super) const ADMIN_TIMEOUT: Duration = Duration::from_secs(10);
 const CANCEL_POLL: Duration = Duration::from_millis(25);
@@ -32,7 +32,7 @@ const AUDIO_CHUNK_SAMPLES: u64 = 1600;
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteClientError {
     #[error("cannot load the remote settings")]
-    Config(#[source] crate::config::ConfigError),
+    Config(#[source] aria_settings::config::ConfigError),
     #[error("cannot prepare remote client storage")]
     Storage,
     #[error("another pairing operation is active or its lock is unavailable")]
@@ -153,7 +153,7 @@ impl RemoteTranscriber {
 
     /// Refuses operations on a server that runs anything but `engine`.
     pub(crate) fn require_engine(self, engine: &str) -> Result<Self, TranscriptionError> {
-        let engine = crate::config::backend::local(engine)
+        let engine = aria_settings::config::backend::local(engine)
             .ok_or_else(|| transcription_error(RemoteClientError::Unsupported))?;
         Ok(Self {
             required_engine: Some(engine),
@@ -174,8 +174,8 @@ impl RemoteTranscriber {
                         .map_err(rpc_error)?;
                     Info::try_from(response.into_inner()).map_err(|_| RemoteClientError::Response)
                 }))?;
-        let engine =
-            crate::config::backend::local(&info.engine).ok_or(RemoteClientError::Unsupported)?;
+        let engine = aria_settings::config::backend::local(&info.engine)
+            .ok_or(RemoteClientError::Unsupported)?;
         if self
             .required_engine
             .is_some_and(|required| required != engine)
@@ -878,8 +878,8 @@ mod tests {
             DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
             ExecutionControl, StopMode,
         };
-        use crate::settings::DeliveryMode;
         use aria_platform::delivery::OutputMode;
+        use aria_settings::settings::DeliveryMode;
 
         let server = Fixture::with_model(
             "whisper",
@@ -970,9 +970,9 @@ mod tests {
         use crate::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
-        use crate::settings::DeliveryMode;
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_platform::delivery::OutputMode;
+        use aria_settings::settings::DeliveryMode;
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {
@@ -1031,10 +1031,10 @@ mod tests {
         use crate::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
-        use crate::settings::DeliveryMode;
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
         use aria_platform::delivery::OutputMode;
+        use aria_settings::settings::DeliveryMode;
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {
@@ -1605,8 +1605,9 @@ mod tests {
 
     #[test]
     fn remote_errors_do_not_repeat_untrusted_messages() {
-        let status: tonic::Status =
-            crate::rpc::RpcFailure::new(RpcErrorCode::Internal, "private transcript").into();
+        let status: tonic::Status = crate::ipc::protocol::failure_status(
+            aria_settings::rpc::RpcFailure::new(RpcErrorCode::Internal, "private transcript"),
+        );
         let error = rpc_error(status);
         assert_eq!(error.to_string(), "remote operation failed (internal)");
         assert!(!format!("{error:?}").contains("private transcript"));

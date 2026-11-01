@@ -25,30 +25,30 @@ use std::time::Duration;
 use aria_kit::synthesis::{SpeakingRateError, VoiceError};
 use aria_kit::transcription::LanguageCodeError;
 
-use crate::audio::{AutoStopError, SilenceDurationError};
+use aria_kit::audio::{AutoStopError, SilenceDurationError};
 
 pub use choices::{CleanupConfigError, DeliveryMode, PromptKind, Settings, Shortcut, StoreError};
-pub(crate) use choices::{MAX_DICTATION_TIMEOUT, is_valid_model_id, validate_cleanup_llm};
+pub use choices::{MAX_DICTATION_TIMEOUT, is_valid_model_id, validate_cleanup_llm};
 pub use chord::{Chord, ChordError, Modifiers};
 pub use command::{
     CommandError, Outcome, Row, banner, create, path, reset, schema, set, show, validate,
 };
 pub use directory::{Directory, DirectoryError};
-pub(crate) use document::{
+pub use document::{
     ApplicationOverrideEntry, AriaKeyName, Capture, CaptureBackendName, Delivery, DeliveryModeName,
     DeviceName, Dictation, Keyed, Loaded, Memory, OutputModeName, PaceName, Phone, PromptEntry,
     Revision, SettingsFile, ShortcutEntry, Speaker, Stt, Tts, TtsFallbackName, Wake, invalid,
 };
-pub(crate) use keys::Scope;
+pub use keys::Scope;
 pub use keys::{Apply, Key};
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
 };
 pub use prompts::{Prompt, PromptError, PromptId, Prompts};
-pub(crate) use store::SettingsStore;
+pub use store::SettingsStore;
 pub use store::{SettingsPatch, SettingsSnapshot, UpdateResult};
-pub(crate) use watch::{SettingsCache, SettingsPoll};
-pub(crate) use write::{Patch, Refusal, Written, check_patch, modify, write_schema_beside};
+pub use watch::{SettingsCache, SettingsPoll};
+pub use write::{Patch, Refusal, Written, check_patch, modify, write_schema_beside};
 
 /// What a client sees of the file beyond its values: whether it is valid,
 /// and what waits for a restart.
@@ -74,12 +74,12 @@ const SETTINGS_RELATIVE_PATH: &str = ".aria/settings.toml";
 const LOCK_FILE_NAME: &str = "settings.lock";
 pub(crate) const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
-pub(crate) fn default_path(home: &Path) -> PathBuf {
+pub fn default_path(home: &Path) -> PathBuf {
     home.join(SETTINGS_RELATIVE_PATH)
 }
 
 /// The settings a one-shot command reads: the file at `home`.
-pub(crate) fn load(home: &Path) -> Result<SettingsFile, SettingsError> {
+pub fn load(home: &Path) -> Result<SettingsFile, SettingsError> {
     let path = default_path(home);
     let text = document::read_text(&path)?;
     let loaded = Loaded::parse(text.as_ref().map_or("", |text| &text.raw), home)?;
@@ -219,7 +219,7 @@ impl SettingsError {
         let message = match self {
             Self::Parse(error) => error.message.clone(),
             Self::Invalid { key, source, .. } => format!("{key} {source}"),
-            other => crate::primitives::error_chain(other),
+            other => aria_primitives::error_chain(other),
         };
         SettingsFault {
             message,

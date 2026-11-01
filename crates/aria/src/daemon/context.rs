@@ -2,11 +2,11 @@
 
 use std::path::PathBuf;
 
-#[cfg(not(test))]
-use crate::config::home_directory;
-use crate::config::{ConfigError, UNATTENDED_ENV, codex_home, unattended};
 use aria_platform::delivery::DeliveryFactory;
 use aria_platform::runtime::PreparedRuntimePaths;
+#[cfg(not(test))]
+use aria_settings::config::home_directory;
+use aria_settings::config::{ConfigError, UNATTENDED_ENV, codex_home, unattended};
 
 use super::host::DaemonLifetime;
 
@@ -37,7 +37,7 @@ impl<'runtime> Context<'runtime> {
         let delivery = DeliveryFactory::detect(&home);
         Ok(Self {
             paths,
-            settings_path: crate::settings::default_path(&home),
+            settings_path: aria_settings::settings::default_path(&home),
             codex_home: codex_home(&home),
             home,
             delivery,

@@ -14,8 +14,8 @@ use super::Directory;
 use super::document::{self, Loaded, SettingsFile, Stamp, Text};
 use super::write::{self, Refusal, Settled};
 use super::{Apply, Key, Patch, Revision, SettingsError, SettingsFault, SettingsStatus, Written};
-use crate::primitives::error_chain;
 use aria_platform::hotkey::AriaKey;
+use aria_primitives::error_chain;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const START_READ_ATTEMPTS: usize = 3;
@@ -78,7 +78,7 @@ struct State {
     recent: Vec<RecentWrite>,
 }
 
-pub(crate) struct SettingsCache {
+pub struct SettingsCache {
     path: PathBuf,
     home: PathBuf,
     startup: StartupSettings,
@@ -89,7 +89,7 @@ pub(crate) struct SettingsCache {
 }
 
 #[derive(Debug)]
-pub(crate) enum Reload {
+pub enum Reload {
     Unchanged,
     Reloaded {
         restart_required: Vec<Key>,
@@ -103,7 +103,7 @@ pub(crate) enum Reload {
 
 impl SettingsCache {
     /// Reads the file once. An invalid file is fatal here, with its position.
-    pub(crate) fn open(path: PathBuf, home: PathBuf) -> Result<Self, SettingsError> {
+    pub fn open(path: PathBuf, home: PathBuf) -> Result<Self, SettingsError> {
         let text = text_at_start(&path)?;
         let stamp = text.as_ref().map(|text| text.stamp);
         let loaded = Loaded::parse(text.as_ref().map_or("", |text| &text.raw), &home)?;
@@ -136,25 +136,25 @@ impl SettingsCache {
     }
 
     /// What an operation admitted now reads: restart keys stay frozen.
-    pub(crate) fn effective(&self) -> Arc<SettingsFile> {
+    pub fn effective(&self) -> Arc<SettingsFile> {
         Arc::clone(&self.lock_state().effective)
     }
 
     /// The Aria key, `None` while it is off. Fires only when the key
     /// changes, so the listener is not re-armed by unrelated writes.
-    pub(crate) fn aria_key(&self) -> watch::Receiver<Option<AriaKey>> {
+    pub fn aria_key(&self) -> watch::Receiver<Option<AriaKey>> {
         self.aria_key.subscribe()
     }
 
     /// The project folder to read terms from, `None` while project
     /// vocabulary is off. Fires only when it changes.
-    pub(crate) fn project_vocabulary(&self) -> watch::Receiver<Option<Directory>> {
+    pub fn project_vocabulary(&self) -> watch::Receiver<Option<Directory>> {
         self.project_vocabulary.subscribe()
     }
 
     /// Fires on every change of the status: a fault, a fix, a restart key,
     /// a revert.
-    pub(crate) fn status(&self) -> watch::Receiver<SettingsStatus> {
+    pub fn status(&self) -> watch::Receiver<SettingsStatus> {
         self.status.subscribe()
     }
 
@@ -163,13 +163,13 @@ impl SettingsCache {
         self.status.borrow().restart_required.clone()
     }
 
-    pub(crate) fn check_patch(&self, patch: &Patch) -> Result<Written, SettingsError> {
+    pub fn check_patch(&self, patch: &Patch) -> Result<Written, SettingsError> {
         write::check_patch(&self.path, &self.home, patch)
     }
 
     /// The one write path, with the patch made from the file as it stands
     /// under the lock. The daemon's own writes pass no expected revision.
-    pub(crate) fn modify<E: From<SettingsError>>(
+    pub fn modify<E: From<SettingsError>>(
         &self,
         expected: Option<Revision>,
         edit: impl FnOnce(&SettingsFile) -> Result<Patch, E>,
@@ -234,7 +234,7 @@ impl SettingsCache {
 
     /// One check of the file. The poll thread runs this every second; tests
     /// call it directly.
-    pub(crate) fn poll(&self) -> Result<Reload, SettingsError> {
+    pub fn poll(&self) -> Result<Reload, SettingsError> {
         let seen = Stamp::of(&self.path)?;
         let known = self.lock_state().stamp;
         if seen == known {
@@ -366,13 +366,13 @@ fn send_if_changed<T: PartialEq>(sender: &watch::Sender<T>, value: T) {
 }
 
 /// Checks the file every second until dropped.
-pub(crate) struct SettingsPoll {
+pub struct SettingsPoll {
     stop: Sender<()>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl SettingsPoll {
-    pub(crate) fn spawn(cache: Arc<SettingsCache>) -> Result<Self, SettingsError> {
+    pub fn spawn(cache: Arc<SettingsCache>) -> Result<Self, SettingsError> {
         let (stop, stopped) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("aria-settings-poll".to_owned())
@@ -675,8 +675,13 @@ mod tests {
         hand_edit(&store, "[dictation]\ncleanup = false\n");
         reloaded(store.poll().expect("polls"));
 
-        let home_dir = PathBuf::from(HOME);
-        crate::config::DictationConfig::load(&store.effective(), &home_dir)
+        let effective = store.effective();
+        let frozen = effective
+            .dictation
+            .cleanup_llm
+            .as_ref()
+            .expect("the table stays");
+        crate::settings::validate_cleanup_llm(&frozen.endpoint, &frozen.model)
             .expect("the live switch and the frozen table load together");
     }
 

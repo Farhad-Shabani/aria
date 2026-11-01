@@ -17,7 +17,7 @@ use crate::config::WakeBackend;
 use crate::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 use crate::primitives::error_chain;
-use crate::settings::DeliveryMode;
+use aria_settings::settings::DeliveryMode;
 
 use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;

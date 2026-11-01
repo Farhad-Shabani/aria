@@ -1,9 +1,9 @@
 use super::{DictationRequest, DictationSettings, Rewriting};
-use crate::settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
 use crate::vocabulary::Context;
 use aria_platform::delivery::{
     Application, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
 };
+use aria_settings::settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
 
 impl DictationSettings {
     /// `application` is the app in front as dictation is admitted. Each
@@ -82,7 +82,8 @@ impl DictationSettings {
 mod tests {
     use super::*;
     use crate::dictation::StopMode;
-    use crate::settings::{ApplicationId, ApplicationOverrides};
+    use aria_settings::settings::Directory;
+    use aria_settings::settings::{ApplicationId, ApplicationOverrides};
 
     const SLACK: &str = "com.tinyspeck.slackmacgap";
 
@@ -277,5 +278,55 @@ mod tests {
                 .overridden_for,
             None
         );
+    }
+
+    #[test]
+    fn history_keep_audio_comes_from_the_settings() {
+        for enabled in [true, false] {
+            let settings = Settings {
+                history_keep_audio: enabled,
+                ..Settings::default()
+            };
+            let resolved = DictationSettings::resolve(
+                settings,
+                DictationRequest::new(StopMode::OnSilence),
+                None,
+            );
+            assert_eq!(resolved.history_keep_audio, enabled);
+        }
+    }
+
+    #[test]
+    fn a_request_overrides_the_selected_vocabulary_only_while_vocabulary_is_on() {
+        let selected = Directory::new("/projects/selected".into()).expect("absolute path");
+        let explicit = Directory::new("/projects/explicit".into()).expect("absolute path");
+        let settings = Settings {
+            vocabulary_enabled: true,
+            vocabulary_dir: Some(selected.clone()),
+            ..Settings::default()
+        };
+        let project = |settings: &Settings, context| {
+            DictationSettings::resolve(
+                settings.clone(),
+                DictationRequest {
+                    project: context,
+                    ..DictationRequest::new(StopMode::OnSilence)
+                },
+                None,
+            )
+            .project
+        };
+
+        assert_eq!(project(&settings, Context::Default), Some(selected));
+        assert_eq!(
+            project(&settings, Context::Directory(explicit.clone())),
+            Some(explicit.clone())
+        );
+        assert_eq!(project(&settings, Context::Disabled), None);
+        let disabled = Settings {
+            vocabulary_enabled: false,
+            ..settings
+        };
+        assert_eq!(project(&disabled, Context::Directory(explicit)), None);
     }
 }

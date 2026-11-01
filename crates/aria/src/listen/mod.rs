@@ -14,8 +14,8 @@ pub(crate) use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
 pub(crate) use tap::SystemAudioCapture;
 
-use crate::rpc::RpcErrorCode;
 use crate::transcription::TranscriptionError;
+use aria_settings::rpc::RpcErrorCode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListenError {

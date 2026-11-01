@@ -87,7 +87,7 @@ pub(super) struct Actors {
     pub(super) vocabulary: super::vocabulary::Worker<
         crate::vocabulary::discover::LocalCollector<crate::vocabulary::extract::LocalExtractor>,
     >,
-    pub(super) settings_poll: crate::settings::SettingsPoll,
+    pub(super) settings_poll: aria_settings::settings::SettingsPoll,
 }
 
 impl Server {

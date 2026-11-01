@@ -6,10 +6,10 @@ use aria_kit::cancel::CancelToken;
 
 use crate::config::{SpeechDefaults, TtsConfig, TtsEngine};
 use crate::primitives::lazy::Lazy;
-use crate::settings::SettingsCache;
 use crate::speech::{
     SpeechError, SpeechEventEmitter, SpeechOutcome, SpeechRequest, SpeechSettings, SpeechStage,
 };
+use aria_settings::settings::SettingsCache;
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;

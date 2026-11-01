@@ -13,13 +13,13 @@ use crate::audio::{
     AudioCapture, CaptureError, RecordingMode, SilenceDuration, StopSignal, WakeWordControl,
 };
 use crate::config::SpeakerConfig;
-use crate::event::EventEmitter;
 use crate::microphone::Gate;
 use crate::primitives::error_chain;
-use crate::rpc::RpcErrorCode;
 use crate::speaker::{
     Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace, Role, SpeakerName,
 };
+use aria_settings::event::EventEmitter;
+use aria_settings::rpc::RpcErrorCode;
 
 pub(crate) type EnrollmentEventEmitter = EventEmitter<EnrollmentStage>;
 

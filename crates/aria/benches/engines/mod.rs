@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
-use aria::config::{TranscriptionConfig, TranscriptionDevice, backend};
+use aria::config::{TranscriptionConfig, TranscriptionDevice};
 use aria::transcription::{Cadence, Stream};
 use aria_harness::{
     artifact::{self, Provenance, TextFingerprint},
     inputs, stats,
 };
+use aria_settings::config::backend;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const MOONSHINE_MODEL_ENV: &str = "ARIA_TEST_MOONSHINE_MODEL";

@@ -20,7 +20,7 @@ use macos::MacosFeedback as PlatformFeedback;
 use status::StatusFile;
 
 #[cfg(target_os = "linux")]
-use crate::rpc::RpcErrorCode;
+use aria_settings::rpc::RpcErrorCode;
 
 pub(crate) struct DictationSubscribers {
     #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -10,7 +10,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::Status;
 
 use crate::ipc::wire;
-use crate::rpc::RpcErrorCode;
+use aria_settings::rpc::RpcErrorCode;
 
 /// Each `aria ask` waiting on its reply holds one, beside the app and
 /// `aria events`.

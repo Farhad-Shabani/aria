@@ -47,7 +47,7 @@ impl TryFrom<TranscriptionConfig> for EngineConfig {
             #[cfg(not(target_os = "macos"))]
             TranscriptionConfig::ParakeetMlx { .. } => {
                 Err(TranscriptionError::UnsupportedBackend {
-                    backend: crate::config::backend::PARAKEET_MLX,
+                    backend: aria_settings::config::backend::PARAKEET_MLX,
                 })
             }
         }
@@ -164,7 +164,7 @@ mod tests {
         assert!(matches!(
             error,
             TranscriptionError::Model {
-                backend: crate::config::backend::WHISPER,
+                backend: aria_settings::config::backend::WHISPER,
                 source: ModelError::Path(InspectionError::NotRegularFile { .. }),
             }
         ));

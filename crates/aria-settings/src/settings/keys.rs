@@ -18,7 +18,7 @@ pub enum Apply {
 /// Who may write the key. The phone's allowlist is every `Phone` key; a key
 /// that controls egress or runs code stays `Mac`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Scope {
+pub enum Scope {
     Mac,
     Phone,
 }
@@ -95,22 +95,22 @@ macro_rules! keys {
         }
 
         impl Key {
-            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant,)+];
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)+];
 
             /// The dotted TOML path.
-            pub(crate) fn path(self) -> &'static str {
+            pub fn path(self) -> &'static str {
                 match self {
                     $(Self::$variant => $path,)+
                 }
             }
 
-            pub(crate) fn apply(self) -> Apply {
+            pub fn apply(self) -> Apply {
                 match self {
                     $(Self::$variant => Apply::$apply,)+
                 }
             }
 
-            pub(crate) fn scope(self) -> Scope {
+            pub fn scope(self) -> Scope {
                 match self {
                     $(Self::$variant => Scope::$scope,)+
                 }
@@ -281,7 +281,7 @@ impl Key {
     /// The value an absent key takes, as a TOML literal. `None` when absent
     /// means something no single value says, such as "the caller's directory"
     /// or "the engine's own voice".
-    pub(crate) fn default(self) -> Option<Cow<'static, str>> {
+    pub fn default(self) -> Option<Cow<'static, str>> {
         let text = self.default_text()?;
         Some(match self.kind() {
             Kind::Choice(_) => format!("\"{text}\"").into(),

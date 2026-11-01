@@ -1,6 +1,5 @@
 use super::tasks::Supervised;
 use crate::memory::Lexicon;
-use crate::settings::Directory;
 use crate::vocabulary::{
     MatchError, PersonalRules, State, Status, Term, Vocabulary,
     catalog::{self, Catalog},
@@ -8,6 +7,7 @@ use crate::vocabulary::{
     discover, select,
 };
 use aria_kit::cancel::{CancelToken, Deadline};
+use aria_settings::settings::Directory;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

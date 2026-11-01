@@ -9,8 +9,8 @@ use aria_kit::transcription::{Language, LanguageCode};
 
 use super::SettingsError;
 use super::{ApplicationOverrides, Chord, Prompts};
-use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
+use aria_kit::audio::{AutoStop, SilenceDuration};
 use aria_platform::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
 use aria_platform::hotkey::{AriaKey, Combo};
 
@@ -156,12 +156,12 @@ pub enum PromptKind {
     Compose,
 }
 
-pub(crate) const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(660);
+pub const MAX_DICTATION_TIMEOUT: Duration = Duration::from_secs(660);
 
 /// The most `chat.timeout` may ask for.
 pub(super) const MAX_CHAT_TIMEOUT: Duration = Duration::from_secs(570);
 
-pub(crate) fn is_valid_model_id(model_id: &str) -> bool {
+pub fn is_valid_model_id(model_id: &str) -> bool {
     const MAX_MODEL_ID_BYTES: usize = 200;
     model_id.len() <= MAX_MODEL_ID_BYTES
         && !model_id.starts_with('-')
@@ -181,7 +181,7 @@ pub enum CleanupConfigError {
     Model,
 }
 
-pub(crate) fn validate_cleanup_llm(endpoint: &str, model: &str) -> Result<(), CleanupConfigError> {
+pub fn validate_cleanup_llm(endpoint: &str, model: &str) -> Result<(), CleanupConfigError> {
     let address = endpoint
         .strip_prefix("http://")
         .and_then(|rest| rest.strip_suffix("/v1/chat/completions"))

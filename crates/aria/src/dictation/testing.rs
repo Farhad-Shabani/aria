@@ -348,7 +348,7 @@ impl DictationExecutor for RecordsUntilStopped {
         _recording: &mut RecordingReader,
         _language: &Language,
         _own_voice_only: bool,
-        _project: Option<&crate::settings::Directory>,
+        _project: Option<&aria_settings::settings::Directory>,
         _rewriting: super::Rewriting,
         _cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {

@@ -9,8 +9,8 @@ pub(crate) mod tls;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::config::ServerEndpoint;
 use aria_platform::runtime::RuntimePaths;
+use aria_settings::config::ServerEndpoint;
 
 /// Leaves room past the audio bound for the final decode.
 pub(crate) const OVERALL_TIMEOUT: Duration = Duration::from_secs(720);

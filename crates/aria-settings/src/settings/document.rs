@@ -122,7 +122,7 @@ fn read_capped(path: &Path) -> Result<String, SettingsError> {
 
 /// A hash of the parsed values. A comment edit changes nothing here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct Revision(u64);
+pub struct Revision(u64);
 
 impl Revision {
     pub(crate) fn get(self) -> u64 {
@@ -145,9 +145,9 @@ impl fmt::Display for Revision {
 
 /// One valid file: the editable text, the values it holds, and their hash.
 #[derive(Debug, Clone)]
-pub(crate) struct Loaded {
+pub struct Loaded {
     pub(super) document: DocumentMut,
-    pub(crate) settings: SettingsFile,
+    pub settings: SettingsFile,
     pub(crate) revision: Revision,
     /// The file's stamp as the write path saw it, under the lock. `None`
     /// until the write path sets it.
@@ -157,7 +157,7 @@ pub(crate) struct Loaded {
 impl Loaded {
     /// Parses, moves aliases to their current names, expands `~`, and
     /// validates. A missing file reads as an empty one.
-    pub(crate) fn parse(text: &str, home: &Path) -> Result<Self, SettingsError> {
+    pub fn parse(text: &str, home: &Path) -> Result<Self, SettingsError> {
         let aliases: Vec<(Key, &str)> = Key::ALL
             .iter()
             .flat_map(|key| key.aliases().iter().map(|alias| (*key, *alias)))
@@ -348,62 +348,62 @@ fn is_default<T: Default + PartialEq>(section: &T) -> bool {
 /// The file's shape. Every leaf is optional; absent means default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct SettingsFile {
+pub struct SettingsFile {
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) dictation: Dictation,
+    pub dictation: Dictation,
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) history: History,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) listen: Listen,
+    pub listen: Listen,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) assistant: Assistant,
+    pub assistant: Assistant,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) memory: Memory,
+    pub memory: Memory,
     #[serde(skip_serializing_if = "Keyed::is_empty")]
     pub(crate) prompts: Keyed<PromptEntry>,
     #[serde(skip_serializing_if = "Keyed::is_empty")]
     pub(crate) application_overrides: Keyed<ApplicationOverrideEntry>,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) shortcuts: Shortcuts,
+    pub shortcuts: Shortcuts,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) wake: Wake,
+    pub wake: Wake,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) phone: Phone,
+    pub phone: Phone,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) delivery: Delivery,
+    pub delivery: Delivery,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) stt: Stt,
+    pub stt: Stt,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) tts: Tts,
+    pub tts: Tts,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) speaker: Speaker,
+    pub speaker: Speaker,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) capture: Capture,
+    pub capture: Capture,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Dictation {
+pub struct Dictation {
     pub(crate) output_mode: Option<OutputModeName>,
     pub(crate) delivery_mode: Option<DeliveryModeName>,
     pub(crate) silence_duration_ms: Option<u64>,
     pub(crate) auto_stop_ms: Option<u64>,
-    pub(crate) max_recording_secs: Option<f64>,
-    pub(crate) timeout_secs: Option<f64>,
+    pub max_recording_secs: Option<f64>,
+    pub timeout_secs: Option<f64>,
     pub(crate) mute_sound: Option<bool>,
     pub(crate) cleanup: Option<bool>,
     pub(crate) backtrack: Option<bool>,
     pub(crate) own_voice_only: Option<bool>,
-    pub(crate) cleanup_llm: Option<CleanupLlm>,
+    pub cleanup_llm: Option<CleanupLlm>,
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) vocabulary: Vocabulary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CleanupLlm {
-    pub(crate) endpoint: String,
-    pub(crate) model: String,
+pub struct CleanupLlm {
+    pub endpoint: String,
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,36 +422,36 @@ pub(crate) struct History {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Listen {
-    pub(crate) backend: Option<String>,
-    pub(crate) model: Option<PathBuf>,
-    pub(crate) device: Option<DeviceName>,
-    pub(crate) transcripts_dir: Option<PathBuf>,
+pub struct Listen {
+    pub backend: Option<String>,
+    pub model: Option<PathBuf>,
+    pub device: Option<DeviceName>,
+    pub transcripts_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Assistant {
-    pub(crate) id: Option<String>,
-    pub(crate) workdir: Option<PathBuf>,
-    pub(crate) project_roots: Option<Vec<PathBuf>>,
-    pub(crate) timeout_secs: Option<f64>,
+pub struct Assistant {
+    pub id: Option<String>,
+    pub workdir: Option<PathBuf>,
+    pub project_roots: Option<Vec<PathBuf>>,
+    pub timeout_secs: Option<f64>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) models: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Memory {
-    pub(crate) enabled: Option<bool>,
-    pub(crate) extract_model: Option<String>,
-    pub(crate) max_facts_per_session: Option<u32>,
+pub struct Memory {
+    pub enabled: Option<bool>,
+    pub extract_model: Option<String>,
+    pub max_facts_per_session: Option<u32>,
     pub(crate) dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PromptEntry {
+pub struct PromptEntry {
     pub(crate) name: String,
     pub(crate) kind: PromptKindName,
     pub(crate) file: PathBuf,
@@ -468,7 +468,7 @@ fn enabled() -> bool {
 /// while others are added or removed. Entries keep file order, which is the
 /// prompt list's order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Keyed<T>(pub(crate) Vec<(String, T)>);
+pub struct Keyed<T>(pub(crate) Vec<(String, T)>);
 
 impl<T> Default for Keyed<T> {
     fn default() -> Self {
@@ -528,7 +528,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Keyed<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ApplicationOverrideEntry {
+pub struct ApplicationOverrideEntry {
     pub(crate) output_mode: Option<OutputModeName>,
     pub(crate) delivery_mode: Option<DeliveryModeName>,
     #[serde(default)]
@@ -537,102 +537,102 @@ pub(crate) struct ApplicationOverrideEntry {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Shortcuts {
-    pub(crate) aria_key: Option<AriaKeyName>,
+pub struct Shortcuts {
+    pub aria_key: Option<AriaKeyName>,
     pub(crate) ask: Option<ShortcutEntry>,
     pub(crate) prompt_list: Option<ShortcutEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Wake {
-    pub(crate) enabled: Option<bool>,
-    pub(crate) backend: Option<String>,
-    pub(crate) model: Option<PathBuf>,
-    pub(crate) threshold: Option<f32>,
+pub struct Wake {
+    pub enabled: Option<bool>,
+    pub backend: Option<String>,
+    pub model: Option<PathBuf>,
+    pub threshold: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Phone {
-    pub(crate) enabled: Option<bool>,
-    pub(crate) port: Option<u16>,
+pub struct Phone {
+    pub enabled: Option<bool>,
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Delivery {
+pub struct Delivery {
     pub(crate) timeout_secs: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Stt {
-    pub(crate) backend: Option<String>,
+pub struct Stt {
+    pub backend: Option<String>,
     pub(crate) language: Option<String>,
     /// A path for every local engine but parakeet-mlx, whose model is a
     /// Hugging Face repo ID.
-    pub(crate) model: Option<String>,
-    pub(crate) device: Option<DeviceName>,
-    pub(crate) interpreter: Option<PathBuf>,
-    pub(crate) server: Option<String>,
+    pub model: Option<String>,
+    pub device: Option<DeviceName>,
+    pub interpreter: Option<PathBuf>,
+    pub server: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Tts {
-    pub(crate) backend: Option<String>,
-    pub(crate) rate: Option<f64>,
-    pub(crate) fallback: Option<TtsFallbackName>,
+pub struct Tts {
+    pub backend: Option<String>,
+    pub rate: Option<f64>,
+    pub fallback: Option<TtsFallbackName>,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) system: TtsSystem,
+    pub system: TtsSystem,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) kokoro: TtsKokoro,
+    pub kokoro: TtsKokoro,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) qwen: TtsQwen,
+    pub qwen: TtsQwen,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct TtsSystem {
-    pub(crate) voice: Option<String>,
+pub struct TtsSystem {
+    pub voice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct TtsKokoro {
-    pub(crate) model: Option<PathBuf>,
-    pub(crate) voices: Option<PathBuf>,
-    pub(crate) voice: Option<String>,
+pub struct TtsKokoro {
+    pub model: Option<PathBuf>,
+    pub voices: Option<PathBuf>,
+    pub voice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct TtsQwen {
-    pub(crate) model: Option<PathBuf>,
-    pub(crate) tokenizer: Option<PathBuf>,
-    pub(crate) voice: Option<String>,
+pub struct TtsQwen {
+    pub model: Option<PathBuf>,
+    pub tokenizer: Option<PathBuf>,
+    pub voice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Speaker {
-    pub(crate) model: Option<PathBuf>,
-    pub(crate) segmentation_model: Option<PathBuf>,
-    pub(crate) profiles_dir: Option<PathBuf>,
+pub struct Speaker {
+    pub model: Option<PathBuf>,
+    pub segmentation_model: Option<PathBuf>,
+    pub profiles_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Capture {
-    pub(crate) backend: Option<CaptureBackendName>,
-    pub(crate) path: Option<PathBuf>,
-    pub(crate) pace: Option<PaceName>,
+pub struct Capture {
+    pub backend: Option<CaptureBackendName>,
+    pub path: Option<PathBuf>,
+    pub pace: Option<PaceName>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum OutputModeName {
+pub enum OutputModeName {
     Insert,
     InsertAndSubmit,
     InsertOrCopy,
@@ -652,7 +652,7 @@ impl From<OutputMode> for OutputModeName {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DeliveryModeName {
+pub enum DeliveryModeName {
     Streaming,
     Complete,
 }
@@ -714,7 +714,7 @@ impl From<PromptKindName> for PromptKind {
 /// The Aria key, or `Off`, which runs no listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AriaKeyName {
+pub enum AriaKeyName {
     RightOption,
     Fn,
     Off,
@@ -733,7 +733,7 @@ impl From<Option<AriaKey>> for AriaKeyName {
 
 /// What starts the ask or the prompt list: a word, or a chord table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ShortcutEntry {
+pub enum ShortcutEntry {
     Off,
     Shift,
     Command,
@@ -788,7 +788,7 @@ impl<'de> Deserialize<'de> for ShortcutEntry {
 /// A key code with modifiers. An omitted modifier is off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ChordEntry {
+pub struct ChordEntry {
     pub(crate) key_code: u16,
     #[serde(default)]
     pub(crate) control: bool,
@@ -896,28 +896,28 @@ impl From<Chord> for ChordEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum TtsFallbackName {
+pub enum TtsFallbackName {
     None,
     System,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DeviceName {
+pub enum DeviceName {
     Cpu,
     Gpu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CaptureBackendName {
+pub enum CaptureBackendName {
     Microphone,
     WavFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PaceName {
+pub enum PaceName {
     Immediate,
     Realtime,
 }
@@ -1285,7 +1285,7 @@ impl SettingsFile {
     }
 
     /// The Aria key, `None` while it is off.
-    pub(crate) fn aria_key(&self) -> Option<AriaKey> {
+    pub fn aria_key(&self) -> Option<AriaKey> {
         match self.shortcuts.aria_key {
             None | Some(AriaKeyName::RightOption) => Some(AriaKey::RightOption),
             Some(AriaKeyName::Fn) => Some(AriaKey::Fn),
@@ -1381,7 +1381,7 @@ pub(crate) fn value_at(values: &serde_json::Value, key: Key) -> serde_json::Valu
     current.clone()
 }
 
-pub(crate) fn invalid(key: Key, source: InvalidValue) -> SettingsError {
+pub fn invalid(key: Key, source: InvalidValue) -> SettingsError {
     SettingsError::Invalid {
         key,
         source,

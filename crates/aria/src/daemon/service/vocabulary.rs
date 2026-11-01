@@ -1,8 +1,8 @@
 use super::super::vocabulary::{Error, Runtime};
 use crate::ipc::wire;
-use crate::rpc::{RpcErrorCode, RpcFailure};
-use crate::settings::{Directory, SettingsStore};
 use crate::vocabulary::State;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::settings::{Directory, SettingsStore};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
@@ -39,11 +39,10 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         let directory = self
             .directory(request.into_inner())?
             .ok_or_else(|| -> Status {
-                RpcFailure::new(
+                crate::ipc::protocol::failure_status(RpcFailure::new(
                     RpcErrorCode::InvalidRequest,
                     "select a vocabulary directory first",
-                )
-                .into()
+                ))
             })?;
         let status = self.runtime.refresh(directory).await.map_err(failure)?;
         Ok(Response::new(status.into()))
@@ -74,11 +73,10 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         let directory = self
             .directory(request.into_inner())?
             .ok_or_else(|| -> Status {
-                RpcFailure::new(
+                crate::ipc::protocol::failure_status(RpcFailure::new(
                     RpcErrorCode::InvalidRequest,
                     "select a vocabulary directory first",
-                )
-                .into()
+                ))
             })?;
         let status = self.runtime.forget(directory).await.map_err(failure)?;
         Ok(Response::new(status.into()))
@@ -92,5 +90,5 @@ fn failure(error: Error) -> Status {
         Error::Unsupported => RpcErrorCode::Unsupported,
         Error::TooLarge => RpcErrorCode::PayloadTooLarge,
     };
-    RpcFailure::new(code, error.to_string()).into()
+    crate::ipc::protocol::failure_status(RpcFailure::new(code, error.to_string()))
 }

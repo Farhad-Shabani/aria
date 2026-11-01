@@ -154,6 +154,7 @@ dependencies = [
  "aria-platform",
  "aria-primitives",
  "aria-segmentation",
+ "aria-settings",
  "aria-speaker",
  "aria-stt",
  "aria-tts",
@@ -318,6 +319,25 @@ version = "0.7.0"
 dependencies = [
  "aria-kit",
  "ort",
+]
+
+[[package]]
+name = "aria-settings"
+version = "0.7.0"
+dependencies = [
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "http",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml_edit",
+ "tracing",
 ]
 
 [[package]]

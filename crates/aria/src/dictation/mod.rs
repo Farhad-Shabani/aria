@@ -3,8 +3,8 @@
 use std::fmt;
 
 use crate::audio::{AutoStop, SilenceDuration};
-use crate::settings::DeliveryMode;
 use crate::transcription::Language;
+use aria_settings::settings::DeliveryMode;
 
 pub(crate) mod cleanup;
 mod cursor;
@@ -94,7 +94,7 @@ pub(crate) struct DictationSettings {
     pub(crate) own_voice_only: bool,
     pub(crate) rewriting: Rewriting,
     pub(crate) transcript_only: bool,
-    pub(crate) project: Option<crate::settings::Directory>,
+    pub(crate) project: Option<aria_settings::settings::Directory>,
     /// The app in front as dictation was admitted.
     pub(crate) application: Option<aria_platform::delivery::Application>,
     pub(crate) target: aria_platform::delivery::TargetPolicy,

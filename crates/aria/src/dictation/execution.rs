@@ -8,9 +8,9 @@ use aria_kit::cancel::{CancelToken, Deadline};
 use crate::audio::{CaptureError, RecordingReader};
 use crate::microphone::{Admitted, Claim, Gate};
 use crate::primitives::error_chain;
-use crate::rpc::RpcErrorCode;
-use crate::settings::MAX_DICTATION_TIMEOUT;
 use crate::transcription::{Language, Transcript, TranscriptionError};
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::MAX_DICTATION_TIMEOUT;
 
 #[cfg(target_os = "macos")]
 use super::output::OutputMute;
@@ -44,7 +44,7 @@ pub(crate) trait DictationExecutor: Send + Sync + 'static {
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&crate::settings::Directory>,
+        project: Option<&aria_settings::settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
@@ -65,7 +65,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&crate::settings::Directory>,
+        project: Option<&aria_settings::settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -612,7 +612,7 @@ where
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&crate::settings::Directory>,
+        project: Option<&aria_settings::settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -673,9 +673,9 @@ mod tests {
 
     use crate::audio::SilenceDuration;
     use crate::dictation::testing::{Edge, HEARD, RecordsUntilStopped, recording_started};
-    use crate::settings::DeliveryMode;
     use crate::transcription::LanguageCode;
     use aria_platform::delivery::OutputMode;
+    use aria_settings::settings::DeliveryMode;
 
     use super::*;
 
@@ -1052,7 +1052,7 @@ mod tests {
                 _: &mut RecordingReader,
                 _: &Language,
                 _: bool,
-                _: Option<&crate::settings::Directory>,
+                _: Option<&aria_settings::settings::Directory>,
                 _: Rewriting,
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {

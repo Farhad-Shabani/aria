@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
 use crate::ipc::wire;
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 pub(crate) use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
@@ -226,7 +226,10 @@ const SETTINGS_NEED_FIXING: &str = "Settings need fixing on your Mac";
 /// one can't cross until someone has checked its messages.
 pub(in crate::daemon) fn redacted(status: Status) -> Status {
     let Some(failure) = crate::ipc::protocol::rpc_failure(&status) else {
-        return RpcFailure::new(RpcErrorCode::Internal, SOMETHING_WENT_WRONG).into();
+        return crate::ipc::protocol::failure_status(RpcFailure::new(
+            RpcErrorCode::Internal,
+            SOMETHING_WENT_WRONG,
+        ));
     };
     let message = match failure.code {
         RpcErrorCode::InvalidRequest
@@ -274,7 +277,7 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::HistoryProjectUnavailable
         | RpcErrorCode::Unknown(_) => SOMETHING_WENT_WRONG.to_owned(),
     };
-    RpcFailure::new(failure.code, message).into()
+    crate::ipc::protocol::failure_status(RpcFailure::new(failure.code, message))
 }
 
 const SOMETHING_WENT_WRONG: &str = "Something went wrong on your Mac";

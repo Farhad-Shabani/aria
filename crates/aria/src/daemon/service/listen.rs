@@ -33,8 +33,8 @@ impl ListenRpc {
         tokio::task::spawn_blocking(move || operation(&state))
             .await
             .map_err(|_join| {
-                Status::from(crate::rpc::RpcFailure::new(
-                    crate::rpc::RpcErrorCode::Internal,
+                crate::ipc::protocol::failure_status(aria_settings::rpc::RpcFailure::new(
+                    aria_settings::rpc::RpcErrorCode::Internal,
                     "the listen operation panicked",
                 ))
             })

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use crate::event::EventEmitter;
-use crate::rpc::RpcErrorCode;
+use aria_settings::event::EventEmitter;
+use aria_settings::rpc::RpcErrorCode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListenStage {

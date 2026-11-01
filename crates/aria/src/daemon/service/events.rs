@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use crate::rpc::RpcFailure;
+use aria_settings::rpc::RpcFailure;
 
 use super::super::subscriptions::Subscriptions;
 use super::failed;

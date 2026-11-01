@@ -16,7 +16,7 @@ use super::{DB_FILE, LEXICON_FILE, MemoryError};
 use crate::chat::AssistantError;
 use crate::config::MemoryConfig;
 use crate::primitives::error_chain;
-use crate::settings::SettingsFile;
+use aria_settings::settings::SettingsFile;
 
 #[derive(Debug, Default)]
 pub struct ConsolidationReport {
@@ -351,7 +351,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         assert!(
             run_backlog(
-                &crate::settings::SettingsFile::default(),
+                &aria_settings::settings::SettingsFile::default(),
                 home.path(),
                 &CancelToken::never()
             )

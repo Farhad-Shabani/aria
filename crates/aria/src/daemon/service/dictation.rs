@@ -10,7 +10,7 @@ use tonic::{Request, Response, Status};
 use crate::dictation::{DictationRequest, RecordingId};
 use crate::ipc::wire;
 use crate::primitives::error_chain;
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::dictation::DictationRuntimeError;
 use super::super::dictation::{
@@ -161,7 +161,7 @@ mod tests {
         EDGE_WAIT, Edge, HEARD, RecordsUntilStopped, recording_started,
     };
     use crate::ipc::wire;
-    use crate::rpc::RpcErrorCode;
+    use aria_settings::rpc::RpcErrorCode;
 
     /// A press that hands its transcript back instead of delivering it.
     /// It asks for complete delivery, since streaming, the default, hands none back.

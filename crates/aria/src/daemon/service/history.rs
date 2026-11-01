@@ -11,7 +11,7 @@ use crate::history::{
     ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, RetryOptions,
 };
 use crate::ipc::{protocol, wire};
-use crate::rpc::RpcFailure;
+use aria_settings::rpc::RpcFailure;
 
 use super::super::dictation::DictationRuntime;
 use super::super::operation::{
@@ -234,5 +234,5 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
 }
 
 fn failure(error: HistoryError) -> Status {
-    RpcFailure::from(error).into()
+    crate::ipc::protocol::failure_status(RpcFailure::from(error))
 }

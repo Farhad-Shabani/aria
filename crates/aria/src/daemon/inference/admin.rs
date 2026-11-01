@@ -8,14 +8,14 @@ use tonic::transport::{Channel, Endpoint};
 use super::Paths;
 use super::client::{ADMIN_TIMEOUT, RemoteClientError, bounded, rpc_error, run};
 use super::identity::MAX_DOCUMENT_BYTES;
-use crate::config::ServerEndpoint;
 use crate::daemon::relay::fingerprint_from_hex;
 use crate::ipc::{protocol, wire};
-use crate::rpc::RpcErrorCode;
+use aria_settings::config::ServerEndpoint;
+use aria_settings::rpc::RpcErrorCode;
 
 pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
     let endpoint = ServerEndpoint::parse(endpoint).ok_or(RemoteClientError::InvalidEndpoint)?;
-    let home = crate::config::home_directory().map_err(RemoteClientError::Config)?;
+    let home = aria_settings::config::home_directory().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = admin_channel(&home).await?;
         let response =
@@ -34,7 +34,7 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
 pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
     let fingerprint =
         fingerprint_from_hex(fingerprint).ok_or(RemoteClientError::InvalidFingerprint)?;
-    let home = crate::config::home_directory().map_err(RemoteClientError::Config)?;
+    let home = aria_settings::config::home_directory().map_err(RemoteClientError::Config)?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = admin_channel(&home).await?;
         wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)

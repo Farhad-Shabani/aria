@@ -17,8 +17,8 @@ use crate::enrollment::{
     EnrollError, EnrolledSpeaker, Enroller, EnrollmentEventEmitter, EnrollmentRequest,
     EnrollmentResult, Speakers,
 };
-use crate::settings::{SettingsPatch, SettingsStore};
 use crate::speaker::SpeakerName;
+use aria_settings::settings::{SettingsPatch, SettingsStore};
 
 use super::operation::{self, CallError, Pending, call, cancellable_call, operation_cancellation};
 use super::tasks::Supervised;

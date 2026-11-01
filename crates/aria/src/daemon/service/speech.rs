@@ -4,8 +4,8 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 use crate::primitives::error_chain;
-use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::speech::SpeechRequest;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::operation::CallError;
 use super::super::speech::SpeechRuntimeError;

@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(unpaired.code(), tonic::Code::Unauthenticated);
         assert_eq!(
             crate::ipc::protocol::rpc_failure(&unpaired).unwrap().code,
-            crate::rpc::RpcErrorCode::Unauthenticated
+            aria_settings::rpc::RpcErrorCode::Unauthenticated
         );
         assert_eq!(relay(&channel).await, tonic::Code::Unauthenticated);
         assert_eq!(settings(&channel).await, tonic::Code::Unauthenticated);
@@ -635,7 +635,7 @@ mod tests {
             .expect_err("a wrong code must not pair");
         assert_eq!(
             crate::ipc::protocol::rpc_failure(&wrong).unwrap().code,
-            crate::rpc::RpcErrorCode::Unauthenticated
+            aria_settings::rpc::RpcErrorCode::Unauthenticated
         );
         pair(&channel, code.raw())
             .await

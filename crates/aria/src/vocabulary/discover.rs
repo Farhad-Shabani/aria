@@ -42,7 +42,7 @@ impl<E: Extractor> Collector for LocalCollector<E> {
 
     fn collect(
         &mut self,
-        selected: &crate::settings::Directory,
+        selected: &aria_settings::settings::Directory,
         previous: &[Source],
         cancel: &CancelToken,
     ) -> Result<Discovery, Error<Self::Error>> {

@@ -21,7 +21,7 @@ mod vocabulary;
 use tonic::Status;
 
 use crate::primitives::error_chain;
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 pub(super) use chat::ChatRpc;
 pub(super) use dictation::DictationRpc;
@@ -47,13 +47,13 @@ fn invalid_request(method: &'static str, error: &dyn std::error::Error) -> Statu
 
 fn failed(method: &'static str, failure: RpcFailure) -> Status {
     log_failure(method, &failure);
-    failure.into()
+    crate::ipc::protocol::failure_status(failure)
 }
 
 /// A settings fault's message can quote the file, so only its place is
 /// logged.
 fn log_failure(method: &'static str, failure: &RpcFailure) {
-    if failure.code != crate::rpc::RpcErrorCode::SettingsInvalid {
+    if failure.code != aria_settings::rpc::RpcErrorCode::SettingsInvalid {
         tracing::info!(
             method,
             status = failure.code.label(),
@@ -79,8 +79,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::rpc::RpcErrorCode;
-    use crate::settings::Position;
+    use aria_settings::rpc::RpcErrorCode;
+    use aria_settings::settings::Position;
 
     /// A log sink the test reads back.
     #[derive(Clone, Default)]

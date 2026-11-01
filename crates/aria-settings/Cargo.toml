@@ -1,0 +1,30 @@
+[package]
+name                 = "aria-settings"
+version.workspace    = true
+edition.workspace    = true
+description          = "The settings file, its value types, and the failure categories Aria features share"
+license              = "GPL-3.0-only"
+repository.workspace = true
+readme.workspace     = true
+publish              = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = [  ]
+
+[dependencies]
+aria-kit        = { workspace = true }
+aria-platform   = { workspace = true }
+aria-primitives = { workspace = true }
+http            = "1"
+rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+sha2            = "0.10"
+tempfile        = { workspace = true }
+thiserror       = { workspace = true }
+tokio           = { version = "1", features = [ "sync" ] }
+toml_edit       = { workspace = true, features = [ "display", "parse", "serde" ] }
+tracing         = { workspace = true }

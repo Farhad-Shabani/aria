@@ -15,14 +15,14 @@ use crate::listen::{
     ListenError, ListenEventEmitter, SystemAudioCapture, TranscriptFile, spawn_session,
 };
 use crate::primitives::error_chain;
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::host::DaemonLifetime;
 
 pub(super) struct ListenState {
     lifetime: DaemonLifetime,
     home: PathBuf,
-    cache: Arc<crate::settings::SettingsCache>,
+    cache: Arc<aria_settings::settings::SettingsCache>,
     events: ListenEventEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
     active: Mutex<Slot>,
@@ -63,7 +63,7 @@ impl ListenState {
     pub(super) fn new(
         lifetime: DaemonLifetime,
         home: PathBuf,
-        cache: Arc<crate::settings::SettingsCache>,
+        cache: Arc<aria_settings::settings::SettingsCache>,
         events: ListenEventEmitter,
         vocabulary: Arc<super::vocabulary::Runtime>,
     ) -> Self {
@@ -93,7 +93,7 @@ impl ListenState {
             return Ok((active.transcript.clone(), true));
         }
 
-        let internal = |error: crate::config::ConfigError| {
+        let internal = |error: aria_settings::config::ConfigError| {
             RpcFailure::new(RpcErrorCode::Internal, error_chain(&error))
         };
         let settings = self.cache.effective();

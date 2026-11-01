@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use aria_kit::cancel::CancelToken;
 
-use crate::config::{ConfigError, memory_directory};
+use aria_settings::config::{ConfigError, memory_directory};
 
 pub use consolidate::ConsolidationReport;
 pub(crate) use consolidate::run_backlog;
@@ -44,8 +44,8 @@ pub enum MemoryError {
 
 /// The store and its directory as the settings find them.
 pub fn open() -> Result<(Store, PathBuf), MemoryError> {
-    let home = crate::config::home_directory()?;
-    let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
     let dir = memory_directory(&settings.memory, &home);
     let store = Store::open(&dir.join(DB_FILE))?;
     Ok((store, dir))
@@ -53,7 +53,7 @@ pub fn open() -> Result<(Store, PathBuf), MemoryError> {
 
 /// Extracts from every session with new turns, now, in this process.
 pub fn consolidate_now() -> Result<ConsolidationReport, MemoryError> {
-    let home = crate::config::home_directory()?;
-    let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
     run_backlog(&settings, &home, &CancelToken::never())
 }

@@ -22,12 +22,13 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AssistantId, ChatConfig, ConfigError};
-use crate::event::EventEmitter;
+use crate::config::ChatConfig;
 use crate::primitives::error_chain;
-use crate::rpc::RpcErrorCode;
-use crate::settings::PromptKind;
 use aria_platform::delivery::{DeliveryError, OutputMode};
+use aria_settings::config::{AssistantId, ConfigError};
+use aria_settings::event::EventEmitter;
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::PromptKind;
 
 pub(crate) use assistants::{
     CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant, claude_command, parse_claude,
@@ -81,8 +82,8 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     pub fn configured(text: String, assistant_id: AssistantId) -> Result<Self, ChatRequestError> {
-        let home = crate::config::home_directory()?;
-        let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+        let home = aria_settings::config::home_directory()?;
+        let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
         let config = ChatConfig::load(&settings)?;
         Self::from_config(text, assistant_id, config)
     }
@@ -145,10 +146,10 @@ impl std::fmt::Display for SessionKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PromptCall {
     pub(crate) text: String,
-    pub(crate) prompt: crate::settings::PromptId,
+    pub(crate) prompt: aria_settings::settings::PromptId,
     /// The app in front when the chord was pressed, the only one the result
     /// may be typed into. None when the caller could not tell.
-    pub(crate) application: Option<crate::settings::ApplicationId>,
+    pub(crate) application: Option<aria_settings::settings::ApplicationId>,
     /// A tap of the Aria key cancels this run while it is in flight.
     pub(crate) tap_cancels: bool,
 }
@@ -163,7 +164,7 @@ pub(crate) struct PromptRequest {
     pub(crate) file: PathBuf,
     pub(crate) assistant_id: AssistantId,
     pub(crate) model_id: Option<String>,
-    pub(crate) application: Option<crate::settings::ApplicationId>,
+    pub(crate) application: Option<aria_settings::settings::ApplicationId>,
     pub(crate) tap_cancels: bool,
 }
 
@@ -387,7 +388,7 @@ pub struct AskTarget {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ResolveError {
     #[error("failed to read settings")]
-    Settings(#[source] crate::settings::StoreError),
+    Settings(#[source] aria_settings::settings::StoreError),
 
     #[error("failed to resolve the chat settings")]
     Config(#[source] ConfigError),
@@ -431,7 +432,7 @@ pub(crate) enum ChatError {
     Session(#[from] SessionStoreError),
 
     #[error("failed to read shared settings")]
-    Settings(#[source] crate::settings::StoreError),
+    Settings(#[source] aria_settings::settings::StoreError),
 
     #[error("no stored prompt has that ID")]
     UnknownPrompt,

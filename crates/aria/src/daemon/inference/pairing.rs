@@ -18,7 +18,7 @@ use crate::primitives::private_fs::prepare_directory;
 /// secret never appears on a command line.
 pub fn remote_pair(input: impl std::io::Read) -> Result<String, RemoteClientError> {
     let invitation = read_invitation(input)?;
-    let home = crate::config::home_directory().map_err(RemoteClientError::Config)?;
+    let home = aria_settings::config::home_directory().map_err(RemoteClientError::Config)?;
     pair_at(&home, &invitation)
 }
 

@@ -6,20 +6,12 @@ use crate::chat::{
     AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, Step,
     Ticket,
 };
-use crate::config::AssistantId;
 use crate::dictation::{
     CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationStage,
     GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
 use crate::listen::ListenStage;
-use crate::rpc::{RpcErrorCode, RpcFailure};
-use crate::settings::{
-    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
-    DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
-    PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
-    Shortcut, UpdateResult,
-};
 use crate::speaker::{Role, SpeakerName, SpeakerNameError};
 use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use crate::transcription::LanguageCodeError;
@@ -28,6 +20,14 @@ use aria_kit::synthesis::{
 };
 use aria_platform::delivery::{DeliveryOutcome, OutputMode, Placement, Rect};
 use aria_platform::hotkey::{AriaKey, Combo};
+use aria_settings::config::AssistantId;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::settings::{
+    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
+    DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
+    PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
+    Shortcut, UpdateResult,
+};
 use prost::Message;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -44,26 +44,24 @@ const RPC_ERROR_TYPE_URL: &str = "type.googleapis.com/aria.daemon.v1.RpcError";
 
 /// The status code is the lossy projection; the exact Aria code rides in the
 /// status details as a `google.rpc.Status` holding one packed `RpcError`.
-impl From<RpcFailure> for Status {
-    fn from(failure: RpcFailure) -> Self {
-        let code = grpc_code(failure.code);
-        let error = wire::RpcError::from(failure.clone());
-        let details = tonic_types::pb::Status {
-            code: i32::from(code),
-            message: failure.message.clone(),
-            details: vec![prost_types::Any {
-                type_url: RPC_ERROR_TYPE_URL.to_owned(),
-                value: error.encode_to_vec(),
-            }],
-        };
-        Self::with_details(code, failure.message, details.encode_to_vec().into())
-    }
+pub(crate) fn failure_status(failure: RpcFailure) -> Status {
+    let code = grpc_code(failure.code);
+    let error = wire::RpcError::from(failure.clone());
+    let details = tonic_types::pb::Status {
+        code: i32::from(code),
+        message: failure.message.clone(),
+        details: vec![prost_types::Any {
+            type_url: RPC_ERROR_TYPE_URL.to_owned(),
+            value: error.encode_to_vec(),
+        }],
+    };
+    Status::with_details(code, failure.message, details.encode_to_vec().into())
 }
 
 impl From<RpcFailure> for wire::RpcError {
     fn from(failure: RpcFailure) -> Self {
         Self {
-            code: failure.code.into(),
+            code: error_code_number(failure.code),
             message: failure.message,
             settings_position: failure.settings_position.map(wire::SettingsPosition::from),
         }
@@ -75,7 +73,7 @@ impl TryFrom<wire::RpcError> for RpcFailure {
 
     fn try_from(error: wire::RpcError) -> Result<Self, Self::Error> {
         Ok(
-            Self::new(RpcErrorCode::try_from(error.code)?, error.message)
+            Self::new(error_code_from_number(error.code)?, error.message)
                 .with_settings_position(error.settings_position.map(Position::from)),
         )
     }
@@ -423,7 +421,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 copied,
             }) => Self {
                 stage: wire::ChatStage::Replied as i32,
-                error_code: delivery_error.map_or(0, i32::from),
+                error_code: delivery_error.map_or(0, error_code_number),
                 ticket,
                 text,
                 error_message: String::new(),
@@ -434,7 +432,7 @@ impl From<ChatStage> for wire::ChatEvent {
             },
             ChatStageKind::Failed { code, message } => Self {
                 stage: wire::ChatStage::Failed as i32,
-                error_code: code.into(),
+                error_code: error_code_number(code),
                 ticket,
                 text: String::new(),
                 error_message: message,
@@ -459,12 +457,12 @@ impl TryFrom<&wire::ChatEvent> for ChatStage {
                 text: event.text.clone(),
                 delivery_error: match event.error_code {
                     0 => None,
-                    code => Some(RpcErrorCode::try_from(code)?),
+                    code => Some(error_code_from_number(code)?),
                 },
                 copied: event.copied,
             }),
             Ok(wire::ChatStage::Failed) => ChatStageKind::Failed {
-                code: RpcErrorCode::try_from(event.error_code)?,
+                code: error_code_from_number(event.error_code)?,
                 message: event.error_message.clone(),
             },
             Ok(wire::ChatStage::Unspecified) | Err(..) => {
@@ -572,7 +570,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
             .transpose()?;
         let assistant_id = decode_enum::<wire::AssistantId>(request.assistant_id, "assistant_id")?;
-        if !crate::settings::is_valid_model_id(&request.model_id) {
+        if !aria_settings::settings::is_valid_model_id(&request.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
         Ok(Self {
@@ -662,7 +660,7 @@ impl From<EnrollmentStage> for wire::SpeakerEvent {
                 stage: wire::SpeakerStage::Failed as i32,
                 index: 0,
                 samples: 0,
-                error_code: code.into(),
+                error_code: error_code_number(code),
             },
         }
     }
@@ -684,7 +682,7 @@ impl TryFrom<&wire::SpeakerEvent> for EnrollmentStage {
             Ok(wire::SpeakerStage::Enrolled) => Ok(Self::Enrolled),
             Ok(wire::SpeakerStage::Cancelled) => Ok(Self::Cancelled),
             Ok(wire::SpeakerStage::Failed) => {
-                RpcErrorCode::try_from(event.error_code).map(Self::Failed)
+                error_code_from_number(event.error_code).map(Self::Failed)
             }
             Ok(wire::SpeakerStage::Unspecified) | Err(..) => Err(ProtocolError::InvalidEnum {
                 field: "stage",
@@ -863,7 +861,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
                 offset_seconds: 0,
-                error_code: code.into(),
+                error_code: error_code_number(code),
             },
         }
     }
@@ -887,7 +885,7 @@ impl TryFrom<&wire::ListenEvent> for ListenStage {
             }),
             Ok(wire::ListenStage::Stopped) => Ok(Self::Stopped),
             Ok(wire::ListenStage::Failed) => {
-                RpcErrorCode::try_from(event.error_code).map(Self::Failed)
+                error_code_from_number(event.error_code).map(Self::Failed)
             }
             Ok(wire::ListenStage::Unspecified) | Err(..) => Err(ProtocolError::InvalidEnum {
                 field: "stage",
@@ -905,7 +903,7 @@ impl From<SpeechStage> for wire::SpeechEvent {
             SpeechStage::Spoken => (wire::SpeechStage::Completed, 0),
             SpeechStage::Stopped => (wire::SpeechStage::Interrupted, 0),
             SpeechStage::Cancelled => (wire::SpeechStage::Cancelled, 0),
-            SpeechStage::Failed(code) => (wire::SpeechStage::Failed, code.into()),
+            SpeechStage::Failed(code) => (wire::SpeechStage::Failed, error_code_number(code)),
         };
         Self {
             stage: code as i32,
@@ -926,7 +924,7 @@ impl TryFrom<&wire::SpeechEvent> for SpeechStage {
             Ok(wire::SpeechStage::Cancelled) => Ok(Self::Cancelled),
             // 0 is rejected rather than kept as Unknown(0): unknown codes
             // must round-trip, but UNSPECIFIED must never re-enter the wire.
-            Ok(wire::SpeechStage::Failed) => match RpcErrorCode::try_from(event.error_code) {
+            Ok(wire::SpeechStage::Failed) => match error_code_from_number(event.error_code) {
                 Ok(code) => Ok(Self::Failed(code)),
                 Err(error) => Err(error),
             },
@@ -1084,7 +1082,7 @@ impl TryFrom<Option<wire::start_dictation_request::Project>> for crate::vocabula
         Ok(match project {
             None => Self::Default,
             Some(Project::ProjectDirectory(path)) => {
-                Self::Directory(crate::settings::Directory::new(path.into())?)
+                Self::Directory(aria_settings::settings::Directory::new(path.into())?)
             }
             Some(Project::ProjectVocabularyDisabled(_)) => Self::Disabled,
         })
@@ -1146,7 +1144,7 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
         if request
             .engine_id
             .as_deref()
-            .is_some_and(|engine| crate::config::backend::local(engine).is_none())
+            .is_some_and(|engine| aria_settings::config::backend::local(engine).is_none())
         {
             return Err(ProtocolError::InvalidHistory("engine"));
         }
@@ -1311,13 +1309,13 @@ impl From<crate::history::HistoryPage> for wire::ListHistoryResponse {
     }
 }
 
-impl TryFrom<wire::VocabularyRequest> for Option<crate::settings::Directory> {
+impl TryFrom<wire::VocabularyRequest> for Option<aria_settings::settings::Directory> {
     type Error = ProtocolError;
 
     fn try_from(request: wire::VocabularyRequest) -> Result<Self, Self::Error> {
         request
             .directory
-            .map(|path| crate::settings::Directory::new(path.into()).map_err(Into::into))
+            .map(|path| aria_settings::settings::Directory::new(path.into()).map_err(Into::into))
             .transpose()
     }
 }
@@ -1433,7 +1431,7 @@ fn decode_assistant_models(
     let mut models = BTreeMap::new();
     for entry in entries {
         let assistant_id = decode_enum::<wire::AssistantId>(entry.assistant_id, "assistant_id")?;
-        if !crate::settings::is_valid_model_id(&entry.model_id) {
+        if !aria_settings::settings::is_valid_model_id(&entry.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
         if models.insert(assistant_id, entry.model_id).is_some() {
@@ -1482,7 +1480,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                 vocabulary_enabled: settings.vocabulary_enabled,
                 vocabulary_dir: settings
                     .vocabulary_dir
-                    .map(|path| crate::settings::Directory::new(path.into()))
+                    .map(|path| aria_settings::settings::Directory::new(path.into()))
                     .transpose()?,
                 history_enabled: settings.history_enabled,
                 history_keep_audio: settings.history_keep_audio,
@@ -1693,7 +1691,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                     if path.is_empty() {
                         Ok(None)
                     } else {
-                        crate::settings::Directory::new(path.into()).map(Some)
+                        aria_settings::settings::Directory::new(path.into()).map(Some)
                     }
                 })
                 .transpose()?,
@@ -2013,7 +2011,7 @@ impl From<DictationStage> for wire::DictationEvent {
                 (wire::DictationStage::Delivered, 0)
             }
             DictationStage::Cancelled => (wire::DictationStage::Cancelled, 0),
-            DictationStage::Failed(code) => (wire::DictationStage::Failed, code.into()),
+            DictationStage::Failed(code) => (wire::DictationStage::Failed, error_code_number(code)),
             DictationStage::SegmentTranscribed {
                 text: segment,
                 speaker: heard_in,
@@ -2089,7 +2087,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             Ok(wire::DictationStage::Cancelled) => Ok(Self::Cancelled),
             // 0 is rejected rather than kept as Unknown(0): unknown codes
             // must round-trip, but UNSPECIFIED must never re-enter the wire.
-            Ok(wire::DictationStage::Failed) => match RpcErrorCode::try_from(event.error_code) {
+            Ok(wire::DictationStage::Failed) => match error_code_from_number(event.error_code) {
                 Ok(code) => Ok(Self::Failed(code)),
                 Err(error) => Err(error),
             },
@@ -2101,116 +2099,110 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
     }
 }
 
-impl From<RpcErrorCode> for i32 {
-    fn from(code: RpcErrorCode) -> Self {
-        let encoded = match code {
-            RpcErrorCode::InvalidRequest => wire::ErrorCode::InvalidRequest,
-            RpcErrorCode::Busy => wire::ErrorCode::Busy,
-            RpcErrorCode::Internal => wire::ErrorCode::Internal,
-            RpcErrorCode::Cancelled => wire::ErrorCode::Cancelled,
-            RpcErrorCode::Unauthenticated => wire::ErrorCode::Unauthenticated,
-            RpcErrorCode::Unsupported => wire::ErrorCode::Unsupported,
-            RpcErrorCode::ShuttingDown => wire::ErrorCode::ShuttingDown,
-            RpcErrorCode::PayloadTooLarge => wire::ErrorCode::PayloadTooLarge,
-            RpcErrorCode::PermissionDenied => wire::ErrorCode::PermissionDenied,
-            RpcErrorCode::DurabilityUnconfirmed => wire::ErrorCode::DurabilityUnconfirmed,
-            RpcErrorCode::SettingsInvalid => wire::ErrorCode::SettingsInvalid,
-            RpcErrorCode::OverallTimeout => wire::ErrorCode::OverallTimeout,
-            RpcErrorCode::RecordingTimeout => wire::ErrorCode::RecordingTimeout,
-            RpcErrorCode::DeliveryTimeout => wire::ErrorCode::DeliveryTimeout,
-            RpcErrorCode::CaptureFailed => wire::ErrorCode::CaptureFailed,
-            RpcErrorCode::NoSpeech => wire::ErrorCode::NoSpeech,
-            RpcErrorCode::TranscriptionFailed => wire::ErrorCode::TranscriptionFailed,
-            RpcErrorCode::DeliveryFailed => wire::ErrorCode::DeliveryFailed,
-            RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
-            RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
-            RpcErrorCode::ApplicationExcluded => wire::ErrorCode::ApplicationExcluded,
-            RpcErrorCode::SynthesisFailed => wire::ErrorCode::SynthesisFailed,
-            RpcErrorCode::PlaybackFailed => wire::ErrorCode::PlaybackFailed,
-            RpcErrorCode::SpeechTimeout => wire::ErrorCode::SpeechTimeout,
-            RpcErrorCode::VoiceUnavailable => wire::ErrorCode::VoiceUnavailable,
-            RpcErrorCode::AssistantUnavailable => wire::ErrorCode::AssistantUnavailable,
-            RpcErrorCode::AssistantFailed => wire::ErrorCode::AssistantFailed,
-            RpcErrorCode::AssistantTimeout => wire::ErrorCode::AssistantTimeout,
-            RpcErrorCode::AssistantSignedOut => wire::ErrorCode::AssistantSignedOut,
-            RpcErrorCode::PromptUnreadable => wire::ErrorCode::PromptUnreadable,
-            RpcErrorCode::SpeakerModelMissing => wire::ErrorCode::SpeakerModelMissing,
-            RpcErrorCode::SpeakerAlreadyEnrolled => wire::ErrorCode::SpeakerAlreadyEnrolled,
-            RpcErrorCode::SpeakerNotEnrolled => wire::ErrorCode::SpeakerNotEnrolled,
-            RpcErrorCode::SpeakerInconsistentSamples => wire::ErrorCode::SpeakerInconsistentSamples,
-            RpcErrorCode::SpeakerProfileWriteFailed => wire::ErrorCode::SpeakerProfileWriteFailed,
-            RpcErrorCode::SpeakerNoSpeech => wire::ErrorCode::SpeakerNoSpeech,
-            RpcErrorCode::ListenUnsupportedOs => wire::ErrorCode::ListenUnsupportedOs,
-            RpcErrorCode::ListenPermissionDenied => wire::ErrorCode::ListenPermissionDenied,
-            RpcErrorCode::ListenCaptureFailed => wire::ErrorCode::ListenCaptureFailed,
-            RpcErrorCode::HistoryMissing => wire::ErrorCode::HistoryMissing,
-            RpcErrorCode::HistoryAudioUnavailable => wire::ErrorCode::HistoryAudioUnavailable,
-            RpcErrorCode::HistoryUnavailable => wire::ErrorCode::HistoryUnavailable,
-            RpcErrorCode::HistoryProjectUnavailable => wire::ErrorCode::HistoryProjectUnavailable,
-            RpcErrorCode::Unknown(value) => return value,
-        };
-        encoded as Self
-    }
+pub(crate) fn error_code_number(code: RpcErrorCode) -> i32 {
+    let encoded = match code {
+        RpcErrorCode::InvalidRequest => wire::ErrorCode::InvalidRequest,
+        RpcErrorCode::Busy => wire::ErrorCode::Busy,
+        RpcErrorCode::Internal => wire::ErrorCode::Internal,
+        RpcErrorCode::Cancelled => wire::ErrorCode::Cancelled,
+        RpcErrorCode::Unauthenticated => wire::ErrorCode::Unauthenticated,
+        RpcErrorCode::Unsupported => wire::ErrorCode::Unsupported,
+        RpcErrorCode::ShuttingDown => wire::ErrorCode::ShuttingDown,
+        RpcErrorCode::PayloadTooLarge => wire::ErrorCode::PayloadTooLarge,
+        RpcErrorCode::PermissionDenied => wire::ErrorCode::PermissionDenied,
+        RpcErrorCode::DurabilityUnconfirmed => wire::ErrorCode::DurabilityUnconfirmed,
+        RpcErrorCode::SettingsInvalid => wire::ErrorCode::SettingsInvalid,
+        RpcErrorCode::OverallTimeout => wire::ErrorCode::OverallTimeout,
+        RpcErrorCode::RecordingTimeout => wire::ErrorCode::RecordingTimeout,
+        RpcErrorCode::DeliveryTimeout => wire::ErrorCode::DeliveryTimeout,
+        RpcErrorCode::CaptureFailed => wire::ErrorCode::CaptureFailed,
+        RpcErrorCode::NoSpeech => wire::ErrorCode::NoSpeech,
+        RpcErrorCode::TranscriptionFailed => wire::ErrorCode::TranscriptionFailed,
+        RpcErrorCode::DeliveryFailed => wire::ErrorCode::DeliveryFailed,
+        RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
+        RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
+        RpcErrorCode::ApplicationExcluded => wire::ErrorCode::ApplicationExcluded,
+        RpcErrorCode::SynthesisFailed => wire::ErrorCode::SynthesisFailed,
+        RpcErrorCode::PlaybackFailed => wire::ErrorCode::PlaybackFailed,
+        RpcErrorCode::SpeechTimeout => wire::ErrorCode::SpeechTimeout,
+        RpcErrorCode::VoiceUnavailable => wire::ErrorCode::VoiceUnavailable,
+        RpcErrorCode::AssistantUnavailable => wire::ErrorCode::AssistantUnavailable,
+        RpcErrorCode::AssistantFailed => wire::ErrorCode::AssistantFailed,
+        RpcErrorCode::AssistantTimeout => wire::ErrorCode::AssistantTimeout,
+        RpcErrorCode::AssistantSignedOut => wire::ErrorCode::AssistantSignedOut,
+        RpcErrorCode::PromptUnreadable => wire::ErrorCode::PromptUnreadable,
+        RpcErrorCode::SpeakerModelMissing => wire::ErrorCode::SpeakerModelMissing,
+        RpcErrorCode::SpeakerAlreadyEnrolled => wire::ErrorCode::SpeakerAlreadyEnrolled,
+        RpcErrorCode::SpeakerNotEnrolled => wire::ErrorCode::SpeakerNotEnrolled,
+        RpcErrorCode::SpeakerInconsistentSamples => wire::ErrorCode::SpeakerInconsistentSamples,
+        RpcErrorCode::SpeakerProfileWriteFailed => wire::ErrorCode::SpeakerProfileWriteFailed,
+        RpcErrorCode::SpeakerNoSpeech => wire::ErrorCode::SpeakerNoSpeech,
+        RpcErrorCode::ListenUnsupportedOs => wire::ErrorCode::ListenUnsupportedOs,
+        RpcErrorCode::ListenPermissionDenied => wire::ErrorCode::ListenPermissionDenied,
+        RpcErrorCode::ListenCaptureFailed => wire::ErrorCode::ListenCaptureFailed,
+        RpcErrorCode::HistoryMissing => wire::ErrorCode::HistoryMissing,
+        RpcErrorCode::HistoryAudioUnavailable => wire::ErrorCode::HistoryAudioUnavailable,
+        RpcErrorCode::HistoryUnavailable => wire::ErrorCode::HistoryUnavailable,
+        RpcErrorCode::HistoryProjectUnavailable => wire::ErrorCode::HistoryProjectUnavailable,
+        RpcErrorCode::Unknown(value) => return value,
+    };
+    encoded as i32
 }
 
-impl TryFrom<i32> for RpcErrorCode {
-    type Error = ProtocolError;
-
-    fn try_from(code: i32) -> Result<Self, Self::Error> {
-        let decoded = match wire::ErrorCode::try_from(code) {
-            Ok(wire::ErrorCode::InvalidRequest) => Self::InvalidRequest,
-            Ok(wire::ErrorCode::Busy) => Self::Busy,
-            Ok(wire::ErrorCode::Internal) => Self::Internal,
-            Ok(wire::ErrorCode::Cancelled) => Self::Cancelled,
-            Ok(wire::ErrorCode::Unauthenticated) => Self::Unauthenticated,
-            Ok(wire::ErrorCode::Unsupported) => Self::Unsupported,
-            Ok(wire::ErrorCode::ShuttingDown) => Self::ShuttingDown,
-            Ok(wire::ErrorCode::PayloadTooLarge) => Self::PayloadTooLarge,
-            Ok(wire::ErrorCode::PermissionDenied) => Self::PermissionDenied,
-            Ok(wire::ErrorCode::DurabilityUnconfirmed) => Self::DurabilityUnconfirmed,
-            Ok(wire::ErrorCode::SettingsInvalid) => Self::SettingsInvalid,
-            Ok(wire::ErrorCode::OverallTimeout) => Self::OverallTimeout,
-            Ok(wire::ErrorCode::RecordingTimeout) => Self::RecordingTimeout,
-            Ok(wire::ErrorCode::DeliveryTimeout) => Self::DeliveryTimeout,
-            Ok(wire::ErrorCode::CaptureFailed) => Self::CaptureFailed,
-            Ok(wire::ErrorCode::NoSpeech) => Self::NoSpeech,
-            Ok(wire::ErrorCode::TranscriptionFailed) => Self::TranscriptionFailed,
-            Ok(wire::ErrorCode::DeliveryFailed) => Self::DeliveryFailed,
-            Ok(wire::ErrorCode::DeliveryTargetChanged) => Self::DeliveryTargetChanged,
-            Ok(wire::ErrorCode::DeliveryInterrupted) => Self::DeliveryInterrupted,
-            Ok(wire::ErrorCode::ApplicationExcluded) => Self::ApplicationExcluded,
-            Ok(wire::ErrorCode::SynthesisFailed) => Self::SynthesisFailed,
-            Ok(wire::ErrorCode::PlaybackFailed) => Self::PlaybackFailed,
-            Ok(wire::ErrorCode::SpeechTimeout) => Self::SpeechTimeout,
-            Ok(wire::ErrorCode::VoiceUnavailable) => Self::VoiceUnavailable,
-            Ok(wire::ErrorCode::AssistantUnavailable) => Self::AssistantUnavailable,
-            Ok(wire::ErrorCode::AssistantFailed) => Self::AssistantFailed,
-            Ok(wire::ErrorCode::AssistantTimeout) => Self::AssistantTimeout,
-            Ok(wire::ErrorCode::AssistantSignedOut) => Self::AssistantSignedOut,
-            Ok(wire::ErrorCode::PromptUnreadable) => Self::PromptUnreadable,
-            Ok(wire::ErrorCode::SpeakerModelMissing) => Self::SpeakerModelMissing,
-            Ok(wire::ErrorCode::SpeakerAlreadyEnrolled) => Self::SpeakerAlreadyEnrolled,
-            Ok(wire::ErrorCode::SpeakerNotEnrolled) => Self::SpeakerNotEnrolled,
-            Ok(wire::ErrorCode::SpeakerInconsistentSamples) => Self::SpeakerInconsistentSamples,
-            Ok(wire::ErrorCode::SpeakerProfileWriteFailed) => Self::SpeakerProfileWriteFailed,
-            Ok(wire::ErrorCode::SpeakerNoSpeech) => Self::SpeakerNoSpeech,
-            Ok(wire::ErrorCode::ListenUnsupportedOs) => Self::ListenUnsupportedOs,
-            Ok(wire::ErrorCode::ListenPermissionDenied) => Self::ListenPermissionDenied,
-            Ok(wire::ErrorCode::ListenCaptureFailed) => Self::ListenCaptureFailed,
-            Ok(wire::ErrorCode::HistoryMissing) => Self::HistoryMissing,
-            Ok(wire::ErrorCode::HistoryAudioUnavailable) => Self::HistoryAudioUnavailable,
-            Ok(wire::ErrorCode::HistoryUnavailable) => Self::HistoryUnavailable,
-            Ok(wire::ErrorCode::HistoryProjectUnavailable) => Self::HistoryProjectUnavailable,
-            Ok(wire::ErrorCode::Unspecified) => {
-                return Err(ProtocolError::InvalidEnum {
-                    field: "error code",
-                    value: code,
-                });
-            }
-            Err(_unknown) => Self::Unknown(code),
-        };
-        Ok(decoded)
-    }
+pub(crate) fn error_code_from_number(code: i32) -> Result<RpcErrorCode, ProtocolError> {
+    let decoded = match wire::ErrorCode::try_from(code) {
+        Ok(wire::ErrorCode::InvalidRequest) => RpcErrorCode::InvalidRequest,
+        Ok(wire::ErrorCode::Busy) => RpcErrorCode::Busy,
+        Ok(wire::ErrorCode::Internal) => RpcErrorCode::Internal,
+        Ok(wire::ErrorCode::Cancelled) => RpcErrorCode::Cancelled,
+        Ok(wire::ErrorCode::Unauthenticated) => RpcErrorCode::Unauthenticated,
+        Ok(wire::ErrorCode::Unsupported) => RpcErrorCode::Unsupported,
+        Ok(wire::ErrorCode::ShuttingDown) => RpcErrorCode::ShuttingDown,
+        Ok(wire::ErrorCode::PayloadTooLarge) => RpcErrorCode::PayloadTooLarge,
+        Ok(wire::ErrorCode::PermissionDenied) => RpcErrorCode::PermissionDenied,
+        Ok(wire::ErrorCode::DurabilityUnconfirmed) => RpcErrorCode::DurabilityUnconfirmed,
+        Ok(wire::ErrorCode::SettingsInvalid) => RpcErrorCode::SettingsInvalid,
+        Ok(wire::ErrorCode::OverallTimeout) => RpcErrorCode::OverallTimeout,
+        Ok(wire::ErrorCode::RecordingTimeout) => RpcErrorCode::RecordingTimeout,
+        Ok(wire::ErrorCode::DeliveryTimeout) => RpcErrorCode::DeliveryTimeout,
+        Ok(wire::ErrorCode::CaptureFailed) => RpcErrorCode::CaptureFailed,
+        Ok(wire::ErrorCode::NoSpeech) => RpcErrorCode::NoSpeech,
+        Ok(wire::ErrorCode::TranscriptionFailed) => RpcErrorCode::TranscriptionFailed,
+        Ok(wire::ErrorCode::DeliveryFailed) => RpcErrorCode::DeliveryFailed,
+        Ok(wire::ErrorCode::DeliveryTargetChanged) => RpcErrorCode::DeliveryTargetChanged,
+        Ok(wire::ErrorCode::DeliveryInterrupted) => RpcErrorCode::DeliveryInterrupted,
+        Ok(wire::ErrorCode::ApplicationExcluded) => RpcErrorCode::ApplicationExcluded,
+        Ok(wire::ErrorCode::SynthesisFailed) => RpcErrorCode::SynthesisFailed,
+        Ok(wire::ErrorCode::PlaybackFailed) => RpcErrorCode::PlaybackFailed,
+        Ok(wire::ErrorCode::SpeechTimeout) => RpcErrorCode::SpeechTimeout,
+        Ok(wire::ErrorCode::VoiceUnavailable) => RpcErrorCode::VoiceUnavailable,
+        Ok(wire::ErrorCode::AssistantUnavailable) => RpcErrorCode::AssistantUnavailable,
+        Ok(wire::ErrorCode::AssistantFailed) => RpcErrorCode::AssistantFailed,
+        Ok(wire::ErrorCode::AssistantTimeout) => RpcErrorCode::AssistantTimeout,
+        Ok(wire::ErrorCode::AssistantSignedOut) => RpcErrorCode::AssistantSignedOut,
+        Ok(wire::ErrorCode::PromptUnreadable) => RpcErrorCode::PromptUnreadable,
+        Ok(wire::ErrorCode::SpeakerModelMissing) => RpcErrorCode::SpeakerModelMissing,
+        Ok(wire::ErrorCode::SpeakerAlreadyEnrolled) => RpcErrorCode::SpeakerAlreadyEnrolled,
+        Ok(wire::ErrorCode::SpeakerNotEnrolled) => RpcErrorCode::SpeakerNotEnrolled,
+        Ok(wire::ErrorCode::SpeakerInconsistentSamples) => RpcErrorCode::SpeakerInconsistentSamples,
+        Ok(wire::ErrorCode::SpeakerProfileWriteFailed) => RpcErrorCode::SpeakerProfileWriteFailed,
+        Ok(wire::ErrorCode::SpeakerNoSpeech) => RpcErrorCode::SpeakerNoSpeech,
+        Ok(wire::ErrorCode::ListenUnsupportedOs) => RpcErrorCode::ListenUnsupportedOs,
+        Ok(wire::ErrorCode::ListenPermissionDenied) => RpcErrorCode::ListenPermissionDenied,
+        Ok(wire::ErrorCode::ListenCaptureFailed) => RpcErrorCode::ListenCaptureFailed,
+        Ok(wire::ErrorCode::HistoryMissing) => RpcErrorCode::HistoryMissing,
+        Ok(wire::ErrorCode::HistoryAudioUnavailable) => RpcErrorCode::HistoryAudioUnavailable,
+        Ok(wire::ErrorCode::HistoryUnavailable) => RpcErrorCode::HistoryUnavailable,
+        Ok(wire::ErrorCode::HistoryProjectUnavailable) => RpcErrorCode::HistoryProjectUnavailable,
+        Ok(wire::ErrorCode::Unspecified) => {
+            return Err(ProtocolError::InvalidEnum {
+                field: "error code",
+                value: code,
+            });
+        }
+        Err(_unknown) => RpcErrorCode::Unknown(code),
+    };
+    Ok(decoded)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2226,7 +2218,7 @@ pub enum ProtocolError {
     #[error("invalid vocabulary term count {0}")]
     InvalidVocabularyTerms(u64),
     #[error(transparent)]
-    InvalidVocabularyDir(#[from] crate::settings::DirectoryError),
+    InvalidVocabularyDir(#[from] aria_settings::settings::DirectoryError),
     #[error("invalid {field} value {value}")]
     InvalidEnum { field: &'static str, value: i32 },
 
@@ -2319,7 +2311,7 @@ mod tests {
     fn a_settings_fault_keeps_its_position_on_the_wire() {
         let failure = RpcFailure::new(RpcErrorCode::SettingsInvalid, "fix settings.toml first")
             .with_settings_position(Some(Position { line: 3, column: 7 }));
-        let status = tonic::Status::from(failure.clone());
+        let status = crate::ipc::protocol::failure_status(failure.clone());
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
         assert_eq!(rpc_failure(&status), Some(failure));
 
@@ -2487,7 +2479,7 @@ mod tests {
     }
 
     fn error_code_label(code: i32) -> &'static str {
-        RpcErrorCode::try_from(code).map_or("unspecified", |code| code.label())
+        error_code_from_number(code).map_or("unspecified", |code| code.label())
     }
 
     #[test]
@@ -2506,10 +2498,10 @@ mod tests {
         ];
 
         for failure in &failures {
-            let sent = i32::from(RpcErrorCode::from(failure));
+            let sent = error_code_number(RpcErrorCode::from(failure));
 
             assert_eq!(
-                RpcErrorCode::try_from(sent).ok(),
+                error_code_from_number(sent).ok(),
                 Some(failure.into()),
                 "{failure}"
             );
@@ -2521,7 +2513,7 @@ mod tests {
     fn a_failure_round_trips_through_the_status_details() {
         let failure = RpcFailure::new(RpcErrorCode::NoSpeech, "no speech was detected");
 
-        let status = Status::from(failure.clone());
+        let status = crate::ipc::protocol::failure_status(failure.clone());
 
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
         assert_eq!(status.message(), failure.message);
@@ -2539,7 +2531,7 @@ mod tests {
     fn the_zero_code_names_no_failure() {
         let unspecified = wire::ErrorCode::Unspecified as i32;
 
-        assert!(RpcErrorCode::try_from(unspecified).is_err());
+        assert!(error_code_from_number(unspecified).is_err());
         assert_eq!(error_code_label(unspecified), "unspecified");
     }
 
@@ -2970,8 +2962,8 @@ mod tests {
 
     #[test]
     fn project_context_preserves_presence_and_rejects_invalid_paths() {
-        use crate::settings::Directory;
         use crate::vocabulary::Context;
+        use aria_settings::settings::Directory;
         for project in [
             Context::Default,
             Context::Disabled,
@@ -3199,14 +3191,14 @@ mod tests {
         assert_eq!(unchecked.status, wire::AssistantStatus::Unchecked as i32);
         assert!(unchecked.fix.contains("deadline"), "{}", unchecked.fix);
 
-        assert_eq!(i32::from(RpcErrorCode::AssistantSignedOut), 303);
+        assert_eq!(error_code_number(RpcErrorCode::AssistantSignedOut), 303);
         assert!(matches!(
-            RpcErrorCode::try_from(303),
+            error_code_from_number(303),
             Ok(RpcErrorCode::AssistantSignedOut)
         ));
-        assert_eq!(i32::from(RpcErrorCode::PromptUnreadable), 304);
+        assert_eq!(error_code_number(RpcErrorCode::PromptUnreadable), 304);
         assert!(matches!(
-            RpcErrorCode::try_from(304),
+            error_code_from_number(304),
             Ok(RpcErrorCode::PromptUnreadable)
         ));
     }
@@ -3216,10 +3208,10 @@ mod tests {
         let future = 9_999;
 
         let decoded =
-            RpcErrorCode::try_from(future).expect("an unknown code still names a failure");
+            error_code_from_number(future).expect("an unknown code still names a failure");
 
         assert_eq!(decoded, RpcErrorCode::Unknown(future));
-        assert_eq!(i32::from(decoded), future);
+        assert_eq!(error_code_number(decoded), future);
         assert_eq!(error_code_label(future), "unknown");
     }
 
@@ -3540,11 +3532,11 @@ mod history_tests {
             ),
         ] {
             assert_eq!(
-                RpcErrorCode::try_from(i32::from(code)).expect("known code"),
+                error_code_from_number(error_code_number(code)).expect("known code"),
                 code
             );
             assert_eq!(
-                Status::from(RpcFailure::new(code, "safe message")).code(),
+                crate::ipc::protocol::failure_status(RpcFailure::new(code, "safe message")).code(),
                 grpc
             );
         }

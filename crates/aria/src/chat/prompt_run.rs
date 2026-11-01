@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::AssistantError;
-use crate::settings::PromptKind;
+use aria_settings::settings::PromptKind;
 
 const REWRITE_FRAME: &str = include_str!("../../../../prompts/rewrite.md");
 const COMPOSE_FRAME: &str = include_str!("../../../../prompts/compose.md");

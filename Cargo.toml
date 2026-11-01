@@ -9,6 +9,7 @@ members = [
   "crates/aria",
   "crates/aria-bench",
   "crates/aria-bench-speaker",
+  "crates/aria-settings",
   "crates/aria-harness",
   "crates/aria-kit",
   "crates/aria-platform",
@@ -47,6 +48,7 @@ strip = "none"
 # stays in that member's manifest.
 [workspace.dependencies]
 # crates.io requires a version beside each internal path.
+aria-settings     = { path = "crates/aria-settings", version = "0.7.0" }
 aria-harness      = { path = "crates/aria-harness", version = "0.7.0" }
 aria-kit          = { path = "crates/aria-kit", version = "0.7.0" }
 aria-platform     = { path = "crates/aria-platform", version = "0.7.0" }

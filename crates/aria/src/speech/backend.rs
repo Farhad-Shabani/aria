@@ -8,8 +8,8 @@ use aria_tts::qwen::Qwen;
 use aria_tts::system::SystemVoice;
 
 use crate::config::{TtsBackend, TtsEngine, TtsFallback, TtsModel};
-use crate::rpc::RpcErrorCode;
 use crate::synthesis::{PlaybackError, Session, SpeakerOutput, Synthesis, SynthesisError};
+use aria_settings::rpc::RpcErrorCode;
 
 use super::{
     ExecutionControl, SpeechError, SpeechEventEmitter, SpeechExecutor, SpeechOutcome,

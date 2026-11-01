@@ -66,7 +66,7 @@ impl RpcErrorCode {
     }
 
     /// What a failure says to a person: its own text, or else its code.
-    pub(crate) fn reason(self, message: &str) -> String {
+    pub fn reason(self, message: &str) -> String {
         if message.is_empty() {
             self.words()
         } else {
@@ -142,10 +142,7 @@ impl RpcFailure {
         }
     }
 
-    pub(crate) fn with_settings_position(
-        mut self,
-        position: Option<crate::settings::Position>,
-    ) -> Self {
+    pub fn with_settings_position(mut self, position: Option<crate::settings::Position>) -> Self {
         self.settings_position = position;
         self
     }

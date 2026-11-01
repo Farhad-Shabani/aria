@@ -11,17 +11,18 @@ use crate::chat::{
     PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
     read_instructions,
 };
-use crate::config::{AssistantId, ChatConfig, ConfigError, MemoryConfig, SpeakerConfig};
+use crate::config::{ChatConfig, MemoryConfig, SpeakerConfig};
 use crate::memory::{DB_FILE, Store, load_profile_block};
 use crate::primitives::error_chain;
-use crate::rpc::RpcErrorCode;
-use crate::settings::{ApplicationId, SettingsCache, SettingsStore};
 use crate::speaker::{ProfileStore, Role};
 use aria_kit::cancel::CancelToken;
 use aria_platform::delivery::{
     DeliveryError, DeliveryFactory, DeliveryOutcome, OutputMode, PlatformTextDelivery,
     TargetPolicy, TextDelivery,
 };
+use aria_settings::config::{AssistantId, ConfigError};
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::{ApplicationId, SettingsCache, SettingsStore};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -645,7 +646,7 @@ pub(super) mod tests {
     use std::sync::Mutex;
     use std::sync::mpsc::{Sender, channel};
 
-    use crate::settings::PromptKind;
+    use aria_settings::settings::PromptKind;
 
     use super::*;
 
@@ -803,7 +804,7 @@ pub(super) mod tests {
         let for_models = Arc::clone(&assistant_factory);
         let cache = Arc::new(
             SettingsCache::open(
-                crate::settings::default_path(directory),
+                aria_settings::settings::default_path(directory),
                 directory.to_path_buf(),
             )
             .expect("test settings"),
@@ -884,7 +885,7 @@ pub(super) mod tests {
 
     #[test]
     fn ask_models_are_bound_at_admission_and_request_overrides_win() {
-        use crate::settings::SettingsPatch;
+        use aria_settings::settings::SettingsPatch;
         let home = tempfile::tempdir().unwrap();
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         runtime
@@ -930,7 +931,7 @@ pub(super) mod tests {
 
     #[test]
     fn prompts_and_ask_targets_share_the_saved_assistant() {
-        use crate::settings::{Prompt, PromptId, Prompts, SettingsPatch};
+        use aria_settings::settings::{Prompt, PromptId, Prompts, SettingsPatch};
 
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir(home.path().join(".aria")).unwrap();
@@ -1003,7 +1004,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_prompt_request_names_only_a_stored_prompt_that_is_on() {
-        use crate::settings::{Prompt, PromptId, Prompts, SettingsPatch};
+        use aria_settings::settings::{Prompt, PromptId, Prompts, SettingsPatch};
 
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
@@ -1347,7 +1348,7 @@ pub(super) mod tests {
         let (runtime, events) = runtime_with(directory.path(), assistant_factory);
         let written = runtime
             .settings
-            .modify(crate::settings::SettingsPatch {
+            .modify(aria_settings::settings::SettingsPatch {
                 assistant_id: Some(AssistantId::Codex),
                 ..Default::default()
             })

@@ -12,8 +12,8 @@ use super::{
     AriaKeyName, DeliveryModeName, InvalidValue, Key, Keyed, OutputModeName, Patch, SettingsError,
     SettingsFile, ShortcutEntry, invalid,
 };
-use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
+use aria_kit::audio::{AutoStop, SilenceDuration};
 
 impl Settings {
     pub(crate) fn from_file(settings: &SettingsFile) -> Result<Self, SettingsError> {

@@ -12,14 +12,14 @@ use std::thread;
 const EVENT_BUFFER: usize = 16;
 
 #[derive(Clone)]
-pub(crate) struct EventEmitter<T> {
+pub struct EventEmitter<T> {
     forward: Arc<dyn Fn(T) + Send + Sync>,
 }
 
 impl<T: Send + 'static> EventEmitter<T> {
     /// Hands the subscriber a thread of its own and returns the emitter that
     /// feeds it.
-    pub(crate) fn subscribed_by(
+    pub fn subscribed_by(
         thread_name: &'static str,
         subscriber: impl Fn(T) + Send + 'static,
     ) -> Self {
@@ -49,13 +49,13 @@ impl<T: Send + 'static> EventEmitter<T> {
     }
 
     /// Nobody is listening, so nothing is sent and no thread runs.
-    pub(crate) fn unsubscribed() -> Self {
+    pub fn unsubscribed() -> Self {
         Self::forwarded_by(|_| {})
     }
 
     // `forward` must only enqueue, such as into another emitter, so subscriber
     // work stays off the emitting thread.
-    pub(crate) fn forwarded_by(forward: impl Fn(T) + Send + Sync + 'static) -> Self {
+    pub fn forwarded_by(forward: impl Fn(T) + Send + Sync + 'static) -> Self {
         Self {
             forward: Arc::new(forward),
         }
@@ -63,7 +63,7 @@ impl<T: Send + 'static> EventEmitter<T> {
 
     /// An event that cannot be delivered is dropped. Its contents are never
     /// logged: an event may carry what the user said.
-    pub(crate) fn emit(&self, stage: impl Into<T>) {
+    pub fn emit(&self, stage: impl Into<T>) {
         (self.forward)(stage.into());
     }
 }

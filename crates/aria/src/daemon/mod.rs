@@ -68,7 +68,6 @@ pub use crate::chat::{
     Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
     Focus, Project, ProjectsError, Step, Ticket,
 };
-pub use crate::config::AssistantId;
 pub use crate::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -77,7 +76,8 @@ pub use crate::enrollment::{
 };
 pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
 pub use crate::listen::ListenStage;
-pub use crate::settings::DeliveryMode;
 pub use crate::speaker::{Role, SpeakerName, SpeakerNameError};
 pub use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 pub use aria_platform::delivery::OutputMode;
+pub use aria_settings::config::AssistantId;
+pub use aria_settings::settings::DeliveryMode;

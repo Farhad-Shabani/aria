@@ -7,7 +7,8 @@ use crate::audio::{
     AudioCapture, CaptureError, Microphone, PreparedMicrophone, RecordingMode, RecordingReader,
     StopSignal, WakeWordMonitor, WavReplayCapture,
 };
-use crate::config::{CaptureConfig, ConfigError, WakeConfig};
+use crate::config::{CaptureConfig, WakeConfig};
+use aria_settings::config::ConfigError;
 
 use super::DictationInitializationError;
 use super::wake::WakeDetector;

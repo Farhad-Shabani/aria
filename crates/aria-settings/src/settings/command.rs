@@ -10,7 +10,7 @@ use super::keys::{DELIVERY_MODES, Kind, OUTPUT_MODES};
 use super::{
     Apply, Key, Patch, Refusal, SettingsError, SettingsFault, Written, default_path, document,
 };
-use crate::primitives::user_home::{self, UserHomeError};
+use aria_primitives::user_home::{self, UserHomeError};
 
 /// One key as `aria settings show` reports it.
 #[derive(Debug, Clone, PartialEq)]
@@ -448,9 +448,6 @@ fn defaults_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        ChatConfig, DictationConfig, ListenConfig, MemoryConfig, SpeakerConfig, TtsConfig,
-    };
     use crate::settings::Loaded;
     use std::fs;
 
@@ -739,8 +736,6 @@ mod tests {
         let defaults = Loaded::parse(&defaults_text(), home)
             .expect("every default is valid")
             .settings;
-        let empty = crate::settings::SettingsFile::default();
-        let home_dir = home.to_path_buf();
 
         let mut settings = crate::settings::Settings::from_file(&defaults).expect("valid");
         assert_eq!(
@@ -748,30 +743,6 @@ mod tests {
             Some(crate::settings::Settings::default().resolve_assistant_id())
         );
         assert_eq!(crate::settings::Settings::default(), settings);
-        assert_eq!(
-            DictationConfig::load(&defaults, &home_dir).unwrap(),
-            DictationConfig::load(&empty, &home_dir).unwrap()
-        );
-        assert_eq!(
-            TtsConfig::load(&defaults.tts, &home_dir).unwrap(),
-            TtsConfig::load(&empty.tts, &home_dir).unwrap()
-        );
-        assert_eq!(
-            ChatConfig::load(&defaults).unwrap(),
-            ChatConfig::load(&empty).unwrap()
-        );
-        assert_eq!(
-            MemoryConfig::load(&defaults.memory, &home_dir),
-            MemoryConfig::load(&empty.memory, &home_dir)
-        );
-        assert_eq!(
-            SpeakerConfig::load(&defaults.speaker, &home_dir),
-            SpeakerConfig::load(&empty.speaker, &home_dir)
-        );
-        assert_eq!(
-            ListenConfig::load(&defaults, &home_dir).unwrap(),
-            ListenConfig::load(&empty, &home_dir).unwrap()
-        );
     }
 
     #[test]

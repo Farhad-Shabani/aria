@@ -16,7 +16,7 @@ use toml_edit::{DocumentMut, Item, TableLike, Value};
 
 use super::document::{self, Keyed, Loaded, Stamp, Text, read_text};
 use super::{Apply, InvalidValue, Key, MAX_SETTINGS_BYTES, Revision, SettingsError, lock_path};
-use crate::primitives::private_fs;
+use aria_primitives::private_fs;
 
 const LOCK_RETRY_BUDGET: Duration = Duration::from_secs(2);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
@@ -38,7 +38,7 @@ const EXAMPLE: &str = include_str!("../../../../settings.example.toml");
 
 /// The keys one write changes. Everything else in the file stays as it was.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Patch {
+pub struct Patch {
     changes: Vec<Edit>,
 }
 
@@ -60,16 +60,16 @@ enum Change {
 }
 
 impl Patch {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn set(&mut self, key: Key, value: impl Into<Value>) -> &mut Self {
+    pub fn set(&mut self, key: Key, value: impl Into<Value>) -> &mut Self {
         self.push(key, Vec::new(), Change::Set(Item::Value(value.into())))
     }
 
     /// A value inside a keyed table: an entry, or a field below one.
-    pub(crate) fn set_below(&mut self, key: Key, below: Vec<String>, value: Value) -> &mut Self {
+    pub fn set_below(&mut self, key: Key, below: Vec<String>, value: Value) -> &mut Self {
         let item = match below.as_slice() {
             [_entry] => entry_item(value),
             _ => Item::Value(value),
@@ -78,7 +78,7 @@ impl Patch {
     }
 
     /// Any value the key's type serializes, as one value.
-    pub(crate) fn set_encoded<T: serde::Serialize + ?Sized>(
+    pub fn set_encoded<T: serde::Serialize + ?Sized>(
         &mut self,
         key: Key,
         value: &T,
@@ -162,12 +162,12 @@ impl Patch {
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
 
     /// Removes the key's line, so the default applies.
-    pub(crate) fn reset(&mut self, key: Key) -> &mut Self {
+    pub fn reset(&mut self, key: Key) -> &mut Self {
         self.push(key, Vec::new(), Change::Reset)
     }
 
@@ -177,7 +177,7 @@ impl Patch {
     }
 
     /// Each key the patch touches, once.
-    pub(crate) fn keys(&self) -> impl Iterator<Item = Key> + use<> {
+    pub fn keys(&self) -> impl Iterator<Item = Key> + use<> {
         let mut keys: Vec<Key> = Vec::new();
         for edit in &self.changes {
             if !keys.contains(&edit.key) {
@@ -318,7 +318,7 @@ fn reorder(table: &mut dyn TableLike, order: &[String]) {
 }
 
 #[derive(Debug)]
-pub(crate) enum Written {
+pub enum Written {
     Applied(Loaded),
     /// Written, but a restart-marked key changed.
     AppliedRestartKey(Loaded),
@@ -335,7 +335,7 @@ impl Written {
 }
 
 #[derive(Debug)]
-pub(crate) enum Refusal {
+pub enum Refusal {
     /// The file no longer holds the revision the patch was made against.
     /// `current` is what it holds instead.
     Conflict { current: Box<Loaded> },
@@ -350,7 +350,7 @@ pub(crate) enum Refusal {
 
 /// The one write path, with the patch made by `edit` from the file as it
 /// stands under the lock.
-pub(crate) fn modify<E: From<SettingsError>>(
+pub fn modify<E: From<SettingsError>>(
     path: &Path,
     home: &Path,
     expected: Option<Revision>,
@@ -434,11 +434,7 @@ fn starter_text() -> String {
 
 /// What [`modify`] would do with `patch`, without the lock and without
 /// writing: a check before work that a refused write would waste.
-pub(crate) fn check_patch(
-    path: &Path,
-    home: &Path,
-    patch: &Patch,
-) -> Result<Written, SettingsError> {
+pub fn check_patch(path: &Path, home: &Path, patch: &Patch) -> Result<Written, SettingsError> {
     let target = resolve_symlinks(path)?;
     let text = match read_text(&target) {
         Ok(text) => text,
@@ -685,11 +681,11 @@ fn replace_file(target: &Path, text: &str, mode: u32) -> Result<Stamp, SettingsE
 /// Keeps the schema the header names beside settings.toml. Editors are all
 /// that read it, so a directory that refuses it, such as a read-only Nix
 /// store, costs a warning and nothing else.
-pub(crate) fn write_schema_beside(settings_path: &Path) {
+pub fn write_schema_beside(settings_path: &Path) {
     if let Err(error) = update_schema(settings_path) {
         tracing::warn!(
             path = %settings_path.display(),
-            error = %crate::primitives::error_chain(&error),
+            error = %aria_primitives::error_chain(&error),
             "settings schema not written"
         );
     }

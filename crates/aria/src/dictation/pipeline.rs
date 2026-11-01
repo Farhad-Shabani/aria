@@ -1348,7 +1348,6 @@ mod tests {
         timed,
     };
     use crate::dictation::{Cursor, RecordingId};
-    use crate::rpc::RpcErrorCode;
     use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
     use crate::transcription::{
         Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcription,
@@ -1359,6 +1358,7 @@ mod tests {
     use aria_kit::speaker::LevelSegmenter;
     use aria_kit::speaker::{Diarizer, SpeakerError};
     use aria_platform::delivery::{DeliveryError, OutputMode, TextDelivery};
+    use aria_settings::rpc::RpcErrorCode;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

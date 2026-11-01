@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail, ensure};
-use aria::config::{TranscriptionConfig, TranscriptionDevice, backend};
+use aria::config::{TranscriptionConfig, TranscriptionDevice};
 use aria_harness::{Sandbox, inputs, log, start_service, stats, toml_string};
+use aria_settings::config::backend;
 
 mod dictation_delivery;
 mod engines;

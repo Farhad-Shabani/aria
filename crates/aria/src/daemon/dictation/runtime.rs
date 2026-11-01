@@ -9,23 +9,22 @@ use super::assembly::{
     build_dictation, transcribe_retry,
 };
 use crate::audio::{RecordingReader, WakeWordMonitor};
-use crate::config::{
-    ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
-};
+use crate::config::{DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig};
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
     subscribers::DictationSubscribers,
 };
-use crate::event::EventEmitter;
 use crate::history::{HistoryEntry, HistoryError, RetryOptions};
 use crate::microphone::Gate;
 use crate::primitives::lazy::Lazy;
-use crate::rpc::RpcErrorCode;
-use crate::settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use crate::transcription::Language;
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
+use aria_settings::config::{ConfigError, backend};
+use aria_settings::event::EventEmitter;
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -553,7 +552,7 @@ fn retry_settings(
             if !path.is_dir() {
                 return Err(HistoryError::ProjectUnavailable);
             }
-            crate::settings::Directory::new(path.clone())
+            aria_settings::settings::Directory::new(path.clone())
                 .map_err(|_| HistoryError::ProjectUnavailable)
         })
         .transpose()?;
@@ -622,7 +621,7 @@ mod event_tests {
     use std::time::Duration;
 
     use crate::daemon::subscriptions::EVENT_BUFFER;
-    use crate::settings::SettingsPatch;
+    use aria_settings::settings::SettingsPatch;
 
     use super::*;
 
@@ -846,7 +845,7 @@ mod event_tests {
             _: &mut RecordingReader,
             _: &Language,
             _: bool,
-            _: Option<&crate::settings::Directory>,
+            _: Option<&aria_settings::settings::Directory>,
             _: crate::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
@@ -887,7 +886,7 @@ mod history_tests {
 
     use crate::dictation::{DictationExecutor, DictationPolicy, DictationResult, ExecutionControl};
     use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
-    use crate::settings::Settings;
+    use aria_settings::settings::Settings;
 
     use super::*;
 
@@ -911,7 +910,7 @@ mod history_tests {
             recording: &mut RecordingReader,
             language: &Language,
             own_voice_only: bool,
-            project: Option<&crate::settings::Directory>,
+            project: Option<&aria_settings::settings::Directory>,
             _: crate::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
@@ -1013,7 +1012,7 @@ mod history_tests {
         fixture
             .runtime
             .settings
-            .modify(crate::settings::SettingsPatch {
+            .modify(aria_settings::settings::SettingsPatch {
                 history_enabled: Some(false),
                 ..Default::default()
             })
@@ -1043,7 +1042,7 @@ mod history_tests {
         fixture
             .runtime
             .settings
-            .modify(crate::settings::SettingsPatch {
+            .modify(aria_settings::settings::SettingsPatch {
                 history_keep_audio: Some(true),
                 ..Default::default()
             })
@@ -1145,22 +1144,24 @@ mod history_tests {
             fixture
                 .runtime
                 .settings
-                .modify(crate::settings::SettingsPatch {
+                .modify(aria_settings::settings::SettingsPatch {
                     history_keep_audio: Some(true),
                     ..Default::default()
                 })
                 .unwrap();
             let home_dir = home.clone();
             let mut config =
-                DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir)
+                DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
                     .unwrap();
             config.transcription = TranscriptionBackend::Server { endpoint };
             config.capture = crate::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: crate::audio::ReplayPace::Immediate,
             };
-            let speaker =
-                SpeakerConfig::load(&crate::settings::SettingsFile::default().speaker, &home_dir);
+            let speaker = SpeakerConfig::load(
+                &aria_settings::settings::SettingsFile::default().speaker,
+                &home_dir,
+            );
             let (vocabulary, _worker) = VocabularyRuntime::new(
                 home.join("vocabulary"),
                 None,
@@ -1300,7 +1301,7 @@ mod history_tests {
             own_voice_only: true,
             vocabulary_enabled: true,
             vocabulary_dir: Some(
-                crate::settings::Directory::new(directory.path().to_path_buf()).unwrap(),
+                aria_settings::settings::Directory::new(directory.path().to_path_buf()).unwrap(),
             ),
             ..Default::default()
         };

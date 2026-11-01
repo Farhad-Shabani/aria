@@ -345,7 +345,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::chat::ChatStageKind;
-    use crate::rpc::RpcErrorCode;
+    use aria_settings::rpc::RpcErrorCode;
 
     use super::super::runtime::tests::{ParkedAssistant, request, runtime_with};
     use super::*;
@@ -662,9 +662,9 @@ mod tests {
         let prompt = || {
             ChatJob::Prompt(PromptRequest {
                 text: "hi".to_owned(),
-                kind: crate::settings::PromptKind::Rewrite,
+                kind: aria_settings::settings::PromptKind::Rewrite,
                 file: "/p.md".into(),
-                assistant_id: crate::config::AssistantId::ClaudeCode,
+                assistant_id: aria_settings::config::AssistantId::ClaudeCode,
                 model_id: None,
                 application: None,
                 tap_cancels: false,

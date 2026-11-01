@@ -1,9 +1,10 @@
 //! Composition of a speech capability: backend loading and the coordinator
 //! the runtime executes.
 
-use crate::config::{ConfigError, TtsConfig, TtsEngine};
-use crate::rpc::RpcErrorCode;
+use crate::config::{TtsConfig, TtsEngine};
 use crate::speech::{SpeechBackend, SpeechBuildError, SpeechCoordinator};
+use aria_settings::config::ConfigError;
+use aria_settings::rpc::RpcErrorCode;
 
 pub(super) struct BuiltSpeech {
     pub(super) coordinator: SpeechCoordinator<SpeechBackend>,

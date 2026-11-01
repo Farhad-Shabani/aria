@@ -13,7 +13,7 @@ use tonic::{Request, Status};
 
 use crate::primitives::error_chain;
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 /// Where the material lives under the user's home. The Mac app deletes this
 /// file to revoke every phone, so its path is pinned by a test.
@@ -252,11 +252,10 @@ pub(in crate::daemon) fn require_paired(
         Some(fingerprint) if phones.contains(&fingerprint) => Ok(request),
         _ => {
             tracing::debug!("refused a request from a phone that is not paired");
-            Err(RpcFailure::new(
+            Err(crate::ipc::protocol::failure_status(RpcFailure::new(
                 RpcErrorCode::Unauthenticated,
                 "pair this device with the Mac first",
-            )
-            .into())
+            )))
         }
     }
 }

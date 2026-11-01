@@ -8,10 +8,10 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 use crate::chat::{AssistantError, ChatError, ChatRequest, PromptCall, Ticket};
-use crate::config::AssistantId;
 use crate::ipc::wire;
 use crate::primitives::error_chain;
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::config::AssistantId;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::chat::{ChatCallError, ChatHandle, ChatRuntime};
 use super::super::host::DaemonLifetime;

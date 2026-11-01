@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use super::PairedServer;
-use crate::config::ServerEndpoint;
 use crate::daemon::relay::{PairingCode, PairingCodes, PairingError, fingerprint, mint, to_hex};
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::private_document::{DocumentError, PrivateDocument};
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::config::ServerEndpoint;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 pub(super) const MAX_DOCUMENT_BYTES: u64 = 16 * 1024;
 const MAX_CLIENTS: usize = 16;

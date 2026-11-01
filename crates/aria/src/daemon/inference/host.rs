@@ -13,7 +13,7 @@ use tokio_util::task::TaskTracker;
 use tonic::service::interceptor::InterceptedService;
 
 use crate::audio::remove_all_spools;
-use crate::config::{ConfigError, TranscriptionBackend};
+use crate::config::TranscriptionBackend;
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -30,6 +30,7 @@ use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use crate::transcription::TranscriptionError;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
+use aria_settings::config::ConfigError;
 
 use super::engine::Engine;
 use super::identity::{self, ServerAccess};
@@ -46,14 +47,14 @@ pub fn serve_inference(bind: SocketAddr) -> Result<(), InferenceHostError> {
 
 fn run(address: SocketAddr) -> Result<(), HostFailure> {
     let shutdown = ShutdownSignal::install()?;
-    let home = crate::config::home_directory()?;
+    let home = aria_settings::config::home_directory()?;
     // A headless server reads engine keys and never writes.
-    let settings = crate::settings::load(&home).map_err(ConfigError::from)?;
+    let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
     let config = match TranscriptionBackend::load(&settings.stt, &home)? {
         TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
         TranscriptionBackend::Server { .. } => {
             return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
-                backend: crate::config::backend::SERVER,
+                backend: aria_settings::config::backend::SERVER,
             }));
         }
     };
@@ -329,12 +330,12 @@ pub(in crate::daemon) mod tests {
     use super::super::identity::{ClientIdentity, Invitation};
     use super::*;
     use crate::audio::RecordingReader;
-    use crate::config::ServerEndpoint;
     use crate::daemon::relay::fingerprint;
     use crate::transcription::{
         AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, Stream as RecognitionStream,
         Transcriber, Transcription, TranscriptionAudio, Whole,
     };
+    use aria_settings::config::ServerEndpoint;
 
     #[derive(Default)]
     pub(in crate::daemon) struct Observed {

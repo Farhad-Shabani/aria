@@ -20,8 +20,8 @@ use tonic::transport::{ClientTlsConfig, Endpoint, Identity};
 use super::identity::{
     CERTIFICATE_NAME, ClientIdentity, Credentials, Invitation, PinnedServer, ServerAccess,
 };
-use crate::config::ServerEndpoint;
 use crate::daemon::relay::fingerprint;
+use aria_settings::config::ServerEndpoint;
 
 pub(super) fn server(access: &Arc<ServerAccess>) -> Result<TlsAcceptor, Error> {
     let verifier = ClientVerifier {

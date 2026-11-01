@@ -41,7 +41,7 @@ fn sound_for(kind: &ChatStageKind) -> Option<String> {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use crate::chat::{ChatReply, Step};
-    use crate::rpc::RpcErrorCode;
+    use aria_settings::rpc::RpcErrorCode;
 
     use super::*;
 

@@ -1,55 +1,34 @@
 //! Resolution of settings-file values and defaults.
 
-use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::audio::ReplayPace;
-use crate::primitives::user_home;
 
-use aria_kit::backend::ModelDownload;
 use aria_kit::synthesis::{SpeakingRate, Voice};
 
 use super::ChatConfig;
 use super::WakeWordOverride;
 use super::{
-    CaptureConfig, ConfigError, DaemonConfig, DictationConfig, DictationTimeouts, HotkeyConfig,
-    ListenConfig, ListenTranscription, MemoryConfig, RelayConfig, SpeakerConfig, SpeechDefaults,
+    CaptureConfig, DaemonConfig, DictationConfig, DictationTimeouts, HotkeyConfig, ListenConfig,
+    ListenTranscription, MemoryConfig, RelayConfig, SpeakerConfig, SpeechDefaults,
     TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig,
-    TtsEngine, TtsFallback, TtsModel, WakeBackend, WakeConfig, backend, tts_backend, wake_backend,
+    TtsEngine, TtsFallback, TtsModel, WakeBackend, WakeConfig,
 };
-use crate::settings::{
+use aria_settings::config::{
+    ConfigError, DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, backend, delivery_timeout,
+    memory_directory, model_file, model_folder, model_location, string_value, timeout, tts_backend,
+    wake_backend,
+};
+use aria_settings::settings::{
     Capture, CaptureBackendName, Delivery, DeviceName, Dictation, Memory, PaceName, Phone,
     SettingsFile, Speaker, Stt, Tts, TtsFallbackName, Wake,
 };
-
-/// Where setup downloads models, relative to home. The default model paths
-/// below sit inside it.
-const MODELS_DIR: &str = ".aria/models";
-
-/// Where each model sits inside the models directory. Setup downloads into
-/// the same folders.
-pub(crate) mod model_folder {
-    pub(crate) const WHISPER: &str = "whisper";
-    pub(crate) const WHISPER_CANDLE: &str = "whisper-candle/tiny.en";
-    pub(crate) const PARAKEET: &str = "parakeet/parakeet-tdt-0.6b-v3";
-    pub(crate) const MOONSHINE: &str = "moonshine/base";
-    pub(crate) const NEMOTRON: &str = "nemotron/nemotron-speech-streaming-en-0.6b";
-    pub(crate) const QWEN: &str = "qwen/qwen3-tts-0.6b-customvoice";
-    pub(crate) const QWEN_TOKENIZER: &str = "qwen/qwen3-tts-tokenizer";
-    pub(crate) const KOKORO: &str = "kokoro";
-    pub(crate) const SPEAKER: &str = "wespeaker/en";
-    pub(crate) const SEGMENTATION: &str = "pyannote";
-}
 
 const DEFAULT_WAKE_MODEL: &str = "wakeword/aria.onnx";
 const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
-pub(crate) const DEFAULT_RECORDING_TIMEOUT: Duration = Duration::from_secs(600);
-const DEFAULT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
-pub(crate) const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(660);
-
 const WAV_FILE_CAPTURE_BACKEND: &str = "wav_file";
 
 /// Long enough for an assistant to read a repo and think.
@@ -57,22 +36,8 @@ const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
 
 const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = ".aria/transcripts";
 const DEFAULT_SPEAKERS_DIR: &str = ".aria/speakers";
-const DEFAULT_MEMORY_DIR: &str = ".aria/memory";
 const DEFAULT_MEMORY_EXTRACT_MODEL: &str = "sonnet";
 const DEFAULT_MEMORY_MAX_FACTS: u32 = 10;
-
-pub(crate) const UNATTENDED_ENV: &str = "ARIA_UNATTENDED";
-const CODEX_HOME_ENV: &str = "CODEX_HOME";
-
-/// Where the Codex CLI keeps its login, as it finds it itself.
-pub(crate) fn codex_home(home: &Path) -> PathBuf {
-    std::env::var_os(CODEX_HOME_ENV).map_or_else(|| home.join(".codex"), PathBuf::from)
-}
-
-/// Raw, because what counts as unattended is the daemon's call.
-pub(crate) fn unattended() -> Result<Option<String>, ConfigError> {
-    environment(UNATTENDED_ENV)
-}
 
 impl DaemonConfig {
     pub(crate) fn load(
@@ -186,13 +151,6 @@ impl SpeakerConfig {
     }
 }
 
-pub(crate) fn memory_directory(memory: &Memory, home: &Path) -> PathBuf {
-    memory
-        .dir
-        .clone()
-        .unwrap_or_else(|| home.join(DEFAULT_MEMORY_DIR))
-}
-
 impl MemoryConfig {
     pub(crate) fn load(memory: &Memory, home: &Path) -> Self {
         Self {
@@ -281,25 +239,6 @@ impl SpeechDefaults {
             rate: speaking_rate(tts.rate)?,
         })
     }
-}
-
-/// A downloaded file's path relative to the models directory.
-fn model_file(folder: &str, file: &ModelDownload) -> PathBuf {
-    Path::new(folder).join(file.file_name)
-}
-
-/// The configured path, else `default` inside the models directory.
-fn model_location(value: Option<&Path>, default: impl AsRef<Path>, home: &Path) -> PathBuf {
-    value.map_or_else(|| models_dir(home).join(default), Path::to_path_buf)
-}
-
-/// The transcription engine the section names, or the default.
-pub(crate) fn transcription_engine(file: &Stt) -> &str {
-    file.backend.as_deref().unwrap_or(backend::DEFAULT)
-}
-
-pub(crate) fn models_dir(home: &Path) -> PathBuf {
-    home.join(MODELS_DIR)
 }
 
 /// A model file or folder Aria loads. `section` is the settings table that
@@ -396,7 +335,7 @@ fn cleanup_llm(dictation: &Dictation) -> Result<Option<super::LlmCleanupConfig>,
     let Some(config) = &dictation.cleanup_llm else {
         return Ok(None);
     };
-    crate::settings::validate_cleanup_llm(&config.endpoint, &config.model)
+    aria_settings::settings::validate_cleanup_llm(&config.endpoint, &config.model)
         .map_err(ConfigError::CleanupLlm)?;
     Ok(Some(super::LlmCleanupConfig {
         endpoint: config.endpoint.clone(),
@@ -602,55 +541,10 @@ fn timeouts(dictation: &Dictation, delivery: &Delivery) -> Result<DictationTimeo
     })
 }
 
-fn delivery_timeout(delivery: &Delivery) -> Result<Duration, ConfigError> {
-    timeout(
-        delivery.timeout_secs,
-        "delivery.timeout_secs",
-        DEFAULT_DELIVERY_TIMEOUT,
-    )
-}
-
-fn string_value(file_value: Option<String>, default: &'static str) -> String {
-    file_value.unwrap_or_else(|| default.to_owned())
-}
-
-fn timeout(
-    file_value: Option<f64>,
-    field: &'static str,
-    default: Duration,
-) -> Result<Duration, ConfigError> {
-    match file_value {
-        Some(seconds) => duration(seconds, field),
-        None => Ok(default),
-    }
-}
-
-fn environment(variable: &'static str) -> Result<Option<String>, ConfigError> {
-    let Some(value) = env::var_os(variable) else {
-        return Ok(None);
-    };
-    value
-        .into_string()
-        .map(Some)
-        .map_err(|_value| ConfigError::InvalidEnvironmentEncoding { variable })
-}
-
-fn duration(seconds: f64, field: &'static str) -> Result<Duration, ConfigError> {
-    if !seconds.is_finite() || seconds <= 0.0 {
-        return Err(ConfigError::InvalidDuration { field, seconds });
-    }
-    Duration::try_from_secs_f64(seconds)
-        .map_err(|_error| ConfigError::InvalidDuration { field, seconds })
-}
-
-pub(crate) fn home_directory() -> Result<PathBuf, ConfigError> {
-    user_home::resolve().map_err(ConfigError::Home)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Loaded;
+    use aria_settings::settings::Loaded;
 
     fn test_home() -> PathBuf {
         PathBuf::from("/home/user")
@@ -1057,7 +951,7 @@ mod tests {
                 workdir: None,
                 project_roots: Vec::new(),
                 timeout: DEFAULT_CHAT_TIMEOUT,
-                delivery_timeout: DEFAULT_DELIVERY_TIMEOUT,
+                delivery_timeout: aria_settings::config::DEFAULT_DELIVERY_TIMEOUT,
             }
         );
     }
@@ -1275,8 +1169,9 @@ mod tests {
         let path = dir.path().join("settings.toml");
         let started = "[stt]\nbackend = \"server\"\nserver = \"https://started.test:9851\"\n";
         std::fs::write(&path, started).expect("written");
-        let store = crate::settings::SettingsCache::open(path.clone(), dir.path().to_path_buf())
-            .expect("opens");
+        let store =
+            aria_settings::settings::SettingsCache::open(path.clone(), dir.path().to_path_buf())
+                .expect("opens");
         std::thread::sleep(Duration::from_millis(20));
         std::fs::write(
             &path,
@@ -1298,5 +1193,72 @@ mod tests {
             panic!("expected a server backend");
         };
         assert_eq!(endpoint.to_string(), "https://started.test:9851");
+    }
+
+    fn defaults_text() -> String {
+        let mut sections = std::collections::BTreeMap::<&str, String>::new();
+        for key in aria_settings::settings::Key::ALL {
+            let Some(literal) = key.default() else {
+                continue;
+            };
+            let (section, name) = key.path().rsplit_once('.').expect("a dotted key");
+            let entries = sections.entry(section).or_default();
+            entries.push_str(&format!("{name} = {literal}\n"));
+        }
+        sections
+            .iter()
+            .map(|(section, entries)| format!("[{section}]\n{entries}"))
+            .collect()
+    }
+
+    #[test]
+    fn the_defaults_load_and_match_what_code_does_without_them() {
+        let home = Path::new("/home/user");
+        let defaults = Loaded::parse(&defaults_text(), home)
+            .expect("every default is valid")
+            .settings;
+        let empty = SettingsFile::default();
+        let home_dir = home.to_path_buf();
+
+        assert_eq!(
+            DictationConfig::load(&defaults, &home_dir).unwrap(),
+            DictationConfig::load(&empty, &home_dir).unwrap()
+        );
+        assert_eq!(
+            TtsConfig::load(&defaults.tts, &home_dir).unwrap(),
+            TtsConfig::load(&empty.tts, &home_dir).unwrap()
+        );
+        assert_eq!(
+            ChatConfig::load(&defaults).unwrap(),
+            ChatConfig::load(&empty).unwrap()
+        );
+        assert_eq!(
+            MemoryConfig::load(&defaults.memory, &home_dir),
+            MemoryConfig::load(&empty.memory, &home_dir)
+        );
+        assert_eq!(
+            SpeakerConfig::load(&defaults.speaker, &home_dir),
+            SpeakerConfig::load(&empty.speaker, &home_dir)
+        );
+        assert_eq!(
+            ListenConfig::load(&defaults, &home_dir).unwrap(),
+            ListenConfig::load(&empty, &home_dir).unwrap()
+        );
+    }
+
+    #[test]
+    fn engine_names_match_what_the_engines_declare() {
+        assert_eq!(backend::WHISPER, aria_stt::whisper::NAME);
+        assert_eq!(backend::WHISPER_CANDLE, aria_stt::whisper_candle::NAME);
+        assert_eq!(backend::PARAKEET, aria_stt::parakeet::NAME);
+        assert_eq!(backend::MOONSHINE, aria_stt::moonshine::NAME);
+        assert_eq!(backend::NEMOTRON, aria_stt::nemotron::NAME);
+        #[cfg(not(target_os = "ios"))]
+        assert_eq!(backend::PARAKEET_MLX, aria_stt::parakeet_mlx::NAME);
+        assert_eq!(tts_backend::KOKORO, aria_tts::kokoro::NAME);
+        assert_eq!(tts_backend::QWEN, aria_tts::qwen::NAME);
+        assert_eq!(tts_backend::SYSTEM, aria_tts::system::NAME);
+        assert_eq!(wake_backend::OPEN_WAKE_WORD, aria_wake::openwakeword::NAME);
+        assert_eq!(wake_backend::LIVEKIT, aria_wake::livekit::NAME);
     }
 }

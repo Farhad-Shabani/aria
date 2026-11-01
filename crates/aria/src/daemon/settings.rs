@@ -10,13 +10,15 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::AssistantId;
-use crate::settings::{SettingsPatch, SettingsSnapshot, SettingsStore, StoreError, UpdateResult};
+use aria_settings::config::AssistantId;
+use aria_settings::settings::{
+    SettingsPatch, SettingsSnapshot, SettingsStore, StoreError, UpdateResult,
+};
 
 use super::operation::{self, CallError, Pending, call};
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
-use crate::settings::SettingsStatus;
+use aria_settings::settings::SettingsStatus;
 
 /// A handoff slot, not a work queue.
 const COMMAND_CAPACITY: usize = 1;

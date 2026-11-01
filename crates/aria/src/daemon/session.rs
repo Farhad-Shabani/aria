@@ -7,7 +7,7 @@ use crate::chat::{
     Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
     ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
-use crate::config::{AssistantId, ChatConfig, ConfigError, WakeWordOverride};
+use crate::config::{ChatConfig, WakeWordOverride};
 use crate::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -17,13 +17,14 @@ use crate::ipc::{
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
 };
 use crate::listen::ListenStage;
-use crate::rpc::RpcErrorCode;
-use crate::settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
 use crate::speaker::SpeakerName;
 use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
+use aria_settings::config::{AssistantId, ConfigError};
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -191,8 +192,8 @@ impl DaemonSession {
         clarify: Clarify,
         assistant_id: AssistantId,
     ) -> Result<Routing, RouteError> {
-        let home = crate::config::home_directory().map_err(ProjectsError::Config)?;
-        let settings = crate::settings::load(&home)
+        let home = aria_settings::config::home_directory().map_err(ProjectsError::Config)?;
+        let settings = aria_settings::settings::load(&home)
             .map_err(ConfigError::from)
             .map_err(ProjectsError::Config)?;
         let config = ChatConfig::load(&settings).map_err(ProjectsError::Config)?;
@@ -279,21 +280,21 @@ impl DaemonSession {
 
     pub fn vocabulary_status(
         &self,
-        directory: Option<&crate::settings::Directory>,
+        directory: Option<&aria_settings::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         self.client.vocabulary_status(directory)
     }
 
     pub fn vocabulary_refresh(
         &self,
-        directory: Option<&crate::settings::Directory>,
+        directory: Option<&aria_settings::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         self.client.vocabulary_refresh(directory)
     }
 
     pub fn vocabulary_forget(
         &self,
-        directory: Option<&crate::settings::Directory>,
+        directory: Option<&aria_settings::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         self.client.vocabulary_forget(directory)
     }
@@ -303,7 +304,7 @@ impl DaemonSession {
     }
 
     /// Whether settings.toml is valid, and what waits for a restart.
-    pub fn settings_status(&self) -> Result<crate::settings::SettingsStatus, ClientError> {
+    pub fn settings_status(&self) -> Result<aria_settings::settings::SettingsStatus, ClientError> {
         self.client.settings_status()
     }
 
@@ -741,10 +742,10 @@ pub fn restart_required_keys() -> Result<Vec<String>, ClientError> {
 #[cfg(test)]
 mod tests {
     use crate::chat::Step;
-    use crate::config::AssistantId;
     use crate::daemon::Daemon;
     use crate::speech::SpeechStage;
     use aria_platform::runtime::RuntimePaths;
+    use aria_settings::config::AssistantId;
 
     use super::*;
 

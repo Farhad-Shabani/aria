@@ -6,8 +6,8 @@
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use crate::rpc::{RpcErrorCode, RpcFailure};
-use crate::settings::{Key, Scope};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::settings::{Key, Scope};
 
 use super::super::service::SettingsRpc;
 use super::redacted;
@@ -74,11 +74,10 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         &self,
         _request: Request<wire::CheckSettingsRequest>,
     ) -> Result<Response<wire::CheckSettingsResponse>, Status> {
-        Err(RpcFailure::new(
+        Err(crate::ipc::protocol::failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             "a patch is checked on the Mac",
-        )
-        .into())
+        )))
     }
 
     /// The status names keys and quotes the file, which stay on the Mac.
@@ -86,11 +85,10 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         &self,
         _request: Request<wire::GetSettingsStatusRequest>,
     ) -> Result<Response<wire::GetSettingsStatusResponse>, Status> {
-        Err(RpcFailure::new(
+        Err(crate::ipc::protocol::failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             "the settings status is read on the Mac",
-        )
-        .into())
+        )))
     }
 }
 
@@ -170,21 +168,19 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         .iter()
         .find(|(key, set)| *set && key.scope() != Scope::Phone)
     {
-        return Err(RpcFailure::new(
+        return Err(crate::ipc::protocol::failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             format!("{key} is only changed on the Mac"),
-        )
-        .into());
+        )));
     }
     if vocabulary_dir
         .as_deref()
         .is_some_and(|path| !path.is_empty())
     {
-        return Err(RpcFailure::new(
+        return Err(crate::ipc::protocol::failure_status(RpcFailure::new(
             RpcErrorCode::PermissionDenied,
             "choose the vocabulary folder on the Mac; a phone can only clear it",
-        )
-        .into());
+        )));
     }
     let copies = output_mode == Some(wire::OutputMode::Copy as i32);
     Ok(wire::SettingsPatch {
@@ -210,8 +206,8 @@ mod tests {
     use super::super::super::tasks::Supervised;
     use super::super::SETTINGS_NEED_FIXING;
     use super::*;
-    use crate::settings::SettingsStatus;
-    use crate::settings::SettingsStore;
+    use aria_settings::settings::SettingsStatus;
+    use aria_settings::settings::SettingsStore;
     use wire::settings_service_server::SettingsService;
 
     struct RunningLan {
@@ -319,12 +315,15 @@ mod tests {
             RpcErrorCode::TranscriptionFailed,
             RpcErrorCode::Unknown(999),
         ] {
-            let status = redacted(RpcFailure::new(code, path).into());
+            let status = redacted(crate::ipc::protocol::failure_status(RpcFailure::new(
+                code, path,
+            )));
             assert!(!status.message().contains(path), "{code:?}");
         }
-        let kept = redacted(
-            RpcFailure::new(RpcErrorCode::InvalidRequest, "memory.enabled is refused").into(),
-        );
+        let kept = redacted(crate::ipc::protocol::failure_status(RpcFailure::new(
+            RpcErrorCode::InvalidRequest,
+            "memory.enabled is refused",
+        )));
         assert_eq!(kept.message(), "memory.enabled is refused");
         let bare = redacted(Status::internal(path));
         assert!(!bare.message().contains(path));

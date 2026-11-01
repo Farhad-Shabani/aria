@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 
 use rustix::fs::{Mode, OFlags};
 
-use crate::config::{ChatConfig, ConfigError};
+use crate::config::ChatConfig;
 use crate::primitives::private_fs::{self, PRIVATE_FILE_MODE};
+use aria_settings::config::ConfigError;
 
 const FOCUS_DIRECTORY: &str = ".aria";
 const FOCUS_FILE: &str = "project";

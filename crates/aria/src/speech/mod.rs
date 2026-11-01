@@ -5,8 +5,8 @@ mod execution;
 
 use aria_kit::synthesis::{SpeakingRate, SpeechText, SynthesisError, Voice};
 
-use crate::event::EventEmitter;
-use crate::rpc::RpcErrorCode;
+use aria_settings::event::EventEmitter;
+use aria_settings::rpc::RpcErrorCode;
 
 pub(crate) use backend::SpeechBackend;
 pub use backend::SpeechBuildError;

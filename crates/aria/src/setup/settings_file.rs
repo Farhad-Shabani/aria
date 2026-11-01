@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use crate::config::{self, ServerEndpoint, backend, tts_backend};
-use crate::settings::{
+use aria_settings::config::{ServerEndpoint, backend, tts_backend};
+use aria_settings::settings::{
     self, AriaKeyName, Key, Patch, Refusal, SettingsError, SettingsFile, Written,
 };
 
@@ -95,7 +95,7 @@ impl Selections {
         paired_server: Option<&ServerEndpoint>,
     ) -> Result<Patch, SettingsError> {
         let mut patch = Patch::new();
-        if config::transcription_engine(&current.stt) != self.stt {
+        if aria_settings::config::transcription_engine(&current.stt) != self.stt {
             for key in [
                 Key::SttModel,
                 Key::SttDevice,
@@ -292,7 +292,7 @@ mod tests {
         fs::write(settings_path(home.path()), "[stt]\nmodel = \"~/tdt\"\n").unwrap();
 
         let default_engine = Selections {
-            stt: config::backend::DEFAULT.to_owned(),
+            stt: aria_settings::config::backend::DEFAULT.to_owned(),
             ..selections()
         };
         default_engine.write(home.path(), None).unwrap();

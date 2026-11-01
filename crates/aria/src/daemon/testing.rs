@@ -28,7 +28,7 @@ impl HostedDaemon {
         Self::serve(|paths| {
             let home = paths.spool_dir();
             std::fs::create_dir_all(home.join(".aria")).expect("the settings directory is created");
-            std::fs::write(crate::settings::default_path(home), config(home))
+            std::fs::write(aria_settings::settings::default_path(home), config(home))
                 .expect("the settings are written");
             assembly::build(paths, DaemonLifetime::OnDemand, WakeWordOverride::Inherit)
         })
@@ -62,7 +62,7 @@ impl HostedDaemon {
     }
 
     pub(in crate::daemon) fn settings_path(&self) -> std::path::PathBuf {
-        crate::settings::default_path(self.paths.spool_dir())
+        aria_settings::settings::default_path(self.paths.spool_dir())
     }
 
     pub(in crate::daemon) fn socket_path(&self) -> &Path {

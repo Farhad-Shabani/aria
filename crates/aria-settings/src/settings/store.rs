@@ -8,8 +8,8 @@ use tokio::sync::watch;
 use super::DeliveryMode;
 use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view};
 use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
-use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
+use aria_kit::audio::{AutoStop, SilenceDuration};
 use aria_platform::delivery::OutputMode;
 use aria_platform::hotkey::AriaKey;
 
@@ -59,18 +59,18 @@ pub enum UpdateResult {
 
 /// The shared settings as a view over the settings file. Every write goes
 /// through the settings write path; the watches belong to the settings cache.
-pub(crate) struct SettingsStore {
+pub struct SettingsStore {
     cache: Arc<SettingsCache>,
 }
 
 impl SettingsStore {
-    pub(crate) fn new(cache: Arc<SettingsCache>) -> Self {
+    pub fn new(cache: Arc<SettingsCache>) -> Self {
         Self { cache }
     }
 
     /// A store over its own settings file at `path`, for tests.
-    #[cfg(test)]
-    pub(crate) fn open(path: impl Into<std::path::PathBuf>) -> Result<Self, StoreError> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open(path: impl Into<std::path::PathBuf>) -> Result<Self, StoreError> {
         let path = path.into();
         let home = path
             .parent()
@@ -80,17 +80,17 @@ impl SettingsStore {
     }
 
     /// The Aria key, `None` while it is off.
-    pub(crate) fn aria_key(&self) -> watch::Receiver<Option<AriaKey>> {
+    pub fn aria_key(&self) -> watch::Receiver<Option<AriaKey>> {
         self.cache.aria_key()
     }
 
-    pub(crate) fn snapshot(&self) -> Result<SettingsSnapshot, StoreError> {
+    pub fn snapshot(&self) -> Result<SettingsSnapshot, StoreError> {
         let loaded = self.cache.snapshot();
         snapshot_of(&loaded)
     }
 
     /// A client's patch against the revision it read.
-    pub(crate) fn update(
+    pub fn update(
         &self,
         expected_revision: u64,
         patch: SettingsPatch,
@@ -99,7 +99,7 @@ impl SettingsStore {
     }
 
     /// The daemon's own write, made against the file as it stands.
-    pub(crate) fn modify(&self, patch: SettingsPatch) -> Result<SettingsSnapshot, StoreError> {
+    pub fn modify(&self, patch: SettingsPatch) -> Result<SettingsSnapshot, StoreError> {
         match self.write(None, patch)? {
             UpdateResult::Updated { snapshot, .. } | UpdateResult::Conflict(snapshot) => {
                 Ok(snapshot)
@@ -109,7 +109,7 @@ impl SettingsStore {
 
     /// Tells whether an update would accept `patch`. Takes no lock and no
     /// revision, so the update can still conflict or find the file busy.
-    pub(crate) fn check(&self, patch: SettingsPatch) -> Result<(), StoreError> {
+    pub fn check(&self, patch: SettingsPatch) -> Result<(), StoreError> {
         let current = self.cache.snapshot();
         let patch = Self::file_patch(patch, &current.settings)?;
         match self.cache.check_patch(&patch)? {
@@ -388,12 +388,6 @@ mod tests {
         let (_home, path, store) = new_store();
         let original = store.snapshot().unwrap().settings;
         assert!(!original.history_keep_audio);
-        let settings = crate::dictation::DictationSettings::resolve(
-            original,
-            crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
-            None,
-        );
-        assert!(!settings.history_keep_audio);
 
         for enabled in [true, false] {
             update(
@@ -409,28 +403,16 @@ mod tests {
                 .unwrap()
                 .settings;
             assert_eq!(loaded.history_keep_audio, enabled);
-            assert_eq!(
-                crate::dictation::DictationSettings::resolve(
-                    loaded,
-                    crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
-                    None
-                )
-                .history_keep_audio,
-                enabled
-            );
-            assert!(!settings.history_keep_audio);
+            assert!(!original.history_keep_audio);
         }
     }
 
     #[test]
-    fn vocabulary_selection_persists_and_respects_request_overrides() {
-        use crate::dictation::{DictationRequest, StopMode};
+    fn vocabulary_selection_persists() {
         use crate::settings::Directory;
-        use crate::vocabulary::Context;
 
         let (_home, path, store) = new_store();
         let selected = Directory::new("/projects/selected".into()).expect("absolute path");
-        let explicit = Directory::new("/projects/explicit".into()).expect("absolute path");
         store
             .update(
                 revision(&store),
@@ -446,39 +428,13 @@ mod tests {
             .snapshot()
             .expect("snapshot")
             .settings;
-        for (context, expected) in [
-            (Context::Default, Some(selected.clone())),
-            (Context::Directory(explicit.clone()), Some(explicit.clone())),
-            (Context::Disabled, None),
-        ] {
-            let settings = crate::dictation::DictationSettings::resolve(
-                settings.clone(),
-                DictationRequest {
-                    project: context,
-                    ..DictationRequest::new(StopMode::OnSilence)
-                },
-                None,
-            );
-            assert_eq!(settings.project, expected);
-        }
+        assert_eq!(settings.vocabulary_dir, Some(selected.clone()));
         let disabled = SettingsPatch {
             vocabulary_enabled: Some(false),
             ..Default::default()
         }
         .apply_to(&settings);
         assert_eq!(disabled.vocabulary_dir, Some(selected));
-        assert_eq!(
-            crate::dictation::DictationSettings::resolve(
-                disabled,
-                DictationRequest {
-                    project: Context::Directory(explicit),
-                    ..DictationRequest::new(StopMode::OnSilence)
-                },
-                None
-            )
-            .project,
-            None
-        );
         let cleared = SettingsPatch {
             vocabulary_dir: Some(None),
             ..Default::default()

@@ -18,8 +18,8 @@ use crate::dictation::{
 use crate::history::HistorySource;
 use crate::ipc::wire;
 use crate::microphone::{Claim, Gate};
-use crate::rpc::{RpcErrorCode, RpcFailure};
 use aria_platform::delivery::{DeliveryError, DeliveryOutcome, PlatformTextDelivery, TextDelivery};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::dictation::DictationRuntime;
 use super::super::relay::{self, Collected, Opening, RelayError};
@@ -154,7 +154,10 @@ impl Session {
                     message = failure.message,
                     "request failed"
                 );
-                self.emit(Err(relay::redacted(Status::from(failure)))).await;
+                self.emit(Err(relay::redacted(crate::ipc::protocol::failure_status(
+                    failure,
+                ))))
+                .await;
                 return;
             }
         };
@@ -192,12 +195,14 @@ impl Session {
                     "request failed"
                 );
                 announcer.announce(DictationStage::ended_by(failure.code));
-                Err(relay::redacted(Status::from(failure)))
+                Err(relay::redacted(crate::ipc::protocol::failure_status(
+                    failure,
+                )))
             }
             Err(_join) => {
                 tracing::error!(method = METHOD, "the relay job panicked");
                 announcer.announce(DictationStage::Failed(RpcErrorCode::Internal));
-                Err(Status::from(RpcFailure::new(
+                Err(crate::ipc::protocol::failure_status(RpcFailure::new(
                     RpcErrorCode::Internal,
                     "the relay operation ended unexpectedly",
                 )))
@@ -422,6 +427,9 @@ mod tests {
     }
 
     fn settings(output_mode: OutputMode) -> DictationSettings {
-        crate::dictation::testing::settings(crate::settings::DeliveryMode::Complete, output_mode)
+        crate::dictation::testing::settings(
+            aria_settings::settings::DeliveryMode::Complete,
+            output_mode,
+        )
     }
 }

@@ -8,7 +8,7 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 use crate::primitives::error_chain;
-use crate::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::relay::{PairingCodes, PairingError, Phones, presented};
 
@@ -45,7 +45,7 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                 status = failure.code.label(),
                 "request failed"
             );
-            return Err(failure.into());
+            return Err(crate::ipc::protocol::failure_status(failure));
         };
         let phones = Arc::clone(&self.phones);
         tokio::task::spawn_blocking(move || phones.admit(phone))

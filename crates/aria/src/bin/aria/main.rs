@@ -14,11 +14,11 @@ use aria::daemon::{
 };
 use aria::doctor::Status;
 use aria::primitives::error_chain;
-use aria::rpc::RpcErrorCode;
 use aria::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
 use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
 use aria::synthesis::{SpeakingRate, SpeechText, Voice};
 use aria_platform::runtime::PreparedRuntimePaths;
+use aria_settings::rpc::RpcErrorCode;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod cli;
@@ -492,7 +492,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 command: SettingsCommand::Check { .. }
             }
     );
-    if !checking && let Some(banner) = aria::settings::banner() {
+    if !checking && let Some(banner) = aria_settings::settings::banner() {
         eprintln!("{banner}");
     }
     match cli.command {
@@ -970,7 +970,7 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
         SettingsCommand::Show { key, json } => {
             let pending = aria::daemon::restart_required_keys()
                 .context("cannot read the running daemon's settings status")?;
-            let rows = aria::settings::show(&pending, key.as_deref())?;
+            let rows = aria_settings::settings::show(&pending, key.as_deref())?;
             if json {
                 let rows = rows.iter().map(settings_row_json).collect();
                 println!("{}", serde_json::Value::Array(rows));
@@ -980,13 +980,13 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
             Ok(())
         }
         SettingsCommand::Set { pairs, json } => {
-            report_settings_write(aria::settings::set(&pairs)?, json)
+            report_settings_write(aria_settings::settings::set(&pairs)?, json)
         }
         SettingsCommand::Reset { key } => {
-            report_settings_write(aria::settings::reset(&key)?, false)
+            report_settings_write(aria_settings::settings::reset(&key)?, false)
         }
         SettingsCommand::Check { json } => {
-            let fault = aria::settings::validate()?;
+            let fault = aria_settings::settings::validate()?;
             if json {
                 let report = serde_json::json!({
                     "valid": fault.is_none(),
@@ -1004,27 +1004,27 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
             Ok(())
         }
         SettingsCommand::Create => {
-            println!("{}", aria::settings::create()?.display());
+            println!("{}", aria_settings::settings::create()?.display());
             Ok(())
         }
         SettingsCommand::Path => {
-            println!("{}", aria::settings::path()?.display());
+            println!("{}", aria_settings::settings::path()?.display());
             Ok(())
         }
         SettingsCommand::Schema => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&aria::settings::schema())?
+                serde_json::to_string_pretty(&aria_settings::settings::schema())?
             );
             Ok(())
         }
     }
 }
 
-fn settings_apply(apply: aria::settings::Apply) -> &'static str {
+fn settings_apply(apply: aria_settings::settings::Apply) -> &'static str {
     match apply {
-        aria::settings::Apply::Live => "live",
-        aria::settings::Apply::Restart => "restart",
+        aria_settings::settings::Apply::Live => "live",
+        aria_settings::settings::Apply::Restart => "restart",
     }
 }
 
@@ -1037,7 +1037,7 @@ fn settings_value(value: &serde_json::Value) -> String {
     }
 }
 
-fn print_settings_rows(rows: &[aria::settings::Row]) {
+fn print_settings_rows(rows: &[aria_settings::settings::Row]) {
     let values: Vec<String> = rows.iter().map(|row| settings_value(&row.value)).collect();
     let key_width = rows
         .iter()
@@ -1063,7 +1063,7 @@ fn print_settings_rows(rows: &[aria::settings::Row]) {
     }
 }
 
-fn settings_row_json(row: &aria::settings::Row) -> serde_json::Value {
+fn settings_row_json(row: &aria_settings::settings::Row) -> serde_json::Value {
     serde_json::json!({
         "key": row.path(),
         "value": row.value,
@@ -1074,7 +1074,7 @@ fn settings_row_json(row: &aria::settings::Row) -> serde_json::Value {
     })
 }
 
-fn settings_fault_json(fault: &aria::settings::SettingsFault) -> serde_json::Value {
+fn settings_fault_json(fault: &aria_settings::settings::SettingsFault) -> serde_json::Value {
     serde_json::json!({
         "message": fault.message,
         "line": fault.position.map(|position| position.line),
@@ -1082,7 +1082,7 @@ fn settings_fault_json(fault: &aria::settings::SettingsFault) -> serde_json::Val
     })
 }
 
-fn settings_fault_line(fault: &aria::settings::SettingsFault) -> String {
+fn settings_fault_line(fault: &aria_settings::settings::SettingsFault) -> String {
     match fault.position {
         Some(position) => format!("{position}: {}", fault.message),
         None => fault.message.clone(),
@@ -1090,12 +1090,15 @@ fn settings_fault_line(fault: &aria::settings::SettingsFault) -> String {
 }
 
 /// `applied`, `applied, restart key changed`, or the refusal, which exits 1.
-fn report_settings_write(outcome: aria::settings::Outcome, json: bool) -> anyhow::Result<()> {
+fn report_settings_write(
+    outcome: aria_settings::settings::Outcome,
+    json: bool,
+) -> anyhow::Result<()> {
     let (restart_key_changed, fault) = match &outcome {
-        aria::settings::Outcome::Applied {
+        aria_settings::settings::Outcome::Applied {
             restart_key_changed,
         } => (*restart_key_changed, None),
-        aria::settings::Outcome::Refused(fault) => (false, Some(fault)),
+        aria_settings::settings::Outcome::Refused(fault) => (false, Some(fault)),
     };
     if json {
         let report = serde_json::json!({
@@ -1384,7 +1387,7 @@ fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// One line per status: the fault, else what waits for a restart, else ok.
-fn settings_line(status: &aria::settings::SettingsStatus) -> String {
+fn settings_line(status: &aria_settings::settings::SettingsStatus) -> String {
     if let Some(fault) = &status.fault {
         return match fault.position {
             Some(position) => format!("settings invalid at {position}: {}", fault.message),
@@ -1488,7 +1491,7 @@ fn run_events() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::settings::Directory> {
+fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria_settings::settings::Directory> {
     let path = if path.is_absolute() {
         path
     } else {
@@ -1499,7 +1502,7 @@ fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::settings::Directory> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
         Err(error) => return Err(error.into()),
     };
-    Ok(aria::settings::Directory::new(path)?)
+    Ok(aria_settings::settings::Directory::new(path)?)
 }
 
 fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
@@ -1695,7 +1698,7 @@ fn run_dictate(
     let project = if no_project || !session.get_settings()?.settings.vocabulary_enabled {
         aria::vocabulary::Context::Disabled
     } else {
-        aria::vocabulary::Context::Directory(aria::settings::Directory::new(
+        aria::vocabulary::Context::Directory(aria_settings::settings::Directory::new(
             std::env::current_dir()?,
         )?)
     };
@@ -1789,7 +1792,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
                 .canonicalize()
                 .context("failed to resolve the project directory")?;
             anyhow::ensure!(path.is_dir(), "the project path is not a directory");
-            Ok::<_, anyhow::Error>(aria::settings::Directory::new(path)?)
+            Ok::<_, anyhow::Error>(aria_settings::settings::Directory::new(path)?)
         })
         .transpose()?;
     let stop_mode = if args.toggle {

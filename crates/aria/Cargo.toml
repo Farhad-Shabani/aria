@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 anyhow            = { workspace = true }
+aria-settings     = { workspace = true }
 aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
 aria-platform     = { workspace = true }
 aria-primitives   = { workspace = true }
@@ -72,8 +73,9 @@ objc2-app-kit    = { version = "0.3.2", default-features = false, features = [ "
 objc2-foundation = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
 
 [dev-dependencies]
-aria-kit     = { workspace = true, features = [ "test-support" ] }
-aria-harness = { workspace = true }
+aria-settings = { workspace = true, features = [ "test-support" ] }
+aria-kit      = { workspace = true, features = [ "test-support" ] }
+aria-harness  = { workspace = true }
 # The relay's timeouts are minutes long; its tests advance the clock instead.
 tokio = { version = "1", features = [ "test-util" ] }
 

@@ -2,14 +2,11 @@
 
 mod load;
 
-use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use aria_kit::synthesis::{SpeakingRate, SpeakingRateError, Voice, VoiceError};
-
-use crate::primitives::user_home::UserHomeError;
-use crate::settings::SettingsError;
+use aria_kit::synthesis::{SpeakingRate, Voice};
+use aria_settings::config::{ConfigError, ServerEndpoint, backend, tts_backend, wake_backend};
 
 pub(crate) struct DaemonConfig {
     pub(crate) dictation: DictationConfig,
@@ -17,12 +14,6 @@ pub(crate) struct DaemonConfig {
     pub(crate) hotkey: HotkeyConfig,
     pub(crate) relay: RelayConfig,
     pub(crate) tts: TtsConfig,
-}
-
-impl From<crate::settings::SettingsError> for ConfigError {
-    fn from(error: crate::settings::SettingsError) -> Self {
-        Self::Settings(error)
-    }
 }
 
 /// A loopback LLM pass over the transcript, after the rule-based cleanup.
@@ -99,12 +90,6 @@ impl WakeBackend {
     }
 }
 
-pub mod wake_backend {
-    pub const OPEN_WAKE_WORD: &str = aria_wake::openwakeword::NAME;
-    pub const LIVEKIT: &str = aria_wake::livekit::NAME;
-    pub const DEFAULT: &str = OPEN_WAKE_WORD;
-}
-
 /// The engine a daemon builds, and what it falls back to if that fails.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TtsConfig {
@@ -175,56 +160,6 @@ pub(crate) enum TtsFallback {
     System,
 }
 
-/// Names an engine under `tts.backend`, and labels that engine in its own
-/// logs and errors.
-pub mod tts_backend {
-    pub const KOKORO: &str = aria_tts::kokoro::NAME;
-    pub const QWEN: &str = aria_tts::qwen::NAME;
-    pub const SYSTEM: &str = aria_tts::system::NAME;
-    pub const DEFAULT: &str = SYSTEM;
-}
-
-/// An HTTPS origin with no credentials, path, query, or fragment. Pairing
-/// matches endpoints exactly, so spellings of one origin share one form.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub(crate) struct ServerEndpoint(String);
-
-impl ServerEndpoint {
-    pub(crate) fn parse(endpoint: &str) -> Option<Self> {
-        let uri = endpoint.parse::<tonic::codegen::http::Uri>().ok()?;
-        let authority = uri.authority()?.as_str();
-        let valid = endpoint.len() <= 2048
-            && uri.scheme_str() == Some("https")
-            && uri.host().is_some()
-            && !authority.contains('@')
-            && uri.query().is_none()
-            && !endpoint.contains('#')
-            && matches!(uri.path(), "" | "/");
-        valid.then(|| Self(format!("https://{}", authority.to_ascii_lowercase())))
-    }
-}
-
-impl TryFrom<String> for ServerEndpoint {
-    type Error = ConfigError;
-
-    fn try_from(endpoint: String) -> Result<Self, ConfigError> {
-        Self::parse(&endpoint).ok_or(ConfigError::InvalidServerEndpoint)
-    }
-}
-
-impl From<ServerEndpoint> for String {
-    fn from(endpoint: ServerEndpoint) -> Self {
-        endpoint.0
-    }
-}
-
-impl fmt::Display for ServerEndpoint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
 /// Where dictation and recorded transcription run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TranscriptionBackend {
@@ -251,43 +186,6 @@ pub(crate) struct ChatConfig {
     pub(crate) timeout: Duration,
     /// A reply delivered like a transcript gets dictation's delivery timeout.
     pub(crate) delivery_timeout: Duration,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum AssistantId {
-    ClaudeCode,
-    Codex,
-}
-
-impl AssistantId {
-    pub const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex];
-    pub const DEFAULT: Self = Self::ClaudeCode;
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-        }
-    }
-
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::Codex => "Codex",
-        }
-    }
-}
-
-impl std::str::FromStr for AssistantId {
-    type Err = ConfigError;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|id| id.name() == name)
-            .ok_or_else(|| ConfigError::UnknownAssistant(name.to_owned()))
-    }
 }
 
 /// Listen mode: system-audio capture transcribed to a file. Loaded per Start,
@@ -355,11 +253,7 @@ pub(crate) struct MemoryConfig {
     pub(crate) dir: PathBuf,
 }
 
-pub(crate) use load::{
-    DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, LoadedModel, UNATTENDED_ENV, codex_home,
-    home_directory, loaded_models, memory_directory, model_folder, models_dir,
-    transcription_engine, unattended,
-};
+pub(crate) use load::{LoadedModel, loaded_models};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptionConfig {
@@ -425,38 +319,6 @@ impl TranscriptionConfig {
     }
 }
 
-/// Names an engine under `stt.backend`, and labels that engine in
-/// its own logs and errors.
-pub mod backend {
-    pub const SERVER: &str = "server";
-    pub const WHISPER: &str = aria_stt::whisper::NAME;
-    pub const WHISPER_CANDLE: &str = aria_stt::whisper_candle::NAME;
-    pub const PARAKEET: &str = aria_stt::parakeet::NAME;
-    pub const MOONSHINE: &str = aria_stt::moonshine::NAME;
-    pub const NEMOTRON: &str = aria_stt::nemotron::NAME;
-    // iOS cannot spawn the sidecar, so the app leaves its feature disabled
-    // and restates the name for config parsing.
-    #[cfg(not(target_os = "ios"))]
-    pub const PARAKEET_MLX: &str = aria_stt::parakeet_mlx::NAME;
-    #[cfg(target_os = "ios")]
-    pub const PARAKEET_MLX: &str = "parakeet-mlx";
-    pub const DEFAULT: &str = PARAKEET;
-
-    /// The canonical name of a local engine, or `None`.
-    pub(crate) fn local(name: &str) -> Option<&'static str> {
-        [
-            WHISPER,
-            WHISPER_CANDLE,
-            PARAKEET,
-            MOONSHINE,
-            NEMOTRON,
-            PARAKEET_MLX,
-        ]
-        .into_iter()
-        .find(|engine| *engine == name)
-    }
-}
-
 pub use aria_stt::parakeet::Device as TranscriptionDevice;
 
 use crate::audio::ReplayPace;
@@ -474,70 +336,4 @@ pub(crate) struct DictationTimeouts {
     pub(crate) recording: Duration,
     pub(crate) delivery: Duration,
     pub(crate) overall: Duration,
-}
-
-// A fault in the file is named by path. A fault in one setting is named by its
-// field, so the message points at what to edit.
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("unknown assistant {0:?}; use aria ask --help to list choices")]
-    UnknownAssistant(String),
-
-    #[error("stt.server must be an HTTPS origin without credentials, query or fragment")]
-    InvalidServerEndpoint,
-
-    #[error(
-        "listen requires a local engine; set listen.backend to parakeet, moonshine, or nemotron"
-    )]
-    ListenRequiresLocal,
-    #[error("cannot locate the Aria settings")]
-    Home(#[source] UserHomeError),
-
-    #[error("cannot read the settings")]
-    Settings(#[source] SettingsError),
-
-    #[error("environment variable {variable} is not valid UTF-8")]
-    InvalidEnvironmentEncoding { variable: &'static str },
-
-    #[error("{field} must be a finite number of seconds greater than zero; got {seconds}")]
-    InvalidDuration { field: &'static str, seconds: f64 },
-
-    #[error("{field} does not accept {value:?}; supported values are {supported}")]
-    UnsupportedValue {
-        field: &'static str,
-        value: String,
-        supported: &'static str,
-    },
-
-    #[error("{field} does not apply to the {backend} backend")]
-    NotApplicableToBackend {
-        field: &'static str,
-        backend: &'static str,
-    },
-
-    #[error("the {backend} backend requires {field}")]
-    MissingValue {
-        field: &'static str,
-        backend: &'static str,
-    },
-
-    #[error("wake-word monitoring requires capture.backend to be microphone")]
-    WakeRequiresMicrophone,
-
-    #[error("invalid dictation.cleanup_llm settings")]
-    CleanupLlm(#[source] crate::settings::CleanupConfigError),
-
-    #[error("{field} is not a usable speaking rate")]
-    InvalidSpeakingRate {
-        field: &'static str,
-        #[source]
-        source: SpeakingRateError,
-    },
-
-    #[error("{field} is not a usable voice name")]
-    InvalidVoice {
-        field: &'static str,
-        #[source]
-        source: VoiceError,
-    },
 }

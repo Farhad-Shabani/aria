@@ -13,24 +13,22 @@ use super::super::inference::client::RemoteTranscriber;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
-use crate::config::{
-    ConfigError, DictationConfig, ServerEndpoint, SpeakerConfig, TranscriptionBackend,
-    TranscriptionConfig,
-};
+use crate::config::{DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig};
 use crate::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
     DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
     Rewriting, Transcribed,
 };
-use crate::rpc::RpcErrorCode;
-use crate::settings::Directory;
 use crate::transcription::{
     Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcription,
     TranscriptionError, Whole,
 };
 use crate::vocabulary::Vocabulary;
 use aria_platform::delivery::{DeliveryError, PlatformTextDelivery};
+use aria_settings::config::{ConfigError, ServerEndpoint};
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::Directory;
 
 use super::super::transcripts::{History, TranscriptStore};
 use super::model_load::ModelLoad;
@@ -262,7 +260,7 @@ fn select_remote(
     let remote = RemoteTranscriber::open(home, endpoint)
         .map_err(DictationInitializationError::Transcription)?;
     Ok(SelectedEngine::new(
-        crate::config::backend::SERVER,
+        aria_settings::config::backend::SERVER,
         Transcription::<_, Streaming>::delegated(remote),
     ))
 }
@@ -295,7 +293,7 @@ fn select_local(
         #[cfg(not(target_os = "macos"))]
         TranscriptionConfig::ParakeetMlx { .. } => Err(
             DictationInitializationError::Transcription(TranscriptionError::UnsupportedBackend {
-                backend: crate::config::backend::PARAKEET_MLX,
+                backend: aria_settings::config::backend::PARAKEET_MLX,
             }),
         ),
     }
@@ -500,7 +498,7 @@ fn retry_transcription(
             let remote: Box<dyn Transcriber> = Box::new(remote);
             Ok((
                 Transcription::delegated(remote),
-                crate::config::backend::SERVER,
+                aria_settings::config::backend::SERVER,
             ))
         }
         RetryTarget::Local(config) => {
@@ -546,7 +544,7 @@ mod tests {
                 ),
             );
             let mut dictation =
-                DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir)
+                DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
                     .unwrap();
             dictation.transcription = TranscriptionBackend::Server { endpoint };
             dictation.capture = CaptureConfig::WavFile {
@@ -557,7 +555,7 @@ mod tests {
                 DictationSetup {
                     dictation,
                     speaker: SpeakerConfig::load(
-                        &crate::settings::SettingsFile::default().speaker,
+                        &aria_settings::settings::SettingsFile::default().speaker,
                         &home_dir,
                     ),
                     vocabulary: Arc::clone(&vocabulary.0),
@@ -575,17 +573,17 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(built.engine, crate::config::backend::SERVER);
+        assert_eq!(built.engine, aria_settings::config::backend::SERVER);
         let coordinator = Arc::new(built.coordinator);
         let dictate = move || {
             let mut settings = DictationSettings::resolve(
-                crate::settings::Settings::default(),
+                aria_settings::settings::Settings::default(),
                 crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
                 None,
             );
             settings.own_voice_only = false;
             settings.transcript_only = true;
-            settings.delivery_mode = crate::settings::DeliveryMode::Complete;
+            settings.delivery_mode = aria_settings::settings::DeliveryMode::Complete;
             let coordinator = Arc::clone(&coordinator);
             tokio::task::spawn_blocking(move || {
                 coordinator.execute(
@@ -620,7 +618,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let home_dir = home.path().to_owned();
         let mut config =
-            DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir).unwrap();
+            DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
+                .unwrap();
         config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
@@ -640,7 +639,7 @@ mod tests {
             dictation: config,
             wake: WakeConfig::Disabled,
             speaker: SpeakerConfig::load(
-                &crate::settings::SettingsFile::default().speaker,
+                &aria_settings::settings::SettingsFile::default().speaker,
                 &home_dir,
             ),
             vocabulary,
@@ -670,13 +669,16 @@ mod tests {
         std::fs::write(prompts.join("cleanup.md"), [0xff]).unwrap();
         let home_dir = home.path().to_owned();
         let mut config =
-            DictationConfig::load(&crate::settings::SettingsFile::default(), &home_dir).unwrap();
+            DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
+                .unwrap();
         config.cleanup_llm = Some(crate::config::LlmCleanupConfig {
             endpoint: "http://127.0.0.1:8080/v1/chat/completions".into(),
             model: "test".into(),
         });
-        let speaker =
-            SpeakerConfig::load(&crate::settings::SettingsFile::default().speaker, &home_dir);
+        let speaker = SpeakerConfig::load(
+            &aria_settings::settings::SettingsFile::default().speaker,
+            &home_dir,
+        );
         let (vocabulary, _worker) = VocabularyRuntime::new(
             home.path().join("vocabulary"),
             None,
@@ -688,7 +690,7 @@ mod tests {
         let audio = crate::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
         let settings = DictationSettings::resolve(
-            crate::settings::Settings::default(),
+            aria_settings::settings::Settings::default(),
             crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
             None,
         );

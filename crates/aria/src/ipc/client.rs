@@ -4,13 +4,13 @@
 
 use super::{protocol, wire};
 use crate::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
-use crate::config::AssistantId;
 use crate::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage};
 use crate::listen::ListenStage;
-use crate::rpc::{RpcErrorCode, RpcFailure};
-use crate::settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
 use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+use aria_settings::config::AssistantId;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -517,7 +517,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_status(
         &self,
-        directory: Option<&crate::settings::Directory>,
+        directory: Option<&aria_settings::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -542,7 +542,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_refresh(
         &self,
-        directory: Option<&crate::settings::Directory>,
+        directory: Option<&aria_settings::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -567,7 +567,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_forget(
         &self,
-        directory: Option<&crate::settings::Directory>,
+        directory: Option<&aria_settings::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -977,7 +977,7 @@ mod tests {
 
     #[test]
     fn a_readiness_rejection_is_not_transient() {
-        let error = status_error(tonic::Status::from(RpcFailure::new(
+        let error = status_error(crate::ipc::protocol::failure_status(RpcFailure::new(
             RpcErrorCode::InvalidRequest,
             "malformed request",
         )));
@@ -1096,7 +1096,7 @@ mod tests {
 
     #[test]
     fn delivery_target_change_is_preserved_for_clients() {
-        let error = status_error(tonic::Status::from(RpcFailure::new(
+        let error = status_error(crate::ipc::protocol::failure_status(RpcFailure::new(
             RpcErrorCode::DeliveryTargetChanged,
             "test RPC error",
         )));

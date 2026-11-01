@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::config::{self, LoadedModel};
 use crate::primitives::user_home;
-use crate::settings::SettingsFile;
+use aria_settings::settings::SettingsFile;
 
 use super::assets::{self, Asset};
 use super::{SetupError, model_states, settings_file};
@@ -61,7 +61,7 @@ pub fn remove(name: &str) -> Result<u64, SetupError> {
 }
 
 fn listed(home: &Path, file: &SettingsFile) -> Result<Vec<Model>, SetupError> {
-    let models_dir = config::models_dir(home);
+    let models_dir = aria_settings::config::models_dir(home);
     let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
     Ok(model_states(home, file)?
         .into_iter()
@@ -81,7 +81,7 @@ fn removed(home: &Path, file: &SettingsFile, name: &str) -> Result<u64, SetupErr
         .ok_or_else(|| SetupError::UnknownModel {
             name: name.to_owned(),
         })?;
-    let models_dir = config::models_dir(home);
+    let models_dir = aria_settings::config::models_dir(home);
     let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
     if let Some(section) = user(&loaded, &models_dir, model.asset) {
         return Err(SetupError::ModelInUse {
@@ -132,7 +132,7 @@ mod tests {
     /// A temporary home and the models directory inside it.
     fn home() -> (tempfile::TempDir, PathBuf) {
         let home = tempfile::tempdir().unwrap();
-        let models = config::models_dir(home.path());
+        let models = aria_settings::config::models_dir(home.path());
         (home, models)
     }
 
@@ -145,7 +145,10 @@ mod tests {
     fn an_empty_config_uses_the_default_models() {
         let file = config("");
 
-        assert_eq!(used_by(&file, config::backend::DEFAULT), Some("stt"));
+        assert_eq!(
+            used_by(&file, aria_settings::config::backend::DEFAULT),
+            Some("stt")
+        );
         assert_eq!(used_by(&file, "kokoro"), None);
         assert_eq!(used_by(&file, "speaker"), Some("speaker"));
         assert_eq!(used_by(&file, "segmentation"), Some("speaker"));

@@ -10,8 +10,8 @@ use crate::history::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
     HistorySource, HistoryStatus,
 };
-use crate::rpc::{RpcErrorCode, RpcFailure};
 use aria_platform::delivery::Caret;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 pub(in crate::daemon) mod storage;
 
@@ -268,8 +268,8 @@ mod tests {
     use super::*;
     use crate::audio::RecordingReader;
     use crate::dictation::{DictationRequest, StopMode};
-    use crate::settings::Settings;
     use crate::transcription::TranscriptionError;
+    use aria_settings::settings::Settings;
 
     fn store(directory: &Path) -> Arc<TranscriptStore> {
         Arc::new(TranscriptStore::open(&directory.join(".aria/history")))
