@@ -18,6 +18,12 @@ struct UnixSocketSettings: SettingsTransport {
         }
     }
 
+    func check(_ request: Aria_Daemon_V1_CheckSettingsRequest) async throws {
+        try await withClient { client in
+            try await client.check(request: ClientRequest(message: request)) { _ in }
+        }
+    }
+
     func status() async throws -> Aria_Daemon_V1_SettingsStatus {
         try await withClient { client in
             try await client.getStatus(request: ClientRequest(message: .init())) { response in

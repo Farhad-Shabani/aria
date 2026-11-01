@@ -14,9 +14,19 @@ final class SetupStatus: ObservableObject {
     @Published private(set) var server: Aria_Setup_V1_PairedServer?
     @Published private(set) var transcription = TranscriptionLocation.thisMac
 
+    private let inspect: @MainActor () async throws -> Aria_Setup_V1_Inspection
+    /// Only the newest inspection may update the status. An older one could
+    /// hide a change the person just made.
+    private var inspectionID: UUID?
+
+    init(inspect: @escaping @MainActor () async throws -> Aria_Setup_V1_Inspection = SetupClient.inspect) {
+        self.inspect = inspect
+    }
+
     var reason: String? { required.first.map(Self.explanation) }
 
     func show(_ inspection: Aria_Setup_V1_Inspection) {
+        inspectionID = nil
         required = Self.required(in: inspection)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
@@ -24,8 +34,12 @@ final class SetupStatus: ObservableObject {
     }
 
     func refresh() async {
+        let inspectionID = UUID()
+        self.inspectionID = inspectionID
         do {
-            show(try await SetupClient.inspect())
+            let inspection = try await inspect()
+            guard self.inspectionID == inspectionID else { return }
+            show(inspection)
         } catch {
             log.error("Setup inspection failed: \(String(describing: error), privacy: .private)")
         }

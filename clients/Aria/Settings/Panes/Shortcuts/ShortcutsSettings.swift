@@ -30,7 +30,9 @@ struct ShortcutsSettings: View {
                     title: "Shortcut",
                     hotkey: editor.snapshot.askShortcut,
                     ariaKey: ariaKey,
-                    binding: askChord
+                    binding: askChord,
+                    check: { chord in try await editor.check { $0.askShortcut = Aria_Daemon_V1_Shortcut(.chord(chord)) }
+                    }
                 ) {
                     editor.set(\.askShortcut, to: Aria_Daemon_V1_Shortcut($0))
                 }
@@ -46,7 +48,10 @@ struct ShortcutsSettings: View {
                     title: "Prompt list shortcut",
                     hotkey: editor.snapshot.promptListShortcut,
                     ariaKey: ariaKey,
-                    binding: promptListChord
+                    binding: promptListChord,
+                    check: { chord in
+                        try await editor.check { $0.promptListShortcut = Aria_Daemon_V1_Shortcut(.chord(chord)) }
+                    }
                 ) {
                     editor.set(\.promptListShortcut, to: Aria_Daemon_V1_Shortcut($0))
                 }

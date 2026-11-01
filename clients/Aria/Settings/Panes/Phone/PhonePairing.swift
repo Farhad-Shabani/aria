@@ -15,10 +15,6 @@ final class PhonePairing: ObservableObject {
     /// polls never come closer together than this.
     nonisolated private static let minimumPoll: Duration = .milliseconds(250)
 
-    /// The expiry is estimated after the fetch returns, so it runs a little
-    /// late. A code replaced with more than this left was redeemed, not expired.
-    nonisolated private static let expiryTolerance: TimeInterval = 1
-
     /// Asks clipboard managers not to record the code.
     private static let concealedPasteboardType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
@@ -39,6 +35,11 @@ final class PhonePairing: ObservableObject {
 
     private let poller: StatusPoller
     private let daemon: PairingDaemon
+    /// Goes up each time this object restarts the daemon. A poll that started
+    /// before the restart sees a different number and drops its answer.
+    private var generation = 0
+    /// The daemon's pairing count at the last poll. Nil until one answers.
+    private var pairingCount: UInt64?
 
     init(poller: StatusPoller, daemon: PairingDaemon = .live) {
         self.poller = poller
@@ -72,12 +73,13 @@ final class PhonePairing: ObservableObject {
 
     @discardableResult
     func poll() async -> Duration {
-        let issued: (invite: PairingInvite, expiresAt: Date)
+        let generation = self.generation
+        let issued: IssuedInvite
         do {
             issued = try await daemon.issueInvite()
         } catch {
+            guard self.generation == generation else { return Self.pollInterval }
             let failure = Self.status(for: error)
-            guard status != .restarting else { return Self.pollInterval }
             // Polled every couple of seconds, so only a new failure is logged.
             if case .failed = failure, failure != status {
                 log.error("Fetching a pairing code failed: \(String(describing: error), privacy: .private)")
@@ -85,14 +87,15 @@ final class PhonePairing: ObservableObject {
             status = failure
             return Self.pollInterval
         }
-        // A poll in flight when a restart began must not bring the code back.
-        if status == .restarting { return Self.pollInterval }
-        if case .live(let shown, let expiresAt) = status {
-            if shown == issued.invite { return Self.nextPoll(expiresAt: expiresAt) }
-            if Self.wasRedeemed(expiresAt: expiresAt, replacedAt: .now) {
-                log.notice("A phone redeemed the pairing code")
-                phonePairedAt = .now
-            }
+        guard self.generation == generation else { return Self.pollInterval }
+        // A count that fell means the daemon restarted, which is not a pairing.
+        if let pairingCount, issued.pairingCount > pairingCount {
+            log.notice("A phone redeemed the pairing code")
+            phonePairedAt = .now
+        }
+        pairingCount = issued.pairingCount
+        if case .live(let shown, let expiresAt) = status, shown == issued.invite {
+            return Self.nextPoll(expiresAt: expiresAt)
         }
         status = .live(issued.invite, expiresAt: issued.expiresAt)
         return Self.nextPoll(expiresAt: issued.expiresAt)
@@ -114,17 +117,13 @@ final class PhonePairing: ObservableObject {
         return max(minimumPoll, min(pollInterval, untilExpiry))
     }
 
-    nonisolated static func wasRedeemed(expiresAt: Date, replacedAt now: Date) -> Bool {
-        now.addingTimeInterval(expiryTolerance) < expiresAt
-    }
-
     /// The daemon reads the pairing setting only at start, so the restart is
     /// what applies it.
     func turn(on: Bool) async {
         targetIsOn = on
         defer { targetIsOn = nil }
         // The code goes at once, so nobody scans it while pairing turns off.
-        status = .restarting
+        beginRestart()
         do {
             try await daemon.setPairing(on)
         } catch {
@@ -151,7 +150,7 @@ final class PhonePairing: ObservableObject {
     func revoke() async {
         targetIsOn = true
         defer { targetIsOn = nil }
-        status = .restarting
+        beginRestart()
         do {
             try await poller.restart(whileStopped: daemon.removePairingFile)
             actionError = nil
@@ -169,7 +168,7 @@ final class PhonePairing: ObservableObject {
     /// The poller refuses a restart while it is already starting or stopping
     /// Aria. The setting is saved by then, so it applies on the next start.
     private func restart() async {
-        status = .restarting
+        beginRestart()
         do {
             try await poller.restart()
         } catch StatusPoller.RestartFailure.busy {
@@ -182,6 +181,11 @@ final class PhonePairing: ObservableObject {
         }
         status = .loading
         await poll()
+    }
+
+    private func beginRestart() {
+        generation += 1
+        status = .restarting
     }
 
     /// The general pasteboard is the only one the phone's paste field can

@@ -2,10 +2,17 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
 
+struct IssuedInvite: Sendable {
+    let invite: PairingInvite
+    let expiresAt: Date
+    /// Phones paired since the daemon started.
+    let pairingCount: UInt64
+}
+
 /// What phone pairing asks of the daemon and its files. Tests swap it so
 /// no socket, config or pairing file is touched.
 struct PairingDaemon: Sendable {
-    var issueInvite: @Sendable () async throws -> (invite: PairingInvite, expiresAt: Date)
+    var issueInvite: @Sendable () async throws -> IssuedInvite
     var setPairing: @Sendable (_ enabled: Bool) async throws -> Void
     var removePairingFile: @Sendable () throws -> Void
 }
@@ -17,10 +24,11 @@ extension PairingDaemon {
                 let invites = Aria_Daemon_V1_InviteService.Client(wrapping: client)
                 return try await invites.issueInvite(Aria_Daemon_V1_IssueInviteRequest()) { response in
                     let issued = try response.message
-                    let invite = PairingInvite(
-                        instanceName: issued.instanceName, code: issued.code,
-                        fingerprint: issued.fingerprint)
-                    return (invite, Date.now.addingTimeInterval(TimeInterval(issued.expiresInMs) / 1000))
+                    return IssuedInvite(
+                        invite: PairingInvite(
+                            instanceName: issued.instanceName, code: issued.code, fingerprint: issued.fingerprint),
+                        expiresAt: Date.now.addingTimeInterval(TimeInterval(issued.expiresInMs) / 1000),
+                        pairingCount: issued.pairingCount)
                 }
             }
         },

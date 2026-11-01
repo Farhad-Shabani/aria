@@ -65,31 +65,6 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertNil(settings.lastError)
     }
 
-    func testAssistantEditStaysVisibleAndSurvivesARevisionConflict() async {
-        var initial = snapshot(revision: 3)
-        initial.settings.assistantID = .claudeCode
-        var changedElsewhere = snapshot(revision: 4, language: "auto")
-        changedElsewhere.settings.assistantID = .claudeCode
-        var saved = snapshot(revision: 5, language: "auto")
-        saved.settings.assistantID = .codex
-        let transport = FakeSettingsTransport()
-        transport.snapshots = [initial]
-        transport.updates = [conflict(changedElsewhere), accepted(saved)]
-        let settings = DaemonSettings(transport: transport)
-        await settings.sync()
-        transport.duringUpdate = {
-            XCTAssertEqual(settings.snapshot?.assistantID, .codex)
-        }
-
-        await settings.set { $0.assistantID = .codex }
-
-        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
-        XCTAssertEqual(transport.sentUpdates.map(\.patch.assistantID), [.codex, .codex])
-        XCTAssertEqual(settings.snapshot?.assistantID, .codex)
-        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
-        XCTAssertNil(settings.lastError)
-    }
-
     func testSyncUsesHistoryBooleanWithoutPresenceFallback() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3)]
@@ -173,65 +148,101 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertNil(settings.lastError)
     }
 
-    func testConflictRetriesTheLatestEdit() async {
+    func testAConflictRetriesTheSameEditAndLaterOnesFollow() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3)]
-        transport.updates = [conflict(snapshot(revision: 4)), accepted(snapshot(revision: 5))]
+        transport.updates = [
+            conflict(snapshot(revision: 4)),
+            accepted(snapshot(revision: 5, mute: true)),
+            accepted(snapshot(revision: 6, mute: false)),
+        ]
         let settings = DaemonSettings(transport: transport)
         await settings.sync()
         transport.duringUpdate = { await settings.set { $0.muteSound = false } }
 
         await settings.set { $0.muteSound = true }
 
-        XCTAssertEqual(transport.sentUpdates.map(\.patch.muteSound), [true, false])
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4, 5])
+        XCTAssertEqual(transport.sentUpdates.map(\.patch.muteSound), [true, true, false])
         XCTAssertEqual(settings.snapshot?.muteSound, false)
         XCTAssertNil(settings.lastError)
     }
 
-    func testAcceptedFieldsAreNotReplayedWithLaterEdits() async {
+    func testAConflictRetryKeepsAListEntryAddedElsewhere() async {
+        var initial = snapshot(revision: 3)
+        initial.settings.prompts.entries = [prompt("mac-old")]
+        var changedElsewhere = snapshot(revision: 4)
+        changedElsewhere.settings.prompts.entries = [prompt("mac-old"), prompt("phone")]
+        var saved = snapshot(revision: 5)
+        saved.settings.prompts.entries = [prompt("mac-old"), prompt("phone"), prompt("mac-new")]
+        let transport = FakeSettingsTransport()
+        transport.snapshots = [initial]
+        transport.updates = [conflict(changedElsewhere), accepted(saved)]
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
+
+        await settings.edit(promptsEdit { PromptEdits.add(self.prompt("mac-new"), to: &$0) })
+
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
+        XCTAssertEqual(
+            transport.sentUpdates.map { $0.patch.prompts.entries.map(\.id) },
+            [["mac-old", "mac-new"], ["mac-old", "phone", "mac-new"]])
+        XCTAssertEqual(settings.snapshot?.prompts.entries.map(\.id), ["mac-old", "phone", "mac-new"])
+        XCTAssertNil(settings.lastError)
+    }
+
+    func testARefusedEditDoesNotTakeTheOnesBehindItWithIt() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3)]
-        transport.updates = [
-            accepted(snapshot(revision: 4, mute: true)),
-            accepted(snapshot(revision: 5, mute: true, language: "auto")),
-        ]
+        transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
+        transport.updates = [accepted(snapshot(revision: 4, language: "auto"))]
         let settings = DaemonSettings(transport: transport)
         await settings.sync()
-        transport.duringUpdate = { await settings.set { $0.sttLanguage = "auto" } }
+        transport.duringUpdate = {
+            await settings.set { $0.sttLanguage = "auto" }
+            // Only the first request is refused.
+            transport.duringUpdate = { transport.updateError = nil }
+        }
 
         await settings.set { $0.muteSound = true }
+
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 3])
+        XCTAssertEqual(transport.sentUpdates.map(\.patch.hasMuteSound), [true, false])
+        XCTAssertEqual(transport.sentUpdates.last?.patch.sttLanguage, "auto")
+        XCTAssertEqual(settings.snapshot?.muteSound, false, "the refused edit leaves the view")
+        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
+        XCTAssertEqual((settings.lastError as? RPCError)?.code, .permissionDenied, "the refusal outlives later edits")
+        XCTAssertFalse(settings.hasUnsavedChange)
+    }
+
+    func testAListEditQueuedBehindARefusedOneRebasesOnTheDaemonsList() async {
+        var initial = snapshot(revision: 3)
+        initial.settings.prompts.entries = [prompt("a"), prompt("b")]
+        var saved = snapshot(revision: 4)
+        saved.settings.prompts.entries = [prompt("a"), prompt("b", name: "B renamed")]
+        let transport = FakeSettingsTransport()
+        transport.snapshots = [initial]
+        transport.updateError = RPCError(code: .invalidArgument, message: "shortcut in use")
+        transport.updates = [accepted(saved)]
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
+        transport.duringUpdate = {
+            await settings.edit(self.promptsEdit { PromptEdits.update("b", in: &$0) { $0.name = "B renamed" } })
+            transport.duringUpdate = { transport.updateError = nil }
+        }
+
+        await settings.edit(promptsEdit { PromptEdits.update("a", in: &$0) { $0.chord.keyCode = 7 } })
 
         XCTAssertEqual(transport.sentUpdates.count, 2)
-        XCTAssertEqual(transport.sentUpdates.last?.patch.hasMuteSound, false)
-        XCTAssertEqual(transport.sentUpdates.last?.patch.sttLanguage, "auto")
+        let rename = transport.sentUpdates.last?.patch.prompts.entries
+        XCTAssertEqual(rename?.first { $0.id == "a" }?.hasChord, false, "the refused chord is not carried forward")
+        XCTAssertEqual(rename?.first { $0.id == "b" }?.name, "B renamed")
+        XCTAssertEqual(settings.snapshot?.prompts.entries.first { $0.id == "a" }?.hasChord, false)
+        XCTAssertEqual(settings.snapshot?.prompts.entries.first { $0.id == "b" }?.name, "B renamed")
+        XCTAssertEqual((settings.lastError as? RPCError)?.code, .invalidArgument)
     }
 
-    func testRefusalPreservesEditsDuringTheRequestAndRecovery() async {
-        let transport = FakeSettingsTransport()
-        transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3), snapshot(revision: 3)]
-        transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
-        let settings = DaemonSettings(transport: transport)
-        await settings.sync()
-        transport.duringUpdate = { await settings.set { $0.sttLanguage = "auto" } }
-        transport.duringSnapshot = { await settings.set { $0.historyEnabled = false } }
-
-        await settings.set { $0.muteSound = true }
-
-        XCTAssertEqual(settings.snapshot?.muteSound, false)
-        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
-        XCTAssertNotNil(settings.lastError)
-        transport.updateError = nil
-        transport.updates = [accepted(snapshot(revision: 4, language: "auto"))]
-        await settings.sync()
-
-        XCTAssertEqual(transport.sentUpdates.last?.patch.hasMuteSound, false)
-        XCTAssertEqual(transport.sentUpdates.last?.patch.sttLanguage, "auto")
-        XCTAssertEqual(transport.sentUpdates.last?.patch.hasHistoryEnabled, true)
-        XCTAssertEqual(transport.sentUpdates.last?.patch.historyEnabled, false)
-        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
-    }
-
-    func testFailedRequestRestoresOlderFieldsUnderNewerValues() async {
+    func testATransientFailureKeepsEveryEditInOrder() async {
         for missingResult in [false, true] {
             let transport = FakeSettingsTransport()
             transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]
@@ -261,25 +272,46 @@ final class DaemonSettingsTests: XCTestCase {
             } else {
                 XCTAssertTrue(settings.lastError is FakeSettingsTransport.Unreachable)
             }
-            XCTAssertEqual(settings.snapshot?.muteSound, true, "the edit stays visible")
+            XCTAssertTrue(settings.hasUnsavedChange)
+            XCTAssertEqual(settings.snapshot?.muteSound, true, "both edits stay visible")
             XCTAssertEqual(settings.snapshot?.askShortcut, Aria_Daemon_V1_Shortcut())
             XCTAssertEqual(settings.snapshot?.hasVocabularyDir, false)
             transport.updateError = nil
-            transport.updates = [accepted(snapshot(revision: 4, mute: true))]
+            var first = snapshot(revision: 4, mute: true)
+            first.settings.askShortcut.chord.keyCode = 7
+            first.settings.askShortcut.chord.command = true
+            first.settings.vocabularyDir = "/repo"
+            transport.updates = [accepted(first), accepted(snapshot(revision: 5, mute: true))]
             await settings.sync()
 
-            XCTAssertEqual(transport.sentUpdates.count, 2)
-            let retried = transport.sentUpdates.last?.patch
-            XCTAssertEqual(retried?.muteSound, true)
-            XCTAssertEqual(retried?.hasAskShortcut, true)
-            XCTAssertEqual(retried?.askShortcut, Aria_Daemon_V1_Shortcut())
-            XCTAssertEqual(retried?.hasVocabularyDir, true)
-            XCTAssertEqual(retried?.vocabularyDir, "")
+            XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 3, 4])
+            XCTAssertEqual(transport.sentUpdates[1].patch, transport.sentUpdates[0].patch, "the failed edit goes first")
+            let second = transport.sentUpdates.last?.patch
+            XCTAssertEqual(second?.hasMuteSound, false)
+            XCTAssertEqual(second?.askShortcut, Aria_Daemon_V1_Shortcut())
+            XCTAssertEqual(second?.vocabularyDir, "")
             XCTAssertNil(settings.lastError)
+            XCTAssertFalse(settings.hasUnsavedChange)
         }
     }
 
-    func testCancellationStopsRetriesAndKeepsTheEdit() async {
+    func testSyncWithAPendingEditStillShowsWhatChangedElsewhere() async {
+        let transport = FakeSettingsTransport()
+        transport.snapshots = [snapshot(revision: 3), snapshot(revision: 8, language: "auto")]
+        transport.updateError = FakeSettingsTransport.Unreachable()
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
+        await settings.set { $0.muteSound = true }
+        XCTAssertNotNil(settings.lastError)
+
+        await settings.sync()
+
+        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
+        XCTAssertEqual(settings.snapshot?.muteSound, true)
+        XCTAssertTrue(settings.hasUnsavedChange)
+    }
+
+    func testCancellationKeepsTheEditWithoutAnError() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 4)]
         transport.updates = [conflict(snapshot(revision: 4)), accepted(snapshot(revision: 5, mute: true))]
@@ -290,14 +322,14 @@ final class DaemonSettingsTests: XCTestCase {
         await Task { await settings.set { $0.muteSound = true } }.value
 
         XCTAssertEqual(transport.sentUpdates.count, 1)
-        XCTAssertTrue(settings.lastError is CancellationError)
+        XCTAssertNil(settings.lastError)
         XCTAssertEqual(settings.snapshot?.muteSound, true)
         await settings.sync()
         XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
         XCTAssertNil(settings.lastError)
     }
 
-    func testConflictBudgetDoesNotRestartAfterAnAcceptedBatch() async {
+    func testTheConflictBudgetResetsWithEachAcceptedEdit() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3)]
         transport.updates = [
@@ -314,9 +346,55 @@ final class DaemonSettingsTests: XCTestCase {
 
         await settings.set { $0.muteSound = true }
 
-        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4, 5])
-        XCTAssertEqual(settings.lastError as? DaemonSettings.UpdateError, .conflict)
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4, 5, 6])
+        XCTAssertNil(settings.lastError)
+        XCTAssertEqual(settings.snapshot?.muteSound, true)
         XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
     }
 
+    func testARefusedEditLeavesNoConflictsForTheNextOne() async {
+        let transport = FakeSettingsTransport()
+        transport.snapshots = [snapshot(revision: 3)]
+        transport.updates = [
+            conflict(snapshot(revision: 4)),
+            conflict(snapshot(revision: 5)),
+            accepted(snapshot(revision: 6, language: "auto")),
+        ]
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
+        transport.duringUpdate = {
+            await settings.set { $0.sttLanguage = "auto" }
+            transport.duringUpdate = {
+                transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
+                transport.duringUpdate = { transport.updateError = nil }
+            }
+        }
+
+        await settings.set { $0.muteSound = true }
+
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4, 4, 5])
+        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
+        XCTAssertFalse(settings.hasUnsavedChange)
+    }
+
+    private func prompt(_ id: String, name: String? = nil) -> Aria_Daemon_V1_Prompt {
+        var prompt = Aria_Daemon_V1_Prompt()
+        prompt.id = id
+        prompt.name = name ?? id
+        prompt.kind = .rewrite
+        prompt.file = "/prompts/\(id).md"
+        prompt.enabled = true
+        return prompt
+    }
+
+    /// A whole-list edit, as `SettingsEditor.editLatest` builds one.
+    private func promptsEdit(_ change: @escaping (inout Aria_Daemon_V1_Prompts) -> Void) -> DaemonSettings.Edit {
+        { base in
+            var prompts = base.prompts
+            change(&prompts)
+            var patch = Aria_Daemon_V1_SettingsPatch()
+            patch.prompts = prompts
+            return patch
+        }
+    }
 }

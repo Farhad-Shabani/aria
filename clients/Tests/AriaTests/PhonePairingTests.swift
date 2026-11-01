@@ -18,18 +18,11 @@ final class PhonePairingTests: XCTestCase {
         XCTAssertEqual(PhonePairing.nextPoll(expiresAt: now, now: now), .milliseconds(250))
     }
 
-    func testWasRedeemedOnlyWhenTheCodeHadTimeLeft() {
-        let expiresAt = Date(timeIntervalSinceReferenceDate: 1_000)
-        XCTAssertTrue(PhonePairing.wasRedeemed(expiresAt: expiresAt, replacedAt: expiresAt.addingTimeInterval(-30)))
-        XCTAssertFalse(PhonePairing.wasRedeemed(expiresAt: expiresAt, replacedAt: expiresAt.addingTimeInterval(-0.5)))
-        XCTAssertFalse(PhonePairing.wasRedeemed(expiresAt: expiresAt, replacedAt: expiresAt))
-    }
-
     @MainActor
-    func testPollCountsACodeReplacedEarlyAsAPairing() async {
+    func testPollCountsARisingPairingCountAsAPairing() async {
         let now = Date.now
         let pairing = Self.pairing(invites: [
-            Self.issued("a", expiresAt: now + 60), Self.issued("b", expiresAt: now + 120),
+            Self.issued("a", expiresAt: now + 60), Self.issued("b", expiresAt: now + 120, pairingCount: 1),
         ])
 
         await pairing.poll()
@@ -41,7 +34,7 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
-    func testPollDoesNotCountAnExpiredCodeAsAPairing() async {
+    func testPollDoesNotCountAReplacedCodeAloneAsAPairing() async {
         let now = Date.now
         let pairing = Self.pairing(invites: [
             Self.issued("a", expiresAt: now + 0.5), Self.issued("b", expiresAt: now + 60),
@@ -50,6 +43,54 @@ final class PhonePairingTests: XCTestCase {
         await pairing.poll()
         await pairing.poll()
 
+        XCTAssertNil(pairing.phonePairedAt)
+        XCTAssertEqual(pairing.status, .live(Self.invite("b"), expiresAt: now + 60))
+    }
+
+    @MainActor
+    func testARestartedDaemonDoesNotCountAsAPairing() async {
+        let now = Date.now
+        let pairing = Self.pairing(invites: [
+            Self.issued("a", expiresAt: now + 60, pairingCount: 3), Self.issued("b", expiresAt: now + 60),
+        ])
+
+        await pairing.poll()
+        await pairing.poll()
+
+        XCTAssertNil(pairing.phonePairedAt)
+    }
+
+    @MainActor
+    func testAPollAnsweredBeforeARestartIsDroppedAfterIt() async {
+        let now = Date.now
+        let gate = Gate()
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let daemon = PairingDaemon(
+            issueInvite: {
+                let call = calls.withLock { calls in
+                    calls += 1
+                    return calls
+                }
+                guard call == 1 else { return Self.issued("after", expiresAt: now + 60) }
+                await gate.wait()
+                return Self.issued("before", expiresAt: now + 60)
+            },
+            setPairing: { _ in },
+            removePairingFile: {}
+        )
+        let control = FakeDaemonControl()
+        control.running = true
+        let pairing = PhonePairing(
+            poller: StatusPoller(client: control, probeInterval: .milliseconds(1)), daemon: daemon)
+        let stale = Task { await pairing.poll() }
+        await gate.reached()
+
+        await pairing.turn(on: true)
+        XCTAssertEqual(pairing.status, .live(Self.invite("after"), expiresAt: now + 60))
+        gate.open()
+        await stale.value
+
+        XCTAssertEqual(pairing.status, .live(Self.invite("after"), expiresAt: now + 60))
         XCTAssertNil(pairing.phonePairedAt)
     }
 
@@ -83,14 +124,14 @@ final class PhonePairingTests: XCTestCase {
         PairingInvite(instanceName: "mac", code: code, fingerprint: Data())
     }
 
-    private static func issued(_ code: String, expiresAt: Date) -> (invite: PairingInvite, expiresAt: Date) {
-        (invite(code), expiresAt)
+    private static func issued(_ code: String, expiresAt: Date, pairingCount: UInt64 = 0) -> IssuedInvite {
+        IssuedInvite(invite: invite(code), expiresAt: expiresAt, pairingCount: pairingCount)
     }
 
     /// Fetches past the scripted invites find the daemon not listening.
     @MainActor
     private static func pairing(
-        invites: [(invite: PairingInvite, expiresAt: Date)],
+        invites: [IssuedInvite],
         setPairingError: (any Error)? = nil,
         control: FakeDaemonControl = FakeDaemonControl(),
         removePairingFile: @escaping @Sendable () throws -> Void = {}

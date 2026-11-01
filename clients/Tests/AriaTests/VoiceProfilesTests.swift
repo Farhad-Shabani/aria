@@ -18,10 +18,20 @@ final class VoiceProfilesTests: XCTestCase {
         var enrollContinuation: CheckedContinuation<Void, Error>?
         var suspendsEnroll = false
         var setOwnerError: Error?
+        var listContinuation: CheckedContinuation<Void, Never>?
+        /// Makes the next list call wait after reading, like a slow socket.
+        var suspendsNextList = false
 
         var effects: VoiceProfiles.Effects {
             .init(
-                list: { self.speakers },
+                list: {
+                    let speakers = self.speakers
+                    if self.suspendsNextList {
+                        self.suspendsNextList = false
+                        await withCheckedContinuation { self.listContinuation = $0 }
+                    }
+                    return speakers
+                },
                 enroll: { name, role, replace in
                     self.enrolled.append(Enrolled(name: name, role: role, replace: replace))
                     if let error = self.enrollError { throw error }
@@ -95,6 +105,23 @@ final class VoiceProfilesTests: XCTestCase {
         await voices.refresh()
         XCTAssertEqual(
             voices.ownVoiceSummary, "Types only your voice. The status pill glows when Aria hears you.")
+    }
+
+    func testAListReadBeforeARemovalDoesNotBringTheVoiceBack() async {
+        let harness = Harness()
+        harness.speakers = [Self.speaker("sam", .owner), Self.speaker("alex", .guest)]
+        let voices = VoiceProfiles(effects: harness.effects)
+        await voices.refresh()
+        harness.suspendsNextList = true
+        let stale = Task { await voices.refresh() }
+        await waitUntil { harness.listContinuation != nil }
+
+        await voices.remove("alex")
+        XCTAssertEqual(voices.speakers?.map(\.name), ["sam"])
+        harness.listContinuation?.resume()
+        await stale.value
+
+        XCTAssertEqual(voices.speakers?.map(\.name), ["sam"])
     }
 
     func testMakingAGuestTheOwnerShowsBothNewRoles() async {

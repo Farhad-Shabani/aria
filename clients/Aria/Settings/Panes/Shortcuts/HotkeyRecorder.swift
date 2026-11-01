@@ -6,6 +6,7 @@ struct HotkeyRecorder: View {
     let hotkey: Aria_Daemon_V1_Shortcut
     let ariaKey: AriaKey
     @ObservedObject var binding: ChordBinding
+    let check: (Chord) async throws -> Void
     let set: (ShortcutBinding?) -> Void
 
     var body: some View {
@@ -17,7 +18,7 @@ struct HotkeyRecorder: View {
                 }
             }
         } else {
-            ChordRecorder(title: title, chord: hotkey.storedChord, isInUse: binding.wasRefused) {
+            ChordRecorder(title: title, chord: hotkey.storedChord, isInUse: binding.wasRefused, check: check) {
                 set(.chord($0))
             } clear: {
                 set(nil)

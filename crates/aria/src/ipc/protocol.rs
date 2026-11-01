@@ -1401,6 +1401,17 @@ impl From<(u64, SettingsPatch)> for wire::UpdateSettingsRequest {
     }
 }
 
+impl TryFrom<wire::CheckSettingsRequest> for SettingsPatch {
+    type Error = ProtocolError;
+
+    fn try_from(check: wire::CheckSettingsRequest) -> Result<Self, Self::Error> {
+        check
+            .patch
+            .ok_or(ProtocolError::MissingSettingsPatch)?
+            .try_into()
+    }
+}
+
 impl TryFrom<wire::UpdateSettingsRequest> for (u64, SettingsPatch) {
     type Error = ProtocolError;
 

@@ -23,6 +23,13 @@ enum PromptEdits {
         return entry
     }
 
+    /// An edit can run more than once, so adding a prompt already in the list
+    /// does nothing.
+    static func add(_ entry: Aria_Daemon_V1_Prompt, to prompts: inout Aria_Daemon_V1_Prompts) {
+        guard self.entry(entry.id, in: prompts) == nil else { return }
+        prompts.entries.append(entry)
+    }
+
     static func remove(_ id: String, from prompts: inout Aria_Daemon_V1_Prompts) {
         prompts.entries.removeAll { $0.id == id }
     }

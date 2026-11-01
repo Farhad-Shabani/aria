@@ -15,11 +15,16 @@ struct ChordRecorder: View {
     let chord: Chord?
     /// Carbon turned the chord down, so another app holds it.
     let isInUse: Bool
+    /// Asks the daemon whether it can use the chord. A refusal keeps the
+    /// recorder open. Any other error, such as the daemon being off, records
+    /// the chord anyway, and saving it reports the problem.
+    let check: (Chord) async throws -> Void
     let record: (Chord) -> Void
     /// Removes the chord, from the ⓧ beside it or Delete while recording.
     let clear: () -> Void
     @Environment(\.isEnabled) private var isEnabled
     @State private var monitor: Any?
+    @State private var checking: Task<Void, Never>?
     @State private var refusal: String?
 
     var body: some View {
@@ -83,6 +88,8 @@ struct ChordRecorder: View {
 
     private func endCapture() {
         refusal = nil
+        checking?.cancel()
+        checking = nil
         guard let monitor else { return }
         NSEvent.removeMonitor(monitor)
         self.monitor = nil
@@ -100,8 +107,24 @@ struct ChordRecorder: View {
         case .refused(let reason):
             refusal = reason
         case .chord(let chord):
-            endCapture()
-            record(chord)
+            guard checking == nil else { return }
+            checking = Task { @MainActor in
+                let refused: Bool
+                do {
+                    try await check(chord)
+                    refused = false
+                } catch {
+                    refused = DaemonSettings.refusesPatch(error)
+                }
+                guard !Task.isCancelled else { return }
+                checking = nil
+                if refused {
+                    refusal = "Aria already uses this shortcut. Press another."
+                } else {
+                    endCapture()
+                    record(chord)
+                }
+            }
         }
     }
 }

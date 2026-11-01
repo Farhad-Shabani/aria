@@ -163,6 +163,10 @@ impl SettingsCache {
         self.status.borrow().restart_required.clone()
     }
 
+    pub(crate) fn check_patch(&self, patch: &Patch) -> Result<Written, SettingsError> {
+        write::check_patch(&self.path, &self.home, patch)
+    }
+
     /// The one write path, with the patch made from the file as it stands
     /// under the lock. The daemon's own writes pass no expected revision.
     pub(crate) fn modify<E: From<SettingsError>>(

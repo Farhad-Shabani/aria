@@ -2,6 +2,7 @@
 //! have its certificate pinned.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -47,6 +48,8 @@ struct Live {
 #[derive(Debug, Default)]
 pub(in crate::daemon) struct PairingCodes {
     current: Mutex<Option<Live>>,
+    /// Phones paired since the daemon started.
+    pairing_count: AtomicU64,
 }
 
 impl PairingCodes {
@@ -81,6 +84,16 @@ impl PairingCodes {
             *current = None;
         }
         matches
+    }
+
+    /// Call this once a phone is admitted. A redeemed code doesn't count if
+    /// the phone was then refused.
+    pub(in crate::daemon) fn record_pairing(&self) {
+        self.pairing_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(in crate::daemon) fn pairing_count(&self) -> u64 {
+        self.pairing_count.load(Ordering::Relaxed)
     }
 
     pub(in crate::daemon) fn is_live(&self, now: Instant) -> bool {
@@ -128,6 +141,24 @@ mod tests {
         for malformed in [&upper, &code.raw()[1..], "+0123456789abcdef0123456789abcde"] {
             assert!(!PairingCode::is_well_formed(malformed));
         }
+    }
+
+    #[test]
+    fn only_an_admitted_phone_counts_as_a_pairing() {
+        let codes = PairingCodes::default();
+        let now = Instant::now();
+        let (code, _) = codes.issue(now).unwrap();
+
+        assert!(codes.redeem(code.raw(), now));
+        assert_eq!(
+            codes.pairing_count(),
+            0,
+            "a redeemed code alone is not a pairing"
+        );
+        codes.record_pairing();
+        assert_eq!(codes.pairing_count(), 1);
+        codes.issue(now).unwrap();
+        assert_eq!(codes.pairing_count(), 1, "a fresh code is not a pairing");
     }
 
     #[test]

@@ -29,7 +29,7 @@ struct PromptsSettings: View {
     private func add(_ editor: SettingsEditor) {
         guard let file = PromptFile.choose() else { return }
         let entry = PromptEdits.makeEntry(for: file)
-        editor.editLatest(\.prompts, \.prompts) { $0.entries.append(entry) }
+        editor.editLatest(\.prompts, \.prompts) { PromptEdits.add(entry, to: &$0) }
         open(entry.id)
     }
 }

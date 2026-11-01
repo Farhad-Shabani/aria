@@ -9,16 +9,16 @@ enum DictationEdits {
     /// Milliseconds; 0 is off.
     static let autoStopChoices: [UInt64] = [0, 3000, 5000, 10000, 15000, 20000, 30000, 45000, 60000]
 
-    /// Copy cannot stream, so the daemon delivers it after recording stops.
+    /// Copy cannot stream. The proto states this on `Settings.delivery_mode`.
     static func locksDelivery(_ mode: Aria_Daemon_V1_OutputMode) -> Bool {
         mode == .copy
     }
 
-    static func setOutput(_ mode: Aria_Daemon_V1_OutputMode, in patch: inout Aria_Daemon_V1_SettingsPatch) {
-        patch.outputMode = mode
-        if locksDelivery(mode) {
-            patch.deliveryMode = .complete
-        }
+    /// The delivery that applies: Complete when the output mode is Copy,
+    /// otherwise the stored choice. Copy leaves the stored choice in place for
+    /// when the output mode changes.
+    static func effectiveDelivery(in settings: Aria_Daemon_V1_Settings) -> Aria_Daemon_V1_DeliveryMode {
+        locksDelivery(settings.outputMode) ? .complete : settings.deliveryMode
     }
 
     /// Whole milliseconds; the slider already keeps the value in the
