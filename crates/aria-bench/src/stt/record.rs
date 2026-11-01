@@ -9,7 +9,7 @@ use std::io::{BufWriter, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use aria::primitives::private_fs::PRIVATE_FILE_MODE;
+use aria_kit::primitives::private_fs::PRIVATE_FILE_MODE;
 use rustix::fs::{Mode, OFlags};
 use serde::Serialize;
 

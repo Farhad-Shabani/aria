@@ -395,8 +395,9 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
 
 pub fn fixtures() -> Result<Suite> {
     let mut suite: Suite = serde_json::from_str(include_str!("vocabulary-cases.json"))?;
-    let memory: Value =
-        serde_json::from_str(include_str!("../../../aria/src/memory/eval_cases.json"))?;
+    let memory: Value = serde_json::from_str(include_str!(
+        "../../../aria-assistant/src/memory/eval_cases.json"
+    ))?;
     for value in memory["lexicon"]
         .as_array()
         .ok_or("missing personal lexicon cases")?

@@ -30,16 +30,16 @@ prost             = "0.14"
 
 rustix             = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde_json         = { workspace = true }
-sha2               = "0.10"
+sha2               = { workspace = true }
 signal-hook        = { version = "0.4", default-features = false }
 tempfile           = { workspace = true }
 thiserror          = { workspace = true }
-time               = { version = "0.3", features = [ "formatting", "macros" ] }
+time               = { workspace = true }
 toml_edit          = { workspace = true, features = [ "display", "parse", "serde" ] }
 tonic              = { version = "0.14", features = [ "tls-ring" ] }
 tracing            = { workspace = true }
 tracing-log        = "0.2"
-tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
+tracing-subscriber = { workspace = true }
 
 # The MLX sidecar requires child processes, which iOS forbids.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
@@ -50,10 +50,10 @@ aria-stt = { workspace = true, features = [ "parakeet-gpu" ] }
 aria-tts = { workspace = true, features = [ "qwen-accelerate" ] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2            = "0.6"
+objc2            = { workspace = true }
 objc2-app-kit    = { version = "0.3.2", default-features = false, features = [ "NSRunningApplication", "libc", "std" ] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
-cidre            = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+objc2-foundation = { workspace = true, features = [ "NSString", "std" ] }
+cidre            = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
 
 [dev-dependencies]
 aria-daemon   = { workspace = true, features = [ "test-support" ] }
@@ -61,8 +61,8 @@ aria-voice    = { workspace = true, features = [ "test-support" ] }
 aria-settings = { workspace = true, features = [ "test-support" ] }
 aria-kit      = { workspace = true, features = [ "test-support" ] }
 aria-harness  = { workspace = true }
-tokio = { version = "1", features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
-serde = { workspace = true }
+tokio         = { workspace = true, features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
+serde         = { workspace = true }
 
 # Each catalog case is its own test, so the catalog brings its own runner.
 [[test]]

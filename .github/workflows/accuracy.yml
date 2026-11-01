@@ -18,9 +18,9 @@ on:
       - "crates/aria-kit/**"
       - "crates/aria-primitives/**"
       - "crates/aria-stt/**"
-      - "crates/aria/Cargo.toml"
-      - "crates/aria/src/config/**"
-      - "crates/aria/src/transcription/**"
+      - "crates/aria-voice/Cargo.toml"
+      - "crates/aria-voice/src/config/**"
+      - "crates/aria-voice/src/transcription/**"
 
 permissions:
   contents: read

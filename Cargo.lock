@@ -210,13 +210,14 @@ name = "aria-bench"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "aria",
  "aria-bench-speaker",
  "aria-harness",
  "aria-kit",
+ "aria-settings",
  "aria-speaker",
  "aria-stt",
  "aria-tts",
+ "aria-voice",
  "clap",
  "hound",
  "ort",

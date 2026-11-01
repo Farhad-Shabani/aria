@@ -22,9 +22,9 @@ http            = "1"
 rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
-sha2            = "0.10"
+sha2            = { workspace = true }
 tempfile        = { workspace = true }
 thiserror       = { workspace = true }
-tokio           = { version = "1", features = [ "sync" ] }
+tokio           = { workspace = true, features = [ "sync" ] }
 toml_edit       = { workspace = true, features = [ "display", "parse", "serde" ] }
 tracing         = { workspace = true }

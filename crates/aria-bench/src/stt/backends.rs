@@ -358,7 +358,7 @@ pub(super) fn selections(
         match check_model(&selection.config) {
             Ok(_) => selected.push(selection),
             Err(failure) => {
-                let detail = aria::primitives::error_chain(&failure);
+                let detail = aria_kit::primitives::error_chain(&failure);
                 tracing::warn!(%detail, "a transcription backend cannot be used");
                 skipped.push(Skipped {
                     backend: request.name(),

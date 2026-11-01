@@ -19,7 +19,7 @@ aria-kit        = { workspace = true }
 aria-platform   = { workspace = true }
 aria-primitives = { workspace = true }
 aria-settings   = { workspace = true }
-rusqlite        = { version = "0.40", features = [ "bundled", "hooks" ] }
+rusqlite        = { workspace = true }
 rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde           = { workspace = true }
 serde_json      = { workspace = true }

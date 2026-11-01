@@ -1316,7 +1316,7 @@ fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
             match &forgotten {
                 aria_daemon::daemon::Forgotten::NothingPaired => println!("No server is paired."),
                 aria_daemon::daemon::Forgotten::Server { .. } => {
-                    println!("Forgot the paired server.")
+                    println!("Forgot the paired server.");
                 }
                 aria_daemon::daemon::Forgotten::UnfinishedPairing { .. } => {
                     println!("Removed the key from a pairing that did not finish.");

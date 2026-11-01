@@ -26,11 +26,11 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-use aria::primitives::error_chain;
 use aria_kit::audio::{
     AudioCapture, CaptureError, Recording, RecordingMode, RecordingReader, ReplayPace,
     ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
 };
+use aria_kit::primitives::error_chain;
 use aria_voice::transcription::{Language, LanguageCode, TranscriptionError};
 
 pub use backends::{BackendRequest, SelectionError, Skipped};

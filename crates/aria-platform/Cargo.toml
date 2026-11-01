@@ -18,12 +18,12 @@ rustix          = { workspace = true, features = [ "fs", "process", "system", "t
 serde           = { workspace = true }
 tempfile        = { workspace = true }
 thiserror       = { workspace = true }
-tokio           = { version = "1", features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
+tokio           = { workspace = true, features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
 tracing         = { workspace = true }
 
 [target.'cfg(target_os = "ios")'.dependencies]
-objc2            = "0.6"
-objc2-foundation = { version = "0.3.2", default-features = false, features = [ "NSArray", "NSItemProvider", "NSString", "std" ] }
+objc2            = { workspace = true }
+objc2-foundation = { workspace = true, features = [ "NSArray", "NSItemProvider", "NSString", "std" ] }
 objc2-ui-kit     = { version = "0.3.2", default-features = false, features = [ "UIPasteboard", "std" ] }
 
 # `image-data` is on by default and pulls an image codec the clipboard never
@@ -37,9 +37,9 @@ rustix = { workspace = true, features = [ "event", "time" ] }
 x11rb  = { version = "0.13", features = [ "xtest" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cidre                 = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
-objc2                 = "0.6"
+cidre                 = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+objc2                 = { workspace = true }
 objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
 objc2-core-graphics   = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
-objc2-foundation      = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
+objc2-foundation      = { workspace = true, features = [ "NSString", "std" ] }
