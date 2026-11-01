@@ -11,8 +11,8 @@ struct GeneralSettings: View {
     private var statusPillEnabled = StatusController.isEnabledByDefault
     @AppStorage(GhostController.enabledKey)
     private var ghostTextEnabled = GhostController.isEnabledByDefault
-    @AppStorage(AppDelegate.captionsEnabledKey)
-    private var captionsEnabled = AppDelegate.areCaptionsEnabledByDefault
+    @AppStorage(CaptionState.enabledKey)
+    private var captionsEnabled = CaptionState.isEnabledByDefault
 
     var body: some View {
         Form {

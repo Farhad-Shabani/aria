@@ -1,6 +1,8 @@
 import Foundation
 
 struct CaptionState {
+    static let enabledKey = "captionsEnabled"
+    static let isEnabledByDefault = false
     private static let expiry: TimeInterval = 5
     private(set) var committed = ""
     private(set) var provisional = ""

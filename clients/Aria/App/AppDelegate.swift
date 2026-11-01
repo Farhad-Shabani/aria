@@ -16,8 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus)
     let updates = UpdateController()
 
-    static let captionsEnabledKey = "captionsEnabled"
-    static let areCaptionsEnabledByDefault = false
     private static let setupOfferedKey = "setupOffered"
 
     private let dockPresence = DockPresence()
@@ -101,9 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let launchKind = NSAppleEventManager.shared().currentAppleEvent?
             .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
         settings.didLaunch(atLogin: launchKind == keyAELaunchedAsLogInItem)
-        UserDefaults.standard.register(defaults: [Self.captionsEnabledKey: Self.areCaptionsEnabledByDefault])
+        UserDefaults.standard.register(defaults: [CaptionState.enabledKey: CaptionState.isEnabledByDefault])
 
-        caption.setEnabled(UserDefaults.standard.bool(forKey: Self.captionsEnabledKey))
+        caption.setEnabled(UserDefaults.standard.bool(forKey: CaptionState.enabledKey))
         events.onCaption { [weak self] snapshot in
             guard let self else { return }
             caption.apply(snapshot, now: ProcessInfo.processInfo.systemUptime)
@@ -127,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.caption.setEnabled(UserDefaults.standard.bool(forKey: Self.captionsEnabledKey))
+                self.caption.setEnabled(UserDefaults.standard.bool(forKey: CaptionState.enabledKey))
                 self.render()
             }
         }
