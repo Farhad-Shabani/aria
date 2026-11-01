@@ -1,15 +1,16 @@
 //! Linux delivery puts the transcript on the clipboard and primary selection,
-//! then sends Shift+Insert to paste into the focused app.
+//! then sends Shift+Insert to paste into the focused app. This file decides
+//! what each mode does when that fails; `desktop` does the work.
 
-mod display;
+mod desktop;
 mod portal;
 mod x11;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use self::display::{DisplayThread, JobError, Refusal};
+use self::desktop::{AfterFailure, Budget, Desktop, JobError, KeyboardState, Refusal};
 use super::{
     DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
 };
@@ -17,11 +18,10 @@ use super::{
 /// The portal uses this ID to find the desktop entry installed by `aria service install`.
 pub(crate) const APP_ID: &str = "io.github.farhad_shabani.aria";
 
-/// Shares one display connection across deliveries and connects on first use.
-/// Missing display variables require a daemon restart before delivery can work.
+/// Shares one desktop across deliveries.
 #[derive(Clone)]
 pub(super) struct Session {
-    display: Arc<DisplayThread>,
+    desktop: Arc<Desktop>,
 }
 
 impl Session {
@@ -32,16 +32,15 @@ impl Session {
         } else {
             DisplayServer::capture()
         };
-        tracing::info!(?server, "display server");
         Self {
-            display: Arc::new(DisplayThread::new(server, home)),
+            desktop: Arc::new(Desktop::new(home, server)),
         }
     }
 
     pub(super) fn create(&self, timeout: Duration) -> Result<LinuxTextDelivery, DeliveryError> {
         validate_timeout(timeout)?;
         Ok(LinuxTextDelivery {
-            display: Arc::clone(&self.display),
+            desktop: Arc::clone(&self.desktop),
             timeout,
         })
     }
@@ -73,45 +72,45 @@ impl DisplayServer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LinuxTarget {
+pub(crate) enum LinuxDeliveryTarget {
+    Application,
+    ApplicationOrClipboard,
     Clipboard,
-    Insert,
-    InsertOrCopy,
 }
 
 pub(crate) struct LinuxTextDelivery {
-    display: Arc<DisplayThread>,
+    desktop: Arc<Desktop>,
     timeout: Duration,
 }
 
 impl LinuxTextDelivery {
-    fn copy(
-        &self,
-        text: &str,
-        timeout: Duration,
-        should_cancel: &impl Fn() -> bool,
-    ) -> Result<DeliveryOutcome, DeliveryError> {
-        self.display
-            .copy(text, timeout, should_cancel)
+    fn copy(&self, text: &str, budget: &Budget<'_>) -> Result<DeliveryOutcome, DeliveryError> {
+        self.desktop
+            .copy(text, budget)
             .map(|()| DeliveryOutcome::Copied)
             .map_err(|failure| delivery_error(failure, self.timeout))
     }
 
-    /// Waits out a slow connection, since nothing else can deliver the text.
-    fn insert(
+    /// What refused the insertion is the actionable cause, so a clipboard
+    /// rejection is logged rather than returned in its place.
+    fn copy_instead(
         &self,
         text: &str,
-        should_cancel: &impl Fn() -> bool,
+        refusal: Refusal,
+        budget: &Budget<'_>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
-        let deadline = Instant::now() + self.timeout;
-        let pasted = self
-            .display
-            .await_keyboard(self.timeout, should_cancel)
-            .and_then(|()| {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                self.display.paste(text, remaining, false, should_cancel)
-            });
-        pasted
+        tracing::info!(?refusal, "the transcript is copied instead of pasted");
+        self.copy(text, budget).map_err(|error| match error {
+            DeliveryError::ClipboardRejected => refusal_error(refusal),
+            error => error,
+        })
+    }
+
+    /// Waits out a slow connection, since nothing else can deliver the text.
+    fn insert(&self, text: &str, budget: &Budget<'_>) -> Result<DeliveryOutcome, DeliveryError> {
+        self.desktop
+            .await_keyboard(budget)
+            .and_then(|()| self.desktop.paste(text, AfterFailure::Withdraw, budget))
             .map(|()| DeliveryOutcome::Inserted)
             .map_err(|failure| delivery_error(failure, self.timeout))
     }
@@ -120,32 +119,51 @@ impl LinuxTextDelivery {
     fn insert_or_copy(
         &self,
         text: &str,
-        should_cancel: &impl Fn() -> bool,
+        budget: &Budget<'_>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
-        let deadline = Instant::now() + self.timeout;
-        let remaining = || deadline.saturating_duration_since(Instant::now());
-        match self.display.await_keyboard(Duration::ZERO, should_cancel) {
-            Err(JobError::Cancelled) => return Err(DeliveryError::Cancelled),
-            Err(failure) => {
-                tracing::info!(?failure, "the transcript is copied instead of pasted");
-                return self.copy(text, remaining(), should_cancel);
+        match self.desktop.keyboard() {
+            KeyboardState::Ready => {}
+            KeyboardState::Connecting => {
+                tracing::info!("the transcript is copied while the keyboard connects");
+                return self.copy(text, budget);
             }
-            Ok(()) => {}
+            KeyboardState::Refused(refusal) => return self.copy_instead(text, refusal, budget),
         }
-        match self.display.paste(text, remaining(), true, should_cancel) {
-            Ok(()) => Ok(DeliveryOutcome::Inserted),
-            Err(JobError::PrimaryRejected) => Ok(DeliveryOutcome::Copied),
-            Err(JobError::Refused(refusal)) => {
-                tracing::info!(?refusal, "the transcript is copied instead of pasted");
-                self.copy(text, remaining(), should_cancel)
-            }
-            Err(failure) => Err(delivery_error(failure, self.timeout)),
+        let Err(failure) = self.desktop.paste(text, AfterFailure::Keep, budget) else {
+            return Ok(DeliveryOutcome::Inserted);
+        };
+        match failed_paste(failure) {
+            FailedPaste::AlreadyCopied => Ok(DeliveryOutcome::Copied),
+            FailedPaste::CopyInstead(refusal) => self.copy_instead(text, refusal, budget),
+            FailedPaste::Fail(failure) => Err(delivery_error(failure, self.timeout)),
         }
     }
 }
 
+/// What insert-or-copy does about a paste that failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailedPaste {
+    /// The text is on the clipboard and no keys went out.
+    AlreadyCopied,
+    /// Nothing was written yet.
+    CopyInstead(Refusal),
+    /// Copying now could deliver the text twice, or the caller gave up.
+    Fail(JobError),
+}
+
+fn failed_paste(failure: JobError) -> FailedPaste {
+    match failure {
+        JobError::PrimaryRejected | JobError::NotSent => FailedPaste::AlreadyCopied,
+        JobError::Refused(refusal) => FailedPaste::CopyInstead(refusal),
+        JobError::ClipboardRejected
+        | JobError::TimedOut
+        | JobError::Cancelled
+        | JobError::Unconfirmed => FailedPaste::Fail(failure),
+    }
+}
+
 impl TextDelivery for LinuxTextDelivery {
-    type Prepared = LinuxTarget;
+    type Prepared = LinuxDeliveryTarget;
 
     const DEFAULT_MODE: OutputMode = OutputMode::InsertOrCopy;
     const OUTLIVES_PROCESS: bool = false;
@@ -164,19 +182,22 @@ impl TextDelivery for LinuxTextDelivery {
             return Err(DeliveryError::Cancelled);
         }
         match mode {
-            OutputMode::Copy => Ok(LinuxTarget::Clipboard),
+            OutputMode::Copy => Ok(LinuxDeliveryTarget::Clipboard),
             // Nothing confirms that the paste landed before Return would.
             OutputMode::InsertAndSubmit => Err(DeliveryError::SubmissionUnsupported),
-            OutputMode::Insert => self
-                .display
-                .start_connecting()
-                .map(|()| LinuxTarget::Insert)
-                .map_err(refusal_error),
-            OutputMode::InsertOrCopy => Ok(match self.display.start_connecting() {
-                Ok(()) => LinuxTarget::InsertOrCopy,
-                Err(refusal) => {
+            OutputMode::Insert => match self.desktop.keyboard() {
+                KeyboardState::Refused(refusal) => Err(refusal_error(refusal)),
+                KeyboardState::Ready | KeyboardState::Connecting => {
+                    Ok(LinuxDeliveryTarget::Application)
+                }
+            },
+            OutputMode::InsertOrCopy => Ok(match self.desktop.keyboard() {
+                KeyboardState::Refused(refusal) => {
                     tracing::info!(?refusal, "the transcript is copied instead of pasted");
-                    LinuxTarget::Clipboard
+                    LinuxDeliveryTarget::Clipboard
+                }
+                KeyboardState::Ready | KeyboardState::Connecting => {
+                    LinuxDeliveryTarget::ApplicationOrClipboard
                 }
             }),
         }
@@ -200,10 +221,11 @@ impl TextDelivery for LinuxTextDelivery {
         if should_cancel() {
             return Err(DeliveryError::Cancelled);
         }
+        let budget = Budget::new(self.timeout, &should_cancel);
         match prepared {
-            LinuxTarget::Clipboard => self.copy(text, self.timeout, &should_cancel),
-            LinuxTarget::Insert => self.insert(text, &should_cancel),
-            LinuxTarget::InsertOrCopy => self.insert_or_copy(text, &should_cancel),
+            LinuxDeliveryTarget::Clipboard => self.copy(text, &budget),
+            LinuxDeliveryTarget::Application => self.insert(text, &budget),
+            LinuxDeliveryTarget::ApplicationOrClipboard => self.insert_or_copy(text, &budget),
         }
     }
 }
@@ -220,6 +242,7 @@ fn delivery_error(failure: JobError, timeout: Duration) -> DeliveryError {
     match failure {
         JobError::Refused(refusal) => refusal_error(refusal),
         JobError::ClipboardRejected | JobError::PrimaryRejected => DeliveryError::ClipboardRejected,
+        JobError::NotSent => DeliveryError::TargetUnavailable,
         JobError::TimedOut => DeliveryError::Timeout(timeout),
         JobError::Cancelled => DeliveryError::Cancelled,
         JobError::Unconfirmed => DeliveryError::PasteUnconfirmed,
@@ -253,7 +276,7 @@ mod tests {
         let first_timeout = Duration::from_secs(1);
         let first = factory.create(first_timeout).expect("a valid timeout");
         let second = cloned.create(TIMEOUT).expect("a valid timeout");
-        assert!(Arc::ptr_eq(&first.display, &second.display));
+        assert!(Arc::ptr_eq(&first.desktop, &second.desktop));
         assert_eq!(first.timeout, first_timeout);
         assert_eq!(second.timeout, TIMEOUT);
         for timeout in [
@@ -266,7 +289,7 @@ mod tests {
             ));
         }
 
-        let session = Arc::downgrade(&first.display);
+        let session = Arc::downgrade(&first.desktop);
         drop(factory);
         drop(cloned);
         drop(first);
@@ -282,7 +305,7 @@ mod tests {
             delivery
                 .prepare(OutputMode::InsertOrCopy, || false)
                 .unwrap(),
-            LinuxTarget::Clipboard
+            LinuxDeliveryTarget::Clipboard
         );
         assert!(matches!(
             delivery.prepare(OutputMode::Insert, || false),
@@ -301,8 +324,43 @@ mod tests {
     #[test]
     fn with_no_display_a_delivery_fails_alone() {
         assert!(matches!(
-            delivery().deliver(&LinuxTarget::Clipboard, "text", || false),
+            delivery().deliver(&LinuxDeliveryTarget::Clipboard, "text", || false),
             Err(DeliveryError::TargetUnavailable)
+        ));
+    }
+
+    #[test]
+    fn a_paste_that_sent_no_keys_counts_as_copied() {
+        for failure in [JobError::NotSent, JobError::PrimaryRejected] {
+            assert_eq!(failed_paste(failure), FailedPaste::AlreadyCopied);
+        }
+    }
+
+    #[test]
+    fn a_refused_paste_copies_because_nothing_was_written() {
+        assert_eq!(
+            failed_paste(JobError::Refused(Refusal::Failed)),
+            FailedPaste::CopyInstead(Refusal::Failed)
+        );
+    }
+
+    #[test]
+    fn a_paste_that_may_have_landed_is_never_copied_again() {
+        for failure in [
+            JobError::Unconfirmed,
+            JobError::TimedOut,
+            JobError::Cancelled,
+            JobError::ClipboardRejected,
+        ] {
+            assert_eq!(failed_paste(failure), FailedPaste::Fail(failure));
+        }
+    }
+
+    #[test]
+    fn insert_reports_a_paste_that_sent_no_keys_as_unavailable() {
+        assert!(matches!(
+            delivery_error(JobError::NotSent, TIMEOUT),
+            DeliveryError::TargetUnavailable
         ));
     }
 

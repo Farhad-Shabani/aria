@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use ashpd::desktop::remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions};
 use ashpd::desktop::{PersistMode, ResponseError, Session};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::APP_ID;
-use super::display::Refusal;
+use super::desktop::{Refusal, SendFailure};
 use crate::primitives::private_document::PrivateDocument;
 
 const RELATIVE_PATH: &str = ".aria/desktop/remote-desktop.json";
@@ -22,11 +24,26 @@ const KEY_TIMEOUT: Duration = Duration::from_secs(1);
 // linux/input-event-codes.h
 const KEY_LEFTSHIFT: i32 = 42;
 const KEY_INSERT: i32 = 110;
+const PASTE_CHORD: [(i32, KeyState); 4] = [
+    (KEY_LEFTSHIFT, KeyState::Pressed),
+    (KEY_INSERT, KeyState::Pressed),
+    (KEY_INSERT, KeyState::Released),
+    (KEY_LEFTSHIFT, KeyState::Released),
+];
 
 pub(super) struct PortalKeyboard {
     portal: RemoteDesktop,
     session: Arc<Session<RemoteDesktop>>,
+    /// Stopped first on drop, so closing this session reports no loss.
+    closed_watcher: JoinHandle<()>,
     runtime: &'static Runtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyFailure {
+    Refused,
+    /// A late answer can still mean the key arrived.
+    NoAnswer,
 }
 
 /// Lives as long as the process. The portal client keeps one D-Bus connection
@@ -50,9 +67,11 @@ fn runtime() -> Result<&'static Runtime, Refusal> {
 }
 
 /// Connects in the background; shutdown interrupts a pending consent request.
+/// `on_closed` runs if the session later ends without this process closing it.
 pub(super) fn connect_in_background(
     home: &Path,
     shutdown: &CancellationToken,
+    on_closed: impl FnOnce() + Send + 'static,
     done: impl FnOnce(Result<PortalKeyboard, Refusal>) + Send + 'static,
 ) {
     let runtime = match runtime() {
@@ -66,40 +85,53 @@ pub(super) fn connect_in_background(
             started = start(&token) => started,
             () = shutdown.cancelled() => Err(Refusal::Failed),
         };
-        done(started.map(|(portal, session)| PortalKeyboard {
-            portal,
-            session: Arc::new(session),
-            runtime,
+        done(started.map(|(portal, session)| {
+            let session = Arc::new(session);
+            PortalKeyboard {
+                portal,
+                closed_watcher: runtime.spawn(watch_closed(Arc::clone(&session), on_closed)),
+                session,
+                runtime,
+            }
         }));
     });
 }
 
+/// A stream that ends means the bus connection died, which ends the session too.
+async fn watch_closed(session: Arc<Session<RemoteDesktop>>, on_closed: impl FnOnce()) {
+    match session.receive_closed().await {
+        Ok(closed) => {
+            let mut closed = std::pin::pin!(closed);
+            let _ = closed.next().await;
+            on_closed();
+        }
+        Err(error) => tracing::warn!(%error, "cannot watch the portal session"),
+    }
+}
+
 impl PortalKeyboard {
-    pub(super) fn paste(&self) -> Result<(), Refusal> {
+    pub(super) fn paste(&self) -> Result<(), SendFailure> {
         self.runtime.block_on(async {
             let mut pressed = Vec::new();
-            for (key, state) in [
-                (KEY_LEFTSHIFT, KeyState::Pressed),
-                (KEY_INSERT, KeyState::Pressed),
-                (KEY_INSERT, KeyState::Released),
-                (KEY_LEFTSHIFT, KeyState::Released),
-            ] {
-                if let Err(refusal) = self.key(key, state).await {
+            let mut chord_sent = false;
+            for (key, state) in PASTE_CHORD {
+                if let Err(failure) = self.key(key, state).await {
                     for key in pressed.into_iter().rev() {
                         let _ = self.key(key, KeyState::Released).await;
                     }
-                    return Err(refusal);
+                    return Err(send_failure(chord_sent, key, failure));
                 }
                 match state {
                     KeyState::Pressed => pressed.push(key),
                     KeyState::Released => pressed.retain(|held| *held != key),
                 }
+                chord_sent |= key == KEY_INSERT;
             }
             Ok(())
         })
     }
 
-    async fn key(&self, key: i32, state: KeyState) -> Result<(), Refusal> {
+    async fn key(&self, key: i32, state: KeyState) -> Result<(), KeyFailure> {
         let sent =
             self.portal
                 .notify_keyboard_keycode(&self.session, key, state, Default::default());
@@ -107,19 +139,29 @@ impl PortalKeyboard {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => {
                 tracing::warn!(%error, "the portal refused a key");
-                Err(Refusal::Failed)
+                Err(KeyFailure::Refused)
             }
             Err(_elapsed) => {
                 tracing::warn!("the portal did not answer a key");
-                Err(Refusal::Failed)
+                Err(KeyFailure::NoAnswer)
             }
         }
+    }
+}
+
+/// Shift alone pastes nothing, so only Insert can have reached the app.
+fn send_failure(chord_sent: bool, key: i32, failure: KeyFailure) -> SendFailure {
+    if chord_sent || (key == KEY_INSERT && failure == KeyFailure::NoAnswer) {
+        SendFailure::PartlySent
+    } else {
+        SendFailure::NothingSent
     }
 }
 
 impl Drop for PortalKeyboard {
     /// Spawned, not awaited: the last owner may be on an async thread.
     fn drop(&mut self) {
+        self.closed_watcher.abort();
         let session = Arc::clone(&self.session);
         self.runtime.spawn(async move { close(&session).await });
     }
@@ -276,6 +318,19 @@ mod tests {
             7
         });
         assert_eq!(runtime.block_on(task).expect("the task finished"), 7);
+    }
+
+    #[test]
+    fn a_paste_counts_as_sent_once_insert_may_have_arrived() {
+        let unsent = SendFailure::NothingSent;
+        let sent = SendFailure::PartlySent;
+        assert_eq!(
+            send_failure(false, KEY_LEFTSHIFT, KeyFailure::NoAnswer),
+            unsent
+        );
+        assert_eq!(send_failure(false, KEY_INSERT, KeyFailure::Refused), unsent);
+        assert_eq!(send_failure(false, KEY_INSERT, KeyFailure::NoAnswer), sent);
+        assert_eq!(send_failure(true, KEY_LEFTSHIFT, KeyFailure::Refused), sent);
     }
 
     #[test]

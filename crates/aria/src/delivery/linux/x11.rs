@@ -8,7 +8,7 @@ use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
-use super::display::Refusal;
+use super::desktop::{Refusal, SendFailure};
 
 const XK_SHIFT_L: Keysym = 0xffe1;
 const XK_INSERT: Keysym = 0xff63;
@@ -46,7 +46,8 @@ impl X11Keyboard {
     }
 
     /// Presses Shift+Insert, then waits until the server has taken it.
-    pub(super) fn paste(&self) -> Result<(), Refusal> {
+    pub(super) fn paste(&self) -> Result<(), SendFailure> {
+        let mut chord_sent = false;
         for (kind, key) in [
             (KEY_PRESS_EVENT, self.shift),
             (KEY_PRESS_EVENT, self.insert),
@@ -57,12 +58,17 @@ impl X11Keyboard {
                 .xtest_fake_input(kind, key, x11rb::CURRENT_TIME, x11rb::NONE, 0, 0, 0)
                 .map_err(|error| {
                     tracing::warn!(%error, "XTest refused a key");
-                    Refusal::Failed
+                    if chord_sent {
+                        SendFailure::PartlySent
+                    } else {
+                        SendFailure::NothingSent
+                    }
                 })?;
+            chord_sent |= key == self.insert;
         }
         self.connection.sync().map_err(|error| {
             tracing::warn!(%error, "the X server did not confirm the paste");
-            Refusal::Failed
+            SendFailure::PartlySent
         })
     }
 }
