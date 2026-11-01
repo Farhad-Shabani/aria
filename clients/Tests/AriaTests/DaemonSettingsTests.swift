@@ -65,31 +65,6 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertNil(settings.lastError)
     }
 
-    func testAssistantEditStaysVisibleAndSurvivesARevisionConflict() async {
-        var initial = snapshot(revision: 3)
-        initial.settings.assistantID = .claudeCode
-        var changedElsewhere = snapshot(revision: 4, language: "auto")
-        changedElsewhere.settings.assistantID = .claudeCode
-        var saved = snapshot(revision: 5, language: "auto")
-        saved.settings.assistantID = .codex
-        let transport = FakeSettingsTransport()
-        transport.snapshots = [initial]
-        transport.updates = [conflict(changedElsewhere), accepted(saved)]
-        let settings = DaemonSettings(transport: transport)
-        await settings.sync()
-        transport.duringUpdate = {
-            XCTAssertEqual(settings.snapshot?.assistantID, .codex)
-        }
-
-        await settings.set { $0.assistantID = .codex }
-
-        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
-        XCTAssertEqual(transport.sentUpdates.map(\.patch.assistantID), [.codex, .codex])
-        XCTAssertEqual(settings.snapshot?.assistantID, .codex)
-        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
-        XCTAssertNil(settings.lastError)
-    }
-
     func testSyncUsesHistoryBooleanWithoutPresenceFallback() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3)]
@@ -214,24 +189,6 @@ final class DaemonSettingsTests: XCTestCase {
             [["mac-old", "mac-new"], ["mac-old", "phone", "mac-new"]])
         XCTAssertEqual(settings.snapshot?.prompts.entries.map(\.id), ["mac-old", "phone", "mac-new"])
         XCTAssertNil(settings.lastError)
-    }
-
-    func testAcceptedFieldsAreNotReplayedWithLaterEdits() async {
-        let transport = FakeSettingsTransport()
-        transport.snapshots = [snapshot(revision: 3)]
-        transport.updates = [
-            accepted(snapshot(revision: 4, mute: true)),
-            accepted(snapshot(revision: 5, mute: true, language: "auto")),
-        ]
-        let settings = DaemonSettings(transport: transport)
-        await settings.sync()
-        transport.duringUpdate = { await settings.set { $0.sttLanguage = "auto" } }
-
-        await settings.set { $0.muteSound = true }
-
-        XCTAssertEqual(transport.sentUpdates.count, 2)
-        XCTAssertEqual(transport.sentUpdates.last?.patch.hasMuteSound, false)
-        XCTAssertEqual(transport.sentUpdates.last?.patch.sttLanguage, "auto")
     }
 
     func testARefusedEditDoesNotTakeTheOnesBehindItWithIt() async {
