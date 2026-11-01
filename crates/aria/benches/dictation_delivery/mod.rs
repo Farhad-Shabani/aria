@@ -7,10 +7,7 @@ use aria_kit::transcription::Caret;
 use serde_json::{Value, json};
 use tonic::transport::{Channel, Endpoint};
 
-#[allow(dead_code, unreachable_pub)]
-mod wire {
-    include!(concat!(env!("OUT_DIR"), "/aria.daemon.v1.rs"));
-}
+use aria_daemon::ipc::wire;
 
 pub(super) mod target;
 

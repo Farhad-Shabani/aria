@@ -6,8 +6,8 @@ use std::io::{Read, Write};
 
 use prost::Message;
 
-use crate::daemon::PairedServer;
 use crate::supervisor::{DaemonState, Job, Status};
+use aria_daemon::daemon::PairedServer;
 
 use super::backends::ModelSource;
 use super::models::OnDisk;

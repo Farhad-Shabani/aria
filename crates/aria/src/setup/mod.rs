@@ -19,16 +19,16 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::daemon::{
-    DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
-    StopMode, guided,
-};
-use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
+use aria_daemon::daemon::{
+    DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
+    StopMode, guided,
+};
+use aria_daemon::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
@@ -108,7 +108,7 @@ enum Pairing {
 
 impl Pairing {
     fn read(home: &Path) -> Self {
-        match crate::daemon::paired_server(home) {
+        match aria_daemon::daemon::paired_server(home) {
             Ok(Some(paired)) => Self::Paired(paired),
             Ok(None) => Self::Unpaired,
             Err(error) => {
@@ -275,7 +275,7 @@ fn forget_server_at(home: &Path) -> Result<Forgotten, SetupError> {
     {
         return Err(SetupError::ServerInUse);
     }
-    crate::daemon::forget_paired_server(home).map_err(SetupError::Forget)
+    aria_daemon::daemon::forget_paired_server(home).map_err(SetupError::Forget)
 }
 
 pub fn inspect() -> Result<Inspection, SetupError> {
@@ -903,7 +903,7 @@ pub enum SetupError {
     ServerInUse,
 
     #[error(transparent)]
-    Forget(crate::daemon::RemoteClientError),
+    Forget(aria_daemon::daemon::RemoteClientError),
 
     #[error("{name} is in use by `{section}` in settings.toml; change that table first")]
     ModelInUse {
@@ -1000,7 +1000,7 @@ mod tests {
     /// daemon loads them.
     #[test]
     fn shared_models_land_where_the_daemon_loads_them() {
-        use crate::daemon::config::{DaemonConfig, WakeConfig, WakeWordOverride};
+        use aria_daemon::daemon::config::{DaemonConfig, WakeConfig, WakeWordOverride};
         use aria_voice::config::SpeakerConfig;
 
         let home = tempfile::tempdir().unwrap();
@@ -1461,7 +1461,7 @@ mod tests {
             "the pin on disk decides, not the inspection"
         );
 
-        let identity = crate::daemon::InferencePaths::in_home(home.path()).client_identity();
+        let identity = aria_daemon::daemon::InferencePaths::in_home(home.path()).client_identity();
         crate::primitives::private_fs::prepare_directory(&home.path().join(".aria")).unwrap();
         crate::primitives::private_fs::prepare_directory(identity.parent().unwrap()).unwrap();
         fs::write(&identity, "{").unwrap();
@@ -1469,7 +1469,7 @@ mod tests {
         assert!(matches!(result, Err(SetupError::PairingUnusable { .. })));
 
         fs::remove_file(&identity).unwrap();
-        crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+        aria_daemon::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
         let mut steps = Vec::new();
         let _ = apply(&selections, &no_downloads(), &inspection, &mut |event| {
             steps.push(event);
@@ -1482,7 +1482,7 @@ mod tests {
     fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
         let home = tempfile::tempdir().unwrap();
         let config = aria_settings::settings::default_path(home.path());
-        crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+        aria_daemon::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
 
         let running = lock_setup(&config).unwrap();
         assert!(matches!(

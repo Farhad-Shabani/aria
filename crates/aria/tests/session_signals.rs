@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use aria::daemon::{Daemon, DaemonLifetime, DaemonSession};
 use aria::primitives::process::{ChildProcess, WaitOutcome};
+use aria_daemon::daemon::{Daemon, DaemonLifetime, DaemonSession};
 use aria_harness::Sandbox;
 use signal_hook::consts::SIGINT;
 

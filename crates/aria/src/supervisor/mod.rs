@@ -11,11 +11,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 use std::{fs, io};
 
-use crate::ipc::{ClientError, ConnectError, Liveness, ProbeError, probe_daemon};
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::owner_pid;
 use crate::primitives::process::{self, Bounds, Capture, RunError};
 use crate::primitives::user_home::{self, UserHomeError};
+use aria_daemon::ipc::{ClientError, ConnectError, Liveness, ProbeError, probe_daemon};
 use aria_platform::runtime::{PreparedRuntimePaths, RUNTIME_DIR_ENV, RuntimeError};
 
 #[cfg(target_os = "macos")]

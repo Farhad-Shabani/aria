@@ -4,19 +4,19 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use aria::daemon::guided::DEFAULT_SAMPLES;
-use aria::daemon::{
+use aria::doctor::Status;
+use aria::primitives::error_chain;
+use aria::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
+use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
+use aria::synthesis::{SpeakingRate, SpeechText, Voice};
+use aria_daemon::daemon::guided::DEFAULT_SAMPLES;
+use aria_daemon::daemon::{
     AskError, AssistantId, ChatRequest, ChatStage, ChatStageKind, Clarify, Daemon, DaemonEvent,
     DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, DictationStage,
     EnrollmentRequest, EnrollmentStage, ListenStage, OutputMode, Role, Routing, SpeakerName,
     SpeechOutcome, SpeechRequest, SpeechStage, StopMode, Ticket, WakeWordStatus, guided,
     open_log_writer, read_log_tail,
 };
-use aria::doctor::Status;
-use aria::primitives::error_chain;
-use aria::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
-use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
-use aria::synthesis::{SpeakingRate, SpeechText, Voice};
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::rpc::RpcErrorCode;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -968,7 +968,7 @@ fn run_doctor() -> anyhow::Result<()> {
 fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
     match command {
         SettingsCommand::Show { key, json } => {
-            let pending = aria::daemon::restart_required_keys()
+            let pending = aria_daemon::daemon::restart_required_keys()
                 .context("cannot read the running daemon's settings status")?;
             let rows = aria_settings::settings::show(&pending, key.as_deref())?;
             if json {
@@ -1294,39 +1294,41 @@ fn run_serve(bind: std::net::SocketAddr) -> anyhow::Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
     aria_stt::whisper::install_logging_hooks();
-    Ok(aria::daemon::serve_inference(bind)?)
+    Ok(aria_daemon::daemon::serve_inference(bind)?)
 }
 
 fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
     match command {
         RemoteCommand::Invite { endpoint } => {
-            println!("{}", aria::daemon::remote_invite(&endpoint)?);
+            println!("{}", aria_daemon::daemon::remote_invite(&endpoint)?);
         }
         RemoteCommand::Pair => {
-            let fingerprint = aria::daemon::remote_pair(std::io::stdin().lock())?;
+            let fingerprint = aria_daemon::daemon::remote_pair(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
             println!("To use it, choose the paired inference server in `aria setup`.");
         }
         RemoteCommand::Revoke { fingerprint } => {
-            aria::daemon::remote_revoke(&fingerprint)?;
+            aria_daemon::daemon::remote_revoke(&fingerprint)?;
             println!("Client revoked.");
         }
         RemoteCommand::Forget => {
             let forgotten = aria::setup::forget_server()?;
             match &forgotten {
-                aria::daemon::Forgotten::NothingPaired => println!("No server is paired."),
-                aria::daemon::Forgotten::Server { .. } => println!("Forgot the paired server."),
-                aria::daemon::Forgotten::UnfinishedPairing { .. } => {
+                aria_daemon::daemon::Forgotten::NothingPaired => println!("No server is paired."),
+                aria_daemon::daemon::Forgotten::Server { .. } => {
+                    println!("Forgot the paired server.")
+                }
+                aria_daemon::daemon::Forgotten::UnfinishedPairing { .. } => {
                     println!("Removed the key from a pairing that did not finish.");
                 }
-                aria::daemon::Forgotten::Unreadable => {
+                aria_daemon::daemon::Forgotten::Unreadable => {
                     println!("Removed an unreadable pairing file; its fingerprint is unknown.");
                 }
             }
             if matches!(
                 forgotten,
-                aria::daemon::Forgotten::Server { .. }
-                    | aria::daemon::Forgotten::UnfinishedPairing { .. }
+                aria_daemon::daemon::Forgotten::Server { .. }
+                    | aria_daemon::daemon::Forgotten::UnfinishedPairing { .. }
             ) {
                 println!("To block this machine on the server too, run there:");
                 println!("  {}", forgotten.revoke_hint());
@@ -1377,10 +1379,10 @@ fn run_daemon() -> anyhow::Result<()> {
 fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::process::CommandExt;
 
-    if !aria::daemon::needs_login_shell_path(std::env::var_os("PATH").as_deref()) {
+    if !aria_daemon::daemon::needs_login_shell_path(std::env::var_os("PATH").as_deref()) {
         return Ok(());
     }
-    let path = aria::daemon::login_shell_path()?;
+    let path = aria_daemon::daemon::login_shell_path()?;
     // Same pid, so launchd still tracks the daemon.
     let error = std::process::Command::new(std::env::current_exe()?)
         .args(std::env::args_os().skip(1))
@@ -1615,8 +1617,8 @@ fn history_clear_message(
     ))
 }
 
-fn history_clear_error(error: aria::daemon::ClientError) -> anyhow::Error {
-    use aria::daemon::ClientError;
+fn history_clear_error(error: aria_daemon::daemon::ClientError) -> anyhow::Error {
+    use aria_daemon::daemon::ClientError;
     let context = match &error {
         ClientError::Status(status) if status.code() == tonic::Code::Unimplemented => {
             "this daemon does not support clearing history; update Aria and restart the daemon"
@@ -2307,7 +2309,7 @@ mod tests {
 
     #[test]
     fn history_clear_reports_complete_partial_and_uncertain_outcomes() {
-        use aria::daemon::ClientError;
+        use aria_daemon::daemon::ClientError;
         use aria_voice::history::ClearHistoryResult;
 
         for deleted_entries in [0, 42] {

@@ -3,9 +3,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use aria::daemon::{Daemon, DaemonSession};
 use aria::primitives::cancel::CancelToken;
 use aria::primitives::process::{self, Bounds, Capture, ChildProcess, WaitOutcome};
+use aria_daemon::daemon::{Daemon, DaemonSession};
 use aria_harness::Sandbox;
 use aria_settings::settings::DeliveryMode;
 use aria_voice::dictation::{DictationOutcome, DictationRequest, StopMode};
