@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[cfg(not(test))]
 use crate::config::home_directory;
 use crate::config::{ConfigError, UNATTENDED_ENV, codex_home, unattended};
-use crate::delivery::DisplayServer;
+use crate::delivery::DeliveryFactory;
 use crate::runtime::PreparedRuntimePaths;
 
 use super::host::DaemonLifetime;
@@ -15,7 +15,7 @@ pub(super) struct Context<'runtime> {
     pub(super) settings_path: PathBuf,
     pub(super) home: PathBuf,
     pub(super) codex_home: PathBuf,
-    pub(super) display: DisplayServer,
+    pub(super) delivery: DeliveryFactory,
     pub(super) lifetime: DaemonLifetime,
     pub(super) attended: bool,
 }
@@ -34,18 +34,13 @@ impl<'runtime> Context<'runtime> {
         let home = paths.spool_dir().to_path_buf();
         // Nor may it play cues or show banners on the developer's machine.
         let attended = !cfg!(test) && attended(unattended()?.as_deref());
-        // Linux tests must not connect to the desktop.
-        let display = if cfg!(test) {
-            DisplayServer::Absent
-        } else {
-            DisplayServer::capture()
-        };
+        let delivery = DeliveryFactory::detect(&home);
         Ok(Self {
             paths,
             settings_path: crate::settings::default_path(&home),
             codex_home: codex_home(&home),
             home,
-            display,
+            delivery,
             lifetime,
             attended,
         })

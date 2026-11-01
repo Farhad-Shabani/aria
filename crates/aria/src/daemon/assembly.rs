@@ -3,7 +3,7 @@
 use crate::audio::{WakeWordMonitor, remove_all_spools};
 use crate::config::{ConfigError, memory_directory};
 use crate::config::{DaemonConfig, HotkeyConfig, RelayConfig, SpeakerConfig, WakeWordOverride};
-use crate::delivery::{Desktop, PlatformTextDelivery};
+use crate::delivery::PlatformTextDelivery;
 use crate::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use crate::memory::Lexicon;
 use crate::microphone::Gate;
@@ -355,7 +355,6 @@ fn build_workers(
     memory_wake: mpsc::Sender<()>,
     vocabulary: Arc<super::vocabulary::Runtime>,
 ) -> Result<Workers, DaemonError> {
-    let desktop = Desktop::new(&context.home, context.display);
     match context.lifetime {
         DaemonLifetime::Persistent => eager_workers(
             context,
@@ -364,14 +363,12 @@ fn build_workers(
             microphone,
             memory_wake,
             vocabulary,
-            desktop,
         ),
         DaemonLifetime::OnDemand => Ok(deferred_workers(
             context,
             dependencies,
             microphone,
             vocabulary,
-            desktop,
         )),
     }
 }
@@ -385,7 +382,6 @@ fn eager_workers(
     microphone: Arc<Gate>,
     memory_wake: mpsc::Sender<()>,
     vocabulary: Arc<super::vocabulary::Runtime>,
-    desktop: Desktop,
 ) -> Result<Workers, DaemonError> {
     let Dependencies {
         subscriptions,
@@ -406,7 +402,9 @@ fn eager_workers(
     let relay_delivery = match relay {
         RelayConfig::Disabled => None,
         RelayConfig::Enabled { port } => Some((
-            PlatformTextDelivery::new(dictation_config.dictation_timeouts.delivery, &desktop)
+            context
+                .delivery
+                .create(dictation_config.dictation_timeouts.delivery)
                 .map_err(DictationInitializationError::Delivery)
                 .map_err(DaemonError::Dictation)?,
             port,
@@ -425,7 +423,7 @@ fn eager_workers(
             wake,
             speaker: speaker_config.clone(),
             vocabulary,
-            desktop: desktop.clone(),
+            delivery: context.delivery.clone(),
         },
         Arc::clone(&microphone),
     )
@@ -447,7 +445,6 @@ fn eager_workers(
             Arc::clone(settings),
             Arc::clone(cache),
             Some(memory_wake),
-            desktop,
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -467,7 +464,6 @@ fn deferred_workers(
     dependencies: &Dependencies<'_>,
     microphone: Arc<Gate>,
     vocabulary: Arc<super::vocabulary::Runtime>,
-    desktop: Desktop,
 ) -> Workers {
     let Dependencies {
         subscriptions,
@@ -491,7 +487,6 @@ fn deferred_workers(
             Arc::clone(transcripts),
             microphone,
             vocabulary,
-            desktop.clone(),
         )),
         speech: Arc::new(SpeechRuntime::deferred(
             context,
@@ -506,7 +501,6 @@ fn deferred_workers(
             Arc::clone(settings),
             Arc::clone(cache),
             None,
-            desktop,
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.

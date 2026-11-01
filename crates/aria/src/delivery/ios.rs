@@ -7,8 +7,7 @@ use objc2_foundation::{NSArray, NSString};
 use objc2_ui_kit::UIPasteboard;
 
 use super::{
-    DeliveryError, DeliveryOutcome, Desktop, OutputMode, TextDelivery, validate_text,
-    validate_timeout,
+    DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
 };
 
 pub(crate) struct IosTextDelivery;
@@ -17,7 +16,7 @@ impl IosTextDelivery {
     // The pasteboard write returns immediately, so nothing here waits on a
     // deadline. The bound is still checked to keep one meaning for the
     // configured timeout across platforms.
-    pub(crate) fn new(timeout: Duration, _desktop: &Desktop) -> Result<Self, DeliveryError> {
+    pub(super) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
         Ok(Self)
     }

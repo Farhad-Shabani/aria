@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use arboard::{ClearExtLinux, Clipboard, LinuxClipboardKind, SetExtLinux};
 use tokio_util::sync::CancellationToken;
 
-use super::super::DisplayServer;
+use super::DisplayServer;
 use super::portal::{self, PortalKeyboard};
 use super::x11::X11Keyboard;
 

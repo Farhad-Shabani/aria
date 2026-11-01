@@ -1,5 +1,6 @@
 //! Delivery of completed text to user-facing platform destinations.
 
+use std::path::Path;
 use std::time::Duration;
 
 #[cfg(target_os = "ios")]
@@ -12,52 +13,38 @@ mod macos;
 #[cfg(target_os = "ios")]
 pub(crate) use ios::IosTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::LinuxTextDelivery as PlatformTextDelivery;
+pub(crate) use linux::APP_ID;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{APP_ID, Desktop};
+pub(crate) use linux::LinuxTextDelivery as PlatformTextDelivery;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::MacOsTextDelivery as PlatformTextDelivery;
 
 #[cfg(not(any(target_os = "ios", target_os = "linux", target_os = "macos")))]
 compile_error!("no text-delivery adapter exists for this target");
 
-/// The display server named by the daemon environment at startup.
-/// Only Linux delivery reads it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum DisplayServer {
-    Wayland,
-    X11,
-    #[default]
-    Absent,
+#[derive(Clone)]
+pub(crate) struct DeliveryFactory {
+    #[cfg(target_os = "linux")]
+    session: linux::Session,
 }
 
-impl DisplayServer {
-    pub(crate) fn capture() -> Self {
-        let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
-        Self::named(set("WAYLAND_DISPLAY"), set("DISPLAY"))
-    }
-
-    /// Wayland wins: XWayland sets `DISPLAY` beside it.
-    fn named(wayland: bool, x11: bool) -> Self {
-        if wayland {
-            Self::Wayland
-        } else if x11 {
-            Self::X11
-        } else {
-            Self::Absent
+impl DeliveryFactory {
+    pub(crate) fn detect(_home: &Path) -> Self {
+        Self {
+            #[cfg(target_os = "linux")]
+            session: linux::Session::detect(_home),
         }
     }
-}
 
-/// The desktop session every delivery shares. Only Linux keeps state in it.
-#[cfg(not(target_os = "linux"))]
-#[derive(Debug, Clone)]
-pub(crate) struct Desktop;
-
-#[cfg(not(target_os = "linux"))]
-impl Desktop {
-    pub(crate) const fn new(_home: &std::path::Path, _server: DisplayServer) -> Self {
-        Self
+    pub(crate) fn create(&self, timeout: Duration) -> Result<PlatformTextDelivery, DeliveryError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.session.create(timeout)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            PlatformTextDelivery::new(timeout)
+        }
     }
 }
 
@@ -318,13 +305,6 @@ pub enum DeliveryError {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn wayland_wins_over_the_xwayland_display() {
-        assert_eq!(DisplayServer::named(true, true), DisplayServer::Wayland);
-        assert_eq!(DisplayServer::named(false, true), DisplayServer::X11);
-        assert_eq!(DisplayServer::named(false, false), DisplayServer::Absent);
-    }
-
     use super::*;
 
     fn front(bundle_id: &str) -> Option<crate::history::Application> {
