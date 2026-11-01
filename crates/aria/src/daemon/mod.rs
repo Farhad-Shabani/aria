@@ -49,7 +49,7 @@ pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
     AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,
     ListenStarted, ListenStopped, PendingAsk, RouteError, Routing, StartupError, WakeWordStatus,
-    WakeWordStatusError,
+    WakeWordStatusError, restart_required_keys,
 };
 #[cfg(target_os = "macos")]
 pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
@@ -69,14 +69,15 @@ pub use crate::chat::{
     Focus, Project, ProjectsError, Step, Ticket,
 };
 pub use crate::config::AssistantId;
+pub use crate::delivery::OutputMode;
 pub use crate::dictation::{
-    DeliveryMode, DictationOutcome, DictationRequest, DictationResult, DictationStage, OutputMode,
-    RecordingId, StopMode,
+    DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
 pub use crate::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
 pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
 pub use crate::listen::ListenStage;
+pub use crate::settings::DeliveryMode;
 pub use crate::speaker::{Role, SpeakerName, SpeakerNameError};
 pub use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};

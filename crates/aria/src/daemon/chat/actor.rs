@@ -662,7 +662,7 @@ mod tests {
         let prompt = || {
             ChatJob::Prompt(PromptRequest {
                 text: "hi".to_owned(),
-                kind: crate::chat::PromptKind::Rewrite,
+                kind: crate::settings::PromptKind::Rewrite,
                 file: "/p.md".into(),
                 assistant_id: crate::config::AssistantId::ClaudeCode,
                 model_id: None,

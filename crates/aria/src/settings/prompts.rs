@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::Chord;
-use crate::chat::PromptKind;
+use super::PromptKind;
 
 // Sized so a full list fits the settings file's byte cap beside a full
 // list of app overrides, with every name and path escaped at worst.

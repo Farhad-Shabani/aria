@@ -28,7 +28,7 @@ impl TextDelivery for IosTextDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Copy;
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::history::Application> {
+    fn frontmost(&self) -> Option<super::Application> {
         None
     }
 

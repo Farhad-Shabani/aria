@@ -1,37 +1,32 @@
 //! Dictation initialization state and request execution owned by the daemon.
 
-use std::sync::Arc;
-
-use aria_kit::cancel::{CancelToken, Deadline};
-
+use super::super::context::Context;
+use super::super::subscriptions::Subscriptions;
+use super::super::transcripts::{History, TranscriptStore};
 use super::super::vocabulary::Runtime as VocabularyRuntime;
+use super::assembly::{
+    BuiltDictation, DictationInitializationError, ModelLoading, RetryTarget, RuntimeExecutor,
+    build_dictation, transcribe_retry,
+};
 use crate::audio::{RecordingReader, WakeWordMonitor};
 use crate::config::{
     ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
 };
 use crate::delivery::DeliveryFactory;
-use crate::dictation::subscribers::DictationSubscribers;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
-    DictationRequest, DictationSettings, DictationStage, MAX_DICTATION_TIMEOUT, RecordingId,
-    StopMode, Transcribed,
+    DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
+    subscribers::DictationSubscribers,
 };
 use crate::event::EventEmitter;
 use crate::history::{HistoryEntry, HistoryError, RetryOptions};
 use crate::microphone::Gate;
 use crate::primitives::lazy::Lazy;
 use crate::rpc::RpcErrorCode;
-use crate::settings::SettingsCache;
-use crate::settings::{SettingsStore, StoreError};
+use crate::settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use crate::transcription::Language;
-
-use super::super::context::Context;
-use super::super::subscriptions::Subscriptions;
-use super::super::transcripts::{History, TranscriptStore};
-use super::assembly::{
-    BuiltDictation, DictationInitializationError, ModelLoading, RetryTarget, RuntimeExecutor,
-    build_dictation, transcribe_retry,
-};
+use aria_kit::cancel::{CancelToken, Deadline};
+use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
 
@@ -327,14 +322,16 @@ impl DictationRuntime {
 
     fn settings_for(
         &self,
-        application: Option<crate::history::Application>,
+        application: Option<crate::delivery::Application>,
     ) -> Result<DictationSettings, DictationRuntimeError> {
         self.settings
             .snapshot()
             .map(|snapshot| {
-                snapshot
-                    .settings
-                    .resolve_dictation(DictationRequest::new(StopMode::OnSilence), application)
+                DictationSettings::resolve(
+                    snapshot.settings,
+                    DictationRequest::new(StopMode::OnSilence),
+                    application,
+                )
             })
             .map_err(DictationRuntimeError::Settings)
     }
@@ -468,9 +465,11 @@ impl DictationRuntime {
         };
         // Read once the coordinator is built, which may load a model, so the
         // app judged is the one in front as recording starts.
-        let mut settings = snapshot
-            .settings
-            .resolve_dictation(request, crate::delivery::frontmost_application());
+        let mut settings = DictationSettings::resolve(
+            snapshot.settings,
+            request,
+            crate::delivery::frontmost_application(),
+        );
         match auto_stop {
             AutoStopRule::Setting => {}
             AutoStopRule::Off => settings.auto_stop = None,
@@ -554,7 +553,7 @@ fn retry_settings(
             if !path.is_dir() {
                 return Err(HistoryError::ProjectUnavailable);
             }
-            crate::vocabulary::Directory::new(path.clone())
+            crate::settings::Directory::new(path.clone())
                 .map_err(|_| HistoryError::ProjectUnavailable)
         })
         .transpose()?;
@@ -847,7 +846,7 @@ mod event_tests {
             _: &mut RecordingReader,
             _: &Language,
             _: bool,
-            _: Option<&crate::vocabulary::Directory>,
+            _: Option<&crate::settings::Directory>,
             _: crate::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
@@ -912,7 +911,7 @@ mod history_tests {
             recording: &mut RecordingReader,
             language: &Language,
             own_voice_only: bool,
-            project: Option<&crate::vocabulary::Directory>,
+            project: Option<&crate::settings::Directory>,
             _: crate::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
@@ -1301,7 +1300,7 @@ mod history_tests {
             own_voice_only: true,
             vocabulary_enabled: true,
             vocabulary_dir: Some(
-                crate::vocabulary::Directory::new(directory.path().to_path_buf()).unwrap(),
+                crate::settings::Directory::new(directory.path().to_path_buf()).unwrap(),
             ),
             ..Default::default()
         };
@@ -1309,9 +1308,11 @@ mod history_tests {
         original.own_voice_only = false;
         let resolved = retry_settings(
             &original,
-            current
-                .clone()
-                .resolve_dictation(DictationRequest::new(StopMode::OnSilence), None),
+            DictationSettings::resolve(
+                current.clone(),
+                DictationRequest::new(StopMode::OnSilence),
+                None,
+            ),
             None,
         )
         .unwrap();
@@ -1324,7 +1325,11 @@ mod history_tests {
         assert!(matches!(
             retry_settings(
                 &original,
-                current.resolve_dictation(DictationRequest::new(StopMode::OnSilence), None),
+                DictationSettings::resolve(
+                    current,
+                    DictationRequest::new(StopMode::OnSilence),
+                    None
+                ),
                 None,
             ),
             Err(HistoryError::ProjectUnavailable)

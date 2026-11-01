@@ -1,13 +1,10 @@
-use std::sync::Arc;
-
-use tonic::{Request, Response, Status};
-
+use super::super::vocabulary::{Error, Runtime};
 use crate::ipc::wire;
 use crate::rpc::{RpcErrorCode, RpcFailure};
-use crate::settings::SettingsStore;
-use crate::vocabulary::{Directory, State};
-
-use super::super::vocabulary::{Error, Runtime};
+use crate::settings::{Directory, SettingsStore};
+use crate::vocabulary::State;
+use std::sync::Arc;
+use tonic::{Request, Response, Status};
 
 pub(in crate::daemon) struct VocabularyRpc {
     runtime: Arc<Runtime>,

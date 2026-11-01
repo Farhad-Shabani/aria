@@ -2,24 +2,19 @@
 //!
 //! Synchronous: each client owns a single-threaded tokio runtime and blocks on it.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
-
-use tonic::transport::{Channel, Endpoint};
-
+use super::{protocol, wire};
 use crate::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
 use crate::config::AssistantId;
 use crate::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage};
 use crate::listen::ListenStage;
 use crate::rpc::{RpcErrorCode, RpcFailure};
-use crate::settings::SettingsStatus;
-use crate::settings::{SettingsPatch, SettingsSnapshot, UpdateResult};
+use crate::settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
 use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
-
-use super::{protocol, wire};
-
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tonic::transport::{Channel, Endpoint};
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
@@ -522,7 +517,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_status(
         &self,
-        directory: Option<&crate::vocabulary::Directory>,
+        directory: Option<&crate::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -547,7 +542,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_refresh(
         &self,
-        directory: Option<&crate::vocabulary::Directory>,
+        directory: Option<&crate::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -572,7 +567,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_forget(
         &self,
-        directory: Option<&crate::vocabulary::Directory>,
+        directory: Option<&crate::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());

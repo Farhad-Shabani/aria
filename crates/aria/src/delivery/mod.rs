@@ -62,6 +62,12 @@ pub enum OutputMode {
     Copy,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Application {
+    pub name: String,
+    pub bundle_id: Option<String>,
+}
+
 /// Where a delivery ended up. A request may allow either; a delivery did one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryOutcome {
@@ -104,7 +110,7 @@ pub(crate) trait TextDelivery: Send + Sync + 'static {
 
     /// The application keystrokes would reach now. `None` where the
     /// platform cannot tell.
-    fn frontmost(&self) -> Option<crate::history::Application>;
+    fn frontmost(&self) -> Option<Application>;
 
     /// The text beside the caret where `deliver` would type. Unknown unless
     /// the destination shows it.
@@ -146,7 +152,7 @@ pub(crate) struct Font {
 pub(crate) use macos::frontmost_application;
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn frontmost_application() -> Option<crate::history::Application> {
+pub(crate) fn frontmost_application() -> Option<Application> {
     None
 }
 
@@ -163,7 +169,7 @@ pub(crate) struct TargetPolicy {
 }
 
 impl TargetPolicy {
-    pub(crate) fn excludes(&self, application: Option<&crate::history::Application>) -> bool {
+    pub(crate) fn excludes(&self, application: Option<&Application>) -> bool {
         application
             .and_then(|application| application.bundle_id.as_deref())
             .is_some_and(|id| self.excluded.iter().any(|excluded| excluded == id))
@@ -174,7 +180,7 @@ impl TargetPolicy {
         self.confirm(delivery.frontmost().as_ref())
     }
 
-    fn confirm(&self, front: Option<&crate::history::Application>) -> Result<(), DeliveryError> {
+    fn confirm(&self, front: Option<&Application>) -> Result<(), DeliveryError> {
         if self.excludes(front) {
             return Err(DeliveryError::ApplicationExcluded);
         }
@@ -307,8 +313,8 @@ pub enum DeliveryError {
 mod tests {
     use super::*;
 
-    fn front(bundle_id: &str) -> Option<crate::history::Application> {
-        Some(crate::history::Application {
+    fn front(bundle_id: &str) -> Option<Application> {
+        Some(Application {
             name: "App".into(),
             bundle_id: Some(bundle_id.into()),
         })

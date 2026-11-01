@@ -16,18 +16,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
+use super::PromptKind;
+use super::choices::MAX_CHAT_TIMEOUT;
 use super::keys::{LISTEN_BACKENDS, STT_BACKENDS, WAKE_BACKENDS};
+use super::validate_cleanup_llm;
+use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
+use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
 use super::{InvalidValue, Key, MAX_SETTINGS_BYTES, ParseError, SettingsError};
-use crate::chat::PromptKind;
 use crate::config::{
     DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, ServerEndpoint, backend, tts_backend,
     wake_backend,
 };
 use crate::delivery::OutputMode;
-use crate::dictation::{DeliveryMode, MAX_DICTATION_TIMEOUT};
-use crate::hotkey::AriaKey;
-use crate::hotkey::Combo;
-use crate::settings::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
+use crate::hotkey::{AriaKey, Combo};
 
 /// What a reader saw of the file's identity. Two equal stamps around a read
 /// say the bytes between them were one version.
@@ -861,10 +862,10 @@ impl From<&ApplicationOverrides> for Keyed<ApplicationOverrideEntry> {
         overrides
             .iter()
             .map(|(id, entry)| {
-                let crate::settings::ApplicationOverride {
+                let super::ApplicationOverride {
                     excluded,
                     overrides:
-                        crate::settings::DictationOverrides {
+                        super::DictationOverrides {
                             output_mode,
                             delivery_mode,
                         },
@@ -1008,14 +1009,12 @@ impl SettingsFile {
     fn validate_dictation(&self) -> Result<(), SettingsError> {
         let dictation = &self.dictation;
         if let Some(llm) = &dictation.cleanup_llm {
-            crate::dictation::cleanup::validate_config(&llm.endpoint, &llm.model).map_err(
-                |source| {
-                    invalid(
-                        Key::DictationCleanupLlmEndpoint,
-                        InvalidValue::Cleanup(source),
-                    )
-                },
-            )?;
+            validate_cleanup_llm(&llm.endpoint, &llm.model).map_err(|source| {
+                invalid(
+                    Key::DictationCleanupLlmEndpoint,
+                    InvalidValue::Cleanup(source),
+                )
+            })?;
         }
         Ok(())
     }
@@ -1083,7 +1082,7 @@ impl SettingsFile {
     fn validate_assistant(&self) -> Result<(), SettingsError> {
         let assistant = &self.assistant;
         for model in assistant.models.values() {
-            if !crate::chat::is_valid_model_id(model) {
+            if !super::is_valid_model_id(model) {
                 return Err(invalid(Key::AssistantModels, InvalidValue::ModelId));
             }
         }
@@ -1092,12 +1091,12 @@ impl SettingsFile {
         }
         if let Some(seconds) = assistant.timeout_secs {
             let timeout = duration(seconds, Key::AssistantTimeoutSecs)?;
-            if timeout > crate::chat::MAX_TIMEOUT {
+            if timeout > MAX_CHAT_TIMEOUT {
                 return Err(invalid(
                     Key::AssistantTimeoutSecs,
                     InvalidValue::TooLong {
                         actual: timeout,
-                        maximum: crate::chat::MAX_TIMEOUT,
+                        maximum: MAX_CHAT_TIMEOUT,
                     },
                 ));
             }
@@ -1295,7 +1294,7 @@ impl SettingsFile {
     }
 
     /// The folder project vocabulary reads, `None` while it is off.
-    pub(crate) fn project_vocabulary(&self) -> Option<crate::vocabulary::Directory> {
+    pub(crate) fn project_vocabulary(&self) -> Option<super::Directory> {
         if self.dictation.vocabulary.enabled != Some(true) {
             return None;
         }
@@ -1304,7 +1303,7 @@ impl SettingsFile {
             .vocabulary
             .dir
             .clone()
-            .and_then(|path| crate::vocabulary::Directory::new(path).ok())
+            .and_then(|path| super::Directory::new(path).ok())
     }
 
     /// Every value as one JSON tree, for the revision and for per-key diffs.

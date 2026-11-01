@@ -1,8 +1,8 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
+use super::DeliveryMode;
 use crate::delivery::OutputMode;
-use crate::dictation::DeliveryMode;
 
 const MAX_APPLICATIONS: usize = 64;
 const MAX_ID_BYTES: usize = 255;

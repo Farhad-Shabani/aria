@@ -13,9 +13,10 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
 use crate::audio::RecordingReader;
+use crate::delivery::Application;
 use crate::history::{
-    Application, AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage,
-    HistoryQuery, HistorySource, HistoryStatus,
+    AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
+    HistorySource, HistoryStatus,
 };
 use crate::rpc::{RpcErrorCode, RpcFailure};
 

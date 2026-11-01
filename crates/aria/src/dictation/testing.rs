@@ -1,23 +1,20 @@
 //! Spies and builders the dictation tests share.
 
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
-
-use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{OperationSource, TimedWord};
-use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
-
-use crate::audio::{RecordingReader, SilenceDuration};
-use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery};
-use crate::transcription::{
-    Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
-};
-
 use super::{
     Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
     DictationResult, DictationSettings, ExecutionControl, RecordingId, StopMode, Transcribed,
     TranscriptSink, Utterance,
 };
+use crate::audio::{RecordingReader, SilenceDuration};
+use crate::delivery::{DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery};
+use crate::transcription::{
+    Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
+};
+use aria_kit::cancel::CancelToken;
+use aria_kit::transcription::{OperationSource, TimedWord};
+use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 /// One ordered record of what every spy built from it saw, so a test can
 /// assert that history heard a segment before the cursor typed it.
@@ -85,11 +82,11 @@ pub(crate) struct RecordingDelivery {
 
 impl TextDelivery for RecordingDelivery {
     type Prepared = OutputMode;
-
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::history::Application> {
+    fn frontmost(&self) -> Option<crate::delivery::Application> {
         None
     }
 
@@ -149,7 +146,7 @@ impl TextDelivery for PlacedDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::history::Application> {
+    fn frontmost(&self) -> Option<crate::delivery::Application> {
         None
     }
 
@@ -349,7 +346,7 @@ impl DictationExecutor for RecordsUntilStopped {
         _recording: &mut RecordingReader,
         _language: &Language,
         _own_voice_only: bool,
-        _project: Option<&crate::vocabulary::Directory>,
+        _project: Option<&crate::settings::Directory>,
         _rewriting: super::Rewriting,
         _cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {

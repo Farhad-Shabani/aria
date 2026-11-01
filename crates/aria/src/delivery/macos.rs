@@ -89,7 +89,7 @@ impl TextDelivery for MacOsTextDelivery {
     const DEFAULT_MODE: OutputMode = OutputMode::Insert;
     const OUTLIVES_PROCESS: bool = true;
 
-    fn frontmost(&self) -> Option<crate::history::Application> {
+    fn frontmost(&self) -> Option<super::Application> {
         frontmost_application()
     }
 
@@ -382,13 +382,13 @@ fn frontmost_process() -> Result<u32, DeliveryError> {
         .ok_or(DeliveryError::TargetUnavailable)
 }
 
-pub(crate) fn frontmost_application() -> Option<crate::history::Application> {
+pub(crate) fn frontmost_application() -> Option<super::Application> {
     autoreleasepool(|_| {
         let pid = i32::try_from(frontmost_process().ok()?).ok()?;
         let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
         let name = app.localizedName()?.to_string();
         let bundle_id = app.bundleIdentifier().map(|id| id.to_string());
-        Some(crate::history::Application { name, bundle_id })
+        Some(super::Application { name, bundle_id })
     })
 }
 

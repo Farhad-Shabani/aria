@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
+use super::Directory;
 use super::document::{self, Loaded, SettingsFile, Stamp, Text};
 use super::write::{self, Refusal, Settled};
 use super::{Apply, Key, Patch, Revision, SettingsError, SettingsFault, SettingsStatus, Written};
 use crate::hotkey::AriaKey;
 use crate::primitives::error_chain;
-use crate::vocabulary::Directory;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const START_READ_ATTEMPTS: usize = 3;

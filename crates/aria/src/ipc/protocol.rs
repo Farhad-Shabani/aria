@@ -1,42 +1,38 @@
 //! Translation between generated wire messages and domain types.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::Duration;
-
-use prost::Message;
-use tonic::Status;
-
-use aria_kit::synthesis::{
-    SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
-};
-
+use super::wire;
 use crate::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
 use crate::chat::{
-    AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall,
-    PromptKind, Step, Ticket,
+    AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, Step,
+    Ticket,
 };
 use crate::config::AssistantId;
-use crate::delivery::{DeliveryOutcome, Placement, Rect};
+use crate::delivery::{DeliveryOutcome, OutputMode, Placement, Rect};
 use crate::dictation::{
-    CaptionSnapshot, DeliveryMode, DictationEvent, DictationOutcome, DictationRequest,
-    DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, OutputMode, RecordingId, StopMode,
+    CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationStage,
+    GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
 use crate::hotkey::{AriaKey, Combo};
 use crate::listen::ListenStage;
 use crate::rpc::{RpcErrorCode, RpcFailure};
 use crate::settings::{
-    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError,
-    DictationOverrides, Modifiers, OverrideError, Prompt, PromptError, PromptId, Prompts, Settings,
-    SettingsPatch, SettingsSnapshot, Shortcut, UpdateResult,
+    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
+    DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
+    PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
+    Shortcut, UpdateResult,
 };
-use crate::settings::{Position, SettingsFault, SettingsStatus};
 use crate::speaker::{Role, SpeakerName, SpeakerNameError};
 use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use crate::transcription::LanguageCodeError;
-
-use super::wire;
+use aria_kit::synthesis::{
+    SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
+};
+use prost::Message;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tonic::Status;
 
 mod inference;
 
@@ -576,7 +572,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
             .transpose()?;
         let assistant_id = decode_enum::<wire::AssistantId>(request.assistant_id, "assistant_id")?;
-        if !crate::chat::is_valid_model_id(&request.model_id) {
+        if !crate::settings::is_valid_model_id(&request.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
         Ok(Self {
@@ -1088,7 +1084,7 @@ impl TryFrom<Option<wire::start_dictation_request::Project>> for crate::vocabula
         Ok(match project {
             None => Self::Default,
             Some(Project::ProjectDirectory(path)) => {
-                Self::Directory(crate::vocabulary::Directory::new(path.into())?)
+                Self::Directory(crate::settings::Directory::new(path.into())?)
             }
             Some(Project::ProjectVocabularyDisabled(_)) => Self::Disabled,
         })
@@ -1168,7 +1164,8 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
     type Error = ProtocolError;
 
     fn try_from(entry: wire::HistoryEntry) -> Result<Self, Self::Error> {
-        use crate::history::{Application, AudioAvailability, HistorySource, HistoryStatus};
+        use crate::delivery::Application;
+        use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
         if entry.id == 0 || entry.id > i64::MAX as u64 {
             return Err(ProtocolError::InvalidHistory("id"));
         }
@@ -1314,13 +1311,13 @@ impl From<crate::history::HistoryPage> for wire::ListHistoryResponse {
     }
 }
 
-impl TryFrom<wire::VocabularyRequest> for Option<crate::vocabulary::Directory> {
+impl TryFrom<wire::VocabularyRequest> for Option<crate::settings::Directory> {
     type Error = ProtocolError;
 
     fn try_from(request: wire::VocabularyRequest) -> Result<Self, Self::Error> {
         request
             .directory
-            .map(|path| crate::vocabulary::Directory::new(path.into()).map_err(Into::into))
+            .map(|path| crate::settings::Directory::new(path.into()).map_err(Into::into))
             .transpose()
     }
 }
@@ -1436,7 +1433,7 @@ fn decode_assistant_models(
     let mut models = BTreeMap::new();
     for entry in entries {
         let assistant_id = decode_enum::<wire::AssistantId>(entry.assistant_id, "assistant_id")?;
-        if !crate::chat::is_valid_model_id(&entry.model_id) {
+        if !crate::settings::is_valid_model_id(&entry.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
         if models.insert(assistant_id, entry.model_id).is_some() {
@@ -1485,7 +1482,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                 vocabulary_enabled: settings.vocabulary_enabled,
                 vocabulary_dir: settings
                     .vocabulary_dir
-                    .map(|path| crate::vocabulary::Directory::new(path.into()))
+                    .map(|path| crate::settings::Directory::new(path.into()))
                     .transpose()?,
                 history_enabled: settings.history_enabled,
                 history_keep_audio: settings.history_keep_audio,
@@ -1696,7 +1693,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                     if path.is_empty() {
                         Ok(None)
                     } else {
-                        crate::vocabulary::Directory::new(path.into()).map(Some)
+                        crate::settings::Directory::new(path.into()).map(Some)
                     }
                 })
                 .transpose()?,
@@ -2229,7 +2226,7 @@ pub enum ProtocolError {
     #[error("invalid vocabulary term count {0}")]
     InvalidVocabularyTerms(u64),
     #[error(transparent)]
-    InvalidVocabularyDir(#[from] crate::vocabulary::DirectoryError),
+    InvalidVocabularyDir(#[from] crate::settings::DirectoryError),
     #[error("invalid {field} value {value}")]
     InvalidEnum { field: &'static str, value: i32 },
 
@@ -2973,7 +2970,8 @@ mod tests {
 
     #[test]
     fn project_context_preserves_presence_and_rejects_invalid_paths() {
-        use crate::vocabulary::{Context, Directory};
+        use crate::settings::Directory;
+        use crate::vocabulary::Context;
         for project in [
             Context::Default,
             Context::Disabled,

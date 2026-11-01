@@ -5,25 +5,21 @@
 //! The reads stop short of running an operation, which would take a model, a
 //! microphone or an assistant. Bugs of this class come from a value captured
 //! once, and every read here goes through the per-operation entry point:
-//! `resolve_dictation` for a press, `next_utterance` for speech, and the
-//! config load an ask, a memory run and a listen session each make on start.
+//! `DictationSettings::resolve` for a press, `next_utterance` for
+//! speech, and the config load an ask, a memory run and a listen session each
+//! make on start.
 
+use super::speech::next_utterance;
+use crate::config::{ChatConfig, ListenConfig, MemoryConfig, TtsEngine};
+use crate::delivery::{Application, PlatformTextDelivery, TextDelivery};
+use crate::dictation::{DictationRequest, StopMode};
+use crate::settings::{Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify};
+use crate::speech::SpeechRequest;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-
 use toml_edit::Value;
-
-use crate::config::{ChatConfig, ListenConfig, MemoryConfig, TtsEngine};
-use crate::delivery::{PlatformTextDelivery, TextDelivery};
-use crate::dictation::{DictationRequest, StopMode};
-use crate::history::Application;
-use crate::settings::SettingsStore;
-use crate::settings::{Apply, Key, Patch, SettingsCache, SettingsError, modify};
-use crate::speech::SpeechRequest;
-
-use super::speech::next_utterance;
 
 /// Names the output mode because its default differs by platform, and each
 /// case must change what this file holds.
@@ -73,15 +69,11 @@ impl LiveHarness {
             name: "App".into(),
             bundle_id: Some("com.app".into()),
         };
-        let settings = self
-            .settings
-            .snapshot()
-            .unwrap()
-            .settings
-            .resolve_dictation(
-                DictationRequest::new(StopMode::OnSilence),
-                Some(application),
-            );
+        let settings = crate::dictation::DictationSettings::resolve(
+            self.settings.snapshot().unwrap().settings,
+            DictationRequest::new(StopMode::OnSilence),
+            Some(application),
+        );
         format!("{settings:?}")
     }
 

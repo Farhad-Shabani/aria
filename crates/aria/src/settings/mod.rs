@@ -7,6 +7,7 @@
 mod choices;
 mod chord;
 mod command;
+mod directory;
 mod document;
 mod keys;
 mod overrides;
@@ -22,17 +23,17 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aria_kit::synthesis::{SpeakingRateError, VoiceError};
+use aria_kit::transcription::LanguageCodeError;
 
 use crate::audio::{AutoStopError, SilenceDurationError};
-use crate::dictation::CleanupError;
-use crate::transcription::LanguageCodeError;
-use crate::vocabulary::DirectoryError;
 
-pub use choices::{Settings, Shortcut, StoreError};
+pub use choices::{CleanupConfigError, DeliveryMode, PromptKind, Settings, Shortcut, StoreError};
+pub(crate) use choices::{MAX_DICTATION_TIMEOUT, is_valid_model_id, validate_cleanup_llm};
 pub use chord::{Chord, ChordError, Modifiers};
 pub use command::{
     CommandError, Outcome, Row, banner, create, path, reset, schema, set, show, validate,
 };
+pub use directory::{Directory, DirectoryError};
 pub(crate) use document::{
     ApplicationOverrideEntry, AriaKeyName, Capture, CaptureBackendName, Delivery, DeliveryModeName,
     DeviceName, Dictation, Keyed, Loaded, Memory, OutputModeName, PaceName, Phone, PromptEntry,
@@ -327,7 +328,7 @@ pub enum InvalidValue {
     SharedBinding,
 
     #[error("is not usable: {0}")]
-    Cleanup(#[source] CleanupError),
+    Cleanup(#[source] CleanupConfigError),
 
     #[error("is not usable: {0}")]
     SpeakingRate(#[source] SpeakingRateError),

@@ -1,17 +1,16 @@
 //! Acquisition and ownership of a usable daemon session.
 
-use std::path::PathBuf;
-use std::thread;
-use std::time::{Duration, Instant};
-
+use super::assembly::DaemonError;
+use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
+use super::shutdown::ShutdownSignal;
 use crate::chat::{
     Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
     ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
+use crate::config::{AssistantId, ChatConfig, ConfigError, WakeWordOverride};
 use crate::delivery::{PlatformTextDelivery, TextDelivery};
 use crate::dictation::{
-    DeliveryMode, DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId,
-    StopMode,
+    DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
 use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult};
 use crate::ipc::{
@@ -21,17 +20,14 @@ use crate::ipc::{
 use crate::listen::ListenStage;
 use crate::rpc::RpcErrorCode;
 use crate::runtime::{PreparedRuntimePaths, RuntimeError};
-use crate::settings::{SettingsPatch, SettingsSnapshot, UpdateResult};
+use crate::settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
 use crate::speaker::SpeakerName;
 use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
+use std::path::PathBuf;
+use std::thread;
+use std::time::{Duration, Instant};
 use tonic_health::pb::health_check_response::ServingStatus;
-
-use crate::config::{AssistantId, ChatConfig, ConfigError, WakeWordOverride};
-
-use super::assembly::DaemonError;
-use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
-use super::shutdown::ShutdownSignal;
 
 pub(super) const STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
@@ -283,21 +279,21 @@ impl DaemonSession {
 
     pub fn vocabulary_status(
         &self,
-        directory: Option<&crate::vocabulary::Directory>,
+        directory: Option<&crate::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         self.client.vocabulary_status(directory)
     }
 
     pub fn vocabulary_refresh(
         &self,
-        directory: Option<&crate::vocabulary::Directory>,
+        directory: Option<&crate::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         self.client.vocabulary_refresh(directory)
     }
 
     pub fn vocabulary_forget(
         &self,
-        directory: Option<&crate::vocabulary::Directory>,
+        directory: Option<&crate::settings::Directory>,
     ) -> Result<crate::vocabulary::Status, ClientError> {
         self.client.vocabulary_forget(directory)
     }
@@ -728,6 +724,18 @@ fn probe_error(paths: &PreparedRuntimePaths, error: ProbeError) -> StartupError 
             source,
         },
     }
+}
+
+/// What the running daemon waits on a restart for; nothing when no daemon
+/// runs.
+pub fn restart_required_keys() -> Result<Vec<String>, ClientError> {
+    let Ok(paths) = PreparedRuntimePaths::for_current_user() else {
+        return Ok(Vec::new());
+    };
+    let Ok(session) = DaemonSession::connect_at(&paths) else {
+        return Ok(Vec::new());
+    };
+    Ok(session.settings_status()?.restart_required)
 }
 
 #[cfg(test)]

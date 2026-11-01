@@ -95,42 +95,6 @@ fn category(error: TranscriptionError) -> &'static str {
 }
 
 #[test]
-fn configuration_accepts_only_explicit_loopback_chat_endpoints() {
-    for endpoint in [
-        "http://127.0.0.1:8080/v1/chat/completions",
-        "http://[::1]:8080/v1/chat/completions",
-    ] {
-        validate_config(endpoint, "local/model:1").unwrap();
-    }
-    for endpoint in [
-        "http://localhost:8080/v1/chat/completions",
-        "https://127.0.0.1:8080/v1/chat/completions",
-        "http://192.168.0.1:8080/v1/chat/completions",
-        "http://127.0.0.1/v1/chat/completions",
-        "http://127.0.0.1:0/v1/chat/completions",
-        "http://user@127.0.0.1:80/v1/chat/completions",
-        "http://127.0.0.1:80/v1/chat/completions?key=secret",
-        "http://127.0.0.1:80/v1/chat/completions#x",
-        "http://127.0.0.1:80/other",
-        "http://[::ffff:127.0.0.1]:80/v1/chat/completions",
-    ] {
-        assert!(
-            matches!(
-                validate_config(endpoint, "local"),
-                Err(CleanupError::Endpoint)
-            ),
-            "{endpoint}"
-        );
-    }
-    for model in ["", " ", "model\nsecret", &"a".repeat(257)] {
-        assert!(matches!(
-            validate_config("http://127.0.0.1:80/v1/chat/completions", model),
-            Err(CleanupError::Model)
-        ));
-    }
-}
-
-#[test]
 fn prompt_overrides_are_bounded_and_keep_the_output_contract() {
     let home = tempfile::tempdir().unwrap();
     let bundled = build_prompt(home.path()).unwrap();

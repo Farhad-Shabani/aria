@@ -1,8 +1,8 @@
 use super::{DB_FILE, LEXICON_FILE};
-use crate::vocabulary::PersonalRules;
-#[cfg(test)]
-use crate::vocabulary::Vocabulary;
 use aria_kit::cancel::CancelToken;
+#[cfg(test)]
+use aria_kit::transcription::layer::vocabulary::Vocabulary;
+use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules};
 use rusqlite::{Connection, OpenFlags};
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
@@ -104,7 +104,7 @@ impl Lexicon {
             return Err(LexiconError::TooLarge);
         }
         PersonalRules::from_stored(terms, learned, cancel).map_err(|error| match error {
-            crate::vocabulary::MatchError::Cancelled => LexiconError::Cancelled,
+            MatchError::Cancelled => LexiconError::Cancelled,
             _ => LexiconError::TooLarge,
         })
     }

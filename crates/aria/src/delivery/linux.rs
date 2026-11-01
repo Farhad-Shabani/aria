@@ -169,7 +169,7 @@ impl TextDelivery for LinuxTextDelivery {
     const OUTLIVES_PROCESS: bool = false;
     const STREAMS: bool = false;
 
-    fn frontmost(&self) -> Option<crate::history::Application> {
+    fn frontmost(&self) -> Option<super::Application> {
         None
     }
 

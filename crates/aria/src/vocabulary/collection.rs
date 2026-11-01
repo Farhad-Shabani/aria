@@ -2,7 +2,8 @@ use std::io;
 
 use aria_kit::cancel::CancelToken;
 
-use super::{Directory, Discovery, Source};
+use super::{Discovery, Source};
+use crate::settings::Directory;
 
 pub(crate) trait Collector: Send + 'static {
     type Error: std::error::Error + Send + Sync + 'static;

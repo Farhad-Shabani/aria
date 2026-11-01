@@ -8,10 +8,10 @@ use aria_kit::transcription::layer::{
     self, Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats,
 };
 
+use super::{CleanupError, LlmCleanup};
+use crate::config::DictationConfig;
 use crate::transcription::{Transcript, TranscriptionError};
 use crate::vocabulary::Vocabulary;
-
-use super::{CleanupError, LlmCleanup};
 
 /// The layers the settings can add after the deterministic passes.
 pub(crate) type ConfiguredLayers = Layered<Option<LlmCleanup>, ()>;
@@ -38,6 +38,20 @@ pub(crate) struct Rewrites<L = ()> {
 impl Rewrites {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+}
+
+impl Rewrites<ConfiguredLayers> {
+    pub(crate) fn load(
+        config: &DictationConfig,
+        home: &std::path::Path,
+    ) -> Result<Self, CleanupError> {
+        let llm = config
+            .cleanup_llm
+            .as_ref()
+            .map(|cleanup| LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home))
+            .transpose()?;
+        Ok(Rewrites::new().with(llm))
     }
 }
 

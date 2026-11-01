@@ -14,11 +14,10 @@ use tonic_health::server::HealthReporter;
 
 use crate::audio::{CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor};
 use crate::config::WakeBackend;
-use crate::dictation::{
-    DeliveryMode, DictationError, DictationOutcome, DictationRequest, StopMode,
-};
+use crate::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 use crate::primitives::error_chain;
+use crate::settings::DeliveryMode;
 
 use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;

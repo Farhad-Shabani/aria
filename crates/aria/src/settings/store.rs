@@ -2,16 +2,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use aria_kit::synthesis::SpeakingRate;
+use aria_kit::transcription::Language;
 use tokio::sync::watch;
 
+use super::DeliveryMode;
 use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view};
+use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
 use crate::audio::{AutoStop, SilenceDuration};
 use crate::config::AssistantId;
 use crate::delivery::OutputMode;
-use crate::dictation::DeliveryMode;
 use crate::hotkey::AriaKey;
-use crate::settings::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
-use crate::transcription::Language;
 
 /// `revision` is the hash of the file's values, so a comment edit keeps it.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -31,7 +31,7 @@ pub struct SettingsPatch {
     pub backtrack: Option<bool>,
     pub own_voice_only: Option<bool>,
     pub vocabulary_enabled: Option<bool>,
-    pub vocabulary_dir: Option<Option<crate::vocabulary::Directory>>,
+    pub vocabulary_dir: Option<Option<super::Directory>>,
     pub history_enabled: Option<bool>,
     pub history_keep_audio: Option<bool>,
     pub assistant_id: Option<AssistantId>,
@@ -221,7 +221,6 @@ impl SettingsPatch {
 mod tests {
     use super::super::{Chord, Modifiers, Prompt, PromptId};
     use super::*;
-
     use crate::hotkey::Combo;
 
     fn revision(store: &SettingsStore) -> u64 {
@@ -389,7 +388,8 @@ mod tests {
         let (_home, path, store) = new_store();
         let original = store.snapshot().unwrap().settings;
         assert!(!original.history_keep_audio);
-        let settings = original.resolve_dictation(
+        let settings = crate::dictation::DictationSettings::resolve(
+            original,
             crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
             None,
         );
@@ -410,14 +410,12 @@ mod tests {
                 .settings;
             assert_eq!(loaded.history_keep_audio, enabled);
             assert_eq!(
-                loaded
-                    .resolve_dictation(
-                        crate::dictation::DictationRequest::new(
-                            crate::dictation::StopMode::OnSilence
-                        ),
-                        None
-                    )
-                    .history_keep_audio,
+                crate::dictation::DictationSettings::resolve(
+                    loaded,
+                    crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+                    None
+                )
+                .history_keep_audio,
                 enabled
             );
             assert!(!settings.history_keep_audio);
@@ -427,7 +425,8 @@ mod tests {
     #[test]
     fn vocabulary_selection_persists_and_respects_request_overrides() {
         use crate::dictation::{DictationRequest, StopMode};
-        use crate::vocabulary::{Context, Directory};
+        use crate::settings::Directory;
+        use crate::vocabulary::Context;
 
         let (_home, path, store) = new_store();
         let selected = Directory::new("/projects/selected".into()).expect("absolute path");
@@ -452,7 +451,8 @@ mod tests {
             (Context::Directory(explicit.clone()), Some(explicit.clone())),
             (Context::Disabled, None),
         ] {
-            let settings = settings.clone().resolve_dictation(
+            let settings = crate::dictation::DictationSettings::resolve(
+                settings.clone(),
                 DictationRequest {
                     project: context,
                     ..DictationRequest::new(StopMode::OnSilence)
@@ -468,15 +468,15 @@ mod tests {
         .apply_to(&settings);
         assert_eq!(disabled.vocabulary_dir, Some(selected));
         assert_eq!(
-            disabled
-                .resolve_dictation(
-                    DictationRequest {
-                        project: Context::Directory(explicit),
-                        ..DictationRequest::new(StopMode::OnSilence)
-                    },
-                    None
-                )
-                .project,
+            crate::dictation::DictationSettings::resolve(
+                disabled,
+                DictationRequest {
+                    project: Context::Directory(explicit),
+                    ..DictationRequest::new(StopMode::OnSilence)
+                },
+                None
+            )
+            .project,
             None
         );
         let cleared = SettingsPatch {

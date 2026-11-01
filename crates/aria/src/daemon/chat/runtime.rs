@@ -2,14 +2,8 @@
 //! conversation it continues, and the reply's optional delivery. Ordering
 //! between asks is the actor's job; here only the record file is shared.
 
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use std::time::Duration;
-use tokio::sync::mpsc;
-
-use aria_kit::cancel::CancelToken;
-
+use super::super::context::Context;
+use super::super::subscriptions::Subscriptions;
 use crate::chat::{
     AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
     CODEX_BINARY, ChatError, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
@@ -25,12 +19,13 @@ use crate::delivery::{
 use crate::memory::{DB_FILE, Store, load_profile_block};
 use crate::primitives::error_chain;
 use crate::rpc::RpcErrorCode;
-use crate::settings::SettingsCache;
-use crate::settings::{ApplicationId, SettingsStore};
+use crate::settings::{ApplicationId, SettingsCache, SettingsStore};
 use crate::speaker::{ProfileStore, Role};
-
-use super::super::context::Context;
-use super::super::subscriptions::Subscriptions;
+use aria_kit::cancel::CancelToken;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Resume ids outlive the daemon and a reboot, like the assistants' own history.
 const SESSION_FILE: &str = "chat-session.json";
@@ -650,7 +645,7 @@ pub(super) mod tests {
     use std::sync::Mutex;
     use std::sync::mpsc::{Sender, channel};
 
-    use crate::chat::PromptKind;
+    use crate::settings::PromptKind;
 
     use super::*;
 
@@ -707,8 +702,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn request_drop_and_shutdown_cancel_model_discovery() {
-        use crate::daemon::host::DaemonLifetime;
-        use crate::daemon::service::ChatRpc;
+        use crate::daemon::{host::DaemonLifetime, service::ChatRpc};
         use crate::ipc::wire::{self, chat_service_server::ChatService};
 
         for disconnect in [true, false] {
@@ -1510,8 +1504,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn listed_assistants_carry_their_status_and_fix() {
-        use crate::daemon::host::DaemonLifetime;
-        use crate::daemon::service::ChatRpc;
+        use crate::daemon::{host::DaemonLifetime, service::ChatRpc};
         use crate::ipc::wire::{self, chat_service_server::ChatService};
 
         let directory = tempfile::tempdir().expect("test directory");

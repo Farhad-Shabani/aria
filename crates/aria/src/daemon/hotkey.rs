@@ -2,25 +2,22 @@
 //! dictation, or cancels a run a client's press started; a hold records
 //! here; a combo is broadcast for a client to run.
 
-use std::sync::Arc;
-
-use tokio::sync::{oneshot, watch};
-use tokio_util::sync::CancellationToken;
-use tonic_health::ServingStatus;
-use tonic_health::server::HealthReporter;
-
-use crate::dictation::{
-    DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
-};
-use crate::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
-use crate::ipc::HOTKEY_HEALTH_SERVICE;
-
 use super::chat::{ChatCallError, ChatHandle};
 use super::dictation::DictationRuntimeError;
 use super::dictation::{AutoStopRule, DictationCallError, DictationHandle, DictationRuntime};
 use super::operation::CallError;
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
+use crate::dictation::{
+    DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
+};
+use crate::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
+use crate::ipc::HOTKEY_HEALTH_SERVICE;
+use std::sync::Arc;
+use tokio::sync::{oneshot, watch};
+use tokio_util::sync::CancellationToken;
+use tonic_health::ServingStatus;
+use tonic_health::server::HealthReporter;
 
 /// The blocking platform listener; tests swap in a fake.
 type Listener = fn(AriaKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);

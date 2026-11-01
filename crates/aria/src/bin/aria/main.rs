@@ -968,7 +968,9 @@ fn run_doctor() -> anyhow::Result<()> {
 fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
     match command {
         SettingsCommand::Show { key, json } => {
-            let rows = aria::settings::show(key.as_deref())?;
+            let pending = aria::daemon::restart_required_keys()
+                .context("cannot read the running daemon's settings status")?;
+            let rows = aria::settings::show(&pending, key.as_deref())?;
             if json {
                 let rows = rows.iter().map(settings_row_json).collect();
                 println!("{}", serde_json::Value::Array(rows));
@@ -1486,7 +1488,7 @@ fn run_events() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::vocabulary::Directory> {
+fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::settings::Directory> {
     let path = if path.is_absolute() {
         path
     } else {
@@ -1497,7 +1499,7 @@ fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::vocabulary::Directory> 
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
         Err(error) => return Err(error.into()),
     };
-    Ok(aria::vocabulary::Directory::new(path)?)
+    Ok(aria::settings::Directory::new(path)?)
 }
 
 fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
@@ -1693,7 +1695,7 @@ fn run_dictate(
     let project = if no_project || !session.get_settings()?.settings.vocabulary_enabled {
         aria::vocabulary::Context::Disabled
     } else {
-        aria::vocabulary::Context::Directory(aria::vocabulary::Directory::new(
+        aria::vocabulary::Context::Directory(aria::settings::Directory::new(
             std::env::current_dir()?,
         )?)
     };
@@ -1787,7 +1789,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
                 .canonicalize()
                 .context("failed to resolve the project directory")?;
             anyhow::ensure!(path.is_dir(), "the project path is not a directory");
-            Ok::<_, anyhow::Error>(aria::vocabulary::Directory::new(path)?)
+            Ok::<_, anyhow::Error>(aria::settings::Directory::new(path)?)
         })
         .transpose()?;
     let stop_mode = if args.toggle {

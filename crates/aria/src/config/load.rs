@@ -396,7 +396,7 @@ fn cleanup_llm(dictation: &Dictation) -> Result<Option<super::LlmCleanupConfig>,
     let Some(config) = &dictation.cleanup_llm else {
         return Ok(None);
     };
-    crate::dictation::cleanup::validate_config(&config.endpoint, &config.model)
+    crate::settings::validate_cleanup_llm(&config.endpoint, &config.model)
         .map_err(ConfigError::CleanupLlm)?;
     Ok(Some(super::LlmCleanupConfig {
         endpoint: config.endpoint.clone(),
