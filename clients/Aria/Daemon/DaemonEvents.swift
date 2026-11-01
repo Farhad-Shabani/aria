@@ -187,3 +187,7 @@ final class DaemonEvents {
         }
     }
 }
+
+extension Notification.Name {
+    static let dictationHistoryChanged = Notification.Name("dictationHistoryChanged")
+}

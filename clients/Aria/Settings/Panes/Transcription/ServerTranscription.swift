@@ -3,11 +3,6 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "ServerTranscription")
 
-enum TranscriptionLocation: Equatable {
-    case thisMac
-    case server
-}
-
 /// Each switch runs setup apply, which writes the settings file and restarts the service.
 @MainActor
 final class ServerTranscription: ObservableObject {
