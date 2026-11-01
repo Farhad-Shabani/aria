@@ -1000,7 +1000,8 @@ mod tests {
     /// daemon loads them.
     #[test]
     fn shared_models_land_where_the_daemon_loads_them() {
-        use crate::config::{DaemonConfig, SpeakerConfig, WakeConfig, WakeWordOverride};
+        use crate::config::SpeakerConfig;
+        use crate::daemon::config::{DaemonConfig, WakeConfig, WakeWordOverride};
 
         let home = tempfile::tempdir().unwrap();
         let settings_path = aria_settings::settings::default_path(home.path());

@@ -10,8 +10,10 @@
 //! make on start.
 
 use super::speech::next_utterance;
-use crate::config::{ChatConfig, ListenConfig, MemoryConfig, TtsEngine};
+use crate::chat::ChatConfig;
+use crate::config::{ListenConfig, TtsEngine};
 use crate::dictation::{DictationRequest, StopMode};
+use crate::memory::MemoryConfig;
 use crate::speech::SpeechRequest;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use aria_settings::settings::{

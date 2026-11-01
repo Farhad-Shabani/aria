@@ -14,7 +14,7 @@ use super::profile::write_profile;
 use super::store::{Store, StoreError};
 use super::{DB_FILE, LEXICON_FILE, MemoryError};
 use crate::chat::AssistantError;
-use crate::config::MemoryConfig;
+use crate::memory::MemoryConfig;
 use crate::primitives::error_chain;
 use aria_settings::settings::SettingsFile;
 

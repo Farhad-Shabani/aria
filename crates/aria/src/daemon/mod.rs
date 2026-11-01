@@ -3,6 +3,8 @@
 //! One import point for both roles: hosts run a [`Daemon`], clients open a
 //! [`DaemonSession`] or watch an [`EventStream`].
 
+pub(crate) mod config;
+
 mod assembly;
 mod capture;
 mod chat;

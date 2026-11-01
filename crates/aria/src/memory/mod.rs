@@ -4,6 +4,8 @@
 //! Everything lives under the memory directory: `memory.db`, `profile.md`,
 //! and the user's own `lexicon.txt`.
 
+mod config;
+pub(crate) use config::MemoryConfig;
 mod consolidate;
 mod extract;
 mod lexicon;

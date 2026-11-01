@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crate::config::WakeWordOverride;
+use crate::daemon::config::WakeWordOverride;
 use crate::dictation::DictationExecutor;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimePaths};
 

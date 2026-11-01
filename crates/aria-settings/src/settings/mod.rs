@@ -13,6 +13,8 @@ mod keys;
 mod overrides;
 mod prompts;
 mod store;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 mod view;
 mod watch;
 mod write;

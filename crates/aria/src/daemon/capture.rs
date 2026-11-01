@@ -7,7 +7,8 @@ use crate::audio::{
     AudioCapture, CaptureError, Microphone, PreparedMicrophone, RecordingMode, RecordingReader,
     StopSignal, WakeWordMonitor, WavReplayCapture,
 };
-use crate::config::{CaptureConfig, WakeConfig};
+use crate::config::CaptureConfig;
+use crate::daemon::config::WakeConfig;
 use aria_settings::config::ConfigError;
 
 use super::DictationInitializationError;
@@ -111,7 +112,7 @@ mod tests {
     use super::*;
 
     use crate::audio::ReplayPace;
-    use crate::config::WakeBackend;
+    use crate::daemon::config::WakeBackend;
 
     #[test]
     fn a_wake_word_on_a_replayed_capture_is_refused() {

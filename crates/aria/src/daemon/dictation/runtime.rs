@@ -9,7 +9,8 @@ use super::assembly::{
     build_dictation, transcribe_retry,
 };
 use crate::audio::{RecordingReader, WakeWordMonitor};
-use crate::config::{DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig};
+use crate::config::{DictationConfig, SpeakerConfig, TranscriptionBackend};
+use crate::daemon::config::WakeConfig;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,

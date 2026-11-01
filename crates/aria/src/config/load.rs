@@ -1,78 +1,31 @@
 //! Resolution of settings-file values and defaults.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use crate::audio::ReplayPace;
 
 use aria_kit::synthesis::{SpeakingRate, Voice};
 
-use super::ChatConfig;
-use super::WakeWordOverride;
 use super::{
-    CaptureConfig, DaemonConfig, DictationConfig, DictationTimeouts, HotkeyConfig, ListenConfig,
-    ListenTranscription, MemoryConfig, RelayConfig, SpeakerConfig, SpeechDefaults,
-    TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend, TtsConfig,
-    TtsEngine, TtsFallback, TtsModel, WakeBackend, WakeConfig,
+    CaptureConfig, DictationConfig, DictationTimeouts, ListenConfig, ListenTranscription,
+    SpeakerConfig, SpeechDefaults, TranscriptionBackend, TranscriptionConfig, TranscriptionDevice,
+    TtsBackend, TtsConfig, TtsEngine, TtsFallback, TtsModel,
 };
 use aria_settings::config::{
     ConfigError, DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, backend, delivery_timeout,
-    memory_directory, model_file, model_folder, model_location, string_value, timeout, tts_backend,
-    wake_backend,
+    model_file, model_folder, model_location, string_value, timeout, tts_backend,
 };
 use aria_settings::settings::{
-    Capture, CaptureBackendName, Delivery, DeviceName, Dictation, Memory, PaceName, Phone,
-    SettingsFile, Speaker, Stt, Tts, TtsFallbackName, Wake,
+    Capture, CaptureBackendName, Delivery, DeviceName, Dictation, PaceName, SettingsFile, Speaker,
+    Stt, Tts, TtsFallbackName,
 };
 
-const DEFAULT_WAKE_MODEL: &str = "wakeword/aria.onnx";
-const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
 const WAV_FILE_CAPTURE_BACKEND: &str = "wav_file";
 
-/// Long enough for an assistant to read a repo and think.
-const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
-
 const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = ".aria/transcripts";
 const DEFAULT_SPEAKERS_DIR: &str = ".aria/speakers";
-const DEFAULT_MEMORY_EXTRACT_MODEL: &str = "sonnet";
-const DEFAULT_MEMORY_MAX_FACTS: u32 = 10;
-
-impl DaemonConfig {
-    pub(crate) fn load(
-        settings: &SettingsFile,
-        home: &Path,
-        wake_word: WakeWordOverride,
-    ) -> Result<Self, ConfigError> {
-        let dictation = DictationConfig::load(settings, home)?;
-        let wake = wake(&settings.wake, home, &dictation.capture, wake_word)?;
-        let tts = TtsConfig::load(&settings.tts, home)?;
-        Ok(Self {
-            dictation,
-            wake,
-            hotkey: HotkeyConfig::Enabled,
-            relay: relay(&settings.phone),
-            tts,
-        })
-    }
-}
-
-/// A paired phone can type into the focused app, so the LAN listener stays
-/// off until configured.
-const DEFAULT_RELAY_ENABLED: bool = false;
-const DEFAULT_RELAY_PORT: u16 = 9850;
-
-fn relay(phone: &Phone) -> RelayConfig {
-    if phone.enabled.unwrap_or(DEFAULT_RELAY_ENABLED) {
-        RelayConfig::Enabled {
-            port: phone.port.unwrap_or(DEFAULT_RELAY_PORT),
-        }
-    } else {
-        RelayConfig::Disabled
-    }
-}
-
 impl ListenConfig {
     pub(crate) fn load(settings: &SettingsFile, home: &Path) -> Result<Self, ConfigError> {
         let backend = settings.listen.backend.clone();
@@ -148,38 +101,6 @@ impl SpeakerConfig {
                 .clone()
                 .unwrap_or_else(|| home.join(DEFAULT_SPEAKERS_DIR)),
         }
-    }
-}
-
-impl MemoryConfig {
-    pub(crate) fn load(memory: &Memory, home: &Path) -> Self {
-        Self {
-            enabled: memory.enabled.unwrap_or(false),
-            extract_model: memory
-                .extract_model
-                .clone()
-                .unwrap_or_else(|| DEFAULT_MEMORY_EXTRACT_MODEL.to_owned()),
-            max_facts_per_session: memory
-                .max_facts_per_session
-                .unwrap_or(DEFAULT_MEMORY_MAX_FACTS),
-            dir: memory_directory(memory, home),
-        }
-    }
-}
-
-impl ChatConfig {
-    pub(crate) fn load(settings: &SettingsFile) -> Result<Self, ConfigError> {
-        let timeout = timeout(
-            settings.assistant.timeout_secs,
-            "assistant.timeout_secs",
-            DEFAULT_CHAT_TIMEOUT,
-        )?;
-        Ok(Self {
-            workdir: settings.assistant.workdir.clone(),
-            project_roots: settings.assistant.project_roots.clone().unwrap_or_default(),
-            timeout,
-            delivery_timeout: delivery_timeout(&settings.delivery)?,
-        })
     }
 }
 
@@ -366,55 +287,6 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
     }
 }
 
-fn wake(
-    wake: &Wake,
-    home: &Path,
-    capture: &CaptureConfig,
-    wake_word: WakeWordOverride,
-) -> Result<WakeConfig, ConfigError> {
-    let enabled = matches!(wake_word, WakeWordOverride::Enable) || wake.enabled.unwrap_or(false);
-    if !enabled {
-        return Ok(WakeConfig::Disabled);
-    }
-
-    let backend = parse_wake_backend(&string_value(wake.backend.clone(), wake_backend::DEFAULT))?;
-
-    if !matches!(capture, CaptureConfig::Microphone) {
-        return Err(ConfigError::WakeRequiresMicrophone);
-    }
-
-    let model = match (wake.model.as_deref(), backend) {
-        (Some(model), _) => Some(model),
-        (None, WakeBackend::OpenWakeWord) => None,
-        // No aria-trained livekit head ships with Aria, and the openWakeWord
-        // default would load into the wrong backend.
-        (None, WakeBackend::LiveKit) => {
-            return Err(ConfigError::MissingValue {
-                field: "wake.model",
-                backend: wake_backend::LIVEKIT,
-            });
-        }
-    };
-    let classifier = model_location(model, DEFAULT_WAKE_MODEL, home);
-    Ok(WakeConfig::Enabled {
-        backend,
-        classifier,
-        threshold: wake.threshold.unwrap_or(DEFAULT_WAKE_THRESHOLD),
-    })
-}
-
-fn parse_wake_backend(value: &str) -> Result<WakeBackend, ConfigError> {
-    match value {
-        wake_backend::OPEN_WAKE_WORD => Ok(WakeBackend::OpenWakeWord),
-        wake_backend::LIVEKIT => Ok(WakeBackend::LiveKit),
-        _ => Err(ConfigError::UnsupportedValue {
-            field: "wake.backend",
-            value: value.to_owned(),
-            supported: "openwakeword and livekit",
-        }),
-    }
-}
-
 impl TranscriptionBackend {
     pub(crate) fn load(file: &Stt, home: &Path) -> Result<Self, ConfigError> {
         TranscriptionSettings::read(file).resolve(home)
@@ -545,6 +417,7 @@ fn timeouts(dictation: &Dictation, delivery: &Delivery) -> Result<DictationTimeo
 mod tests {
     use super::*;
     use aria_settings::settings::Loaded;
+    use std::time::Duration;
 
     fn test_home() -> PathBuf {
         PathBuf::from("/home/user")
@@ -716,116 +589,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn disabled_wake_ignores_its_dormant_settings() {
-        let file = file("[wake]\nenabled = false\nmodel = \"/missing/model.onnx\"\n");
-
-        let wake = wake(
-            &file.wake,
-            &test_home(),
-            &CaptureConfig::Microphone,
-            WakeWordOverride::Inherit,
-        )
-        .expect("a disabled wake word reads nothing else");
-
-        assert_eq!(wake, WakeConfig::Disabled);
-    }
-
-    #[test]
-    fn a_wake_word_run_outranks_a_disabled_file() {
-        let wake = wake(
-            &file("[wake]\nenabled = false\n").wake,
-            &test_home(),
-            &CaptureConfig::Microphone,
-            WakeWordOverride::Enable,
-        )
-        .expect("the command should enable monitoring");
-
-        assert!(matches!(wake, WakeConfig::Enabled { .. }));
-    }
-
-    /// The file's rule skips a disabled wake word, so a run that enables one
-    /// meets this rule here first.
-    #[test]
-    fn a_wake_word_run_needs_the_microphone() {
-        let error = wake(
-            &file("[wake]\nenabled = false\n").wake,
-            &test_home(),
-            &CaptureConfig::WavFile {
-                path: PathBuf::from("/fixture.wav"),
-                pace: ReplayPace::Immediate,
-            },
-            WakeWordOverride::Enable,
-        )
-        .expect_err("a replay has no live audio to monitor");
-        assert!(matches!(error, ConfigError::WakeRequiresMicrophone));
-    }
-
-    fn enabled_wake(rest: &str) -> SettingsFile {
-        file(&format!("[wake]\nenabled = true\n{rest}"))
-    }
-
-    #[test]
-    fn wake_defaults_to_openwakeword_and_its_own_model() {
-        let wake = wake(
-            &enabled_wake("").wake,
-            &test_home(),
-            &CaptureConfig::Microphone,
-            WakeWordOverride::Inherit,
-        )
-        .expect("the default backend must resolve");
-
-        assert_eq!(
-            wake,
-            WakeConfig::Enabled {
-                backend: WakeBackend::OpenWakeWord,
-                classifier: PathBuf::from("/home/user/.aria/models/wakeword/aria.onnx"),
-                threshold: DEFAULT_WAKE_THRESHOLD,
-            }
-        );
-    }
-
-    #[test]
-    fn wake_resolves_the_livekit_backend() {
-        let file = enabled_wake("backend = \"livekit\"\nmodel = \"~/models/hey_livekit.onnx\"\n");
-
-        let wake = wake(
-            &file.wake,
-            &test_home(),
-            &CaptureConfig::Microphone,
-            WakeWordOverride::Inherit,
-        )
-        .expect("livekit with a model must resolve");
-
-        assert_eq!(
-            wake,
-            WakeConfig::Enabled {
-                backend: WakeBackend::LiveKit,
-                classifier: PathBuf::from("/home/user/models/hey_livekit.onnx"),
-                threshold: DEFAULT_WAKE_THRESHOLD,
-            }
-        );
-    }
-
-    #[test]
-    fn a_wake_word_run_of_livekit_without_a_model_is_refused() {
-        let error = wake(
-            &file("[wake]\nbackend = \"livekit\"\n").wake,
-            &test_home(),
-            &CaptureConfig::Microphone,
-            WakeWordOverride::Enable,
-        )
-        .expect_err("livekit has no default model");
-
-        assert!(matches!(
-            error,
-            ConfigError::MissingValue {
-                field: "wake.model",
-                backend: "livekit",
-            }
-        ));
-    }
-
     /// Every setting unset but the backend, so each test names only what it
     /// is about.
     fn settings(backend: &str) -> TranscriptionSettings<'static> {
@@ -939,40 +702,6 @@ mod tests {
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn chat_defaults_to_the_caller_directory_and_default_timeouts() {
-        let chat = ChatConfig::load(&SettingsFile::default()).expect("defaults resolve");
-
-        assert_eq!(
-            chat,
-            ChatConfig {
-                workdir: None,
-                project_roots: Vec::new(),
-                timeout: DEFAULT_CHAT_TIMEOUT,
-                delivery_timeout: aria_settings::config::DEFAULT_DELIVERY_TIMEOUT,
-            }
-        );
-    }
-
-    #[test]
-    fn chat_resolves_its_workdir_and_timeouts() {
-        let file = file(
-            "[assistant]\nworkdir = \"~/src\"\nproject_roots = [\"~\", \"/srv/code\"]\ntimeout_secs = 30.0\n\
-             [delivery]\ntimeout_secs = 2.0\n",
-        );
-        let home_dir = test_home();
-
-        let chat = ChatConfig::load(&file).expect("the assistant table resolves");
-
-        assert_eq!(chat.workdir, Some(home_dir.join("src")));
-        assert_eq!(
-            chat.project_roots,
-            vec![home_dir, PathBuf::from("/srv/code")]
-        );
-        assert_eq!(chat.timeout, Duration::from_secs(30));
-        assert_eq!(chat.delivery_timeout, Duration::from_secs(2));
     }
 
     #[test]
@@ -1195,26 +924,10 @@ mod tests {
         assert_eq!(endpoint.to_string(), "https://started.test:9851");
     }
 
-    fn defaults_text() -> String {
-        let mut sections = std::collections::BTreeMap::<&str, String>::new();
-        for key in aria_settings::settings::Key::ALL {
-            let Some(literal) = key.default() else {
-                continue;
-            };
-            let (section, name) = key.path().rsplit_once('.').expect("a dotted key");
-            let entries = sections.entry(section).or_default();
-            entries.push_str(&format!("{name} = {literal}\n"));
-        }
-        sections
-            .iter()
-            .map(|(section, entries)| format!("[{section}]\n{entries}"))
-            .collect()
-    }
-
     #[test]
     fn the_defaults_load_and_match_what_code_does_without_them() {
         let home = Path::new("/home/user");
-        let defaults = Loaded::parse(&defaults_text(), home)
+        let defaults = Loaded::parse(&aria_settings::settings::testing::defaults_text(), home)
             .expect("every default is valid")
             .settings;
         let empty = SettingsFile::default();
@@ -1227,14 +940,6 @@ mod tests {
         assert_eq!(
             TtsConfig::load(&defaults.tts, &home_dir).unwrap(),
             TtsConfig::load(&empty.tts, &home_dir).unwrap()
-        );
-        assert_eq!(
-            ChatConfig::load(&defaults).unwrap(),
-            ChatConfig::load(&empty).unwrap()
-        );
-        assert_eq!(
-            MemoryConfig::load(&defaults.memory, &home_dir),
-            MemoryConfig::load(&empty.memory, &home_dir)
         );
         assert_eq!(
             SpeakerConfig::load(&defaults.speaker, &home_dir),
@@ -1258,7 +963,5 @@ mod tests {
         assert_eq!(tts_backend::KOKORO, aria_tts::kokoro::NAME);
         assert_eq!(tts_backend::QWEN, aria_tts::qwen::NAME);
         assert_eq!(tts_backend::SYSTEM, aria_tts::system::NAME);
-        assert_eq!(wake_backend::OPEN_WAKE_WORD, aria_wake::openwakeword::NAME);
-        assert_eq!(wake_backend::LIVEKIT, aria_wake::livekit::NAME);
     }
 }

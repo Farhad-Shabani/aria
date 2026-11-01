@@ -13,7 +13,7 @@ use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 
 use crate::audio::{CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor};
-use crate::config::WakeBackend;
+use crate::daemon::config::WakeBackend;
 use crate::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 use crate::primitives::error_chain;

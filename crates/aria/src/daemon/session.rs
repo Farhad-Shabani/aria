@@ -3,11 +3,12 @@
 use super::assembly::DaemonError;
 use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
 use super::shutdown::ShutdownSignal;
+use crate::chat::ChatConfig;
 use crate::chat::{
     Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
     ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
-use crate::config::{ChatConfig, WakeWordOverride};
+use crate::daemon::config::WakeWordOverride;
 use crate::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };

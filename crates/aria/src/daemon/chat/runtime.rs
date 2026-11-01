@@ -4,6 +4,7 @@
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
+use crate::chat::ChatConfig;
 use crate::chat::{
     AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
     CODEX_BINARY, ChatError, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
@@ -11,7 +12,8 @@ use crate::chat::{
     PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
     read_instructions,
 };
-use crate::config::{ChatConfig, MemoryConfig, SpeakerConfig};
+use crate::config::SpeakerConfig;
+use crate::memory::MemoryConfig;
 use crate::memory::{DB_FILE, Store, load_profile_block};
 use crate::primitives::error_chain;
 use crate::speaker::{ProfileStore, Role};

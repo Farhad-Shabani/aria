@@ -517,7 +517,8 @@ mod tests {
     use super::*;
 
     use crate::audio::ReplayPace;
-    use crate::config::{CaptureConfig, WakeConfig};
+    use crate::config::CaptureConfig;
+    use crate::daemon::config::WakeConfig;
 
     #[tokio::test]
     async fn one_server_build_dictates_and_fails_only_the_press_the_server_misses() {

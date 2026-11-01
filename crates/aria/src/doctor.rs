@@ -7,10 +7,12 @@ use std::time::Duration;
 
 use crate::audio::{WavReplayCapture, check_default_input_device};
 use crate::config::{
-    CaptureConfig, DaemonConfig, DictationConfig, HotkeyConfig, ListenConfig, RelayConfig,
-    SpeakerConfig, TranscriptionBackend, WakeBackend, WakeConfig, WakeWordOverride,
+    CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
 };
 use crate::daemon::RELAY_SERVICE_TYPE;
+use crate::daemon::config::{
+    DaemonConfig, HotkeyConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride,
+};
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;

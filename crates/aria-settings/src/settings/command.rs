@@ -427,24 +427,6 @@ fn kind_schema(kind: Kind) -> serde_json::Value {
     }
 }
 
-/// Every default, as one file. It must load, and must read back as the
-/// same values code uses when a key is absent.
-#[cfg(test)]
-fn defaults_text() -> String {
-    let mut document = toml_edit::DocumentMut::new();
-    for key in Key::ALL {
-        let Some(literal) = key.default() else {
-            continue;
-        };
-        let value: Value = literal.parse().expect("a default is a TOML literal");
-        let segments: Vec<&str> = key.segments().collect();
-        let table = document::table_at(document.as_table_mut(), segments.iter().copied())
-            .expect("a default's table");
-        table.insert(segments[segments.len() - 1], toml_edit::Item::Value(value));
-    }
-    document.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,7 +715,7 @@ mod tests {
     #[test]
     fn the_defaults_load_and_match_what_code_does_without_them() {
         let home = Path::new("/home/user");
-        let defaults = Loaded::parse(&defaults_text(), home)
+        let defaults = Loaded::parse(&crate::settings::testing::defaults_text(), home)
             .expect("every default is valid")
             .settings;
 

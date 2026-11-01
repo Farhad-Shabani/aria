@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use rustix::fs::{Mode, OFlags};
 
-use crate::config::ChatConfig;
+use crate::chat::ChatConfig;
 use crate::primitives::private_fs::{self, PRIVATE_FILE_MODE};
 use aria_settings::config::ConfigError;
 

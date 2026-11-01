@@ -4,6 +4,8 @@
 //! returns a [`Ticket`]; its reply arrives through [`ChatStage`] events.
 //! A [`Step`] describes the assistant's activity while the ask is running.
 
+mod config;
+pub(crate) use config::ChatConfig;
 mod assistants;
 mod models;
 pub use models::AssistantModel;
@@ -22,7 +24,6 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
-use crate::config::ChatConfig;
 use crate::primitives::error_chain;
 use aria_platform::delivery::{DeliveryError, OutputMode};
 use aria_settings::config::{AssistantId, ConfigError};

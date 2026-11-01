@@ -10,7 +10,7 @@ use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError, RuntimePaths};
 
 use super::assembly::{self, DaemonError};
 use super::shutdown::ShutdownSignal;
-use crate::config::WakeWordOverride;
+use crate::daemon::config::WakeWordOverride;
 
 /// Policy governing how long the daemon accepts work.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

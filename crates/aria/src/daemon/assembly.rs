@@ -1,7 +1,8 @@
 //! Concrete assembly and execution of the Aria daemon.
 
 use crate::audio::{WakeWordMonitor, remove_all_spools};
-use crate::config::{DaemonConfig, HotkeyConfig, RelayConfig, SpeakerConfig, WakeWordOverride};
+use crate::config::SpeakerConfig;
+use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
 use crate::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use crate::memory::Lexicon;
 use crate::microphone::Gate;
