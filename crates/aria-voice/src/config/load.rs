@@ -417,17 +417,8 @@ fn timeouts(dictation: &Dictation, delivery: &Delivery) -> Result<DictationTimeo
 mod tests {
     use super::*;
     use aria_settings::settings::Loaded;
+    use aria_settings::settings::testing::{file, test_home};
     use std::time::Duration;
-
-    fn test_home() -> PathBuf {
-        PathBuf::from("/home/user")
-    }
-
-    fn file(text: &str) -> SettingsFile {
-        Loaded::parse(text, &test_home())
-            .expect("the file is valid")
-            .settings
-    }
 
     /// The typed values of `text`, before the file's own rules, for a state
     /// only a mix of live and frozen keys or a direct call can produce.
@@ -911,7 +902,7 @@ mod tests {
 
         let on_disk = Loaded::parse(&std::fs::read_to_string(&path).unwrap(), dir.path())
             .expect("valid")
-            .settings;
+            .into_settings();
         let in_use = DictationConfig::load(&store.effective(), &test_home()).expect("resolves");
 
         assert_eq!(
@@ -929,7 +920,7 @@ mod tests {
         let home = Path::new("/home/user");
         let defaults = Loaded::parse(&aria_settings::settings::testing::defaults_text(), home)
             .expect("every default is valid")
-            .settings;
+            .into_settings();
         let empty = SettingsFile::default();
         let home_dir = home.to_path_buf();
 

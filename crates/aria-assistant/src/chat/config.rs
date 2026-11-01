@@ -41,17 +41,8 @@ impl ChatConfig {
 mod tests {
     use super::*;
     use aria_settings::settings::Loaded;
+    use aria_settings::settings::testing::{file, test_home};
     use std::path::Path;
-
-    fn test_home() -> PathBuf {
-        PathBuf::from("/home/user")
-    }
-
-    fn file(text: &str) -> SettingsFile {
-        Loaded::parse(text, &test_home())
-            .expect("the file is valid")
-            .settings
-    }
 
     #[test]
     fn chat_defaults_to_the_caller_directory_and_default_timeouts() {
@@ -94,7 +85,7 @@ mod tests {
             Path::new("/home/user"),
         )
         .expect("every default is valid")
-        .settings;
+        .into_settings();
         assert_eq!(
             ChatConfig::load(&defaults).unwrap(),
             ChatConfig::load(&SettingsFile::default()).unwrap()

@@ -1,5 +1,9 @@
 //! What every feature shares about resolving settings: engine names, the
 //! `~/.aria` layout, and the errors a load can report.
+//!
+//! Engine crates declare the engine names. This crate builds without engines,
+//! so it restates them, and each engine's owner holds the two equal with a
+//! test.
 
 use std::env;
 use std::fmt;
@@ -12,8 +16,6 @@ use aria_primitives::user_home::{self, UserHomeError};
 
 use crate::settings::{Delivery, Memory, SettingsError, Stt};
 
-// Engine crates declare these names. This crate builds without engines, so it
-// restates them, and each engine's owner holds the two equal with a test.
 pub mod wake_backend {
     pub const OPEN_WAKE_WORD: &str = "openwakeword";
     pub const LIVEKIT: &str = "livekit";
@@ -208,7 +210,6 @@ pub enum ConfigError {
 
 /// Where setup downloads models, relative to home. The default model paths
 /// below sit inside it.
-const DEFAULT_MEMORY_DIR: &str = ".aria/memory";
 const MODELS_DIR: &str = ".aria/models";
 
 /// Where each model sits inside the models directory. Setup downloads into
@@ -230,14 +231,9 @@ pub const DEFAULT_RECORDING_TIMEOUT: Duration = Duration::from_secs(600);
 pub const DEFAULT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(660);
 
+const DEFAULT_MEMORY_DIR: &str = ".aria/memory";
+
 pub const UNATTENDED_ENV: &str = "ARIA_UNATTENDED";
-const CODEX_HOME_ENV: &str = "CODEX_HOME";
-
-/// Where the Codex CLI keeps its login, as it finds it itself.
-pub fn codex_home(home: &Path) -> PathBuf {
-    std::env::var_os(CODEX_HOME_ENV).map_or_else(|| home.join(".codex"), PathBuf::from)
-}
-
 /// Raw, because what counts as unattended is the daemon's call.
 pub fn unattended() -> Result<Option<String>, ConfigError> {
     environment(UNATTENDED_ENV)
@@ -295,7 +291,7 @@ fn environment(variable: &'static str) -> Result<Option<String>, ConfigError> {
         .map_err(|_value| ConfigError::InvalidEnvironmentEncoding { variable })
 }
 
-pub fn duration(seconds: f64, field: &'static str) -> Result<Duration, ConfigError> {
+fn duration(seconds: f64, field: &'static str) -> Result<Duration, ConfigError> {
     if !seconds.is_finite() || seconds <= 0.0 {
         return Err(ConfigError::InvalidDuration { field, seconds });
     }

@@ -358,6 +358,6 @@ mod tests {
     fn read_text(text: &str) -> SettingsFile {
         settings::Loaded::parse(text, Path::new("/Users/you"))
             .unwrap()
-            .settings
+            .into_settings()
     }
 }

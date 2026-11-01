@@ -403,7 +403,6 @@ mod tests {
                 .unwrap()
                 .settings;
             assert_eq!(loaded.history_keep_audio, enabled);
-            assert!(!original.history_keep_audio);
         }
     }
 

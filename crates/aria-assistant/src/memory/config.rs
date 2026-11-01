@@ -46,7 +46,7 @@ mod tests {
         let home = Path::new("/home/user");
         let defaults = Loaded::parse(&aria_settings::settings::testing::defaults_text(), home)
             .expect("every default is valid")
-            .settings;
+            .into_settings();
         assert_eq!(
             MemoryConfig::load(&defaults.memory, home),
             MemoryConfig::load(&Memory::default(), home)

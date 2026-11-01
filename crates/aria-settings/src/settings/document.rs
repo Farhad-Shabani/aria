@@ -147,7 +147,7 @@ impl fmt::Display for Revision {
 #[derive(Debug, Clone)]
 pub struct Loaded {
     pub(super) document: DocumentMut,
-    pub settings: SettingsFile,
+    pub(crate) settings: SettingsFile,
     pub(crate) revision: Revision,
     /// The file's stamp as the write path saw it, under the lock. `None`
     /// until the write path sets it.
@@ -155,6 +155,14 @@ pub struct Loaded {
 }
 
 impl Loaded {
+    pub fn settings(&self) -> &SettingsFile {
+        &self.settings
+    }
+
+    pub fn into_settings(self) -> SettingsFile {
+        self.settings
+    }
+
     /// Parses, moves aliases to their current names, expands `~`, and
     /// validates. A missing file reads as an empty one.
     pub fn parse(text: &str, home: &Path) -> Result<Self, SettingsError> {

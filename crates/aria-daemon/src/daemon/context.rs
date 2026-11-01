@@ -1,14 +1,16 @@
 //! What describes one daemon run, fixed at startup.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use aria_platform::delivery::DeliveryFactory;
 use aria_platform::runtime::PreparedRuntimePaths;
 #[cfg(not(test))]
 use aria_settings::config::home_directory;
-use aria_settings::config::{ConfigError, UNATTENDED_ENV, codex_home, unattended};
+use aria_settings::config::{ConfigError, UNATTENDED_ENV, unattended};
 
 use super::host::DaemonLifetime;
+
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
 
 pub(super) struct Context<'runtime> {
     pub(super) paths: &'runtime PreparedRuntimePaths,
@@ -59,6 +61,11 @@ fn attended(unattended: Option<&str>) -> bool {
             true
         }
     }
+}
+
+/// Where the Codex CLI keeps its login, as it finds it itself.
+fn codex_home(home: &Path) -> PathBuf {
+    std::env::var_os(CODEX_HOME_ENV).map_or_else(|| home.join(".codex"), PathBuf::from)
 }
 
 #[cfg(test)]

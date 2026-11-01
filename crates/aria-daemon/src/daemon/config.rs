@@ -167,17 +167,7 @@ const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 mod tests {
     use super::*;
     use aria_kit::audio::ReplayPace;
-    use aria_settings::settings::Loaded;
-
-    fn test_home() -> PathBuf {
-        PathBuf::from("/home/user")
-    }
-
-    fn file(text: &str) -> SettingsFile {
-        Loaded::parse(text, &test_home())
-            .expect("the file is valid")
-            .settings
-    }
+    use aria_settings::settings::testing::{file, test_home};
 
     #[test]
     fn disabled_wake_ignores_its_dormant_settings() {
