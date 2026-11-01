@@ -9,6 +9,7 @@ use crate::audio::{RecordingReader, WakeWordMonitor};
 use crate::config::{
     ConfigError, DictationConfig, SpeakerConfig, TranscriptionBackend, WakeConfig, backend,
 };
+use crate::delivery::Desktop;
 use crate::dictation::subscribers::DictationSubscribers;
 use crate::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
@@ -51,6 +52,7 @@ pub(in crate::daemon) struct DictationSetup {
     pub(in crate::daemon) wake: WakeConfig,
     pub(in crate::daemon) speaker: SpeakerConfig,
     pub(in crate::daemon) vocabulary: Arc<VocabularyRuntime>,
+    pub(in crate::daemon) desktop: Desktop,
 }
 
 /// The microphone parts every other recording operation borrows: the one
@@ -108,6 +110,10 @@ impl DictationRuntime {
     ///
     /// Settings and the model are read when the coordinator is built, so
     /// a fault in either reaches the press that triggered it and is announced.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each is a distinct collaborator moved into the deferred build"
+    )]
     pub(in crate::daemon) fn deferred(
         context: &Context<'_>,
         subscriptions: Arc<Subscriptions>,
@@ -116,6 +122,7 @@ impl DictationRuntime {
         transcripts: Arc<TranscriptStore>,
         microphone: Arc<Gate>,
         vocabulary: Arc<VocabularyRuntime>,
+        desktop: Desktop,
     ) -> Self {
         let spool_dir = context.paths.spool_dir().to_path_buf();
         let home = context.home.clone();
@@ -152,6 +159,7 @@ impl DictationRuntime {
                             wake: WakeConfig::Disabled,
                             speaker,
                             vocabulary: Arc::clone(&vocabulary),
+                            desktop: desktop.clone(),
                         },
                         &spool_dir,
                         &home,
@@ -1172,6 +1180,7 @@ mod history_tests {
                     speaker: speaker.clone(),
                     vocabulary: Arc::clone(&vocabulary),
                     wake: WakeConfig::Disabled,
+                    desktop: Desktop::new(&home, Default::default()),
                 },
                 &home,
                 &home,

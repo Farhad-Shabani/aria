@@ -17,7 +17,10 @@ fn native_streaming_target_receives_unicode_selection_and_rejects_focus_loss() -
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let delivery = MacOsTextDelivery::new(Duration::from_secs(2))?;
+    let delivery = MacOsTextDelivery::new(
+        Duration::from_secs(2),
+        &crate::delivery::Desktop::new(&std::env::temp_dir(), Default::default()),
+    )?;
     let mut target = target::Target::launch()?;
     target.reset("", 0, 0)?;
     let prepared = delivery.prepare(OutputMode::Insert, || false)?;

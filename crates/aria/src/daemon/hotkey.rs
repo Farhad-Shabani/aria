@@ -631,6 +631,7 @@ mod tests {
                 .expect("the settings store should open"),
             ),
             None,
+            crate::delivery::Desktop::new(directory.path(), Default::default()),
         );
         let (chat, chat_actor) = chat_channel(Arc::new(chat));
         let mut dictation = DictationRuntime::detached(settings);

@@ -3,7 +3,7 @@
 use crate::audio::{WakeWordMonitor, remove_all_spools};
 use crate::config::{ConfigError, memory_directory};
 use crate::config::{DaemonConfig, HotkeyConfig, RelayConfig, SpeakerConfig, WakeWordOverride};
-use crate::delivery::PlatformTextDelivery;
+use crate::delivery::{Desktop, PlatformTextDelivery};
 use crate::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use crate::memory::Lexicon;
 use crate::microphone::Gate;
@@ -355,6 +355,7 @@ fn build_workers(
     memory_wake: mpsc::Sender<()>,
     vocabulary: Arc<super::vocabulary::Runtime>,
 ) -> Result<Workers, DaemonError> {
+    let desktop = Desktop::new(&context.home, context.display);
     match context.lifetime {
         DaemonLifetime::Persistent => eager_workers(
             context,
@@ -363,12 +364,14 @@ fn build_workers(
             microphone,
             memory_wake,
             vocabulary,
+            desktop,
         ),
         DaemonLifetime::OnDemand => Ok(deferred_workers(
             context,
             dependencies,
             microphone,
             vocabulary,
+            desktop,
         )),
     }
 }
@@ -382,6 +385,7 @@ fn eager_workers(
     microphone: Arc<Gate>,
     memory_wake: mpsc::Sender<()>,
     vocabulary: Arc<super::vocabulary::Runtime>,
+    desktop: Desktop,
 ) -> Result<Workers, DaemonError> {
     let Dependencies {
         subscriptions,
@@ -398,13 +402,11 @@ fn eager_workers(
         tts,
     } = DaemonConfig::load(startup, &context.home, wake_word)
         .map_err(DaemonError::Configuration)?;
-    // Its own adapter, not the dictation pipeline's: that one is wrapped in a
-    // press's lifecycle, and a relayed recording has no press around it. The
-    // adapter is stateless, so a second costs a timeout and nothing else.
+    // Relayed recordings have no key press, so they need a separate delivery adapter.
     let relay_delivery = match relay {
         RelayConfig::Disabled => None,
         RelayConfig::Enabled { port } => Some((
-            PlatformTextDelivery::new(dictation_config.dictation_timeouts.delivery)
+            PlatformTextDelivery::new(dictation_config.dictation_timeouts.delivery, &desktop)
                 .map_err(DictationInitializationError::Delivery)
                 .map_err(DaemonError::Dictation)?,
             port,
@@ -423,6 +425,7 @@ fn eager_workers(
             wake,
             speaker: speaker_config.clone(),
             vocabulary,
+            desktop: desktop.clone(),
         },
         Arc::clone(&microphone),
     )
@@ -444,6 +447,7 @@ fn eager_workers(
             Arc::clone(settings),
             Arc::clone(cache),
             Some(memory_wake),
+            desktop,
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -463,6 +467,7 @@ fn deferred_workers(
     dependencies: &Dependencies<'_>,
     microphone: Arc<Gate>,
     vocabulary: Arc<super::vocabulary::Runtime>,
+    desktop: Desktop,
 ) -> Workers {
     let Dependencies {
         subscriptions,
@@ -486,6 +491,7 @@ fn deferred_workers(
             Arc::clone(transcripts),
             microphone,
             vocabulary,
+            desktop.clone(),
         )),
         speech: Arc::new(SpeechRuntime::deferred(
             context,
@@ -500,6 +506,7 @@ fn deferred_workers(
             Arc::clone(settings),
             Arc::clone(cache),
             None,
+            desktop,
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.

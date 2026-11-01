@@ -19,7 +19,8 @@ use crate::chat::{
 };
 use crate::config::{AssistantId, ChatConfig, ConfigError, MemoryConfig, SpeakerConfig};
 use crate::delivery::{
-    DeliveryError, DeliveryOutcome, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
+    DeliveryError, DeliveryOutcome, Desktop, OutputMode, PlatformTextDelivery, TargetPolicy,
+    TextDelivery,
 };
 use crate::memory::{DB_FILE, Store, load_profile_block};
 use crate::primitives::error_chain;
@@ -69,6 +70,7 @@ pub(in crate::daemon) struct ChatRuntime {
     /// Nudges the memory backlog after a turn worth remembering. `None`
     /// in a daemon that runs no backlog.
     memory_wake: Option<mpsc::Sender<()>>,
+    desktop: Desktop,
 }
 
 impl ChatRuntime {
@@ -79,6 +81,7 @@ impl ChatRuntime {
         settings: Arc<SettingsStore>,
         cache: Arc<SettingsCache>,
         memory_wake: Option<mpsc::Sender<()>>,
+        desktop: Desktop,
     ) -> Self {
         Self {
             emitter: event_emitter(context, subscriptions),
@@ -88,6 +91,7 @@ impl ChatRuntime {
             settings,
             cache,
             memory_wake,
+            desktop,
             #[cfg(test)]
             assistant_overrides: None,
         }
@@ -308,6 +312,7 @@ impl ChatRuntime {
                     mode,
                     self.target_policy(None)?,
                     config.delivery_timeout,
+                    &self.desktop,
                     cancel,
                 ) {
                     Ok(delivery) => (Some(delivery), None),
@@ -365,6 +370,7 @@ impl ChatRuntime {
             OutputMode::InsertOrCopy,
             self.target_policy(request.application.as_ref())?,
             config.delivery_timeout,
+            &self.desktop,
             cancel,
         )?;
         let text = self.prompt_answer(assistant, &request, config.timeout, cancel)?;
@@ -572,9 +578,10 @@ impl Delivery {
         mode: OutputMode,
         policy: TargetPolicy,
         timeout: Duration,
+        desktop: &Desktop,
         cancel: &CancelToken,
     ) -> Result<Self, ChatError> {
-        let platform = PlatformTextDelivery::new(timeout).map_err(ChatError::Delivery)?;
+        let platform = PlatformTextDelivery::new(timeout, desktop).map_err(ChatError::Delivery)?;
         policy
             .confirm_front(&platform)
             .map_err(ChatError::Delivery)?;
@@ -829,6 +836,7 @@ pub(super) mod tests {
             settings: Arc::new(SettingsStore::new(Arc::clone(&cache))),
             cache,
             memory_wake: Some(wake),
+            desktop: Desktop::new(directory, Default::default()),
         };
         (runtime, received, woken)
     }

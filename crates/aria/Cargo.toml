@@ -65,7 +65,10 @@ objc2-ui-kit     = { version = "0.3.2", default-features = false, features = [ "
 # the clipboard is X11 only.
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.6", default-features = false, features = [ "wayland-data-control" ] }
-rustix  = { workspace = true, features = [ "event", "time" ] }
+# RemoteDesktop uses types from the screencast feature.
+ashpd  = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "3ea494564e48bf0f351a13da1e18abb5a9dd45e6", default-features = false, features = [ "remote_desktop", "screencast", "tokio" ] }
+rustix = { workspace = true, features = [ "event", "time" ] }
+x11rb  = { version = "0.13", features = [ "xtest" ] }
 
 # The MLX sidecar requires child processes, which iOS forbids.
 [target.'cfg(not(target_os = "ios"))'.dependencies]

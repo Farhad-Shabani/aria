@@ -88,6 +88,9 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         }
         let output = match settings.delivery_mode {
             DeliveryMode::Complete => settings.output_mode,
+            DeliveryMode::Streaming if !D::STREAMS => {
+                return Err(DeliveryError::StreamingUnsupported);
+            }
             DeliveryMode::Streaming => streaming_output_mode(settings.output_mode)
                 .ok_or(DeliveryError::InsertionUnsupported)?,
         };
@@ -410,6 +413,63 @@ mod tests {
         );
 
         assert!(matches!(started, Err(DeliveryError::InsertionUnsupported)));
+        assert!(log.entries().is_empty());
+    }
+
+    struct PastingDelivery(RecordingDelivery);
+
+    impl TextDelivery for PastingDelivery {
+        type Prepared = OutputMode;
+
+        const DEFAULT_MODE: OutputMode = OutputMode::InsertOrCopy;
+        const OUTLIVES_PROCESS: bool = false;
+        const STREAMS: bool = false;
+
+        fn frontmost(&self) -> Option<crate::history::Application> {
+            None
+        }
+
+        fn prepare(
+            &self,
+            mode: OutputMode,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<OutputMode, DeliveryError> {
+            self.0.prepare(mode, should_cancel)
+        }
+
+        fn finish(
+            &self,
+            prepared: &OutputMode,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            self.0.finish(prepared, should_cancel)
+        }
+
+        fn deliver(
+            &self,
+            prepared: &OutputMode,
+            text: &str,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<DeliveryOutcome, DeliveryError> {
+            self.0.deliver(prepared, text, should_cancel)
+        }
+    }
+
+    #[test]
+    fn a_pasting_delivery_refuses_to_stream_before_any_text() {
+        let log = CallLog::default();
+        let mut cursor = Cursor::new(PastingDelivery(RecordingDelivery {
+            log: log.clone(),
+            fail: false,
+        }));
+        let control = ExecutionControl::for_test(StopMode::Manual);
+
+        let started = cursor.dictation_started(
+            &settings(DeliveryMode::Streaming, OutputMode::InsertOrCopy),
+            &control,
+        );
+
+        assert!(matches!(started, Err(DeliveryError::StreamingUnsupported)));
         assert!(log.entries().is_empty());
     }
 

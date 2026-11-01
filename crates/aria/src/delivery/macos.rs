@@ -11,8 +11,8 @@ use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
 use objc2_foundation::NSString;
 
 use super::{
-    Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery, validate_text,
-    validate_timeout,
+    Caret, DeliveryError, DeliveryOutcome, Desktop, OutputMode, Placement, TextDelivery,
+    validate_text, validate_timeout,
 };
 use crate::accessibility::Trust;
 
@@ -77,7 +77,7 @@ impl MacOsDeliveryTarget {
 }
 
 impl MacOsTextDelivery {
-    pub(crate) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
+    pub(crate) fn new(timeout: Duration, _desktop: &Desktop) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
         Ok(Self { timeout })
     }
@@ -664,7 +664,11 @@ mod tests {
 
     #[test]
     fn deliver_rejects_an_already_cancelled_request() {
-        let delivery = MacOsTextDelivery::new(TEST_TIMEOUT).expect("delivery should initialize");
+        let delivery = MacOsTextDelivery::new(
+            TEST_TIMEOUT,
+            &Desktop::new(&std::env::temp_dir(), Default::default()),
+        )
+        .expect("delivery should initialize");
         let target = MacOsDeliveryTarget::application(PREPARED_TARGET);
 
         let result = delivery.deliver(&target, TEST_TRANSCRIPT, || true);
