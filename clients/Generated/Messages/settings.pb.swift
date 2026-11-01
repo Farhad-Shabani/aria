@@ -318,6 +318,37 @@ public nonisolated struct Aria_Daemon_V1_UpdateSettingsResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Aria_Daemon_V1_CheckSettingsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var patch: Aria_Daemon_V1_SettingsPatch {
+    get {_patch ?? Aria_Daemon_V1_SettingsPatch()}
+    set {_patch = newValue}
+  }
+  /// Returns true if `patch` has been explicitly set.
+  public var hasPatch: Bool {self._patch != nil}
+  /// Clears the value of `patch`. Subsequent reads from it will return its default value.
+  public mutating func clearPatch() {self._patch = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _patch: Aria_Daemon_V1_SettingsPatch? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_CheckSettingsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Aria_Daemon_V1_SettingsSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -388,6 +419,9 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._outputMode = newValue}
   }
 
+  /// Does not apply while dictation outputs by Copy, which cannot stream:
+  /// it then delivers the complete text. The stored choice stays, and
+  /// applies again with another output mode.
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode}
     set {_uniqueStorage()._deliveryMode = newValue}
@@ -561,6 +595,7 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {_uniqueStorage()._outputMode = nil}
 
+  /// Stored even while output_mode is Copy; see `Settings.delivery_mode`.
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode ?? .unspecified}
     set {_uniqueStorage()._deliveryMode = newValue}
@@ -1232,6 +1267,59 @@ nonisolated extension Aria_Daemon_V1_UpdateSettingsResponse: SwiftProtobuf.Messa
   public static func ==(lhs: Aria_Daemon_V1_UpdateSettingsResponse, rhs: Aria_Daemon_V1_UpdateSettingsResponse) -> Bool {
     if lhs.result != rhs.result {return false}
     if lhs.restartRequired != rhs.restartRequired {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_CheckSettingsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CheckSettingsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}patch\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._patch) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._patch {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_CheckSettingsRequest, rhs: Aria_Daemon_V1_CheckSettingsRequest) -> Bool {
+    if lhs._patch != rhs._patch {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_CheckSettingsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CheckSettingsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_CheckSettingsResponse, rhs: Aria_Daemon_V1_CheckSettingsResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

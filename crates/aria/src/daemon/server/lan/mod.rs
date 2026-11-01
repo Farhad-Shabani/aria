@@ -325,6 +325,13 @@ mod tests {
             Err(Status::aborted("the stand-in settings were reached"))
         }
 
+        async fn check(
+            &self,
+            _request: tonic::Request<wire::CheckSettingsRequest>,
+        ) -> std::result::Result<tonic::Response<wire::CheckSettingsResponse>, Status> {
+            Err(Status::aborted("the stand-in settings were reached"))
+        }
+
         async fn get_status(
             &self,
             _request: tonic::Request<wire::GetSettingsStatusRequest>,

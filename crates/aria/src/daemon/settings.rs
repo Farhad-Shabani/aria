@@ -34,6 +34,10 @@ enum SettingsCommand {
         patch: SettingsPatch,
         reply: Reply<UpdateResult>,
     },
+    Check {
+        patch: SettingsPatch,
+        reply: Reply<()>,
+    },
 }
 
 type Reply<T> = operation::Reply<T, StoreError>;
@@ -63,6 +67,11 @@ impl SettingsHandle {
             patch,
             reply,
         });
+        self.submit(command, pending).await
+    }
+
+    pub(super) async fn check(&self, patch: SettingsPatch) -> Result<(), SettingsCallError> {
+        let (command, pending) = call(|reply| SettingsCommand::Check { patch, reply });
         self.submit(command, pending).await
     }
 
@@ -148,6 +157,9 @@ impl SettingsActor {
                     Ok(result)
                 });
             }
+            SettingsCommand::Check { patch, reply } => {
+                self.spawn_job(reply, move |store| store.check(patch));
+            }
         }
     }
 
@@ -168,6 +180,7 @@ impl SettingsActor {
             match command {
                 SettingsCommand::Get { reply } => reply.unavailable(),
                 SettingsCommand::Update { reply, .. } => reply.unavailable(),
+                SettingsCommand::Check { reply, .. } => reply.unavailable(),
             }
         }
         while let Some(finished) = self.jobs.join_next().await {

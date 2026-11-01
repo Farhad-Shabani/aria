@@ -48,6 +48,19 @@ public enum Aria_Daemon_V1_SettingsService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Check" metadata.
+        public enum Check: Sendable {
+            /// Request type for "Check".
+            public typealias Input = Aria_Daemon_V1_CheckSettingsRequest
+            /// Response type for "Check".
+            public typealias Output = Aria_Daemon_V1_CheckSettingsResponse
+            /// Descriptor for "Check".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SettingsService"),
+                method: "Check",
+                type: .unary
+            )
+        }
         /// Namespace for "GetStatus" metadata.
         public enum GetStatus: Sendable {
             /// Request type for "GetStatus".
@@ -65,6 +78,7 @@ public enum Aria_Daemon_V1_SettingsService: Sendable {
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Get.descriptor,
             Update.descriptor,
+            Check.descriptor,
             GetStatus.descriptor
         ]
     }
@@ -127,6 +141,32 @@ extension Aria_Daemon_V1_SettingsService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_UpdateSettingsResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_UpdateSettingsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Check" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates the patch as an Update would and writes nothing: a patch an
+        /// > Update refuses for its values fails with the same status. Takes no
+        /// > lock and no revision, so a busy file or a conflict is not foreseen.
+        /// > Served on the unix socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_CheckSettingsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_CheckSettingsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CheckSettingsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func check<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CheckSettingsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CheckSettingsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CheckSettingsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CheckSettingsResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "GetStatus" method.
@@ -236,6 +276,43 @@ extension Aria_Daemon_V1_SettingsService {
             )
         }
 
+        /// Call the "Check" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates the patch as an Update would and writes nothing: a patch an
+        /// > Update refuses for its values fails with the same status. Takes no
+        /// > lock and no revision, so a busy file or a conflict is not foreseen.
+        /// > Served on the unix socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_CheckSettingsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_CheckSettingsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CheckSettingsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func check<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CheckSettingsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CheckSettingsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CheckSettingsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CheckSettingsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_SettingsService.Method.Check.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "GetStatus" method.
         ///
         /// > Source IDL Documentation:
@@ -327,6 +404,38 @@ extension Aria_Daemon_V1_SettingsService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_UpdateSettingsRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_UpdateSettingsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Check" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Validates the patch as an Update would and writes nothing: a patch an
+    /// > Update refuses for its values fails with the same status. Takes no
+    /// > lock and no revision, so a busy file or a conflict is not foreseen.
+    /// > Served on the unix socket only.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_CheckSettingsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func check<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_CheckSettingsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CheckSettingsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.check(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_CheckSettingsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_CheckSettingsResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -424,6 +533,42 @@ extension Aria_Daemon_V1_SettingsService.ClientProtocol {
             metadata: metadata
         )
         return try await self.update(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Check" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Validates the patch as an Update would and writes nothing: a patch an
+    /// > Update refuses for its values fails with the same status. Takes no
+    /// > lock and no revision, so a busy file or a conflict is not foreseen.
+    /// > Served on the unix socket only.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func check<Result>(
+        _ message: Aria_Daemon_V1_CheckSettingsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CheckSettingsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_CheckSettingsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.check(
             request: request,
             options: options,
             onResponse: handleResponse

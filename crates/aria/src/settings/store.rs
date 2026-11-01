@@ -10,7 +10,7 @@ use crate::config::AssistantId;
 use crate::delivery::OutputMode;
 use crate::dictation::DeliveryMode;
 use crate::hotkey::AriaKey;
-use crate::settings::{Loaded, Refusal, Revision, SettingsCache, Written};
+use crate::settings::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
 use crate::transcription::Language;
 
 /// `revision` is the hash of the file's values, so a comment edit keeps it.
@@ -107,20 +107,31 @@ impl SettingsStore {
         }
     }
 
+    /// Whether an update would take `patch` for its values. Takes no lock
+    /// and no revision, so a busy file or a conflict is not foreseen. A
+    /// recorder asks before it commits a chord.
+    pub(crate) fn check(&self, patch: SettingsPatch) -> Result<(), StoreError> {
+        let current = self.cache.snapshot();
+        let patch = Self::file_patch(patch, &current.settings)?;
+        match self.cache.check_patch(&patch)? {
+            // `check_patch` takes no revision, so it never answers a conflict.
+            Written::Applied(_)
+            | Written::AppliedRestartKey(_)
+            | Written::Refused(Refusal::Conflict { .. }) => Ok(()),
+            Written::Refused(Refusal::FileInvalid(error)) => Err(StoreError::FileInvalid(error)),
+            Written::Refused(Refusal::Invalid(error)) => Err(StoreError::Settings(error)),
+            Written::Refused(Refusal::ChangedRecently) => Err(StoreError::ChangedRecently),
+        }
+    }
+
     fn write(
         &self,
         expected: Option<Revision>,
         patch: SettingsPatch,
     ) -> Result<UpdateResult, StoreError> {
-        let written = self.cache.modify(expected, |settings| {
-            let current = Settings::from_file(settings)?;
-            let next = patch.apply_to(&current);
-            next.validate_assistant_models()?;
-            if next.shares_a_binding() {
-                return Err(StoreError::BindingInUse);
-            }
-            Ok(view::patch(&current, &next)?)
-        })?;
+        let written = self
+            .cache
+            .modify(expected, |settings| Self::file_patch(patch, settings))?;
         match written {
             Written::Applied(loaded) | Written::AppliedRestartKey(loaded) => {
                 Ok(UpdateResult::Updated {
@@ -135,6 +146,20 @@ impl SettingsStore {
             Written::Refused(Refusal::Invalid(error)) => Err(StoreError::Settings(error)),
             Written::Refused(Refusal::ChangedRecently) => Err(StoreError::ChangedRecently),
         }
+    }
+}
+
+impl SettingsStore {
+    /// The file keys `patch` changes, once the whole result passes the
+    /// checks that span keys: model ids and shared bindings.
+    fn file_patch(patch: SettingsPatch, settings: &SettingsFile) -> Result<Patch, StoreError> {
+        let current = Settings::from_file(settings)?;
+        let next = patch.apply_to(&current);
+        next.validate_assistant_models()?;
+        if next.shares_a_binding() {
+            return Err(StoreError::BindingInUse);
+        }
+        Ok(view::patch(&current, &next)?)
     }
 }
 
@@ -543,6 +568,46 @@ mod tests {
                 "{shared:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_check_answers_like_an_update_and_leaves_the_file_as_it_was() {
+        let (_home, path, store) = new_store();
+        let control_option_a = Shortcut::Chord(
+            Chord::new(
+                0,
+                Modifiers {
+                    control: true,
+                    option: true,
+                    ..Modifiers::default()
+                },
+            )
+            .expect("a chord"),
+        );
+        update(
+            &store,
+            SettingsPatch {
+                ask_shortcut: Some(Some(control_option_a)),
+                ..Default::default()
+            },
+        );
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let refused = store.check(SettingsPatch {
+            prompt_list_shortcut: Some(Some(control_option_a)),
+            ..Default::default()
+        });
+        let taken = store.check(SettingsPatch {
+            mute_sound: Some(true),
+            ..Default::default()
+        });
+
+        assert!(
+            matches!(refused, Err(StoreError::BindingInUse)),
+            "{refused:?}"
+        );
+        assert!(taken.is_ok(), "{taken:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
     }
 
     /// Operations read these through `loaded`, so a restart mark would report

@@ -62,6 +62,22 @@ impl wire::settings_service_server::SettingsService for SettingsRpc {
         }
     }
 
+    async fn check(
+        &self,
+        request: Request<wire::CheckSettingsRequest>,
+    ) -> Result<Response<wire::CheckSettingsResponse>, Status> {
+        const METHOD: &str = "SettingsService/Check";
+        let patch = SettingsPatch::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        match self.settings.check(patch).await {
+            Ok(()) => {
+                tracing::info!(method = METHOD, status = "ok", "request served");
+                Ok(Response::new(wire::CheckSettingsResponse {}))
+            }
+            Err(error) => Err(super::failed(METHOD, failure("check", error))),
+        }
+    }
+
     async fn get_status(
         &self,
         _request: Request<wire::GetSettingsStatusRequest>,

@@ -68,6 +68,19 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         Ok(response)
     }
 
+    /// A phone's patch is checked by its update; the recorder that asks
+    /// ahead is on the Mac.
+    async fn check(
+        &self,
+        _request: Request<wire::CheckSettingsRequest>,
+    ) -> Result<Response<wire::CheckSettingsResponse>, Status> {
+        Err(RpcFailure::new(
+            RpcErrorCode::PermissionDenied,
+            "a patch is checked on the Mac",
+        )
+        .into())
+    }
+
     /// The status names keys and quotes the file, which stay on the Mac.
     async fn get_status(
         &self,
@@ -317,10 +330,10 @@ mod tests {
         assert!(!bare.message().contains(path));
     }
 
-    /// A phone reads the settings and never the settings status,
-    /// which names keys and quotes the file.
+    /// A phone reads the settings. The status names keys and quotes the
+    /// file, and a check is for the Mac's recorder, so both stay on the Mac.
     #[tokio::test]
-    async fn a_phone_reads_the_settings_and_not_the_status() {
+    async fn a_phone_reads_the_settings_and_neither_checks_nor_reads_the_status() {
         let home = tempfile::tempdir().unwrap();
         let store = Arc::new(SettingsStore::open(home.path().join("settings.toml")).unwrap());
         let running = serve(store);
@@ -336,10 +349,16 @@ mod tests {
             .get_status(Request::new(wire::GetSettingsStatusRequest {}))
             .await
             .expect_err("the status stays on the Mac");
+        let unchecked = running
+            .lan
+            .check(Request::new(wire::CheckSettingsRequest::default()))
+            .await
+            .expect_err("a check stays on the Mac");
         running.stop().await;
 
         assert!(snapshot.settings.is_some());
         assert_eq!(refused.code(), tonic::Code::PermissionDenied);
+        assert_eq!(unchecked.code(), tonic::Code::PermissionDenied);
     }
 
     #[test]
