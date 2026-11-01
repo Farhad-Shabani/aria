@@ -18,7 +18,7 @@ macOS. The scoped recipes use default features.
 | Shell and sidecar part of the gate | `just support-check` |
 | macOS app formatting and tests | `just swift-check` |
 | Build `Aria.app` with the daemon inside | `just app` |
-| Affected cross-target gate | `just rust-wasm` / `just rust-linux` |
+| Affected cross-target gate | `just rust-wasm` / `just rust-linux` / `just rust-ios` |
 | Build the CLI | `cargo build --release --bin aria` |
 | Build / serve books | `just book` / `just book-serve` |
 
