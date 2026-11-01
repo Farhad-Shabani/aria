@@ -22,9 +22,10 @@ struct SettingsEditor {
         Binding(get: { value }, set: { self.set($0, edit: edit) })
     }
 
-    /// For a field the daemon replaces whole, such as a list. Each change
-    /// starts from the latest snapshot rather than the one this view drew,
-    /// so two quick edits don't undo each other.
+    /// For a field the daemon replaces whole, such as a list. The change
+    /// runs against the latest value when it is sent, not the one this
+    /// view drew, so two quick edits don't undo each other and a retry
+    /// keeps what another client added meanwhile.
     func editLatest<Value>(
         _ field: KeyPath<Aria_Daemon_V1_Settings, Value> & Sendable,
         _ patch: WritableKeyPath<Aria_Daemon_V1_SettingsPatch, Value> & Sendable,
@@ -32,10 +33,21 @@ struct SettingsEditor {
     ) {
         let settings = settings
         Task {
-            guard var value = settings.snapshot?[keyPath: field] else { return }
-            change(&value)
-            await settings.set { $0[keyPath: patch] = value }
+            await settings.edit { base in
+                var value = base[keyPath: field]
+                change(&value)
+                var edit = Aria_Daemon_V1_SettingsPatch()
+                edit[keyPath: patch] = value
+                return edit
+            }
         }
+    }
+
+    /// Asks the daemon whether it would take the edit, with nothing written.
+    func check(_ edit: (inout Aria_Daemon_V1_SettingsPatch) -> Void) async throws {
+        var request = Aria_Daemon_V1_CheckSettingsRequest()
+        edit(&request.patch)
+        try await UnixSocketSettings().check(request)
     }
 
     func set<Value>(_ patch: WritableKeyPath<Aria_Daemon_V1_SettingsPatch, Value>, to value: Value) {

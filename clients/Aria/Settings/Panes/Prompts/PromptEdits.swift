@@ -23,6 +23,13 @@ enum PromptEdits {
         return entry
     }
 
+    /// A lost reply replays the edit against a list that already has the
+    /// entry, so adding is idempotent.
+    static func add(_ entry: Aria_Daemon_V1_Prompt, to prompts: inout Aria_Daemon_V1_Prompts) {
+        guard self.entry(entry.id, in: prompts) == nil else { return }
+        prompts.entries.append(entry)
+    }
+
     static func remove(_ id: String, from prompts: inout Aria_Daemon_V1_Prompts) {
         prompts.entries.removeAll { $0.id == id }
     }
