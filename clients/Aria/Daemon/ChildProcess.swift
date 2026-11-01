@@ -30,11 +30,7 @@ final class ChildProcess: Sendable {
     static func run(_ executable: URL, _ arguments: [String], input: Data? = nil) async throws -> Output {
         let child = ChildProcess(executable, arguments)
         try child.launch(input: input)
-        return await withTaskCancellationHandler {
-            await child.exit()
-        } onCancel: {
-            child.interrupt()
-        }
+        return await child.exit()
     }
 
     /// With `onStdout`, stdout goes there in order and stays out of the output.
@@ -73,11 +69,15 @@ final class ChildProcess: Sendable {
         }
     }
 
-    /// Waits for the child to exit and close both pipes. Cancellation does
-    /// not cut the wait short; pair it with `interrupt()`.
+    /// Cancellation interrupts the child, then waits for exit and both pipes
+    /// to close so its final output is preserved.
     func exit() async -> Output {
-        await withCheckedContinuation { waiter in
-            update { $0.waiters.append(waiter) }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { waiter in
+                update { $0.waiters.append(waiter) }
+            }
+        } onCancel: {
+            self.interrupt()
         }
     }
 

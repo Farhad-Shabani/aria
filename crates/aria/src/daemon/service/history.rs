@@ -15,7 +15,7 @@ use crate::rpc::RpcFailure;
 
 use super::super::dictation::DictationRuntime;
 use super::super::operation::{
-    CallError, Pending, Reply, cancellable_call, operation_cancellation,
+    CallError, Pending, Reply, call, cancellable_call, operation_cancellation,
 };
 use super::super::server::ActivityGuard;
 use super::super::tasks::Supervised;
@@ -174,7 +174,7 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         let activity = ActivityGuard::take(&mut request);
         let query = HistoryQuery::try_from(request.into_inner())
             .map_err(|error| super::invalid_request("HistoryService/List", &error))?;
-        let (command, pending) = cancellable_call(|_, reply| Command::List(query, reply, activity));
+        let (command, pending) = call(|reply| Command::List(query, reply, activity));
         self.submit(command, pending)
             .await
             .map(|page| Response::new(page.into()))
@@ -187,7 +187,7 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         let activity = ActivityGuard::take(&mut request);
         let id = protocol::history_id(request.into_inner().id)
             .map_err(|error| super::invalid_request("HistoryService/Get", &error))?;
-        let (command, pending) = cancellable_call(|_, reply| Command::Get(id, reply, activity));
+        let (command, pending) = call(|reply| Command::Get(id, reply, activity));
         self.submit(command, pending)
             .await
             .map(|entry| Response::new(entry.into()))
@@ -200,7 +200,7 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         let activity = ActivityGuard::take(&mut request);
         let id = protocol::history_id(request.into_inner().id)
             .map_err(|error| super::invalid_request("HistoryService/Delete", &error))?;
-        let (command, pending) = cancellable_call(|_, reply| Command::Delete(id, reply, activity));
+        let (command, pending) = call(|reply| Command::Delete(id, reply, activity));
         self.submit(command, pending).await?;
         Ok(Response::new(wire::DeleteHistoryResponse {}))
     }
@@ -210,7 +210,7 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         mut request: Request<wire::ClearHistoryRequest>,
     ) -> Result<Response<wire::ClearHistoryResponse>, Status> {
         let activity = ActivityGuard::take(&mut request);
-        let (command, pending) = cancellable_call(|_, reply| Command::Clear(reply, activity));
+        let (command, pending) = call(|reply| Command::Clear(reply, activity));
         let result = self.submit(command, pending).await?;
         Ok(Response::new(wire::ClearHistoryResponse {
             deleted_entry_count: result.deleted_entries,

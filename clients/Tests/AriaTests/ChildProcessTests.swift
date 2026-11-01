@@ -51,6 +51,36 @@ final class ChildProcessTests: XCTestCase {
         XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), "started")
     }
 
+    func testExitCancellationInterruptsChildAndDrainsOutput() async throws {
+        let started = expectation(description: "child installed its interrupt handler")
+        let exited = expectation(description: "cancelled child exited")
+        let script = "trap 'printf interrupted >&2; exit 7' INT; printf started; while :; do :; done"
+        let child = ChildProcess(shell, ["-c", script])
+        let streamed = Mutex(Data())
+        try child.launch { chunk in
+            let ready = streamed.withLock {
+                $0.append(chunk)
+                return $0 == Data("started".utf8)
+            }
+            if ready { started.fulfill() }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        let wait = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            let output = await child.exit()
+            exited.fulfill()
+            return output
+        }
+        await fulfillment(of: [exited], timeout: 2)
+        child.interrupt()
+        let output = await wait.value
+
+        XCTAssertEqual(output.status, 7)
+        XCTAssertTrue(output.stdout.isEmpty)
+        XCTAssertEqual(streamed.withLock { String(decoding: $0, as: UTF8.self) }, "started")
+        XCTAssertEqual(String(decoding: output.stderr, as: UTF8.self), "interrupted")
+    }
+
     func testRunThrowsForMissingExecutable() async {
         do {
             _ = try await ChildProcess.run(URL(fileURLWithPath: "/nonexistent/aria"), [])
