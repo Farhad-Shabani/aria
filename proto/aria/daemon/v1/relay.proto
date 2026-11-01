@@ -64,6 +64,9 @@ message IssueInviteResponse {
   // SHA-256 of the relay certificate's DER bytes; the phone pins it.
   bytes fingerprint = 3;
   uint32 expires_in_ms = 4;
+  // Pair calls that succeeded since the daemon started. A rise since the
+  // last poll means a phone paired; a fall means the daemon restarted.
+  uint64 pairing_count = 5;
 }
 
 message RelayRequest {

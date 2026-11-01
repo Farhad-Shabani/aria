@@ -158,6 +158,10 @@ public nonisolated struct Aria_Daemon_V1_IssueInviteResponse: Sendable {
 
   public var expiresInMs: UInt32 = 0
 
+  /// Pair calls that succeeded since the daemon started. A rise since the
+  /// last poll means a phone paired; a fall means the daemon restarted.
+  public var pairingCount: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -339,7 +343,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteRequest: SwiftProtobuf.Message, 
 
 nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".IssueInviteResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}instance_name\0\u{1}code\0\u{1}fingerprint\0\u{3}expires_in_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}instance_name\0\u{1}code\0\u{1}fingerprint\0\u{3}expires_in_ms\0\u{3}pairing_count\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -351,6 +355,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
       case 2: try { try decoder.decodeSingularStringField(value: &self.code) }()
       case 3: try { try decoder.decodeSingularBytesField(value: &self.fingerprint) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.expiresInMs) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.pairingCount) }()
       default: break
       }
     }
@@ -369,6 +374,9 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
     if self.expiresInMs != 0 {
       try visitor.visitSingularUInt32Field(value: self.expiresInMs, fieldNumber: 4)
     }
+    if self.pairingCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.pairingCount, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -377,6 +385,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
     if lhs.code != rhs.code {return false}
     if lhs.fingerprint != rhs.fingerprint {return false}
     if lhs.expiresInMs != rhs.expiresInMs {return false}
+    if lhs.pairingCount != rhs.pairingCount {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

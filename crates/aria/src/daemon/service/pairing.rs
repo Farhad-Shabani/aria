@@ -77,6 +77,7 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                     RpcFailure::new(code, error_chain(&error)),
                 ))
             })?;
+        self.codes.count_pairing();
         tracing::info!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::PairResponse {}))
     }
@@ -132,6 +133,7 @@ impl wire::invite_service_server::InviteService for InviteRpc {
             code: code.raw().to_owned(),
             fingerprint: self.fingerprint.to_vec(),
             expires_in_ms,
+            pairing_count: self.codes.pairing_count(),
         }))
     }
 }
@@ -168,5 +170,17 @@ mod tests {
         assert_eq!(issued.code, live.raw());
         assert_eq!(issued.fingerprint, pairing.certificate_fingerprint);
         assert!(issued.expires_in_ms <= 60_000);
+        assert_eq!(issued.pairing_count, 0);
+
+        assert!(codes.redeem(live.raw(), Instant::now()));
+        codes.count_pairing();
+        let reissued = rpc
+            .issue_invite(Request::new(wire::IssueInviteRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_ne!(reissued.code, issued.code);
+        assert_eq!(reissued.pairing_count, 1);
     }
 }
