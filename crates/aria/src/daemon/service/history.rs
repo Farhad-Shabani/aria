@@ -7,11 +7,11 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
-use crate::history::{
-    ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, RetryOptions,
-};
 use crate::ipc::{protocol, wire};
 use aria_settings::rpc::RpcFailure;
+use aria_voice::history::{
+    ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, RetryOptions,
+};
 
 use super::super::dictation::DictationRuntime;
 use super::super::operation::{

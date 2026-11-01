@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
 
-use crate::config::{SpeechDefaults, TtsConfig, TtsEngine};
 use crate::primitives::lazy::Lazy;
-use crate::speech::{
+use aria_settings::settings::SettingsCache;
+use aria_voice::config::{SpeechDefaults, TtsConfig, TtsEngine};
+use aria_voice::speech::{
     SpeechError, SpeechEventEmitter, SpeechOutcome, SpeechRequest, SpeechSettings, SpeechStage,
 };
-use aria_settings::settings::SettingsCache;
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
@@ -146,7 +146,7 @@ pub(in crate::daemon) enum SpeechRuntimeError {
 }
 
 fn event_emitter(subscriptions: Arc<Subscriptions>) -> SpeechEventEmitter {
-    SpeechEventEmitter::subscribed_by(crate::speech::EVENT_THREAD, move |stage| {
+    SpeechEventEmitter::subscribed_by(aria_voice::speech::EVENT_THREAD, move |stage| {
         subscriptions.broadcast(stage);
     })
 }

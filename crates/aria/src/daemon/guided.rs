@@ -7,8 +7,8 @@
 use std::io::Write;
 use std::thread;
 
-use crate::enrollment::{EnrollmentRequest, EnrollmentResult, EnrollmentStage};
 use crate::ipc::{ClientError, DaemonEvent, EventStream};
+use aria_voice::enrollment::{EnrollmentRequest, EnrollmentResult, EnrollmentStage};
 
 use super::DaemonSession;
 

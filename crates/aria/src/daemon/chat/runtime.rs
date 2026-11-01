@@ -12,11 +12,9 @@ use crate::chat::{
     PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
     read_instructions,
 };
-use crate::config::SpeakerConfig;
 use crate::memory::MemoryConfig;
 use crate::memory::{DB_FILE, Store, load_profile_block};
 use crate::primitives::error_chain;
-use crate::speaker::{ProfileStore, Role};
 use aria_kit::cancel::CancelToken;
 use aria_platform::delivery::{
     DeliveryError, DeliveryFactory, DeliveryOutcome, OutputMode, PlatformTextDelivery,
@@ -25,6 +23,8 @@ use aria_platform::delivery::{
 use aria_settings::config::{AssistantId, ConfigError};
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::settings::{ApplicationId, SettingsCache, SettingsStore};
+use aria_voice::config::SpeakerConfig;
+use aria_voice::speaker::{ProfileStore, Role};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -488,7 +488,7 @@ impl ChatRuntime {
     fn owner_name(&self) -> Option<String> {
         let settings = self.cache.effective();
         let config = SpeakerConfig::load(&settings.speaker, &self.home);
-        crate::speaker::usable_profiles(ProfileStore::open(&config.profiles_dir).read_all())
+        aria_voice::speaker::usable_profiles(ProfileStore::open(&config.profiles_dir).read_all())
             .into_iter()
             .find(|profile| profile.role == Role::Owner)
             .map(|profile| profile.name.as_str().to_owned())
@@ -865,10 +865,10 @@ pub(super) mod tests {
     }
 
     fn enroll_owner(home: &Path) {
-        crate::speaker::ProfileStore::open(home.join(".aria/speakers"))
+        aria_voice::speaker::ProfileStore::open(home.join(".aria/speakers"))
             .save(
                 &aria_kit::speaker::enrolled_voice("sam", Role::Owner, vec![1.0]),
-                crate::speaker::Replace::Never,
+                aria_voice::speaker::Replace::Never,
             )
             .expect("the owner enrolls");
     }

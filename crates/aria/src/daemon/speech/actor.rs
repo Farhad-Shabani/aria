@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::speech::{SpeechOutcome, SpeechRequest};
+use aria_voice::speech::{SpeechOutcome, SpeechRequest};
 
 use super::super::operation::{CallError, Reply, cancellable_call, operation_cancellation};
 use super::super::tasks::Supervised;

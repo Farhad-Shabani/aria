@@ -1,8 +1,8 @@
 use super::super::vocabulary::{Error, Runtime};
 use crate::ipc::wire;
-use crate::vocabulary::State;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::settings::{Directory, SettingsStore};
+use aria_voice::vocabulary::State;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 

@@ -13,12 +13,12 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
 use crate::audio::RecordingReader;
-use crate::history::{
+use aria_platform::delivery::Application;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::history::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
     HistorySource, HistoryStatus,
 };
-use aria_platform::delivery::Application;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 const MAX_ENTRIES: usize = 1_000;
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
@@ -900,27 +900,6 @@ fn all(state: &State) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
         }
     }
     Ok((entries, unreadable))
-}
-
-impl From<rusqlite::Error> for HistoryError {
-    fn from(error: rusqlite::Error) -> Self {
-        match error {
-            rusqlite::Error::SqliteFailure(cause, _)
-                if matches!(
-                    cause.code,
-                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
-                ) =>
-            {
-                Self::Busy
-            }
-            rusqlite::Error::SqliteFailure(cause, _)
-                if cause.code == rusqlite::ErrorCode::DiskFull =>
-            {
-                Self::TooLarge
-            }
-            _ => Self::Storage,
-        }
-    }
 }
 
 #[cfg(test)]

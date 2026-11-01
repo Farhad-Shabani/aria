@@ -1,7 +1,7 @@
 //! What the desktop and a paired inference server exchange, independent of
 //! the wire encoding.
 
-use crate::transcription::{Language, TranscriptUpdate};
+use aria_voice::transcription::{Language, TranscriptUpdate};
 
 /// Uploads are mono PCM16 at this rate, so sample positions are wire units.
 const SAMPLE_RATE: u64 = 16_000;
@@ -23,22 +23,22 @@ pub(crate) enum Strategy {
 
 #[derive(Clone)]
 pub(crate) struct Start {
-    pub engine: String,
-    pub language: Language,
-    pub strategy: Strategy,
+    pub(crate) engine: String,
+    pub(crate) language: Language,
+    pub(crate) strategy: Strategy,
 }
 
 /// What a server runs. Every engine transcribes whole recordings, so
 /// `strategy` names the strongest one it supports.
 pub(crate) struct Info {
-    pub engine: String,
-    pub strategy: Strategy,
+    pub(crate) engine: String,
+    pub(crate) strategy: Strategy,
 }
 
 #[derive(Clone)]
 pub(crate) struct Completion {
-    pub text: String,
-    pub engine: String,
+    pub(crate) text: String,
+    pub(crate) engine: String,
 }
 
 pub(crate) enum Event {

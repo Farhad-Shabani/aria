@@ -267,9 +267,9 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
     use crate::primitives::error_chain;
     use aria_settings::settings::SettingsFile;
+    use aria_voice::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
 
     #[test]
     fn server_is_ready_once_a_server_is_paired() {
@@ -363,16 +363,17 @@ mod tests {
         {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
-            let crate::config::TranscriptionBackend::Local(transcription) = DictationConfig::load(
-                &aria_settings::settings::load(&home_dir).unwrap(),
-                &home_dir,
-            )
-            .unwrap()
-            .transcription
+            let aria_voice::config::TranscriptionBackend::Local(transcription) =
+                DictationConfig::load(
+                    &aria_settings::settings::load(&home_dir).unwrap(),
+                    &home_dir,
+                )
+                .unwrap()
+                .transcription
             else {
                 panic!("{} is a local engine", stt.key());
             };
-            if let Err(error) = crate::transcription::check_model(&transcription) {
+            if let Err(error) = aria_voice::transcription::check_model(&transcription) {
                 panic!("{}: {}", stt.key(), error_chain(&error));
             }
         }

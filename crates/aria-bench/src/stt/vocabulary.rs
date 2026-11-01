@@ -5,9 +5,9 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Instant;
 
-use aria::vocabulary::{PersonalRules, Term, Vocabulary};
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use aria_harness::stats::bootstrap;
+use aria_voice::vocabulary::{PersonalRules, Term, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

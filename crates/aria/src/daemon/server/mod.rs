@@ -85,7 +85,9 @@ pub(super) struct Actors {
     pub(super) speaker: SpeakerActor,
     pub(super) memory: Option<MemoryBacklog>,
     pub(super) vocabulary: super::vocabulary::Worker<
-        crate::vocabulary::discover::LocalCollector<crate::vocabulary::extract::LocalExtractor>,
+        aria_voice::vocabulary::discover::LocalCollector<
+            aria_voice::vocabulary::extract::LocalExtractor,
+        >,
     >,
     pub(super) settings_poll: aria_settings::settings::SettingsPoll,
 }

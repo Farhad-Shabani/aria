@@ -350,7 +350,7 @@ enum HistoryCommand {
         #[arg(long)]
         engine: Option<String>,
         #[arg(long)]
-        language: Option<aria::transcription::Language>,
+        language: Option<aria_voice::transcription::Language>,
     },
 }
 
@@ -1506,7 +1506,7 @@ fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria_settings::settings::Dire
 }
 
 fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
-    use aria::history::{HistoryQuery, RetryOptions};
+    use aria_voice::history::{HistoryQuery, RetryOptions};
 
     if let HistoryCommand::Clear { yes } = &command
         && !confirm_history_clear(*yes, std::io::stdin().is_terminal(), answer)?
@@ -1599,7 +1599,9 @@ fn confirm_history_clear(
     Ok(matches!(answer.as_str(), "y" | "yes"))
 }
 
-fn history_clear_message(result: aria::history::ClearHistoryResult) -> anyhow::Result<String> {
+fn history_clear_message(
+    result: aria_voice::history::ClearHistoryResult,
+) -> anyhow::Result<String> {
     anyhow::ensure!(
         !result.cleanup_pending,
         "dictation text cleared, but some recordings could not be removed; Aria will retry"
@@ -1638,7 +1640,7 @@ fn history_clear_error(error: aria::daemon::ClientError) -> anyhow::Error {
     anyhow::Error::new(error).context(context)
 }
 
-fn history_entry_json(entry: &aria::history::HistoryEntry) -> serde_json::Value {
+fn history_entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::Value {
     serde_json::json!({
         "id": entry.id,
         "created_at_ms": entry.created_at_ms,
@@ -1649,8 +1651,8 @@ fn history_entry_json(entry: &aria::history::HistoryEntry) -> serde_json::Value 
     })
 }
 
-fn history_audio_label(audio: aria::history::AudioAvailability) -> &'static str {
-    use aria::history::AudioAvailability;
+fn history_audio_label(audio: aria_voice::history::AudioAvailability) -> &'static str {
+    use aria_voice::history::AudioAvailability;
     match audio {
         AudioAvailability::Available { .. } => "Available",
         AudioAvailability::Expired => "Expired",
@@ -1676,7 +1678,7 @@ fn run_vocabulary(command: VocabularyCommand) -> anyhow::Result<()> {
         "{:?}: {} terms, catalog revision {}, runtime revision {}",
         status.state, status.terms, status.catalog_revision, status.runtime_revision
     );
-    if status.state != aria::vocabulary::State::Disabled && !status.error.is_empty() {
+    if status.state != aria_voice::vocabulary::State::Disabled && !status.error.is_empty() {
         anyhow::bail!(
             "vocabulary {} failed; the previous snapshot is retained when available",
             status.error
@@ -1696,9 +1698,9 @@ fn run_dictate(
     init_daemon_logging(paths.log_path())?;
     let session = Arc::new(DaemonSession::open_at(&paths)?);
     let project = if no_project || !session.get_settings()?.settings.vocabulary_enabled {
-        aria::vocabulary::Context::Disabled
+        aria_voice::vocabulary::Context::Disabled
     } else {
-        aria::vocabulary::Context::Directory(aria_settings::settings::Directory::new(
+        aria_voice::vocabulary::Context::Directory(aria_settings::settings::Directory::new(
             std::env::current_dir()?,
         )?)
     };
@@ -1815,16 +1817,18 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
             let heard = {
                 let mut recording = interrupt.recording(DeliveryMode::Complete);
                 let context = if let Some(project) = &project {
-                    aria::vocabulary::Context::Directory(project.clone())
+                    aria_voice::vocabulary::Context::Directory(project.clone())
                 } else if session.get_settings()?.settings.vocabulary_enabled {
                     match session.route(String::new(), Clarify::Refuse, assistant_id)? {
                         Routing::Ready { request, .. } => {
-                            aria::vocabulary::Context::Directory(vocabulary_dir(request.workdir)?)
+                            aria_voice::vocabulary::Context::Directory(vocabulary_dir(
+                                request.workdir,
+                            )?)
                         }
                         Routing::Stopped => return Ok(()),
                     }
                 } else {
-                    aria::vocabulary::Context::Disabled
+                    aria_voice::vocabulary::Context::Disabled
                 };
                 let heard =
                     session.transcribe_in(stop_mode, context, |stage| recording.follow(stage));
@@ -2016,13 +2020,13 @@ fn listen_follow(session: &DaemonSession) -> anyhow::Result<()> {
                 let label = label.as_deref().map(str::to_owned);
                 let mut stdout = std::io::stdout().lock();
                 if open_label.as_ref() != Some(&label)
-                    || now.duration_since(last_segment) >= aria::listen::GAP_BREAK
+                    || now.duration_since(last_segment) >= aria_voice::listen::GAP_BREAK
                 {
                     if open_label.is_some() {
                         writeln!(stdout)?;
                         writeln!(stdout)?;
                     }
-                    write!(stdout, "{} ", aria::listen::stamp(at_seconds))?;
+                    write!(stdout, "{} ", aria_voice::listen::stamp(at_seconds))?;
                     if let Some(label) = &label {
                         write!(stdout, "{label}: ")?;
                     }
@@ -2267,7 +2271,7 @@ mod tests {
             command,
             Command::History {
                 command: HistoryCommand::Retry {
-                    id: 42, engine: Some(engine), language: Some(aria::transcription::Language::Automatic)
+                    id: 42, engine: Some(engine), language: Some(aria_voice::transcription::Language::Automatic)
                 }
             } if engine == "whisper"
         ));
@@ -2301,7 +2305,7 @@ mod tests {
     #[test]
     fn history_clear_reports_complete_partial_and_uncertain_outcomes() {
         use aria::daemon::ClientError;
-        use aria::history::ClearHistoryResult;
+        use aria_voice::history::ClearHistoryResult;
 
         for deleted_entries in [0, 42] {
             assert_eq!(
@@ -2481,7 +2485,7 @@ mod tests {
 
     #[test]
     fn history_listing_distinguishes_audio_states() {
-        use aria::history::AudioAvailability;
+        use aria_voice::history::AudioAvailability;
         assert_eq!(
             history_audio_label(AudioAvailability::Available { expires_at_ms: 1 }),
             "Available"

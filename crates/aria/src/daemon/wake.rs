@@ -14,10 +14,10 @@ use tonic_health::server::HealthReporter;
 
 use crate::audio::{CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor};
 use crate::daemon::config::WakeBackend;
-use crate::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 use crate::primitives::error_chain;
 use aria_settings::settings::DeliveryMode;
+use aria_voice::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 
 use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;
@@ -154,7 +154,7 @@ impl WakeTrigger {
             delivery_mode: Some(DeliveryMode::Complete),
             stop_mode: StopMode::OnSilence,
             transcript_only: false,
-            project: crate::vocabulary::Context::Default,
+            project: aria_voice::vocabulary::Context::Default,
         };
         // Daemon shutdown reaches the operation through the actor, which also
         // releases this blocking wait by answering it.

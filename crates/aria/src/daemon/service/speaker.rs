@@ -3,9 +3,9 @@
 
 use tonic::{Request, Response, Status};
 
-use crate::enrollment::{EnrollError, EnrollmentRequest};
 use crate::ipc::{protocol, wire};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::enrollment::{EnrollError, EnrollmentRequest};
 
 use super::super::operation::CallError;
 use super::super::speaker::{SpeakerCallError, SpeakerHandle};

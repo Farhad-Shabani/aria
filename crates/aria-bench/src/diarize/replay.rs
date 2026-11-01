@@ -6,13 +6,15 @@
 use std::path::Path;
 use std::time::Duration;
 
-use aria::speaker::{Diarizer, Label, VoiceprintTracker};
-use aria::transcription::{Language, Streaming, Transcriber, Transcription, TranscriptionError};
 use aria_kit::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, WavReplayCapture};
 use aria_kit::speaker::{Admission, Decision, Gate, Timeline, TurnFeed};
 use aria_kit::transcription::next_heard;
 use aria_kit::voice_activity::{SileroVad, SpeechDetector};
 use aria_speaker::wespeaker::WeSpeaker;
+use aria_voice::speaker::{Diarizer, Label, VoiceprintTracker};
+use aria_voice::transcription::{
+    Language, Streaming, Transcriber, Transcription, TranscriptionError,
+};
 
 use crate::diarize::BenchError;
 

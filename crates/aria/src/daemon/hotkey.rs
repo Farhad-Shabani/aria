@@ -8,11 +8,11 @@ use super::dictation::{AutoStopRule, DictationCallError, DictationHandle, Dictat
 use super::operation::CallError;
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
-use crate::dictation::{
-    DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
-};
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
 use aria_platform::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
+use aria_voice::dictation::{
+    DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
+};
 use std::sync::Arc;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
@@ -418,11 +418,11 @@ mod tests {
     use tonic_health::pb::health_server::Health;
     use tonic_health::server::HealthService;
 
-    use crate::dictation::testing::{RecordsUntilStopped, recording_started};
     use crate::ipc::wire;
     use aria_platform::hotkey::Combo;
     use aria_platform::runtime::RuntimePaths;
     use aria_settings::settings::SettingsStore;
+    use aria_voice::dictation::testing::{RecordsUntilStopped, recording_started};
 
     use super::super::chat::{ChatRuntime, channel as chat_channel};
     use super::super::context::Context;

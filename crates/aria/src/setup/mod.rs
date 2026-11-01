@@ -19,7 +19,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::config;
 use crate::daemon::{
     DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
     StopMode, guided,
@@ -28,7 +27,6 @@ use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
-use crate::speech::SpeechRequest;
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
 use aria_kit::backend::ModelError;
@@ -36,6 +34,8 @@ use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::ServerEndpoint;
 use aria_settings::settings::{SettingsError, SettingsFile};
+use aria_voice::config;
+use aria_voice::speech::SpeechRequest;
 
 mod assets;
 mod backends;
@@ -1000,8 +1000,8 @@ mod tests {
     /// daemon loads them.
     #[test]
     fn shared_models_land_where_the_daemon_loads_them() {
-        use crate::config::SpeakerConfig;
         use crate::daemon::config::{DaemonConfig, WakeConfig, WakeWordOverride};
+        use aria_voice::config::SpeakerConfig;
 
         let home = tempfile::tempdir().unwrap();
         let settings_path = aria_settings::settings::default_path(home.path());

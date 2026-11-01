@@ -506,7 +506,7 @@ mod tests {
         for _ in 0..QUEUE_CAPACITY {
             events
                 .try_send(Event::Update {
-                    update: crate::transcription::TranscriptUpdate::Provisional {
+                    update: aria_voice::transcription::TranscriptUpdate::Provisional {
                         text: "private text".into(),
                         source_window: None,
                     },
@@ -546,7 +546,7 @@ mod tests {
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         events
             .try_send(Event::Update {
-                update: crate::transcription::TranscriptUpdate::Provisional {
+                update: aria_voice::transcription::TranscriptUpdate::Provisional {
                     text: "words".into(),
                     source_window: None,
                 },
@@ -607,7 +607,7 @@ mod tests {
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         events
             .try_send(Event::Update {
-                update: crate::transcription::TranscriptUpdate::Provisional {
+                update: aria_voice::transcription::TranscriptUpdate::Provisional {
                     text: "private words".into(),
                     source_window: None,
                 },

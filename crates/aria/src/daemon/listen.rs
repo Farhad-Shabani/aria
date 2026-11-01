@@ -10,12 +10,12 @@ use std::thread::JoinHandle;
 use aria_kit::cancel::CancelToken;
 
 use crate::audio::Stopper;
-use crate::config::{ListenConfig, SpeakerConfig};
-use crate::listen::{
-    ListenError, ListenEventEmitter, SystemAudioCapture, TranscriptFile, spawn_session,
-};
 use crate::primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::config::{ListenConfig, SpeakerConfig};
+use aria_voice::listen::{
+    ListenError, ListenEventEmitter, SystemAudioCapture, TranscriptFile, spawn_session,
+};
 
 use super::host::DaemonLifetime;
 

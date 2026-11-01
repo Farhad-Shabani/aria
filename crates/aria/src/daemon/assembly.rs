@@ -1,11 +1,8 @@
 //! Concrete assembly and execution of the Aria daemon.
 
 use crate::audio::{WakeWordMonitor, remove_all_spools};
-use crate::config::SpeakerConfig;
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
-use crate::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use crate::memory::Lexicon;
-use crate::microphone::Gate;
 use crate::primitives::error_chain;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_platform::delivery::PlatformTextDelivery;
@@ -13,6 +10,9 @@ use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::{ConfigError, memory_directory};
 use aria_settings::settings::{SettingsCache, SettingsError, SettingsFile};
 use aria_settings::settings::{SettingsStore, StoreError};
+use aria_voice::config::SpeakerConfig;
+use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
+use aria_voice::microphone::Gate;
 
 use std::sync::Arc;
 
@@ -113,7 +113,7 @@ pub(super) fn build(
 #[cfg(test)]
 pub(super) fn build_scripted(
     paths: &PreparedRuntimePaths,
-    executor: Box<dyn crate::dictation::DictationExecutor>,
+    executor: Box<dyn aria_voice::dictation::DictationExecutor>,
 ) -> Result<Server, DaemonError> {
     compose(
         paths,
@@ -157,8 +157,8 @@ fn compose(
         context.home.join(".aria/vocabulary"),
         lexicon,
         matches!(context.lifetime, DaemonLifetime::Persistent),
-        crate::vocabulary::discover::LocalCollector::new(
-            crate::vocabulary::extract::LocalExtractor,
+        aria_voice::vocabulary::discover::LocalCollector::new(
+            aria_voice::vocabulary::extract::LocalExtractor,
         ),
     );
     if let Err(error) = vocabulary_worker.initialize_personal() {
@@ -337,15 +337,20 @@ struct Workers {
 }
 
 fn enrollment_event_emitter(subscriptions: Arc<Subscriptions>) -> EnrollmentEventEmitter {
-    EnrollmentEventEmitter::subscribed_by(crate::enrollment::EVENT_THREAD, move |stage| {
+    EnrollmentEventEmitter::subscribed_by(aria_voice::enrollment::EVENT_THREAD, move |stage| {
         subscriptions.broadcast(stage);
     })
 }
 
-fn listen_event_emitter(subscriptions: Arc<Subscriptions>) -> crate::listen::ListenEventEmitter {
-    crate::listen::ListenEventEmitter::subscribed_by(crate::listen::EVENT_THREAD, move |stage| {
-        subscriptions.broadcast(stage);
-    })
+fn listen_event_emitter(
+    subscriptions: Arc<Subscriptions>,
+) -> aria_voice::listen::ListenEventEmitter {
+    aria_voice::listen::ListenEventEmitter::subscribed_by(
+        aria_voice::listen::EVENT_THREAD,
+        move |stage| {
+            subscriptions.broadcast(stage);
+        },
+    )
 }
 
 fn build_workers(

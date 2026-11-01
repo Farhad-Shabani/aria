@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use aria_settings::config::{ConfigError, model_location, string_value, wake_backend};
 use aria_settings::settings::{Phone, SettingsFile, Wake};
 
-use crate::config::{CaptureConfig, DictationConfig, TtsConfig};
+use aria_voice::config::{CaptureConfig, DictationConfig, TtsConfig};
 
 pub(crate) struct DaemonConfig {
     pub(crate) dictation: DictationConfig,

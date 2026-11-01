@@ -7,10 +7,10 @@ use tokio::sync::mpsc;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
 
-use crate::dictation::{DictationRequest, RecordingId};
 use crate::ipc::wire;
 use crate::primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::dictation::{DictationRequest, RecordingId};
 
 use super::super::dictation::DictationRuntimeError;
 use super::super::dictation::{
@@ -157,11 +157,11 @@ mod tests {
         ClientError, DaemonEvent, DeliveryMode, DictationOutcome, DictationRequest,
         DictationResult, DictationStage, StopMode,
     };
-    use crate::dictation::testing::{
-        EDGE_WAIT, Edge, HEARD, RecordsUntilStopped, recording_started,
-    };
     use crate::ipc::wire;
     use aria_settings::rpc::RpcErrorCode;
+    use aria_voice::dictation::testing::{
+        EDGE_WAIT, Edge, HEARD, RecordsUntilStopped, recording_started,
+    };
 
     /// A press that hands its transcript back instead of delivering it.
     /// It asks for complete delivery, since streaming, the default, hands none back.

@@ -6,9 +6,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::audio::{WavReplayCapture, check_default_input_device};
-use crate::config::{
-    CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
-};
 use crate::daemon::RELAY_SERVICE_TYPE;
 use crate::daemon::config::{
     DaemonConfig, HotkeyConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride,
@@ -16,7 +13,6 @@ use crate::daemon::config::{
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
-use crate::transcription::check_model;
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
@@ -26,6 +22,10 @@ use aria_segmentation::pyannote::Pyannote;
 use aria_settings::config::ConfigError;
 use aria_settings::settings::SettingsFile;
 use aria_speaker::wespeaker::WeSpeaker;
+use aria_voice::config::{
+    CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
+};
+use aria_voice::transcription::check_model;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn a_missing_model_fails_and_says_which_backend() {
         let check = model(&TranscriptionBackend::Local(
-            crate::config::TranscriptionConfig::Whisper {
+            aria_voice::config::TranscriptionConfig::Whisper {
                 model: PathBuf::from("/nonexistent/model.bin"),
             },
         ));

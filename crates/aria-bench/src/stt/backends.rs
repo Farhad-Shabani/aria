@@ -10,16 +10,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
-use aria::config::{TranscriptionConfig, TranscriptionDevice};
-use aria::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcriber,
-    Transcription, TranscriptionAudio, TranscriptionError, Whole, check_model,
-};
 use aria_kit::audio::RecordingReader;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{Transcript, TranscriptUpdate};
 use aria_settings::config::backend;
 use aria_stt::{EngineConfig, moonshine, nemotron, parakeet, parakeet_mlx, whisper};
+use aria_voice::config::{TranscriptionConfig, TranscriptionDevice};
+use aria_voice::transcription::{
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcriber,
+    Transcription, TranscriptionAudio, TranscriptionError, Whole, check_model,
+};
 
 use super::Mode;
 use super::conditions::{Conditions, Decoding};

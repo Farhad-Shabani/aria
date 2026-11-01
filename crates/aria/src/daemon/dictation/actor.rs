@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::dictation::{DictationEventEmitter, DictationOutcome, DictationRequest};
+use aria_voice::dictation::{DictationEventEmitter, DictationOutcome, DictationRequest};
 
 use super::super::operation::{
     CallError, Pending, Reply, cancellable_call, operation_cancellation,

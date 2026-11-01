@@ -19,6 +19,7 @@ members = [
   "crates/aria-wake",
   "crates/aria-segmentation",
   "crates/aria-speaker",
+  "crates/aria-voice",
   "crates/aria-web",
 ]
 default-members = [ "crates/aria" ]
@@ -57,6 +58,7 @@ aria-segmentation = { path = "crates/aria-segmentation", version = "0.7.0" }
 aria-speaker      = { path = "crates/aria-speaker", version = "0.7.0" }
 aria-stt          = { path = "crates/aria-stt", version = "0.7.0" }
 aria-tts          = { path = "crates/aria-tts", version = "0.7.0" }
+aria-voice        = { path = "crates/aria-voice", version = "0.7.0" }
 aria-wake         = { path = "crates/aria-wake", version = "0.7.0" }
 hound             = "3.5"
 rubato            = "4"

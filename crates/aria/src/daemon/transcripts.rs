@@ -3,15 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::audio::RecordingReader;
-use crate::dictation::{
+use aria_platform::delivery::Caret;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
 };
-use crate::history::{
+use aria_voice::history::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
     HistorySource, HistoryStatus,
 };
-use aria_platform::delivery::Caret;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 pub(in crate::daemon) mod storage;
 
@@ -267,9 +267,9 @@ fn failure_from_code(code: RpcErrorCode) -> RpcFailure {
 mod tests {
     use super::*;
     use crate::audio::RecordingReader;
-    use crate::dictation::{DictationRequest, StopMode};
-    use crate::transcription::TranscriptionError;
     use aria_settings::settings::Settings;
+    use aria_voice::dictation::{DictationRequest, StopMode};
+    use aria_voice::transcription::TranscriptionError;
 
     fn store(directory: &Path) -> Arc<TranscriptStore> {
         Arc::new(TranscriptStore::open(&directory.join(".aria/history")))

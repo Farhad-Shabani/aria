@@ -12,14 +12,14 @@ use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::dictation::{
-    DictationError, DictationSettings, DictationStage, TranscriptSink, Utterance,
-};
-use crate::history::HistorySource;
 use crate::ipc::wire;
-use crate::microphone::{Claim, Gate};
 use aria_platform::delivery::{DeliveryError, DeliveryOutcome, PlatformTextDelivery, TextDelivery};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::dictation::{
+    DictationError, DictationSettings, DictationStage, TranscriptSink, Utterance,
+};
+use aria_voice::history::HistorySource;
+use aria_voice::microphone::{Claim, Gate};
 
 use super::super::dictation::DictationRuntime;
 use super::super::relay::{self, Collected, Opening, RelayError};
@@ -303,7 +303,7 @@ fn deliver<D: TextDelivery>(
 /// Whether the engine heard nothing. A recording of a quiet room is a fact
 /// about the audio, not a fault in the daemon.
 fn is_silence(error: &super::super::dictation::DictationRuntimeError) -> bool {
-    use crate::dictation::DictationError;
+    use aria_voice::dictation::DictationError;
 
     matches!(
         error,
@@ -427,7 +427,7 @@ mod tests {
     }
 
     fn settings(output_mode: OutputMode) -> DictationSettings {
-        crate::dictation::testing::settings(
+        aria_voice::dictation::testing::settings(
             aria_settings::settings::DeliveryMode::Complete,
             output_mode,
         )

@@ -7,8 +7,8 @@
 use std::path::Path;
 
 use crate::daemon::config::WakeWordOverride;
-use crate::dictation::DictationExecutor;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimePaths};
+use aria_voice::dictation::DictationExecutor;
 
 use super::assembly;
 use super::host::{DaemonLifetime, SpawnedRuntime, spawn_server};

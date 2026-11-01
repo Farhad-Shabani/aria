@@ -126,7 +126,7 @@ impl Subscriptions {
 mod tests {
     use tokio_stream::StreamExt;
 
-    use crate::dictation::{DictationStage, RecordingId};
+    use aria_voice::dictation::{DictationStage, RecordingId};
 
     use super::*;
 

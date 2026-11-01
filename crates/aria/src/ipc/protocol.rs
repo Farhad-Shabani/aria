@@ -6,15 +6,6 @@ use crate::chat::{
     AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, Step,
     Ticket,
 };
-use crate::dictation::{
-    CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationStage,
-    GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
-};
-use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
-use crate::listen::ListenStage;
-use crate::speaker::{Role, SpeakerName, SpeakerNameError};
-use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
-use crate::transcription::LanguageCodeError;
 use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
 };
@@ -28,6 +19,15 @@ use aria_settings::settings::{
     PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
     Shortcut, UpdateResult,
 };
+use aria_voice::dictation::{
+    CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationStage,
+    GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
+};
+use aria_voice::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
+use aria_voice::listen::ListenStage;
+use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
+use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+use aria_voice::transcription::LanguageCodeError;
 use prost::Message;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1030,7 +1030,7 @@ impl From<DictationRequest> for wire::StartDictationRequest {
                 .map(|mode| wire::DeliveryMode::from(mode) as i32),
             stop_mode: wire::StopMode::from(request.stop_mode) as i32,
             transcript_only: request.transcript_only,
-            project: request.project.into(),
+            project: project_to_wire(request.project),
         }
     }
 }
@@ -1054,14 +1054,16 @@ impl TryFrom<wire::StartDictationRequest> for DictationRequest {
             delivery_mode,
             stop_mode,
             transcript_only: request.transcript_only,
-            project: request.project.try_into()?,
+            project: project_from_wire(request.project)?,
         })
     }
 }
 
-impl From<crate::vocabulary::Context> for Option<wire::start_dictation_request::Project> {
-    fn from(context: crate::vocabulary::Context) -> Self {
-        use crate::vocabulary::Context;
+fn project_to_wire(
+    context: aria_voice::vocabulary::Context,
+) -> Option<wire::start_dictation_request::Project> {
+    {
+        use aria_voice::vocabulary::Context;
         use wire::start_dictation_request::Project;
         match context {
             Context::Default => None,
@@ -1073,25 +1075,25 @@ impl From<crate::vocabulary::Context> for Option<wire::start_dictation_request::
     }
 }
 
-impl TryFrom<Option<wire::start_dictation_request::Project>> for crate::vocabulary::Context {
-    type Error = ProtocolError;
-    fn try_from(
-        project: Option<wire::start_dictation_request::Project>,
-    ) -> Result<Self, Self::Error> {
+fn project_from_wire(
+    project: Option<wire::start_dictation_request::Project>,
+) -> Result<aria_voice::vocabulary::Context, ProtocolError> {
+    {
+        use aria_voice::vocabulary::Context;
         use wire::start_dictation_request::Project;
         Ok(match project {
-            None => Self::Default,
+            None => Context::Default,
             Some(Project::ProjectDirectory(path)) => {
-                Self::Directory(aria_settings::settings::Directory::new(path.into())?)
+                Context::Directory(aria_settings::settings::Directory::new(path.into())?)
             }
-            Some(Project::ProjectVocabularyDisabled(_)) => Self::Disabled,
+            Some(Project::ProjectVocabularyDisabled(_)) => Context::Disabled,
         })
     }
 }
 
-impl From<crate::vocabulary::Status> for wire::VocabularyStatus {
-    fn from(status: crate::vocabulary::Status) -> Self {
-        use crate::vocabulary::State;
+impl From<aria_voice::vocabulary::Status> for wire::VocabularyStatus {
+    fn from(status: aria_voice::vocabulary::Status) -> Self {
+        use aria_voice::vocabulary::State;
         Self {
             state: match status.state {
                 State::Ready => wire::VocabularyState::Ready,
@@ -1109,7 +1111,7 @@ impl From<crate::vocabulary::Status> for wire::VocabularyStatus {
     }
 }
 
-impl TryFrom<wire::ListHistoryRequest> for crate::history::HistoryQuery {
+impl TryFrom<wire::ListHistoryRequest> for aria_voice::history::HistoryQuery {
     type Error = ProtocolError;
 
     fn try_from(request: wire::ListHistoryRequest) -> Result<Self, Self::Error> {
@@ -1136,7 +1138,7 @@ pub(crate) fn history_id(id: u64) -> Result<u64, ProtocolError> {
     Ok(id)
 }
 
-impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOptions) {
+impl TryFrom<wire::RegenerateHistoryRequest> for (u64, aria_voice::history::RetryOptions) {
     type Error = ProtocolError;
 
     fn try_from(request: wire::RegenerateHistoryRequest) -> Result<Self, Self::Error> {
@@ -1150,7 +1152,7 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
         }
         Ok((
             id,
-            crate::history::RetryOptions {
+            aria_voice::history::RetryOptions {
                 engine: request.engine_id,
                 language: request.language.as_deref().map(str::parse).transpose()?,
             },
@@ -1158,12 +1160,12 @@ impl TryFrom<wire::RegenerateHistoryRequest> for (u64, crate::history::RetryOpti
     }
 }
 
-impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
+impl TryFrom<wire::HistoryEntry> for aria_voice::history::HistoryEntry {
     type Error = ProtocolError;
 
     fn try_from(entry: wire::HistoryEntry) -> Result<Self, Self::Error> {
-        use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
         use aria_platform::delivery::Application;
+        use aria_voice::history::{AudioAvailability, HistorySource, HistoryStatus};
         if entry.id == 0 || entry.id > i64::MAX as u64 {
             return Err(ProtocolError::InvalidHistory("id"));
         }
@@ -1219,7 +1221,7 @@ impl TryFrom<wire::HistoryEntry> for crate::history::HistoryEntry {
     }
 }
 
-impl TryFrom<wire::ListHistoryResponse> for crate::history::HistoryPage {
+impl TryFrom<wire::ListHistoryResponse> for aria_voice::history::HistoryPage {
     type Error = ProtocolError;
 
     fn try_from(page: wire::ListHistoryResponse) -> Result<Self, Self::Error> {
@@ -1241,9 +1243,9 @@ impl TryFrom<wire::ListHistoryResponse> for crate::history::HistoryPage {
     }
 }
 
-impl From<crate::history::HistoryEntry> for wire::HistoryEntry {
-    fn from(entry: crate::history::HistoryEntry) -> Self {
-        use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
+impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
+    fn from(entry: aria_voice::history::HistoryEntry) -> Self {
+        use aria_voice::history::{AudioAvailability, HistorySource, HistoryStatus};
         let (audio, audio_expires_at_ms) = match entry.audio {
             AudioAvailability::Unavailable => (wire::HistoryAudioAvailability::Unavailable, None),
             AudioAvailability::Expired => (wire::HistoryAudioAvailability::Expired, None),
@@ -1287,8 +1289,8 @@ impl From<crate::history::HistoryEntry> for wire::HistoryEntry {
     }
 }
 
-impl From<crate::history::HistoryPage> for wire::ListHistoryResponse {
-    fn from(page: crate::history::HistoryPage) -> Self {
+impl From<aria_voice::history::HistoryPage> for wire::ListHistoryResponse {
+    fn from(page: aria_voice::history::HistoryPage) -> Self {
         Self {
             entries: page
                 .entries
@@ -1320,10 +1322,10 @@ impl TryFrom<wire::VocabularyRequest> for Option<aria_settings::settings::Direct
     }
 }
 
-impl TryFrom<wire::VocabularyStatus> for crate::vocabulary::Status {
+impl TryFrom<wire::VocabularyStatus> for aria_voice::vocabulary::Status {
     type Error = ProtocolError;
     fn try_from(status: wire::VocabularyStatus) -> Result<Self, Self::Error> {
-        use crate::vocabulary::State;
+        use aria_voice::vocabulary::State;
         if status.term_count > 100_000 {
             return Err(ProtocolError::InvalidVocabularyTerms(status.term_count));
         }
@@ -2276,7 +2278,7 @@ pub enum ProtocolError {
 
 #[cfg(test)]
 mod tests {
-    use crate::dictation::DictationError;
+    use aria_voice::dictation::DictationError;
 
     use super::*;
 
@@ -2812,7 +2814,7 @@ mod tests {
             delivery_mode: Some(DeliveryMode::Complete),
             stop_mode: StopMode::Manual,
             transcript_only: true,
-            project: crate::vocabulary::Context::Default,
+            project: aria_voice::vocabulary::Context::Default,
         };
 
         let sent = wire::StartDictationRequest::from(request.clone());
@@ -2962,8 +2964,8 @@ mod tests {
 
     #[test]
     fn project_context_preserves_presence_and_rejects_invalid_paths() {
-        use crate::vocabulary::Context;
         use aria_settings::settings::Directory;
+        use aria_voice::vocabulary::Context;
         for project in [
             Context::Default,
             Context::Disabled,
@@ -3394,22 +3396,22 @@ mod tests {
 #[cfg(test)]
 mod history_tests {
     use super::*;
-    use crate::history::{HistoryEntry, HistoryPage, HistoryQuery};
-    use crate::transcription::Language;
+    use aria_voice::history::{HistoryEntry, HistoryPage, HistoryQuery};
+    use aria_voice::transcription::Language;
 
     fn entry() -> HistoryEntry {
         HistoryEntry {
             id: 42,
             created_at_ms: 1_000,
-            source: crate::history::HistorySource::Local,
+            source: aria_voice::history::HistorySource::Local,
             application: None,
             duration_ms: None,
             text: "界".repeat(200),
             complete: false,
-            status: crate::history::HistoryStatus::TranscriptionFailed,
+            status: aria_voice::history::HistoryStatus::TranscriptionFailed,
             error: None,
             warning: None,
-            audio: crate::history::AudioAvailability::Available {
+            audio: aria_voice::history::AudioAvailability::Available {
                 expires_at_ms: 2_000,
             },
             retrying: false,
@@ -3458,29 +3460,31 @@ mod history_tests {
             engine_id: Some("whisper".into()),
             language: Some("auto".into()),
         };
-        let (id, options) = <(u64, crate::history::RetryOptions)>::try_from(request).unwrap();
+        let (id, options) = <(u64, aria_voice::history::RetryOptions)>::try_from(request).unwrap();
         assert_eq!(id, 42);
         assert_eq!(options.engine.as_deref(), Some("whisper"));
         assert_eq!(options.language, Some(Language::Automatic));
         for (engine, language) in [(Some("unknown"), None), (Some(""), None), (None, Some(""))] {
             assert!(
-                <(u64, crate::history::RetryOptions)>::try_from(wire::RegenerateHistoryRequest {
-                    id: 42,
-                    engine_id: engine.map(str::to_owned),
-                    language: language.map(str::to_owned),
-                })
+                <(u64, aria_voice::history::RetryOptions)>::try_from(
+                    wire::RegenerateHistoryRequest {
+                        id: 42,
+                        engine_id: engine.map(str::to_owned),
+                        language: language.map(str::to_owned),
+                    }
+                )
                 .is_err()
             );
         }
         let mut original = entry();
-        original.status = crate::history::HistoryStatus::Success;
+        original.status = aria_voice::history::HistoryStatus::Success;
         let encoded = wire::HistoryEntry::from(original);
         assert!(encoded.can_regenerate);
         let decoded = HistoryEntry::try_from(encoded.clone()).unwrap();
-        assert_eq!(decoded.status, crate::history::HistoryStatus::Success);
+        assert_eq!(decoded.status, aria_voice::history::HistoryStatus::Success);
         assert_eq!(
             decoded.audio,
-            crate::history::AudioAvailability::Available {
+            aria_voice::history::AudioAvailability::Available {
                 expires_at_ms: 2_000
             }
         );

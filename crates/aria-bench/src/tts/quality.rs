@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::stt::{Alignment, word_errors, words};
-use aria::config::TranscriptionDevice;
-use aria::transcription::{
-    Language, LanguageCode, Transcriber, Transcript, Transcription, TranscriptionError, Whole,
-};
 use aria_kit::audio::{CaptureError, Clip, ClipError, RecordingReader, ResampleError};
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::error_chain;
 use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
+use aria_voice::config::TranscriptionDevice;
+use aria_voice::transcription::{
+    Language, LanguageCode, Transcriber, Transcript, Transcription, TranscriptionError, Whole,
+};
 
 use super::backends::Loaded;
 use super::latency;

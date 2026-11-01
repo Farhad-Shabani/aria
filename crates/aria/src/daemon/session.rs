@@ -9,23 +9,23 @@ use crate::chat::{
     ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
 use crate::daemon::config::WakeWordOverride;
-use crate::dictation::{
-    DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
-};
-use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult};
 use crate::ipc::{
     ClientError, ConnectError, DaemonClient, DaemonEvent, EventStream, Liveness, ProbeError,
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
 };
-use crate::listen::ListenStage;
-use crate::speaker::SpeakerName;
-use crate::speech::{SpeechOutcome, SpeechRequest};
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_settings::config::{AssistantId, ConfigError};
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
+use aria_voice::dictation::{
+    DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
+};
+use aria_voice::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult};
+use aria_voice::listen::ListenStage;
+use aria_voice::speaker::SpeakerName;
+use aria_voice::speech::{SpeechOutcome, SpeechRequest};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -162,13 +162,13 @@ impl DaemonSession {
         stop_mode: StopMode,
         observe: impl FnMut(&DictationStage),
     ) -> Result<Option<DictationResult>, ClientError> {
-        self.transcribe_in(stop_mode, crate::vocabulary::Context::Default, observe)
+        self.transcribe_in(stop_mode, aria_voice::vocabulary::Context::Default, observe)
     }
 
     pub fn transcribe_in(
         &self,
         stop_mode: StopMode,
-        project: crate::vocabulary::Context,
+        project: aria_voice::vocabulary::Context,
         observe: impl FnMut(&DictationStage),
     ) -> Result<Option<DictationResult>, ClientError> {
         let outcome = self.request_dictation(
@@ -262,41 +262,41 @@ impl DaemonSession {
 
     pub fn list_history(
         &self,
-        query: crate::history::HistoryQuery,
-    ) -> Result<crate::history::HistoryPage, ClientError> {
+        query: aria_voice::history::HistoryQuery,
+    ) -> Result<aria_voice::history::HistoryPage, ClientError> {
         self.client.list_history(query)
     }
 
     pub fn retry_history(
         &self,
         id: u64,
-        options: crate::history::RetryOptions,
-    ) -> Result<crate::history::HistoryEntry, ClientError> {
+        options: aria_voice::history::RetryOptions,
+    ) -> Result<aria_voice::history::HistoryEntry, ClientError> {
         self.client.retry_history(id, options)
     }
 
-    pub fn clear_history(&self) -> Result<crate::history::ClearHistoryResult, ClientError> {
+    pub fn clear_history(&self) -> Result<aria_voice::history::ClearHistoryResult, ClientError> {
         self.client.clear_history()
     }
 
     pub fn vocabulary_status(
         &self,
         directory: Option<&aria_settings::settings::Directory>,
-    ) -> Result<crate::vocabulary::Status, ClientError> {
+    ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         self.client.vocabulary_status(directory)
     }
 
     pub fn vocabulary_refresh(
         &self,
         directory: Option<&aria_settings::settings::Directory>,
-    ) -> Result<crate::vocabulary::Status, ClientError> {
+    ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         self.client.vocabulary_refresh(directory)
     }
 
     pub fn vocabulary_forget(
         &self,
         directory: Option<&aria_settings::settings::Directory>,
-    ) -> Result<crate::vocabulary::Status, ClientError> {
+    ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         self.client.vocabulary_forget(directory)
     }
 
@@ -744,9 +744,9 @@ pub fn restart_required_keys() -> Result<Vec<String>, ClientError> {
 mod tests {
     use crate::chat::Step;
     use crate::daemon::Daemon;
-    use crate::speech::SpeechStage;
     use aria_platform::runtime::RuntimePaths;
     use aria_settings::config::AssistantId;
+    use aria_voice::speech::SpeechStage;
 
     use super::*;
 

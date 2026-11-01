@@ -12,12 +12,12 @@ use crate::audio::{
 };
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::ExclusiveListener;
-use crate::transcription::{
+use aria_kit::transcription::check_cancelled;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::transcription::{
     AudioInputKind, Stream, Transcriber, TranscriptSegment, TranscriptUpdate, Transcription,
     TranscriptionError,
 };
-use aria_kit::transcription::check_cancelled;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT};
 use crate::inference::{

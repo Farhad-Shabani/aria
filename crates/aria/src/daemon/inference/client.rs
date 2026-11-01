@@ -18,11 +18,11 @@ use crate::inference::{
     MAX_TEXT_BYTES, Start, Strategy,
 };
 use crate::ipc::{protocol, wire};
-use crate::transcription::{
-    Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
-};
 use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::RpcErrorCode;
+use aria_voice::transcription::{
+    Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
+};
 
 pub(super) const ADMIN_TIMEOUT: Duration = Duration::from_secs(10);
 const CANCEL_POLL: Duration = Duration::from_millis(25);
@@ -531,7 +531,9 @@ impl Session {
                             .map_err(TranscriptionError::Capture)?;
                     }
                     let completed = completed
-                        .map(|transcript| crate::transcription::Transcript::new(transcript.text))
+                        .map(|transcript| {
+                            aria_voice::transcription::Transcript::new(transcript.text)
+                        })
                         .transpose()?;
                     return Ok(OperationStep::Update {
                         update,
@@ -544,7 +546,7 @@ impl Session {
                     recording.fill().map_err(TranscriptionError::Capture)?;
                     let end = recording.held_to();
                     return Ok(OperationStep::Complete {
-                        transcript: crate::transcription::Transcript::new(transcript.text)?,
+                        transcript: aria_voice::transcription::Transcript::new(transcript.text)?,
                         retained_from: end,
                         read_to: end,
                     });
@@ -773,9 +775,9 @@ pub(super) fn rpc_error(status: tonic::Status) -> RemoteClientError {
 mod tests {
     use super::*;
     use crate::daemon::inference::host::tests::{Fixture, Observed};
-    use crate::transcription::{Stream, Streaming};
     use aria_kit::audio::Recording;
     use aria_kit::transcription::{AudioInputKind, Cadence, TimedWord, TranscriptSegment};
+    use aria_voice::transcription::{Stream, Streaming};
 
     #[tokio::test]
     async fn live_native_words_arrive_before_stop_and_use_one_server_stream() {
@@ -873,13 +875,13 @@ mod tests {
     #[tokio::test]
     async fn normal_streaming_dictation_previews_delivers_and_keeps_history() {
         use crate::audio::{ReplayPace, WavReplayCapture, fixture_of};
-        use crate::dictation::testing::{CallLog, Loud, settings};
-        use crate::dictation::{
+        use aria_platform::delivery::OutputMode;
+        use aria_settings::settings::DeliveryMode;
+        use aria_voice::dictation::testing::{CallLog, Loud, settings};
+        use aria_voice::dictation::{
             DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
             ExecutionControl, StopMode,
         };
-        use aria_platform::delivery::OutputMode;
-        use aria_settings::settings::DeliveryMode;
 
         let server = Fixture::with_model(
             "whisper",
@@ -966,13 +968,13 @@ mod tests {
     async fn a_whole_only_server_serves_streaming_dictation_under_its_own_engine() {
         use std::sync::Mutex;
 
-        use crate::dictation::testing::{CallLog, Loud, settings};
-        use crate::dictation::{
-            DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
-        };
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_platform::delivery::OutputMode;
         use aria_settings::settings::DeliveryMode;
+        use aria_voice::dictation::testing::{CallLog, Loud, settings};
+        use aria_voice::dictation::{
+            DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
+        };
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {
@@ -1027,14 +1029,14 @@ mod tests {
     async fn later_speech_does_not_validate_a_delayed_silence_guess() {
         use std::sync::Mutex;
 
-        use crate::dictation::testing::{CallLog, Loud, settings};
-        use crate::dictation::{
-            DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
-        };
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
         use aria_platform::delivery::OutputMode;
         use aria_settings::settings::DeliveryMode;
+        use aria_voice::dictation::testing::{CallLog, Loud, settings};
+        use aria_voice::dictation::{
+            DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
+        };
 
         struct Capture(Mutex<Option<RecordingReader>>);
         impl AudioCapture for Capture {
@@ -1444,10 +1446,10 @@ mod tests {
 
     #[tokio::test]
     async fn own_voice_rejection_precedes_upload_and_corrections_stay_on_device() {
-        use crate::dictation::{DictationPipeline, testing::Loud};
-        use crate::transcription::Transcription;
-        use crate::vocabulary::{PersonalRules, Vocabulary};
         use aria_kit::speaker::{Diarizer, Embedder, LevelSegmenter, SpeakerError};
+        use aria_voice::dictation::{DictationPipeline, testing::Loud};
+        use aria_voice::transcription::Transcription;
+        use aria_voice::vocabulary::{PersonalRules, Vocabulary};
 
         struct Voice([f32; 2]);
         impl Embedder for Voice {
@@ -1475,7 +1477,7 @@ mod tests {
             for (voice, accepted) in [([0.0, 1.0], false), ([1.0, 0.0], true)] {
                 let enrolled = vec![aria_kit::speaker::enrolled_voice(
                     "owner",
-                    crate::speaker::Role::Owner,
+                    aria_voice::speaker::Role::Owner,
                     vec![1.0, 0.0],
                 )];
                 let diarizer = Diarizer::new(Voice(voice), enrolled);
@@ -1484,14 +1486,14 @@ mod tests {
                     DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
                         .tracking_voices(Some(diarizer), Some(LevelSegmenter))
-                        .rewriting(crate::dictation::Rewrites::new());
+                        .rewriting(aria_voice::dictation::Rewrites::new());
                 let mut recording = crate::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(
                     &mut recording,
                     &Language::Automatic,
                     true,
                     Some(&matcher),
-                    crate::dictation::Rewriting {
+                    aria_voice::dictation::Rewriting {
                         cleanup: true,
                         backtrack: false,
                     },
@@ -1507,7 +1509,7 @@ mod tests {
                 } else {
                     assert!(matches!(
                         result,
-                        Err(crate::dictation::DictationError::NoSpeech)
+                        Err(aria_voice::dictation::DictationError::NoSpeech)
                     ));
                     assert!(observed.samples.lock().unwrap().is_empty());
                 }

@@ -9,23 +9,23 @@ use super::assembly::{
     build_dictation, transcribe_retry,
 };
 use crate::audio::{RecordingReader, WakeWordMonitor};
-use crate::config::{DictationConfig, SpeakerConfig, TranscriptionBackend};
 use crate::daemon::config::WakeConfig;
-use crate::dictation::{
-    DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
-    DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
-    subscribers::DictationSubscribers,
-};
-use crate::history::{HistoryEntry, HistoryError, RetryOptions};
-use crate::microphone::Gate;
 use crate::primitives::lazy::Lazy;
-use crate::transcription::Language;
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
 use aria_settings::config::{ConfigError, backend};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
+use aria_voice::config::{DictationConfig, SpeakerConfig, TranscriptionBackend};
+use aria_voice::dictation::{
+    DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
+    DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
+    subscribers::DictationSubscribers,
+};
+use aria_voice::history::{HistoryEntry, HistoryError, RetryOptions};
+use aria_voice::microphone::Gate;
+use aria_voice::transcription::Language;
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -187,7 +187,7 @@ impl DictationRuntime {
 
     #[cfg(test)]
     pub(in crate::daemon) fn execute_with(&mut self, executor: RuntimeExecutor) {
-        let policy = crate::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
+        let policy = aria_voice::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
             .expect("the longest timeout is a valid policy");
         self.coordinator = CoordinatorState::Ready(ReadyDictation {
             coordinator: DictationCoordinator::new(policy, executor, Arc::clone(&self.microphone)),
@@ -603,7 +603,7 @@ fn forward_events(
     subscriptions: Arc<Subscriptions>,
     local: impl Fn(DaemonEvent) + Send + 'static,
 ) -> EventEmitter<DaemonEvent> {
-    let local = EventEmitter::subscribed_by(crate::dictation::EVENT_THREAD, local);
+    let local = EventEmitter::subscribed_by(aria_voice::dictation::EVENT_THREAD, local);
     EventEmitter::forwarded_by(move |message: DaemonEvent| match &message.event {
         DictationEvent::Level(_) | DictationEvent::Ghost(_) => {
             subscriptions.broadcast_lossy(message.event);
@@ -648,7 +648,7 @@ mod event_tests {
         });
         emitter.emit(uncued(DictationStage::Recording(RecordingId(1))));
         waiting.recv_timeout(Duration::from_secs(2)).unwrap();
-        let voice = DictationStage::SpeakerChanged(crate::dictation::HeardSpeaker::KeptOut);
+        let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
         emitter.emit(uncued(voice.clone()));
         let observed = tokio::time::timeout(Duration::from_millis(100), async {
             stream.next().await.unwrap().unwrap();
@@ -667,7 +667,7 @@ mod event_tests {
         let mut stream = subscriptions.subscribe().unwrap();
         let emitter = forward_events(Arc::clone(&subscriptions), |_| {});
         for _level in 0..EVENT_BUFFER {
-            emitter.emit(uncued(crate::dictation::MicLevel {
+            emitter.emit(uncued(aria_voice::dictation::MicLevel {
                 recording: RecordingId(1),
                 level: 0.5,
             }));
@@ -693,7 +693,7 @@ mod event_tests {
         let (call, progress) = channel();
         let events = runtime.emitter_for_call(move |stage| call.send(stage).unwrap());
         let operation = runtime.operation_emitter(false, Some(&events));
-        let voice = DictationStage::SpeakerChanged(crate::dictation::HeardSpeaker::KeptOut);
+        let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
         operation.emit(voice.clone());
         operation.emit(DictationStage::Transcribing);
         assert_eq!(received.recv().unwrap(), DictationEvent::Stage(voice));
@@ -830,13 +830,13 @@ mod event_tests {
     /// Records the auto-stop each press runs with, then ends the press.
     struct AutoStopSpy(Arc<std::sync::Mutex<Vec<Option<crate::audio::AutoStop>>>>);
 
-    impl crate::dictation::DictationExecutor for AutoStopSpy {
+    impl aria_voice::dictation::DictationExecutor for AutoStopSpy {
         fn execute(
             &self,
             settings: DictationSettings,
-            _: &Arc<crate::dictation::ExecutionControl>,
+            _: &Arc<aria_voice::dictation::ExecutionControl>,
             _: &DictationEventEmitter,
-        ) -> Result<crate::dictation::DictationResult, DictationError> {
+        ) -> Result<aria_voice::dictation::DictationResult, DictationError> {
             self.0.lock().unwrap().push(settings.auto_stop);
             Err(DictationError::NoSpeech)
         }
@@ -847,7 +847,7 @@ mod event_tests {
             _: &Language,
             _: bool,
             _: Option<&aria_settings::settings::Directory>,
-            _: crate::dictation::Rewriting,
+            _: aria_voice::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             panic!("a press never retries history");
@@ -885,9 +885,11 @@ mod history_tests {
     use std::sync::Mutex;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use crate::dictation::{DictationExecutor, DictationPolicy, DictationResult, ExecutionControl};
-    use crate::history::{AudioAvailability, HistorySource, HistoryStatus};
     use aria_settings::settings::Settings;
+    use aria_voice::dictation::{
+        DictationExecutor, DictationPolicy, DictationResult, ExecutionControl,
+    };
+    use aria_voice::history::{AudioAvailability, HistorySource, HistoryStatus};
 
     use super::*;
 
@@ -912,7 +914,7 @@ mod history_tests {
             language: &Language,
             own_voice_only: bool,
             project: Option<&aria_settings::settings::Directory>,
-            _: crate::dictation::Rewriting,
+            _: aria_voice::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());
@@ -926,7 +928,7 @@ mod history_tests {
                 return Err(DictationError::Cancelled);
             }
             Ok(Transcribed {
-                transcript: crate::transcription::Transcript::new("recovered words").unwrap(),
+                transcript: aria_voice::transcription::Transcript::new("recovered words").unwrap(),
                 engine: "test",
             })
         }
@@ -1155,7 +1157,7 @@ mod history_tests {
                 DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
                     .unwrap();
             config.transcription = TranscriptionBackend::Server { endpoint };
-            config.capture = crate::config::CaptureConfig::WavFile {
+            config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: crate::audio::ReplayPace::Immediate,
             };
@@ -1167,8 +1169,8 @@ mod history_tests {
                 home.join("vocabulary"),
                 None,
                 false,
-                crate::vocabulary::discover::LocalCollector::new(
-                    crate::vocabulary::extract::LocalExtractor,
+                aria_voice::vocabulary::discover::LocalCollector::new(
+                    aria_voice::vocabulary::extract::LocalExtractor,
                 ),
             );
             let built = build_dictation(

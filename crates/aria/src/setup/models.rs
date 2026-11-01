@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
-use crate::config::{self, LoadedModel};
 use crate::primitives::user_home;
 use aria_settings::settings::SettingsFile;
+use aria_voice::config::{self, LoadedModel};
 
 use super::assets::{self, Asset};
 use super::{SetupError, model_states, settings_file};

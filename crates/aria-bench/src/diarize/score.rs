@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use aria::speaker::Label;
+use aria_voice::speaker::Label;
 
 use crate::stt::words;
 

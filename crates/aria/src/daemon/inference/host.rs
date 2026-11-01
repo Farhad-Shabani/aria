@@ -13,7 +13,6 @@ use tokio_util::task::TaskTracker;
 use tonic::service::interceptor::InterceptedService;
 
 use crate::audio::remove_all_spools;
-use crate::config::TranscriptionBackend;
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -28,9 +27,10 @@ use crate::daemon::shutdown::{ShutdownError, ShutdownSignal};
 use crate::ipc::wire;
 use crate::primitives::cancel::CancelToken;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
-use crate::transcription::TranscriptionError;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_settings::config::ConfigError;
+use aria_voice::config::TranscriptionBackend;
+use aria_voice::transcription::TranscriptionError;
 
 use super::engine::Engine;
 use super::identity::{self, ServerAccess};
@@ -331,11 +331,11 @@ pub(in crate::daemon) mod tests {
     use super::*;
     use crate::audio::RecordingReader;
     use crate::daemon::relay::fingerprint;
-    use crate::transcription::{
+    use aria_settings::config::ServerEndpoint;
+    use aria_voice::transcription::{
         AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, Stream as RecognitionStream,
         Transcriber, Transcription, TranscriptionAudio, Whole,
     };
-    use aria_settings::config::ServerEndpoint;
 
     #[derive(Default)]
     pub(in crate::daemon) struct Observed {

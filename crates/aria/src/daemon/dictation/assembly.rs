@@ -13,22 +13,24 @@ use super::super::inference::client::RemoteTranscriber;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use crate::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
-use crate::config::{DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig};
-use crate::dictation::{
+use aria_platform::delivery::{DeliveryError, PlatformTextDelivery};
+use aria_settings::config::{ConfigError, ServerEndpoint};
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::settings::Directory;
+use aria_voice::config::{
+    DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
+};
+use aria_voice::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
     DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
     Rewriting, Transcribed,
 };
-use crate::transcription::{
+use aria_voice::transcription::{
     Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcription,
     TranscriptionError, Whole,
 };
-use crate::vocabulary::Vocabulary;
-use aria_platform::delivery::{DeliveryError, PlatformTextDelivery};
-use aria_settings::config::{ConfigError, ServerEndpoint};
-use aria_settings::rpc::RpcErrorCode;
-use aria_settings::settings::Directory;
+use aria_voice::vocabulary::Vocabulary;
 
 use super::super::transcripts::{History, TranscriptStore};
 use super::model_load::ModelLoad;
@@ -42,10 +44,10 @@ use aria_stt::parakeet::{Parakeet, ParakeetConfig};
 #[cfg(target_os = "macos")]
 use aria_stt::parakeet_mlx::{ParakeetMlx, ParakeetMlxConfig};
 
-use crate::microphone::Gate;
-use crate::speaker;
 use aria_stt::whisper::{Whisper, WhisperConfig};
 use aria_stt::whisper_candle::{WhisperCandle, WhisperCandleConfig};
+use aria_voice::microphone::Gate;
+use aria_voice::speaker;
 
 pub(super) type RuntimeExecutor = Box<dyn DictationExecutor>;
 
@@ -517,8 +519,8 @@ mod tests {
     use super::*;
 
     use crate::audio::ReplayPace;
-    use crate::config::CaptureConfig;
     use crate::daemon::config::WakeConfig;
+    use aria_voice::config::CaptureConfig;
 
     #[tokio::test]
     async fn one_server_build_dictates_and_fails_only_the_press_the_server_misses() {
@@ -540,8 +542,8 @@ mod tests {
                 root.join("vocabulary"),
                 None,
                 false,
-                crate::vocabulary::discover::LocalCollector::new(
-                    crate::vocabulary::extract::LocalExtractor,
+                aria_voice::vocabulary::discover::LocalCollector::new(
+                    aria_voice::vocabulary::extract::LocalExtractor,
                 ),
             );
             let mut dictation =
@@ -579,7 +581,9 @@ mod tests {
         let dictate = move || {
             let mut settings = DictationSettings::resolve(
                 aria_settings::settings::Settings::default(),
-                crate::dictation::DictationRequest::new(crate::dictation::StopMode::Manual),
+                aria_voice::dictation::DictationRequest::new(
+                    aria_voice::dictation::StopMode::Manual,
+                ),
                 None,
             );
             settings.own_voice_only = false;
@@ -595,7 +599,7 @@ mod tests {
             })
         };
         let outcome = dictate().await.unwrap().unwrap();
-        let crate::dictation::DictationOutcome::Completed(result) = outcome else {
+        let aria_voice::dictation::DictationOutcome::Completed(result) = outcome else {
             panic!("{outcome:?}");
         };
         assert!(result.text.contains("native words"), "{}", result.text);
@@ -632,8 +636,8 @@ mod tests {
             home.path().join("vocabulary"),
             None,
             false,
-            crate::vocabulary::discover::LocalCollector::new(
-                crate::vocabulary::extract::LocalExtractor,
+            aria_voice::vocabulary::discover::LocalCollector::new(
+                aria_voice::vocabulary::extract::LocalExtractor,
             ),
         );
         let setup = DictationSetup {
@@ -672,7 +676,7 @@ mod tests {
         let mut config =
             DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
                 .unwrap();
-        config.cleanup_llm = Some(crate::config::LlmCleanupConfig {
+        config.cleanup_llm = Some(aria_voice::config::LlmCleanupConfig {
             endpoint: "http://127.0.0.1:8080/v1/chat/completions".into(),
             model: "test".into(),
         });
@@ -684,15 +688,17 @@ mod tests {
             home.path().join("vocabulary"),
             None,
             false,
-            crate::vocabulary::discover::LocalCollector::new(
-                crate::vocabulary::extract::LocalExtractor,
+            aria_voice::vocabulary::discover::LocalCollector::new(
+                aria_voice::vocabulary::extract::LocalExtractor,
             ),
         );
         let audio = crate::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
         let settings = DictationSettings::resolve(
             aria_settings::settings::Settings::default(),
-            crate::dictation::DictationRequest::new(crate::dictation::StopMode::OnSilence),
+            aria_voice::dictation::DictationRequest::new(
+                aria_voice::dictation::StopMode::OnSilence,
+            ),
             None,
         );
         let TranscriptionBackend::Local(engine) = config.transcription.clone() else {

@@ -11,14 +11,14 @@
 
 use super::speech::next_utterance;
 use crate::chat::ChatConfig;
-use crate::config::{ListenConfig, TtsEngine};
-use crate::dictation::{DictationRequest, StopMode};
 use crate::memory::MemoryConfig;
-use crate::speech::SpeechRequest;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use aria_settings::settings::{
     Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify,
 };
+use aria_voice::config::{ListenConfig, TtsEngine};
+use aria_voice::dictation::{DictationRequest, StopMode};
+use aria_voice::speech::SpeechRequest;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -73,7 +73,7 @@ impl LiveHarness {
             name: "App".into(),
             bundle_id: Some("com.app".into()),
         };
-        let settings = crate::dictation::DictationSettings::resolve(
+        let settings = aria_voice::dictation::DictationSettings::resolve(
             self.settings.snapshot().unwrap().settings,
             DictationRequest::new(StopMode::OnSilence),
             Some(application),

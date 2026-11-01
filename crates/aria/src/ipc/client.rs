@@ -4,13 +4,15 @@
 
 use super::{protocol, wire};
 use crate::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
-use crate::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
-use crate::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage};
-use crate::listen::ListenStage;
-use crate::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
+use aria_voice::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
+use aria_voice::enrollment::{
+    EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
+};
+use aria_voice::listen::ListenStage;
+use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -439,8 +441,8 @@ impl DaemonClient {
 
     pub(crate) fn list_history(
         &self,
-        query: crate::history::HistoryQuery,
-    ) -> Result<crate::history::HistoryPage, ClientError> {
+        query: aria_voice::history::HistoryQuery,
+    ) -> Result<aria_voice::history::HistoryPage, ClientError> {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let request = wire::ListHistoryRequest {
@@ -466,7 +468,9 @@ impl DaemonClient {
             })
     }
 
-    pub(crate) fn clear_history(&self) -> Result<crate::history::ClearHistoryResult, ClientError> {
+    pub(crate) fn clear_history(
+        &self,
+    ) -> Result<aria_voice::history::ClearHistoryResult, ClientError> {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let response = self
@@ -480,7 +484,7 @@ impl DaemonClient {
             ))?
             .map_err(status_error)?
             .into_inner();
-        Ok(crate::history::ClearHistoryResult {
+        Ok(aria_voice::history::ClearHistoryResult {
             deleted_entries: response.deleted_entry_count,
             cleanup_pending: response.audio_cleanup_pending,
         })
@@ -489,8 +493,8 @@ impl DaemonClient {
     pub(crate) fn retry_history(
         &self,
         id: u64,
-        options: crate::history::RetryOptions,
-    ) -> Result<crate::history::HistoryEntry, ClientError> {
+        options: aria_voice::history::RetryOptions,
+    ) -> Result<aria_voice::history::HistoryEntry, ClientError> {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let request = wire::RegenerateHistoryRequest {
@@ -518,7 +522,7 @@ impl DaemonClient {
     pub(crate) fn vocabulary_status(
         &self,
         directory: Option<&aria_settings::settings::Directory>,
-    ) -> Result<crate::vocabulary::Status, ClientError> {
+    ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
         let request = wire::VocabularyRequest {
@@ -543,7 +547,7 @@ impl DaemonClient {
     pub(crate) fn vocabulary_refresh(
         &self,
         directory: Option<&aria_settings::settings::Directory>,
-    ) -> Result<crate::vocabulary::Status, ClientError> {
+    ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
         let request = wire::VocabularyRequest {
@@ -568,7 +572,7 @@ impl DaemonClient {
     pub(crate) fn vocabulary_forget(
         &self,
         directory: Option<&aria_settings::settings::Directory>,
-    ) -> Result<crate::vocabulary::Status, ClientError> {
+    ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
         let request = wire::VocabularyRequest {
@@ -813,7 +817,7 @@ fn outcome_from(
             }
             Some(Body::Result(result)) => {
                 return Ok(DictationOutcome::Completed(
-                    crate::dictation::DictationResult {
+                    aria_voice::dictation::DictationResult {
                         text: result.text,
                         own_voice: result.own_voice,
                     },
@@ -1039,7 +1043,7 @@ mod tests {
                 DictationStage::Transcribing,
             )),
             Ok(wire::StartDictationResponse::from(
-                DictationOutcome::Completed(crate::dictation::DictationResult {
+                DictationOutcome::Completed(aria_voice::dictation::DictationResult {
                     text: "heard".to_owned(),
                     own_voice: false,
                 }),

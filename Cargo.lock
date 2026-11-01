@@ -158,12 +158,12 @@ dependencies = [
  "aria-speaker",
  "aria-stt",
  "aria-tts",
+ "aria-voice",
  "aria-wake",
  "cidre",
  "clap",
  "futures-util",
  "getrandom 0.3.4",
- "ignore",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -171,7 +171,6 @@ dependencies = [
  "prost-types",
  "protox",
  "rcgen",
- "rtrb",
  "rusqlite",
  "rustix",
  "rustls-pki-types",
@@ -198,7 +197,6 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "ureq",
 ]
 
 [[package]]
@@ -386,6 +384,36 @@ dependencies = [
  "thiserror 2.0.21",
  "tokenizers 0.23.2",
  "zip",
+]
+
+[[package]]
+name = "aria-voice"
+version = "0.7.0"
+dependencies = [
+ "aria-harness",
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "aria-segmentation",
+ "aria-settings",
+ "aria-speaker",
+ "aria-stt",
+ "aria-tts",
+ "cidre",
+ "ignore",
+ "rtrb",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "toml_edit",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
 ]
 
 [[package]]

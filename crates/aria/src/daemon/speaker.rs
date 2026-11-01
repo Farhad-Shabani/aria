@@ -13,12 +13,12 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::capture::CaptureBackend;
-use crate::enrollment::{
+use aria_settings::settings::{SettingsPatch, SettingsStore};
+use aria_voice::enrollment::{
     EnrollError, EnrolledSpeaker, Enroller, EnrollmentEventEmitter, EnrollmentRequest,
     EnrollmentResult, Speakers,
 };
-use crate::speaker::SpeakerName;
-use aria_settings::settings::{SettingsPatch, SettingsStore};
+use aria_voice::speaker::SpeakerName;
 
 use super::operation::{self, CallError, Pending, call, cancellable_call, operation_cancellation};
 use super::tasks::Supervised;
@@ -260,8 +260,8 @@ mod tests {
     use aria_kit::speaker::enrolled_voice;
 
     use super::*;
-    use crate::config::SpeakerConfig;
-    use crate::speaker::{ProfileStore, Replace, Role};
+    use aria_voice::config::SpeakerConfig;
+    use aria_voice::speaker::{ProfileStore, Replace, Role};
 
     /// A runtime over a speakers directory holding `voices`, with
     /// "only type my voice" on.

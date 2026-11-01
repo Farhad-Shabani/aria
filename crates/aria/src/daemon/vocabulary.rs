@@ -1,13 +1,13 @@
 use super::tasks::Supervised;
 use crate::memory::Lexicon;
-use crate::vocabulary::{
+use aria_kit::cancel::{CancelToken, Deadline};
+use aria_settings::settings::Directory;
+use aria_voice::vocabulary::{
     MatchError, PersonalRules, State, Status, Term, Vocabulary,
     catalog::{self, Catalog},
     collection::{self, Collector},
     discover, select,
 };
-use aria_kit::cancel::{CancelToken, Deadline};
-use aria_settings::settings::Directory;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -991,8 +991,8 @@ impl<C: Collector> Worker<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
-    use crate::vocabulary::{
+    use aria_voice::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
+    use aria_voice::vocabulary::{
         Candidate, Coverage, Discovery, Source, SourceKind, cache_key, discover::LocalCollector,
     };
     use std::ops::Range;
