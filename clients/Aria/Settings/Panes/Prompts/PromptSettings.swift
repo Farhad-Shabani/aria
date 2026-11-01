@@ -75,7 +75,12 @@ struct PromptSettings: View {
             ChordRecorder(
                 title: "Shortcut",
                 chord: entry.storedChord,
-                isInUse: hotkeys.refused.contains(id)
+                isInUse: hotkeys.refused.contains(id),
+                check: { chord in
+                    var prompts = editor.snapshot.prompts
+                    PromptEdits.update(id, in: &prompts) { $0.chord = chord.wire }
+                    try await editor.check { $0.prompts = prompts }
+                }
             ) { chord in
                 editor.editPrompt(id) { $0.chord = chord.wire }
             } clear: {
