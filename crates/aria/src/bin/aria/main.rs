@@ -27,10 +27,14 @@ use cli::{INTERRUPTED, Interrupt};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
-// Silences dependencies that log personal text, and rustls, which any LAN host
-// can make warn.
-const DEFAULT_LOG_FILTER: &str =
-    "info,ort=warn,whisper_rs=warn,rustls=error,misaki_rs=off,language_tokenizer=off";
+const DEFAULT_LOG_FILTER: &str = concat!(
+    // Some of these log personal text, and any LAN host can make rustls warn.
+    "info,ort=warn,whisper_rs=warn,rustls=error,misaki_rs=off,language_tokenizer=off,",
+    // These log heavily below warn. Under a blanket `RUST_LOG=debug`, they would
+    // fill the size-capped log and push out the daemon's own lines.
+    "h2=warn,hyper_util=warn,tonic=warn,tower=warn,",
+    "globset=warn,ignore=warn,tokenizers=warn,candle_transformers=warn",
+);
 
 #[derive(Parser)]
 #[command(name = "aria", version, about = "Aria local voice assistant")]
@@ -2084,6 +2088,7 @@ fn init_daemon_logging(log_path: &Path) -> anyhow::Result<()> {
         .with(terminal_layer);
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|error| anyhow::anyhow!("failed to initialize daemon logging: {error}"))?;
+    log_panics();
     // HTTP traces can contain dictated text, even when application errors are redacted.
     tracing_log::LogTracer::builder()
         .ignore_crate("ureq")
@@ -2102,6 +2107,21 @@ fn init_daemon_logging(log_path: &Path) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// A detached daemon's stderr goes nowhere, so a panic has to reach the log.
+/// Only its place is logged, because a panic message can quote personal content.
+fn log_panics() {
+    let print_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        let thread = std::thread::current();
+        tracing::error!(
+            thread = thread.name().unwrap_or("unnamed"),
+            location = panic.location().map(tracing::field::display),
+            "a thread panicked"
+        );
+        print_panic(panic);
+    }));
 }
 
 /// The daemon's log filter, for the file and the terminal alike. `RUST_LOG`
