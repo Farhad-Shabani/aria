@@ -12,7 +12,7 @@ use crate::config::{
 };
 use crate::daemon::RELAY_SERVICE_TYPE;
 use crate::delivery::{PlatformTextDelivery, TextDelivery};
-use crate::hotkey::{AriaKey, PlatformHotkeyListener};
+use crate::hotkey::PlatformHotkeyListener;
 use crate::ipc::{DaemonClient, Liveness, probe_daemon};
 use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
@@ -411,11 +411,11 @@ fn serving_suffix(wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> &'
 
 /// Why the dictation hotkey is not armed, and the fix when one exists.
 pub fn hotkey_unarmed_reason() -> String {
-    let key = loaded(|settings, _home| Ok(settings.aria_key()))
-        .ok()
-        .flatten()
-        .unwrap_or(AriaKey::RightOption);
-    PlatformHotkeyListener::unarmed_reason(key)
+    match loaded(|settings, _home| Ok(settings.aria_key())) {
+        Ok(Some(key)) => PlatformHotkeyListener::unarmed_reason(key),
+        Ok(None) => "the Aria key is off in the settings file".to_owned(),
+        Err(error) => format!("the settings file could not be read: {error}"),
+    }
 }
 
 fn wake_is_enabled(wake: Option<&WakeConfig>) -> bool {
