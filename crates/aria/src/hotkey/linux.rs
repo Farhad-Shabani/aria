@@ -104,11 +104,9 @@ impl LinuxHotkeyListener {
             Readiness::NoKeyboard => {
                 "the dictation hotkey found no keyboard with a Right Alt key".to_owned()
             }
-            Readiness::Reading => {
-                "the keyboard is readable, so the hotkey arms within ~2s".to_owned()
-            }
-            Readiness::StateUnavailable => {
-                "the dictation hotkey cannot read which keys are held; it retries within ~2s"
+            Readiness::Reading | Readiness::StateUnavailable => {
+                "the keyboard is readable, so the hotkey should arm within ~2s; if it does \
+                 not, see `journalctl --user -u aria-daemon`"
                     .to_owned()
             }
         }
@@ -300,6 +298,7 @@ impl Devices {
     }
 
     fn rescan(&mut self) -> Readiness {
+        self.recover(held_keys);
         self.rescan_with(initialize_device)
     }
 
@@ -353,7 +352,11 @@ impl Devices {
             );
         }
         self.lost_keyboard = lost_keyboard;
-        if self.state_unavailable {
+        let recovery_failed = self
+            .open
+            .iter()
+            .any(|device| device.stream == Stream::ReportSeen);
+        if self.state_unavailable || recovery_failed {
             Readiness::StateUnavailable
         } else if self.open.iter().any(|device| device.kind == Kind::Keyboard) {
             Readiness::Reading
@@ -418,9 +421,15 @@ impl Devices {
                 }
             }
         }
+        self.recover(query);
+        batch
+    }
+
+    /// A failed query stays due: an idle device sends no later report, and
+    /// the next rescan tries again.
+    fn recover(&mut self, query: impl Fn(&File) -> io::Result<HeldKeys>) {
         for device in &mut self.open {
             if device.stream == Stream::ReportSeen {
-                device.stream = Stream::Dropped;
                 device.pending.clear();
                 // EVIOCGKEY flushes the kernel queue; discard already-read events too.
                 match query(&device.file) {
@@ -434,7 +443,6 @@ impl Devices {
                 }
             }
         }
-        batch
     }
 
     fn any_ready(&self, timeout: Duration) -> bool {
@@ -1015,7 +1023,7 @@ mod tests {
             |_| Err(io::ErrorKind::Other.into()),
         );
         assert!(matches!(inputs.as_slice(), [DeviceInput::LostKeys]));
-        assert_eq!(devices.open[0].stream, Stream::Dropped);
+        assert_eq!(devices.open[0].stream, Stream::ReportSeen);
         let inputs = devices.translate_events(vec![(0, sync(SYN_REPORT))], control_held);
         assert_eq!(devices.open[0].stream, Stream::Live);
         assert!(inputs.is_empty());
@@ -1028,6 +1036,23 @@ mod tests {
                 held: Modifiers::CONTROL
             })]
         ));
+    }
+
+    #[test]
+    fn a_failed_recovery_unarms_until_a_retry_succeeds() {
+        let tree = InputTree::new();
+        tree.add("event0", &[KEY_RIGHTALT]);
+        let mut devices = tree.devices();
+        devices.rescan_with(nothing_held);
+        devices.translate_events(vec![(0, sync(SYN_DROPPED)), (0, sync(SYN_REPORT))], |_| {
+            Err(io::ErrorKind::Other.into())
+        });
+        assert_eq!(
+            devices.rescan_with(nothing_held),
+            Readiness::StateUnavailable
+        );
+        devices.recover(nothing_held);
+        assert_eq!(devices.rescan_with(nothing_held), Readiness::Reading);
     }
 
     #[test]
