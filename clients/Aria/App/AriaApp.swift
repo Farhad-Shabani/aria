@@ -30,6 +30,7 @@ struct AriaApp: App {
                     .disabled(poller.state == .working)
                 }
                 .padding(8)
+                ListenStatusRow(status: appDelegate.listenStatus)
                 SettingsAttentionView(
                     health: appDelegate.settingsHealth, poller: poller, settings: settings
                 )
@@ -80,6 +81,7 @@ struct AriaApp: App {
             MenuBarLabel(
                 poller: poller,
                 status: appDelegate.status,
+                listenStatus: appDelegate.listenStatus,
                 updates: appDelegate.updates,
                 settings: settings,
                 controller: appDelegate
@@ -160,13 +162,15 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var poller: StatusPoller
     @ObservedObject var status: StatusController
+    @ObservedObject var listenStatus: ListenStatus
     @ObservedObject var updates: UpdateController
     let settings: DaemonSettings
     let controller: AppDelegate
 
     var body: some View {
         let state = MenuBarState(
-            daemon: poller.state, pill: status.live, isUpdateAvailable: updates.isUpdateAvailable)
+            daemon: poller.state, pill: status.live, isListenRunning: listenStatus.isRunning,
+            isUpdateAvailable: updates.isUpdateAvailable)
         Image(nsImage: MenuBarMark.image(state))
             .accessibilityLabel(state.accessibilityLabel)
             .onAppear {
@@ -192,6 +196,82 @@ private struct MenuBarLabel: View {
                 let health = controller.settingsHealth
                 Task { await health.refresh() }
             }
+    }
+}
+
+private struct ListenStatusRow: View {
+    private static let iconSide: CGFloat = 26
+    private static let stopSide: CGFloat = 24
+    private static let stopFailure = "Aria couldn’t stop transcribing. Try again."
+
+    @ObservedObject var status: ListenStatus
+
+    var body: some View {
+        if status.isRunning {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: Self.iconSide, height: Self.iconSide)
+                        .background(.tint, in: Circle())
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Transcribing your Mac’s audio")
+                        Text("Saving to transcript file")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    stopControl.frame(width: Self.stopSide, height: Self.stopSide)
+                }
+                if status.didFailToStop {
+                    Text(Self.stopFailure)
+                        .font(.caption)
+                        .foregroundStyle(.failure)
+                }
+            }
+            .padding(.horizontal, 8)
+            .onChange(of: status.didFailToStop) { _, didFail in
+                guard didFail else { return }
+                NSAccessibility.post(
+                    element: NSApp as Any,
+                    notification: .announcementRequested,
+                    userInfo: [.announcement: Self.stopFailure]
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stopControl: some View {
+        if status.isStopping {
+            ProgressView().controlSize(.small)
+        } else {
+            Button {
+                Task { await status.stop() }
+            } label: {
+                Image(systemName: "stop.fill").font(.caption)
+            }
+            .buttonStyle(MenuIconButtonStyle())
+            .help("Stop Transcribing")
+            .accessibilityLabel("Stop Transcribing")
+        }
+    }
+}
+
+private struct MenuIconButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Circle())
+            .background {
+                Circle().fill(.primary.opacity(configuration.isPressed ? 0.12 : isHovered ? 0.06 : 0))
+            }
+            .onHover { isHovered = $0 }
     }
 }
 

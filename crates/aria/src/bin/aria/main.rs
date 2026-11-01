@@ -1463,6 +1463,7 @@ fn run_events() -> anyhow::Result<()> {
                 SpeechStage::Failed(code) => writeln!(stdout, "speech failed {}", code.label()),
             },
             DaemonEvent::Listen(stage) => match stage {
+                ListenStage::Started => writeln!(stdout, "listen started"),
                 ListenStage::SegmentTranscribed { text, label, .. } => match label {
                     Some(label) => writeln!(stdout, "listen segment [{label}] {text}"),
                     None => writeln!(stdout, "listen segment {text}"),
@@ -2000,6 +2001,7 @@ fn listen_follow(session: &DaemonSession) -> anyhow::Result<()> {
     let mut failure = None;
     for stage in follow {
         match stage? {
+            ListenStage::Started => {}
             ListenStage::SegmentTranscribed {
                 text,
                 label,

@@ -20,6 +20,7 @@ final class DaemonEvents {
     private var levelHandlers: [(Float) -> Void] = []
     private var hotkeyHandlers: [(Aria_Daemon_V1_ShortcutCombo) -> Void] = []
     private var settingsHandlers: [(Aria_Daemon_V1_SettingsStatus?) -> Void] = []
+    private var listenHandlers: [(Aria_Daemon_V1_ListenEvent?) -> Void] = []
     private var streamOpenedHandlers: [() -> Void] = []
 
     /// Called with `nil` whenever the stream is not carrying events.
@@ -67,6 +68,12 @@ final class DaemonEvents {
         settingsHandlers.append(handle)
     }
 
+    /// Called for each listen stage that arrives, and with `nil` whenever the
+    /// stream is not carrying events. Lossy at the source: a stage can go missing.
+    func onListen(_ handle: @escaping (Aria_Daemon_V1_ListenEvent?) -> Void) {
+        listenHandlers.append(handle)
+    }
+
     /// Called each time the stream connects. It doesn't replay what it missed.
     func onStreamOpened(_ handle: @escaping () -> Void) {
         streamOpenedHandlers.append(handle)
@@ -89,6 +96,7 @@ final class DaemonEvents {
                 self?.publish(caption: nil)
                 self?.publish(ghost: nil)
                 self?.publish(settings: nil)
+                self?.publish(listen: nil)
                 try? await Task.sleep(for: Self.retryDelay)
             }
         }
@@ -116,6 +124,10 @@ final class DaemonEvents {
 
     private func publish(settings: Aria_Daemon_V1_SettingsStatus?) {
         for handler in settingsHandlers { handler(settings) }
+    }
+
+    private func publish(listen: Aria_Daemon_V1_ListenEvent?) {
+        for handler in listenHandlers { handler(listen) }
     }
 
     private func publish(level: Float) {
@@ -156,6 +168,8 @@ final class DaemonEvents {
                             await MainActor.run { self.publish(speaker: speaker) }
                         case .hotkey(let hotkey):
                             await MainActor.run { self.publish(hotkey: hotkey.combo) }
+                        case .listen(let listen):
+                            await MainActor.run { self.publish(listen: listen) }
                         case .settings(let settings):
                             await MainActor.run { self.publish(settings: settings) }
                         default:

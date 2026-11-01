@@ -66,4 +66,8 @@ enum ListenStage {
   LISTEN_STAGE_STOPPED = 2;
   LISTEN_STAGE_FAILED = 3;
   LISTEN_STAGE_SPEAKER_MERGED = 4;
+  // The session was accepted. Capture may still fail to start, which FAILED
+  // reports. A subscriber that connects later misses this stage and reads
+  // GetStatus instead.
+  LISTEN_STAGE_STARTED = 5;
 }

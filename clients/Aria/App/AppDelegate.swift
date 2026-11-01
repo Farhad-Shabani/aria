@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel = FloatingPanel(
         width: OverlayStyle.captionWidth, bottomMargin: OverlayStyle.captionBottomMargin)
     let status: StatusController
+    let listenStatus: ListenStatus
     private let ghost: GhostController
     let askShortcut: PressController
     let promptHotkeys: PromptHotkeys
@@ -44,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voices = VoiceProfiles(effects: .live)
         let status = StatusController(events: events, prompts: promptHotkeys)
         self.status = status
+        listenStatus = ListenStatus(events: events)
         ghost = GhostController(events: events)
         askShortcut = PressController(events: events, operation: .ask) { [weak status] run in
             status?.noteAsk(run)

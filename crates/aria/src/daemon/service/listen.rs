@@ -85,7 +85,8 @@ impl wire::listen_service_server::ListenService for ListenRpc {
     ) -> Result<Response<wire::GetListenStatusResponse>, Status> {
         const METHOD: &str = "ListenService/GetStatus";
         let status = self.blocking(ListenState::status).await?;
-        tracing::info!(method = METHOD, status = "ok", "request served");
+        // The app polls this, so info would fill the log.
+        tracing::debug!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::GetListenStatusResponse {
             listening: status.listening,
             transcript_path: status.transcript.display().to_string(),

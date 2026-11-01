@@ -51,6 +51,7 @@ pub(crate) fn spawn_session(
     thread::Builder::new()
         .name("aria-listen".into())
         .spawn(move || {
+            events.emit(ListenStage::Started);
             let session = Session {
                 vocabulary: &vocabulary,
                 events: &events,
