@@ -2,7 +2,8 @@
 
 use anyhow::Context;
 use aria_platform::accessibility::Trust;
-use aria_platform::delivery::{DeliveryError, OutputMode, PlatformTextDelivery, TextDelivery};
+use aria_platform::delivery::{DeliveryError, DeliveryFactory, OutputMode, TextDelivery};
+use std::path::Path;
 use std::time::Duration;
 
 #[path = "../benches/dictation_delivery/target.rs"]
@@ -19,7 +20,7 @@ fn native_streaming_target_receives_unicode_selection_and_rejects_focus_loss() -
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let delivery = PlatformTextDelivery::new(Duration::from_secs(2))?;
+    let delivery = DeliveryFactory::detect(Path::new("/")).create(Duration::from_secs(2))?;
     let mut target = target::Target::launch()?;
     target.reset("", 0, 0)?;
     let prepared = delivery.prepare(OutputMode::Insert, || false)?;

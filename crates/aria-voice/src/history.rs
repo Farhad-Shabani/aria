@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub use aria_platform::delivery::Application;
+use aria_platform::delivery::Application;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 #[derive(Clone)]

@@ -37,8 +37,8 @@ impl SystemAudioCapture {
         Ok((tap, recording))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn spawn_fake(
+    #[cfg(test)]
+    pub(crate) fn spawn_fake(
         outcome: Result<(), ListenError>,
     ) -> Result<(Self, RecordingReader), ListenError> {
         Self::spawn_with(move |writer, _| {

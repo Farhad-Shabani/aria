@@ -1,7 +1,7 @@
 pub mod config;
 pub mod dictation;
 pub mod enrollment;
-pub mod hearing;
+mod hearing;
 pub mod history;
 pub mod listen;
 pub mod microphone;

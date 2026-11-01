@@ -5,10 +5,10 @@ use std::time::{Duration, Instant};
 
 use aria::primitives::cancel::CancelToken;
 use aria::primitives::process::{self, Bounds, Capture, ChildProcess, WaitOutcome};
-use aria_daemon::daemon::{Daemon, DaemonSession};
+use aria_daemon::daemon::{
+    Daemon, DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, StopMode,
+};
 use aria_harness::Sandbox;
-use aria_settings::settings::DeliveryMode;
-use aria_voice::dictation::{DictationOutcome, DictationRequest, StopMode};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 

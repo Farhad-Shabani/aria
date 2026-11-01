@@ -11,9 +11,6 @@ publish              = false
 [lints]
 workspace = true
 
-[features]
-test-support = [ "aria-kit/test-support" ]
-
 [dependencies]
 aria-kit        = { workspace = true }
 aria-platform   = { workspace = true }

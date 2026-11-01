@@ -6,10 +6,10 @@ use aria_kit::speaker::{
 };
 
 /// The owner's voice.
-pub const OWN: [f32; 2] = [1.0, 0.0];
+pub(crate) const OWN: [f32; 2] = [1.0, 0.0];
 
 /// A speaker model that hears one fixed voice in every window.
-pub struct Voice(pub [f32; 2]);
+pub(crate) struct Voice(pub(crate) [f32; 2]);
 
 impl Embedder for Voice {
     fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
@@ -22,18 +22,18 @@ impl Embedder for Voice {
 }
 
 /// The owner's profile, the only one enrolled.
-pub fn alex() -> Vec<Profile> {
+pub(crate) fn alex() -> Vec<Profile> {
     vec![enrolled_voice("alex", Role::Owner, OWN.to_vec())]
 }
 
 /// A diarizer that hears `embedder` in every window of sound, with only
 /// [`alex`] enrolled.
-pub fn diarizer<E: Embedder>(embedder: E) -> Diarizer<E> {
+pub(crate) fn diarizer<E: Embedder>(embedder: E) -> Diarizer<E> {
     Diarizer::new(embedder, alex())
 }
 
 /// The tracker an owner-only press runs, starting at `at`.
-pub fn tracker<E: Embedder>(
+pub(crate) fn tracker<E: Embedder>(
     diarizer: &mut Diarizer<E>,
     at: u64,
 ) -> VoiceprintTracker<'_, E, LevelSegmenter> {

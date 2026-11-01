@@ -43,7 +43,8 @@ impl CallLog {
         })
     }
 
-    pub fn failing_cursor(&self) -> Cursor<RecordingDelivery> {
+    #[cfg(test)]
+    pub(crate) fn failing_cursor(&self) -> Cursor<RecordingDelivery> {
         Cursor::new(RecordingDelivery {
             log: self.clone(),
             fail: true,

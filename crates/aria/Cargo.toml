@@ -57,7 +57,7 @@ cidre            = { workspace = true, features = [ "ax", "core_audio", "dispatc
 
 [dev-dependencies]
 aria-daemon   = { workspace = true, features = [ "test-support" ] }
-aria-voice    = { workspace = true, features = [ "test-support" ] }
+aria-voice    = { workspace = true }
 aria-settings = { workspace = true, features = [ "test-support" ] }
 aria-kit      = { workspace = true, features = [ "test-support" ] }
 aria-harness  = { workspace = true }
@@ -78,6 +78,5 @@ name    = "first_text"
 harness = false
 
 [build-dependencies]
-prost             = "0.14"
 protox            = "0.9"
 tonic-prost-build = "0.14"

@@ -31,9 +31,8 @@ use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::settings::PromptKind;
 
-pub use assistants::{
-    CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant, claude_command, parse_claude,
-};
+pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
+pub(crate) use assistants::{claude_command, parse_claude};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub use prompt_run::{InstructionsError, PromptRun, read_instructions};

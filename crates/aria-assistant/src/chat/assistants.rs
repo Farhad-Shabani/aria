@@ -59,7 +59,7 @@ const CODEX_PROMPT_SETTINGS: &[&str] = &[
 ];
 
 /// `claude` with only the environment it needs.
-pub fn claude_command() -> Command {
+pub(crate) fn claude_command() -> Command {
     Cli::Claude.command(Path::new(CLAUDE_BINARY))
 }
 
@@ -412,7 +412,7 @@ impl Session for CliSession {
 }
 
 #[derive(Debug)]
-pub struct Reply {
+pub(crate) struct Reply {
     pub(crate) text: String,
     session_id: String,
 }
@@ -434,7 +434,7 @@ enum ClaudeEnvelope {
 
 /// The stream ends with the envelope; everything before it was a step. A
 /// stream with no envelope died early, whatever its last line says.
-pub fn parse_claude(stdout: &str) -> Result<Reply, AssistantError> {
+pub(crate) fn parse_claude(stdout: &str) -> Result<Reply, AssistantError> {
     let last = stdout
         .lines()
         .rev()

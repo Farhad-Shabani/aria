@@ -2,8 +2,8 @@
 //! listen share, and the voice track listen runs beside its transcriber. The
 //! policy itself lives in `aria_kit::speaker`.
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod testing;
+#[cfg(test)]
+pub(crate) mod testing;
 
 use std::time::Instant;
 

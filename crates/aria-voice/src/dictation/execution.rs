@@ -308,12 +308,15 @@ impl ExecutionControl {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_test_with_cancellation(stop_mode: StopMode, cancellation: CancelToken) -> Arc<Self> {
+    pub(crate) fn for_test_with_cancellation(
+        stop_mode: StopMode,
+        cancellation: CancelToken,
+    ) -> Arc<Self> {
         Self::for_test_lasting(stop_mode, cancellation, Duration::from_secs(5))
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_test_lasting(
+    pub(crate) fn for_test_lasting(
         stop_mode: StopMode,
         cancellation: CancelToken,
         overall: Duration,
