@@ -22,9 +22,6 @@ mod confirmation;
 mod element;
 mod placement;
 
-#[cfg(test)]
-mod benchmark_tests;
-
 use anchor::Anchoring;
 use confirmation::Confirmation;
 
@@ -77,7 +74,7 @@ impl MacOsDeliveryTarget {
 }
 
 impl MacOsTextDelivery {
-    pub(super) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
+    pub fn new(timeout: Duration) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
         Ok(Self { timeout })
     }

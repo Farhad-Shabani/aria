@@ -43,6 +43,3 @@ objc2-app-kit         = { version = "0.3.2", default-features = false, features 
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
 objc2-core-graphics   = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
 objc2-foundation      = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
-
-[dev-dependencies]
-anyhow = { workspace = true }
