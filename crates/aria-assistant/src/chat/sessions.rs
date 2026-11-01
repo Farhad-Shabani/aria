@@ -9,7 +9,7 @@ use super::SessionKey;
 
 /// Resume ids on disk. They outlive the daemon and a reboot, like the
 /// assistants' own history.
-pub(crate) struct SessionStore {
+pub struct SessionStore {
     path: PathBuf,
     /// Asks on different records run side by side; the file is the one
     /// thing they share.
@@ -24,14 +24,14 @@ struct SessionRecord {
 }
 
 impl SessionStore {
-    pub(crate) fn open(path: impl Into<PathBuf>) -> Self {
+    pub fn open(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             lock: Mutex::new(()),
         }
     }
 
-    pub(crate) fn recall(&self, key: &SessionKey) -> Result<Option<String>, SessionStoreError> {
+    pub fn recall(&self, key: &SessionKey) -> Result<Option<String>, SessionStoreError> {
         let _lock = self.lock();
         Ok(read_records(&self.path)?
             .into_iter()
@@ -39,7 +39,7 @@ impl SessionStore {
             .map(|record| record.id))
     }
 
-    pub(crate) fn record(&self, key: SessionKey, id: &str) -> Result<(), SessionStoreError> {
+    pub fn record(&self, key: SessionKey, id: &str) -> Result<(), SessionStoreError> {
         let _lock = self.lock();
         let mut records = read_records(&self.path)?;
         records.retain(|record| record.key != key);
@@ -50,7 +50,7 @@ impl SessionStore {
         write_records(&self.path, &records)
     }
 
-    pub(crate) fn forget(&self, key: &SessionKey) -> Result<(), SessionStoreError> {
+    pub fn forget(&self, key: &SessionKey) -> Result<(), SessionStoreError> {
         let _lock = self.lock();
         let mut records = read_records(&self.path)?;
         records.retain(|record| record.key != *key);
@@ -99,7 +99,7 @@ fn write_records(path: &Path, records: &[SessionRecord]) -> Result<(), SessionSt
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to {action} the conversation record")]
-pub(crate) struct SessionStoreError {
+pub struct SessionStoreError {
     action: &'static str,
     #[source]
     source: std::io::Error,

@@ -5,7 +5,7 @@
 //! and the user's own `lexicon.txt`.
 
 mod config;
-pub(crate) use config::MemoryConfig;
+pub use config::MemoryConfig;
 mod consolidate;
 mod extract;
 mod lexicon;
@@ -24,15 +24,15 @@ use aria_kit::cancel::CancelToken;
 use aria_settings::config::{ConfigError, memory_directory};
 
 pub use consolidate::ConsolidationReport;
-pub(crate) use consolidate::run_backlog;
+pub use consolidate::run_backlog;
 pub use extract::ConsolidationResult;
-pub(crate) use lexicon::Lexicon;
+pub use lexicon::Lexicon;
 pub use lexicon::load_terms;
-pub(crate) use profile::load_profile_block;
+pub use profile::load_profile_block;
 pub use profile::write_profile;
 pub use store::{DerivedPair, Fact, Store, StoreError};
 
-pub(crate) const DB_FILE: &str = "memory.db";
+pub const DB_FILE: &str = "memory.db";
 pub const LEXICON_FILE: &str = "lexicon.txt";
 pub(crate) const PROFILE_FILE: &str = "profile.md";
 

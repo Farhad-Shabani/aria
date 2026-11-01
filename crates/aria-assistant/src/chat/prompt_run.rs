@@ -27,17 +27,17 @@ const MAX_TEXT_BYTES: usize = 64 * 1024;
 /// Room for a long prompt, not a document.
 const MAX_INSTRUCTIONS_BYTES: u64 = 16 * 1024;
 
-pub(crate) struct PromptRun<'a> {
-    pub(crate) model_id: Option<&'a str>,
-    pub(crate) kind: PromptKind,
-    pub(crate) instructions: &'a str,
-    pub(crate) transcript: &'a str,
+pub struct PromptRun<'a> {
+    pub model_id: Option<&'a str>,
+    pub kind: PromptKind,
+    pub instructions: &'a str,
+    pub transcript: &'a str,
 }
 
 impl PromptRun<'_> {
     /// The transcript goes last, after every instruction, so nothing said
     /// aloud can come after the rules that frame it.
-    pub(crate) fn prompt(&self) -> String {
+    pub fn prompt(&self) -> String {
         let frame = match self.kind {
             PromptKind::Rewrite => REWRITE_FRAME,
             PromptKind::Compose => COMPOSE_FRAME,
@@ -52,7 +52,7 @@ impl PromptRun<'_> {
 
 /// A prompt's Markdown, read fresh so an edit applies to the next run.
 /// A symlink is followed: the user picked the file, wherever it lives.
-pub(crate) fn read_instructions(path: &Path) -> Result<String, InstructionsError> {
+pub fn read_instructions(path: &Path) -> Result<String, InstructionsError> {
     let unreadable = |source| InstructionsError::Unreadable {
         path: path.to_path_buf(),
         source,
@@ -87,7 +87,7 @@ pub(crate) fn read_instructions(path: &Path) -> Result<String, InstructionsError
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum InstructionsError {
+pub enum InstructionsError {
     #[error("failed to read the prompt file {}", path.display())]
     Unreadable {
         path: PathBuf,

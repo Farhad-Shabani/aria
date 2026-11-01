@@ -5,7 +5,7 @@
 //! A [`Step`] describes the assistant's activity while the ask is running.
 
 mod config;
-pub(crate) use config::ChatConfig;
+pub use config::ChatConfig;
 mod assistants;
 mod models;
 pub use models::AssistantModel;
@@ -24,23 +24,23 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::error_chain;
 use aria_platform::delivery::{DeliveryError, OutputMode};
+use aria_primitives::error_chain;
 use aria_settings::config::{AssistantId, ConfigError};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::settings::PromptKind;
 
-pub(crate) use assistants::{
+pub use assistants::{
     CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant, claude_command, parse_claude,
 };
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
-pub(crate) use prompt_run::{InstructionsError, PromptRun, read_instructions};
-pub(crate) use sessions::{SessionStore, SessionStoreError};
-pub(crate) use subscribers::ChatSubscribers;
+pub use prompt_run::{InstructionsError, PromptRun, read_instructions};
+pub use sessions::{SessionStore, SessionStoreError};
+pub use subscribers::ChatSubscribers;
 
-pub(crate) const EVENT_THREAD: &str = "aria-chat-events";
+pub const EVENT_THREAD: &str = "aria-chat-events";
 
 /// Names one ask for as long as the daemon that took it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -89,7 +89,7 @@ impl ChatRequest {
         Self::from_config(text, assistant_id, config)
     }
 
-    pub(crate) fn from_config(
+    pub fn from_config(
         text: String,
         assistant_id: AssistantId,
         config: ChatConfig,
@@ -118,7 +118,7 @@ impl ChatRequest {
         }
     }
 
-    pub(crate) fn key(&self) -> SessionKey {
+    pub fn key(&self) -> SessionKey {
         SessionKey {
             assistant_id: self.assistant_id.name().to_owned(),
             name: self
@@ -133,7 +133,7 @@ impl ChatRequest {
 /// directory unless the request names one. Turns on one key run one after
 /// another; different keys run side by side.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) struct SessionKey {
+pub struct SessionKey {
     pub(crate) assistant_id: String,
     pub(crate) name: String,
 }
@@ -145,28 +145,28 @@ impl std::fmt::Display for SessionKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PromptCall {
-    pub(crate) text: String,
-    pub(crate) prompt: aria_settings::settings::PromptId,
+pub struct PromptCall {
+    pub text: String,
+    pub prompt: aria_settings::settings::PromptId,
     /// The app in front when the chord was pressed, the only one the result
     /// may be typed into. None when the caller could not tell.
-    pub(crate) application: Option<aria_settings::settings::ApplicationId>,
+    pub application: Option<aria_settings::settings::ApplicationId>,
     /// A tap of the Aria key cancels this run while it is in flight.
-    pub(crate) tap_cancels: bool,
+    pub tap_cancels: bool,
 }
 
 /// A prompt call resolved against the stored prompt and the configured
 /// assistant. One fresh assistant run; no conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PromptRequest {
-    pub(crate) text: String,
-    pub(crate) kind: PromptKind,
+pub struct PromptRequest {
+    pub text: String,
+    pub kind: PromptKind,
     /// The Markdown instructions, read when the run starts.
-    pub(crate) file: PathBuf,
-    pub(crate) assistant_id: AssistantId,
-    pub(crate) model_id: Option<String>,
-    pub(crate) application: Option<aria_settings::settings::ApplicationId>,
-    pub(crate) tap_cancels: bool,
+    pub file: PathBuf,
+    pub assistant_id: AssistantId,
+    pub model_id: Option<String>,
+    pub application: Option<aria_settings::settings::ApplicationId>,
+    pub tap_cancels: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -209,7 +209,7 @@ const MAX_SKILL_NAME_CHARS: usize = 64;
 impl Step {
     /// A skill named by the assistant, and so by whatever it read. Control
     /// characters would reach a terminal as-is, so they do not survive.
-    pub(crate) fn skill(name: &str) -> Self {
+    pub fn skill(name: &str) -> Self {
         Self::Skill(
             name.chars()
                 .filter(|character| !character.is_control())
@@ -251,15 +251,15 @@ pub struct ChatReply {
     pub copied: bool,
 }
 
-pub(crate) type ChatEventEmitter = EventEmitter<ChatStage>;
+pub type ChatEventEmitter = EventEmitter<ChatStage>;
 
-pub(crate) struct SessionSpec<'a> {
-    pub(crate) workdir: &'a Path,
-    pub(crate) model_id: Option<&'a str>,
-    pub(crate) resume: Option<&'a str>,
+pub struct SessionSpec<'a> {
+    pub workdir: &'a Path,
+    pub model_id: Option<&'a str>,
+    pub resume: Option<&'a str>,
 }
 
-pub(crate) trait Assistant: Send + Sync {
+pub trait Assistant: Send + Sync {
     type Session: Session;
 
     fn models(&self, cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError>;
@@ -280,7 +280,7 @@ pub(crate) trait Assistant: Send + Sync {
 }
 
 #[derive(Debug)]
-pub(crate) enum AssistantStatus {
+pub enum AssistantStatus {
     Ready,
     /// Its command is not on the daemon's PATH.
     NotInstalled {
@@ -296,7 +296,7 @@ pub(crate) enum AssistantStatus {
 
 impl AssistantStatus {
     /// What makes it ready, or why the check failed; `None` when ready.
-    pub(crate) fn fix(&self) -> Option<String> {
+    pub fn fix(&self) -> Option<String> {
         match self {
             Self::Ready => None,
             Self::NotInstalled { binary } => {
@@ -309,7 +309,7 @@ impl AssistantStatus {
 }
 
 /// One conversation with an assistant, taking one turn at a time.
-pub(crate) trait Session: Send {
+pub trait Session: Send {
     /// Sends one prompt and feeds its output to `sink` until the turn ends.
     fn prompt(
         &mut self,
@@ -325,14 +325,14 @@ pub(crate) trait Session: Send {
 }
 
 /// Where a turn's output goes.
-pub(crate) trait TurnSink: Send {
+pub trait TurnSink: Send {
     fn text(&mut self, chunk: &str);
     /// What the assistant has moved on to. Repeats are the sink's to drop.
     fn step(&mut self, step: Step);
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum AssistantError {
+pub enum AssistantError {
     #[error(
         "assistant executable {} was not found; install its command-line app",
         binary.display()
@@ -387,7 +387,7 @@ pub struct AskTarget {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ResolveError {
+pub enum ResolveError {
     #[error("failed to read settings")]
     Settings(#[source] aria_settings::settings::StoreError),
 
@@ -419,7 +419,7 @@ impl From<&ResolveError> for RpcErrorCode {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ChatError {
+pub enum ChatError {
     #[error("failed to resolve the chat settings")]
     Config(#[source] ConfigError),
 

@@ -2,7 +2,7 @@
 
 use super::wire;
 use crate::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
-use crate::chat::{
+use aria_assistant::chat::{
     AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, Step,
     Ticket,
 };
@@ -410,7 +410,7 @@ impl From<ChatStage> for wire::ChatEvent {
                     text: String::new(),
                     error_message: String::new(),
                     assistant_id,
-                    step: i32::from(step),
+                    step: step_number(step),
                     skill,
                     copied: false,
                 }
@@ -451,7 +451,7 @@ impl TryFrom<&wire::ChatEvent> for ChatStage {
     fn try_from(event: &wire::ChatEvent) -> Result<Self, Self::Error> {
         let kind = match wire::ChatStage::try_from(event.stage) {
             Ok(wire::ChatStage::Working) => {
-                ChatStageKind::Working(Step::from_wire(event.step, &event.skill)?)
+                ChatStageKind::Working(step_from_wire(event.step, &event.skill)?)
             }
             Ok(wire::ChatStage::Replied) => ChatStageKind::Replied(ChatReply {
                 text: event.text.clone(),
@@ -489,40 +489,36 @@ impl From<AssistantId> for wire::AssistantId {
     }
 }
 
-impl From<Step> for i32 {
-    fn from(step: Step) -> Self {
-        let code = match step {
-            Step::Thinking => wire::ChatStep::Thinking,
-            Step::Reading => wire::ChatStep::Reading,
-            Step::Searching => wire::ChatStep::Searching,
-            Step::Running => wire::ChatStep::Running,
-            Step::Skill(..) => wire::ChatStep::Skill,
-            Step::Unknown(code) => return code,
-        };
-        code as Self
-    }
+fn step_number(step: Step) -> i32 {
+    let code = match step {
+        Step::Thinking => wire::ChatStep::Thinking,
+        Step::Reading => wire::ChatStep::Reading,
+        Step::Searching => wire::ChatStep::Searching,
+        Step::Running => wire::ChatStep::Running,
+        Step::Skill(..) => wire::ChatStep::Skill,
+        Step::Unknown(code) => return code,
+    };
+    code as i32
 }
 
-impl Step {
-    /// A code this build does not know is kept, as `RpcErrorCode` keeps
-    /// its own, so a newer daemon's step still shows as one. Unspecified
-    /// is a daemon too old to send steps at all.
-    fn from_wire(code: i32, skill: &str) -> Result<Self, ProtocolError> {
-        Ok(match wire::ChatStep::try_from(code) {
-            Ok(wire::ChatStep::Thinking) => Self::Thinking,
-            Ok(wire::ChatStep::Reading) => Self::Reading,
-            Ok(wire::ChatStep::Searching) => Self::Searching,
-            Ok(wire::ChatStep::Running) => Self::Running,
-            Ok(wire::ChatStep::Skill) => Self::skill(skill),
-            Ok(wire::ChatStep::Unspecified) => {
-                return Err(ProtocolError::InvalidEnum {
-                    field: "step",
-                    value: code,
-                });
-            }
-            Err(..) => Self::Unknown(code),
-        })
-    }
+/// A code this build does not know is kept, as `RpcErrorCode` keeps
+/// its own, so a newer daemon's step still shows as one. Unspecified
+/// is a daemon too old to send steps at all.
+fn step_from_wire(code: i32, skill: &str) -> Result<Step, ProtocolError> {
+    Ok(match wire::ChatStep::try_from(code) {
+        Ok(wire::ChatStep::Thinking) => Step::Thinking,
+        Ok(wire::ChatStep::Reading) => Step::Reading,
+        Ok(wire::ChatStep::Searching) => Step::Searching,
+        Ok(wire::ChatStep::Running) => Step::Running,
+        Ok(wire::ChatStep::Skill) => Step::skill(skill),
+        Ok(wire::ChatStep::Unspecified) => {
+            return Err(ProtocolError::InvalidEnum {
+                field: "step",
+                value: code,
+            });
+        }
+        Err(..) => Step::Unknown(code),
+    })
 }
 
 impl WireEnum for wire::AssistantId {
@@ -3186,7 +3182,7 @@ mod tests {
 
         let unchecked = wire::Assistant::from((
             AssistantId::ClaudeCode,
-            AssistantStatus::Unchecked(crate::chat::AssistantError::Timeout(
+            AssistantStatus::Unchecked(aria_assistant::chat::AssistantError::Timeout(
                 std::time::Duration::from_secs(2),
             )),
         ));

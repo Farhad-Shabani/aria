@@ -1133,7 +1133,7 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
         )
         .try_init()
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
-    let report = aria::memory::consolidate_now()?;
+    let report = aria_assistant::memory::consolidate_now()?;
     let results = report.results;
     if results.is_empty() && report.failed == 0 {
         println!("Nothing to consolidate (or memory disabled)");
@@ -1157,7 +1157,7 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
 }
 
 fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
-    let (store, dir) = aria::memory::open()?;
+    let (store, dir) = aria_assistant::memory::open()?;
     match command {
         MemoryCommand::List { pending } => {
             let facts = match pending {
@@ -1198,7 +1198,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
                 return Ok(());
             }
             store.forget(id)?;
-            aria::memory::write_profile(&store, &dir)?;
+            aria_assistant::memory::write_profile(&store, &dir)?;
             println!("Forgotten");
         }
         MemoryCommand::Review => {
@@ -1222,7 +1222,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
                     _ => {}
                 }
             }
-            aria::memory::write_profile(&store, &dir)?;
+            aria_assistant::memory::write_profile(&store, &dir)?;
         }
         MemoryCommand::Lexicon { forget_pair, json } => {
             if let Some(id) = forget_pair {
@@ -1230,8 +1230,8 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
                 println!("Pair forgotten");
                 return Ok(());
             }
-            let path = dir.join(aria::memory::LEXICON_FILE);
-            let terms = aria::memory::load_terms(&path);
+            let path = dir.join(aria_assistant::memory::LEXICON_FILE);
+            let terms = aria_assistant::memory::load_terms(&path);
             if json {
                 println!("{}", lexicon_json(&terms, &store.list_pairs()?));
                 return Ok(());
@@ -1260,7 +1260,10 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn lexicon_json(terms: &[String], pairs: &[aria::memory::DerivedPair]) -> serde_json::Value {
+fn lexicon_json(
+    terms: &[String],
+    pairs: &[aria_assistant::memory::DerivedPair],
+) -> serde_json::Value {
     let pairs: Vec<_> = pairs
         .iter()
         .map(|pair| {

@@ -3,10 +3,10 @@
 
 use crate::chat::{ChatStage, ChatStageKind};
 
-pub(crate) struct ChatSubscribers;
+pub struct ChatSubscribers;
 
 impl ChatSubscribers {
-    pub(crate) fn observe(&self, stage: &ChatStage) {
+    pub fn observe(&self, stage: &ChatStage) {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(sound) = sound_for(&stage.kind) {
             aria_platform::feedback::play("chat-cue", &sound);

@@ -3,15 +3,15 @@
 use super::assembly::DaemonError;
 use super::host::{DaemonFailure, DaemonLifetime, SpawnedRuntime, spawn_runtime};
 use super::shutdown::ShutdownSignal;
-use crate::chat::ChatConfig;
-use crate::chat::{
-    Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
-    ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
-};
 use crate::daemon::config::WakeWordOverride;
 use crate::ipc::{
     ClientError, ConnectError, DaemonClient, DaemonEvent, EventStream, Liveness, ProbeError,
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
+};
+use aria_assistant::chat::ChatConfig;
+use aria_assistant::chat::{
+    Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
+    ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
 };
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
@@ -742,8 +742,8 @@ pub fn restart_required_keys() -> Result<Vec<String>, ClientError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::chat::Step;
     use crate::daemon::Daemon;
+    use aria_assistant::chat::Step;
     use aria_platform::runtime::RuntimePaths;
     use aria_settings::config::AssistantId;
     use aria_voice::speech::SpeechStage;

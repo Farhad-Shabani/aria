@@ -87,7 +87,7 @@ pub fn write_profile(store: &Store, dir: &Path) -> Result<(), StoreError> {
 
 /// The block as written, or `None` when there is none or it cannot be
 /// read: memory never fails an ask.
-pub(crate) fn load_profile_block(dir: &Path) -> Option<String> {
+pub fn load_profile_block(dir: &Path) -> Option<String> {
     let path = dir.join(PROFILE_FILE);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,

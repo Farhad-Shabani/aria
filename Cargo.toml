@@ -7,6 +7,7 @@ readme     = "README.md"
 [workspace]
 members = [
   "crates/aria",
+  "crates/aria-assistant",
   "crates/aria-bench",
   "crates/aria-bench-speaker",
   "crates/aria-settings",
@@ -50,6 +51,7 @@ strip = "none"
 [workspace.dependencies]
 # crates.io requires a version beside each internal path.
 aria-settings     = { path = "crates/aria-settings", version = "0.7.0" }
+aria-assistant    = { path = "crates/aria-assistant", version = "0.7.0" }
 aria-harness      = { path = "crates/aria-harness", version = "0.7.0" }
 aria-kit          = { path = "crates/aria-kit", version = "0.7.0" }
 aria-platform     = { path = "crates/aria-platform", version = "0.7.0" }

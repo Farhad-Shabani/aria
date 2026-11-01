@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use rustix::fs::{Mode, OFlags};
 
 use crate::chat::ChatConfig;
-use crate::primitives::private_fs::{self, PRIVATE_FILE_MODE};
+use aria_primitives::private_fs::{self, PRIVATE_FILE_MODE};
 use aria_settings::config::ConfigError;
 
 const FOCUS_DIRECTORY: &str = ".aria";
@@ -21,7 +21,7 @@ const MAX_FOCUS_BYTES: u64 = 4096;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub(crate) name: String,
-    pub(crate) path: PathBuf,
+    pub path: PathBuf,
 }
 
 /// The repos an ask may name, and the one later asks fall back to.
@@ -33,7 +33,7 @@ pub struct Projects {
 }
 
 impl Projects {
-    pub(crate) fn load_with(home: &Path, config: &ChatConfig) -> Result<Self, ProjectsError> {
+    pub fn load_with(home: &Path, config: &ChatConfig) -> Result<Self, ProjectsError> {
         let known = discover(&config.project_roots)?;
         let focused = load_focus(home)
             .map_err(ProjectsError::Focus)?

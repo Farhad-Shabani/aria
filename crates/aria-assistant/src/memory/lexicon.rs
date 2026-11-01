@@ -12,7 +12,7 @@ const MAX_LEXICON_BYTES: u64 = 1024 * 1024;
 const MAX_PAIRS: usize = 100_000;
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum LexiconError {
+pub enum LexiconError {
     #[error("personal lexicon could not be read")]
     Io(#[from] std::io::Error),
     #[error("personal correction pairs could not be read")]
@@ -35,13 +35,13 @@ pub fn load_terms(path: &Path) -> Vec<String> {
         .collect()
 }
 
-pub(crate) struct Lexicon {
+pub struct Lexicon {
     terms_path: PathBuf,
     db_path: PathBuf,
 }
 
 impl Lexicon {
-    pub(crate) fn new(dir: &Path) -> Self {
+    pub fn new(dir: &Path) -> Self {
         Self {
             terms_path: dir.join(LEXICON_FILE),
             db_path: dir.join(DB_FILE),
@@ -53,7 +53,7 @@ impl Lexicon {
         self.snapshot_cancellable(&CancelToken::never())
     }
 
-    pub(crate) fn snapshot_cancellable(
+    pub fn snapshot_cancellable(
         &self,
         cancel: &CancelToken,
     ) -> Result<PersonalRules, LexiconError> {

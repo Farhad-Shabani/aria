@@ -15,7 +15,7 @@ use super::store::{Store, StoreError};
 use super::{DB_FILE, LEXICON_FILE, MemoryError};
 use crate::chat::AssistantError;
 use crate::memory::MemoryConfig;
-use crate::primitives::error_chain;
+use aria_primitives::error_chain;
 use aria_settings::settings::SettingsFile;
 
 #[derive(Debug, Default)]
@@ -99,7 +99,7 @@ fn consolidate_one(
 /// The backlog as the memory section configures it: nothing when memory is
 /// off. A session that fails is logged and left for the next run; a store
 /// that cannot be opened is the caller's to report.
-pub(crate) fn run_backlog(
+pub fn run_backlog(
     settings: &SettingsFile,
     home: &Path,
     cancel: &CancelToken,

@@ -1,5 +1,5 @@
 use super::tasks::Supervised;
-use crate::memory::Lexicon;
+use aria_assistant::memory::Lexicon;
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_settings::settings::Directory;
 use aria_voice::vocabulary::{

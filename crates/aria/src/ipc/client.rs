@@ -3,7 +3,7 @@
 //! Synchronous: each client owns a single-threaded tokio runtime and blocks on it.
 
 use super::{protocol, wire};
-use crate::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
+use aria_assistant::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};

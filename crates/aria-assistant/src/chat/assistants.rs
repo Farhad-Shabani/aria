@@ -21,8 +21,8 @@ use super::{
     TurnSink,
 };
 
-pub(crate) const CLAUDE_BINARY: &str = "claude";
-pub(crate) const CODEX_BINARY: &str = "codex";
+pub const CLAUDE_BINARY: &str = "claude";
+pub const CODEX_BINARY: &str = "codex";
 
 // What a CLI needs to find its config, sign in, and reach its API. Anything
 // else in the daemon's environment, such as an unrelated token, stays out.
@@ -59,7 +59,7 @@ const CODEX_PROMPT_SETTINGS: &[&str] = &[
 ];
 
 /// `claude` with only the environment it needs.
-pub(crate) fn claude_command() -> Command {
+pub fn claude_command() -> Command {
     Cli::Claude.command(Path::new(CLAUDE_BINARY))
 }
 
@@ -68,12 +68,12 @@ pub(crate) fn claude_command() -> Command {
 /// and the session id to `--resume` from. `--restricted` drops the
 /// command-running tools and ignores user, project and local settings;
 /// `--tools` leaves reading the repo and loading a skill.
-pub(crate) struct ClaudeCodeAssistant {
+pub struct ClaudeCodeAssistant {
     binary: PathBuf,
 }
 
 impl ClaudeCodeAssistant {
-    pub(crate) fn new(binary: PathBuf) -> Self {
+    pub fn new(binary: PathBuf) -> Self {
         Self { binary }
     }
 }
@@ -122,14 +122,14 @@ impl Assistant for ClaudeCodeAssistant {
 /// `codex exec resume` continues. The sandbox is pinned on every turn: a
 /// resumed thread takes whatever the user's config says, not what it
 /// started with.
-pub(crate) struct CodexAssistant {
+pub struct CodexAssistant {
     binary: PathBuf,
     /// The user's own Codex home, whose login a prompt run borrows.
     user_home: PathBuf,
 }
 
 impl CodexAssistant {
-    pub(crate) fn new(binary: PathBuf, user_home: PathBuf) -> Self {
+    pub fn new(binary: PathBuf, user_home: PathBuf) -> Self {
         Self { binary, user_home }
     }
 }
@@ -315,7 +315,7 @@ impl Cli {
 
 /// A conversation carried by one CLI run per turn; `resume` is all that
 /// connects them.
-pub(crate) struct CliSession {
+pub struct CliSession {
     cli: Cli,
     binary: PathBuf,
     workdir: PathBuf,
@@ -412,7 +412,7 @@ impl Session for CliSession {
 }
 
 #[derive(Debug)]
-pub(crate) struct Reply {
+pub struct Reply {
     pub(crate) text: String,
     session_id: String,
 }
@@ -434,7 +434,7 @@ enum ClaudeEnvelope {
 
 /// The stream ends with the envelope; everything before it was a step. A
 /// stream with no envelope died early, whatever its last line says.
-pub(crate) fn parse_claude(stdout: &str) -> Result<Reply, AssistantError> {
+pub fn parse_claude(stdout: &str) -> Result<Reply, AssistantError> {
     let last = stdout
         .lines()
         .rev()

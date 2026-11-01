@@ -88,9 +88,9 @@ pub struct DerivedPair {
 /// One thing the owner said to the assistant, through the own-voice gate.
 /// Nothing else is kept: only these feed extraction.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Turn {
-    pub(crate) text: String,
-    pub(crate) speaker: String,
+pub struct Turn {
+    pub text: String,
+    pub speaker: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -273,12 +273,7 @@ impl Store {
         Ok(changed > 0)
     }
 
-    pub(crate) fn add_turn(
-        &self,
-        session: &str,
-        text: &str,
-        speaker: &str,
-    ) -> Result<(), StoreError> {
+    pub fn add_turn(&self, session: &str, text: &str, speaker: &str) -> Result<(), StoreError> {
         self.conn.execute(
             &format!(
                 "INSERT INTO turns (session, text, speaker, created_at) \
@@ -300,12 +295,7 @@ impl Store {
         Ok(sessions)
     }
 
-    pub(crate) fn turns(
-        &self,
-        session: &str,
-        start: u32,
-        end: u32,
-    ) -> Result<Vec<Turn>, StoreError> {
+    pub fn turns(&self, session: &str, start: u32, end: u32) -> Result<Vec<Turn>, StoreError> {
         assert!(start <= end, "turn range must be ordered");
         let mut statement = self.conn.prepare(
             "SELECT text, speaker FROM turns WHERE session = ?1 ORDER BY id LIMIT ?2 OFFSET ?3",

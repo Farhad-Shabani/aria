@@ -2,9 +2,9 @@
 
 use crate::audio::{WakeWordMonitor, remove_all_spools};
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
-use crate::memory::Lexicon;
 use crate::primitives::error_chain;
 use crate::primitives::local_socket::{ExclusiveListener, LocalSocketError};
+use aria_assistant::memory::Lexicon;
 use aria_platform::delivery::PlatformTextDelivery;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::{ConfigError, memory_directory};

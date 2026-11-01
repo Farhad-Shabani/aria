@@ -149,6 +149,7 @@ name = "aria"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "aria-assistant",
  "aria-harness",
  "aria-kit",
  "aria-platform",
@@ -197,6 +198,25 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "aria-assistant"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "aria-harness",
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "aria-settings",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

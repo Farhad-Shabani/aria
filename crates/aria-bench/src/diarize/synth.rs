@@ -18,8 +18,8 @@ pub(crate) struct Scenario {
 
 pub(crate) struct Turn {
     /// Ground-truth speaker identity — the kokoro voice name.
-    pub(crate) speaker: &'static str,
-    pub(crate) text: &'static str,
+    pub speaker: &'static str,
+    pub text: &'static str,
 }
 
 impl Scenario {

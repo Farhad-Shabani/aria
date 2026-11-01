@@ -66,11 +66,11 @@ pub(crate) use inference::{PairedServer, paired_server};
 pub(crate) use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 pub use speech::SpeechInitializationError;
 
-pub use crate::chat::{
+pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
+pub use aria_assistant::chat::{
     Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
     Focus, Project, ProjectsError, Step, Ticket,
 };
-pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
 pub use aria_platform::delivery::OutputMode;
 pub use aria_settings::config::AssistantId;
 pub use aria_settings::settings::DeliveryMode;

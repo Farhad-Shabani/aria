@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 anyhow            = { workspace = true }
 aria-settings     = { workspace = true }
+aria-assistant    = { workspace = true }
 aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
 aria-platform     = { workspace = true }
 aria-primitives   = { workspace = true }
@@ -68,7 +69,7 @@ aria-tts = { workspace = true, features = [ "qwen-accelerate" ] }
 objc2            = "0.6"
 objc2-app-kit    = { version = "0.3.2", default-features = false, features = [ "NSRunningApplication", "libc", "std" ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [ "NSString", "std" ] }
-cidre = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+cidre            = { version = "=0.28.0", default-features = false, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
 
 [dev-dependencies]
 aria-voice    = { workspace = true, features = [ "test-support" ] }

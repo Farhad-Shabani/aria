@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::tasks::Supervised;
-use crate::memory::run_backlog;
 use crate::primitives::error_chain;
+use aria_assistant::memory::run_backlog;
 use aria_settings::settings::SettingsCache;
 
 /// How long the asks have to go quiet before their turns are extracted.

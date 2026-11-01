@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::chat::{ChatRequest, PromptRequest, SessionKey, Ticket};
+use aria_assistant::chat::{ChatRequest, PromptRequest, SessionKey, Ticket};
 
 use super::super::operation::{CallError, Reply, call, operation_cancellation, panic_message};
 use super::super::tasks::Supervised;
@@ -344,7 +344,7 @@ mod tests {
     use std::sync::mpsc::{Receiver, channel as std_channel};
     use std::time::Duration;
 
-    use crate::chat::ChatStageKind;
+    use aria_assistant::chat::ChatStageKind;
     use aria_settings::rpc::RpcErrorCode;
 
     use super::super::runtime::tests::{ParkedAssistant, request, runtime_with};
@@ -356,7 +356,7 @@ mod tests {
         handle: ChatHandle,
         started: Receiver<u64>,
         release: std::sync::mpsc::Sender<()>,
-        events: Receiver<crate::chat::ChatStage>,
+        events: Receiver<aria_assistant::chat::ChatStage>,
         shutdown: CancellationToken,
         actor: tokio::task::JoinHandle<()>,
     }
@@ -451,7 +451,7 @@ mod tests {
         harness.actor.await.expect("the actor drains");
     }
 
-    fn ended_as(stage: &crate::chat::ChatStage, ticket: Ticket) -> Option<RpcErrorCode> {
+    fn ended_as(stage: &aria_assistant::chat::ChatStage, ticket: Ticket) -> Option<RpcErrorCode> {
         match &stage.kind {
             ChatStageKind::Failed { code, .. } if stage.ticket == ticket => Some(*code),
             _ => None,

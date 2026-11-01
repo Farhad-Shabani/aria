@@ -10,8 +10,8 @@
 //! make on start.
 
 use super::speech::next_utterance;
-use crate::chat::ChatConfig;
-use crate::memory::MemoryConfig;
+use aria_assistant::chat::ChatConfig;
+use aria_assistant::memory::MemoryConfig;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use aria_settings::settings::{
     Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify,

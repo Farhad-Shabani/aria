@@ -4,17 +4,17 @@
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
-use crate::chat::ChatConfig;
-use crate::chat::{
+use crate::primitives::error_chain;
+use aria_assistant::chat::ChatConfig;
+use aria_assistant::chat::{
     AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
     CODEX_BINARY, ChatError, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
     ChatSubscribers, ClaudeCodeAssistant, CodexAssistant, Projects, PromptCall, PromptRequest,
     PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
     read_instructions,
 };
-use crate::memory::MemoryConfig;
-use crate::memory::{DB_FILE, Store, load_profile_block};
-use crate::primitives::error_chain;
+use aria_assistant::memory::MemoryConfig;
+use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
 use aria_kit::cancel::CancelToken;
 use aria_platform::delivery::{
     DeliveryError, DeliveryFactory, DeliveryOutcome, OutputMode, PlatformTextDelivery,
@@ -634,7 +634,7 @@ fn replied(
 /// client asked to be told, and still is.
 fn event_emitter(context: &Context<'_>, subscriptions: Arc<Subscriptions>) -> ChatEventEmitter {
     let local = context.attended.then_some(ChatSubscribers);
-    ChatEventEmitter::subscribed_by(crate::chat::EVENT_THREAD, move |stage| {
+    ChatEventEmitter::subscribed_by(aria_assistant::chat::EVENT_THREAD, move |stage| {
         if let Some(local) = &local {
             local.observe(&stage);
         }

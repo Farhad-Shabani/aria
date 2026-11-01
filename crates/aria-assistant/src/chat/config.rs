@@ -8,21 +8,21 @@ use aria_settings::settings::SettingsFile;
 
 /// Where and how long `aria ask` runs the assistant. Loaded per ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ChatConfig {
+pub struct ChatConfig {
     /// Pins the assistant's working directory; otherwise the caller's.
-    pub(crate) workdir: Option<PathBuf>,
+    pub workdir: Option<PathBuf>,
     /// Directories whose git repos an ask may name; empty turns routing off.
     pub(crate) project_roots: Vec<PathBuf>,
-    pub(crate) timeout: Duration,
+    pub timeout: Duration,
     /// A reply delivered like a transcript gets dictation's delivery timeout.
-    pub(crate) delivery_timeout: Duration,
+    pub delivery_timeout: Duration,
 }
 
 /// Long enough for an assistant to read a repo and think.
 const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
 
 impl ChatConfig {
-    pub(crate) fn load(settings: &SettingsFile) -> Result<Self, ConfigError> {
+    pub fn load(settings: &SettingsFile) -> Result<Self, ConfigError> {
         let timeout = timeout(
             settings.assistant.timeout_secs,
             "assistant.timeout_secs",

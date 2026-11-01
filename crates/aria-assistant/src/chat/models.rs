@@ -18,7 +18,7 @@ pub struct AssistantModel {
 }
 
 impl AssistantModel {
-    pub(crate) fn is_valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         !self.id.is_empty()
             && is_valid_model_id(&self.id)
             && !self.name.is_empty()

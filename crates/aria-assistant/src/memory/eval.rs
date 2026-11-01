@@ -15,7 +15,7 @@ use super::extract::{ClaudeExtractor, Extractor, build_system_prompt};
 use super::store::Fact;
 use super::{DB_FILE, LEXICON_FILE, Lexicon, Store, load_profile_block};
 use crate::chat::AssistantError;
-use crate::primitives::error_chain;
+use aria_primitives::error_chain;
 
 const CORPUS: &str = include_str!("eval_cases.json");
 const RECALL_PROMPT: &str = "Answer the question using only the supplied user profile. \

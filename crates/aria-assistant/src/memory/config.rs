@@ -8,12 +8,12 @@ use aria_settings::settings::Memory;
 /// What the assistant remembers across sessions and how it learns it.
 /// `dir` also holds the lexicon, which works whether or not `enabled`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemoryConfig {
-    pub(crate) enabled: bool,
+pub struct MemoryConfig {
+    pub enabled: bool,
     /// A model name the `claude` CLI accepts for fact extraction.
     pub(crate) extract_model: String,
     pub(crate) max_facts_per_session: u32,
-    pub(crate) dir: PathBuf,
+    pub dir: PathBuf,
 }
 
 const DEFAULT_MEMORY_EXTRACT_MODEL: &str = "sonnet";
@@ -21,7 +21,7 @@ const DEFAULT_MEMORY_EXTRACT_MODEL: &str = "sonnet";
 const DEFAULT_MEMORY_MAX_FACTS: u32 = 10;
 
 impl MemoryConfig {
-    pub(crate) fn load(memory: &Memory, home: &Path) -> Self {
+    pub fn load(memory: &Memory, home: &Path) -> Self {
         Self {
             enabled: memory.enabled.unwrap_or(false),
             extract_model: memory
