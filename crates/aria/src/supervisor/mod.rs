@@ -102,8 +102,8 @@ impl Supervisor {
         platform::unload()?;
         self.refuse_foreign_owner()?;
         write_file(&self.unit, &platform::render(&self.spec))?;
-        if let Some(path) = platform::companion_path(&self.spec) {
-            write_file(&path, &platform::render_companion(&self.spec))?;
+        if let Some((path, contents)) = platform::companion(&self.spec) {
+            write_file(&path, &contents)?;
         }
         platform::load(&self.unit)?;
         self.await_bind()
@@ -115,7 +115,7 @@ impl Supervisor {
         if !platform::app_owns_job(&self.unit)? {
             platform::unload()?;
         }
-        let companion = platform::companion_path(&self.spec);
+        let companion = platform::companion(&self.spec).map(|(path, _)| path);
         for path in std::iter::once(self.unit.clone()).chain(companion) {
             match fs::remove_file(&path) {
                 Ok(()) => {}

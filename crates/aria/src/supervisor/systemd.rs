@@ -36,7 +36,7 @@ pub(super) fn render(spec: &UnitSpec) -> String {
 }
 
 /// The portal uses this hidden desktop entry to name Aria in its permission dialog.
-pub(super) fn companion_path(spec: &UnitSpec) -> Option<PathBuf> {
+pub(super) fn companion(spec: &UnitSpec) -> Option<(PathBuf, String)> {
     let data_home = spec
         .environment
         .iter()
@@ -44,19 +44,15 @@ pub(super) fn companion_path(spec: &UnitSpec) -> Option<PathBuf> {
         .map(|(_, value)| PathBuf::from(value))
         .filter(|path| path.is_absolute())
         .unwrap_or_else(|| spec.home.join(".local/share"));
-    Some(
-        data_home
-            .join("applications")
-            .join(format!("{APP_ID}.desktop")),
-    )
-}
-
-pub(super) fn render_companion(spec: &UnitSpec) -> String {
-    format!(
+    let path = data_home
+        .join("applications")
+        .join(format!("{APP_ID}.desktop"));
+    let entry = format!(
         "[Desktop Entry]\nType=Application\nName=Aria\nComment=Local voice dictation\n\
          Exec={} daemon\nNoDisplay=true\n",
         exec_argument(spec.exe.as_os_str())
-    )
+    );
+    Some((path, entry))
 }
 
 /// Desktop entries unescape the value before parsing the quoted Exec argument,
@@ -209,7 +205,7 @@ mod tests {
             };
 
             assert_eq!(
-                companion_path(&spec),
+                companion(&spec).map(|(path, _)| path),
                 Some(Path::new(directory).join(format!("applications/{APP_ID}.desktop"))),
                 "XDG_DATA_HOME={value:?}"
             );
@@ -224,13 +220,13 @@ mod tests {
             environment: Vec::new(),
         };
 
+        let (path, entry) = companion(&spec).expect("Linux has a desktop entry");
         assert_eq!(
-            companion_path(&spec),
-            Some(PathBuf::from(
+            path,
+            PathBuf::from(
                 "/home/tester/.local/share/applications/io.github.farhad_shabani.aria.desktop"
-            ))
+            )
         );
-        let entry = render_companion(&spec);
         assert!(
             entry.contains("Exec=\"/opt/a\\\\\"b \\\\$c%%d\\\\\\\\e/aria\" daemon\n"),
             "{entry}"

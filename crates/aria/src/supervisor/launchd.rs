@@ -70,12 +70,8 @@ pub(super) fn render(spec: &UnitSpec) -> String {
     )
 }
 
-pub(super) fn companion_path(_spec: &UnitSpec) -> Option<PathBuf> {
+pub(super) fn companion(_spec: &UnitSpec) -> Option<(PathBuf, String)> {
     None
-}
-
-pub(super) fn render_companion(_spec: &UnitSpec) -> String {
-    String::new()
 }
 
 pub(super) fn load(unit: &Path) -> Result<(), SupervisorError> {
