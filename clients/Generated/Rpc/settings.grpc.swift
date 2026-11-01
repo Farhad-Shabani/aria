@@ -147,9 +147,9 @@ extension Aria_Daemon_V1_SettingsService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Validates the patch as an Update would and writes nothing: a patch an
-        /// > Update refuses for its values fails with the same status. Takes no
-        /// > lock and no revision, so a busy file or a conflict is not foreseen.
+        /// > Tells whether Update would accept the patch, and writes nothing. A
+        /// > refused patch fails with the status Update would give. Passing does not
+        /// > promise the Update succeeds: it can still conflict or find the file busy.
         /// > Served on the unix socket only.
         ///
         /// - Parameters:
@@ -280,9 +280,9 @@ extension Aria_Daemon_V1_SettingsService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Validates the patch as an Update would and writes nothing: a patch an
-        /// > Update refuses for its values fails with the same status. Takes no
-        /// > lock and no revision, so a busy file or a conflict is not foreseen.
+        /// > Tells whether Update would accept the patch, and writes nothing. A
+        /// > refused patch fails with the status Update would give. Passing does not
+        /// > promise the Update succeeds: it can still conflict or find the file busy.
         /// > Served on the unix socket only.
         ///
         /// - Parameters:
@@ -413,9 +413,9 @@ extension Aria_Daemon_V1_SettingsService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Validates the patch as an Update would and writes nothing: a patch an
-    /// > Update refuses for its values fails with the same status. Takes no
-    /// > lock and no revision, so a busy file or a conflict is not foreseen.
+    /// > Tells whether Update would accept the patch, and writes nothing. A
+    /// > refused patch fails with the status Update would give. Passing does not
+    /// > promise the Update succeeds: it can still conflict or find the file busy.
     /// > Served on the unix socket only.
     ///
     /// - Parameters:
@@ -543,9 +543,9 @@ extension Aria_Daemon_V1_SettingsService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Validates the patch as an Update would and writes nothing: a patch an
-    /// > Update refuses for its values fails with the same status. Takes no
-    /// > lock and no revision, so a busy file or a conflict is not foreseen.
+    /// > Tells whether Update would accept the patch, and writes nothing. A
+    /// > refused patch fails with the status Update would give. Passing does not
+    /// > promise the Update succeeds: it can still conflict or find the file busy.
     /// > Served on the unix socket only.
     ///
     /// - Parameters:

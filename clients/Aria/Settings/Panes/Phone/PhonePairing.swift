@@ -35,8 +35,8 @@ final class PhonePairing: ObservableObject {
 
     private let poller: StatusPoller
     private let daemon: PairingDaemon
-    /// Bumped by every restart, so a poll sent before one is dropped when
-    /// its answer lands after.
+    /// Goes up each time this object restarts the daemon. A poll that started
+    /// before the restart sees a different number and drops its answer.
     private var generation = 0
     /// The daemon's pairing count at the last poll. Nil until one answers.
     private var pairingCount: UInt64?

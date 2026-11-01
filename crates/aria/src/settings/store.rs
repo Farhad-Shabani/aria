@@ -107,14 +107,14 @@ impl SettingsStore {
         }
     }
 
-    /// Whether an update would take `patch` for its values. Takes no lock
-    /// and no revision, so a busy file or a conflict is not foreseen. A
-    /// recorder asks before it commits a chord.
+    /// Tells whether an update would accept `patch`. Takes no lock and no
+    /// revision, so the update can still conflict or find the file busy.
     pub(crate) fn check(&self, patch: SettingsPatch) -> Result<(), StoreError> {
         let current = self.cache.snapshot();
         let patch = Self::file_patch(patch, &current.settings)?;
         match self.cache.check_patch(&patch)? {
             // `check_patch` takes no revision, so it never answers a conflict.
+            // The match still has to name that arm.
             Written::Applied(_)
             | Written::AppliedRestartKey(_)
             | Written::Refused(Refusal::Conflict { .. }) => Ok(()),
@@ -150,8 +150,8 @@ impl SettingsStore {
 }
 
 impl SettingsStore {
-    /// The file keys `patch` changes, once the whole result passes the
-    /// checks that span keys: model ids and shared bindings.
+    /// The keys of the settings file that `patch` changes. Fails if the result
+    /// reuses a shortcut or names an invalid model.
     fn file_patch(patch: SettingsPatch, settings: &SettingsFile) -> Result<Patch, StoreError> {
         let current = Settings::from_file(settings)?;
         let next = patch.apply_to(&current);

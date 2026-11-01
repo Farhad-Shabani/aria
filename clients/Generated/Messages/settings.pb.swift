@@ -419,9 +419,9 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._outputMode = newValue}
   }
 
-  /// Does not apply while dictation outputs by Copy, which cannot stream:
-  /// it then delivers the complete text. The stored choice stays, and
-  /// applies again with another output mode.
+  /// Copy output cannot stream, so it always delivers the complete text.
+  /// `delivery_mode` stays stored and applies again once `output_mode` is no
+  /// longer Copy.
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode}
     set {_uniqueStorage()._deliveryMode = newValue}

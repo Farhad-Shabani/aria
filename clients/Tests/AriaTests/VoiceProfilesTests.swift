@@ -18,8 +18,8 @@ final class VoiceProfilesTests: XCTestCase {
         var enrollContinuation: CheckedContinuation<Void, Error>?
         var suspendsEnroll = false
         var setOwnerError: Error?
-        /// The next list read waits on this after reading, as a slow socket would.
         var listContinuation: CheckedContinuation<Void, Never>?
+        /// Makes the next list call wait after reading, like a slow socket.
         var suspendsNextList = false
 
         var effects: VoiceProfiles.Effects {

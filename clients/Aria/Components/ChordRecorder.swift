@@ -15,8 +15,9 @@ struct ChordRecorder: View {
     let chord: Chord?
     /// Carbon turned the chord down, so another app holds it.
     let isInUse: Bool
-    /// Asks the daemon whether it would take the chord, and throws its
-    /// refusal. Any other failure lets the chord through; the save reports it.
+    /// Asks the daemon whether it can use the chord. A refusal keeps the
+    /// recorder open. Any other error, such as the daemon being off, records
+    /// the chord anyway, and saving it reports the problem.
     let check: (Chord) async throws -> Void
     let record: (Chord) -> Void
     /// Removes the chord, from the ⓧ beside it or Delete while recording.

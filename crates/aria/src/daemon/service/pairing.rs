@@ -77,7 +77,7 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
                     RpcFailure::new(code, error_chain(&error)),
                 ))
             })?;
-        self.codes.count_pairing();
+        self.codes.record_pairing();
         tracing::info!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(wire::PairResponse {}))
     }
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(issued.pairing_count, 0);
 
         assert!(codes.redeem(live.raw(), Instant::now()));
-        codes.count_pairing();
+        codes.record_pairing();
         let reissued = rpc
             .issue_invite(Request::new(wire::IssueInviteRequest {}))
             .await

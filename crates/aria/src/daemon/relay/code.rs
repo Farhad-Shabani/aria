@@ -48,7 +48,7 @@ struct Live {
 #[derive(Debug, Default)]
 pub(in crate::daemon) struct PairingCodes {
     current: Mutex<Option<Live>>,
-    /// Pair calls that succeeded since start, as the owner reports them.
+    /// Phones paired since the daemon started.
     pairing_count: AtomicU64,
 }
 
@@ -86,9 +86,9 @@ impl PairingCodes {
         matches
     }
 
-    /// The relay calls this once a phone is admitted. A redeemed code
-    /// whose phone was then refused is not a pairing.
-    pub(in crate::daemon) fn count_pairing(&self) {
+    /// Call this once a phone is admitted. A redeemed code doesn't count if
+    /// the phone was then refused.
+    pub(in crate::daemon) fn record_pairing(&self) {
         self.pairing_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -155,7 +155,7 @@ mod tests {
             0,
             "a redeemed code alone is not a pairing"
         );
-        codes.count_pairing();
+        codes.record_pairing();
         assert_eq!(codes.pairing_count(), 1);
         codes.issue(now).unwrap();
         assert_eq!(codes.pairing_count(), 1, "a fresh code is not a pairing");

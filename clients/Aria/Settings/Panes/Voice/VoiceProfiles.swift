@@ -43,8 +43,8 @@ final class VoiceProfiles: ObservableObject {
 
     private let effects: Effects
     private var recording: Task<Void, Never>?
-    /// The newest refresh wins: a list read before a removal must not bring
-    /// the voice back when it lands after.
+    /// Only the newest refresh may update the list. An older reply could
+    /// bring back a voice the person just removed.
     private var refreshID: UUID?
 
     init(effects: Effects) {

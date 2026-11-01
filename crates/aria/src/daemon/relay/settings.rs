@@ -68,8 +68,8 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         Ok(response)
     }
 
-    /// A phone's patch is checked by its update; the recorder that asks
-    /// ahead is on the Mac.
+    /// Refused for phones. Only the Mac's shortcut recorder checks a patch
+    /// before sending it, and a phone's update runs the same checks.
     async fn check(
         &self,
         _request: Request<wire::CheckSettingsRequest>,
@@ -330,8 +330,6 @@ mod tests {
         assert!(!bare.message().contains(path));
     }
 
-    /// A phone reads the settings. The status names keys and quotes the
-    /// file, and a check is for the Mac's recorder, so both stay on the Mac.
     #[tokio::test]
     async fn a_phone_reads_the_settings_and_neither_checks_nor_reads_the_status() {
         let home = tempfile::tempdir().unwrap();

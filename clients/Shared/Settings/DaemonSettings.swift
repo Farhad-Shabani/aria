@@ -4,7 +4,7 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonSettings")
 
-/// Synchronizes daemon settings through one revision and a queue of edits.
+/// Keeps this client's settings in step with the daemon, using a queue of edits.
 /// The transport decides which daemon and over what; this class does not.
 @MainActor
 final class DaemonSettings: ObservableObject {
@@ -20,29 +20,29 @@ final class DaemonSettings: ObservableObject {
         }
     }
 
-    /// One change the person made, as a patch against whatever the daemon
-    /// holds when it is sent. A list edit reads the list from `base`, so a
-    /// retry after a conflict builds on another writer's entries instead of
-    /// replacing them. An edit runs again every time the base changes, so
-    /// it must be idempotent: adding an entry already there adds nothing.
+    /// One change the person made. It builds its patch from `base`, this
+    /// client's newest copy of the settings when it runs. So a list edit keeps
+    /// entries another client added. An edit can run many times, and `base`
+    /// may already hold it. So adding an entry that is already there must add
+    /// nothing.
     typealias Edit = @MainActor (_ base: Aria_Daemon_V1_Settings) -> Aria_Daemon_V1_SettingsPatch
 
-    /// The daemon's settings with the queued edits laid over. Nil until the
-    /// daemon answers.
+    /// The daemon's settings with edits it hasn't accepted applied on top. Nil
+    /// until the daemon first answers.
     @Published private(set) var snapshot: Aria_Daemon_V1_Settings?
     /// The last failed sync or push; cleared by the next one that succeeds.
     @Published private(set) var lastError: (any Error)?
 
-    /// Conflicts in a row on one edit that end its retries. The first means
-    /// another writer got in first, and the retry rebases. The second means
-    /// that writer is still at it, and the person hears about it.
+    /// How many conflicts in a row one edit can hit before Aria stops
+    /// retrying and tells the person. By then another writer is probably still
+    /// saving, so more retries won't help.
     private static let conflictLimit = 2
 
     private let transport: any SettingsTransport
-    /// The daemon's last answer.
+    /// The last snapshot the daemon returned.
     private var answer: Aria_Daemon_V1_SettingsSnapshot?
-    /// Changes the daemon has not accepted yet, oldest first. Each goes in
-    /// its own request, so a refusal drops only the edit it names.
+    /// Edits the daemon has not accepted yet, oldest first. Each goes in its
+    /// own request, so a refusal drops only that edit.
     @Published private var pending: [Edit] = []
     @Published private var isPushing = false
     /// A fetch that overlaps a push may predate it. The revision can't tell:
@@ -55,8 +55,6 @@ final class DaemonSettings: ObservableObject {
         self.transport = transport
     }
 
-    /// Edits the daemon has not taken yet, with no push under way to
-    /// deliver them.
     var hasUnsavedChange: Bool {
         !pending.isEmpty && !isPushing
     }
@@ -96,7 +94,8 @@ final class DaemonSettings: ObservableObject {
         await self.edit { _ in patch }
     }
 
-    /// Shows the edit at once and pushes it; the daemon's answer replaces it.
+    /// Shows the edit right away, then sends it. The daemon's answer replaces
+    /// what was shown.
     func edit(_ edit: @escaping Edit) async {
         pending.append(edit)
         show()
@@ -108,7 +107,7 @@ final class DaemonSettings: ObservableObject {
         show()
     }
 
-    /// Lays the queued edits over the daemon's answer, so a reply to an
+    /// Applies the queued edits on top of the daemon's answer, so a reply to an
     /// older push never flips a control the user has since moved.
     private func show() {
         guard var shown = answer?.settings else { return }
@@ -118,8 +117,8 @@ final class DaemonSettings: ObservableObject {
         snapshot = shown
     }
 
-    /// A status that says the daemon will never take this edit as sent, as
-    /// opposed to the daemon being away.
+    /// True when the daemon rejected the edit itself, so retrying won't help.
+    /// False for any other error, such as an unreachable daemon.
     static func refusesPatch(_ error: any Error) -> Bool {
         guard let status = error as? RPCError else { return false }
         switch status.code {
@@ -133,26 +132,14 @@ final class DaemonSettings: ObservableObject {
         isPushing = true
         pushCount += 1
         defer { isPushing = false }
-        // A refused edit is dropped, but its refusal must outlive the edits
-        // accepted after it: that is how the person learns the control
-        // snapped back. A later failure still replaces it, newest first.
+        // A refused edit is dropped, but its error stays after later edits
+        // succeed. That error is how the person learns the control snapped
+        // back. A later failure replaces it.
         var refusal: (any Error)?
         var conflicts = 0
         while let next = pending.first {
             do {
-                try Task.checkCancellation()
-                let base: Aria_Daemon_V1_SettingsSnapshot
-                if let answer {
-                    base = answer
-                } else {
-                    base = try await transport.snapshot()
-                    adopt(base)
-                }
-                try Task.checkCancellation()
-                var request = Aria_Daemon_V1_UpdateSettingsRequest()
-                request.expectedRevision = base.revision
-                request.patch = next(base.settings)
-                switch try await transport.update(request).result {
+                switch try await send(next) {
                 case .snapshot(let answer):
                     pending.removeFirst()
                     adopt(answer)
@@ -169,21 +156,40 @@ final class DaemonSettings: ObservableObject {
                     throw UpdateError.invalidResponse
                 }
             } catch {
-                // Closing the window keeps the edit for the next sync.
+                // A push under a window's sync is cancelled when the window
+                // closes. The edit stays queued for the next sync.
                 guard !Task.isCancelled else { return }
                 log.error("Update failed: \(String(describing: error), privacy: .private)")
                 guard Self.refusesPatch(error) else {
                     lastError = error
                     return
                 }
-                // A refused write changed nothing, so the daemon's last
-                // answer still stands and the edit only leaves the view.
+                // A refused write changed nothing, so the daemon's last answer
+                // is still right. Only the view needs updating.
                 pending.removeFirst()
                 show()
+                conflicts = 0
                 refusal = error
                 lastError = error
             }
         }
         lastError = refusal
+    }
+
+    /// Sends one edit, built on the daemon's last answer or a fresh fetch.
+    private func send(_ edit: Edit) async throws -> Aria_Daemon_V1_UpdateSettingsResponse.OneOf_Result? {
+        try Task.checkCancellation()
+        let base: Aria_Daemon_V1_SettingsSnapshot
+        if let answer {
+            base = answer
+        } else {
+            base = try await transport.snapshot()
+            adopt(base)
+        }
+        try Task.checkCancellation()
+        var request = Aria_Daemon_V1_UpdateSettingsRequest()
+        request.expectedRevision = base.revision
+        request.patch = edit(base.settings)
+        return try await transport.update(request).result
     }
 }

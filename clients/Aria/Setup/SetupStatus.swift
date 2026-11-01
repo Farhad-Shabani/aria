@@ -15,8 +15,8 @@ final class SetupStatus: ObservableObject {
     @Published private(set) var transcription = TranscriptionLocation.thisMac
 
     private let inspect: @MainActor () async throws -> Aria_Setup_V1_Inspection
-    /// The newest inspection wins: one started before a change must not
-    /// land over the one that shows it.
+    /// Only the newest inspection may update the status. An older one could
+    /// hide a change the person just made.
     private var inspectionID: UUID?
 
     init(inspect: @escaping @MainActor () async throws -> Aria_Setup_V1_Inspection = SetupClient.inspect) {

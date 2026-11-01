@@ -23,8 +23,8 @@ enum PromptEdits {
         return entry
     }
 
-    /// A lost reply replays the edit against a list that already has the
-    /// entry, so adding is idempotent.
+    /// An edit can run more than once, so adding a prompt already in the list
+    /// does nothing.
     static func add(_ entry: Aria_Daemon_V1_Prompt, to prompts: inout Aria_Daemon_V1_Prompts) {
         guard self.entry(entry.id, in: prompts) == nil else { return }
         prompts.entries.append(entry)

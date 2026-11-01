@@ -14,9 +14,9 @@ service SettingsService {
   // with the current snapshot rather than overwriting. While settings.toml
   // is invalid, every update fails with ERROR_CODE_SETTINGS_INVALID.
   rpc Update(UpdateSettingsRequest) returns (UpdateSettingsResponse);
-  // Validates the patch as an Update would and writes nothing: a patch an
-  // Update refuses for its values fails with the same status. Takes no
-  // lock and no revision, so a busy file or a conflict is not foreseen.
+  // Tells whether Update would accept the patch, and writes nothing. A
+  // refused patch fails with the status Update would give. Passing does not
+  // promise the Update succeeds: it can still conflict or find the file busy.
   // Served on the unix socket only.
   rpc Check(CheckSettingsRequest) returns (CheckSettingsResponse);
   // What the daemon knows about settings.toml beyond its values. Changes
@@ -97,9 +97,9 @@ message Settings {
   // Dictation
 
   OutputMode output_mode = 9;
-  // Does not apply while dictation outputs by Copy, which cannot stream:
-  // it then delivers the complete text. The stored choice stays, and
-  // applies again with another output mode.
+  // Copy output cannot stream, so it always delivers the complete text.
+  // `delivery_mode` stays stored and applies again once `output_mode` is no
+  // longer Copy.
   DeliveryMode delivery_mode = 10;
   // Whole milliseconds, 100 to 10000 inclusive.
   uint64 silence_duration_ms = 1;

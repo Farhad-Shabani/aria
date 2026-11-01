@@ -1,5 +1,5 @@
-/// Holds one call until the test lets it through, so a reply can be made
-/// to land after a later one.
+/// Holds a call until the test opens the gate, so its reply can arrive after
+/// a later call's reply.
 @MainActor
 final class Gate {
     private var waiter: CheckedContinuation<Void, Never>?

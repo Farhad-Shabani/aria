@@ -395,6 +395,31 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
     }
 
+    func testARefusedEditLeavesNoConflictsForTheNextOne() async {
+        let transport = FakeSettingsTransport()
+        transport.snapshots = [snapshot(revision: 3)]
+        transport.updates = [
+            conflict(snapshot(revision: 4)),
+            conflict(snapshot(revision: 5)),
+            accepted(snapshot(revision: 6, language: "auto")),
+        ]
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
+        transport.duringUpdate = {
+            await settings.set { $0.sttLanguage = "auto" }
+            transport.duringUpdate = {
+                transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
+                transport.duringUpdate = { transport.updateError = nil }
+            }
+        }
+
+        await settings.set { $0.muteSound = true }
+
+        XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4, 4, 5])
+        XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
+        XCTAssertFalse(settings.hasUnsavedChange)
+    }
+
     private func prompt(_ id: String, name: String? = nil) -> Aria_Daemon_V1_Prompt {
         var prompt = Aria_Daemon_V1_Prompt()
         prompt.id = id

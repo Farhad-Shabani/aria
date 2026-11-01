@@ -9,14 +9,14 @@ enum DictationEdits {
     /// Milliseconds; 0 is off.
     static let autoStopChoices: [UInt64] = [0, 3000, 5000, 10000, 15000, 20000, 30000, 45000, 60000]
 
-    /// The wire contract on `Settings.delivery_mode`: Copy cannot stream.
+    /// Copy cannot stream. The proto states this on `Settings.delivery_mode`.
     static func locksDelivery(_ mode: Aria_Daemon_V1_OutputMode) -> Bool {
         mode == .copy
     }
 
-    /// The delivery in effect: Complete while output copies, otherwise the
-    /// stored choice. Copy leaves the stored choice alone, so it comes back
-    /// when output changes again.
+    /// The delivery that applies: Complete when the output mode is Copy,
+    /// otherwise the stored choice. Copy leaves the stored choice in place for
+    /// when the output mode changes.
     static func effectiveDelivery(in settings: Aria_Daemon_V1_Settings) -> Aria_Daemon_V1_DeliveryMode {
         locksDelivery(settings.outputMode) ? .complete : settings.deliveryMode
     }

@@ -5,7 +5,7 @@ import GRPCNIOTransportHTTP2
 struct IssuedInvite: Sendable {
     let invite: PairingInvite
     let expiresAt: Date
-    /// Pair calls that succeeded since the daemon started.
+    /// Phones paired since the daemon started.
     let pairingCount: UInt64
 }
 

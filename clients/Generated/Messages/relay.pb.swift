@@ -158,8 +158,8 @@ public nonisolated struct Aria_Daemon_V1_IssueInviteResponse: Sendable {
 
   public var expiresInMs: UInt32 = 0
 
-  /// Pair calls that succeeded since the daemon started. A rise since the
-  /// last poll means a phone paired; a fall means the daemon restarted.
+  /// Phones paired since the daemon started. If it rises between polls, a
+  /// phone paired. If it falls, the daemon restarted.
   public var pairingCount: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
