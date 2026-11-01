@@ -17,8 +17,9 @@ fi
 cargo build --locked --profile dist --bin aria
 stage="target/linux-stage/aria-$version"
 rm -rf target/linux-stage
-mkdir -p "$stage/bin" "$stage/share/doc/aria"
+mkdir -p "$stage/bin" "$stage/share/doc/aria" "$stage/share/udev"
 cp target/dist/aria "$stage/bin/"
+cp scripts/linux/70-aria-input.rules "$stage/share/udev/"
 cp LICENSE-GPL target/THIRD-PARTY-LICENSES.md "$stage/share/doc/aria/"
 mkdir -p dist
 tar -czf dist/aria-linux-x86_64.tar.gz -C target/linux-stage "aria-$version"

@@ -65,6 +65,7 @@ objc2-ui-kit     = { version = "0.3.2", default-features = false, features = [ "
 # the clipboard is X11 only.
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.6", default-features = false, features = [ "wayland-data-control" ] }
+rustix  = { workspace = true, features = [ "event", "time" ] }
 
 # The MLX sidecar requires child processes, which iOS forbids.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
