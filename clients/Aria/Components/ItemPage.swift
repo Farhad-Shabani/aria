@@ -10,7 +10,7 @@ struct ItemPage<Icon: View, Accessory: View, Content: View>: View {
 
     var body: some View {
         Section {
-            HStack(spacing: SettingsMetrics.headerSpacing) {
+            HStack(spacing: HeaderMetrics.iconSpacing) {
                 icon
                 HeadlineStack(title: title) {
                     if let subtitle {

@@ -1,9 +1,5 @@
 import Foundation
 
-extension Notification.Name {
-    static let dictationHistoryChanged = Notification.Name("dictationHistoryChanged")
-}
-
 @MainActor
 final class DictationHistoryState: ObservableObject {
     struct Effects {

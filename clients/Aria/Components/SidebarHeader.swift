@@ -8,8 +8,8 @@ struct SidebarHeader<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(spacing: SettingsMetrics.headerSpacing) {
-            AppIcon(side: SettingsMetrics.cardIconSide)
+        HStack(spacing: HeaderMetrics.iconSpacing) {
+            AppIcon(side: HeaderMetrics.cardIconSide)
             content
         }
         .padding(.vertical, Layout.verticalPadding)

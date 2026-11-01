@@ -3,6 +3,11 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupStatus")
 
+enum TranscriptionLocation: Equatable {
+    case thisMac
+    case server
+}
+
 /// The last setup inspection, as Settings shows it. Only steps dictation
 /// needs raise the badge.
 @MainActor

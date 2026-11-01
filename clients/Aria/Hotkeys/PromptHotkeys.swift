@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 
 /// The prompts that are on and the chords they hold: what `PromptHotkeys`
 /// acts on, decided apart from Carbon.
@@ -92,7 +93,7 @@ final class PromptHotkeys: ObservableObject {
 
     private func canRun(_ id: String) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
-        guard PromptFile.isReadable(entry) else {
+        guard FileManager.default.isReadableFile(atPath: entry.file) else {
             refusals.send(entry.name)
             return false
         }
