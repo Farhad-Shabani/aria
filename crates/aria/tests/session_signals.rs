@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use aria::primitives::process::{ChildProcess, WaitOutcome};
-use aria_daemon::daemon::{Daemon, DaemonLifetime, DaemonSession};
+use aria_daemon::{Daemon, DaemonLifetime, DaemonSession};
 use aria_harness::Sandbox;
 use signal_hook::consts::SIGINT;
 

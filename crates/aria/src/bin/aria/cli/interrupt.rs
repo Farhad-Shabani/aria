@@ -9,7 +9,7 @@ use std::thread;
 use anyhow::Context;
 use signal_hook::consts::{SIGINT, SIGTERM};
 
-use aria_daemon::daemon::{DaemonSession, DeliveryMode, DictationStage, RecordingId, Ticket};
+use aria_daemon::{DaemonSession, DeliveryMode, DictationStage, RecordingId, Ticket};
 
 use super::activity::Activity;
 use super::keys::{Keys, restore_terminal};

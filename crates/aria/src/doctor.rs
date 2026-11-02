@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use crate::audio::{WavReplayCapture, check_default_input_device};
 use crate::primitives::error_chain;
-use aria_daemon::daemon::RELAY_SERVICE_TYPE;
-use aria_daemon::daemon::config::{
+use aria_daemon::RELAY_SERVICE_TYPE;
+use aria_daemon::config::{
     DaemonConfig, HotkeyConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride,
 };
 use aria_daemon::ipc::{DaemonClient, Liveness, probe_daemon};
