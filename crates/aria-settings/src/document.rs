@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 use super::PromptKind;
-use super::choices::MAX_CHAT_TIMEOUT;
 use super::keys::{LISTEN_BACKENDS, STT_BACKENDS, WAKE_BACKENDS};
+use super::limits::MAX_CHAT_TIMEOUT;
 use super::validate_cleanup_llm;
 use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
 use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};

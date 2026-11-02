@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use super::Chord;
-use super::PromptKind;
 
 // Sized so a full list fits the settings file's byte cap beside a full
 // list of app overrides, with every name and path escaped at worst.
@@ -9,6 +8,16 @@ const MAX_PROMPTS: usize = 16;
 const MAX_ID_BYTES: usize = 64;
 const MAX_NAME_BYTES: usize = 128;
 const MAX_FILE_BYTES: usize = 512;
+
+/// What a prompt makes of what was said, which sets how the assistant is told to
+/// treat the transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    /// The same words and meaning, cleaned up or restyled.
+    Rewrite,
+    /// New text made from what was said, such as a reply or a summary.
+    Compose,
+}
 
 /// What `RunPrompt` names a prompt by; a rename keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]

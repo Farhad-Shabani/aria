@@ -12,6 +12,7 @@ mod directory;
 mod document;
 pub mod event;
 mod keys;
+mod limits;
 mod overrides;
 mod prompts;
 pub mod rpc;
@@ -32,8 +33,7 @@ use aria_kit::transcription::LanguageCodeError;
 
 use aria_kit::audio::{AutoStopError, SilenceDurationError};
 
-pub use choices::{CleanupConfigError, DeliveryMode, PromptKind, Settings, Shortcut, StoreError};
-pub use choices::{MAX_DICTATION_TIMEOUT, is_valid_model_id, validate_cleanup_llm};
+pub use choices::{DeliveryMode, Settings, Shortcut, StoreError};
 pub use chord::{Chord, ChordError, Modifiers};
 pub use directory::{Directory, DirectoryError};
 pub use document::{
@@ -43,10 +43,13 @@ pub use document::{
 };
 pub use keys::Scope;
 pub use keys::{Apply, Key};
+pub use limits::{
+    CleanupConfigError, MAX_DICTATION_TIMEOUT, is_valid_model_id, validate_cleanup_llm,
+};
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
 };
-pub use prompts::{Prompt, PromptError, PromptId, Prompts};
+pub use prompts::{Prompt, PromptError, PromptId, PromptKind, Prompts};
 pub use store::SettingsStore;
 pub use store::{SettingsPatch, SettingsSnapshot, UpdateResult};
 pub use watch::{SettingsCache, SettingsPoll};
