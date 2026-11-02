@@ -1,6 +1,5 @@
 use std::io::Write;
 
-use anyhow::Context;
 use aria_daemon::{
     ChatStage, ChatStageKind, DaemonEvent, DaemonSession, DictationStage, EnrollmentStage,
     ListenStage, SpeechStage,

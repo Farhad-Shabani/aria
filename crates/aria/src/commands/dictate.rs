@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use anyhow::Context;
 use aria_daemon::{DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, StopMode};
 
 use super::CliOutputMode;

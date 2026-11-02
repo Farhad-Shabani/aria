@@ -1,4 +1,3 @@
-use anyhow::Context;
 use aria_daemon::guided::DEFAULT_SAMPLES;
 use aria_daemon::{DaemonSession, EnrollmentRequest, Role, SpeakerName, guided};
 use clap::{Subcommand, ValueEnum};
