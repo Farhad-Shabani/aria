@@ -45,29 +45,27 @@ pub(super) fn run(command: SettingsCommand) -> anyhow::Result<()> {
                 .context("cannot read the running daemon's settings status")?;
             let rows = aria_settings::command::show(&pending, key.as_deref())?;
             if json {
-                let rows = rows.iter().map(settings_row_json).collect();
+                let rows = rows.iter().map(row_json).collect();
                 println!("{}", serde_json::Value::Array(rows));
             } else {
-                print_settings_rows(&rows);
+                print_rows(&rows);
             }
             Ok(())
         }
         SettingsCommand::Set { pairs, json } => {
-            report_settings_write(aria_settings::command::set(&pairs)?, json)
+            report_write(aria_settings::command::set(&pairs)?, json)
         }
-        SettingsCommand::Reset { key } => {
-            report_settings_write(aria_settings::command::reset(&key)?, false)
-        }
+        SettingsCommand::Reset { key } => report_write(aria_settings::command::reset(&key)?, false),
         SettingsCommand::Check { json } => {
             let fault = aria_settings::command::validate()?;
             if json {
                 let report = serde_json::json!({
                     "valid": fault.is_none(),
-                    "error": fault.as_ref().map(settings_fault_json),
+                    "error": fault.as_ref().map(fault_json),
                 });
                 println!("{report}");
             } else if let Some(fault) = &fault {
-                eprintln!("settings.toml is invalid: {}", settings_fault_line(fault));
+                eprintln!("settings.toml is invalid: {}", fault_line(fault));
             } else {
                 println!("settings.toml is valid");
             }
@@ -94,7 +92,7 @@ pub(super) fn run(command: SettingsCommand) -> anyhow::Result<()> {
     }
 }
 
-fn settings_apply(apply: aria_settings::Apply) -> &'static str {
+fn apply_label(apply: aria_settings::Apply) -> &'static str {
     match apply {
         aria_settings::Apply::Live => "live",
         aria_settings::Apply::Restart => "restart",
@@ -102,7 +100,7 @@ fn settings_apply(apply: aria_settings::Apply) -> &'static str {
 }
 
 /// Text unquoted, everything else as JSON, absent as a dash.
-fn settings_value(value: &serde_json::Value) -> String {
+fn value_text(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "-".to_owned(),
         serde_json::Value::String(text) => text.clone(),
@@ -110,8 +108,8 @@ fn settings_value(value: &serde_json::Value) -> String {
     }
 }
 
-fn print_settings_rows(rows: &[aria_settings::command::Row]) {
-    let values: Vec<String> = rows.iter().map(|row| settings_value(&row.value)).collect();
+fn print_rows(rows: &[aria_settings::command::Row]) {
+    let values: Vec<String> = rows.iter().map(|row| value_text(&row.value)).collect();
     let key_width = rows
         .iter()
         .map(|row| row.path().len())
@@ -128,7 +126,7 @@ fn print_settings_rows(rows: &[aria_settings::command::Row]) {
         println!(
             "{key:key_width$}  {value:value_width$}  {state}, {apply}{pending}",
             key = row.path(),
-            apply = settings_apply(row.apply()),
+            apply = apply_label(row.apply()),
         );
     }
     if let [row] = rows {
@@ -136,18 +134,18 @@ fn print_settings_rows(rows: &[aria_settings::command::Row]) {
     }
 }
 
-fn settings_row_json(row: &aria_settings::command::Row) -> serde_json::Value {
+fn row_json(row: &aria_settings::command::Row) -> serde_json::Value {
     serde_json::json!({
         "key": row.path(),
         "value": row.value,
         "state": if row.set { "set" } else { "default" },
-        "apply": settings_apply(row.apply()),
+        "apply": apply_label(row.apply()),
         "restart_required": row.restart_required,
         "description": row.description(),
     })
 }
 
-fn settings_fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Value {
+fn fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Value {
     serde_json::json!({
         "message": fault.message,
         "line": fault.position.map(|position| position.line),
@@ -155,7 +153,7 @@ fn settings_fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Valu
     })
 }
 
-fn settings_fault_line(fault: &aria_settings::SettingsFault) -> String {
+fn fault_line(fault: &aria_settings::SettingsFault) -> String {
     match fault.position {
         Some(position) => format!("{position}: {}", fault.message),
         None => fault.message.clone(),
@@ -163,10 +161,7 @@ fn settings_fault_line(fault: &aria_settings::SettingsFault) -> String {
 }
 
 /// `applied`, `applied, restart key changed`, or the refusal, which exits 1.
-fn report_settings_write(
-    outcome: aria_settings::command::Outcome,
-    json: bool,
-) -> anyhow::Result<()> {
+fn report_write(outcome: aria_settings::command::Outcome, json: bool) -> anyhow::Result<()> {
     let (restart_key_changed, fault) = match &outcome {
         aria_settings::command::Outcome::Applied {
             restart_key_changed,
@@ -177,11 +172,11 @@ fn report_settings_write(
         let report = serde_json::json!({
             "applied": fault.is_none(),
             "restart_key_changed": restart_key_changed,
-            "error": fault.map(settings_fault_json),
+            "error": fault.map(fault_json),
         });
         println!("{report}");
     } else if let Some(fault) = fault {
-        eprintln!("refused: {}", settings_fault_line(fault));
+        eprintln!("refused: {}", fault_line(fault));
     } else if restart_key_changed {
         println!("applied, restart key changed");
     } else {

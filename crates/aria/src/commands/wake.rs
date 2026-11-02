@@ -17,7 +17,7 @@ pub(super) enum WakeCommand {
 
 pub(super) fn status() -> anyhow::Result<()> {
     let status = DaemonSession::wake_word_status()?;
-    let (message, success) = wake_status_message(status);
+    let (message, success) = status_message(status);
     println!("{message}");
     if !success {
         std::process::exit(1);
@@ -47,7 +47,7 @@ pub(super) fn log() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn wake_status_message(status: WakeWordStatus) -> (&'static str, bool) {
+fn status_message(status: WakeWordStatus) -> (&'static str, bool) {
     match status {
         WakeWordStatus::Listening => ("listening", true),
         WakeWordStatus::Degraded => ("degraded: wake-word monitoring failed", false),
@@ -102,7 +102,7 @@ mod tests {
             (WakeWordStatus::Disabled, false),
             (WakeWordStatus::Stopped, false),
         ] {
-            assert_eq!(wake_status_message(status).1, expected);
+            assert_eq!(status_message(status).1, expected);
         }
     }
 }

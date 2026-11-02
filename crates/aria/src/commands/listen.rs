@@ -37,14 +37,14 @@ pub(super) fn run(command: ListenCommand) -> anyhow::Result<()> {
     let session = DaemonSession::connect_at(&paths)?;
     match command {
         ListenCommand::Start { output, follow } => {
-            listen_start(&session, output)?;
+            start(&session, output)?;
             if follow {
-                listen_follow(&session)?;
+                follow_transcript(&session)?;
             }
             Ok(())
         }
-        ListenCommand::Follow => listen_follow(&session),
-        ListenCommand::Stop => listen_stop(&session),
+        ListenCommand::Follow => follow_transcript(&session),
+        ListenCommand::Stop => stop(&session),
         ListenCommand::Status => {
             let status = session.listen_status()?;
             if status.listening {
@@ -59,15 +59,15 @@ pub(super) fn run(command: ListenCommand) -> anyhow::Result<()> {
         }
         ListenCommand::Toggle { output } => {
             if session.listen_status()?.listening {
-                listen_stop(&session)
+                stop(&session)
             } else {
-                listen_start(&session, output)
+                start(&session, output)
             }
         }
     }
 }
 
-fn listen_start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+fn start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow::Result<()> {
     let started = session.listen_start(output)?;
     let already = if started.already_listening {
         "already "
@@ -81,7 +81,7 @@ fn listen_start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> 
 /// Streams the running session's segments here as they finalize, until
 /// Ctrl-C or stop. Labels are the tentative live ones; the transcript
 /// file's final rewrite may settle on others.
-fn listen_follow(session: &DaemonSession) -> anyhow::Result<()> {
+fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
     let follow = session.follow_listen()?;
     let transcript_path = follow.transcript_path.clone();
 
@@ -153,7 +153,7 @@ fn listen_follow(session: &DaemonSession) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn listen_stop(session: &DaemonSession) -> anyhow::Result<()> {
+fn stop(session: &DaemonSession) -> anyhow::Result<()> {
     let stopped = session.listen_stop()?;
     if stopped.was_listening {
         println!("stopped -> {}", stopped.transcript_path);

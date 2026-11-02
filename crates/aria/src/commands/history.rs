@@ -42,7 +42,7 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
     use aria_voice::history::{HistoryQuery, RetryOptions};
 
     if let HistoryCommand::Clear { yes } = &command
-        && !confirm_history_clear(*yes, std::io::stdin().is_terminal(), answer)?
+        && !confirm_clear(*yes, std::io::stdin().is_terminal(), answer)?
     {
         println!("History clear cancelled.");
         return Ok(());
@@ -52,8 +52,8 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
     let session = DaemonSession::connect_at(&paths)?;
     match command {
         HistoryCommand::Clear { .. } => {
-            let result = session.clear_history().map_err(history_clear_error)?;
-            println!("{}", history_clear_message(result)?);
+            let result = session.clear_history().map_err(clear_error)?;
+            println!("{}", clear_message(result)?);
         }
         HistoryCommand::List { json } => {
             let mut json_entries = Vec::new();
@@ -72,13 +72,13 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
                 }
                 for entry in page.entries {
                     if json {
-                        json_entries.push(history_entry_json(&entry));
+                        json_entries.push(entry_json(&entry));
                     } else {
                         println!(
                             "{}\t{:?}\taudio={}\t{}",
                             entry.id,
                             entry.status,
-                            history_audio_label(entry.audio),
+                            audio_label(entry.audio),
                             entry.text.replace(['\n', '\r', '\t'], " ")
                         );
                     }
@@ -114,7 +114,7 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn confirm_history_clear(
+fn confirm_clear(
     yes: bool,
     interactive: bool,
     read_answer: impl FnOnce(&str) -> anyhow::Result<String>,
@@ -132,9 +132,7 @@ fn confirm_history_clear(
     Ok(matches!(answer.as_str(), "y" | "yes"))
 }
 
-fn history_clear_message(
-    result: aria_voice::history::ClearHistoryResult,
-) -> anyhow::Result<String> {
+fn clear_message(result: aria_voice::history::ClearHistoryResult) -> anyhow::Result<String> {
     anyhow::ensure!(
         !result.cleanup_pending,
         "dictation text cleared, but some recordings could not be removed; Aria will retry"
@@ -145,7 +143,7 @@ fn history_clear_message(
     ))
 }
 
-fn history_clear_error(error: aria_daemon::ClientError) -> anyhow::Error {
+fn clear_error(error: aria_daemon::ClientError) -> anyhow::Error {
     use aria_daemon::ClientError;
     let context = match &error {
         ClientError::Status(status) if status.code() == tonic::Code::Unimplemented => {
@@ -173,7 +171,7 @@ fn history_clear_error(error: aria_daemon::ClientError) -> anyhow::Error {
     anyhow::Error::new(error).context(context)
 }
 
-fn history_entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::Value {
+fn entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::Value {
     serde_json::json!({
         "id": entry.id,
         "created_at_ms": entry.created_at_ms,
@@ -184,7 +182,7 @@ fn history_entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::
     })
 }
 
-fn history_audio_label(audio: aria_voice::history::AudioAvailability) -> &'static str {
+fn audio_label(audio: aria_voice::history::AudioAvailability) -> &'static str {
     use aria_voice::history::AudioAvailability;
     match audio {
         AudioAvailability::Available { .. } => "Available",
@@ -263,17 +261,15 @@ mod tests {
     fn history_clear_requires_explicit_confirmation() {
         for response in ["y", "yes", "", "n", "no", "yep"] {
             assert_eq!(
-                confirm_history_clear(false, true, |_| Ok(response.into())).unwrap(),
+                confirm_clear(false, true, |_| Ok(response.into())).unwrap(),
                 matches!(response, "y" | "yes")
             );
         }
-        assert!(confirm_history_clear(false, true, |_| anyhow::bail!("input failed")).is_err());
-        let error = confirm_history_clear(false, false, |_| panic!("must not prompt")).unwrap_err();
+        assert!(confirm_clear(false, true, |_| anyhow::bail!("input failed")).is_err());
+        let error = confirm_clear(false, false, |_| panic!("must not prompt")).unwrap_err();
         assert!(error.to_string().contains("--yes"));
         for interactive in [true, false] {
-            assert!(
-                confirm_history_clear(true, interactive, |_| panic!("must not prompt")).unwrap()
-            );
+            assert!(confirm_clear(true, interactive, |_| panic!("must not prompt")).unwrap());
         }
     }
 
@@ -284,7 +280,7 @@ mod tests {
 
         for deleted_entries in [0, 42] {
             assert_eq!(
-                history_clear_message(ClearHistoryResult {
+                clear_message(ClearHistoryResult {
                     deleted_entries,
                     cleanup_pending: false,
                 })
@@ -292,7 +288,7 @@ mod tests {
                 format!("Dictation history cleared ({deleted_entries} entries).")
             );
         }
-        let partial = history_clear_message(ClearHistoryResult {
+        let partial = clear_message(ClearHistoryResult {
             deleted_entries: 42,
             cleanup_pending: true,
         })
@@ -310,7 +306,7 @@ mod tests {
             },
         ] {
             assert!(
-                history_clear_error(error)
+                clear_error(error)
                     .to_string()
                     .contains("update Aria and restart")
             );
@@ -333,12 +329,12 @@ mod tests {
             }),
         ) {
             assert!(
-                history_clear_error(error)
+                clear_error(error)
                     .to_string()
                     .contains("could not be confirmed")
             );
         }
-        let busy = history_clear_error(ClientError::Rpc {
+        let busy = clear_error(ClientError::Rpc {
             code: RpcErrorCode::Busy,
             message: "a history retry is active".into(),
         });
@@ -349,13 +345,10 @@ mod tests {
     fn history_listing_distinguishes_audio_states() {
         use aria_voice::history::AudioAvailability;
         assert_eq!(
-            history_audio_label(AudioAvailability::Available { expires_at_ms: 1 }),
+            audio_label(AudioAvailability::Available { expires_at_ms: 1 }),
             "Available"
         );
-        assert_eq!(history_audio_label(AudioAvailability::Expired), "Expired");
-        assert_eq!(
-            history_audio_label(AudioAvailability::Unavailable),
-            "Unavailable"
-        );
+        assert_eq!(audio_label(AudioAvailability::Expired), "Expired");
+        assert_eq!(audio_label(AudioAvailability::Unavailable), "Unavailable");
     }
 }
