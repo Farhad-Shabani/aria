@@ -21,12 +21,12 @@ struct DictationSettings: View {
                 Text("Applies corrections you say as you dictate. Needs **Deliver** set to After recording stops.")
             }
             Section("Recording") {
+                Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
+                    Text("Mute while recording")
+                    Text("System audio comes back when recording stops.")
+                }
                 autoStop(editor)
                 silence(editor)
-                Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
-                    Text("Mute sound while recording")
-                    Text("Sound returns when recording stops.")
-                }
             }
         }
     }
