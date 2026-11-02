@@ -86,7 +86,7 @@ mod tests {
             }
         ));
         assert!(
-            matches!(Cli::try_parse_from(["aria", "ask", "--project", "/projects/aria", "hello"]).unwrap().command, Command::Ask { project: Some(path), .. } if path == Path::new("/projects/aria"))
+            matches!(Cli::try_parse_from(["aria", "ask", "--project", "/projects/aria", "hello"]).unwrap().command, Command::Ask(crate::commands::ask::AskArgs { project: Some(path), .. }) if path == Path::new("/projects/aria"))
         );
         assert!(
             Cli::try_parse_from([

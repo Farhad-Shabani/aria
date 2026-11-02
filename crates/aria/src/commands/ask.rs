@@ -8,22 +8,47 @@ use aria_daemon::{
     Routing, StopMode, Ticket,
 };
 use aria_settings::rpc::RpcErrorCode;
+use clap::Args;
 
-use super::CliOutputMode;
 use super::runtime_paths;
 use super::vocabulary::vocabulary_dir;
+use super::{CliOutputMode, assistant_parser};
 use crate::cli::{INTERRUPTED, Interrupt};
 
+#[derive(Args)]
 pub(super) struct AskArgs {
+    /// The question. Omit it to record one, or pipe it on stdin
     pub(super) text: Option<String>,
+    /// Bind recording vocabulary and the answering assistant to this directory
+    #[arg(long)]
     pub(super) project: Option<PathBuf>,
+    /// Override the shared assistant for this question
+    #[arg(long = "assistant", value_parser = assistant_parser(), value_name = "ASSISTANT")]
     pub(super) assistant_id: Option<AssistantId>,
+    /// Override the shared model choice for this question
+    #[arg(long = "model", value_name = "MODEL_ID")]
     pub(super) model_id: Option<String>,
+    /// The conversation to continue, by name; defaults to this directory's
+    #[arg(long)]
     pub(super) session: Option<String>,
+    /// Start a fresh conversation instead of continuing the last one
+    #[arg(long)]
     pub(super) new: bool,
+    /// Print the ticket and return; the reply shows up in `aria events`
+    #[arg(long)]
     pub(super) detach: bool,
+    /// Deliver the reply like a transcript instead of printing it
+    #[arg(long, value_enum)]
     pub(super) mode: Option<CliOutputMode>,
+    /// Record until you press Esc, run the command again, or Auto-stop ends it
+    #[arg(long)]
     pub(super) toggle: bool,
+    /// Cancel a pending ask by its ticket instead of asking
+    #[arg(
+        long,
+        value_name = "TICKET",
+        conflicts_with_all = ["text", "assistant_id", "model_id", "session", "new", "detach", "mode", "toggle", "project"]
+    )]
     pub(super) cancel: Option<Ticket>,
 }
 
@@ -225,10 +250,10 @@ mod tests {
                 Cli::try_parse_from(["aria", "ask", "--assistant", name, "hello"])
                     .unwrap()
                     .command,
-                Command::Ask {
+                Command::Ask(AskArgs {
                     assistant_id: Some(_),
                     ..
-                }
+                })
             ));
         }
         assert!(Cli::try_parse_from(["aria", "assistant", "unknown"]).is_err());

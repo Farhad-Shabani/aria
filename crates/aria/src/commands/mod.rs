@@ -1,9 +1,7 @@
-//! One module per `aria` command: its arguments, its work, and what it prints.
-
-use std::path::PathBuf;
+//! The `aria` command line: `Cli` parses it and `run` sends each command to its module.
 
 use anyhow::Context;
-use aria_daemon::{AssistantId, OutputMode, Ticket};
+use aria_daemon::{AssistantId, OutputMode};
 use aria_platform::runtime::PreparedRuntimePaths;
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -121,41 +119,7 @@ enum Command {
         command: assistant::AssistantCommand,
     },
     /// Ask an assistant a question and print its reply
-    Ask {
-        /// The question. Omit it to record one, or pipe it on stdin
-        text: Option<String>,
-        /// Bind recording vocabulary and the answering assistant to this directory
-        #[arg(long)]
-        project: Option<PathBuf>,
-        /// Override the shared assistant for this question
-        #[arg(long = "assistant", value_parser = assistant_parser(), value_name = "ASSISTANT")]
-        assistant_id: Option<AssistantId>,
-        /// Override the shared model choice for this question
-        #[arg(long = "model", value_name = "MODEL_ID")]
-        model_id: Option<String>,
-        /// The conversation to continue, by name; defaults to this directory's
-        #[arg(long)]
-        session: Option<String>,
-        /// Start a fresh conversation instead of continuing the last one
-        #[arg(long)]
-        new: bool,
-        /// Print the ticket and return; the reply shows up in `aria events`
-        #[arg(long)]
-        detach: bool,
-        /// Deliver the reply like a transcript instead of printing it
-        #[arg(long, value_enum)]
-        mode: Option<CliOutputMode>,
-        /// Record until you press Esc, run the command again, or Auto-stop ends it
-        #[arg(long)]
-        toggle: bool,
-        /// Cancel a pending ask by its ticket instead of asking
-        #[arg(
-            long,
-            value_name = "TICKET",
-            conflicts_with_all = ["text", "assistant_id", "model_id", "session", "new", "detach", "mode", "toggle", "project"]
-        )]
-        cancel: Option<Ticket>,
-    },
+    Ask(ask::AskArgs),
     /// Transcribe the machine's own audio output to a file
     Listen {
         #[command(subcommand)]
@@ -267,29 +231,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Assistant {
             command: assistant::AssistantCommand::Models { assistant_id, json },
         } => assistant::models(assistant_id, json),
-        Command::Ask {
-            text,
-            project,
-            assistant_id,
-            model_id,
-            session,
-            new,
-            detach,
-            mode,
-            toggle,
-            cancel,
-        } => ask::run(ask::AskArgs {
-            text,
-            project,
-            assistant_id,
-            model_id,
-            session,
-            new,
-            detach,
-            mode,
-            toggle,
-            cancel,
-        }),
+        Command::Ask(args) => ask::run(args),
         Command::Listen { command } => listen::run(command),
         Command::Speaker { command } => speaker::run(command),
         Command::Say {
