@@ -10,7 +10,6 @@ members = [
   "crates/aria-assistant",
   "crates/aria-bench",
   "crates/aria-bench-speaker",
-  "crates/aria-settings",
   "crates/aria-daemon",
   "crates/aria-harness",
   "crates/aria-kit",
@@ -20,6 +19,7 @@ members = [
   "crates/aria-tts",
   "crates/aria-wake",
   "crates/aria-segmentation",
+  "crates/aria-settings",
   "crates/aria-speaker",
   "crates/aria-voice",
   "crates/aria-web",
@@ -51,14 +51,14 @@ strip = "none"
 # stays in that member's manifest.
 [workspace.dependencies]
 # crates.io requires a version beside each internal path.
-aria-settings     = { path = "crates/aria-settings", version = "0.7.0" }
-aria-assistant    = { path = "crates/aria-assistant", version = "0.7.0" }
+aria-assistant   = { path = "crates/aria-assistant", version = "0.7.0" }
 aria-daemon       = { path = "crates/aria-daemon", version = "0.7.0" }
 aria-harness      = { path = "crates/aria-harness", version = "0.7.0" }
 aria-kit          = { path = "crates/aria-kit", version = "0.7.0" }
 aria-platform     = { path = "crates/aria-platform", version = "0.7.0" }
 aria-primitives   = { path = "crates/aria-primitives", version = "0.7.0" }
 aria-segmentation = { path = "crates/aria-segmentation", version = "0.7.0" }
+aria-settings     = { path = "crates/aria-settings", version = "0.7.0" }
 aria-speaker      = { path = "crates/aria-speaker", version = "0.7.0" }
 aria-stt          = { path = "crates/aria-stt", version = "0.7.0" }
 aria-tts          = { path = "crates/aria-tts", version = "0.7.0" }
