@@ -1,8 +1,9 @@
 use anyhow::Context;
 use aria_daemon::guided::DEFAULT_SAMPLES;
 use aria_daemon::{DaemonSession, EnrollmentRequest, Role, SpeakerName, guided};
-use aria_platform::runtime::PreparedRuntimePaths;
 use clap::{Subcommand, ValueEnum};
+
+use super::runtime_paths;
 
 #[derive(Subcommand)]
 pub(super) enum SpeakerCommand {
@@ -45,8 +46,7 @@ impl From<CliRole> for Role {
 }
 
 pub(super) fn run(command: SpeakerCommand) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     // Enrollment records through the daemon's microphone, so it needs the
     // daemon that owns one; a temporary on-demand daemon has none.
     let session = DaemonSession::connect_at(&paths)?;

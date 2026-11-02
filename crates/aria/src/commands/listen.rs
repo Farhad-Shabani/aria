@@ -2,8 +2,9 @@ use std::io::Write;
 
 use anyhow::Context;
 use aria_daemon::{DaemonSession, ListenStage};
-use aria_platform::runtime::PreparedRuntimePaths;
 use clap::Subcommand;
+
+use super::runtime_paths;
 
 #[derive(Subcommand)]
 pub(super) enum ListenCommand {
@@ -32,8 +33,7 @@ pub(super) enum ListenCommand {
 }
 
 pub(super) fn run(command: ListenCommand) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     let session = DaemonSession::connect_at(&paths)?;
     match command {
         ListenCommand::Start { output, follow } => {

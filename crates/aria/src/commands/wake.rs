@@ -1,9 +1,9 @@
 use anyhow::Context;
 use aria_daemon::{Daemon, DaemonSession, WakeWordStatus, read_log_tail};
-use aria_platform::runtime::PreparedRuntimePaths;
 use clap::Subcommand;
 
 use super::logging::init_daemon_logging;
+use super::runtime_paths;
 
 #[derive(Subcommand)]
 pub(super) enum WakeCommand {
@@ -37,8 +37,7 @@ pub(super) fn run() -> anyhow::Result<()> {
 }
 
 pub(super) fn log() -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     let tail = read_log_tail(paths.log_path().to_path_buf())?;
     if tail.is_empty() {
         println!("daemon log is empty");

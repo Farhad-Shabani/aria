@@ -1,11 +1,11 @@
 use std::io::IsTerminal;
 
 use aria_daemon::DaemonSession;
-use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::rpc::RpcErrorCode;
 use clap::Subcommand;
 
 use super::answer;
+use super::runtime_paths;
 
 #[derive(Subcommand)]
 pub(super) enum HistoryCommand {
@@ -48,7 +48,7 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let paths = PreparedRuntimePaths::for_current_user()?;
+    let paths = runtime_paths()?;
     let session = DaemonSession::connect_at(&paths)?;
     match command {
         HistoryCommand::Clear { .. } => {

@@ -1,8 +1,8 @@
 use aria_daemon::{AssistantId, DaemonSession};
-use aria_platform::runtime::PreparedRuntimePaths;
 use clap::Subcommand;
 
 use super::assistant_parser;
+use super::runtime_paths;
 
 #[derive(Subcommand)]
 pub(super) enum AssistantCommand {
@@ -19,7 +19,7 @@ pub(super) enum AssistantCommand {
 }
 
 pub(super) fn models(assistant_id: Option<AssistantId>, json: bool) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()?;
+    let paths = runtime_paths()?;
     let session = DaemonSession::connect_at(&paths)?;
     let assistant_id = match assistant_id {
         Some(assistant_id) => assistant_id,

@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
+use anyhow::Context;
 use aria_daemon::{AssistantId, OutputMode, Ticket};
+use aria_platform::runtime::PreparedRuntimePaths;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod ask;
@@ -297,6 +299,10 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             stop,
         } => say::run(text, voice, rate, stop),
     }
+}
+
+fn runtime_paths() -> anyhow::Result<PreparedRuntimePaths> {
+    PreparedRuntimePaths::for_current_user().context("failed to prepare daemon runtime paths")
 }
 
 /// One line from the terminal, trimmed and lowercased.

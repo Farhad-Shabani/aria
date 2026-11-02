@@ -7,10 +7,10 @@ use aria_daemon::{
     AskError, AssistantId, ChatRequest, ChatStageKind, Clarify, DaemonSession, DeliveryMode,
     Routing, StopMode, Ticket,
 };
-use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::rpc::RpcErrorCode;
 
 use super::CliOutputMode;
+use super::runtime_paths;
 use super::vocabulary::vocabulary_dir;
 use crate::cli::{INTERRUPTED, Interrupt};
 
@@ -28,8 +28,7 @@ pub(super) struct AskArgs {
 }
 
 pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     let session = Arc::new(DaemonSession::connect_at(&paths)?);
     if let Some(ticket) = args.cancel {
         if session.cancel(ticket)? {

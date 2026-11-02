@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use aria_daemon::{DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, StopMode};
-use aria_platform::runtime::PreparedRuntimePaths;
 
 use super::CliOutputMode;
 use super::logging::init_daemon_logging;
+use super::runtime_paths;
 use crate::cli::Interrupt;
 
 pub(super) fn run(
@@ -14,8 +14,7 @@ pub(super) fn run(
     stream: bool,
     no_project: bool,
 ) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     init_daemon_logging(paths.log_path())?;
     let session = Arc::new(DaemonSession::open_at(&paths)?);
     let project = if no_project || !session.get_settings()?.settings.vocabulary_enabled {

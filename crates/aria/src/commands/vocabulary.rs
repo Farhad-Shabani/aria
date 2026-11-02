@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use aria_daemon::DaemonSession;
-use aria_platform::runtime::PreparedRuntimePaths;
 use clap::Subcommand;
+
+use super::runtime_paths;
 
 #[derive(Subcommand)]
 pub(super) enum VocabularyCommand {
@@ -15,7 +16,7 @@ pub(super) enum VocabularyCommand {
 }
 
 pub(super) fn run(command: VocabularyCommand) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()?;
+    let paths = runtime_paths()?;
     let session = DaemonSession::connect_at(&paths)?;
     let status = match command {
         VocabularyCommand::Status { directory } => {

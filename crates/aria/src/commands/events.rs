@@ -5,11 +5,11 @@ use aria_daemon::{
     ChatStage, ChatStageKind, DaemonEvent, DaemonSession, DictationStage, EnrollmentStage,
     ListenStage, SpeechStage,
 };
-use aria_platform::runtime::PreparedRuntimePaths;
+
+use super::runtime_paths;
 
 pub(super) fn run() -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     let events = DaemonSession::connect_at(&paths)?.events()?;
     let mut stdout = std::io::stdout();
     for event in events {

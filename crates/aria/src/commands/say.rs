@@ -1,9 +1,9 @@
 use crate::synthesis::{SpeakingRate, SpeechText, Voice};
 use anyhow::Context;
 use aria_daemon::{DaemonSession, SpeechOutcome, SpeechRequest};
-use aria_platform::runtime::PreparedRuntimePaths;
 
 use super::logging::init_daemon_logging;
+use super::runtime_paths;
 
 pub(super) fn run(
     text: Option<String>,
@@ -11,8 +11,7 @@ pub(super) fn run(
     rate: Option<f32>,
     stop: bool,
 ) -> anyhow::Result<()> {
-    let paths = PreparedRuntimePaths::for_current_user()
-        .context("failed to prepare daemon runtime paths")?;
+    let paths = runtime_paths()?;
     init_daemon_logging(paths.log_path())?;
     let session = DaemonSession::open_at(&paths)?;
 
