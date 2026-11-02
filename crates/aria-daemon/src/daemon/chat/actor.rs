@@ -662,7 +662,7 @@ mod tests {
         let prompt = || {
             ChatJob::Prompt(PromptRequest {
                 text: "hi".to_owned(),
-                kind: aria_settings::settings::PromptKind::Rewrite,
+                kind: aria_settings::PromptKind::Rewrite,
                 file: "/p.md".into(),
                 assistant_id: aria_settings::config::AssistantId::ClaudeCode,
                 model_id: None,

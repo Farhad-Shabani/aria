@@ -5,7 +5,7 @@ use std::sync::Arc;
 use aria_kit::cancel::CancelToken;
 
 use aria_primitives::lazy::Lazy;
-use aria_settings::settings::SettingsCache;
+use aria_settings::SettingsCache;
 use aria_voice::config::{SpeechDefaults, TtsConfig, TtsEngine};
 use aria_voice::speech::{
     SpeechError, SpeechEventEmitter, SpeechOutcome, SpeechRequest, SpeechSettings, SpeechStage,

@@ -332,12 +332,10 @@ mod tests {
             std::fs::write(&path, text).unwrap();
             assert!(matches!(
                 SettingsStore::open(&path),
-                Err(StoreError::Settings(
-                    crate::settings::SettingsError::Invalid {
-                        key: crate::settings::Key::AssistantModels,
-                        ..
-                    }
-                ))
+                Err(StoreError::Settings(crate::SettingsError::Invalid {
+                    key: crate::Key::AssistantModels,
+                    ..
+                }))
             ));
         }
     }
@@ -408,7 +406,7 @@ mod tests {
 
     #[test]
     fn vocabulary_selection_persists() {
-        use crate::settings::Directory;
+        use crate::Directory;
 
         let (_home, path, store) = new_store();
         let selected = Directory::new("/projects/selected".into()).expect("absolute path");
@@ -569,7 +567,7 @@ mod tests {
     /// a restart while applying live.
     #[test]
     fn every_key_behind_these_settings_is_live() {
-        use crate::settings::{Apply, Key};
+        use crate::{Apply, Key};
         for key in [
             Key::DictationOutputMode,
             Key::DictationDeliveryMode,

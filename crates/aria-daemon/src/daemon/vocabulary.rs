@@ -1,7 +1,7 @@
 use super::tasks::Supervised;
 use aria_assistant::memory::Lexicon;
 use aria_kit::cancel::{CancelToken, Deadline};
-use aria_settings::settings::Directory;
+use aria_settings::Directory;
 use aria_voice::vocabulary::{
     MatchError, PersonalRules, State, Status, Term, Vocabulary,
     catalog::{self, Catalog},

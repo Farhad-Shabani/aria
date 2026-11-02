@@ -430,7 +430,7 @@ fn kind_schema(kind: Kind) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Loaded;
+    use crate::Loaded;
     use std::fs;
 
     fn home_with(text: &str) -> tempfile::TempDir {
@@ -715,16 +715,16 @@ mod tests {
     #[test]
     fn the_defaults_load_and_match_what_code_does_without_them() {
         let home = Path::new("/home/user");
-        let defaults = Loaded::parse(&crate::settings::testing::defaults_text(), home)
+        let defaults = Loaded::parse(&crate::testing::defaults_text(), home)
             .expect("every default is valid")
             .settings;
 
-        let mut settings = crate::settings::Settings::from_file(&defaults).expect("valid");
+        let mut settings = crate::Settings::from_file(&defaults).expect("valid");
         assert_eq!(
             settings.assistant_id.take(),
-            Some(crate::settings::Settings::default().resolve_assistant_id())
+            Some(crate::Settings::default().resolve_assistant_id())
         );
-        assert_eq!(crate::settings::Settings::default(), settings);
+        assert_eq!(crate::Settings::default(), settings);
     }
 
     #[test]

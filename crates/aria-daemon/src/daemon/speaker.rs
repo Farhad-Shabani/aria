@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::capture::CaptureBackend;
-use aria_settings::settings::{SettingsPatch, SettingsStore};
+use aria_settings::{SettingsPatch, SettingsStore};
 use aria_voice::enrollment::{
     EnrollError, EnrolledSpeaker, Enroller, EnrollmentEventEmitter, EnrollmentRequest,
     EnrollmentResult, Speakers,

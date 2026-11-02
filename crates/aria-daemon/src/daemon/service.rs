@@ -80,8 +80,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use aria_settings::Position;
     use aria_settings::rpc::RpcErrorCode;
-    use aria_settings::settings::Position;
 
     /// A log sink the test reads back.
     #[derive(Clone, Default)]

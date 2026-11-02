@@ -325,12 +325,12 @@ fn prompt_list(entries: &Keyed<super::PromptEntry>) -> Result<Prompts, InvalidVa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{Chord, Modifiers, Shortcut};
+    use crate::{Chord, Modifiers, Shortcut};
     use aria_platform::delivery::OutputMode;
     use aria_platform::hotkey::AriaKey;
 
     fn settings(text: &str) -> SettingsFile {
-        crate::settings::Loaded::parse(text, std::path::Path::new("/Users/you"))
+        crate::Loaded::parse(text, std::path::Path::new("/Users/you"))
             .expect("the text loads")
             .settings
     }
@@ -365,7 +365,7 @@ mod tests {
             mute_sound: true,
             stt_language: "de".parse().expect("a language"),
             output_mode: OutputMode::Copy,
-            delivery_mode: crate::settings::DeliveryMode::Complete,
+            delivery_mode: crate::DeliveryMode::Complete,
             silence_duration: SilenceDuration::new(Duration::from_millis(2000)).expect("valid"),
             auto_stop: None,
             own_voice_only: true,
@@ -373,9 +373,7 @@ mod tests {
             ask_shortcut: Some(Shortcut::Chord(chord)),
             prompt_list_shortcut: None,
             vocabulary_enabled: true,
-            vocabulary_dir: Some(
-                crate::settings::Directory::new("/src/writ".into()).expect("valid"),
-            ),
+            vocabulary_dir: Some(crate::Directory::new("/src/writ".into()).expect("valid")),
             application_overrides: ApplicationOverrides::new([(
                 ApplicationId::new("com.tinyspeck.slackmacgap").expect("valid"),
                 ApplicationOverride {
@@ -388,7 +386,7 @@ mod tests {
                 Prompt::new(
                     PromptId::new("reply").expect("id"),
                     "Reply".to_owned(),
-                    crate::settings::PromptKind::Compose,
+                    crate::PromptKind::Compose,
                     "/p/reply.md".into(),
                     true,
                     None,
@@ -400,11 +398,11 @@ mod tests {
         let patch = patch(&Settings::default(), &next).expect("encodes");
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = dir.path().join("settings.toml");
-        let written = crate::settings::modify(&path, dir.path(), None, |_current| {
+        let written = crate::modify(&path, dir.path(), None, |_current| {
             Ok::<_, SettingsError>(patch.clone())
         })
         .expect("writes");
-        let crate::settings::Written::Applied(loaded) = written else {
+        let crate::Written::Applied(loaded) = written else {
             panic!("{written:?}");
         };
 

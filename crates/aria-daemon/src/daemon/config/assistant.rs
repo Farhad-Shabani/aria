@@ -6,7 +6,7 @@ use std::time::Duration;
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::memory::MemoryConfig;
 use aria_settings::config::{ConfigError, delivery_timeout, memory_directory, timeout};
-use aria_settings::settings::{Memory, SettingsFile};
+use aria_settings::{Memory, SettingsFile};
 
 /// Long enough for an assistant to read a repo and think.
 const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -46,8 +46,8 @@ pub fn load_memory(memory: &Memory, home: &Path) -> MemoryConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aria_settings::settings::Loaded;
-    use aria_settings::settings::testing::{defaults_text, file, test_home};
+    use aria_settings::Loaded;
+    use aria_settings::testing::{defaults_text, file, test_home};
     use std::path::PathBuf;
 
     #[test]

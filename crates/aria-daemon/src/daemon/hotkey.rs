@@ -421,7 +421,7 @@ mod tests {
     use crate::ipc::wire;
     use aria_platform::hotkey::Combo;
     use aria_platform::runtime::RuntimePaths;
-    use aria_settings::settings::SettingsStore;
+    use aria_settings::SettingsStore;
     use aria_voice::dictation::testing::{RecordsUntilStopped, recording_started};
 
     use super::super::chat::{ChatRuntime, channel as chat_channel};
@@ -603,7 +603,7 @@ mod tests {
             Arc::clone(&subscriptions),
             Arc::clone(&settings),
             Arc::new(
-                aria_settings::settings::SettingsCache::open(
+                aria_settings::SettingsCache::open(
                     directory.path().join("chat-settings.toml"),
                     directory.path().to_path_buf(),
                 )

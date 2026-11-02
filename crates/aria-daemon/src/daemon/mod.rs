@@ -72,8 +72,8 @@ pub use aria_assistant::chat::{
     Focus, Project, ProjectsError, Step, Ticket,
 };
 pub use aria_platform::delivery::OutputMode;
+pub use aria_settings::DeliveryMode;
 pub use aria_settings::config::AssistantId;
-pub use aria_settings::settings::DeliveryMode;
 pub use aria_voice::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };

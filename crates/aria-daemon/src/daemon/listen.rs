@@ -22,7 +22,7 @@ use super::host::DaemonLifetime;
 pub(super) struct ListenState {
     lifetime: DaemonLifetime,
     home: PathBuf,
-    cache: Arc<aria_settings::settings::SettingsCache>,
+    cache: Arc<aria_settings::SettingsCache>,
     events: ListenEventEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
     active: Mutex<Slot>,
@@ -63,7 +63,7 @@ impl ListenState {
     pub(super) fn new(
         lifetime: DaemonLifetime,
         home: PathBuf,
-        cache: Arc<aria_settings::settings::SettingsCache>,
+        cache: Arc<aria_settings::SettingsCache>,
         events: ListenEventEmitter,
         vocabulary: Arc<super::vocabulary::Runtime>,
     ) -> Self {

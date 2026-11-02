@@ -9,7 +9,7 @@ use aria_kit::transcription::{
 use aria_primitives::cancel::CancelToken;
 use serde::Deserialize;
 
-use aria_settings::settings::{CleanupConfigError, validate_cleanup_llm};
+use aria_settings::{CleanupConfigError, validate_cleanup_llm};
 
 const MIN_WORDS: usize = 4;
 const MAX_INPUT_BYTES: usize = 4 * 1024;

@@ -29,7 +29,7 @@ macOS. The scoped recipes use default features.
 - The service reloads `~/.aria/settings.toml` within a second, and keys marked
   restart wait for a restart.
 - Every setting goes through `settings::modify`, and every key through the table
-  in `crates/aria-settings/src/settings/keys.rs`. Keep client-local presentation choices with the client.
+  in `crates/aria-settings/src/keys.rs`. Keep client-local presentation choices with the client.
   Reject unknown keys.
 - Listen transcription and voice tracking read separate
   `RecordingReader::fork()` readers. Preserve the lag and drain bounds in

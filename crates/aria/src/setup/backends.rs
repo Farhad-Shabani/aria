@@ -66,11 +66,7 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
 
 /// Applying the server choice writes the paired server's address, so a
 /// pairing alone makes it ready.
-pub(super) fn stt_choices(
-    file: &aria_settings::settings::Stt,
-    paired: bool,
-    host: &Host,
-) -> Vec<Choice> {
+pub(super) fn stt_choices(file: &aria_settings::Stt, paired: bool, host: &Host) -> Vec<Choice> {
     let mut choices = choices::<Stt>(file.backend.as_deref(), host);
     if paired
         && let Some(server) = choices
@@ -268,7 +264,7 @@ mod tests {
 
     use super::*;
     use crate::primitives::error_chain;
-    use aria_settings::settings::SettingsFile;
+    use aria_settings::SettingsFile;
     use aria_voice::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
 
     #[test]
@@ -364,12 +360,9 @@ mod tests {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
             let aria_voice::config::TranscriptionBackend::Local(transcription) =
-                DictationConfig::load(
-                    &aria_settings::settings::load(&home_dir).unwrap(),
-                    &home_dir,
-                )
-                .unwrap()
-                .transcription
+                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir)
+                    .unwrap()
+                    .transcription
             else {
                 panic!("{} is a local engine", stt.key());
             };
@@ -383,28 +376,26 @@ mod tests {
         {
             let home = home_with_downloads("tts", tts.key(), tts.model().assets());
             let home_dir = home.path().to_path_buf();
-            let checked = match TtsConfig::load(
-                &aria_settings::settings::load(&home_dir).unwrap().tts,
-                &home_dir,
-            )
-            .unwrap()
-            .backend
-            {
-                TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
-                    aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
-                        model,
-                        voices,
-                    })
-                }
-                TtsBackend::Model(TtsModel::Qwen {
-                    model_dir,
-                    tokenizer_dir,
-                }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
-                    model_dir,
-                    speech_tokenizer_dir: tokenizer_dir,
-                }),
-                TtsBackend::System => panic!("the system voice downloads nothing"),
-            };
+            let checked =
+                match TtsConfig::load(&aria_settings::load(&home_dir).unwrap().tts, &home_dir)
+                    .unwrap()
+                    .backend
+                {
+                    TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
+                        aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
+                            model,
+                            voices,
+                        })
+                    }
+                    TtsBackend::Model(TtsModel::Qwen {
+                        model_dir,
+                        tokenizer_dir,
+                    }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
+                        model_dir,
+                        speech_tokenizer_dir: tokenizer_dir,
+                    }),
+                    TtsBackend::System => panic!("the system voice downloads nothing"),
+                };
             if let Err(error) = checked {
                 panic!("{}: {}", tts.key(), error_chain(&error));
             }

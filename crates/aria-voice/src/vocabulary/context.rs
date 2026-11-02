@@ -1,4 +1,4 @@
-use aria_settings::settings::Directory;
+use aria_settings::Directory;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Context {

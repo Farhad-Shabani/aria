@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::transcription::Language;
 use aria_kit::audio::{AutoStop, SilenceDuration};
-use aria_settings::settings::DeliveryMode;
+use aria_settings::DeliveryMode;
 
 pub(crate) mod cleanup;
 mod cursor;
@@ -94,7 +94,7 @@ pub struct DictationSettings {
     pub own_voice_only: bool,
     pub rewriting: Rewriting,
     pub transcript_only: bool,
-    pub project: Option<aria_settings::settings::Directory>,
+    pub project: Option<aria_settings::Directory>,
     /// The app in front as dictation was admitted.
     pub application: Option<aria_platform::delivery::Application>,
     pub target: aria_platform::delivery::TargetPolicy,

@@ -13,7 +13,7 @@ use super::config::load_memory;
 use super::tasks::Supervised;
 use aria_assistant::memory::run_backlog;
 use aria_primitives::error_chain;
-use aria_settings::settings::SettingsCache;
+use aria_settings::SettingsCache;
 
 /// How long the asks have to go quiet before their turns are extracted.
 const QUIET: Duration = Duration::from_secs(120);

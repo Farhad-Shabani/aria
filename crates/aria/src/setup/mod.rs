@@ -33,7 +33,7 @@ use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::ServerEndpoint;
-use aria_settings::settings::{SettingsError, SettingsFile};
+use aria_settings::{SettingsError, SettingsFile};
 use aria_voice::config;
 use aria_voice::speech::SpeechRequest;
 
@@ -269,7 +269,7 @@ pub fn forget_server() -> Result<Forgotten, SetupError> {
 }
 
 fn forget_server_at(home: &Path) -> Result<Forgotten, SetupError> {
-    let _lock = lock_setup(&aria_settings::settings::default_path(home))?;
+    let _lock = lock_setup(&aria_settings::default_path(home))?;
     if aria_settings::config::transcription_engine(&settings_file::read(home)?.stt)
         == aria_settings::config::backend::SERVER
     {
@@ -286,7 +286,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     let exe = std::env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(SetupError::CurrentExe)?;
-    let settings_path = aria_settings::settings::default_path(&home);
+    let settings_path = aria_settings::default_path(&home);
     let host = Host::probe();
     let file = settings_file::read(&home)?;
     let pairing = Pairing::read(&home);
@@ -1004,11 +1004,11 @@ mod tests {
         use aria_voice::config::SpeakerConfig;
 
         let home = tempfile::tempdir().unwrap();
-        let settings_path = aria_settings::settings::default_path(home.path());
+        let settings_path = aria_settings::default_path(home.path());
         fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
         fs::write(&settings_path, "[wake]\nenabled = true\n").unwrap();
         let home_dir = home.path().to_path_buf();
-        let settings = aria_settings::settings::load(&home_dir).unwrap();
+        let settings = aria_settings::load(&home_dir).unwrap();
         let extras: Vec<PathBuf> = EXTRAS
             .iter()
             .flat_map(Asset::files)
@@ -1169,7 +1169,7 @@ mod tests {
 
     fn writable_inspection(home: &Path) -> Inspection {
         let mut inspection = inspection(configured());
-        inspection.settings_path = aria_settings::settings::default_path(home);
+        inspection.settings_path = aria_settings::default_path(home);
         inspection.home = home.to_path_buf();
         fs::create_dir_all(home.join(".aria")).unwrap();
         inspection
@@ -1481,7 +1481,7 @@ mod tests {
     #[test]
     fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
         let home = tempfile::tempdir().unwrap();
-        let config = aria_settings::settings::default_path(home.path());
+        let config = aria_settings::default_path(home.path());
         aria_daemon::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
 
         let running = lock_setup(&config).unwrap();

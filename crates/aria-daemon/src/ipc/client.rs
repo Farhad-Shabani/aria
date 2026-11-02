@@ -6,7 +6,7 @@ use super::{protocol, wire};
 use aria_assistant::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
+use aria_settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
 use aria_voice::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -521,7 +521,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_status(
         &self,
-        directory: Option<&aria_settings::settings::Directory>,
+        directory: Option<&aria_settings::Directory>,
     ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -546,7 +546,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_refresh(
         &self,
-        directory: Option<&aria_settings::settings::Directory>,
+        directory: Option<&aria_settings::Directory>,
     ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
@@ -571,7 +571,7 @@ impl DaemonClient {
 
     pub(crate) fn vocabulary_forget(
         &self,
-        directory: Option<&aria_settings::settings::Directory>,
+        directory: Option<&aria_settings::Directory>,
     ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         let mut vocabulary =
             wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());

@@ -3,7 +3,7 @@ use crate::vocabulary::Context;
 use aria_platform::delivery::{
     Application, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
 };
-use aria_settings::settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
+use aria_settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
 
 impl DictationSettings {
     /// `application` is the app in front as dictation is admitted. Each
@@ -82,8 +82,8 @@ impl DictationSettings {
 mod tests {
     use super::*;
     use crate::dictation::StopMode;
-    use aria_settings::settings::Directory;
-    use aria_settings::settings::{ApplicationId, ApplicationOverrides};
+    use aria_settings::Directory;
+    use aria_settings::{ApplicationId, ApplicationOverrides};
 
     const SLACK: &str = "com.tinyspeck.slackmacgap";
 

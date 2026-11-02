@@ -11,9 +11,7 @@
 
 use super::speech::next_utterance;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
-use aria_settings::settings::{
-    Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify,
-};
+use aria_settings::{Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify};
 use aria_voice::config::{ListenConfig, TtsEngine};
 use aria_voice::dictation::{DictationRequest, StopMode};
 use aria_voice::speech::SpeechRequest;

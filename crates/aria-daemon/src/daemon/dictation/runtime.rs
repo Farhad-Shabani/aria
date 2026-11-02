@@ -16,7 +16,7 @@ use aria_primitives::lazy::Lazy;
 use aria_settings::config::{ConfigError, backend};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
-use aria_settings::settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
+use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, TranscriptionBackend};
 use aria_voice::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
@@ -553,7 +553,7 @@ fn retry_settings(
             if !path.is_dir() {
                 return Err(HistoryError::ProjectUnavailable);
             }
-            aria_settings::settings::Directory::new(path.clone())
+            aria_settings::Directory::new(path.clone())
                 .map_err(|_| HistoryError::ProjectUnavailable)
         })
         .transpose()?;
@@ -622,7 +622,7 @@ mod event_tests {
     use std::time::Duration;
 
     use crate::daemon::subscriptions::EVENT_BUFFER;
-    use aria_settings::settings::SettingsPatch;
+    use aria_settings::SettingsPatch;
 
     use super::*;
 
@@ -846,7 +846,7 @@ mod event_tests {
             _: &mut RecordingReader,
             _: &Language,
             _: bool,
-            _: Option<&aria_settings::settings::Directory>,
+            _: Option<&aria_settings::Directory>,
             _: aria_voice::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
@@ -885,7 +885,7 @@ mod history_tests {
     use std::sync::Mutex;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use aria_settings::settings::Settings;
+    use aria_settings::Settings;
     use aria_voice::dictation::{
         DictationExecutor, DictationPolicy, DictationResult, ExecutionControl,
     };
@@ -913,7 +913,7 @@ mod history_tests {
             recording: &mut RecordingReader,
             language: &Language,
             own_voice_only: bool,
-            project: Option<&aria_settings::settings::Directory>,
+            project: Option<&aria_settings::Directory>,
             _: aria_voice::dictation::Rewriting,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
@@ -1015,7 +1015,7 @@ mod history_tests {
         fixture
             .runtime
             .settings
-            .modify(aria_settings::settings::SettingsPatch {
+            .modify(aria_settings::SettingsPatch {
                 history_enabled: Some(false),
                 ..Default::default()
             })
@@ -1045,7 +1045,7 @@ mod history_tests {
         fixture
             .runtime
             .settings
-            .modify(aria_settings::settings::SettingsPatch {
+            .modify(aria_settings::SettingsPatch {
                 history_keep_audio: Some(true),
                 ..Default::default()
             })
@@ -1147,24 +1147,21 @@ mod history_tests {
             fixture
                 .runtime
                 .settings
-                .modify(aria_settings::settings::SettingsPatch {
+                .modify(aria_settings::SettingsPatch {
                     history_keep_audio: Some(true),
                     ..Default::default()
                 })
                 .unwrap();
             let home_dir = home.clone();
             let mut config =
-                DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
-                    .unwrap();
+                DictationConfig::load(&aria_settings::SettingsFile::default(), &home_dir).unwrap();
             config.transcription = TranscriptionBackend::Server { endpoint };
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: aria_kit::audio::ReplayPace::Immediate,
             };
-            let speaker = SpeakerConfig::load(
-                &aria_settings::settings::SettingsFile::default().speaker,
-                &home_dir,
-            );
+            let speaker =
+                SpeakerConfig::load(&aria_settings::SettingsFile::default().speaker, &home_dir);
             let (vocabulary, _worker) = VocabularyRuntime::new(
                 home.join("vocabulary"),
                 None,
@@ -1304,7 +1301,7 @@ mod history_tests {
             own_voice_only: true,
             vocabulary_enabled: true,
             vocabulary_dir: Some(
-                aria_settings::settings::Directory::new(directory.path().to_path_buf()).unwrap(),
+                aria_settings::Directory::new(directory.path().to_path_buf()).unwrap(),
             ),
             ..Default::default()
         };

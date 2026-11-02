@@ -13,7 +13,7 @@ use aria_platform::delivery::{DeliveryOutcome, OutputMode, Placement, Rect};
 use aria_platform::hotkey::{AriaKey, Combo};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::settings::{
+use aria_settings::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
     DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
     PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
@@ -564,7 +564,7 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
             .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
             .transpose()?;
         let assistant_id = decode_enum::<wire::AssistantId>(request.assistant_id, "assistant_id")?;
-        if !aria_settings::settings::is_valid_model_id(&request.model_id) {
+        if !aria_settings::is_valid_model_id(&request.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
         Ok(Self {
@@ -1075,7 +1075,7 @@ fn project_from_wire(
     Ok(match project {
         None => Context::Default,
         Some(Project::ProjectDirectory(path)) => {
-            Context::Directory(aria_settings::settings::Directory::new(path.into())?)
+            Context::Directory(aria_settings::Directory::new(path.into())?)
         }
         Some(Project::ProjectVocabularyDisabled(_)) => Context::Disabled,
     })
@@ -1301,13 +1301,13 @@ impl From<aria_voice::history::HistoryPage> for wire::ListHistoryResponse {
     }
 }
 
-impl TryFrom<wire::VocabularyRequest> for Option<aria_settings::settings::Directory> {
+impl TryFrom<wire::VocabularyRequest> for Option<aria_settings::Directory> {
     type Error = ProtocolError;
 
     fn try_from(request: wire::VocabularyRequest) -> Result<Self, Self::Error> {
         request
             .directory
-            .map(|path| aria_settings::settings::Directory::new(path.into()).map_err(Into::into))
+            .map(|path| aria_settings::Directory::new(path.into()).map_err(Into::into))
             .transpose()
     }
 }
@@ -1423,7 +1423,7 @@ fn decode_assistant_models(
     let mut models = BTreeMap::new();
     for entry in entries {
         let assistant_id = decode_enum::<wire::AssistantId>(entry.assistant_id, "assistant_id")?;
-        if !aria_settings::settings::is_valid_model_id(&entry.model_id) {
+        if !aria_settings::is_valid_model_id(&entry.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
         if models.insert(assistant_id, entry.model_id).is_some() {
@@ -1472,7 +1472,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                 vocabulary_enabled: settings.vocabulary_enabled,
                 vocabulary_dir: settings
                     .vocabulary_dir
-                    .map(|path| aria_settings::settings::Directory::new(path.into()))
+                    .map(|path| aria_settings::Directory::new(path.into()))
                     .transpose()?,
                 history_enabled: settings.history_enabled,
                 history_keep_audio: settings.history_keep_audio,
@@ -1683,7 +1683,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                     if path.is_empty() {
                         Ok(None)
                     } else {
-                        aria_settings::settings::Directory::new(path.into()).map(Some)
+                        aria_settings::Directory::new(path.into()).map(Some)
                     }
                 })
                 .transpose()?,
@@ -2212,7 +2212,7 @@ pub enum ProtocolError {
     #[error("invalid vocabulary term count {0}")]
     InvalidVocabularyTerms(u64),
     #[error(transparent)]
-    InvalidVocabularyDir(#[from] aria_settings::settings::DirectoryError),
+    InvalidVocabularyDir(#[from] aria_settings::DirectoryError),
     #[error("invalid {field} value {value}")]
     InvalidEnum { field: &'static str, value: i32 },
 
@@ -2956,7 +2956,7 @@ mod tests {
 
     #[test]
     fn project_context_preserves_presence_and_rejects_invalid_paths() {
-        use aria_settings::settings::Directory;
+        use aria_settings::Directory;
         use aria_voice::vocabulary::Context;
         for project in [
             Context::Default,

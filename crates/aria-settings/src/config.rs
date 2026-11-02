@@ -14,7 +14,7 @@ use aria_kit::backend::ModelDownload;
 use aria_kit::synthesis::{SpeakingRateError, VoiceError};
 use aria_primitives::user_home::{self, UserHomeError};
 
-use crate::settings::{Delivery, Memory, SettingsError, Stt};
+use crate::{Delivery, Memory, SettingsError, Stt};
 
 pub mod wake_backend {
     pub const OPEN_WAKE_WORD: &str = "openwakeword";
@@ -136,8 +136,8 @@ impl fmt::Display for ServerEndpoint {
     }
 }
 
-impl From<crate::settings::SettingsError> for ConfigError {
-    fn from(error: crate::settings::SettingsError) -> Self {
+impl From<crate::SettingsError> for ConfigError {
+    fn from(error: crate::SettingsError) -> Self {
         Self::Settings(error)
     }
 }
@@ -191,7 +191,7 @@ pub enum ConfigError {
     WakeRequiresMicrophone,
 
     #[error("invalid dictation.cleanup_llm settings")]
-    CleanupLlm(#[source] crate::settings::CleanupConfigError),
+    CleanupLlm(#[source] crate::CleanupConfigError),
 
     #[error("{field} is not a usable speaking rate")]
     InvalidSpeakingRate {

@@ -39,7 +39,7 @@ impl<'runtime> Context<'runtime> {
         let delivery = DeliveryFactory::detect(&home);
         Ok(Self {
             paths,
-            settings_path: aria_settings::settings::default_path(&home),
+            settings_path: aria_settings::default_path(&home),
             codex_home: codex_home(&home),
             home,
             delivery,

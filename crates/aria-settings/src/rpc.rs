@@ -130,7 +130,7 @@ pub struct RpcFailure {
     pub code: RpcErrorCode,
     pub message: String,
     /// With [`RpcErrorCode::SettingsInvalid`]: where in settings.toml.
-    pub settings_position: Option<crate::settings::Position>,
+    pub settings_position: Option<crate::Position>,
 }
 
 impl RpcFailure {
@@ -142,7 +142,7 @@ impl RpcFailure {
         }
     }
 
-    pub fn with_settings_position(mut self, position: Option<crate::settings::Position>) -> Self {
+    pub fn with_settings_position(mut self, position: Option<crate::Position>) -> Self {
         self.settings_position = position;
         self
     }

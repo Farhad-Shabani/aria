@@ -6,8 +6,8 @@ use tonic::{Request, Response, Status};
 use crate::ipc::wire;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::settings::{SettingsError, SettingsStatus};
-use aria_settings::settings::{SettingsPatch, StoreError};
+use aria_settings::{SettingsError, SettingsStatus};
+use aria_settings::{SettingsPatch, StoreError};
 
 use super::super::operation::CallError;
 use super::super::settings::{SettingsCallError, SettingsHandle};
@@ -161,8 +161,8 @@ mod tests {
     use crate::daemon::DaemonEvent;
     use crate::daemon::testing::HostedDaemon;
     use crate::ipc::ClientError;
-    use aria_settings::settings::Position;
-    use aria_settings::settings::{SettingsPatch, UpdateResult};
+    use aria_settings::Position;
+    use aria_settings::{SettingsPatch, UpdateResult};
 
     const INVALID: &str = "[memory]\nenabled = maybe\n";
 
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn a_refused_write_carries_the_position_as_a_field() {
-        let fault = aria_settings::settings::Loaded::parse(INVALID, std::path::Path::new("/home"))
+        let fault = aria_settings::Loaded::parse(INVALID, std::path::Path::new("/home"))
             .expect_err("invalid");
         let failure = store_error("update", StoreError::FileInvalid(fault));
         assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);

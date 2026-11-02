@@ -15,7 +15,7 @@ use aria_settings::config::{
     ConfigError, DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, backend, delivery_timeout,
     model_file, model_folder, model_location, string_value, timeout, tts_backend,
 };
-use aria_settings::settings::{
+use aria_settings::{
     Capture, CaptureBackendName, Delivery, DeviceName, Dictation, PaceName, SettingsFile, Speaker,
     Stt, Tts, TtsFallbackName,
 };
@@ -256,7 +256,7 @@ fn cleanup_llm(dictation: &Dictation) -> Result<Option<super::LlmCleanupConfig>,
     let Some(config) = &dictation.cleanup_llm else {
         return Ok(None);
     };
-    aria_settings::settings::validate_cleanup_llm(&config.endpoint, &config.model)
+    aria_settings::validate_cleanup_llm(&config.endpoint, &config.model)
         .map_err(ConfigError::CleanupLlm)?;
     Ok(Some(super::LlmCleanupConfig {
         endpoint: config.endpoint.clone(),
@@ -416,8 +416,8 @@ fn timeouts(dictation: &Dictation, delivery: &Delivery) -> Result<DictationTimeo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aria_settings::settings::Loaded;
-    use aria_settings::settings::testing::{file, test_home};
+    use aria_settings::Loaded;
+    use aria_settings::testing::{file, test_home};
     use std::time::Duration;
 
     /// The typed values of `text`, before the file's own rules, for a state
@@ -889,9 +889,8 @@ mod tests {
         let path = dir.path().join("settings.toml");
         let started = "[stt]\nbackend = \"server\"\nserver = \"https://started.test:9851\"\n";
         std::fs::write(&path, started).expect("written");
-        let store =
-            aria_settings::settings::SettingsCache::open(path.clone(), dir.path().to_path_buf())
-                .expect("opens");
+        let store = aria_settings::SettingsCache::open(path.clone(), dir.path().to_path_buf())
+            .expect("opens");
         std::thread::sleep(Duration::from_millis(20));
         std::fs::write(
             &path,
@@ -918,7 +917,7 @@ mod tests {
     #[test]
     fn the_defaults_load_and_match_what_code_does_without_them() {
         let home = Path::new("/home/user");
-        let defaults = Loaded::parse(&aria_settings::settings::testing::defaults_text(), home)
+        let defaults = Loaded::parse(&aria_settings::testing::defaults_text(), home)
             .expect("every default is valid")
             .into_settings();
         let empty = SettingsFile::default();

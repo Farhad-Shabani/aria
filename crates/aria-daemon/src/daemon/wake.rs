@@ -18,7 +18,7 @@ use aria_kit::audio::{
     CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor,
 };
 use aria_primitives::error_chain;
-use aria_settings::settings::DeliveryMode;
+use aria_settings::DeliveryMode;
 use aria_voice::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 
 use super::DictationInitializationError;

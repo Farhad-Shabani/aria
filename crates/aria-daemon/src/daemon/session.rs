@@ -17,7 +17,7 @@ use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_settings::config::{AssistantId, ConfigError};
 use aria_settings::rpc::RpcErrorCode;
-use aria_settings::settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
+use aria_settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
 use aria_voice::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -193,7 +193,7 @@ impl DaemonSession {
         assistant_id: AssistantId,
     ) -> Result<Routing, RouteError> {
         let home = aria_settings::config::home_directory()?;
-        let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
+        let settings = aria_settings::load(&home).map_err(ConfigError::from)?;
         let config = super::config::load_chat(&settings)?;
         let projects = Projects::load_with(&home, &config)?;
         let request = ChatRequest::from_config(text, assistant_id, config)?;
@@ -278,21 +278,21 @@ impl DaemonSession {
 
     pub fn vocabulary_status(
         &self,
-        directory: Option<&aria_settings::settings::Directory>,
+        directory: Option<&aria_settings::Directory>,
     ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         self.client.vocabulary_status(directory)
     }
 
     pub fn vocabulary_refresh(
         &self,
-        directory: Option<&aria_settings::settings::Directory>,
+        directory: Option<&aria_settings::Directory>,
     ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         self.client.vocabulary_refresh(directory)
     }
 
     pub fn vocabulary_forget(
         &self,
-        directory: Option<&aria_settings::settings::Directory>,
+        directory: Option<&aria_settings::Directory>,
     ) -> Result<aria_voice::vocabulary::Status, ClientError> {
         self.client.vocabulary_forget(directory)
     }
@@ -302,7 +302,7 @@ impl DaemonSession {
     }
 
     /// Whether settings.toml is valid, and what waits for a restart.
-    pub fn settings_status(&self) -> Result<aria_settings::settings::SettingsStatus, ClientError> {
+    pub fn settings_status(&self) -> Result<aria_settings::SettingsStatus, ClientError> {
         self.client.settings_status()
     }
 

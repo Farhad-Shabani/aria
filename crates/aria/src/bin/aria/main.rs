@@ -492,7 +492,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 command: SettingsCommand::Check { .. }
             }
     );
-    if !checking && let Some(banner) = aria_settings::settings::banner() {
+    if !checking && let Some(banner) = aria_settings::command::banner() {
         eprintln!("{banner}");
     }
     match cli.command {
@@ -970,7 +970,7 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
         SettingsCommand::Show { key, json } => {
             let pending = aria_daemon::daemon::restart_required_keys()
                 .context("cannot read the running daemon's settings status")?;
-            let rows = aria_settings::settings::show(&pending, key.as_deref())?;
+            let rows = aria_settings::command::show(&pending, key.as_deref())?;
             if json {
                 let rows = rows.iter().map(settings_row_json).collect();
                 println!("{}", serde_json::Value::Array(rows));
@@ -980,13 +980,13 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
             Ok(())
         }
         SettingsCommand::Set { pairs, json } => {
-            report_settings_write(aria_settings::settings::set(&pairs)?, json)
+            report_settings_write(aria_settings::command::set(&pairs)?, json)
         }
         SettingsCommand::Reset { key } => {
-            report_settings_write(aria_settings::settings::reset(&key)?, false)
+            report_settings_write(aria_settings::command::reset(&key)?, false)
         }
         SettingsCommand::Check { json } => {
-            let fault = aria_settings::settings::validate()?;
+            let fault = aria_settings::command::validate()?;
             if json {
                 let report = serde_json::json!({
                     "valid": fault.is_none(),
@@ -1004,27 +1004,27 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
             Ok(())
         }
         SettingsCommand::Create => {
-            println!("{}", aria_settings::settings::create()?.display());
+            println!("{}", aria_settings::command::create()?.display());
             Ok(())
         }
         SettingsCommand::Path => {
-            println!("{}", aria_settings::settings::path()?.display());
+            println!("{}", aria_settings::command::path()?.display());
             Ok(())
         }
         SettingsCommand::Schema => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&aria_settings::settings::schema())?
+                serde_json::to_string_pretty(&aria_settings::command::schema())?
             );
             Ok(())
         }
     }
 }
 
-fn settings_apply(apply: aria_settings::settings::Apply) -> &'static str {
+fn settings_apply(apply: aria_settings::Apply) -> &'static str {
     match apply {
-        aria_settings::settings::Apply::Live => "live",
-        aria_settings::settings::Apply::Restart => "restart",
+        aria_settings::Apply::Live => "live",
+        aria_settings::Apply::Restart => "restart",
     }
 }
 
@@ -1037,7 +1037,7 @@ fn settings_value(value: &serde_json::Value) -> String {
     }
 }
 
-fn print_settings_rows(rows: &[aria_settings::settings::Row]) {
+fn print_settings_rows(rows: &[aria_settings::command::Row]) {
     let values: Vec<String> = rows.iter().map(|row| settings_value(&row.value)).collect();
     let key_width = rows
         .iter()
@@ -1063,7 +1063,7 @@ fn print_settings_rows(rows: &[aria_settings::settings::Row]) {
     }
 }
 
-fn settings_row_json(row: &aria_settings::settings::Row) -> serde_json::Value {
+fn settings_row_json(row: &aria_settings::command::Row) -> serde_json::Value {
     serde_json::json!({
         "key": row.path(),
         "value": row.value,
@@ -1074,7 +1074,7 @@ fn settings_row_json(row: &aria_settings::settings::Row) -> serde_json::Value {
     })
 }
 
-fn settings_fault_json(fault: &aria_settings::settings::SettingsFault) -> serde_json::Value {
+fn settings_fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Value {
     serde_json::json!({
         "message": fault.message,
         "line": fault.position.map(|position| position.line),
@@ -1082,7 +1082,7 @@ fn settings_fault_json(fault: &aria_settings::settings::SettingsFault) -> serde_
     })
 }
 
-fn settings_fault_line(fault: &aria_settings::settings::SettingsFault) -> String {
+fn settings_fault_line(fault: &aria_settings::SettingsFault) -> String {
     match fault.position {
         Some(position) => format!("{position}: {}", fault.message),
         None => fault.message.clone(),
@@ -1091,14 +1091,14 @@ fn settings_fault_line(fault: &aria_settings::settings::SettingsFault) -> String
 
 /// `applied`, `applied, restart key changed`, or the refusal, which exits 1.
 fn report_settings_write(
-    outcome: aria_settings::settings::Outcome,
+    outcome: aria_settings::command::Outcome,
     json: bool,
 ) -> anyhow::Result<()> {
     let (restart_key_changed, fault) = match &outcome {
-        aria_settings::settings::Outcome::Applied {
+        aria_settings::command::Outcome::Applied {
             restart_key_changed,
         } => (*restart_key_changed, None),
-        aria_settings::settings::Outcome::Refused(fault) => (false, Some(fault)),
+        aria_settings::command::Outcome::Refused(fault) => (false, Some(fault)),
     };
     if json {
         let report = serde_json::json!({
@@ -1134,7 +1134,7 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
         .try_init()
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
     let home = aria_settings::config::home_directory()?;
-    let settings = aria_settings::settings::load(&home)?;
+    let settings = aria_settings::load(&home)?;
     let report = aria_assistant::memory::run_backlog(
         aria_daemon::daemon::config::load_memory(&settings.memory, &home),
         &home,
@@ -1167,14 +1167,14 @@ fn chat_request_from_settings(
     assistant_id: AssistantId,
 ) -> anyhow::Result<ChatRequest> {
     let home = aria_settings::config::home_directory()?;
-    let settings = aria_settings::settings::load(&home)?;
+    let settings = aria_settings::load(&home)?;
     let config = aria_daemon::daemon::config::load_chat(&settings)?;
     Ok(ChatRequest::from_config(text, assistant_id, config)?)
 }
 
 fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
     let home = aria_settings::config::home_directory()?;
-    let settings = aria_settings::settings::load(&home)?;
+    let settings = aria_settings::load(&home)?;
     let dir = aria_settings::config::memory_directory(&settings.memory, &home);
     let store = aria_assistant::memory::open(&dir)?;
     match command {
@@ -1411,7 +1411,7 @@ fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// One line per status: the fault, else what waits for a restart, else ok.
-fn settings_line(status: &aria_settings::settings::SettingsStatus) -> String {
+fn settings_line(status: &aria_settings::SettingsStatus) -> String {
     if let Some(fault) = &status.fault {
         return match fault.position {
             Some(position) => format!("settings invalid at {position}: {}", fault.message),
@@ -1515,7 +1515,7 @@ fn run_events() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria_settings::settings::Directory> {
+fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria_settings::Directory> {
     let path = if path.is_absolute() {
         path
     } else {
@@ -1526,7 +1526,7 @@ fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria_settings::settings::Dire
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
         Err(error) => return Err(error.into()),
     };
-    Ok(aria_settings::settings::Directory::new(path)?)
+    Ok(aria_settings::Directory::new(path)?)
 }
 
 fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
@@ -1724,7 +1724,7 @@ fn run_dictate(
     let project = if no_project || !session.get_settings()?.settings.vocabulary_enabled {
         aria_voice::vocabulary::Context::Disabled
     } else {
-        aria_voice::vocabulary::Context::Directory(aria_settings::settings::Directory::new(
+        aria_voice::vocabulary::Context::Directory(aria_settings::Directory::new(
             std::env::current_dir()?,
         )?)
     };
@@ -1818,7 +1818,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
                 .canonicalize()
                 .context("failed to resolve the project directory")?;
             anyhow::ensure!(path.is_dir(), "the project path is not a directory");
-            Ok::<_, anyhow::Error>(aria_settings::settings::Directory::new(path)?)
+            Ok::<_, anyhow::Error>(aria_settings::Directory::new(path)?)
         })
         .transpose()?;
     let stop_mode = if args.toggle {

@@ -1521,7 +1521,7 @@ fn expand_home(path: &Path, home: &Path) -> Result<PathBuf, InvalidValue> {
 pub(super) mod tests {
     use super::*;
 
-    pub(crate) const EXAMPLE: &str = include_str!("../../../../settings.example.toml");
+    pub(crate) const EXAMPLE: &str = include_str!("../../../settings.example.toml");
     pub(crate) const HOME: &str = "/Users/you";
 
     pub(crate) fn load(text: &str) -> Loaded {

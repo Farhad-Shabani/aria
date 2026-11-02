@@ -9,8 +9,8 @@ use crate::microphone::{Admitted, Claim, Gate};
 use crate::transcription::{Language, Transcript, TranscriptionError};
 use aria_kit::audio::{CaptureError, RecordingReader};
 use aria_primitives::error_chain;
+use aria_settings::MAX_DICTATION_TIMEOUT;
 use aria_settings::rpc::RpcErrorCode;
-use aria_settings::settings::MAX_DICTATION_TIMEOUT;
 
 #[cfg(target_os = "macos")]
 use super::output::OutputMute;
@@ -44,7 +44,7 @@ pub trait DictationExecutor: Send + Sync + 'static {
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&aria_settings::settings::Directory>,
+        project: Option<&aria_settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
@@ -65,7 +65,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&aria_settings::settings::Directory>,
+        project: Option<&aria_settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -612,7 +612,7 @@ where
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        project: Option<&aria_settings::settings::Directory>,
+        project: Option<&aria_settings::Directory>,
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -675,7 +675,7 @@ mod tests {
     use crate::transcription::LanguageCode;
     use aria_kit::audio::SilenceDuration;
     use aria_platform::delivery::OutputMode;
-    use aria_settings::settings::DeliveryMode;
+    use aria_settings::DeliveryMode;
 
     use super::*;
 
@@ -1052,7 +1052,7 @@ mod tests {
                 _: &mut RecordingReader,
                 _: &Language,
                 _: bool,
-                _: Option<&aria_settings::settings::Directory>,
+                _: Option<&aria_settings::Directory>,
                 _: Rewriting,
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {

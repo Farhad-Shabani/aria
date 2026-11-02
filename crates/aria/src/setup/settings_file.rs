@@ -4,9 +4,7 @@
 use std::path::Path;
 
 use aria_settings::config::{ServerEndpoint, backend, tts_backend};
-use aria_settings::settings::{
-    self, AriaKeyName, Key, Patch, Refusal, SettingsError, SettingsFile, Written,
-};
+use aria_settings::{AriaKeyName, Key, Patch, Refusal, SettingsError, SettingsFile, Written};
 
 use super::SetupError;
 
@@ -59,8 +57,8 @@ impl Selections {
     ) -> Result<(), SetupError> {
         let current = read(home)?;
         let patch = self.patch(&current, paired_server)?;
-        accepted(settings::check_patch(
-            &settings::default_path(home),
+        accepted(aria_settings::check_patch(
+            &aria_settings::default_path(home),
             home,
             &patch,
         )?)?;
@@ -73,11 +71,12 @@ impl Selections {
         paired_server: Option<&ServerEndpoint>,
     ) -> Result<SettingsWrite, SetupError> {
         let mut changed = false;
-        let written = settings::modify(&settings::default_path(home), home, None, |current| {
-            let patch = self.patch(current, paired_server)?;
-            changed = !patch.is_empty();
-            Ok::<_, SettingsError>(patch)
-        })?;
+        let written =
+            aria_settings::modify(&aria_settings::default_path(home), home, None, |current| {
+                let patch = self.patch(current, paired_server)?;
+                changed = !patch.is_empty();
+                Ok::<_, SettingsError>(patch)
+            })?;
         accepted(written)?;
         Ok(if changed {
             SettingsWrite::Written
@@ -139,7 +138,7 @@ impl Selections {
 }
 
 pub(super) fn read(home: &Path) -> Result<SettingsFile, SetupError> {
-    settings::load(home).map_err(SetupError::Settings)
+    aria_settings::load(home).map_err(SetupError::Settings)
 }
 
 fn accepted(written: Written) -> Result<(), SetupError> {
@@ -178,7 +177,7 @@ mod tests {
     }
 
     fn settings_path(home: &Path) -> std::path::PathBuf {
-        settings::default_path(home)
+        aria_settings::default_path(home)
     }
 
     #[test]
@@ -356,7 +355,7 @@ mod tests {
     }
 
     fn read_text(text: &str) -> SettingsFile {
-        settings::Loaded::parse(text, Path::new("/Users/you"))
+        aria_settings::Loaded::parse(text, Path::new("/Users/you"))
             .unwrap()
             .into_settings()
     }

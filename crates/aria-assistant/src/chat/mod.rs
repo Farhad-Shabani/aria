@@ -26,10 +26,10 @@ use serde::{Deserialize, Serialize};
 
 use aria_platform::delivery::OutputMode;
 use aria_primitives::error_chain;
+use aria_settings::PromptKind;
 use aria_settings::config::AssistantId;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
-use aria_settings::settings::PromptKind;
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
 pub(crate) use assistants::{claude_command, parse_claude};
@@ -139,10 +139,10 @@ impl std::fmt::Display for SessionKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptCall {
     pub text: String,
-    pub prompt: aria_settings::settings::PromptId,
+    pub prompt: aria_settings::PromptId,
     /// The app in front when the chord was pressed, the only one the result
     /// may be typed into. None when the caller could not tell.
-    pub application: Option<aria_settings::settings::ApplicationId>,
+    pub application: Option<aria_settings::ApplicationId>,
     /// A tap of the Aria key cancels this run while it is in flight.
     pub tap_cancels: bool,
 }
@@ -157,7 +157,7 @@ pub struct PromptRequest {
     pub file: PathBuf,
     pub assistant_id: AssistantId,
     pub model_id: Option<String>,
-    pub application: Option<aria_settings::settings::ApplicationId>,
+    pub application: Option<aria_settings::ApplicationId>,
     pub tap_cancels: bool,
 }
 

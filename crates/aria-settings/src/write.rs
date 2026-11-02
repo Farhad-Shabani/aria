@@ -34,7 +34,7 @@ const HEADER: &str = "\
 ";
 
 /// What `create` starts from, commented out so every default stays in code.
-const EXAMPLE: &str = include_str!("../../../../settings.example.toml");
+const EXAMPLE: &str = include_str!("../../../settings.example.toml");
 
 /// The keys one write changes. Everything else in the file stays as it was.
 #[derive(Debug, Clone, Default)]
@@ -697,10 +697,12 @@ fn update_schema(settings_path: &Path) -> Result<(), SettingsError> {
     let path = &resolve_symlinks(settings_path)?.with_file_name(SCHEMA_FILE_NAME);
     let text = format!(
         "{}\n",
-        serde_json::to_string_pretty(&super::schema()).map_err(|error| SettingsError::Io {
-            action: "encode",
-            path: path.to_path_buf(),
-            source: io::Error::other(error),
+        serde_json::to_string_pretty(&crate::command::schema()).map_err(|error| {
+            SettingsError::Io {
+                action: "encode",
+                path: path.to_path_buf(),
+                source: io::Error::other(error),
+            }
         })?
     );
     if holds_text(path, &text) {
@@ -788,7 +790,7 @@ mod tests {
         let schema = fs::read_to_string(directory.path().join(SCHEMA_FILE_NAME)).unwrap();
         assert!(HEADER.contains(&format!("#:schema ./{SCHEMA_FILE_NAME}")));
         let parsed: serde_json::Value = serde_json::from_str(&schema).unwrap();
-        assert_eq!(parsed, super::super::schema());
+        assert_eq!(parsed, crate::command::schema());
     }
 
     #[test]
@@ -823,7 +825,7 @@ mod tests {
         write_schema_beside(&settings);
         let current: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&schema).unwrap()).unwrap();
-        assert_eq!(current, super::super::schema());
+        assert_eq!(current, crate::command::schema());
     }
 
     #[test]

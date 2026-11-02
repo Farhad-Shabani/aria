@@ -19,8 +19,8 @@ use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
+use aria_settings::SettingsFile;
 use aria_settings::config::ConfigError;
-use aria_settings::settings::SettingsFile;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
     CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
@@ -126,14 +126,14 @@ fn loaded<T>(
     load: impl FnOnce(&SettingsFile, &Path) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
     let home = aria_settings::config::home_directory()?;
-    let settings = aria_settings::settings::load(&home)?;
+    let settings = aria_settings::load(&home)?;
     load(&settings, &home)
 }
 
 fn settings_file() -> String {
     match crate::primitives::user_home::resolve() {
         Ok(home) => {
-            let path = aria_settings::settings::default_path(&home);
+            let path = aria_settings::default_path(&home);
             if path.is_file() {
                 path.display().to_string()
             } else {

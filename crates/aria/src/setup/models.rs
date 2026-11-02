@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::primitives::user_home;
-use aria_settings::settings::SettingsFile;
+use aria_settings::SettingsFile;
 use aria_voice::config::{self, LoadedModel};
 
 use super::assets::{self, Asset};

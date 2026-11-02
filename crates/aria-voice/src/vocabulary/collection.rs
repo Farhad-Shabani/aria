@@ -3,7 +3,7 @@ use std::io;
 use aria_kit::cancel::CancelToken;
 
 use super::{Discovery, Source};
-use aria_settings::settings::Directory;
+use aria_settings::Directory;
 
 pub trait Collector: Send + 'static {
     type Error: std::error::Error + Send + Sync + 'static;

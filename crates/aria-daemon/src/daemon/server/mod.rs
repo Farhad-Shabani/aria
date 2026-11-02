@@ -89,7 +89,7 @@ pub(super) struct Actors {
             aria_voice::vocabulary::extract::LocalExtractor,
         >,
     >,
-    pub(super) settings_poll: aria_settings::settings::SettingsPoll,
+    pub(super) settings_poll: aria_settings::SettingsPoll,
 }
 
 impl Server {

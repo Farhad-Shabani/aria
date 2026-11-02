@@ -8,7 +8,7 @@ use aria_settings::rpc::RpcErrorCode;
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
     #[error("failed to read settings")]
-    Settings(#[source] aria_settings::settings::StoreError),
+    Settings(#[source] aria_settings::StoreError),
 
     #[error("failed to resolve the chat settings")]
     Config(#[source] ConfigError),
@@ -52,7 +52,7 @@ pub enum ChatError {
     Session(#[from] SessionStoreError),
 
     #[error("failed to read shared settings")]
-    Settings(#[source] aria_settings::settings::StoreError),
+    Settings(#[source] aria_settings::StoreError),
 
     #[error("no stored prompt has that ID")]
     UnknownPrompt,

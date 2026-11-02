@@ -681,7 +681,7 @@ mod tests {
             .cleanup_llm
             .as_ref()
             .expect("the table stays");
-        crate::settings::validate_cleanup_llm(&frozen.endpoint, &frozen.model)
+        crate::validate_cleanup_llm(&frozen.endpoint, &frozen.model)
             .expect("the live switch and the frozen table load together");
     }
 

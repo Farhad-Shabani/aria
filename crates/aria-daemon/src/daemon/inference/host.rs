@@ -49,7 +49,7 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
     let shutdown = ShutdownSignal::install()?;
     let home = aria_settings::config::home_directory()?;
     // A headless server reads engine keys and never writes.
-    let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
+    let settings = aria_settings::load(&home).map_err(ConfigError::from)?;
     let config = match TranscriptionBackend::load(&settings.stt, &home)? {
         TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
         TranscriptionBackend::Server { .. } => {

@@ -265,7 +265,7 @@ fn failure_from_code(code: RpcErrorCode) -> RpcFailure {
 mod tests {
     use super::*;
     use aria_kit::audio::RecordingReader;
-    use aria_settings::settings::Settings;
+    use aria_settings::Settings;
     use aria_voice::dictation::{DictationRequest, StopMode};
     use aria_voice::transcription::TranscriptionError;
 

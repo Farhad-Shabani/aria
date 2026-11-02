@@ -8,8 +8,8 @@ use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::{ConfigError, memory_directory};
-use aria_settings::settings::{SettingsCache, SettingsError, SettingsFile};
-use aria_settings::settings::{SettingsStore, StoreError};
+use aria_settings::{SettingsCache, SettingsError, SettingsFile};
+use aria_settings::{SettingsStore, StoreError};
 use aria_voice::config::SpeakerConfig;
 use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use aria_voice::microphone::Gate;
@@ -80,7 +80,7 @@ pub enum DaemonError {
 impl DaemonError {
     /// The settings fault that stopped startup, and where it is. Its message
     /// can quote the file, so a log records only the place.
-    pub fn settings_position(&self) -> Option<Option<aria_settings::settings::Position>> {
+    pub fn settings_position(&self) -> Option<Option<aria_settings::Position>> {
         match self {
             Self::Settings(error) => Some(error.position()),
             Self::Store(_)
@@ -277,8 +277,8 @@ fn compose(
         relay,
         health,
     };
-    let settings_poll = aria_settings::settings::SettingsPoll::spawn(Arc::clone(&cache))
-        .map_err(DaemonError::Settings)?;
+    let settings_poll =
+        aria_settings::SettingsPoll::spawn(Arc::clone(&cache)).map_err(DaemonError::Settings)?;
     let actors = Actors {
         history: history_actor,
         dictation: dictation_actor,
@@ -305,7 +305,7 @@ fn compose(
 /// An invalid file stops startup here, with its position.
 fn open_settings(context: &Context<'_>) -> Result<SettingsCache, DaemonError> {
     let home = &context.home;
-    aria_settings::settings::write_schema_beside(&context.settings_path);
+    aria_settings::write_schema_beside(&context.settings_path);
     SettingsCache::open(context.settings_path.clone(), home.to_path_buf())
         .map_err(DaemonError::Settings)
 }
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn an_invalid_settings_file_stops_startup_with_its_position() {
         let (_directory, paths) = prepared();
-        let cache = aria_settings::settings::default_path(paths.spool_dir());
+        let cache = aria_settings::default_path(paths.spool_dir());
         fs::write(&cache, "[tts]\nrate = 9.0\n").expect("written");
 
         let error = build(&paths, DaemonLifetime::OnDemand, WakeWordOverride::Inherit)

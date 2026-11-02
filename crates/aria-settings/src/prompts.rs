@@ -150,7 +150,7 @@ fn has_control(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Modifiers;
+    use crate::Modifiers;
 
     fn prompt(id: &str, chord: Option<Chord>) -> Prompt {
         Prompt::new(

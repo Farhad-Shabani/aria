@@ -8,7 +8,7 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::settings::{Key, Scope};
+use aria_settings::{Key, Scope};
 
 use super::super::service::SettingsRpc;
 use super::redacted;
@@ -207,8 +207,8 @@ mod tests {
     use super::super::super::tasks::Supervised;
     use super::super::SETTINGS_NEED_FIXING;
     use super::*;
-    use aria_settings::settings::SettingsStatus;
-    use aria_settings::settings::SettingsStore;
+    use aria_settings::SettingsStatus;
+    use aria_settings::SettingsStore;
     use wire::settings_service_server::SettingsService;
 
     struct RunningLan {

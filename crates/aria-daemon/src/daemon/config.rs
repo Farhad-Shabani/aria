@@ -8,7 +8,7 @@ pub use assistant::{load_chat, load_memory};
 use std::path::{Path, PathBuf};
 
 use aria_settings::config::{ConfigError, model_location, string_value, wake_backend};
-use aria_settings::settings::{Phone, SettingsFile, Wake};
+use aria_settings::{Phone, SettingsFile, Wake};
 
 use aria_voice::config::{CaptureConfig, DictationConfig, TtsConfig};
 
@@ -171,7 +171,7 @@ const DEFAULT_WAKE_THRESHOLD: f32 = 0.5;
 mod tests {
     use super::*;
     use aria_kit::audio::ReplayPace;
-    use aria_settings::settings::testing::{file, test_home};
+    use aria_settings::testing::{file, test_home};
 
     #[test]
     fn disabled_wake_ignores_its_dormant_settings() {

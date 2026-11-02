@@ -14,9 +14,9 @@ use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use aria_kit::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
 use aria_platform::delivery::{DeliveryError, PlatformTextDelivery};
+use aria_settings::Directory;
 use aria_settings::config::{ConfigError, ServerEndpoint};
 use aria_settings::rpc::RpcErrorCode;
-use aria_settings::settings::Directory;
 use aria_voice::config::{
     DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
 };
@@ -547,8 +547,7 @@ mod tests {
                 ),
             );
             let mut dictation =
-                DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
-                    .unwrap();
+                DictationConfig::load(&aria_settings::SettingsFile::default(), &home_dir).unwrap();
             dictation.transcription = TranscriptionBackend::Server { endpoint };
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
@@ -558,7 +557,7 @@ mod tests {
                 DictationSetup {
                     dictation,
                     speaker: SpeakerConfig::load(
-                        &aria_settings::settings::SettingsFile::default().speaker,
+                        &aria_settings::SettingsFile::default().speaker,
                         &home_dir,
                     ),
                     vocabulary: Arc::clone(&vocabulary.0),
@@ -580,7 +579,7 @@ mod tests {
         let coordinator = Arc::new(built.coordinator);
         let dictate = move || {
             let mut settings = DictationSettings::resolve(
-                aria_settings::settings::Settings::default(),
+                aria_settings::Settings::default(),
                 aria_voice::dictation::DictationRequest::new(
                     aria_voice::dictation::StopMode::Manual,
                 ),
@@ -588,7 +587,7 @@ mod tests {
             );
             settings.own_voice_only = false;
             settings.transcript_only = true;
-            settings.delivery_mode = aria_settings::settings::DeliveryMode::Complete;
+            settings.delivery_mode = aria_settings::DeliveryMode::Complete;
             let coordinator = Arc::clone(&coordinator);
             tokio::task::spawn_blocking(move || {
                 coordinator.execute(
@@ -623,8 +622,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let home_dir = home.path().to_owned();
         let mut config =
-            DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
-                .unwrap();
+            DictationConfig::load(&aria_settings::SettingsFile::default(), &home_dir).unwrap();
         config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
@@ -644,7 +642,7 @@ mod tests {
             dictation: config,
             wake: WakeConfig::Disabled,
             speaker: SpeakerConfig::load(
-                &aria_settings::settings::SettingsFile::default().speaker,
+                &aria_settings::SettingsFile::default().speaker,
                 &home_dir,
             ),
             vocabulary,
@@ -674,16 +672,13 @@ mod tests {
         std::fs::write(prompts.join("cleanup.md"), [0xff]).unwrap();
         let home_dir = home.path().to_owned();
         let mut config =
-            DictationConfig::load(&aria_settings::settings::SettingsFile::default(), &home_dir)
-                .unwrap();
+            DictationConfig::load(&aria_settings::SettingsFile::default(), &home_dir).unwrap();
         config.cleanup_llm = Some(aria_voice::config::LlmCleanupConfig {
             endpoint: "http://127.0.0.1:8080/v1/chat/completions".into(),
             model: "test".into(),
         });
-        let speaker = SpeakerConfig::load(
-            &aria_settings::settings::SettingsFile::default().speaker,
-            &home_dir,
-        );
+        let speaker =
+            SpeakerConfig::load(&aria_settings::SettingsFile::default().speaker, &home_dir);
         let (vocabulary, _worker) = VocabularyRuntime::new(
             home.path().join("vocabulary"),
             None,
@@ -695,7 +690,7 @@ mod tests {
         let audio = aria_kit::audio::canonical_fixture(home.path());
         let mut recording = RecordingReader::from_wav_file(&audio).unwrap();
         let settings = DictationSettings::resolve(
-            aria_settings::settings::Settings::default(),
+            aria_settings::Settings::default(),
             aria_voice::dictation::DictationRequest::new(
                 aria_voice::dictation::StopMode::OnSilence,
             ),

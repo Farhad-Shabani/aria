@@ -424,9 +424,6 @@ mod tests {
     }
 
     fn settings(output_mode: OutputMode) -> DictationSettings {
-        aria_voice::dictation::testing::settings(
-            aria_settings::settings::DeliveryMode::Complete,
-            output_mode,
-        )
+        aria_voice::dictation::testing::settings(aria_settings::DeliveryMode::Complete, output_mode)
     }
 }

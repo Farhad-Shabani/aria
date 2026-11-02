@@ -876,7 +876,7 @@ mod tests {
     async fn normal_streaming_dictation_previews_delivers_and_keeps_history() {
         use aria_kit::audio::{ReplayPace, WavReplayCapture, fixture_of};
         use aria_platform::delivery::OutputMode;
-        use aria_settings::settings::DeliveryMode;
+        use aria_settings::DeliveryMode;
         use aria_voice::dictation::testing::{CallLog, Loud, settings};
         use aria_voice::dictation::{
             DictationEvent, DictationEventEmitter, DictationPipeline, DictationStage,
@@ -970,7 +970,7 @@ mod tests {
 
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_platform::delivery::OutputMode;
-        use aria_settings::settings::DeliveryMode;
+        use aria_settings::DeliveryMode;
         use aria_voice::dictation::testing::{CallLog, Loud, settings};
         use aria_voice::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
@@ -1032,7 +1032,7 @@ mod tests {
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
         use aria_platform::delivery::OutputMode;
-        use aria_settings::settings::DeliveryMode;
+        use aria_settings::DeliveryMode;
         use aria_voice::dictation::testing::{CallLog, Loud, settings};
         use aria_voice::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
