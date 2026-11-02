@@ -765,7 +765,7 @@ fn encode_error(error: &RpcFailure) -> Result<String, HistoryError> {
         return Err(HistoryError::InvalidRequest);
     }
     let stored = StoredError {
-        code: crate::ipc::protocol::error_code_number(error.code),
+        code: crate::ipc::protocol::error_code_to_wire(error.code),
         message: error.message.clone(),
     };
     let stored = serde_json::to_string(&stored).map_err(|_| HistoryError::Storage)?;
@@ -790,7 +790,7 @@ fn decode_error(stored: String) -> rusqlite::Result<RpcFailure> {
         if stored.message.len() > MAX_ERROR_MESSAGE_BYTES {
             return Err(rusqlite::Error::InvalidQuery);
         }
-        let code = crate::ipc::protocol::error_code_from_number(stored.code)
+        let code = crate::ipc::protocol::error_code_from_wire(stored.code)
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         return Ok(RpcFailure::new(code, stored.message));
     }
@@ -1041,7 +1041,7 @@ mod tests {
             r#"{"code":0,"message":"missing category"}"#.to_owned(),
             r#"{"code":"not_a_code","message":"broken"}"#.to_owned(),
             serde_json::to_string(&StoredError {
-                code: crate::ipc::protocol::error_code_number(RpcErrorCode::Internal),
+                code: crate::ipc::protocol::error_code_to_wire(RpcErrorCode::Internal),
                 message: "x".repeat(MAX_ERROR_MESSAGE_BYTES + 1),
             })
             .unwrap(),

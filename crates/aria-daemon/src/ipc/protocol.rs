@@ -61,7 +61,7 @@ pub(crate) fn failure_status(failure: RpcFailure) -> Status {
 impl From<RpcFailure> for wire::RpcError {
     fn from(failure: RpcFailure) -> Self {
         Self {
-            code: error_code_number(failure.code),
+            code: error_code_to_wire(failure.code),
             message: failure.message,
             settings_position: failure.settings_position.map(wire::SettingsPosition::from),
         }
@@ -72,10 +72,8 @@ impl TryFrom<wire::RpcError> for RpcFailure {
     type Error = ProtocolError;
 
     fn try_from(error: wire::RpcError) -> Result<Self, Self::Error> {
-        Ok(
-            Self::new(error_code_from_number(error.code)?, error.message)
-                .with_settings_position(error.settings_position.map(Position::from)),
-        )
+        Ok(Self::new(error_code_from_wire(error.code)?, error.message)
+            .with_settings_position(error.settings_position.map(Position::from)))
     }
 }
 
@@ -410,7 +408,7 @@ impl From<ChatStage> for wire::ChatEvent {
                     text: String::new(),
                     error_message: String::new(),
                     assistant_id,
-                    step: step_number(step),
+                    step: step_to_wire(step),
                     skill,
                     copied: false,
                 }
@@ -421,7 +419,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 copied,
             }) => Self {
                 stage: wire::ChatStage::Replied as i32,
-                error_code: delivery_error.map_or(0, error_code_number),
+                error_code: delivery_error.map_or(0, error_code_to_wire),
                 ticket,
                 text,
                 error_message: String::new(),
@@ -432,7 +430,7 @@ impl From<ChatStage> for wire::ChatEvent {
             },
             ChatStageKind::Failed { code, message } => Self {
                 stage: wire::ChatStage::Failed as i32,
-                error_code: error_code_number(code),
+                error_code: error_code_to_wire(code),
                 ticket,
                 text: String::new(),
                 error_message: message,
@@ -457,12 +455,12 @@ impl TryFrom<&wire::ChatEvent> for ChatStage {
                 text: event.text.clone(),
                 delivery_error: match event.error_code {
                     0 => None,
-                    code => Some(error_code_from_number(code)?),
+                    code => Some(error_code_from_wire(code)?),
                 },
                 copied: event.copied,
             }),
             Ok(wire::ChatStage::Failed) => ChatStageKind::Failed {
-                code: error_code_from_number(event.error_code)?,
+                code: error_code_from_wire(event.error_code)?,
                 message: event.error_message.clone(),
             },
             Ok(wire::ChatStage::Unspecified) | Err(..) => {
@@ -489,7 +487,7 @@ impl From<AssistantId> for wire::AssistantId {
     }
 }
 
-fn step_number(step: Step) -> i32 {
+fn step_to_wire(step: Step) -> i32 {
     let code = match step {
         Step::Thinking => wire::ChatStep::Thinking,
         Step::Reading => wire::ChatStep::Reading,
@@ -656,7 +654,7 @@ impl From<EnrollmentStage> for wire::SpeakerEvent {
                 stage: wire::SpeakerStage::Failed as i32,
                 index: 0,
                 samples: 0,
-                error_code: error_code_number(code),
+                error_code: error_code_to_wire(code),
             },
         }
     }
@@ -678,7 +676,7 @@ impl TryFrom<&wire::SpeakerEvent> for EnrollmentStage {
             Ok(wire::SpeakerStage::Enrolled) => Ok(Self::Enrolled),
             Ok(wire::SpeakerStage::Cancelled) => Ok(Self::Cancelled),
             Ok(wire::SpeakerStage::Failed) => {
-                error_code_from_number(event.error_code).map(Self::Failed)
+                error_code_from_wire(event.error_code).map(Self::Failed)
             }
             Ok(wire::SpeakerStage::Unspecified) | Err(..) => Err(ProtocolError::InvalidEnum {
                 field: "stage",
@@ -857,7 +855,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
                 offset_seconds: 0,
-                error_code: error_code_number(code),
+                error_code: error_code_to_wire(code),
             },
         }
     }
@@ -881,7 +879,7 @@ impl TryFrom<&wire::ListenEvent> for ListenStage {
             }),
             Ok(wire::ListenStage::Stopped) => Ok(Self::Stopped),
             Ok(wire::ListenStage::Failed) => {
-                error_code_from_number(event.error_code).map(Self::Failed)
+                error_code_from_wire(event.error_code).map(Self::Failed)
             }
             Ok(wire::ListenStage::Unspecified) | Err(..) => Err(ProtocolError::InvalidEnum {
                 field: "stage",
@@ -899,7 +897,7 @@ impl From<SpeechStage> for wire::SpeechEvent {
             SpeechStage::Spoken => (wire::SpeechStage::Completed, 0),
             SpeechStage::Stopped => (wire::SpeechStage::Interrupted, 0),
             SpeechStage::Cancelled => (wire::SpeechStage::Cancelled, 0),
-            SpeechStage::Failed(code) => (wire::SpeechStage::Failed, error_code_number(code)),
+            SpeechStage::Failed(code) => (wire::SpeechStage::Failed, error_code_to_wire(code)),
         };
         Self {
             stage: code as i32,
@@ -920,7 +918,7 @@ impl TryFrom<&wire::SpeechEvent> for SpeechStage {
             Ok(wire::SpeechStage::Cancelled) => Ok(Self::Cancelled),
             // 0 is rejected rather than kept as Unknown(0): unknown codes
             // must round-trip, but UNSPECIFIED must never re-enter the wire.
-            Ok(wire::SpeechStage::Failed) => match error_code_from_number(event.error_code) {
+            Ok(wire::SpeechStage::Failed) => match error_code_from_wire(event.error_code) {
                 Ok(code) => Ok(Self::Failed(code)),
                 Err(error) => Err(error),
             },
@@ -2005,7 +2003,9 @@ impl From<DictationStage> for wire::DictationEvent {
                 (wire::DictationStage::Delivered, 0)
             }
             DictationStage::Cancelled => (wire::DictationStage::Cancelled, 0),
-            DictationStage::Failed(code) => (wire::DictationStage::Failed, error_code_number(code)),
+            DictationStage::Failed(code) => {
+                (wire::DictationStage::Failed, error_code_to_wire(code))
+            }
             DictationStage::SegmentTranscribed {
                 text: segment,
                 speaker: heard_in,
@@ -2081,7 +2081,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             Ok(wire::DictationStage::Cancelled) => Ok(Self::Cancelled),
             // 0 is rejected rather than kept as Unknown(0): unknown codes
             // must round-trip, but UNSPECIFIED must never re-enter the wire.
-            Ok(wire::DictationStage::Failed) => match error_code_from_number(event.error_code) {
+            Ok(wire::DictationStage::Failed) => match error_code_from_wire(event.error_code) {
                 Ok(code) => Ok(Self::Failed(code)),
                 Err(error) => Err(error),
             },
@@ -2093,7 +2093,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
     }
 }
 
-pub(crate) fn error_code_number(code: RpcErrorCode) -> i32 {
+pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
     let encoded = match code {
         RpcErrorCode::InvalidRequest => wire::ErrorCode::InvalidRequest,
         RpcErrorCode::Busy => wire::ErrorCode::Busy,
@@ -2143,7 +2143,7 @@ pub(crate) fn error_code_number(code: RpcErrorCode) -> i32 {
     encoded as i32
 }
 
-pub(crate) fn error_code_from_number(code: i32) -> Result<RpcErrorCode, ProtocolError> {
+pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolError> {
     let decoded = match wire::ErrorCode::try_from(code) {
         Ok(wire::ErrorCode::InvalidRequest) => RpcErrorCode::InvalidRequest,
         Ok(wire::ErrorCode::Busy) => RpcErrorCode::Busy,
@@ -2473,7 +2473,7 @@ mod tests {
     }
 
     fn error_code_label(code: i32) -> &'static str {
-        error_code_from_number(code).map_or("unspecified", |code| code.label())
+        error_code_from_wire(code).map_or("unspecified", |code| code.label())
     }
 
     #[test]
@@ -2492,10 +2492,10 @@ mod tests {
         ];
 
         for failure in &failures {
-            let sent = error_code_number(RpcErrorCode::from(failure));
+            let sent = error_code_to_wire(RpcErrorCode::from(failure));
 
             assert_eq!(
-                error_code_from_number(sent).ok(),
+                error_code_from_wire(sent).ok(),
                 Some(failure.into()),
                 "{failure}"
             );
@@ -2525,7 +2525,7 @@ mod tests {
     fn the_zero_code_names_no_failure() {
         let unspecified = wire::ErrorCode::Unspecified as i32;
 
-        assert!(error_code_from_number(unspecified).is_err());
+        assert!(error_code_from_wire(unspecified).is_err());
         assert_eq!(error_code_label(unspecified), "unspecified");
     }
 
@@ -3185,14 +3185,14 @@ mod tests {
         assert_eq!(unchecked.status, wire::AssistantStatus::Unchecked as i32);
         assert!(unchecked.fix.contains("deadline"), "{}", unchecked.fix);
 
-        assert_eq!(error_code_number(RpcErrorCode::AssistantSignedOut), 303);
+        assert_eq!(error_code_to_wire(RpcErrorCode::AssistantSignedOut), 303);
         assert!(matches!(
-            error_code_from_number(303),
+            error_code_from_wire(303),
             Ok(RpcErrorCode::AssistantSignedOut)
         ));
-        assert_eq!(error_code_number(RpcErrorCode::PromptUnreadable), 304);
+        assert_eq!(error_code_to_wire(RpcErrorCode::PromptUnreadable), 304);
         assert!(matches!(
-            error_code_from_number(304),
+            error_code_from_wire(304),
             Ok(RpcErrorCode::PromptUnreadable)
         ));
     }
@@ -3201,11 +3201,10 @@ mod tests {
     fn an_unrecognized_code_survives_the_round_trip() {
         let future = 9_999;
 
-        let decoded =
-            error_code_from_number(future).expect("an unknown code still names a failure");
+        let decoded = error_code_from_wire(future).expect("an unknown code still names a failure");
 
         assert_eq!(decoded, RpcErrorCode::Unknown(future));
-        assert_eq!(error_code_number(decoded), future);
+        assert_eq!(error_code_to_wire(decoded), future);
         assert_eq!(error_code_label(future), "unknown");
     }
 
@@ -3528,7 +3527,7 @@ mod history_tests {
             ),
         ] {
             assert_eq!(
-                error_code_from_number(error_code_number(code)).expect("known code"),
+                error_code_from_wire(error_code_to_wire(code)).expect("known code"),
                 code
             );
             assert_eq!(
