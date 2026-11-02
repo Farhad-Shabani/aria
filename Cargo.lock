@@ -265,7 +265,6 @@ dependencies = [
  "prost-types",
  "protox",
  "rcgen",
- "rusqlite",
  "rustix",
  "rustls-pki-types",
  "serde",

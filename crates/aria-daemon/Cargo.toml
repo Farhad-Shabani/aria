@@ -30,7 +30,6 @@ getrandom         = "0.3"
 prost             = "0.14"
 prost-types       = "0.14"
 rcgen             = "0.14"
-rusqlite          = { workspace = true }
 
 rustix             = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 rustls-pki-types   = "1"
@@ -61,9 +60,9 @@ tracing-subscriber = { workspace = true }
 aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
 
 [dev-dependencies]
-aria-kit = { workspace = true, features = [ "test-support" ] }
-aria-settings  = { workspace = true, features = [ "test-support" ] }
-aria-voice     = { workspace = true, features = [ "test-support" ] }
+aria-kit      = { workspace = true, features = [ "test-support" ] }
+aria-settings = { workspace = true, features = [ "test-support" ] }
+aria-voice    = { workspace = true, features = [ "test-support" ] }
 # The relay's timeouts are minutes long; its tests advance the clock instead.
 tokio = { workspace = true, features = [ "test-util" ] }
 
