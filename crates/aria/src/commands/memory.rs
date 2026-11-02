@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+
+use aria_assistant::memory::Store;
 use clap::Subcommand;
 use tracing_subscriber::EnvFilter;
 
@@ -30,13 +33,18 @@ pub(super) enum MemoryCommand {
     },
 }
 
-pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
+fn open_store() -> anyhow::Result<(Store, PathBuf)> {
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
     let dir = aria_settings::config::memory_directory(&settings.memory, &home);
     let store = aria_assistant::memory::open(&dir)?;
+    Ok((store, dir))
+}
+
+pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
     match command {
         MemoryCommand::List { pending } => {
+            let (store, _) = open_store()?;
             let facts = match pending {
                 true => store.pending_facts()?,
                 false => store.active_facts()?,
@@ -56,6 +64,7 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             }
         }
         MemoryCommand::Why { id } => {
+            let (store, _) = open_store()?;
             let fact = store
                 .get(id)?
                 .ok_or_else(|| anyhow::anyhow!("no fact with id {id}"))?;
@@ -68,6 +77,7 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             println!("  status: {}  created: {}", fact.status, fact.created_at);
         }
         MemoryCommand::Forget { id } => {
+            let (store, dir) = open_store()?;
             let fact = store
                 .get(id)?
                 .ok_or_else(|| anyhow::anyhow!("no fact with id {id}"))?;
@@ -79,6 +89,7 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             println!("Forgotten");
         }
         MemoryCommand::Review => {
+            let (store, dir) = open_store()?;
             let pending = store.pending_facts()?;
             if pending.is_empty() {
                 println!("Nothing to review");
@@ -102,6 +113,7 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             aria_assistant::memory::write_profile(&store, &dir)?;
         }
         MemoryCommand::Lexicon { forget_pair, json } => {
+            let (store, dir) = open_store()?;
             if let Some(id) = forget_pair {
                 anyhow::ensure!(store.forget_pair(id)?, "No pair with id {id}");
                 println!("Pair forgotten");
@@ -155,7 +167,7 @@ fn lexicon_json(
     serde_json::json!({ "terms": terms, "pairs": pairs })
 }
 
-pub(super) fn consolidate() -> anyhow::Result<()> {
+fn consolidate() -> anyhow::Result<()> {
     // Extraction reports what it skipped as warnings; here they belong on
     // the terminal, not in a daemon log.
     tracing_subscriber::fmt()

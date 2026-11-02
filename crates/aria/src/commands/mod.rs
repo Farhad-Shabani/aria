@@ -197,9 +197,6 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Settings { command } => settings::run(command),
         Command::Events => events::run(),
         Command::History { command } => history::run(command),
-        Command::Memory {
-            command: memory::MemoryCommand::Consolidate,
-        } => memory::consolidate(),
         Command::Memory { command } => memory::run(command),
         Command::Vocabulary { command } => vocabulary::run(command),
         Command::Wake {
