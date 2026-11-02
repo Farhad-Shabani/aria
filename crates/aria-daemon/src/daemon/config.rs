@@ -1,6 +1,10 @@
 //! What the daemon itself reads from the settings: the wake word, the Aria
 //! key, and the phone relay.
 
+mod assistant;
+
+pub use assistant::{load_chat, load_memory};
+
 use std::path::{Path, PathBuf};
 
 use aria_settings::config::{ConfigError, model_location, string_value, wake_backend};

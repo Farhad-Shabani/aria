@@ -9,6 +9,7 @@ use aria_kit::cancel::CancelToken;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::config::load_memory;
 use super::tasks::Supervised;
 use aria_assistant::memory::run_backlog;
 use aria_primitives::error_chain;
@@ -51,7 +52,7 @@ impl MemoryBacklog {
         let cache = std::sync::Arc::clone(&self.cache);
         let backlog = move || {
             let settings = cache.effective();
-            run_backlog(&settings, &home, &cancel)
+            run_backlog(load_memory(&settings.memory, &home), &home, &cancel)
         };
         match tokio::task::spawn_blocking(backlog).await {
             Ok(Ok(_)) => self.vocabulary.prepare(None),

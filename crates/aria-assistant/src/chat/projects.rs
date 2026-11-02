@@ -11,7 +11,6 @@ use rustix::fs::{Mode, OFlags};
 
 use crate::chat::ChatConfig;
 use aria_primitives::private_fs::{self, PRIVATE_FILE_MODE};
-use aria_settings::config::ConfigError;
 
 const FOCUS_DIRECTORY: &str = ".aria";
 const FOCUS_FILE: &str = "project";
@@ -66,9 +65,6 @@ impl Projects {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectsError {
-    #[error("failed to read the chat settings")]
-    Config(#[from] ConfigError),
-
     #[error(transparent)]
     Discover(#[from] DiscoverError),
 

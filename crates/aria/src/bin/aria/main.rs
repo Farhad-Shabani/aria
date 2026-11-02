@@ -1133,7 +1133,13 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
         )
         .try_init()
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
-    let report = aria_assistant::memory::consolidate_now()?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::settings::load(&home)?;
+    let report = aria_assistant::memory::run_backlog(
+        aria_daemon::daemon::config::load_memory(&settings.memory, &home),
+        &home,
+        &aria_kit::cancel::CancelToken::never(),
+    )?;
     let results = report.results;
     if results.is_empty() && report.failed == 0 {
         println!("Nothing to consolidate (or memory disabled)");
@@ -1156,8 +1162,21 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn chat_request_from_settings(
+    text: String,
+    assistant_id: AssistantId,
+) -> anyhow::Result<ChatRequest> {
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::settings::load(&home)?;
+    let config = aria_daemon::daemon::config::load_chat(&settings)?;
+    Ok(ChatRequest::from_config(text, assistant_id, config)?)
+}
+
 fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
-    let (store, dir) = aria_assistant::memory::open()?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::settings::load(&home)?;
+    let dir = aria_settings::config::memory_directory(&settings.memory, &home);
+    let store = aria_assistant::memory::open(&dir)?;
     match command {
         MemoryCommand::List { pending } => {
             let facts = match pending {
@@ -1858,7 +1877,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     let (configured, focus) = if let Some(project) = project {
         let request = ChatRequest {
             workdir: project.as_path().to_owned(),
-            ..ChatRequest::configured(text.clone(), assistant_id)?
+            ..chat_request_from_settings(text.clone(), assistant_id)?
         };
         (request, None)
     } else {

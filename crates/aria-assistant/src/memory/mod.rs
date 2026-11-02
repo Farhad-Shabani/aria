@@ -17,11 +17,7 @@ mod eval;
 #[cfg(test)]
 mod eval_stats;
 
-use std::path::PathBuf;
-
-use aria_kit::cancel::CancelToken;
-
-use aria_settings::config::{ConfigError, memory_directory};
+use std::path::Path;
 
 pub use consolidate::ConsolidationReport;
 pub use consolidate::run_backlog;
@@ -38,26 +34,7 @@ pub const EVAL_CASES: &str = include_str!("eval_cases.json");
 pub const LEXICON_FILE: &str = "lexicon.txt";
 pub(crate) const PROFILE_FILE: &str = "profile.md";
 
-#[derive(Debug, thiserror::Error)]
-pub enum MemoryError {
-    #[error("failed to read the memory settings")]
-    Config(#[from] ConfigError),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
-
-/// The store and its directory as the settings find them.
-pub fn open() -> Result<(Store, PathBuf), MemoryError> {
-    let home = aria_settings::config::home_directory()?;
-    let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
-    let dir = memory_directory(&settings.memory, &home);
-    let store = Store::open(&dir.join(DB_FILE))?;
-    Ok((store, dir))
-}
-
-/// Extracts from every session with new turns, now, in this process.
-pub fn consolidate_now() -> Result<ConsolidationReport, MemoryError> {
-    let home = aria_settings::config::home_directory()?;
-    let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
-    run_backlog(&settings, &home, &CancelToken::never())
+/// The store in the memory directory.
+pub fn open(dir: &Path) -> Result<Store, StoreError> {
+    Store::open(&dir.join(DB_FILE))
 }

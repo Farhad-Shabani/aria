@@ -12,11 +12,10 @@ use super::extract::{
 use super::lexicon::load_terms;
 use super::profile::write_profile;
 use super::store::{Store, StoreError};
-use super::{DB_FILE, LEXICON_FILE, MemoryError};
+use super::{DB_FILE, LEXICON_FILE};
 use crate::chat::AssistantError;
 use crate::memory::MemoryConfig;
 use aria_primitives::error_chain;
-use aria_settings::settings::SettingsFile;
 
 #[derive(Debug, Default)]
 pub struct ConsolidationReport {
@@ -100,11 +99,10 @@ fn consolidate_one(
 /// off. A session that fails is logged and left for the next run; a store
 /// that cannot be opened is the caller's to report.
 pub fn run_backlog(
-    settings: &SettingsFile,
+    config: MemoryConfig,
     home: &Path,
     cancel: &CancelToken,
-) -> Result<ConsolidationReport, MemoryError> {
-    let config = MemoryConfig::load(&settings.memory, home);
+) -> Result<ConsolidationReport, StoreError> {
     if !config.enabled {
         return Ok(ConsolidationReport::default());
     }
@@ -351,7 +349,12 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         assert!(
             run_backlog(
-                &aria_settings::settings::SettingsFile::default(),
+                MemoryConfig {
+                    enabled: false,
+                    extract_model: "sonnet".to_owned(),
+                    max_facts_per_session: 10,
+                    dir: home.path().join(".aria/memory"),
+                },
                 home.path(),
                 &CancelToken::never()
             )

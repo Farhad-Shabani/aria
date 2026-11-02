@@ -8,7 +8,6 @@ use crate::ipc::{
     ClientError, ConnectError, DaemonClient, DaemonEvent, EventStream, Liveness, ProbeError,
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
 };
-use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
     Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
     ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
@@ -193,11 +192,9 @@ impl DaemonSession {
         clarify: Clarify,
         assistant_id: AssistantId,
     ) -> Result<Routing, RouteError> {
-        let home = aria_settings::config::home_directory().map_err(ProjectsError::Config)?;
-        let settings = aria_settings::settings::load(&home)
-            .map_err(ConfigError::from)
-            .map_err(ProjectsError::Config)?;
-        let config = ChatConfig::load(&settings).map_err(ProjectsError::Config)?;
+        let home = aria_settings::config::home_directory()?;
+        let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
+        let config = super::config::load_chat(&settings)?;
         let projects = Projects::load_with(&home, &config)?;
         let request = ChatRequest::from_config(text, assistant_id, config)?;
         let project = match projects.mentioned(&request.text) {
@@ -517,6 +514,9 @@ pub enum Routing {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouteError {
+    #[error("failed to read the chat settings")]
+    Config(#[from] ConfigError),
+
     #[error(transparent)]
     Projects(#[from] ProjectsError),
 

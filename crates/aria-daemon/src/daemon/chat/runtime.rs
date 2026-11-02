@@ -2,15 +2,16 @@
 //! conversation it continues, and the reply's optional delivery. Ordering
 //! between asks is the actor's job; here only the record file is shared.
 
+use super::super::config::{load_chat, load_memory};
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
+use super::error::{ChatError, ResolveError};
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
     AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
-    CODEX_BINARY, ChatError, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
+    CODEX_BINARY, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
     ChatSubscribers, ClaudeCodeAssistant, CodexAssistant, Projects, PromptCall, PromptRequest,
-    PromptRun, ResolveError, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink,
-    read_instructions,
+    PromptRun, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink, read_instructions,
 };
 use aria_assistant::memory::MemoryConfig;
 use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
@@ -284,7 +285,7 @@ impl ChatRuntime {
 
     fn chat_config(&self) -> Result<ChatConfig, ConfigError> {
         let settings = self.cache.effective();
-        ChatConfig::load(&settings)
+        load_chat(&settings)
     }
 
     fn ask<A: Assistant>(
@@ -460,7 +461,7 @@ impl ChatRuntime {
     /// The memory section when it is on.
     fn memory(&self) -> Option<MemoryConfig> {
         let settings = self.cache.effective();
-        let config = MemoryConfig::load(&settings.memory, &self.home);
+        let config = load_memory(&settings.memory, &self.home);
         config.enabled.then_some(config)
     }
 

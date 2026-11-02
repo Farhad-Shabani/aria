@@ -10,8 +10,6 @@
 //! make on start.
 
 use super::speech::next_utterance;
-use aria_assistant::chat::ChatConfig;
-use aria_assistant::memory::MemoryConfig;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use aria_settings::settings::{
     Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify,
@@ -87,12 +85,15 @@ impl LiveHarness {
 
     fn next_ask(&self) -> String {
         let settings = self.cache.effective();
-        format!("{:?}", ChatConfig::load(&settings))
+        format!("{:?}", super::config::load_chat(&settings))
     }
 
     fn next_memory_run(&self) -> String {
         let settings = self.cache.effective();
-        format!("{:?}", MemoryConfig::load(&settings.memory, &self.home))
+        format!(
+            "{:?}",
+            super::config::load_memory(&settings.memory, &self.home)
+        )
     }
 
     fn next_listen(&self) -> String {

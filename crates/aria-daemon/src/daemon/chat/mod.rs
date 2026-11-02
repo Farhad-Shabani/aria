@@ -2,7 +2,9 @@
 //! schedules it.
 
 mod actor;
+mod error;
 mod runtime;
 
 pub(in crate::daemon) use actor::{ChatActor, ChatCallError, ChatHandle, channel};
+pub(in crate::daemon) use error::ChatError;
 pub(in crate::daemon) use runtime::ChatRuntime;

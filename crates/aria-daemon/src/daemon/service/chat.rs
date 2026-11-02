@@ -7,8 +7,9 @@ use aria_kit::cancel::CancelToken;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
+use super::super::chat::ChatError;
 use crate::ipc::wire;
-use aria_assistant::chat::{AssistantError, ChatError, ChatRequest, PromptCall, Ticket};
+use aria_assistant::chat::{AssistantError, ChatRequest, PromptCall, Ticket};
 use aria_primitives::error_chain;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};

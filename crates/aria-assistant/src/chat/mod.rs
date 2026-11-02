@@ -24,9 +24,9 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::ChildProcessError;
 use serde::{Deserialize, Serialize};
 
-use aria_platform::delivery::{DeliveryError, OutputMode};
+use aria_platform::delivery::OutputMode;
 use aria_primitives::error_chain;
-use aria_settings::config::{AssistantId, ConfigError};
+use aria_settings::config::AssistantId;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::settings::PromptKind;
@@ -81,13 +81,6 @@ pub struct ChatRequest {
 }
 
 impl ChatRequest {
-    pub fn configured(text: String, assistant_id: AssistantId) -> Result<Self, ChatRequestError> {
-        let home = aria_settings::config::home_directory()?;
-        let settings = aria_settings::settings::load(&home).map_err(ConfigError::from)?;
-        let config = ChatConfig::load(&settings)?;
-        Self::from_config(text, assistant_id, config)
-    }
-
     pub fn from_config(
         text: String,
         assistant_id: AssistantId,
@@ -170,9 +163,6 @@ pub struct PromptRequest {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChatRequestError {
-    #[error("failed to read the chat settings")]
-    Config(#[from] ConfigError),
-
     #[error("failed to read the working directory")]
     CurrentDir(#[source] std::io::Error),
 }
@@ -383,87 +373,6 @@ pub enum AssistantError {
 pub struct AskTarget {
     pub workdir: PathBuf,
     pub assistant_id: AssistantId,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ResolveError {
-    #[error("failed to read settings")]
-    Settings(#[source] aria_settings::settings::StoreError),
-
-    #[error("failed to resolve the chat settings")]
-    Config(#[source] ConfigError),
-
-    #[error("failed to read the known projects")]
-    Projects(#[source] ProjectsError),
-
-    #[error("failed to resolve the assistant's working directory")]
-    Directory(#[source] std::io::Error),
-
-    #[error(
-        "no project is in focus and assistant.workdir is unset; ask from a project once, \
-         or set assistant.workdir"
-    )]
-    NoTarget,
-}
-
-impl From<&ResolveError> for RpcErrorCode {
-    fn from(error: &ResolveError) -> Self {
-        match error {
-            ResolveError::Config(_) | ResolveError::Projects(_) | ResolveError::Settings(_) => {
-                Self::Internal
-            }
-            ResolveError::NoTarget | ResolveError::Directory(_) => Self::InvalidRequest,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ChatError {
-    #[error("failed to resolve the chat settings")]
-    Config(#[source] ConfigError),
-
-    #[error(transparent)]
-    Assistant(#[from] AssistantError),
-
-    #[error("failed to deliver the reply")]
-    Delivery(#[source] DeliveryError),
-
-    #[error(transparent)]
-    Session(#[from] SessionStoreError),
-
-    #[error("failed to read shared settings")]
-    Settings(#[source] aria_settings::settings::StoreError),
-
-    #[error("no stored prompt has that ID")]
-    UnknownPrompt,
-
-    #[error("that prompt is turned off")]
-    PromptOff,
-
-    #[error(transparent)]
-    Instructions(#[from] InstructionsError),
-}
-
-impl From<&ChatError> for RpcErrorCode {
-    fn from(error: &ChatError) -> Self {
-        match error {
-            ChatError::Config(_) | ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
-            ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
-            ChatError::Assistant(AssistantError::NoWorkdir(_))
-            | ChatError::UnknownPrompt
-            | ChatError::PromptOff => Self::InvalidRequest,
-            ChatError::Instructions(_) => Self::PromptUnreadable,
-            ChatError::Assistant(AssistantError::Timeout(_)) => Self::AssistantTimeout,
-            ChatError::Assistant(AssistantError::SignedOut { .. }) => Self::AssistantSignedOut,
-            ChatError::Assistant(AssistantError::Cancelled)
-            | ChatError::Delivery(DeliveryError::Cancelled) => Self::Cancelled,
-            ChatError::Assistant(_) => Self::AssistantFailed,
-            ChatError::Delivery(DeliveryError::Timeout(_)) => Self::DeliveryTimeout,
-            ChatError::Delivery(DeliveryError::TargetChanged) => Self::DeliveryTargetChanged,
-            ChatError::Delivery(DeliveryError::ApplicationExcluded) => Self::ApplicationExcluded,
-            ChatError::Delivery(_) => Self::DeliveryFailed,
-        }
-    }
 }
 
 #[cfg(test)]
