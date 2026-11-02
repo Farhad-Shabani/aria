@@ -428,7 +428,7 @@ mod tests {
         let current =
             Settings::from_file(&settings("[shortcuts]\naria_key = \"off\"\n")).expect("valid");
         let next = Settings {
-            mute_sound: true,
+            mute_sound: false,
             ..current.clone()
         };
         let keys: Vec<Key> = patch(&current, &next).expect("encodes").keys().collect();

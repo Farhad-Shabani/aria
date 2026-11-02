@@ -17,8 +17,21 @@ use super::output::OutputMute;
 
 use super::{
     DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings, DictationStage,
-    RecordingId, Rewriting, StopMode,
+    MutedOutputs, RecordingId, Rewriting, StopMode,
 };
+
+/// Long enough for the start cue to play out before the device goes quiet.
+#[cfg(target_os = "macos")]
+const START_CUE_ALLOWANCE: Duration = Duration::from_millis(600);
+
+/// A released slot stays empty, so a mute that wakes after the recording ended
+/// can't leave the device muted.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct OutputSlot {
+    mute: Option<OutputMute>,
+    is_released: bool,
+}
 
 /// What a recording said, and the engine that heard it.
 pub struct Transcribed {
@@ -274,9 +287,9 @@ pub struct ExecutionControl {
     /// scope's late end says nothing after it.
     capture_abandoned: AtomicBool,
     #[cfg(target_os = "macos")]
-    mute_sound: bool,
+    muted_outputs: Option<Arc<MutedOutputs>>,
     #[cfg(target_os = "macos")]
-    output: std::sync::Mutex<Option<OutputMute>>,
+    output: std::sync::Mutex<OutputSlot>,
 }
 
 impl ExecutionControl {
@@ -285,7 +298,7 @@ impl ExecutionControl {
         stop_mode: StopMode,
         cancellation: CancelToken,
         deadline: Deadline,
-        _mute_sound: bool,
+        _muted_outputs: Option<Arc<MutedOutputs>>,
     ) -> Self {
         Self {
             id,
@@ -296,9 +309,9 @@ impl ExecutionControl {
             capture_polled: AtomicBool::new(false),
             capture_abandoned: AtomicBool::new(false),
             #[cfg(target_os = "macos")]
-            mute_sound: _mute_sound,
+            muted_outputs: _muted_outputs,
             #[cfg(target_os = "macos")]
-            output: std::sync::Mutex::new(None),
+            output: std::sync::Mutex::default(),
         }
     }
 
@@ -327,7 +340,7 @@ impl ExecutionControl {
             stop_mode,
             cancellation,
             policy.deadline(),
-            false,
+            None,
         ))
     }
 
@@ -387,16 +400,39 @@ impl ExecutionControl {
             control: Arc::clone(self),
             events: events.clone(),
         };
-        #[cfg(target_os = "macos")]
-        if self.mute_sound {
-            *self.output() = OutputMute::acquire();
-        }
         events.emit(DictationStage::Recording(self.id));
+        #[cfg(target_os = "macos")]
+        self.mute_output_after_start_cue();
         Ok(guard)
     }
 
     #[cfg(target_os = "macos")]
-    fn output(&self) -> std::sync::MutexGuard<'_, Option<OutputMute>> {
+    fn mute_output_after_start_cue(self: &Arc<Self>) {
+        let Some(muted_outputs) = self.muted_outputs.clone() else {
+            return;
+        };
+        let control = Arc::clone(self);
+        let spawned = thread::Builder::new()
+            .name("aria-output-mute".into())
+            .spawn(move || {
+                thread::sleep(START_CUE_ALLOWANCE);
+                control.mute_output_with(|| OutputMute::acquire(&muted_outputs));
+            });
+        if let Err(error) = spawned {
+            tracing::warn!(%error, "could not mute output; recording continues");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn mute_output_with(&self, acquire: impl FnOnce() -> Option<OutputMute>) {
+        let mut output = self.output();
+        if !output.is_released {
+            output.mute = acquire();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn output(&self) -> std::sync::MutexGuard<'_, OutputSlot> {
         self.output.lock().unwrap_or_else(|poisoned| {
             tracing::error!("the output mute lock was poisoned; recovering");
             poisoned.into_inner()
@@ -408,7 +444,8 @@ impl ExecutionControl {
         {
             // Keep admission blocked until the native restore finishes.
             let mut output = self.output();
-            drop(output.take());
+            output.is_released = true;
+            drop(output.mute.take());
         }
     }
 
@@ -441,6 +478,8 @@ impl ExecutionControl {
                 recording = %self.id,
                 "capture did not let go of the recording in time"
             );
+            // The terminal stage's cue has to be audible.
+            self.restore_output();
         }
     }
 
@@ -505,6 +544,8 @@ pub struct DictationCoordinator<E> {
     policy: DictationPolicy,
     executor: E,
     microphone: Arc<Gate>,
+    /// Absent, the coordinator never touches a real output device.
+    muted_outputs: Option<Arc<MutedOutputs>>,
     /// Counts from one; zero is what the wire refuses.
     next_recording: AtomicU64,
 }
@@ -518,8 +559,15 @@ where
             policy,
             executor,
             microphone,
+            muted_outputs: None,
             next_recording: AtomicU64::new(1),
         }
+    }
+
+    #[must_use]
+    pub fn with_muted_outputs(mut self, muted_outputs: Option<Arc<MutedOutputs>>) -> Self {
+        self.muted_outputs = muted_outputs;
+        self
     }
 
     pub fn execute(
@@ -559,7 +607,7 @@ where
             settings.stop_mode,
             cancellation,
             self.policy.deadline(),
-            settings.mute_sound,
+            self.muted_outputs.clone().filter(|_| settings.mute_sound),
         ));
         match self
             .microphone
@@ -939,7 +987,7 @@ mod tests {
             StopMode::Manual,
             cancel.clone(),
             policy.deadline(),
-            false,
+            None,
         ));
 
         let guard = control.start_recording(&events).expect("recording starts");
@@ -984,6 +1032,83 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn a_capture_that_never_lets_go_still_gets_its_sound_back() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        control.output().mute = Some(fake_output(&writes));
+        let stuck = control
+            .start_recording(&DictationEventEmitter::unsubscribed())
+            .unwrap();
+
+        control.await_capture_release();
+
+        assert_eq!(*writes.lock().unwrap(), [1, 0]);
+        drop(stuck);
+        assert_eq!(*writes.lock().unwrap(), [1, 0]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_mute_that_wakes_after_the_recording_ended_does_nothing() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        control.restore_output();
+
+        control.mute_output_with(|| Some(fake_output(&writes)));
+
+        assert!(writes.lock().unwrap().is_empty());
+        assert!(control.output().mute.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_mute_during_the_recording_is_restored_when_it_ends() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        control.mute_output_with(|| Some(fake_output(&writes)));
+        assert_eq!(*writes.lock().unwrap(), [1]);
+
+        control.restore_output();
+        assert_eq!(*writes.lock().unwrap(), [1, 0]);
+    }
+
+    /// Tests resolve default settings, so only a coordinator given the ledger
+    /// may reach a real output device.
+    #[test]
+    fn only_a_coordinator_with_a_ledger_mutes_when_the_setting_is_on() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = Arc::new(MutedOutputs::new(directory.path().join("muted.json")));
+        for (muted_outputs, mute_sound, expected) in [
+            (None, true, false),
+            (Some(Arc::clone(&ledger)), false, false),
+            (Some(Arc::clone(&ledger)), true, true),
+        ] {
+            let (executor, _edges) = RecordsUntilStopped::new();
+            let coordinator = DictationCoordinator::new(
+                DictationPolicy::new(Duration::from_secs(5)).unwrap(),
+                executor,
+                crate::microphone::Gate::new(),
+            )
+            .with_muted_outputs(muted_outputs);
+            let mut request = settings(StopMode::Manual);
+            request.mute_sound = mute_sound;
+
+            let Ok(Admission::Execute(control, _claim)) =
+                coordinator.admit(&request, CancelToken::never())
+            else {
+                panic!("the microphone is free");
+            };
+
+            #[cfg(target_os = "macos")]
+            assert_eq!(control.muted_outputs.is_some(), expected);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (control, expected);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn recording_cleanup_restores_without_a_terminal_event() {
         for ending in ["stop", "cancel", "deadline", "never_started", "panic"] {
             let events = DictationEventEmitter::unsubscribed();
@@ -997,10 +1122,10 @@ mod tests {
                 StopMode::Manual,
                 CancelToken::new(),
                 Deadline::after(timeout),
-                false,
+                None,
             ));
             let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
-            *control.output() = Some(fake_output(&writes));
+            control.output().mute = Some(fake_output(&writes));
             let guard = control.start_recording(&events).unwrap();
             match ending {
                 "stop" => assert!(control.request_recording_stop()),
@@ -1040,7 +1165,7 @@ mod tests {
                 control: &Arc<ExecutionControl>,
                 events: &DictationEventEmitter,
             ) -> Result<DictationResult, DictationError> {
-                *control.output() = Some(fake_output(&self.writes));
+                control.output().mute = Some(fake_output(&self.writes));
                 let guard = control.start_recording(events)?;
                 assert!(!guard.should_stop());
                 *self.retained.lock().unwrap() = Some(guard);
@@ -1084,7 +1209,7 @@ mod tests {
         else {
             panic!("the failed execution must release admission");
         };
-        *next.output() = Some(fake_output(&writes));
+        next.output().mute = Some(fake_output(&writes));
         let next_recording = next
             .start_recording(&DictationEventEmitter::unsubscribed())
             .unwrap();

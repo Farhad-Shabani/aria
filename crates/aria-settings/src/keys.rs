@@ -161,7 +161,7 @@ keys! {
         "The longest one recording may run.";
     DictationTimeoutSecs: "dictation.timeout_secs", Restart, Mac, [], Kind::Number, Some("660.0"),
         "The longest a whole dictation may take, recording included.";
-    DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("false"),
+    DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("true"),
         "Mutes your Mac's sound while recording.";
     DictationCleanup: "dictation.cleanup", Live, Mac, [], Kind::Bool, Some("false"),
         "Drops \"um\", \"uh\" and repeated words before delivery.";

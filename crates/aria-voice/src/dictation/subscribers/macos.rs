@@ -27,8 +27,8 @@ impl MacosFeedback {
         }
     }
 
-    pub(super) fn observe(&self, stage: &DictationStage, suppress_cues: bool) {
-        let Some(cue) = Cue::for_stage(stage, suppress_cues) else {
+    pub(super) fn observe(&self, stage: &DictationStage) {
+        let Some(cue) = Cue::for_stage(stage) else {
             return;
         };
         if let Some(clip) = self.clip(cue) {
@@ -67,10 +67,7 @@ enum Cue {
 }
 
 impl Cue {
-    fn for_stage(stage: &DictationStage, suppress_cues: bool) -> Option<Self> {
-        if suppress_cues {
-            return None;
-        }
+    fn for_stage(stage: &DictationStage) -> Option<Self> {
         match stage {
             DictationStage::Recording(..) => Some(Self::Start),
             // A focus change or a switched-off app is an ending, not a failure.
@@ -108,7 +105,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mute_policy_suppresses_every_cue() {
+    fn each_ending_and_the_start_have_their_cue() {
         let stages = [
             (
                 DictationStage::Recording(crate::dictation::RecordingId(1)),
@@ -139,11 +136,10 @@ mod tests {
             ),
         ];
         for (stage, cue) in stages {
-            assert_eq!(Cue::for_stage(&stage, false), Some(cue));
-            assert_eq!(Cue::for_stage(&stage, true), None);
+            assert_eq!(Cue::for_stage(&stage), Some(cue));
         }
-        assert_eq!(Cue::for_stage(&DictationStage::Cancelled, false), None);
-        assert_eq!(Cue::for_stage(&DictationStage::Transcribing, false), None);
+        assert_eq!(Cue::for_stage(&DictationStage::Cancelled), None);
+        assert_eq!(Cue::for_stage(&DictationStage::Transcribing), None);
     }
 
     #[test]

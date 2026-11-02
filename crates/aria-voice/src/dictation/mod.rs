@@ -11,6 +11,8 @@ mod cursor;
 mod event;
 mod execution;
 mod level;
+#[cfg(not(target_os = "macos"))]
+mod no_output;
 #[cfg(target_os = "macos")]
 mod output;
 #[cfg(test)]
@@ -36,6 +38,10 @@ pub use execution::{
 };
 use level::Meter;
 pub use level::MicLevel;
+#[cfg(not(target_os = "macos"))]
+pub use no_output::MutedOutputs;
+#[cfg(target_os = "macos")]
+pub use output::MutedOutputs;
 pub use pipeline::DictationPipeline;
 pub use rewrites::{ConfiguredLayers, Rewrites, Rewriting};
 pub use transcripts::{TranscriptSink, Utterance};

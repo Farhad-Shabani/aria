@@ -15,7 +15,7 @@ silence_duration_ms = 1500
 # Silence, in ms, that ends a tapped recording. 3000 to 60000. 0 is off.
 auto_stop_ms = 10000
 # Mutes your Mac's sound while recording. The sound comes back when recording stops.
-mute_sound = false
+mute_sound = true
 # Drops "um", "uh" and repeated words before delivery.
 cleanup = false
 # Applies a spoken self-correction: "meet at 3, actually 4" becomes "meet at 4". English only.

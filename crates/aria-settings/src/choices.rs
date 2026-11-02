@@ -115,7 +115,7 @@ impl Default for Settings {
             delivery_mode: DeliveryMode::Streaming,
             silence_duration: SilenceDuration::default(),
             auto_stop: Some(AutoStop::default()),
-            mute_sound: false,
+            mute_sound: true,
             cleanup: false,
             backtrack: false,
             own_voice_only: false,
