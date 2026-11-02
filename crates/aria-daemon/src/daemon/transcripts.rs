@@ -10,13 +10,11 @@ use aria_voice::dictation::{
 };
 use aria_voice::history::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
-    HistorySource, HistoryStatus,
+    HistorySource, HistoryStatus, MAX_ENTRY_BYTES, Store as HistoryStore,
 };
 
-pub(in crate::daemon) mod storage;
-
 pub(super) struct TranscriptStore {
-    storage: Option<Arc<storage::Store>>,
+    storage: Option<Arc<HistoryStore>>,
     warning: Mutex<Option<String>>,
 }
 
@@ -28,7 +26,7 @@ impl TranscriptStore {
             .and_then(|parent| {
                 aria_primitives::private_fs::prepare_directory(parent)
                     .map_err(|_| HistoryError::Storage)?;
-                storage::Store::open(directory)
+                HistoryStore::open(directory)
             });
         match opened {
             Ok(storage) => Self {
@@ -50,7 +48,7 @@ impl TranscriptStore {
         }
     }
 
-    pub(super) fn storage(&self) -> Result<Arc<storage::Store>, HistoryError> {
+    pub(super) fn storage(&self) -> Result<Arc<HistoryStore>, HistoryError> {
         self.storage.clone().ok_or(HistoryError::Unavailable)
     }
 
@@ -203,7 +201,7 @@ impl TranscriptSink for History {
             && !self.oversized
         {
             let spaced = Caret::between(&entry.text, "").insert(utterance.text);
-            if entry.text.len() + spaced.len() > storage::MAX_ENTRY_BYTES {
+            if entry.text.len() + spaced.len() > MAX_ENTRY_BYTES {
                 self.oversized = true;
             } else {
                 entry.text.push_str(&spaced);
@@ -214,7 +212,7 @@ impl TranscriptSink for History {
 
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
         if let Some(entry) = &mut self.live {
-            self.oversized = utterance.text.len() > storage::MAX_ENTRY_BYTES;
+            self.oversized = utterance.text.len() > MAX_ENTRY_BYTES;
             if !self.oversized {
                 entry.text = utterance.text.to_owned();
                 entry.complete = true;
@@ -521,10 +519,8 @@ mod tests {
         sink.dictation_started(&settings(), &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
         sink.segment(Utterance::anonymous("partial")).unwrap();
-        sink.completed(Utterance::anonymous(
-            &"x".repeat(storage::MAX_ENTRY_BYTES + 1),
-        ))
-        .unwrap();
+        sink.completed(Utterance::anonymous(&"x".repeat(MAX_ENTRY_BYTES + 1)))
+            .unwrap();
         sink.recording_finished(&mut recording, Ok(()));
         let page = saved
             .list(HistoryQuery {

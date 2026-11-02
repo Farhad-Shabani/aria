@@ -12,19 +12,19 @@ use aria_kit::primitives::private_fs;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
-use aria_kit::audio::RecordingReader;
-use aria_platform::delivery::Application;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::history::{
+use super::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
     HistorySource, HistoryStatus,
 };
+use aria_kit::audio::RecordingReader;
+use aria_platform::delivery::Application;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 const MAX_ENTRIES: usize = 1_000;
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
 const MAX_STORED_ERROR_BYTES: usize = 2 * 1024;
 const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
-pub(super) const MAX_ENTRY_BYTES: usize = 128 * 1024;
+pub const MAX_ENTRY_BYTES: usize = 128 * 1024;
 const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
 const TEXT_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
@@ -34,7 +34,7 @@ const AUDIO_WARNING: &str = "The recording could not be saved. Audio recovery is
 const UNREADABLE_WARNING: &str = "Some unreadable history entries were removed.";
 const COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine";
 
-pub(in crate::daemon) struct Store {
+pub struct Store {
     directory: PathBuf,
     audio_directory: File,
     // The one lock also bounds audio copies. Copies need their own admission
@@ -52,10 +52,10 @@ struct State {
     _ownership: File,
 }
 
-pub(in crate::daemon) struct RetryLease {
-    pub(in crate::daemon) entry: HistoryEntry,
+pub struct RetryLease {
+    pub entry: HistoryEntry,
     /// Read from the descriptor whose size was checked.
-    pub(in crate::daemon) recording: RecordingReader,
+    pub recording: RecordingReader,
     store: Arc<Store>,
 }
 
@@ -71,7 +71,7 @@ impl Drop for RetryLease {
 }
 
 impl Store {
-    pub(in crate::daemon) fn open(directory: &Path) -> Result<Arc<Self>, HistoryError> {
+    pub fn open(directory: &Path) -> Result<Arc<Self>, HistoryError> {
         private_fs::prepare_directory(directory).map_err(|_| HistoryError::Storage)?;
         let directory = directory
             .canonicalize()
@@ -155,7 +155,7 @@ impl Store {
         Ok(store)
     }
 
-    pub(in crate::daemon) fn insert(
+    pub fn insert(
         &self,
         mut entry: HistoryEntry,
         audio: Option<&Path>,
@@ -224,10 +224,7 @@ impl Store {
         Ok(saved)
     }
 
-    pub(in crate::daemon) fn list(
-        &self,
-        query: &HistoryQuery,
-    ) -> Result<HistoryPage, HistoryError> {
+    pub fn list(&self, query: &HistoryQuery) -> Result<HistoryPage, HistoryError> {
         if query.query.len() > 256 || query.limit == 0 || query.limit > 100 {
             return Err(HistoryError::InvalidRequest);
         }
@@ -259,14 +256,14 @@ impl Store {
         })
     }
 
-    pub(in crate::daemon) fn get(&self, id: u64) -> Result<HistoryEntry, HistoryError> {
+    pub fn get(&self, id: u64) -> Result<HistoryEntry, HistoryError> {
         validate_id(id)?;
         let mut state = self.lock()?;
         self.maintain(&mut state)?;
         load(&state, id)
     }
 
-    pub(in crate::daemon) fn delete(&self, id: u64) -> Result<bool, HistoryError> {
+    pub fn delete(&self, id: u64) -> Result<bool, HistoryError> {
         validate_id(id)?;
         let mut state = self.lock()?;
         if state.pinned.contains(&id) {
@@ -282,7 +279,7 @@ impl Store {
         Ok(true)
     }
 
-    pub(in crate::daemon) fn clear(&self) -> Result<ClearHistoryResult, HistoryError> {
+    pub fn clear(&self) -> Result<ClearHistoryResult, HistoryError> {
         let mut state = self.lock()?;
         if !state.pinned.is_empty() {
             return Err(HistoryError::Busy);
@@ -298,10 +295,7 @@ impl Store {
         })
     }
 
-    pub(in crate::daemon) fn begin_retry(
-        self: &Arc<Self>,
-        id: u64,
-    ) -> Result<RetryLease, HistoryError> {
+    pub fn begin_retry(self: &Arc<Self>, id: u64) -> Result<RetryLease, HistoryError> {
         validate_id(id)?;
         let mut state = self.lock()?;
         self.maintain(&mut state)?;
@@ -332,7 +326,7 @@ impl Store {
         })
     }
 
-    pub(in crate::daemon) fn recover(
+    pub fn recover(
         &self,
         id: u64,
         text: &str,
@@ -370,11 +364,7 @@ impl Store {
         Ok(entry)
     }
 
-    pub(in crate::daemon) fn attempt_failed(
-        &self,
-        id: u64,
-        error: HistoryError,
-    ) -> Result<(), HistoryError> {
+    pub fn attempt_failed(&self, id: u64, error: HistoryError) -> Result<(), HistoryError> {
         validate_id(id)?;
         let error = encode_error(&error.into())?;
         let state = self.lock()?;
@@ -388,7 +378,7 @@ impl Store {
         Ok(())
     }
 
-    pub(in crate::daemon) fn maintenance(&self) -> Result<(), HistoryError> {
+    pub fn maintenance(&self) -> Result<(), HistoryError> {
         let mut state = self.lock()?;
         self.maintain(&mut state)
     }
@@ -753,11 +743,112 @@ fn status_number(status: HistoryStatus) -> u8 {
     }
 }
 
-/// Keeps the wire code number, which outlives renames of `RpcErrorCode` variants.
+/// Keeps a frozen number, which outlives renames of `RpcErrorCode` variants.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StoredError {
     code: i32,
     message: String,
+}
+
+/// The numbers in existing rows. They never change. A new code takes the number
+/// `errors.proto` gives it.
+fn stored_code(code: RpcErrorCode) -> i32 {
+    match code {
+        RpcErrorCode::InvalidRequest => 1,
+        RpcErrorCode::Busy => 2,
+        RpcErrorCode::Internal => 3,
+        RpcErrorCode::Cancelled => 4,
+        RpcErrorCode::Unauthenticated => 5,
+        RpcErrorCode::Unsupported => 6,
+        RpcErrorCode::ShuttingDown => 7,
+        RpcErrorCode::PayloadTooLarge => 8,
+        RpcErrorCode::PermissionDenied => 9,
+        RpcErrorCode::DurabilityUnconfirmed => 10,
+        RpcErrorCode::SettingsInvalid => 11,
+        RpcErrorCode::OverallTimeout => 100,
+        RpcErrorCode::RecordingTimeout => 101,
+        RpcErrorCode::DeliveryTimeout => 102,
+        RpcErrorCode::CaptureFailed => 103,
+        RpcErrorCode::NoSpeech => 104,
+        RpcErrorCode::TranscriptionFailed => 105,
+        RpcErrorCode::DeliveryFailed => 106,
+        RpcErrorCode::DeliveryTargetChanged => 108,
+        RpcErrorCode::DeliveryInterrupted => 109,
+        RpcErrorCode::ApplicationExcluded => 110,
+        RpcErrorCode::SynthesisFailed => 200,
+        RpcErrorCode::PlaybackFailed => 201,
+        RpcErrorCode::SpeechTimeout => 202,
+        RpcErrorCode::VoiceUnavailable => 203,
+        RpcErrorCode::AssistantUnavailable => 300,
+        RpcErrorCode::AssistantFailed => 301,
+        RpcErrorCode::AssistantTimeout => 302,
+        RpcErrorCode::AssistantSignedOut => 303,
+        RpcErrorCode::PromptUnreadable => 304,
+        RpcErrorCode::SpeakerModelMissing => 500,
+        RpcErrorCode::SpeakerAlreadyEnrolled => 501,
+        RpcErrorCode::SpeakerNotEnrolled => 502,
+        RpcErrorCode::SpeakerInconsistentSamples => 503,
+        RpcErrorCode::SpeakerProfileWriteFailed => 504,
+        RpcErrorCode::SpeakerNoSpeech => 505,
+        RpcErrorCode::ListenUnsupportedOs => 800,
+        RpcErrorCode::ListenPermissionDenied => 801,
+        RpcErrorCode::ListenCaptureFailed => 802,
+        RpcErrorCode::HistoryMissing => 900,
+        RpcErrorCode::HistoryAudioUnavailable => 901,
+        RpcErrorCode::HistoryUnavailable => 902,
+        RpcErrorCode::HistoryProjectUnavailable => 903,
+        RpcErrorCode::Unknown(value) => value,
+    }
+}
+
+fn code_from_stored(number: i32) -> Option<RpcErrorCode> {
+    Some(match number {
+        0 => return None,
+        1 => RpcErrorCode::InvalidRequest,
+        2 => RpcErrorCode::Busy,
+        3 => RpcErrorCode::Internal,
+        4 => RpcErrorCode::Cancelled,
+        5 => RpcErrorCode::Unauthenticated,
+        6 => RpcErrorCode::Unsupported,
+        7 => RpcErrorCode::ShuttingDown,
+        8 => RpcErrorCode::PayloadTooLarge,
+        9 => RpcErrorCode::PermissionDenied,
+        10 => RpcErrorCode::DurabilityUnconfirmed,
+        11 => RpcErrorCode::SettingsInvalid,
+        100 => RpcErrorCode::OverallTimeout,
+        101 => RpcErrorCode::RecordingTimeout,
+        102 => RpcErrorCode::DeliveryTimeout,
+        103 => RpcErrorCode::CaptureFailed,
+        104 => RpcErrorCode::NoSpeech,
+        105 => RpcErrorCode::TranscriptionFailed,
+        106 => RpcErrorCode::DeliveryFailed,
+        108 => RpcErrorCode::DeliveryTargetChanged,
+        109 => RpcErrorCode::DeliveryInterrupted,
+        110 => RpcErrorCode::ApplicationExcluded,
+        200 => RpcErrorCode::SynthesisFailed,
+        201 => RpcErrorCode::PlaybackFailed,
+        202 => RpcErrorCode::SpeechTimeout,
+        203 => RpcErrorCode::VoiceUnavailable,
+        300 => RpcErrorCode::AssistantUnavailable,
+        301 => RpcErrorCode::AssistantFailed,
+        302 => RpcErrorCode::AssistantTimeout,
+        303 => RpcErrorCode::AssistantSignedOut,
+        304 => RpcErrorCode::PromptUnreadable,
+        500 => RpcErrorCode::SpeakerModelMissing,
+        501 => RpcErrorCode::SpeakerAlreadyEnrolled,
+        502 => RpcErrorCode::SpeakerNotEnrolled,
+        503 => RpcErrorCode::SpeakerInconsistentSamples,
+        504 => RpcErrorCode::SpeakerProfileWriteFailed,
+        505 => RpcErrorCode::SpeakerNoSpeech,
+        800 => RpcErrorCode::ListenUnsupportedOs,
+        801 => RpcErrorCode::ListenPermissionDenied,
+        802 => RpcErrorCode::ListenCaptureFailed,
+        900 => RpcErrorCode::HistoryMissing,
+        901 => RpcErrorCode::HistoryAudioUnavailable,
+        902 => RpcErrorCode::HistoryUnavailable,
+        903 => RpcErrorCode::HistoryProjectUnavailable,
+        other => RpcErrorCode::Unknown(other),
+    })
 }
 
 fn encode_error(error: &RpcFailure) -> Result<String, HistoryError> {
@@ -765,7 +856,7 @@ fn encode_error(error: &RpcFailure) -> Result<String, HistoryError> {
         return Err(HistoryError::InvalidRequest);
     }
     let stored = StoredError {
-        code: crate::ipc::protocol::error_code_to_wire(error.code),
+        code: stored_code(error.code),
         message: error.message.clone(),
     };
     let stored = serde_json::to_string(&stored).map_err(|_| HistoryError::Storage)?;
@@ -790,8 +881,7 @@ fn decode_error(stored: String) -> rusqlite::Result<RpcFailure> {
         if stored.message.len() > MAX_ERROR_MESSAGE_BYTES {
             return Err(rusqlite::Error::InvalidQuery);
         }
-        let code = crate::ipc::protocol::error_code_from_wire(stored.code)
-            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let code = code_from_stored(stored.code).ok_or(rusqlite::Error::InvalidQuery)?;
         return Ok(RpcFailure::new(code, stored.message));
     }
     if stored.len() > MAX_ERROR_MESSAGE_BYTES {
@@ -1034,6 +1124,23 @@ mod tests {
     }
 
     #[test]
+    fn stored_codes_keep_their_numbers_and_read_back() {
+        for (code, number) in [
+            (RpcErrorCode::InvalidRequest, 1),
+            (RpcErrorCode::Internal, 3),
+            (RpcErrorCode::SettingsInvalid, 11),
+            (RpcErrorCode::DeliveryTargetChanged, 108),
+            (RpcErrorCode::PromptUnreadable, 304),
+            (RpcErrorCode::HistoryProjectUnavailable, 903),
+            (RpcErrorCode::Unknown(9_999), 9_999),
+        ] {
+            assert_eq!(stored_code(code), number);
+            assert_eq!(code_from_stored(number), Some(code));
+        }
+        assert_eq!(code_from_stored(0), None);
+    }
+
+    #[test]
     fn malformed_or_oversized_stored_errors_are_rejected() {
         for error in [
             "{broken".to_owned(),
@@ -1041,7 +1148,7 @@ mod tests {
             r#"{"code":0,"message":"missing category"}"#.to_owned(),
             r#"{"code":"not_a_code","message":"broken"}"#.to_owned(),
             serde_json::to_string(&StoredError {
-                code: crate::ipc::protocol::error_code_to_wire(RpcErrorCode::Internal),
+                code: stored_code(RpcErrorCode::Internal),
                 message: "x".repeat(MAX_ERROR_MESSAGE_BYTES + 1),
             })
             .unwrap(),

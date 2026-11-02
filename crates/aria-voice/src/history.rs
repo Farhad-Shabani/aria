@@ -1,3 +1,7 @@
+mod store;
+
+pub use store::{MAX_ENTRY_BYTES, RetryLease, Store};
+
 use std::path::PathBuf;
 
 use aria_platform::delivery::Application;
