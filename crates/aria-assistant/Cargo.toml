@@ -1,0 +1,30 @@
+[package]
+name                 = "aria-assistant"
+version.workspace    = true
+edition.workspace    = true
+description          = "Aria's assistant features: chat with coding assistants and what they remember"
+license              = "GPL-3.0-only"
+repository.workspace = true
+readme.workspace     = true
+publish              = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aria-kit        = { workspace = true }
+aria-platform   = { workspace = true }
+aria-primitives = { workspace = true }
+aria-settings   = { workspace = true }
+rusqlite        = { workspace = true }
+rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+tempfile        = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+
+[dev-dependencies]
+anyhow        = { workspace = true }
+aria-harness  = { workspace = true }
+aria-settings = { workspace = true, features = [ "test-support" ] }

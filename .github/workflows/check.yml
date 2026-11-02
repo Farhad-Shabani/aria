@@ -108,6 +108,10 @@ jobs:
           echo "ARIA_TEST_WHISPER_MODEL=$model" >> "$GITHUB_ENV"
       - name: Lint and test Rust
         run: just rust-lint-all rust-test-all
+      - name: Check the iOS platform build
+        run: |
+          rustup target add aarch64-apple-ios
+          just rust-ios
 
   app:
     name: App

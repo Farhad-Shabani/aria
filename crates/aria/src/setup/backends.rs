@@ -1,6 +1,6 @@
 //! The choices setup offers, and what this machine can run.
 
-use crate::config::{backend, tts_backend};
+use aria_settings::config::{backend, tts_backend};
 
 use super::assets::{self, Asset};
 
@@ -66,7 +66,7 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
 
 /// Applying the server choice writes the paired server's address, so a
 /// pairing alone makes it ready.
-pub(super) fn stt_choices(file: &crate::settings::Stt, paired: bool, host: &Host) -> Vec<Choice> {
+pub(super) fn stt_choices(file: &aria_settings::Stt, paired: bool, host: &Host) -> Vec<Choice> {
     let mut choices = choices::<Stt>(file.backend.as_deref(), host);
     if paired
         && let Some(server) = choices
@@ -263,9 +263,9 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
     use crate::primitives::error_chain;
-    use crate::settings::SettingsFile;
+    use aria_settings::SettingsFile;
+    use aria_voice::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
 
     #[test]
     fn server_is_ready_once_a_server_is_paired() {
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn every_model_lands_where_the_daemon_loads_it() {
         let home = Path::new("/home/someone");
-        let models_dir = config::models_dir(home);
+        let models_dir = aria_settings::config::models_dir(home);
         let engines = Stt::ALL
             .iter()
             .map(|stt| ("stt", stt.key(), stt.model().assets()))
@@ -337,7 +337,7 @@ mod tests {
             format!("[{section}]\nbackend = \"{backend}\"\n"),
         )
         .unwrap();
-        let models_dir = config::models_dir(home.path());
+        let models_dir = aria_settings::config::models_dir(home.path());
         for (relative, _) in assets.iter().flat_map(Asset::files) {
             // Engine checks refuse anything group- or world-writable, which
             // a loose umask would otherwise leave behind.
@@ -359,14 +359,14 @@ mod tests {
         {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
-            let crate::config::TranscriptionBackend::Local(transcription) =
-                DictationConfig::load(&crate::settings::load(&home_dir).unwrap(), &home_dir)
+            let aria_voice::config::TranscriptionBackend::Local(transcription) =
+                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir)
                     .unwrap()
                     .transcription
             else {
                 panic!("{} is a local engine", stt.key());
             };
-            if let Err(error) = crate::transcription::check_model(&transcription) {
+            if let Err(error) = aria_voice::transcription::check_model(&transcription) {
                 panic!("{}: {}", stt.key(), error_chain(&error));
             }
         }
@@ -377,7 +377,7 @@ mod tests {
             let home = home_with_downloads("tts", tts.key(), tts.model().assets());
             let home_dir = home.path().to_path_buf();
             let checked =
-                match TtsConfig::load(&crate::settings::load(&home_dir).unwrap().tts, &home_dir)
+                match TtsConfig::load(&aria_settings::load(&home_dir).unwrap().tts, &home_dir)
                     .unwrap()
                     .backend
                 {
@@ -413,7 +413,7 @@ mod tests {
 
         assert_eq!(
             default(choices::<Stt>(None, &host)).map(|choice| choice.key),
-            Some(config::transcription_engine(&unset.stt))
+            Some(aria_settings::config::transcription_engine(&unset.stt))
         );
         assert_eq!(
             default(choices::<Tts>(None, &host)).map(|choice| choice.key),

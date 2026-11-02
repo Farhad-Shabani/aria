@@ -26,12 +26,12 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-use aria::primitives::error_chain;
-use aria::transcription::{Language, LanguageCode, TranscriptionError};
 use aria_kit::audio::{
     AudioCapture, CaptureError, Recording, RecordingMode, RecordingReader, ReplayPace,
     ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
 };
+use aria_kit::primitives::error_chain;
+use aria_voice::transcription::{Language, LanguageCode, TranscriptionError};
 
 pub use backends::{BackendRequest, SelectionError, Skipped};
 pub use corpus::{Built, CorpusError};
@@ -47,7 +47,7 @@ use record::{Descriptor, Preview, Record, RecordWriter, Segment};
 /// Longer than any single utterance a read-speech corpus holds.
 const MAXIMUM_UTTERANCE: Duration = Duration::from_secs(120);
 
-pub use aria::transcription::Cadence;
+pub use aria_voice::transcription::Cadence;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {

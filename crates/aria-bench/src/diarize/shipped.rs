@@ -10,9 +10,9 @@
 use std::ops::Range;
 use std::path::Path;
 
-use aria::speaker::{Grouping, VoiceTrack, Voices, voice_track};
 use aria_kit::audio::RecordingReader;
 use aria_speaker::wespeaker::Config as SpeakerConfig;
+use aria_voice::speaker::{Grouping, VoiceTrack, Voices, voice_track};
 
 use crate::diarize::journal::Journal;
 use crate::diarize::{BenchError, Embedded, Labeled, SAMPLE_RATE, Turn};

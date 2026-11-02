@@ -4,21 +4,21 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use aria::daemon::guided::DEFAULT_SAMPLES;
-use aria::daemon::{
+use aria::doctor::Status;
+use aria::primitives::error_chain;
+use aria::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
+use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
+use aria::synthesis::{SpeakingRate, SpeechText, Voice};
+use aria_daemon::guided::DEFAULT_SAMPLES;
+use aria_daemon::{
     AskError, AssistantId, ChatRequest, ChatStage, ChatStageKind, Clarify, Daemon, DaemonEvent,
     DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, DictationStage,
     EnrollmentRequest, EnrollmentStage, ListenStage, OutputMode, Role, Routing, SpeakerName,
     SpeechOutcome, SpeechRequest, SpeechStage, StopMode, Ticket, WakeWordStatus, guided,
     open_log_writer, read_log_tail,
 };
-use aria::doctor::Status;
-use aria::primitives::error_chain;
-use aria::rpc::RpcErrorCode;
-use aria::runtime::PreparedRuntimePaths;
-use aria::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
-use aria::supervisor::{DaemonState, Job, Status as ServiceStatus, Supervisor};
-use aria::synthesis::{SpeakingRate, SpeechText, Voice};
+use aria_platform::runtime::PreparedRuntimePaths;
+use aria_settings::rpc::RpcErrorCode;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod cli;
@@ -58,7 +58,7 @@ enum Command {
         command: RemoteCommand,
     },
     #[cfg(target_os = "macos")]
-    #[command(name = aria::accessibility::CHECK_SUBCOMMAND, hide = true)]
+    #[command(name = aria_platform::accessibility::CHECK_SUBCOMMAND, hide = true)]
     AccessibilityCheck,
     /// Check the settings, models, and daemon on this machine
     Doctor,
@@ -350,7 +350,7 @@ enum HistoryCommand {
         #[arg(long)]
         engine: Option<String>,
         #[arg(long)]
-        language: Option<aria::transcription::Language>,
+        language: Option<aria_voice::transcription::Language>,
     },
 }
 
@@ -492,7 +492,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 command: SettingsCommand::Check { .. }
             }
     );
-    if !checking && let Some(banner) = aria::settings::banner() {
+    if !checking && let Some(banner) = aria_settings::command::banner() {
         eprintln!("{banner}");
     }
     match cli.command {
@@ -501,7 +501,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Remote { command } => run_remote(command),
         #[cfg(target_os = "macos")]
         Command::AccessibilityCheck => {
-            std::process::exit(aria::accessibility::Trust::in_process().exit_code())
+            std::process::exit(aria_platform::accessibility::Trust::in_process().exit_code())
         }
         Command::Doctor => run_doctor(),
         Command::Settings { command } => run_settings(command),
@@ -968,9 +968,9 @@ fn run_doctor() -> anyhow::Result<()> {
 fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
     match command {
         SettingsCommand::Show { key, json } => {
-            let pending = aria::daemon::restart_required_keys()
+            let pending = aria_daemon::restart_required_keys()
                 .context("cannot read the running daemon's settings status")?;
-            let rows = aria::settings::show(&pending, key.as_deref())?;
+            let rows = aria_settings::command::show(&pending, key.as_deref())?;
             if json {
                 let rows = rows.iter().map(settings_row_json).collect();
                 println!("{}", serde_json::Value::Array(rows));
@@ -980,13 +980,13 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
             Ok(())
         }
         SettingsCommand::Set { pairs, json } => {
-            report_settings_write(aria::settings::set(&pairs)?, json)
+            report_settings_write(aria_settings::command::set(&pairs)?, json)
         }
         SettingsCommand::Reset { key } => {
-            report_settings_write(aria::settings::reset(&key)?, false)
+            report_settings_write(aria_settings::command::reset(&key)?, false)
         }
         SettingsCommand::Check { json } => {
-            let fault = aria::settings::validate()?;
+            let fault = aria_settings::command::validate()?;
             if json {
                 let report = serde_json::json!({
                     "valid": fault.is_none(),
@@ -1004,27 +1004,27 @@ fn run_settings(command: SettingsCommand) -> anyhow::Result<()> {
             Ok(())
         }
         SettingsCommand::Create => {
-            println!("{}", aria::settings::create()?.display());
+            println!("{}", aria_settings::command::create()?.display());
             Ok(())
         }
         SettingsCommand::Path => {
-            println!("{}", aria::settings::path()?.display());
+            println!("{}", aria_settings::command::path()?.display());
             Ok(())
         }
         SettingsCommand::Schema => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&aria::settings::schema())?
+                serde_json::to_string_pretty(&aria_settings::command::schema())?
             );
             Ok(())
         }
     }
 }
 
-fn settings_apply(apply: aria::settings::Apply) -> &'static str {
+fn settings_apply(apply: aria_settings::Apply) -> &'static str {
     match apply {
-        aria::settings::Apply::Live => "live",
-        aria::settings::Apply::Restart => "restart",
+        aria_settings::Apply::Live => "live",
+        aria_settings::Apply::Restart => "restart",
     }
 }
 
@@ -1037,7 +1037,7 @@ fn settings_value(value: &serde_json::Value) -> String {
     }
 }
 
-fn print_settings_rows(rows: &[aria::settings::Row]) {
+fn print_settings_rows(rows: &[aria_settings::command::Row]) {
     let values: Vec<String> = rows.iter().map(|row| settings_value(&row.value)).collect();
     let key_width = rows
         .iter()
@@ -1063,7 +1063,7 @@ fn print_settings_rows(rows: &[aria::settings::Row]) {
     }
 }
 
-fn settings_row_json(row: &aria::settings::Row) -> serde_json::Value {
+fn settings_row_json(row: &aria_settings::command::Row) -> serde_json::Value {
     serde_json::json!({
         "key": row.path(),
         "value": row.value,
@@ -1074,7 +1074,7 @@ fn settings_row_json(row: &aria::settings::Row) -> serde_json::Value {
     })
 }
 
-fn settings_fault_json(fault: &aria::settings::SettingsFault) -> serde_json::Value {
+fn settings_fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Value {
     serde_json::json!({
         "message": fault.message,
         "line": fault.position.map(|position| position.line),
@@ -1082,7 +1082,7 @@ fn settings_fault_json(fault: &aria::settings::SettingsFault) -> serde_json::Val
     })
 }
 
-fn settings_fault_line(fault: &aria::settings::SettingsFault) -> String {
+fn settings_fault_line(fault: &aria_settings::SettingsFault) -> String {
     match fault.position {
         Some(position) => format!("{position}: {}", fault.message),
         None => fault.message.clone(),
@@ -1090,12 +1090,15 @@ fn settings_fault_line(fault: &aria::settings::SettingsFault) -> String {
 }
 
 /// `applied`, `applied, restart key changed`, or the refusal, which exits 1.
-fn report_settings_write(outcome: aria::settings::Outcome, json: bool) -> anyhow::Result<()> {
+fn report_settings_write(
+    outcome: aria_settings::command::Outcome,
+    json: bool,
+) -> anyhow::Result<()> {
     let (restart_key_changed, fault) = match &outcome {
-        aria::settings::Outcome::Applied {
+        aria_settings::command::Outcome::Applied {
             restart_key_changed,
         } => (*restart_key_changed, None),
-        aria::settings::Outcome::Refused(fault) => (false, Some(fault)),
+        aria_settings::command::Outcome::Refused(fault) => (false, Some(fault)),
     };
     if json {
         let report = serde_json::json!({
@@ -1130,7 +1133,13 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
         )
         .try_init()
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
-    let report = aria::memory::consolidate_now()?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::load(&home)?;
+    let report = aria_assistant::memory::run_backlog(
+        aria_daemon::config::load_memory(&settings.memory, &home),
+        &home,
+        &aria_kit::cancel::CancelToken::never(),
+    )?;
     let results = report.results;
     if results.is_empty() && report.failed == 0 {
         println!("Nothing to consolidate (or memory disabled)");
@@ -1153,8 +1162,21 @@ fn run_memory_consolidate() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn chat_request_from_settings(
+    text: String,
+    assistant_id: AssistantId,
+) -> anyhow::Result<ChatRequest> {
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::load(&home)?;
+    let config = aria_daemon::config::load_chat(&settings)?;
+    Ok(ChatRequest::from_config(text, assistant_id, config)?)
+}
+
 fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
-    let (store, dir) = aria::memory::open()?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::load(&home)?;
+    let dir = aria_settings::config::memory_directory(&settings.memory, &home);
+    let store = aria_assistant::memory::open(&dir)?;
     match command {
         MemoryCommand::List { pending } => {
             let facts = match pending {
@@ -1195,7 +1217,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
                 return Ok(());
             }
             store.forget(id)?;
-            aria::memory::write_profile(&store, &dir)?;
+            aria_assistant::memory::write_profile(&store, &dir)?;
             println!("Forgotten");
         }
         MemoryCommand::Review => {
@@ -1219,7 +1241,7 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
                     _ => {}
                 }
             }
-            aria::memory::write_profile(&store, &dir)?;
+            aria_assistant::memory::write_profile(&store, &dir)?;
         }
         MemoryCommand::Lexicon { forget_pair, json } => {
             if let Some(id) = forget_pair {
@@ -1227,8 +1249,8 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
                 println!("Pair forgotten");
                 return Ok(());
             }
-            let path = dir.join(aria::memory::LEXICON_FILE);
-            let terms = aria::memory::load_terms(&path);
+            let path = dir.join(aria_assistant::memory::LEXICON_FILE);
+            let terms = aria_assistant::memory::load_terms(&path);
             if json {
                 println!("{}", lexicon_json(&terms, &store.list_pairs()?));
                 return Ok(());
@@ -1257,7 +1279,10 @@ fn run_memory(command: MemoryCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn lexicon_json(terms: &[String], pairs: &[aria::memory::DerivedPair]) -> serde_json::Value {
+fn lexicon_json(
+    terms: &[String],
+    pairs: &[aria_assistant::memory::DerivedPair],
+) -> serde_json::Value {
     let pairs: Vec<_> = pairs
         .iter()
         .map(|pair| {
@@ -1288,39 +1313,41 @@ fn run_serve(bind: std::net::SocketAddr) -> anyhow::Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
     aria_stt::whisper::install_logging_hooks();
-    Ok(aria::daemon::serve_inference(bind)?)
+    Ok(aria_daemon::serve_inference(bind)?)
 }
 
 fn run_remote(command: RemoteCommand) -> anyhow::Result<()> {
     match command {
         RemoteCommand::Invite { endpoint } => {
-            println!("{}", aria::daemon::remote_invite(&endpoint)?);
+            println!("{}", aria_daemon::remote_invite(&endpoint)?);
         }
         RemoteCommand::Pair => {
-            let fingerprint = aria::daemon::remote_pair(std::io::stdin().lock())?;
+            let fingerprint = aria_daemon::remote_pair(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
             println!("To use it, choose the paired inference server in `aria setup`.");
         }
         RemoteCommand::Revoke { fingerprint } => {
-            aria::daemon::remote_revoke(&fingerprint)?;
+            aria_daemon::remote_revoke(&fingerprint)?;
             println!("Client revoked.");
         }
         RemoteCommand::Forget => {
             let forgotten = aria::setup::forget_server()?;
             match &forgotten {
-                aria::daemon::Forgotten::NothingPaired => println!("No server is paired."),
-                aria::daemon::Forgotten::Server { .. } => println!("Forgot the paired server."),
-                aria::daemon::Forgotten::UnfinishedPairing { .. } => {
+                aria_daemon::Forgotten::NothingPaired => println!("No server is paired."),
+                aria_daemon::Forgotten::Server { .. } => {
+                    println!("Forgot the paired server.");
+                }
+                aria_daemon::Forgotten::UnfinishedPairing { .. } => {
                     println!("Removed the key from a pairing that did not finish.");
                 }
-                aria::daemon::Forgotten::Unreadable => {
+                aria_daemon::Forgotten::Unreadable => {
                     println!("Removed an unreadable pairing file; its fingerprint is unknown.");
                 }
             }
             if matches!(
                 forgotten,
-                aria::daemon::Forgotten::Server { .. }
-                    | aria::daemon::Forgotten::UnfinishedPairing { .. }
+                aria_daemon::Forgotten::Server { .. }
+                    | aria_daemon::Forgotten::UnfinishedPairing { .. }
             ) {
                 println!("To block this machine on the server too, run there:");
                 println!("  {}", forgotten.revoke_hint());
@@ -1371,10 +1398,10 @@ fn run_daemon() -> anyhow::Result<()> {
 fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::process::CommandExt;
 
-    if !aria::daemon::needs_login_shell_path(std::env::var_os("PATH").as_deref()) {
+    if !aria_daemon::needs_login_shell_path(std::env::var_os("PATH").as_deref()) {
         return Ok(());
     }
-    let path = aria::daemon::login_shell_path()?;
+    let path = aria_daemon::login_shell_path()?;
     // Same pid, so launchd still tracks the daemon.
     let error = std::process::Command::new(std::env::current_exe()?)
         .args(std::env::args_os().skip(1))
@@ -1384,7 +1411,7 @@ fn adopt_login_shell_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// One line per status: the fault, else what waits for a restart, else ok.
-fn settings_line(status: &aria::settings::SettingsStatus) -> String {
+fn settings_line(status: &aria_settings::SettingsStatus) -> String {
     if let Some(fault) = &status.fault {
         return match fault.position {
             Some(position) => format!("settings invalid at {position}: {}", fault.message),
@@ -1488,7 +1515,7 @@ fn run_events() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::settings::Directory> {
+fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria_settings::Directory> {
     let path = if path.is_absolute() {
         path
     } else {
@@ -1499,11 +1526,11 @@ fn vocabulary_dir(path: PathBuf) -> anyhow::Result<aria::settings::Directory> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
         Err(error) => return Err(error.into()),
     };
-    Ok(aria::settings::Directory::new(path)?)
+    Ok(aria_settings::Directory::new(path)?)
 }
 
 fn run_history(command: HistoryCommand) -> anyhow::Result<()> {
-    use aria::history::{HistoryQuery, RetryOptions};
+    use aria_voice::history::{HistoryQuery, RetryOptions};
 
     if let HistoryCommand::Clear { yes } = &command
         && !confirm_history_clear(*yes, std::io::stdin().is_terminal(), answer)?
@@ -1596,7 +1623,9 @@ fn confirm_history_clear(
     Ok(matches!(answer.as_str(), "y" | "yes"))
 }
 
-fn history_clear_message(result: aria::history::ClearHistoryResult) -> anyhow::Result<String> {
+fn history_clear_message(
+    result: aria_voice::history::ClearHistoryResult,
+) -> anyhow::Result<String> {
     anyhow::ensure!(
         !result.cleanup_pending,
         "dictation text cleared, but some recordings could not be removed; Aria will retry"
@@ -1607,8 +1636,8 @@ fn history_clear_message(result: aria::history::ClearHistoryResult) -> anyhow::R
     ))
 }
 
-fn history_clear_error(error: aria::daemon::ClientError) -> anyhow::Error {
-    use aria::daemon::ClientError;
+fn history_clear_error(error: aria_daemon::ClientError) -> anyhow::Error {
+    use aria_daemon::ClientError;
     let context = match &error {
         ClientError::Status(status) if status.code() == tonic::Code::Unimplemented => {
             "this daemon does not support clearing history; update Aria and restart the daemon"
@@ -1635,7 +1664,7 @@ fn history_clear_error(error: aria::daemon::ClientError) -> anyhow::Error {
     anyhow::Error::new(error).context(context)
 }
 
-fn history_entry_json(entry: &aria::history::HistoryEntry) -> serde_json::Value {
+fn history_entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::Value {
     serde_json::json!({
         "id": entry.id,
         "created_at_ms": entry.created_at_ms,
@@ -1646,8 +1675,8 @@ fn history_entry_json(entry: &aria::history::HistoryEntry) -> serde_json::Value 
     })
 }
 
-fn history_audio_label(audio: aria::history::AudioAvailability) -> &'static str {
-    use aria::history::AudioAvailability;
+fn history_audio_label(audio: aria_voice::history::AudioAvailability) -> &'static str {
+    use aria_voice::history::AudioAvailability;
     match audio {
         AudioAvailability::Available { .. } => "Available",
         AudioAvailability::Expired => "Expired",
@@ -1673,7 +1702,7 @@ fn run_vocabulary(command: VocabularyCommand) -> anyhow::Result<()> {
         "{:?}: {} terms, catalog revision {}, runtime revision {}",
         status.state, status.terms, status.catalog_revision, status.runtime_revision
     );
-    if status.state != aria::vocabulary::State::Disabled && !status.error.is_empty() {
+    if status.state != aria_voice::vocabulary::State::Disabled && !status.error.is_empty() {
         anyhow::bail!(
             "vocabulary {} failed; the previous snapshot is retained when available",
             status.error
@@ -1693,9 +1722,9 @@ fn run_dictate(
     init_daemon_logging(paths.log_path())?;
     let session = Arc::new(DaemonSession::open_at(&paths)?);
     let project = if no_project || !session.get_settings()?.settings.vocabulary_enabled {
-        aria::vocabulary::Context::Disabled
+        aria_voice::vocabulary::Context::Disabled
     } else {
-        aria::vocabulary::Context::Directory(aria::settings::Directory::new(
+        aria_voice::vocabulary::Context::Directory(aria_settings::Directory::new(
             std::env::current_dir()?,
         )?)
     };
@@ -1789,7 +1818,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
                 .canonicalize()
                 .context("failed to resolve the project directory")?;
             anyhow::ensure!(path.is_dir(), "the project path is not a directory");
-            Ok::<_, anyhow::Error>(aria::settings::Directory::new(path)?)
+            Ok::<_, anyhow::Error>(aria_settings::Directory::new(path)?)
         })
         .transpose()?;
     let stop_mode = if args.toggle {
@@ -1812,16 +1841,18 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
             let heard = {
                 let mut recording = interrupt.recording(DeliveryMode::Complete);
                 let context = if let Some(project) = &project {
-                    aria::vocabulary::Context::Directory(project.clone())
+                    aria_voice::vocabulary::Context::Directory(project.clone())
                 } else if session.get_settings()?.settings.vocabulary_enabled {
                     match session.route(String::new(), Clarify::Refuse, assistant_id)? {
                         Routing::Ready { request, .. } => {
-                            aria::vocabulary::Context::Directory(vocabulary_dir(request.workdir)?)
+                            aria_voice::vocabulary::Context::Directory(vocabulary_dir(
+                                request.workdir,
+                            )?)
                         }
                         Routing::Stopped => return Ok(()),
                     }
                 } else {
-                    aria::vocabulary::Context::Disabled
+                    aria_voice::vocabulary::Context::Disabled
                 };
                 let heard =
                     session.transcribe_in(stop_mode, context, |stage| recording.follow(stage));
@@ -1846,7 +1877,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<()> {
     let (configured, focus) = if let Some(project) = project {
         let request = ChatRequest {
             workdir: project.as_path().to_owned(),
-            ..ChatRequest::configured(text.clone(), assistant_id)?
+            ..chat_request_from_settings(text.clone(), assistant_id)?
         };
         (request, None)
     } else {
@@ -2013,13 +2044,13 @@ fn listen_follow(session: &DaemonSession) -> anyhow::Result<()> {
                 let label = label.as_deref().map(str::to_owned);
                 let mut stdout = std::io::stdout().lock();
                 if open_label.as_ref() != Some(&label)
-                    || now.duration_since(last_segment) >= aria::listen::GAP_BREAK
+                    || now.duration_since(last_segment) >= aria_voice::listen::GAP_BREAK
                 {
                     if open_label.is_some() {
                         writeln!(stdout)?;
                         writeln!(stdout)?;
                     }
-                    write!(stdout, "{} ", aria::listen::stamp(at_seconds))?;
+                    write!(stdout, "{} ", aria_voice::listen::stamp(at_seconds))?;
                     if let Some(label) = &label {
                         write!(stdout, "{label}: ")?;
                     }
@@ -2264,7 +2295,7 @@ mod tests {
             command,
             Command::History {
                 command: HistoryCommand::Retry {
-                    id: 42, engine: Some(engine), language: Some(aria::transcription::Language::Automatic)
+                    id: 42, engine: Some(engine), language: Some(aria_voice::transcription::Language::Automatic)
                 }
             } if engine == "whisper"
         ));
@@ -2297,8 +2328,8 @@ mod tests {
 
     #[test]
     fn history_clear_reports_complete_partial_and_uncertain_outcomes() {
-        use aria::daemon::ClientError;
-        use aria::history::ClearHistoryResult;
+        use aria_daemon::ClientError;
+        use aria_voice::history::ClearHistoryResult;
 
         for deleted_entries in [0, 42] {
             assert_eq!(
@@ -2478,7 +2509,7 @@ mod tests {
 
     #[test]
     fn history_listing_distinguishes_audio_states() {
-        use aria::history::AudioAvailability;
+        use aria_voice::history::AudioAvailability;
         assert_eq!(
             history_audio_label(AudioAvailability::Available { expires_at_ms: 1 }),
             "Available"

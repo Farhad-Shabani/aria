@@ -4,9 +4,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use aria::speaker::{Chunk, PyannoteVoices, Voiceprint};
 use aria_kit::segmentation::{Activity, Segmenter};
 use aria_kit::speaker::Embedder;
+use aria_voice::speaker::{Chunk, PyannoteVoices, Voiceprint};
 use serde::{Deserialize, Serialize};
 
 use crate::diarize::BenchError;

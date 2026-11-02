@@ -16,11 +16,11 @@ anyhow          = { workspace = true }
 aria-primitives = { workspace = true }
 clap            = { workspace = true }
 libtest-mimic   = "0.8"
-time            = { version = "0.3", features = [ "formatting", "macros", "parsing" ] }
+time            = { workspace = true, features = [ "parsing" ] }
 rustix          = { workspace = true, features = [ "system" ] }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
-sha2            = "0.10"
+sha2            = { workspace = true }
 thiserror       = { workspace = true }
 serde-saphyr    = { workspace = true }
 tempfile        = { workspace = true }

@@ -19,22 +19,23 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::config::{self, ServerEndpoint};
-use crate::daemon::{
-    DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
-    StopMode, guided,
-};
-use crate::hotkey::PlatformHotkeyListener;
-use crate::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
 use crate::primitives::error_chain;
 use crate::primitives::process::ChildProcessError;
 use crate::primitives::user_home::{self, UserHomeError};
-use crate::runtime::PreparedRuntimePaths;
-use crate::settings::{SettingsError, SettingsFile};
-use crate::speech::SpeechRequest;
 use crate::supervisor::{self, DaemonState, Job, Status, Supervisor, SupervisorError};
 use crate::synthesis::SpeechText;
+use aria_daemon::ipc::{HOTKEY_HEALTH_SERVICE, Liveness, probe_daemon};
+use aria_daemon::{
+    DaemonSession, EnrollmentRequest, Forgotten, InferencePaths, PairedServer, SpeakerName,
+    StopMode, guided,
+};
 use aria_kit::backend::ModelError;
+use aria_platform::hotkey::PlatformHotkeyListener;
+use aria_platform::runtime::PreparedRuntimePaths;
+use aria_settings::config::ServerEndpoint;
+use aria_settings::{SettingsError, SettingsFile};
+use aria_voice::config;
+use aria_voice::speech::SpeechRequest;
 
 mod assets;
 mod backends;
@@ -107,7 +108,7 @@ enum Pairing {
 
 impl Pairing {
     fn read(home: &Path) -> Self {
-        match crate::daemon::paired_server(home) {
+        match aria_daemon::paired_server(home) {
             Ok(Some(paired)) => Self::Paired(paired),
             Ok(None) => Self::Unpaired,
             Err(error) => {
@@ -123,7 +124,7 @@ impl Pairing {
         selections: &Selections,
         home: &Path,
     ) -> Result<Option<&ServerEndpoint>, SetupError> {
-        if selections.stt != config::backend::SERVER {
+        if selections.stt != aria_settings::config::backend::SERVER {
             return Ok(None);
         }
         match self {
@@ -268,22 +269,24 @@ pub fn forget_server() -> Result<Forgotten, SetupError> {
 }
 
 fn forget_server_at(home: &Path) -> Result<Forgotten, SetupError> {
-    let _lock = lock_setup(&crate::settings::default_path(home))?;
-    if config::transcription_engine(&settings_file::read(home)?.stt) == config::backend::SERVER {
+    let _lock = lock_setup(&aria_settings::default_path(home))?;
+    if aria_settings::config::transcription_engine(&settings_file::read(home)?.stt)
+        == aria_settings::config::backend::SERVER
+    {
         return Err(SetupError::ServerInUse);
     }
-    crate::daemon::forget_paired_server(home).map_err(SetupError::Forget)
+    aria_daemon::forget_paired_server(home).map_err(SetupError::Forget)
 }
 
 pub fn inspect() -> Result<Inspection, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
-    let models_dir = config::models_dir(&home);
+    let models_dir = aria_settings::config::models_dir(&home);
     // `current_exe` may answer the symlink an installer put on PATH; the
     // bundled files sit beside the real binary.
     let exe = std::env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(SetupError::CurrentExe)?;
-    let settings_path = crate::settings::default_path(&home);
+    let settings_path = aria_settings::default_path(&home);
     let host = Host::probe();
     let file = settings_file::read(&home)?;
     let pairing = Pairing::read(&home);
@@ -343,7 +346,7 @@ impl Inspection {
         let Pairing::Paired(paired) = &self.pairing else {
             return false;
         };
-        self.existing.stt.as_deref() == Some(config::backend::SERVER)
+        self.existing.stt.as_deref() == Some(aria_settings::config::backend::SERVER)
             && self.configured_server != Some(paired.endpoint.to_string())
     }
 
@@ -398,7 +401,7 @@ impl Inspection {
 /// Every model setup knows, in the order it offers them: what the speech
 /// engines want first, then what every install wants.
 fn model_states(home: &Path, file: &SettingsFile) -> Result<Vec<ModelState>, SetupError> {
-    let models_dir = config::models_dir(home);
+    let models_dir = aria_settings::config::models_dir(home);
     let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
     // Only the asset's own section counts. Listen's custom moonshine path
     // does not change where transcription looks.
@@ -492,7 +495,7 @@ pub fn apply(
     // the write keeps edits made meanwhile.
     selections.check(&inspection.home, endpoint)?;
 
-    let models_dir = config::models_dir(&inspection.home);
+    let models_dir = aria_settings::config::models_dir(&inspection.home);
     observe(SetupEvent::Started(Step::Wakeword))?;
     let wakeword = install_wakeword(&inspection.exe, &models_dir.join(WAKEWORD_DIR))?;
 
@@ -900,7 +903,7 @@ pub enum SetupError {
     ServerInUse,
 
     #[error(transparent)]
-    Forget(crate::daemon::RemoteClientError),
+    Forget(aria_daemon::RemoteClientError),
 
     #[error("{name} is in use by `{section}` in settings.toml; change that table first")]
     ModelInUse {
@@ -909,7 +912,7 @@ pub enum SetupError {
     },
 
     #[error("settings.toml does not load")]
-    Config(#[source] config::ConfigError),
+    Config(#[source] aria_settings::config::ConfigError),
 
     #[error("{name} is not on disk")]
     ModelNotInstalled { name: &'static str },
@@ -997,18 +1000,19 @@ mod tests {
     /// daemon loads them.
     #[test]
     fn shared_models_land_where_the_daemon_loads_them() {
-        use crate::config::{DaemonConfig, SpeakerConfig, WakeConfig, WakeWordOverride};
+        use aria_daemon::config::{DaemonConfig, WakeConfig, WakeWordOverride};
+        use aria_voice::config::SpeakerConfig;
 
         let home = tempfile::tempdir().unwrap();
-        let settings_path = crate::settings::default_path(home.path());
+        let settings_path = aria_settings::default_path(home.path());
         fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
         fs::write(&settings_path, "[wake]\nenabled = true\n").unwrap();
         let home_dir = home.path().to_path_buf();
-        let settings = crate::settings::load(&home_dir).unwrap();
+        let settings = aria_settings::load(&home_dir).unwrap();
         let extras: Vec<PathBuf> = EXTRAS
             .iter()
             .flat_map(Asset::files)
-            .map(|(relative, _)| config::models_dir(home.path()).join(relative))
+            .map(|(relative, _)| aria_settings::config::models_dir(home.path()).join(relative))
             .collect();
 
         let speaker = SpeakerConfig::load(&settings.speaker, &home_dir);
@@ -1025,7 +1029,11 @@ mod tests {
         };
         assert_eq!(
             classifier.parent(),
-            Some(config::models_dir(home.path()).join(WAKEWORD_DIR).as_path())
+            Some(
+                aria_settings::config::models_dir(home.path())
+                    .join(WAKEWORD_DIR)
+                    .as_path()
+            )
         );
         assert!(WAKEWORD_FILES.iter().any(|file| classifier.ends_with(file)));
     }
@@ -1161,7 +1169,7 @@ mod tests {
 
     fn writable_inspection(home: &Path) -> Inspection {
         let mut inspection = inspection(configured());
-        inspection.settings_path = crate::settings::default_path(home);
+        inspection.settings_path = aria_settings::default_path(home);
         inspection.home = home.to_path_buf();
         fs::create_dir_all(home.join(".aria")).unwrap();
         inspection
@@ -1214,8 +1222,8 @@ mod tests {
     fn yes_takes_the_default_choice_when_nothing_is_configured() {
         let defaults = Selections::defaults(&inspection(Existing::default()));
 
-        assert_eq!(defaults.stt, config::backend::DEFAULT);
-        assert_eq!(defaults.tts, config::tts_backend::DEFAULT);
+        assert_eq!(defaults.stt, aria_settings::config::backend::DEFAULT);
+        assert_eq!(defaults.tts, aria_settings::config::tts_backend::DEFAULT);
         assert!(!defaults.wake);
         assert!(defaults.aria_key);
     }
@@ -1271,7 +1279,11 @@ mod tests {
 
         assert_eq!(
             names(&selections),
-            [config::backend::DEFAULT, SPEAKER_ASSET, "segmentation"]
+            [
+                aria_settings::config::backend::DEFAULT,
+                SPEAKER_ASSET,
+                "segmentation"
+            ]
         );
 
         selections.stt = "future-stt".to_owned();
@@ -1449,7 +1461,7 @@ mod tests {
             "the pin on disk decides, not the inspection"
         );
 
-        let identity = crate::daemon::InferencePaths::in_home(home.path()).client_identity();
+        let identity = aria_daemon::InferencePaths::in_home(home.path()).client_identity();
         crate::primitives::private_fs::prepare_directory(&home.path().join(".aria")).unwrap();
         crate::primitives::private_fs::prepare_directory(identity.parent().unwrap()).unwrap();
         fs::write(&identity, "{").unwrap();
@@ -1457,7 +1469,7 @@ mod tests {
         assert!(matches!(result, Err(SetupError::PairingUnusable { .. })));
 
         fs::remove_file(&identity).unwrap();
-        crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+        aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
         let mut steps = Vec::new();
         let _ = apply(&selections, &no_downloads(), &inspection, &mut |event| {
             steps.push(event);
@@ -1469,8 +1481,8 @@ mod tests {
     #[test]
     fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
         let home = tempfile::tempdir().unwrap();
-        let config = crate::settings::default_path(home.path());
-        crate::daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+        let config = aria_settings::default_path(home.path());
+        aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
 
         let running = lock_setup(&config).unwrap();
         assert!(matches!(

@@ -3,9 +3,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture};
-use aria::transcription::{Language, LanguageCode, Stream, Streaming, Transcriber, Transcription};
 use aria_harness::{inputs, stats};
 use aria_stt::{CancelToken, EngineConfig};
+use aria_voice::transcription::{
+    Language, LanguageCode, Stream, Streaming, Transcriber, Transcription,
+};
 
 mod engines;
 
@@ -189,9 +191,9 @@ fn report(backend: &str, samples: &[u64], expected: u32) -> anyhow::Result<()> {
 #[allow(dead_code, unused_imports)]
 mod tests {
     use super::*;
-    use aria::config::backend;
-    use aria::transcription::{Hypothesis, TranscriptionAudio, TranscriptionError};
     use aria_kit::cancel::CancelToken;
+    use aria_settings::config::backend;
+    use aria_voice::transcription::{Hypothesis, TranscriptionAudio, TranscriptionError};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},

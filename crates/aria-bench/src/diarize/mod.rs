@@ -20,7 +20,7 @@ mod shipped;
 mod sibling;
 pub(crate) mod synth;
 
-pub use aria::speaker::Grouping;
+pub use aria_voice::speaker::Grouping;
 pub use pyannote::{Clustering, Tuning, label_by_segmentation};
 pub use shipped::{Run, label_as_attributed, label_as_shipped};
 pub use sibling::{Windowing, label_by_voice};
@@ -29,8 +29,6 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Duration;
 
-use aria::speaker::{Diarizer, Label};
-use aria::transcription::{StreamingEngine, Transcription, TranscriptionError};
 use aria_kit::audio::{
     CANONICAL_SAMPLE_RATE, CaptureError, ClipError, ReplayPace, ResampleError, WavError,
 };
@@ -38,6 +36,8 @@ use aria_kit::speaker::{Engine as _, SpeakerError};
 use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
 use aria_kit::voice_activity::VoiceActivityError;
 use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
+use aria_voice::speaker::{Diarizer, Label};
+use aria_voice::transcription::{StreamingEngine, Transcription, TranscriptionError};
 
 /// Longer than any scenario's realtime replay.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
@@ -156,15 +156,15 @@ fn settled(
         .iter()
         .map(|segment| Some(segment.span.clone()))
         .collect();
-    let mut labels = aria::speaker::attribute_spans(&voices, &spans);
+    let mut labels = aria_voice::speaker::attribute_spans(&voices, &spans);
     settle_gaps(&mut labels, segments);
     Ok(labels)
 }
 
 /// Fills unnamed segments from their neighbours, as listen's transcript does.
 fn settle_gaps(labels: &mut [Option<Label>], segments: &[replay::Segment]) {
-    let gap = (aria::listen::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
-    aria::speaker::settle(labels, |index| {
+    let gap = (aria_voice::listen::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
+    aria_voice::speaker::settle(labels, |index| {
         segments
             .get(index + 1)
             .is_some_and(|next| next.span.start.saturating_sub(segments[index].span.end) < gap)

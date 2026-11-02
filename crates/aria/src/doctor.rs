@@ -6,23 +6,26 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::audio::{WavReplayCapture, check_default_input_device};
-use crate::config::{
-    CaptureConfig, ConfigError, DaemonConfig, DictationConfig, HotkeyConfig, ListenConfig,
-    RelayConfig, SpeakerConfig, TranscriptionBackend, WakeBackend, WakeConfig, WakeWordOverride,
-};
-use crate::daemon::RELAY_SERVICE_TYPE;
-use crate::delivery::{PlatformTextDelivery, TextDelivery};
-use crate::hotkey::PlatformHotkeyListener;
-use crate::ipc::{DaemonClient, Liveness, probe_daemon};
-use crate::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use crate::primitives::error_chain;
-use crate::runtime::{PreparedRuntimePaths, RuntimeError};
-use crate::settings::SettingsFile;
-use crate::transcription::check_model;
+use aria_daemon::RELAY_SERVICE_TYPE;
+use aria_daemon::config::{
+    DaemonConfig, HotkeyConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride,
+};
+use aria_daemon::ipc::{DaemonClient, Liveness, probe_daemon};
+use aria_daemon::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
+use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
+use aria_platform::hotkey::PlatformHotkeyListener;
+use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
+use aria_settings::SettingsFile;
+use aria_settings::config::ConfigError;
 use aria_speaker::wespeaker::WeSpeaker;
+use aria_voice::config::{
+    CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
+};
+use aria_voice::transcription::check_model;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
@@ -122,15 +125,15 @@ fn settings_check(config: Result<&DaemonConfig, &ConfigError>) -> Check {
 fn loaded<T>(
     load: impl FnOnce(&SettingsFile, &Path) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
-    let home = crate::config::home_directory()?;
-    let settings = crate::settings::load(&home)?;
+    let home = aria_settings::config::home_directory()?;
+    let settings = aria_settings::load(&home)?;
     load(&settings, &home)
 }
 
 fn settings_file() -> String {
     match crate::primitives::user_home::resolve() {
         Ok(home) => {
-            let path = crate::settings::default_path(&home);
+            let path = aria_settings::default_path(&home);
             if path.is_file() {
                 path.display().to_string()
             } else {
@@ -499,7 +502,8 @@ mod tests {
     #[test]
     fn server_transcription_needs_no_local_model() {
         let check = model(&TranscriptionBackend::Server {
-            endpoint: crate::config::ServerEndpoint::parse("https://example.test:9851").unwrap(),
+            endpoint: aria_settings::config::ServerEndpoint::parse("https://example.test:9851")
+                .unwrap(),
         });
         assert_eq!(check.status, Status::Ok);
         assert!(check.detail.contains("https://example.test:9851"));
@@ -541,7 +545,7 @@ mod tests {
     #[test]
     fn a_missing_model_fails_and_says_which_backend() {
         let check = model(&TranscriptionBackend::Local(
-            crate::config::TranscriptionConfig::Whisper {
+            aria_voice::config::TranscriptionConfig::Whisper {
                 model: PathBuf::from("/nonexistent/model.bin"),
             },
         ));

@@ -1,0 +1,53 @@
+[package]
+name                 = "aria-voice"
+version.workspace    = true
+edition.workspace    = true
+description          = "Aria's speech features: dictation, listening, speaking, enrollment, and the engines they run on"
+license              = "GPL-3.0-only"
+repository.workspace = true
+readme.workspace     = true
+publish              = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = [ "aria-kit/test-support" ]
+
+[dependencies]
+aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
+aria-platform     = { workspace = true }
+aria-primitives   = { workspace = true }
+aria-segmentation = { workspace = true }
+aria-settings     = { workspace = true }
+aria-speaker      = { workspace = true }
+aria-stt          = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
+aria-tts          = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
+ignore            = "0.4"
+rusqlite          = { workspace = true }
+rustix            = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+sha2              = { workspace = true }
+tempfile          = { workspace = true }
+thiserror         = { workspace = true }
+time              = { workspace = true }
+tracing           = { workspace = true }
+ureq              = { version = "3.4", default-features = false }
+
+# The MLX sidecar requires child processes, which iOS forbids.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+aria-stt = { workspace = true, features = [ "parakeet-gpu" ] }
+aria-tts = { workspace = true, features = [ "qwen-accelerate" ] }
+cidre    = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+rtrb     = "0.4"
+
+[dev-dependencies]
+toml_edit          = { workspace = true, features = [ "display", "parse", "serde" ] }
+tracing-subscriber = { workspace = true }
+aria-harness       = { workspace = true }
+aria-kit           = { workspace = true, features = [ "test-support" ] }
+aria-settings      = { workspace = true, features = [ "test-support" ] }

@@ -3,10 +3,8 @@
 
 use std::path::Path;
 
-use crate::config::{self, ServerEndpoint, backend, tts_backend};
-use crate::settings::{
-    self, AriaKeyName, Key, Patch, Refusal, SettingsError, SettingsFile, Written,
-};
+use aria_settings::config::{ServerEndpoint, backend, tts_backend};
+use aria_settings::{AriaKeyName, Key, Patch, Refusal, SettingsError, SettingsFile, Written};
 
 use super::SetupError;
 
@@ -59,8 +57,8 @@ impl Selections {
     ) -> Result<(), SetupError> {
         let current = read(home)?;
         let patch = self.patch(&current, paired_server)?;
-        accepted(settings::check_patch(
-            &settings::default_path(home),
+        accepted(aria_settings::check_patch(
+            &aria_settings::default_path(home),
             home,
             &patch,
         )?)?;
@@ -73,11 +71,12 @@ impl Selections {
         paired_server: Option<&ServerEndpoint>,
     ) -> Result<SettingsWrite, SetupError> {
         let mut changed = false;
-        let written = settings::modify(&settings::default_path(home), home, None, |current| {
-            let patch = self.patch(current, paired_server)?;
-            changed = !patch.is_empty();
-            Ok::<_, SettingsError>(patch)
-        })?;
+        let written =
+            aria_settings::modify(&aria_settings::default_path(home), home, None, |current| {
+                let patch = self.patch(current, paired_server)?;
+                changed = !patch.is_empty();
+                Ok::<_, SettingsError>(patch)
+            })?;
         accepted(written)?;
         Ok(if changed {
             SettingsWrite::Written
@@ -95,7 +94,7 @@ impl Selections {
         paired_server: Option<&ServerEndpoint>,
     ) -> Result<Patch, SettingsError> {
         let mut patch = Patch::new();
-        if config::transcription_engine(&current.stt) != self.stt {
+        if aria_settings::config::transcription_engine(&current.stt) != self.stt {
             for key in [
                 Key::SttModel,
                 Key::SttDevice,
@@ -139,7 +138,7 @@ impl Selections {
 }
 
 pub(super) fn read(home: &Path) -> Result<SettingsFile, SetupError> {
-    settings::load(home).map_err(SetupError::Settings)
+    aria_settings::load(home).map_err(SetupError::Settings)
 }
 
 fn accepted(written: Written) -> Result<(), SetupError> {
@@ -178,7 +177,7 @@ mod tests {
     }
 
     fn settings_path(home: &Path) -> std::path::PathBuf {
-        settings::default_path(home)
+        aria_settings::default_path(home)
     }
 
     #[test]
@@ -292,7 +291,7 @@ mod tests {
         fs::write(settings_path(home.path()), "[stt]\nmodel = \"~/tdt\"\n").unwrap();
 
         let default_engine = Selections {
-            stt: config::backend::DEFAULT.to_owned(),
+            stt: aria_settings::config::backend::DEFAULT.to_owned(),
             ..selections()
         };
         default_engine.write(home.path(), None).unwrap();
@@ -356,8 +355,8 @@ mod tests {
     }
 
     fn read_text(text: &str) -> SettingsFile {
-        settings::Loaded::parse(text, Path::new("/Users/you"))
+        aria_settings::Loaded::parse(text, Path::new("/Users/you"))
             .unwrap()
-            .settings
+            .into_settings()
     }
 }

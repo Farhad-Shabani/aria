@@ -149,60 +149,60 @@ name = "aria"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "arboard",
+ "aria-assistant",
+ "aria-daemon",
  "aria-harness",
  "aria-kit",
+ "aria-platform",
  "aria-primitives",
  "aria-segmentation",
+ "aria-settings",
  "aria-speaker",
  "aria-stt",
  "aria-tts",
+ "aria-voice",
  "aria-wake",
- "ashpd",
  "cidre",
  "clap",
- "futures-util",
- "getrandom 0.3.4",
- "ignore",
  "objc2",
  "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
  "objc2-foundation",
- "objc2-ui-kit",
  "prost",
- "prost-types",
  "protox",
- "rcgen",
- "rtrb",
- "rusqlite",
  "rustix",
- "rustls-pki-types",
  "serde",
  "serde_json",
  "sha2",
  "signal-hook",
- "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-util",
  "toml_edit",
  "tonic",
- "tonic-health",
- "tonic-prost",
  "tonic-prost-build",
- "tonic-reflection",
- "tonic-types",
- "tower",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "ureq",
- "x11rb",
+]
+
+[[package]]
+name = "aria-assistant"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "aria-harness",
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "aria-settings",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -210,13 +210,15 @@ name = "aria-bench"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "aria",
+ "aria-assistant",
  "aria-bench-speaker",
  "aria-harness",
  "aria-kit",
+ "aria-settings",
  "aria-speaker",
  "aria-stt",
  "aria-tts",
+ "aria-voice",
  "clap",
  "hound",
  "ort",
@@ -241,6 +243,52 @@ dependencies = [
  "aria-kit",
  "aria-speaker",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "aria-daemon"
+version = "0.7.0"
+dependencies = [
+ "aria-assistant",
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "aria-segmentation",
+ "aria-settings",
+ "aria-speaker",
+ "aria-stt",
+ "aria-voice",
+ "aria-wake",
+ "futures-util",
+ "getrandom 0.3.4",
+ "prost",
+ "prost-types",
+ "protox",
+ "rcgen",
+ "rustix",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
+ "toml_edit",
+ "tonic",
+ "tonic-health",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tonic-reflection",
+ "tonic-types",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -281,6 +329,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aria-platform"
+version = "0.7.0"
+dependencies = [
+ "arboard",
+ "aria-kit",
+ "aria-primitives",
+ "ashpd",
+ "cidre",
+ "futures-util",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-ui-kit",
+ "rustix",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "x11rb",
+]
+
+[[package]]
 name = "aria-primitives"
 version = "0.7.0"
 dependencies = [
@@ -299,6 +373,25 @@ version = "0.7.0"
 dependencies = [
  "aria-kit",
  "ort",
+]
+
+[[package]]
+name = "aria-settings"
+version = "0.7.0"
+dependencies = [
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "http",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml_edit",
+ "tracing",
 ]
 
 [[package]]
@@ -347,6 +440,36 @@ dependencies = [
  "thiserror 2.0.21",
  "tokenizers 0.23.2",
  "zip",
+]
+
+[[package]]
+name = "aria-voice"
+version = "0.7.0"
+dependencies = [
+ "aria-harness",
+ "aria-kit",
+ "aria-platform",
+ "aria-primitives",
+ "aria-segmentation",
+ "aria-settings",
+ "aria-speaker",
+ "aria-stt",
+ "aria-tts",
+ "cidre",
+ "ignore",
+ "rtrb",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "toml_edit",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
 ]
 
 [[package]]

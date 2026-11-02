@@ -12,7 +12,9 @@ publish              = false
 workspace = true
 
 [dependencies]
-aria               = { path = "../aria" }
+aria-assistant     = { workspace = true }
+aria-settings      = { workspace = true }
+aria-voice         = { workspace = true }
 aria-bench-speaker = { path = "../aria-bench-speaker" }
 aria-harness       = { workspace = true }
 aria-kit           = { workspace = true, features = [ "silero" ] }
@@ -30,7 +32,7 @@ serde_json         = { workspace = true }
 tempfile           = { workspace = true }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
-tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
+tracing-subscriber = { workspace = true }
 
 # Scoring dependencies stay separate from the daemon's runtime dependencies.
 regex                 = "1"

@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use aria::primitives::cancel::CancelToken;
-use aria::primitives::process::{Bounds, Capture, RunError, run};
 use aria_harness::artifact::{ArtifactError, fingerprint};
+use aria_kit::primitives::cancel::CancelToken;
+use aria_kit::primitives::process::{Bounds, Capture, RunError, run};
 use signal_hook::consts::SIGINT;
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);

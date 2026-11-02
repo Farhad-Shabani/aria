@@ -12,7 +12,7 @@
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
-use aria::speaker::{Label, Merged, Standing};
+use aria_voice::speaker::{Label, Merged, Standing};
 use serde::Serialize;
 
 use crate::diarize::{BenchError, SAMPLE_RATE};

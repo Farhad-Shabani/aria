@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use aria_kit::backend::{ModelDownload, Unpack};
 
-use crate::config::model_folder;
+use aria_settings::config::model_folder;
 
 use super::SetupError;
 use super::download;

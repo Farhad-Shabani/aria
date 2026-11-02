@@ -18,7 +18,7 @@ macOS. The scoped recipes use default features.
 | Shell and sidecar part of the gate | `just support-check` |
 | macOS app formatting and tests | `just swift-check` |
 | Build `Aria.app` with the daemon inside | `just app` |
-| Affected cross-target gate | `just rust-wasm` / `just rust-linux` |
+| Affected cross-target gate | `just rust-wasm` / `just rust-linux` / `just rust-ios` |
 | Build the CLI | `cargo build --release --bin aria` |
 | Build / serve books | `just book` / `just book-serve` |
 
@@ -29,11 +29,11 @@ macOS. The scoped recipes use default features.
 - The service reloads `~/.aria/settings.toml` within a second, and keys marked
   restart wait for a restart.
 - Every setting goes through `settings::modify`, and every key through the table
-  in `settings/keys.rs`. Keep client-local presentation choices with the client.
+  in `crates/aria-settings/src/keys.rs`. Keep client-local presentation choices with the client.
   Reject unknown keys.
 - Listen transcription and voice tracking read separate
   `RecordingReader::fork()` readers. Preserve the lag and drain bounds in
-  `crates/aria/src/listen/track.rs`.
+  `crates/aria-voice/src/listen/track.rs`.
 - Setup, model downloads, recording, installation, and service changes have
   side effects. Validate documentation with help output and dry-runs.
 
@@ -62,9 +62,10 @@ macOS. The scoped recipes use default features.
 
 ## Licensing
 
-- `crates/aria`, `crates/aria-bench`, and the macOS app are GPL-3.0-only. The
-  library crates and `proto/` are Apache-2.0; keep `crates/aria` out of their
-  dependencies.
+- `crates/aria`, the other application crates (`aria-daemon`, `aria-voice`,
+  `aria-assistant`, `aria-settings`, `aria-platform`), `crates/aria-bench`, and
+  the macOS app are GPL-3.0-only. The library crates and `proto/` are Apache-2.0;
+  keep the application crates out of their dependencies.
 - Files that draw the Aria logo fall under `assets/brand/LICENSE`, not GPL.
   List any new one there and give it the same header.
 - Record copied third-party files in `THIRD-PARTY-NOTICES.md`. If the file

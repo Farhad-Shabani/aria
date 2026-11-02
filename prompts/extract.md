@@ -41,6 +41,6 @@ Examples — transcript line, then the right call:
 - a LEXICON TERM appearing split into words or misspelled in the transcript — PAIR.
 
 <!-- This file holds the extractor's JUDGMENT rules only — edit freely to tune what gets
-     remembered. The JSON output contract is appended in code (crates/aria/src/memory/extract.rs,
+     remembered. The JSON output contract is appended in code (crates/aria-assistant/src/memory/extract.rs,
      OUTPUT_CONTRACT) and must not be restated here: it has to stay in lockstep with the
      parser and gates. Copy to ~/.aria/prompts/extract.md to override at runtime. -->

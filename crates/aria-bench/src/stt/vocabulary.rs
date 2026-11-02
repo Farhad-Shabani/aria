@@ -5,9 +5,9 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Instant;
 
-use aria::vocabulary::{PersonalRules, Term, Vocabulary};
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use aria_harness::stats::bootstrap;
+use aria_voice::vocabulary::{PersonalRules, Term, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -395,8 +395,7 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
 
 pub fn fixtures() -> Result<Suite> {
     let mut suite: Suite = serde_json::from_str(include_str!("vocabulary-cases.json"))?;
-    let memory: Value =
-        serde_json::from_str(include_str!("../../../aria/src/memory/eval_cases.json"))?;
+    let memory: Value = serde_json::from_str(aria_assistant::memory::EVAL_CASES)?;
     for value in memory["lexicon"]
         .as_array()
         .ok_or("missing personal lexicon cases")?

@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail, ensure};
-use aria::config::{TranscriptionConfig, TranscriptionDevice, backend};
 use aria_harness::{Sandbox, inputs, log, start_service, stats, toml_string};
+use aria_settings::config::backend;
+use aria_voice::config::{TranscriptionConfig, TranscriptionDevice};
 
 mod dictation_delivery;
 mod engines;
@@ -212,8 +213,8 @@ fn require_own_voice(speaker: Option<&SpeakerInputs>) -> anyhow::Result<()> {
 }
 
 fn require_owner(profiles_dir: &Path) -> anyhow::Result<()> {
-    use aria::speaker::{ProfileStore, Role};
     use aria_speaker::wespeaker;
+    use aria_voice::speaker::{ProfileStore, Role};
     let stored =
         ProfileStore::open(profiles_dir).read_for(wespeaker::NAME, wespeaker::EMBEDDING_DIM)?;
     ensure!(
@@ -505,20 +506,21 @@ mod tests {
 
     #[test]
     fn own_voice_requires_successful_loading_without_filter_fallbacks() {
-        let loaded = "INFO aria::speaker: speaker model loaded engine=\"wespeaker\" load_ms=7\n";
+        let loaded =
+            "INFO aria_voice::speaker: speaker model loaded engine=\"wespeaker\" load_ms=7\n";
         assert!(verify_own_voice(loaded).is_ok());
         assert!(verify_own_voice("INFO aria: daemon ready\n").is_err());
         for failure in [
-            "INFO aria::speaker: no speaker model; the transcript stays unlabeled",
-            "WARN aria::speaker: speaker model unusable; the transcript stays unlabeled",
-            "WARN aria::speaker: no voice-activity model; audio is not speech-gated",
-            "WARN aria::speaker: the speakers directory is unreadable; nobody is recognized",
-            "WARN aria::speaker: skipping an unreadable speaker profile",
-            "WARN aria::dictation::pipeline: own-voice filtering lacks a model speech=true diarizer=true segmenter=false",
-            "WARN aria::dictation::pipeline: own-voice filtering is unavailable",
+            "INFO aria_voice::speaker: no speaker model; the transcript stays unlabeled",
+            "WARN aria_voice::speaker: speaker model unusable; the transcript stays unlabeled",
+            "WARN aria_voice::speaker: no voice-activity model; audio is not speech-gated",
+            "WARN aria_voice::speaker: the speakers directory is unreadable; nobody is recognized",
+            "WARN aria_voice::speaker: skipping an unreadable speaker profile",
+            "WARN aria_voice::dictation::pipeline: own-voice filtering lacks a model speech=true diarizer=true segmenter=false",
+            "WARN aria_voice::dictation::pipeline: own-voice filtering is unavailable",
             "WARN aria_kit::speaker::turns::tracker: own-voice filtering has no continuity verifier",
-            "ERROR aria::hearing: the turn thread did not start",
-            "ERROR aria::hearing::turns: the turn thread panicked; nothing more passes",
+            "ERROR aria_voice::hearing: the turn thread did not start",
+            "ERROR aria_voice::hearing::turns: the turn thread panicked; nothing more passes",
             "WARN aria_kit::speaker: speaker embedding failed",
             "WARN aria_kit::speaker::turns: voice-activity inference failed; no more speech can be told apart",
             "WARN aria_kit::speaker: the voice timeline could not score audio",
@@ -526,7 +528,7 @@ mod tests {
             assert!(verify_own_voice(&format!("{loaded}{failure}\n")).is_err());
         }
         assert!(verify_own_voice(&format!(
-            "{loaded}WARN aria::dictation::pipeline: dictation cleanup failed; delivering deterministic text\n"
+            "{loaded}WARN aria_voice::dictation::pipeline: dictation cleanup failed; delivering deterministic text\n"
         )).is_ok());
     }
 
@@ -563,8 +565,8 @@ mod tests {
 
     #[test]
     fn own_voice_requires_a_compatible_owner_profile() {
-        use aria::speaker::{Profile, ProfileStore, Replace, Role, SpeakerName};
         use aria_speaker::wespeaker;
+        use aria_voice::speaker::{Profile, ProfileStore, Replace, Role, SpeakerName};
         let directory = tempfile::tempdir().unwrap();
         let store = ProfileStore::open(directory.path());
         assert!(require_owner(directory.path()).is_err());

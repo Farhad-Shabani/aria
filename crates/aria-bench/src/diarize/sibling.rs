@@ -4,10 +4,10 @@
 use std::ops::Range;
 use std::path::Path;
 
-use aria::speaker::Label;
 use aria_kit::audio::read_wav;
 use aria_kit::voice_activity::SileroVad;
 use aria_speaker::wespeaker::Config as SpeakerConfig;
+use aria_voice::speaker::Label;
 
 use crate::diarize::cluster::{Stop, group};
 use crate::diarize::{BenchError, Embedded, Labeled, SAMPLE_RATE, Turn, sequence};
@@ -64,7 +64,7 @@ pub fn label_by_voice(
     // A window the embedder would not judge still covers real speech.
     // Reporting silence there is a miss; a neighbour's name is the better
     // guess, and the one the shipped path already makes.
-    aria::speaker::settle(&mut named, |index| windows[index].opens_speech);
+    aria_voice::speaker::settle(&mut named, |index| windows[index].opens_speech);
 
     let mut turns: Vec<Turn> = named
         .into_iter()
