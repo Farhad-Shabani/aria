@@ -8,7 +8,6 @@ struct RecognitionSettings: View {
 
     var body: some View {
         SettingsForm(settings: settings) { editor in
-            TranscriptionSection(server: serverTranscription, setup: setup)
             Section {
                 language(editor)
             }
@@ -18,6 +17,7 @@ struct RecognitionSettings: View {
                 vocabularyFolder(editor)
                     .disabled(!editor.snapshot.vocabularyEnabled)
             }
+            TranscriptionSection(server: serverTranscription, setup: setup)
         }
     }
 

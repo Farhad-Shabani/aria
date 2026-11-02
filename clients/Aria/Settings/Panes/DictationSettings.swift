@@ -1,11 +1,7 @@
 import SwiftUI
 
 struct DictationSettings: View {
-    private static let silenceStep = 0.1
-
     let settings: DaemonSettings
-    /// Held locally while the thumb moves, then pushed once when it lands.
-    @State private var silenceSeconds = DictationEdits.silenceSecondsRange.lowerBound
 
     var body: some View {
         SettingsForm(settings: settings) { editor in
@@ -26,7 +22,6 @@ struct DictationSettings: View {
                     Text("System audio comes back when recording stops.")
                 }
                 autoStop(editor)
-                silence(editor)
             }
         }
     }
@@ -66,28 +61,6 @@ struct DictationSettings: View {
         } label: {
             Text("Auto-stop")
             Text("Stops a tapped recording after this much silence.")
-        }
-    }
-
-    private func silence(_ editor: SettingsEditor) -> some View {
-        LabeledContent {
-            HStack {
-                // A step would make macOS draw tick marks, so the value is rounded when the thumb lands instead.
-                Slider(value: $silenceSeconds, in: DictationEdits.silenceSecondsRange) { editing in
-                    guard !editing else { return }
-                    silenceSeconds = (silenceSeconds / Self.silenceStep).rounded() * Self.silenceStep
-                    editor.set(\.silenceDurationMs, to: DictationEdits.silenceMilliseconds(seconds: silenceSeconds))
-                }
-                .frame(maxWidth: 160)
-                Text("\(silenceSeconds, format: .number.precision(.fractionLength(1))) s of silence")
-                    .monospacedDigit()
-            }
-        } label: {
-            Text("Wake-word pause")
-            Text("Stops a wake-word recording after this much silence.")
-        }
-        .onChange(of: editor.snapshot.silenceDurationMs, initial: true) { _, ms in
-            silenceSeconds = Double(ms) / 1000
         }
     }
 }

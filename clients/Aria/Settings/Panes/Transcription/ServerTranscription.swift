@@ -46,8 +46,12 @@ final class ServerTranscription: ObservableObject {
     }
 
     /// Going to the server needs a pairing; coming back never does.
+    var needsPairing: Bool {
+        setup.server == nil && setup.transcription != .server
+    }
+
     var canChooseLocation: Bool {
-        !isBusy && (setup.server != nil || setup.transcription == .server)
+        !isBusy && !needsPairing
     }
 
     func use(_ location: TranscriptionLocation) async {
@@ -157,8 +161,7 @@ final class ServerTranscription: ObservableObject {
         return url.port.map { "\(host):\($0)" } ?? host
     }
 
-    /// False when busy or pairing failed. A server in use is applied again,
-    /// so the settings take the new address.
+    /// False when busy or pairing failed.
     func pair(invitation: String) async -> Bool {
         guard !isBusy else { return false }
         isBusy = true
@@ -173,17 +176,7 @@ final class ServerTranscription: ObservableObject {
             pairingStep = .instructions
             return false
         }
-        do {
-            let inspection = try await effects.inspect()
-            if inspection.defaults.transcriptionEngineID == SetupStatus.serverEngine {
-                try await apply(SetupStatus.serverEngine, from: inspection)
-            } else {
-                setup.show(inspection)
-            }
-        } catch {
-            log.error("Applying the paired server failed: \(String(describing: error), privacy: .private)")
-            notice = .failed(Self.switchFailure)
-        }
+        await showChanges()
         return true
     }
 
