@@ -163,8 +163,8 @@ final class SetupState: ObservableObject {
     }
 
     /// The wizard opens itself once, and only while something is missing. A
-    /// missing transcription model reopens it, because the daemon can't start
-    /// without one.
+    /// transcription model setup still has to download reopens it, because the
+    /// daemon can't start without one.
     static func shouldOffer(_ inspection: Aria_Setup_V1_Inspection, offeredBefore: Bool) -> Bool {
         guard !inspection.missing.isEmpty else { return false }
         return !offeredBefore || SetupStatus.isMissingTranscriptionModel(in: inspection)

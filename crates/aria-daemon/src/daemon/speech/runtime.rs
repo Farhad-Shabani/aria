@@ -22,8 +22,8 @@ pub(in crate::daemon) struct SpeechRuntime {
 }
 
 impl SpeechRuntime {
-    /// Settings and the engine are read when the engine is first needed. A
-    /// failed attempt stores nothing, so the next utterance tries again.
+    /// Reads the settings and loads the engine on first use. A failed load
+    /// keeps nothing, so the next request to speak tries again.
     pub(in crate::daemon) fn new(
         context: &Context<'_>,
         emitter: SpeechEventEmitter,
@@ -42,7 +42,7 @@ impl SpeechRuntime {
         }
     }
 
-    /// Builds the engine ahead of the first utterance.
+    /// Loads the engine now instead of at the first request to speak.
     pub(in crate::daemon) fn load(&self) -> Result<(), SpeechInitializationError> {
         self.speech.get().map(|_speech| ())
     }
@@ -195,7 +195,7 @@ mod tests {
         })
     }
 
-    /// A runtime whose engine comes from `build`, which counts its calls.
+    /// A runtime that loads with `build`, and a count of how often it ran.
     fn runtime(
         home: &std::path::Path,
         build: impl Fn() -> Result<BuiltSpeech, SpeechInitializationError> + Send + Sync + 'static,

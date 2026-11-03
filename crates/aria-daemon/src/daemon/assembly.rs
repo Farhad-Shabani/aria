@@ -386,8 +386,8 @@ fn build_workers(
     }
 }
 
-/// Settings, the transcription model, and wake-word monitoring are all read
-/// here, so a daemon that cannot serve a press says so before it accepts one.
+/// Settings, the transcription model, and the wake-word model load here, so a
+/// daemon missing one says so before it accepts a press.
 fn eager_workers(
     context: &Context<'_>,
     dependencies: &Dependencies<'_>,
@@ -427,7 +427,7 @@ fn eager_workers(
         speech_event_emitter(Arc::clone(subscriptions)),
         Arc::clone(cache),
     );
-    // Dictation works without speech, so a failed load waits for the next utterance.
+    // Dictation doesn't need synthesis, so a failed load retries at the next request to speak.
     if let Err(error) = speech.load() {
         tracing::error!(
             error = %error_chain(&error),

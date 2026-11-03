@@ -126,9 +126,9 @@ final class StatusPoller: ObservableObject {
         }
     }
 
-    /// An invalid file or a missing transcription model ends the daemon at startup,
-    /// and the generic failure can't say so. Login Items keeps its own
-    /// message: nothing ran to fail.
+    /// An invalid file or a missing transcription model stops the daemon at
+    /// startup, which the generic failure can't explain. A Login Items failure
+    /// keeps its own message, since nothing ran.
     private func explainFailedStart() async {
         guard state != .running, failure != .backgroundItemOff else { return }
         if let invalid = await client.invalidSettings() {

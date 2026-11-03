@@ -340,9 +340,9 @@ impl Inspection {
         })
     }
 
-    /// The daemon won't start on a server engine without a pin for its address.
-    /// `aria remote pair` replaces the pin but not the settings file's copy of
-    /// its address.
+    /// The daemon won't start on a server engine unless the pin names the
+    /// configured address. `aria remote pair` replaces the pin but leaves the
+    /// address in the settings file.
     fn server_is_unusable(&self) -> bool {
         if self.existing.stt.as_deref() != Some(aria_settings::config::backend::SERVER) {
             return false;
@@ -1313,8 +1313,8 @@ mod tests {
         );
     }
 
-    /// Only the models of engines that run count: the extras are optional,
-    /// and an engine that doesn't run owes nothing.
+    /// Only models of engines that run count. Extras are optional, and an
+    /// engine that doesn't run needs nothing.
     #[test]
     fn a_configured_machine_is_missing_its_models() {
         let inspection = inspection(configured());

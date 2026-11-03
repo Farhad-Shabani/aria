@@ -117,7 +117,7 @@ struct Worker<V, I> {
 }
 
 impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
-    // A missing microphone never stops the daemon. Each recording, and the
+    // A missing microphone doesn't fail the spawn. Each recording, and the
     // wake word's held stream, opens it again.
     fn serve(mut self, requests: Receiver<Command>) {
         if let Err(error) = ensure_live(&mut self.live) {

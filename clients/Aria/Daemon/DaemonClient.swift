@@ -20,7 +20,7 @@ protocol DaemonControlling: Sendable {
     /// What's wrong with the settings file, read with no daemon. Nil when it
     /// is valid or the check couldn't run.
     func invalidSettings() async -> InvalidSettings?
-    /// Whether the transcription model the daemon needs is absent. False when
+    /// Whether setup still has to download the transcription model. False when
     /// the check couldn't run.
     func isMissingTranscriptionModel() async -> Bool
 }

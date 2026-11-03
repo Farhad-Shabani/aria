@@ -142,9 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         offerSetup()
     }
 
-    /// A Mac with something missing gets the setup wizard once, and one without
-    /// its transcription model gets it at every launch. Otherwise, setup waits in
-    /// Settings → General.
     private func offerSetup() {
         let defaults = UserDefaults.standard
         Task { [weak self] in
