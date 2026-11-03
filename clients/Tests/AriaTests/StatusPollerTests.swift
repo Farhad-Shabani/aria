@@ -13,8 +13,11 @@ final class FakeDaemonControl: DaemonControlling, @unchecked Sendable {
     var exitLag = 0
     var ignoresStop = false
     var invalid: InvalidSettings?
+    var missingTranscriptionModel = false
 
     func invalidSettings() async -> InvalidSettings? { invalid }
+
+    func isMissingTranscriptionModel() async -> Bool { missingTranscriptionModel }
 
     func retireLegacyService() async throws {
         if let error = retireError { throw error }
@@ -139,6 +142,31 @@ final class StatusPollerTests: XCTestCase {
         await poller.toggle()
 
         XCTAssertEqual(poller.failure, .settingsInvalid(InvalidSettings(line: nil)))
+    }
+
+    func testADaemonThatNeverListensWithoutItsTranscriptionModelSaysSo() async {
+        let fake = FakeDaemonControl()
+        fake.startLag = 100
+        fake.missingTranscriptionModel = true
+        let poller = self.poller(fake)
+        await poller.pollOnce()
+
+        await poller.toggle()
+
+        XCTAssertEqual(poller.failure, .transcriptionModelMissing)
+    }
+
+    func testAnInvalidFileOutranksAMissingTranscriptionModel() async {
+        let fake = FakeDaemonControl()
+        fake.startLag = 100
+        fake.invalid = InvalidSettings(line: 3)
+        fake.missingTranscriptionModel = true
+        let poller = self.poller(fake)
+        await poller.pollOnce()
+
+        await poller.toggle()
+
+        XCTAssertEqual(poller.failure, .settingsInvalid(InvalidSettings(line: 3)))
     }
 
     func testLoginItemsKeepsItsOwnMessageOverAnInvalidFile() async {

@@ -12,7 +12,7 @@
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -52,7 +52,7 @@ pub(super) fn spawn<V: VoiceActivityDetector + Send + 'static>(
     maximum_duration: Duration,
     vad: V,
 ) -> Result<Sender<Command>> {
-    spawn_worker(spool_dir, maximum_duration, vad, Disabled, None)
+    spawn_worker(spool_dir, maximum_duration, vad, Disabled)
 }
 
 pub(super) fn spawn_with_wake_word<
@@ -65,19 +65,13 @@ pub(super) fn spawn_with_wake_word<
     detector: W,
 ) -> Result<(Sender<Command>, Receiver<WakeWordEvent>)> {
     let (events, detections) = sync_channel(1);
-    let (ready, readiness) = sync_channel(1);
     let commands = spawn_worker(
         spool_dir,
         maximum_duration,
         vad,
         WakeMonitor::new(detector, events, V::FRAME_SAMPLES),
-        Some(ready),
     )?;
-    match readiness.recv() {
-        Ok(Ok(())) => Ok((commands, detections)),
-        Ok(Err(error)) => Err(error),
-        Err(_disconnected) => Err(MicrophoneError::WorkerGone.into()),
-    }
+    Ok((commands, detections))
 }
 
 fn spawn_worker<V, I>(
@@ -85,7 +79,6 @@ fn spawn_worker<V, I>(
     maximum_duration: Duration,
     vad: V,
     monitor: I,
-    readiness: Option<SyncSender<Result<()>>>,
 ) -> Result<Sender<Command>>
 where
     V: VoiceActivityDetector + Send + 'static,
@@ -105,7 +98,7 @@ where
         .name("aria-microphone".to_owned())
         .spawn(move || {
             raise_scheduling_class();
-            worker.serve(requests, readiness);
+            worker.serve(requests);
         })
         .map_err(MicrophoneError::SpawnWorker)
         .map_err(CaptureError::from)?;
@@ -124,24 +117,11 @@ struct Worker<V, I> {
 }
 
 impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
-    fn serve(mut self, requests: Receiver<Command>, readiness: Option<SyncSender<Result<()>>>) {
-        match ensure_live(&mut self.live).map(|_live| ()) {
-            Ok(()) => {
-                if readiness.is_some_and(|ready| ready.send(Ok(())).is_err()) {
-                    return;
-                }
-            }
-            Err(error) => {
-                let Some(ready) = readiness else {
-                    tracing::warn!(
-                        %error,
-                        "microphone is unavailable at startup; retrying per request"
-                    );
-                    return self.serve_requests(requests);
-                };
-                let _send_result = ready.send(Err(error));
-                return;
-            }
+    // A missing microphone doesn't fail the spawn. Each recording, and the
+    // wake word's held stream, opens it again.
+    fn serve(mut self, requests: Receiver<Command>) {
+        if let Err(error) = ensure_live(&mut self.live) {
+            tracing::warn!(%error, "microphone is unavailable at startup; retrying");
         }
         self.serve_requests(requests);
     }

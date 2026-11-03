@@ -162,9 +162,12 @@ final class SetupState: ObservableObject {
         return nil
     }
 
-    /// The wizard opens itself once, and only while something is missing.
-    static func shouldOffer(missing: [Aria_Setup_V1_Missing], offeredBefore: Bool) -> Bool {
-        !missing.isEmpty && !offeredBefore
+    /// The wizard opens itself once, and only while something is missing. A
+    /// transcription model setup still has to download reopens it, because the
+    /// daemon can't start without one.
+    static func shouldOffer(_ inspection: Aria_Setup_V1_Inspection, offeredBefore: Bool) -> Bool {
+        guard !inspection.missing.isEmpty else { return false }
+        return !offeredBefore || SetupStatus.isMissingTranscriptionModel(in: inspection)
     }
 
     /// A voice can be recorded once its model is on disk and nobody is

@@ -88,14 +88,17 @@ fn skipped(name: String, reason: String) -> Trial {
 
 fn run_case(binary: &Path, case: &Case, settings: &str) -> Result<(), Failed> {
     let sandbox = Sandbox::create(settings).map_err(|error| error_chain(&error))?;
+    let judge = |output: Output| {
+        let log = std::fs::read_to_string(sandbox.log_path()).unwrap_or_default();
+        case.expect.check_daemon(&output, &log)
+    };
     let outcome = run_steps(binary, &sandbox, case.expect.steps_before_daemon()).and_then(|()| {
         match case.expect.daemon_startup() {
             None => run_clients(binary, &sandbox, case),
             Some(Startup::Failure) => daemon::run_to_exit(binary, &sandbox)
                 .map_err(|error| error_chain(&error))
-                .and_then(|output| case.expect.check_daemon(&output)),
-            Some(Startup::Success) => serve_clients(binary, &sandbox, case)
-                .and_then(|output| case.expect.check_daemon(&output)),
+                .and_then(judge),
+            Some(Startup::Success) => serve_clients(binary, &sandbox, case).and_then(judge),
         }
     });
     outcome.map_err(|failure| with_log_tail(&failure, &sandbox).into())

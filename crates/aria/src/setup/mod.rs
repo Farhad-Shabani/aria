@@ -32,7 +32,7 @@ use aria_daemon::{
 use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
-use aria_settings::config::ServerEndpoint;
+use aria_settings::config::{ServerEndpoint, backend, tts_backend};
 use aria_settings::{SettingsError, SettingsFile};
 use aria_voice::config;
 use aria_voice::speech::SpeechRequest;
@@ -340,14 +340,17 @@ impl Inspection {
         })
     }
 
-    /// `aria remote pair` replaces the pin but not the settings file's copy of its
-    /// address.
-    fn server_address_is_stale(&self) -> bool {
-        let Pairing::Paired(paired) = &self.pairing else {
+    /// The daemon won't start on a server engine unless the pin names the
+    /// configured address. `aria remote pair` replaces the pin but leaves the
+    /// address in the settings file.
+    fn server_is_unusable(&self) -> bool {
+        if self.existing.stt.as_deref() != Some(aria_settings::config::backend::SERVER) {
             return false;
-        };
-        self.existing.stt.as_deref() == Some(aria_settings::config::backend::SERVER)
-            && self.configured_server != Some(paired.endpoint.to_string())
+        }
+        match &self.pairing {
+            Pairing::Paired(paired) => self.configured_server != Some(paired.endpoint.to_string()),
+            Pairing::Unpaired | Pairing::Unusable => true,
+        }
     }
 
     /// `None` for a local engine.
@@ -368,22 +371,23 @@ impl Inspection {
             && existing.tts.is_some()
             && existing.wake.is_some()
             && existing.aria_key.is_some();
-        if !configured || self.server_address_is_stale() {
+        if !configured || self.server_is_unusable() {
             missing.push(Missing::Settings);
         }
         if self.wakeword_bundled && !self.wakeword_installed {
             missing.push(Missing::Wakeword);
         }
-        let configured_engine = |engine: &str| {
-            existing.stt.as_deref() == Some(engine) || existing.tts.as_deref() == Some(engine)
-        };
+        // An unset engine still runs as its default, so its model counts.
+        let stt = existing.stt.as_deref().unwrap_or(backend::DEFAULT);
+        let tts = existing.tts.as_deref().unwrap_or(tts_backend::DEFAULT);
+        let runs = |engine: &str| engine == stt || engine == tts;
         missing.extend(
             self.models
                 .iter()
                 .filter(|model| {
                     model.on_disk != OnDisk::Complete
                         && !model.external
-                        && model.engine.is_some_and(configured_engine)
+                        && model.engine.is_some_and(runs)
                 })
                 .map(|model| Missing::Model(model.name)),
         );
@@ -1300,12 +1304,17 @@ mod tests {
 
         assert_eq!(
             inspection.missing(),
-            [Missing::Settings, Missing::Wakeword, Missing::Service]
+            [
+                Missing::Settings,
+                Missing::Wakeword,
+                Missing::Model(backend::DEFAULT),
+                Missing::Service,
+            ]
         );
     }
 
-    /// Only the configured engines' models count: the extras are optional,
-    /// and an engine nobody chose owes nothing.
+    /// Only models of engines that run count. Extras are optional, and an
+    /// engine that doesn't run needs nothing.
     #[test]
     fn a_configured_machine_is_missing_its_models() {
         let inspection = inspection(configured());
@@ -1536,6 +1545,19 @@ mod tests {
 
         inspection.configured_server = Some("https://new.test:9851".to_owned());
         assert!(!inspection.missing().contains(&Missing::Settings));
+    }
+
+    #[test]
+    fn a_server_config_without_a_pin_needs_setup() {
+        let mut inspection = inspection(Existing {
+            stt: Some("server".to_owned()),
+            ..configured()
+        });
+        inspection.configured_server = Some("https://new.test:9851".to_owned());
+
+        assert!(inspection.missing().contains(&Missing::Settings));
+        inspection.pairing = Pairing::Unusable;
+        assert!(inspection.missing().contains(&Missing::Settings));
     }
 
     fn paired(endpoint: &str) -> Pairing {

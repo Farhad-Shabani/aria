@@ -63,6 +63,8 @@ struct DaemonExpectations {
     // the cause under it.
     #[serde(default)]
     stderr_contains: Vec<String>,
+    #[serde(default)]
+    log_contains: Vec<String>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -85,7 +87,7 @@ impl Expectations {
         &self.client
     }
 
-    pub(crate) fn check_daemon(&self, output: &Output) -> Result<(), String> {
+    pub(crate) fn check_daemon(&self, output: &Output, log: &str) -> Result<(), String> {
         let Some(daemon) = &self.daemon else {
             return Ok(());
         };
@@ -100,6 +102,7 @@ impl Expectations {
             Startup::Success | Startup::Failure => {}
         }
         unmet.extend(missing("stderr", &output.stderr, &daemon.stderr_contains));
+        unmet.extend(missing("daemon log", log.as_bytes(), &daemon.log_contains));
         judged("`aria daemon`", &unmet, output)
     }
 }
@@ -312,4 +315,28 @@ pub(crate) fn discover(directory: &Path) -> Result<Vec<PathBuf>, CatalogError> {
         });
     }
     Ok(cases)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    use super::*;
+
+    #[test]
+    fn text_absent_from_the_daemon_log_fails_the_case() {
+        let expect: Expectations =
+            serde_saphyr::from_str("daemon:\n  startup: success\n  log_contains: [needle]\n")
+                .unwrap();
+        let output = Output {
+            status: ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+
+        assert!(expect.check_daemon(&output, "a needle here").is_ok());
+        let failure = expect.check_daemon(&output, "nothing here").unwrap_err();
+        assert!(failure.contains("daemon log lacks"), "{failure}");
+    }
 }

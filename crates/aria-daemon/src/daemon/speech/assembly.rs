@@ -26,17 +26,22 @@ pub(super) fn build_speech(config: TtsConfig) -> Result<BuiltSpeech, SpeechIniti
 impl From<&SpeechInitializationError> for RpcErrorCode {
     fn from(error: &SpeechInitializationError) -> Self {
         match error {
-            SpeechInitializationError::Config(_) => Self::Internal,
+            SpeechInitializationError::Config(_) | SpeechInitializationError::LoadPanicked => {
+                Self::Internal
+            }
             SpeechInitializationError::Backend(error) => error.into(),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum SpeechInitializationError {
+pub(in crate::daemon) enum SpeechInitializationError {
     #[error("failed to resolve the speech settings")]
     Config(#[source] ConfigError),
 
     #[error("failed to initialize the speech engine")]
     Backend(#[source] SpeechBuildError),
+
+    #[error("the speech engine panicked while loading")]
+    LoadPanicked,
 }

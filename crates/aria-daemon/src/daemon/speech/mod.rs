@@ -6,7 +6,6 @@ mod assembly;
 mod runtime;
 
 pub(in crate::daemon) use actor::{SpeechActor, SpeechCallError, SpeechHandle, channel};
-pub use assembly::SpeechInitializationError;
 #[cfg(test)]
 pub(in crate::daemon) use runtime::next_utterance;
 pub(in crate::daemon) use runtime::{SpeechRuntime, SpeechRuntimeError};

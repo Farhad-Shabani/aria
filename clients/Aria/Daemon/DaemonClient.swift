@@ -20,6 +20,9 @@ protocol DaemonControlling: Sendable {
     /// What's wrong with the settings file, read with no daemon. Nil when it
     /// is valid or the check couldn't run.
     func invalidSettings() async -> InvalidSettings?
+    /// Whether setup still has to download the transcription model. False when
+    /// the check couldn't run.
+    func isMissingTranscriptionModel() async -> Bool
 }
 
 enum DaemonClientError: LocalizedError {
@@ -140,6 +143,15 @@ struct DaemonClient: DaemonControlling {
         } catch {
             log.error("Settings check failed: \(error.localizedDescription, privacy: .private)")
             return nil
+        }
+    }
+
+    func isMissingTranscriptionModel() async -> Bool {
+        do {
+            return SetupStatus.isMissingTranscriptionModel(in: try await SetupClient.inspect())
+        } catch {
+            log.error("Setup inspection failed: \(String(describing: error), privacy: .private)")
+            return false
         }
     }
 

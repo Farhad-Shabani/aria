@@ -41,6 +41,12 @@ struct AriaApp: App {
                         .foregroundStyle(.failure)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 8)
+                    if failure == .transcriptionModelMissing {
+                        Button("Aria Setup…") {
+                            appDelegate.setup.request()
+                        }
+                        .padding(.horizontal, 8)
+                    }
                 }
                 Divider()
                 VStack(spacing: 2) {

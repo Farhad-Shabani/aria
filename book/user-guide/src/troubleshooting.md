@@ -20,6 +20,11 @@ If registered but stopped, run `aria service start`. If not registered, complete
 `aria setup`. For the Mac app, opening Aria starts its background service;
 choosing **Quit Aria** stops it.
 
+The background service can't start without the speech model your settings
+choose, or Parakeet if they choose none. On a Mac, Aria opens **Aria Setup** at
+launch so you can download it. On Linux, run `aria setup`. Setup reuses models you already
+downloaded.
+
 ## No recording
 
 Run `aria doctor` for model-path and input-device problems. It does not record
@@ -59,6 +64,9 @@ changes need a restart. `aria doctor` doesn't check speech-engine files.
 
 Linux system speech needs `/usr/bin/espeak-ng` or `/usr/bin/espeak`. For Kokoro,
 rerun setup to obtain its model and voices file, or correct their paths.
+Dictation keeps working while the Kokoro or Qwen model is missing. With fallback
+off, the next `aria say` loads a model you restore at the same path. If you
+change the path, or the system voice is standing in, [restart](#restart) Aria.
 
 ## Ask cannot start
 
