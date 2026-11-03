@@ -37,7 +37,7 @@ use super::shutdown::ShutdownError;
 use super::speaker;
 use super::speaker::SpeakerRuntime;
 use super::speech;
-use super::speech::{SpeechInitializationError, SpeechRuntime};
+use super::speech::SpeechRuntime;
 use super::subscriptions::Subscriptions;
 use super::tasks::RuntimeTasks;
 use super::transcripts::TranscriptStore;
@@ -54,9 +54,6 @@ pub enum DaemonError {
 
     #[error("failed to initialize dictation")]
     Dictation(#[source] DictationInitializationError),
-
-    #[error("failed to initialize speech")]
-    Speech(#[source] SpeechInitializationError),
 
     #[error("failed to detect the daemon run context")]
     Context(#[source] ConfigError),
@@ -85,7 +82,6 @@ impl DaemonError {
             Self::Settings(error) => Some(error.position()),
             Self::Store(_)
             | Self::Dictation(_)
-            | Self::Speech(_)
             | Self::Context(_)
             | Self::Configuration(_)
             | Self::Bind(_)
@@ -342,6 +338,17 @@ fn enrollment_event_emitter(subscriptions: Arc<Subscriptions>) -> EnrollmentEven
     })
 }
 
+fn speech_event_emitter(
+    subscriptions: Arc<Subscriptions>,
+) -> aria_voice::speech::SpeechEventEmitter {
+    aria_voice::speech::SpeechEventEmitter::subscribed_by(
+        aria_voice::speech::EVENT_THREAD,
+        move |stage| {
+            subscriptions.broadcast(stage);
+        },
+    )
+}
+
 fn listen_event_emitter(
     subscriptions: Arc<Subscriptions>,
 ) -> aria_voice::listen::ListenEventEmitter {
@@ -379,8 +386,8 @@ fn build_workers(
     }
 }
 
-/// Settings, the model, and wake-word monitoring are all read here, so a
-/// daemon that cannot serve a press says so before it accepts one.
+/// Settings, the transcription model, and wake-word monitoring are all read
+/// here, so a daemon that cannot serve a press says so before it accepts one.
 fn eager_workers(
     context: &Context<'_>,
     dependencies: &Dependencies<'_>,
@@ -401,7 +408,6 @@ fn eager_workers(
         wake,
         hotkey,
         relay,
-        tts,
     } = DaemonConfig::load(startup, &context.home, wake_word)
         .map_err(DaemonError::Configuration)?;
     // Relayed recordings have no key press, so they need a separate delivery adapter.
@@ -416,8 +422,18 @@ fn eager_workers(
             port,
         )),
     };
-    let speech = SpeechRuntime::eager(Arc::clone(subscriptions), Arc::clone(cache), tts)
-        .map_err(DaemonError::Speech)?;
+    let speech = SpeechRuntime::new(
+        context,
+        speech_event_emitter(Arc::clone(subscriptions)),
+        Arc::clone(cache),
+    );
+    // Dictation works without speech, so a failed load waits for the next utterance.
+    if let Err(error) = speech.load() {
+        tracing::error!(
+            error = %error_chain(&error),
+            "speech is unavailable until an utterance can load it"
+        );
+    }
     let speaker_config = SpeakerConfig::load(&startup.speaker, &context.home);
     let (dictation, monitor, recorder) = DictationRuntime::eager(
         context,
@@ -494,9 +510,9 @@ fn deferred_workers(
             microphone,
             vocabulary,
         )),
-        speech: Arc::new(SpeechRuntime::deferred(
+        speech: Arc::new(SpeechRuntime::new(
             context,
-            Arc::clone(subscriptions),
+            speech_event_emitter(Arc::clone(subscriptions)),
             Arc::clone(cache),
         )),
         // An on-demand daemon serves one press; its turns wait for a

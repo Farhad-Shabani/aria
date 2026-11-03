@@ -1,5 +1,13 @@
 name: a setting written with no daemon running is what the daemon starts with
 settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
+
   [tts.kokoro]
   model = "~/missing/kokoro.onnx"
   voices = "~/missing/voices.bin"
@@ -8,6 +16,9 @@ expect:
     - run: [settings, set, tts.backend, kokoro]
       stdout_contains: ["applied"]
   daemon:
-    startup: failure
-    stderr_contains:
-      - "the kokoro model cannot be used"
+    startup: success
+  client:
+    - run: [say, hello]
+      exit: failure
+      stderr_contains:
+        - "the kokoro model cannot be used"

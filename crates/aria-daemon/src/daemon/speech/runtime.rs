@@ -1,5 +1,6 @@
 //! Speech initialization state and request execution owned by the daemon.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
@@ -12,60 +13,38 @@ use aria_voice::speech::{
 };
 
 use super::super::context::Context;
-use super::super::subscriptions::Subscriptions;
 use super::assembly::{BuiltSpeech, SpeechInitializationError, build_speech};
 
 pub(in crate::daemon) struct SpeechRuntime {
     emitter: SpeechEventEmitter,
     cache: Arc<SettingsCache>,
-    speech: SpeechState,
+    speech: Lazy<BuiltSpeech, SpeechInitializationError>,
 }
-
-/// An engine the daemon already holds, or how to build one when the first
-/// utterance asks for it.
-enum SpeechState {
-    Ready(BuiltSpeech),
-    /// Boxed: the empty slot inside is as wide as the engine it will hold,
-    /// and a ready runtime should not pay for that.
-    Deferred(Box<DeferredSpeech>),
-}
-
-type DeferredSpeech = Lazy<BuiltSpeech, SpeechInitializationError>;
 
 impl SpeechRuntime {
-    /// Settings and the engine are read when the first utterance asks
-    /// for them, so a fault in either reaches the request that triggered it
-    /// and is announced.
-    pub(in crate::daemon) fn deferred(
+    /// Settings and the engine are read when the engine is first needed. A
+    /// failed attempt stores nothing, so the next utterance tries again.
+    pub(in crate::daemon) fn new(
         context: &Context<'_>,
-        subscriptions: Arc<Subscriptions>,
+        emitter: SpeechEventEmitter,
         cache: Arc<SettingsCache>,
     ) -> Self {
         let home = context.home.clone();
         Self {
-            emitter: event_emitter(subscriptions),
+            emitter,
             cache: Arc::clone(&cache),
-            speech: SpeechState::Deferred(Box::new(DeferredSpeech::new(move || {
+            speech: speech_load(move || {
                 let settings = cache.effective();
                 let config = TtsConfig::load(&settings.tts, &home)
                     .map_err(SpeechInitializationError::Config)?;
                 build_speech(config)
-            }))),
+            }),
         }
     }
 
-    /// Startup resolves the engine here, so a daemon that cannot speak says
-    /// so before it accepts an utterance.
-    pub(in crate::daemon) fn eager(
-        subscriptions: Arc<Subscriptions>,
-        cache: Arc<SettingsCache>,
-        config: TtsConfig,
-    ) -> Result<Self, SpeechInitializationError> {
-        Ok(Self {
-            emitter: event_emitter(subscriptions),
-            cache,
-            speech: SpeechState::Ready(build_speech(config)?),
-        })
+    /// Builds the engine ahead of the first utterance.
+    pub(in crate::daemon) fn load(&self) -> Result<(), SpeechInitializationError> {
+        self.speech.get().map(|_speech| ())
     }
 
     pub(in crate::daemon) fn execute(
@@ -76,7 +55,7 @@ impl SpeechRuntime {
         if cancellation.is_cancelled() {
             return Err(SpeechRuntimeError::Execution(SpeechError::Cancelled));
         }
-        let speech = match self.speech() {
+        let speech = match self.speech.get() {
             Ok(speech) => speech,
             Err(_) if cancellation.is_cancelled() => {
                 return Err(SpeechRuntimeError::Execution(SpeechError::Cancelled));
@@ -103,20 +82,20 @@ impl SpeechRuntime {
     /// Stops the utterance playing, if any. A runtime that never spoke has
     /// nothing to stop and nothing to build.
     pub(in crate::daemon) fn stop(&self) -> bool {
-        match &self.speech {
-            SpeechState::Ready(speech) => speech.coordinator.stop(),
-            SpeechState::Deferred(deferred) => deferred
-                .built()
-                .is_some_and(|speech| speech.coordinator.stop()),
-        }
+        self.speech
+            .built()
+            .is_some_and(|speech| speech.coordinator.stop())
     }
+}
 
-    fn speech(&self) -> Result<&BuiltSpeech, SpeechInitializationError> {
-        match &self.speech {
-            SpeechState::Ready(speech) => Ok(speech),
-            SpeechState::Deferred(deferred) => deferred.get(),
-        }
-    }
+/// A panicking load counts as a failed one, so it can't end the daemon.
+fn speech_load(
+    build: impl Fn() -> Result<BuiltSpeech, SpeechInitializationError> + Send + Sync + 'static,
+) -> Lazy<BuiltSpeech, SpeechInitializationError> {
+    Lazy::new(move || {
+        catch_unwind(AssertUnwindSafe(&build))
+            .unwrap_or(Err(SpeechInitializationError::LoadPanicked))
+    })
 }
 
 /// The request's voice and rate, else the file's as it stands now, else the
@@ -145,15 +124,12 @@ pub(in crate::daemon) enum SpeechRuntimeError {
     Execution(#[from] SpeechError),
 }
 
-fn event_emitter(subscriptions: Arc<Subscriptions>) -> SpeechEventEmitter {
-    SpeechEventEmitter::subscribed_by(aria_voice::speech::EVENT_THREAD, move |stage| {
-        subscriptions.broadcast(stage);
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
+    use aria_settings::config::ConfigError;
 
     use super::*;
 
@@ -210,5 +186,107 @@ mod tests {
         let spoken = next_utterance(&store, request(None, None), TtsEngine::System).unwrap();
 
         assert_eq!(spoken.voice, Some(Voice::new("Samantha").unwrap()));
+    }
+
+    fn unusable_model() -> SpeechInitializationError {
+        SpeechInitializationError::Config(ConfigError::MissingValue {
+            field: "tts.kokoro.model",
+            backend: "kokoro",
+        })
+    }
+
+    /// A runtime whose engine comes from `build`, which counts its calls.
+    fn runtime(
+        home: &std::path::Path,
+        build: impl Fn() -> Result<BuiltSpeech, SpeechInitializationError> + Send + Sync + 'static,
+    ) -> (SpeechRuntime, Arc<AtomicUsize>) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+        let runtime = SpeechRuntime {
+            emitter: SpeechEventEmitter::subscribed_by(
+                aria_voice::speech::EVENT_THREAD,
+                |_stage| {},
+            ),
+            cache: Arc::new(store(home, "")),
+            speech: speech_load(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                build()
+            }),
+        };
+        (runtime, attempts)
+    }
+
+    #[test]
+    fn a_failed_load_leaves_each_utterance_its_own_attempt() {
+        let home = tempfile::tempdir().unwrap();
+        let (runtime, attempts) = runtime(home.path(), || Err(unusable_model()));
+
+        assert!(runtime.load().is_err());
+        for _ in 0..2 {
+            let failure = runtime.execute(request(None, None), CancelToken::new());
+            assert!(matches!(
+                failure,
+                Err(SpeechRuntimeError::Initialization(
+                    SpeechInitializationError::Config(_)
+                ))
+            ));
+        }
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_panicking_load_fails_and_stays_retryable() {
+        let home = tempfile::tempdir().unwrap();
+        let (runtime, attempts) = runtime(home.path(), || panic!("a broken model file"));
+
+        for _ in 0..2 {
+            assert!(matches!(
+                runtime.load(),
+                Err(SpeechInitializationError::LoadPanicked)
+            ));
+        }
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn stopping_or_cancelling_before_the_load_builds_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let (runtime, attempts) = runtime(home.path(), || Err(unusable_model()));
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+
+        assert!(!runtime.stop());
+        let outcome = runtime.execute(request(None, None), cancelled);
+
+        assert!(matches!(
+            outcome,
+            Err(SpeechRuntimeError::Execution(SpeechError::Cancelled))
+        ));
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+    }
+
+    /// The system voice stands in for a repaired model. Only macOS always has it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_repaired_engine_loads_once_and_stays() {
+        let home = tempfile::tempdir().unwrap();
+        let broken = std::sync::atomic::AtomicBool::new(true);
+        let (runtime, attempts) = runtime(home.path(), move || {
+            if broken.swap(false, Ordering::SeqCst) {
+                return Err(unusable_model());
+            }
+            build_speech(TtsConfig {
+                backend: aria_voice::config::TtsBackend::System,
+                fallback: aria_voice::config::TtsFallback::None,
+            })
+        });
+
+        assert!(runtime.load().is_err());
+        assert!(runtime.load().is_ok());
+        assert!(runtime.load().is_ok());
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 }

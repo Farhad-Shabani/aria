@@ -30,6 +30,7 @@ expect:
   daemon:                  # optional; leave it out to start no daemon
     startup: success       # or failure
     stderr_contains: ["text"]   # every entry must appear
+    log_contains: ["text"]      # the same, in the daemon's log
   before_daemon:           # optional; `aria` commands run before any daemon starts
     - run: [settings, set, assistant.id, codex]
   client:                  # `aria` commands, run in order

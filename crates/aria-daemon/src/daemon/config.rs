@@ -10,14 +10,13 @@ use std::path::{Path, PathBuf};
 use aria_settings::config::{ConfigError, model_location, string_value, wake_backend};
 use aria_settings::{Phone, SettingsFile, Wake};
 
-use aria_voice::config::{CaptureConfig, DictationConfig, TtsConfig};
+use aria_voice::config::{CaptureConfig, DictationConfig};
 
 pub struct DaemonConfig {
     pub dictation: DictationConfig,
     pub wake: WakeConfig,
     pub hotkey: HotkeyConfig,
     pub relay: RelayConfig,
-    pub tts: TtsConfig,
 }
 
 /// The command's say over `wake.enabled`, outranking the file. `aria wake`
@@ -87,13 +86,11 @@ impl DaemonConfig {
     ) -> Result<Self, ConfigError> {
         let dictation = DictationConfig::load(settings, home)?;
         let wake = wake(&settings.wake, home, &dictation.capture, wake_word)?;
-        let tts = TtsConfig::load(&settings.tts, home)?;
         Ok(Self {
             dictation,
             wake,
             hotkey: HotkeyConfig::Enabled,
             relay: relay(&settings.phone),
-            tts,
         })
     }
 }

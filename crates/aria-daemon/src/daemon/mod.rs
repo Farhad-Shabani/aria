@@ -64,7 +64,6 @@ pub use inference::pin_server_for_tests;
 pub use inference::{PairedServer, paired_server};
 /// What `aria doctor` needs to report about the relay without owning one.
 pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
-pub use speech::SpeechInitializationError;
 
 pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
 pub use aria_assistant::chat::{

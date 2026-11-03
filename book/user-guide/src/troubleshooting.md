@@ -59,6 +59,9 @@ changes need a restart. `aria doctor` doesn't check speech-engine files.
 
 Linux system speech needs `/usr/bin/espeak-ng` or `/usr/bin/espeak`. For Kokoro,
 rerun setup to obtain its model and voices file, or correct their paths.
+Dictation keeps working while the Kokoro or Qwen model is missing. With fallback
+off, the next `aria say` loads a model you restore at the same path. A changed
+path, or a model the system voice replaced, needs a [restart](#restart).
 
 ## Ask cannot start
 

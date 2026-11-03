@@ -1,5 +1,13 @@
-name: kokoro without its model fails daemon startup
+name: kokoro without its model leaves the daemon serving and fails each utterance
 settings: |
+  [stt]
+  backend = "whisper"
+  model = "${WHISPER_MODEL}"
+
+  [capture]
+  backend = "wav_file"
+  path = "${FIXTURES}/silence.wav"
+
   [tts]
   backend = "kokoro"
 
@@ -8,7 +16,20 @@ settings: |
   voices = "~/missing/voices.bin"
 expect:
   daemon:
-    startup: failure
-    stderr_contains:
-      - 'failed to initialize speech'
-      - 'the kokoro model cannot be used'
+    startup: success
+    log_contains:
+      - "speech is unavailable until an utterance can load it"
+  client:
+    - run: [say, hello]
+      exit: failure
+      stderr_contains:
+        - 'the kokoro model cannot be used'
+    - run: [say, --stop]
+      stdout_contains:
+        - "nothing was playing"
+    # Silence ends a dictation at transcription, so nothing reaches the
+    # clipboard. Copy mode needs no Accessibility grant.
+    - run: [dictate, --mode, copy]
+      exit: failure
+      stderr_contains:
+        - "no speech was detected"
