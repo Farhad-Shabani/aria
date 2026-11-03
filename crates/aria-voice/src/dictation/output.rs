@@ -1,406 +1,181 @@
 use std::fmt;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use aria_primitives::error_chain;
-use aria_primitives::private_document::{DocumentError, PrivateDocument};
-use cidre::{cf, core_audio as ca, os};
-use serde::{Deserialize, Serialize};
+use cidre::core_audio::{self as ca, aggregate_device_keys as aggregate, hardware};
+use cidre::{cat, cf, ns, os};
 
-const CONFIRM_TIMEOUT: Duration = Duration::from_millis(100);
-const CONFIRM_POLL: Duration = Duration::from_millis(5);
-const RESTORE_ATTEMPTS: usize = 2;
-const UNMUTED: u32 = 0;
-const MUTED: u32 = 1;
-const LEDGER_MAXIMUM_BYTES: u64 = 16 * 1024;
-
-/// The output devices Aria muted and hasn't unmuted yet. It lives on disk
-/// because a killed daemon never runs `OutputMute`'s `Drop`, and an unplugged
-/// device can't be unmuted until it returns.
-pub struct MutedOutputs {
-    document: PrivateDocument,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Ledger {
-    devices: Vec<String>,
-}
-
-impl fmt::Debug for MutedOutputs {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("MutedOutputs")
-            .finish_non_exhaustive()
-    }
-}
-
-impl MutedOutputs {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self {
-            document: PrivateDocument::new(path, LEDGER_MAXIMUM_BYTES),
-        }
-    }
-
-    /// Unmutes what an earlier recording left muted. A device that can't be
-    /// unmuted yet stays listed for the next try.
-    pub fn restore(&self) {
-        self.restore_with(|uid| set_mute(uid, UNMUTED));
-    }
-
-    fn restore_with(&self, mut unmute: impl FnMut(&str) -> Result<(), OutputError>) {
-        let owed = match self.devices() {
-            Ok(owed) => owed,
-            Err(error) => {
-                tracing::error!(error = %error_chain(&error), "could not read the muted output devices");
-                return;
-            }
-        };
-        if owed.is_empty() {
-            return;
-        }
-        let remaining: Vec<String> = owed
-            .iter()
-            .filter(|uid| match unmute(uid) {
-                Ok(()) => false,
-                Err(error) => {
-                    tracing::warn!(%error, "could not unmute an output device left muted");
-                    true
-                }
-            })
-            .cloned()
-            .collect();
-        tracing::info!(
-            restored = owed.len() - remaining.len(),
-            remaining = remaining.len(),
-            "restored output devices left muted"
-        );
-        self.replace(remaining);
-    }
-
-    fn record(&self, uid: &str) -> Result<(), DocumentError> {
-        let mut devices = self.devices()?;
-        if !devices.iter().any(|device| device == uid) {
-            devices.push(uid.to_owned());
-        }
-        self.write(devices)
-    }
-
-    fn forget(&self, uid: &str) {
-        match self.devices() {
-            Ok(devices) => {
-                self.replace(devices.into_iter().filter(|device| device != uid).collect());
-            }
-            Err(error) => {
-                tracing::error!(error = %error_chain(&error), "could not read the muted output devices");
-            }
-        }
-    }
-
-    fn devices(&self) -> Result<Vec<String>, DocumentError> {
-        let ledger = self.document.read::<Ledger>()?;
-        Ok(ledger.map_or_else(Vec::new, |ledger| ledger.devices))
-    }
-
-    fn replace(&self, devices: Vec<String>) {
-        if let Err(error) = self.write(devices) {
-            tracing::error!(error = %error_chain(&error), "could not update the muted output devices");
-        }
-    }
-
-    fn write(&self, devices: Vec<String>) -> Result<(), DocumentError> {
-        if devices.is_empty() {
-            self.document.remove()?;
-            return Ok(());
-        }
-        self.document
-            .prepare(&Ledger { devices })?
-            .commit()?
-            .confirm_durability()
-    }
-}
-
+/// Silences every app but this process while it lives, so cues stay audible.
 pub(super) struct OutputMute {
-    original: u32,
-    write: Box<dyn FnMut(u32) -> Result<(), OutputError> + Send>,
+    restore: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl fmt::Debug for OutputMute {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("OutputMute")
-            .field("original", &self.original)
-            .finish_non_exhaustive()
+        formatter.debug_struct("OutputMute").finish_non_exhaustive()
     }
 }
 
 impl OutputMute {
-    pub(super) fn acquire(muted_outputs: &Arc<MutedOutputs>) -> Option<Self> {
-        muted_outputs.restore();
-        match snapshot() {
-            Ok((uid, original)) => Self::tracked(muted_outputs, uid, original, set_mute),
+    pub(super) fn acquire() -> Option<Self> {
+        let started = Instant::now();
+        match OtherAppsMuted::start() {
+            Ok(muted) => {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "muted other apps"
+                );
+                Some(Self::with_restore(move || drop(muted)))
+            }
             Err(error) => {
-                tracing::warn!(%error, "could not mute output; recording continues");
+                tracing::warn!(%error, "could not mute other apps; recording continues");
                 None
             }
         }
     }
 
-    /// Lists the device before muting it, so no exit can leave a device muted
-    /// without a record. A device that can't be listed stays unmuted.
-    fn tracked(
-        muted_outputs: &Arc<MutedOutputs>,
-        uid: String,
-        original: u32,
-        write_device: impl Fn(&str, u32) -> Result<(), OutputError> + Send + 'static,
-    ) -> Option<Self> {
-        if original == UNMUTED
-            && let Err(error) = muted_outputs.record(&uid)
-        {
-            tracing::warn!(error = %error_chain(&error), "could not list the output device; recording continues unmuted");
-            return None;
+    pub(super) fn with_restore(restore: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            restore: Some(Box::new(restore)),
         }
-        let ledger = Arc::clone(muted_outputs);
-        Some(Self::with_state(original, move |value| {
-            write_device(&uid, value)?;
-            if value == UNMUTED {
-                ledger.forget(&uid);
-            }
-            Ok(())
-        }))
-    }
-
-    pub(super) fn with_state(
-        original: u32,
-        write: impl FnMut(u32) -> Result<(), OutputError> + Send + 'static,
-    ) -> Self {
-        let mut output = Self {
-            original,
-            write: Box::new(write),
-        };
-        if original == UNMUTED
-            && let Err(error) = (output.write)(MUTED)
-        {
-            tracing::warn!(%error, "could not confirm output mute; recording continues");
-        }
-        output
     }
 }
 
 impl Drop for OutputMute {
     fn drop(&mut self) {
-        for attempt in 1..=RESTORE_ATTEMPTS {
-            match (self.write)(self.original) {
-                Ok(()) => return,
-                Err(error) => {
-                    tracing::error!(%error, attempt, "could not restore output mute state");
-                }
-            }
+        if let Some(restore) = self.restore.take() {
+            restore();
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum OutputError {
-    #[error("CoreAudio output operation failed: {0}")]
+enum MuteError {
+    #[error("CoreAudio refused: {0}")]
     Native(#[from] os::Error),
-    #[error("the output device is unavailable")]
-    Unavailable,
-    #[error("the output device has no writable main mute control")]
-    Unsupported,
-    #[error("the output device returned an invalid mute value")]
-    InvalidMute,
-    #[error("the output device did not confirm its mute state")]
-    Unconfirmed,
+    /// Excluding an unknown process excludes nothing, so the tap would mute
+    /// Aria's own cues too.
+    #[error("CoreAudio doesn't know this process yet")]
+    UnknownProcess,
 }
 
-fn snapshot() -> Result<(String, u32), OutputError> {
-    let device = ca::System::default_output_device()?;
-    check_device(device)?;
-    let original: u32 = device.prop(&ca::PropSelector::DEVICE_MUTE.output_addr())?;
-    if original > 1 {
-        return Err(OutputError::InvalidMute);
-    }
-    Ok((device.uid()?.to_string(), original))
+/// A process tap mutes only while something reads it, so a private aggregate
+/// device reads the tap and discards the audio. Both belong to this process,
+/// so the sound comes back if it dies.
+struct OtherAppsMuted {
+    // Drop order: stop reading before the tap goes.
+    reader: Option<hardware::StartedDevice<ca::AggregateDevice>>,
+    _tap: ca::TapGuard,
 }
 
-fn check_device(device: ca::Device) -> Result<(), OutputError> {
-    if device.is_unknown() || !device.is_alive()? {
-        return Err(OutputError::Unavailable);
+impl OtherAppsMuted {
+    fn start() -> Result<Self, MuteError> {
+        let tap = tap_all_but_this_process()?;
+        let reader = aggregate_reading(&tap)?;
+        let discarding = reader.create_io_proc_id(discard, None)?;
+        Ok(Self {
+            reader: Some(ca::device_start(reader, Some(discarding))?),
+            _tap: tap,
+        })
     }
-    let address = ca::PropSelector::DEVICE_MUTE.output_addr();
-    if !device.has_prop(&address) || !device.is_prop_settable(&address)? {
-        return Err(OutputError::Unsupported);
-    }
-    Ok(())
 }
 
-fn set_mute(uid: &str, value: u32) -> Result<(), OutputError> {
-    // The original device stays pinned. Following route changes would need
-    // per-device restoration.
-    let device = ca::Device::with_uid(&cf::String::from_str(uid))?;
-    check_device(device)?;
-    let address = ca::PropSelector::DEVICE_MUTE.output_addr();
-    device.set_prop(&address, &value)?;
-    let deadline = Instant::now() + CONFIRM_TIMEOUT;
-    loop {
-        if device.prop::<u32>(&address)? == value {
-            return Ok(());
+impl Drop for OtherAppsMuted {
+    fn drop(&mut self) {
+        // `stop` reports a failure that the device's own drop would assert on.
+        if let Some(reader) = self.reader.take()
+            && let Err(error) = reader.stop()
+        {
+            tracing::warn!(%error, "could not stop reading the muted apps' sound");
         }
-        if Instant::now() >= deadline {
-            return Err(OutputError::Unconfirmed);
-        }
-        thread::sleep(CONFIRM_POLL);
     }
+}
+
+fn tap_all_but_this_process() -> Result<ca::TapGuard, MuteError> {
+    let pid = ns::ProcessInfo::current().process_id();
+    let process = ca::Process::with_pid(pid)?;
+    if process.0 == ca::Obj::UNKNOWN {
+        return Err(MuteError::UnknownProcess);
+    }
+    let this_process = ns::Number::with_u32(process.0.0);
+    let mut description =
+        ca::TapDesc::with_stereo_global_tap_excluding_processes(&ns::Array::from_slice(&[
+            this_process.as_ref(),
+        ]));
+    description.set_private(true);
+    description.set_mute_behavior(ca::TapMuteBehavior::Muted);
+    Ok(description.create_process_tap()?)
+}
+
+/// The output device drives the IO cycle; a tap alone never runs it.
+fn aggregate_reading(tap: &ca::TapGuard) -> os::Result<ca::AggregateDevice> {
+    let output = ca::System::default_output_device()?.uid()?;
+    let output_entry =
+        cf::DictionaryOf::with_keys_values(&[ca::sub_device_keys::uid()], &[output.as_type_ref()]);
+    let tap_uid = tap.uid()?;
+    let tap_entry = cf::DictionaryOf::with_keys_values(
+        &[hardware::sub_tap_keys::uid()],
+        &[tap_uid.as_type_ref()],
+    );
+    let sub_devices = cf::ArrayOf::from_slice(&[output_entry.as_ref()]);
+    let taps = cf::ArrayOf::from_slice(&[tap_entry.as_ref()]);
+    let uid = cf::Uuid::new().to_cf_string();
+    let description = cf::DictionaryOf::with_keys_values(
+        &[
+            aggregate::uid(),
+            aggregate::name(),
+            aggregate::is_private(),
+            aggregate::main_sub_device(),
+            aggregate::sub_device_list(),
+            aggregate::tap_list(),
+            aggregate::tap_auto_start(),
+        ],
+        &[
+            uid.as_type_ref(),
+            cf::str!(c"Aria mute"),
+            cf::Boolean::value_true(),
+            &output,
+            sub_devices.as_type_ref(),
+            taps.as_type_ref(),
+            cf::Boolean::value_true(),
+        ],
+    );
+    ca::AggregateDevice::with_desc(&description)
+}
+
+extern "C" fn discard(
+    _device: ca::Device,
+    _now: &cat::AudioTimeStamp,
+    _input: &cat::AudioBufList<1>,
+    _input_time: &cat::AudioTimeStamp,
+    _output: &mut cat::AudioBufList<1>,
+    _output_time: &cat::AudioTimeStamp,
+    _client: Option<&mut std::ffi::c_void>,
+) -> os::Status {
+    os::Status::NO_ERR
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
 
     #[test]
-    fn mute_restores_the_saved_state_including_already_muted() {
-        for (original, expected) in [(0, vec![1, 0]), (1, vec![1])] {
-            let writes = Arc::new(Mutex::new(Vec::new()));
-            let received = Arc::clone(&writes);
-            let output = OutputMute::with_state(original, move |value| {
-                received.lock().unwrap().push(value);
-                Ok(())
-            });
-            drop(output);
-            assert_eq!(*writes.lock().unwrap(), expected);
-        }
+    fn dropping_the_mute_restores_the_sound() {
+        let restored = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&restored);
+        let mute = OutputMute::with_restore(move || observed.store(true, Ordering::SeqCst));
+        assert!(!restored.load(Ordering::SeqCst));
+        drop(mute);
+        assert!(restored.load(Ordering::SeqCst));
     }
 
     #[test]
-    fn failed_mute_keeps_the_saved_state_until_recording_ends() {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let received = Arc::clone(&writes);
-        let output = OutputMute::with_state(0, move |value| {
-            received.lock().unwrap().push(value);
-            if value == 1 {
-                Err(OutputError::Unconfirmed)
-            } else {
-                Ok(())
-            }
-        });
-        assert_eq!(*writes.lock().unwrap(), [1]);
-        drop(output);
-        assert_eq!(*writes.lock().unwrap(), [1, 0]);
-    }
-
-    #[test]
-    fn restore_retries_are_bounded() {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let received = Arc::clone(&writes);
-        let output = OutputMute::with_state(0, move |value| {
-            received.lock().unwrap().push(value);
-            if value == 0 {
-                Err(OutputError::Unavailable)
-            } else {
-                Ok(())
-            }
-        });
-        drop(output);
-        assert_eq!(*writes.lock().unwrap(), [1, 0, 0]);
-    }
-
-    fn ledger() -> (tempfile::TempDir, Arc<MutedOutputs>) {
-        let directory = tempfile::tempdir().unwrap();
-        let muted_outputs = Arc::new(MutedOutputs::new(directory.path().join("muted.json")));
-        (directory, muted_outputs)
-    }
-
-    fn succeeds(_uid: &str, _value: u32) -> Result<(), OutputError> {
-        Ok(())
-    }
-
-    #[test]
-    fn a_device_is_listed_while_muted_and_gone_once_restored() {
-        let (_directory, muted_outputs) = ledger();
-        let output = OutputMute::tracked(&muted_outputs, "speakers".into(), UNMUTED, succeeds);
-        assert_eq!(muted_outputs.devices().unwrap(), ["speakers"]);
-        drop(output);
-        assert!(muted_outputs.devices().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_killed_daemon_is_unmuted_by_the_next_one() {
-        let (directory, muted_outputs) = ledger();
-        std::mem::forget(OutputMute::tracked(
-            &muted_outputs,
-            "speakers".into(),
-            UNMUTED,
-            succeeds,
-        ));
-
-        let next_daemon = MutedOutputs::new(directory.path().join("muted.json"));
-        let mut unmuted = Vec::new();
-        next_daemon.restore_with(|uid| {
-            unmuted.push(uid.to_owned());
-            Ok(())
-        });
-
-        assert_eq!(unmuted, ["speakers"]);
-        assert!(next_daemon.devices().unwrap().is_empty());
-    }
-
-    #[test]
-    fn an_unplugged_device_stays_listed_until_it_can_be_unmuted() {
-        let (_directory, muted_outputs) = ledger();
-        drop(OutputMute::tracked(
-            &muted_outputs,
-            "headphones".into(),
-            UNMUTED,
-            |_uid, value| {
-                if value == UNMUTED {
-                    Err(OutputError::Unavailable)
-                } else {
-                    Ok(())
-                }
-            },
-        ));
-        assert_eq!(muted_outputs.devices().unwrap(), ["headphones"]);
-
-        muted_outputs.restore_with(|_uid| Err(OutputError::Unavailable));
-        assert_eq!(muted_outputs.devices().unwrap(), ["headphones"]);
-
-        muted_outputs.restore_with(|_uid| Ok(()));
-        assert!(muted_outputs.devices().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_device_the_user_already_muted_is_never_listed() {
-        let (_directory, muted_outputs) = ledger();
-        let output = OutputMute::tracked(&muted_outputs, "speakers".into(), MUTED, succeeds);
-        assert!(muted_outputs.devices().unwrap().is_empty());
-        drop(output);
-        assert!(muted_outputs.devices().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_device_that_cannot_be_listed_is_not_muted() {
-        let directory = tempfile::tempdir().unwrap();
-        let blocker = directory.path().join("blocker");
-        std::fs::write(&blocker, "").unwrap();
-        let muted_outputs = Arc::new(MutedOutputs::new(blocker.join("muted.json")));
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let received = Arc::clone(&writes);
-
-        let output = OutputMute::tracked(
-            &muted_outputs,
-            "speakers".into(),
-            UNMUTED,
-            move |_uid, value| {
-                received.lock().unwrap().push(value);
-                Ok(())
-            },
-        );
-
-        assert!(output.is_none());
-        assert!(writes.lock().unwrap().is_empty());
+    #[ignore = "mutes this Mac's sound; run by hand with music playing"]
+    fn other_apps_go_quiet_for_five_seconds() {
+        let muted = OtherAppsMuted::start().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        drop(muted);
     }
 }

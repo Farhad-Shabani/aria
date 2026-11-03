@@ -111,7 +111,7 @@ impl DictationRuntime {
         let delivery = context.delivery.clone();
         let spool_dir = context.paths.spool_dir().to_path_buf();
         let home = context.home.clone();
-        let muted_outputs = context.muted_outputs();
+        let sound_muting = context.sound_muting();
         let retry_home = home.clone();
         let retry_vocabulary = Arc::clone(&vocabulary);
         let retry_cache = Arc::clone(&cache);
@@ -152,7 +152,7 @@ impl DictationRuntime {
                         Arc::clone(&transcripts),
                         ModelLoading::OnFirstUse,
                         Arc::clone(&microphone),
-                        muted_outputs.clone(),
+                        sound_muting,
                     )
                     .map(|built| ReadyDictation {
                         coordinator: built.coordinator,
@@ -219,7 +219,7 @@ impl DictationRuntime {
             Arc::clone(&transcripts),
             ModelLoading::Eager,
             Arc::clone(&microphone),
-            context.muted_outputs(),
+            context.sound_muting(),
         )?;
         let runtime = Self {
             emitter: event_emitter(context, subscriptions),
@@ -1142,7 +1142,7 @@ mod history_tests {
                 Arc::clone(&fixture.runtime.transcripts),
                 ModelLoading::Eager,
                 Arc::clone(&fixture.runtime.microphone),
-                None,
+                aria_voice::dictation::SoundMuting::Never,
             )
             .unwrap();
             assert_eq!(built.engine, backend::SERVER);

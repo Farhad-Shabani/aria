@@ -19,7 +19,6 @@ pub struct RuntimePaths {
     lock: PathBuf,
     log: PathBuf,
     status: PathBuf,
-    muted_outputs: PathBuf,
 }
 
 /// Runtime paths whose private directories have been created and validated.
@@ -70,7 +69,6 @@ impl RuntimePaths {
         let lock = directory.join("daemon.lock");
         let log = directory.join("daemon.log");
         let status = directory.join("status");
-        let muted_outputs = directory.join("muted-outputs.json");
         Self {
             directory,
             spool_dir,
@@ -78,7 +76,6 @@ impl RuntimePaths {
             lock,
             log,
             status,
-            muted_outputs,
         }
     }
 }
@@ -116,11 +113,6 @@ impl PreparedRuntimePaths {
     /// contents mean idle.
     pub fn status_path(&self) -> &Path {
         &self.paths.status
-    }
-
-    /// The output devices a recording muted and hasn't unmuted yet.
-    pub fn muted_outputs_path(&self) -> &Path {
-        &self.paths.muted_outputs
     }
 }
 

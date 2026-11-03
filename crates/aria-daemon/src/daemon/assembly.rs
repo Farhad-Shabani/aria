@@ -137,10 +137,6 @@ fn compose(
     let socket = ExclusiveListener::bind(paths.socket_path(), paths.lock_path())
         .map_err(DaemonError::Bind)?;
     let context = Context::detect(paths, lifetime).map_err(DaemonError::Context)?;
-    // After the bind, so this can't unmute a recording another daemon is running.
-    if let Some(muted_outputs) = context.muted_outputs() {
-        muted_outputs.restore();
-    }
     // A daemon starts owning no audio: whatever a run that already ended left
     // behind goes before this one can record over it.
     remove_all_spools(context.paths.spool_dir());

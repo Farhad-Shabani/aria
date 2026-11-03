@@ -1,14 +1,13 @@
 //! What describes one daemon run, fixed at startup.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use aria_platform::delivery::DeliveryFactory;
 use aria_platform::runtime::PreparedRuntimePaths;
 #[cfg(not(test))]
 use aria_settings::config::home_directory;
 use aria_settings::config::{ConfigError, UNATTENDED_ENV, unattended};
-use aria_voice::dictation::MutedOutputs;
+use aria_voice::dictation::SoundMuting;
 
 use super::host::DaemonLifetime;
 
@@ -50,11 +49,12 @@ impl<'runtime> Context<'runtime> {
         })
     }
 
-    /// Absent when nobody is at the machine, so tests and harness runs never
-    /// mute the developer's sound.
-    pub(super) fn muted_outputs(&self) -> Option<Arc<MutedOutputs>> {
-        self.attended
-            .then(|| Arc::new(MutedOutputs::new(self.paths.muted_outputs_path())))
+    pub(super) fn sound_muting(&self) -> SoundMuting {
+        if self.attended {
+            SoundMuting::Allowed
+        } else {
+            SoundMuting::Never
+        }
     }
 }
 

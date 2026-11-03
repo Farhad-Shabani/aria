@@ -23,8 +23,8 @@ use aria_voice::config::{
 use aria_voice::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
-    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, MutedOutputs,
-    Rewrites, Rewriting, Transcribed,
+    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
+    Rewriting, SoundMuting, Transcribed,
 };
 use aria_voice::transcription::{
     Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcription,
@@ -395,7 +395,7 @@ pub(super) fn build_dictation(
     transcripts: Arc<TranscriptStore>,
     loading: ModelLoading,
     microphone: Arc<Gate>,
-    muted_outputs: Option<Arc<MutedOutputs>>,
+    sound_muting: SoundMuting,
 ) -> Result<BuiltDictation, DictationInitializationError> {
     let rewrites =
         Rewrites::load(&setup.dictation, home).map_err(DictationInitializationError::Cleanup)?;
@@ -436,7 +436,7 @@ pub(super) fn build_dictation(
     Ok(BuiltDictation {
         engine: engine.name,
         coordinator: DictationCoordinator::new(policy, execution, microphone)
-            .with_muted_outputs(muted_outputs),
+            .with_sound_muting(sound_muting),
         wake,
         capture,
         wake_control,
@@ -571,7 +571,7 @@ mod tests {
                 Arc::new(TranscriptStore::new()),
                 ModelLoading::Eager,
                 Gate::new(),
-                None,
+                SoundMuting::Never,
             )
             .unwrap();
             (built, vocabulary)
@@ -659,7 +659,7 @@ mod tests {
             Arc::new(TranscriptStore::new()),
             ModelLoading::Eager,
             Gate::new(),
-            None,
+            SoundMuting::Never,
         );
 
         assert!(matches!(

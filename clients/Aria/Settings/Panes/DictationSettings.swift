@@ -19,7 +19,7 @@ struct DictationSettings: View {
             Section("Recording") {
                 Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
                     Text("Mute while recording")
-                    Text("System audio comes back when recording stops.")
+                    Text("Mutes other apps. Their sound comes back when recording stops.")
                 }
                 autoStop(editor)
             }
