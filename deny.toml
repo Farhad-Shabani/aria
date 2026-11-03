@@ -7,6 +7,7 @@ ignore = [
   { id = "RUSTSEC-2026-0367", reason = "zip extract() is never called: npyz and candle-core only open archives and read entries" },
   { id = "RUSTSEC-2026-0368", reason = "zip extract() is never called: npyz and candle-core only open archives and read entries" },
   { id = "RUSTSEC-2026-0369", reason = "zip extract() is never called: npyz and candle-core only open archives and read entries" },
+  { id = "RUSTSEC-2026-0429", reason = "zip extract() is never called: npyz and candle-core only open archives and read entries" },
   { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but pulled in by gemm, pulp, and tokenizers; no fork to switch to" },
 ]
 
