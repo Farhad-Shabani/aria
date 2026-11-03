@@ -1104,21 +1104,33 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_slow_mute_never_holds_the_start_or_outlives_the_recording() {
+        static MUTE_BLOCKED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static MUTED: AtomicBool = AtomicBool::new(false);
         static RESTORED: AtomicBool = AtomicBool::new(false);
         fn slow_mute() -> Option<OutputMute> {
-            thread::sleep(MUTE_WAIT * 3);
+            drop(MUTE_BLOCKED.lock().unwrap());
+            MUTED.store(true, Ordering::SeqCst);
             Some(OutputMute::with_restore(|| {
                 RESTORED.store(true, Ordering::SeqCst);
             }))
         }
         let control = muting_control(slow_mute);
+        let blocked = MUTE_BLOCKED.lock().unwrap();
 
-        let started = Instant::now();
-        let _guard = control
-            .start_recording(&DictationEventEmitter::unsubscribed())
+        // On its own thread, so a start that waits for the mute fails the
+        // test instead of hanging it.
+        let starting = Arc::clone(&control);
+        let (sender, start) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = sender.send(starting.start_recording(&DictationEventEmitter::unsubscribed()));
+        });
+        let _guard = start
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the start waited for the mute")
             .unwrap();
-        assert!(started.elapsed() < MUTE_WAIT * 2);
+        assert!(!MUTED.load(Ordering::SeqCst));
         control.restore_output();
+        drop(blocked);
 
         let waited = Instant::now();
         while !RESTORED.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(2) {
