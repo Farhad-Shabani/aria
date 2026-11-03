@@ -107,6 +107,9 @@ message Missing {
     // Reported only when a serving daemon's hotkey listener has not armed.
     // A stopped daemon reports no grant state.
     KIND_GRANT = 5;
+    // Modifier Keys in Keyboard settings turns the Aria key into another key,
+    // so the hotkey listener never sees it.
+    KIND_KEY_REMAPPED = 7;
   }
   Kind kind = 1;
   // The model ID when kind is KIND_MODEL.

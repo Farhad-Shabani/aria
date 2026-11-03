@@ -501,6 +501,14 @@ final class SetupStateTests: XCTestCase {
         XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: true))
     }
 
+    func testARemappedKeyAloneDoesNotOpenTheWizard() {
+        var inspection = Aria_Setup_V1_Inspection()
+        var remapped = Aria_Setup_V1_Missing()
+        remapped.kind = .keyRemapped
+        inspection.missing = [remapped]
+        XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: false))
+    }
+
     func testAMissingTranscriptionModelReopensTheWizard() throws {
         var inspection = SetupStateTests.freshMac()
         let model = try XCTUnwrap(

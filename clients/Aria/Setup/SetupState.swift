@@ -166,8 +166,19 @@ final class SetupState: ObservableObject {
     /// transcription model setup still has to download reopens it, because the
     /// daemon can't start without one.
     static func shouldOffer(_ inspection: Aria_Setup_V1_Inspection, offeredBefore: Bool) -> Bool {
-        guard !inspection.missing.isEmpty else { return false }
+        guard !wizardWork(in: inspection).isEmpty else { return false }
         return !offeredBefore || SetupStatus.isMissingTranscriptionModel(in: inspection)
+    }
+
+    /// What the wizard can put in place. A remapped Aria key shows only in
+    /// Finish Setting Up.
+    static func wizardWork(in inspection: Aria_Setup_V1_Inspection) -> [Aria_Setup_V1_Missing] {
+        inspection.missing.filter { missing in
+            switch missing.kind {
+            case .keyRemapped: false
+            case .settings, .wakeword, .model, .service, .grant, .unspecified, .UNRECOGNIZED: true
+            }
+        }
     }
 
     /// A voice can be recorded once its model is on disk and nobody is
@@ -182,14 +193,14 @@ final class SetupState: ObservableObject {
     /// until the Mac has been looked at.
     var missingSummary: String? {
         guard step != .inspecting else { return nil }
-        let names = inspection.missing.map { missing in
+        let names = Self.wizardWork(in: inspection).map { missing in
             switch missing.kind {
             case .settings: "settings"
             case .wakeword: "wake-word models"
             case .model: "models"
             case .service: "background service"
             case .grant: "Aria key permission"
-            case .unspecified, .UNRECOGNIZED: "unknown"
+            case .keyRemapped, .unspecified, .UNRECOGNIZED: "unknown"
             }
         }
         var seen = Set<String>()

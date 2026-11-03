@@ -30,6 +30,7 @@ use aria_daemon::{
     StopMode, guided,
 };
 use aria_kit::backend::ModelError;
+use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::{ServerEndpoint, backend, tts_backend};
 use aria_settings::{SettingsError, SettingsFile};
@@ -90,6 +91,7 @@ pub struct Inspection {
     pub wakeword_installed: bool,
     pub service: Status,
     pub grant: Grant,
+    pub key_remapped: bool,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
@@ -162,6 +164,8 @@ pub enum Missing {
     Service,
     /// A serving daemon whose hotkey listener has not armed.
     Grant,
+    /// Modifier Keys turns the Aria key into another key.
+    KeyRemapped,
 }
 
 /// The steps `apply` announces as it starts them.
@@ -305,6 +309,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
         configured_server: file.stt.server.clone(),
+        key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
         existing,
         service,
         grant,
@@ -389,6 +394,9 @@ impl Inspection {
         let serving = matches!(self.service.daemon, DaemonState::Ready { .. });
         if serving && self.grant != Grant::Armed {
             missing.push(Missing::Grant);
+        }
+        if self.key_remapped {
+            missing.push(Missing::KeyRemapped);
         }
         missing
     }
@@ -1146,6 +1154,7 @@ mod tests {
                 daemon: supervisor::DaemonState::NotRunning,
             },
             grant: Grant::Waiting,
+            key_remapped: false,
             home,
             exe: PathBuf::from("/nonexistent/aria"),
         }
@@ -1399,6 +1408,15 @@ mod tests {
 
         inspection.grant = Grant::Armed;
         assert!(!inspection.missing().contains(&Missing::Grant));
+    }
+
+    #[test]
+    fn a_remapped_key_is_missing_until_it_clears() {
+        let mut inspection = inspection(configured());
+        assert!(!inspection.missing().contains(&Missing::KeyRemapped));
+
+        inspection.key_remapped = true;
+        assert!(inspection.missing().contains(&Missing::KeyRemapped));
     }
 
     #[test]

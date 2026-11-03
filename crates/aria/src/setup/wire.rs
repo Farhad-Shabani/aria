@@ -174,6 +174,7 @@ impl From<&Missing> for generated::Missing {
             Missing::Model(name) => (Kind::Model, *name),
             Missing::Service => (Kind::Service, ""),
             Missing::Grant => (Kind::Grant, ""),
+            Missing::KeyRemapped => (Kind::KeyRemapped, ""),
         };
         Self {
             kind: kind as i32,

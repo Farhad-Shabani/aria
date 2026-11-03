@@ -9,6 +9,7 @@ enum SetupItem: Hashable {
     case server
     case speechModel(id: String)
     case ariaKey
+    case ariaKeyRemapped
 
     /// Unset choices still run as their defaults, so a settings gap matters
     /// only for a server engine with no pairing.
@@ -21,6 +22,7 @@ enum SetupItem: Hashable {
             switch missing.kind {
             case .model: recognition.contains(missing.modelID) ? .speechModel(id: missing.modelID) : nil
             case .grant: .ariaKey
+            case .keyRemapped: .ariaKeyRemapped
             case .settings: isUnpairedServer ? .server : nil
             case .wakeword, .service, .unspecified, .UNRECOGNIZED: nil
             }
@@ -57,6 +59,7 @@ enum SetupItem: Hashable {
         case .server: "Server"
         case .speechModel: "Speech model"
         case .ariaKey: "Aria key"
+        case .ariaKeyRemapped: "Aria key"
         }
     }
 
@@ -76,6 +79,8 @@ enum SetupItem: Hashable {
             "Download it so Aria can turn your voice into text."
         case .ariaKey:
             "Lets Aria hear the Aria key and type for you."
+        case .ariaKeyRemapped:
+            "Modifier Keys turns the Aria key into another key, so Aria can’t hear it. Restore it in Keyboard settings."
         }
     }
 }

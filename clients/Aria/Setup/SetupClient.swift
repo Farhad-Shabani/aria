@@ -109,6 +109,11 @@ enum SetupClient {
         if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
     }
 
+    static func openKeyboard() {
+        let pane = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"
+        if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
+    }
+
     /// Waits for a signalled daemon to let go of the socket. One that will
     /// not is left for the service install to refuse loudly.
     static func awaitDaemonSocketClosed(probes: Int = 40, every: Duration = .milliseconds(250)) async {

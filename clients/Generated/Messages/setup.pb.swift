@@ -606,6 +606,10 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
     /// Reported only when a serving daemon's hotkey listener has not armed.
     /// A stopped daemon reports no grant state.
     case grant // = 5
+
+    /// Modifier Keys in Keyboard settings turns the Aria key into another key,
+    /// so the hotkey listener never sees it.
+    case keyRemapped // = 7
     case UNRECOGNIZED(Int)
 
     public init() {
@@ -620,6 +624,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
       case 3: self = .model
       case 4: self = .service
       case 5: self = .grant
+      case 7: self = .keyRemapped
       default: self = .UNRECOGNIZED(rawValue)
       }
     }
@@ -632,6 +637,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
       case .model: return 3
       case .service: return 4
       case .grant: return 5
+      case .keyRemapped: return 7
       case .UNRECOGNIZED(let i): return i
       }
     }
@@ -644,6 +650,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
       .model,
       .service,
       .grant,
+      .keyRemapped,
     ]
 
   }
@@ -1217,7 +1224,7 @@ nonisolated extension Aria_Setup_V1_Missing: SwiftProtobuf.Message, SwiftProtobu
 }
 
 nonisolated extension Aria_Setup_V1_Missing.Kind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}KIND_SETTINGS\0\u{1}KIND_WAKEWORD\0\u{1}KIND_MODEL\0\u{1}KIND_SERVICE\0\u{1}KIND_GRANT\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}KIND_SETTINGS\0\u{1}KIND_WAKEWORD\0\u{1}KIND_MODEL\0\u{1}KIND_SERVICE\0\u{1}KIND_GRANT\0\u{2}\u{2}KIND_KEY_REMAPPED\0")
 }
 
 nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

@@ -90,6 +90,11 @@ pub struct LinuxHotkeyListener;
 impl LinuxHotkeyListener {
     pub const PERMISSION: &str = "access to your keyboard";
 
+    /// A remapper's output is read from its own virtual device.
+    pub fn is_remapped(_key: AriaKey) -> bool {
+        false
+    }
+
     pub fn unarmed_reason(key: AriaKey) -> String {
         let Some(aria_key) = key.key_code() else {
             return "the dictation hotkey is set to Fn, which Linux cannot see; \

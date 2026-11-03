@@ -11,11 +11,14 @@ use std::ptr::NonNull;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CFString};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType,
 };
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
 use super::{AriaKey, KeyEvent, ListenerEvent, Modifiers, Press, PressDetector};
 use crate::accessibility::{self, Trust};
@@ -38,6 +41,12 @@ const CONTROL: u64 = 0x0004_0000;
 /// kCGEventFlagMaskCommand
 const COMMAND: u64 = 0x0010_0000;
 
+/// Modifier Keys keeps one remap list per keyboard, under this prefix plus
+/// the keyboard's vendor and product ids, in the current host's global domain.
+const MODIFIER_MAPPING_PREFIX: &str = "com.apple.keyboard.modifiermapping.";
+const MAPPING_SOURCE: &str = "HIDKeyboardModifierMappingSrc";
+const MAPPING_DESTINATION: &str = "HIDKeyboardModifierMappingDst";
+
 impl AriaKey {
     /// Virtual keycode carried in the key's flags-changed event.
     fn key_code(self) -> i64 {
@@ -56,6 +65,16 @@ impl AriaKey {
             Self::RightOption => flags & 0x40 != 0,
             // kCGEventFlagMaskSecondaryFn
             Self::Fn => flags & 0x0080_0000 != 0,
+        }
+    }
+    /// The HID usage Modifier Keys stores: the usage page in the high 32
+    /// bits, the usage in the low ones.
+    fn hid_usage(self) -> i64 {
+        match self {
+            // Keyboard page, Right Alt.
+            Self::RightOption => 0x7_0000_00E6,
+            // Apple's vendor page, Fn.
+            Self::Fn => 0xFF_0000_0003,
         }
     }
 }
@@ -138,6 +157,11 @@ impl MacOsHotkeyListener {
         )
     }
 
+    /// Modifier Keys turns the key into another one before any tap sees it.
+    pub fn is_remapped(key: AriaKey) -> bool {
+        remaps_away(&modifier_remaps(), key)
+    }
+
     pub fn listen(key: AriaKey, events: impl Fn(ListenerEvent), should_stop: impl Fn() -> bool) {
         let state = TapState {
             key,
@@ -175,6 +199,51 @@ impl MacOsHotkeyListener {
             }
         }
     }
+}
+
+/// A keyboard still sends the Aria key when it maps the key onto itself, or
+/// maps another key onto it, as an Option and Command swap does.
+// ponytail: a list left by an unplugged keyboard still counts; match it
+// against connected keyboards if that misleads anyone.
+fn remaps_away(keyboards: &[Vec<(i64, i64)>], key: AriaKey) -> bool {
+    let aria = key.hid_usage();
+    keyboards.iter().any(|remaps| {
+        let sends_it_away = remaps
+            .iter()
+            .any(|&(source, destination)| source == aria && destination != aria);
+        let another_sends_it = remaps
+            .iter()
+            .any(|&(source, destination)| source != aria && destination == aria);
+        sends_it_away && !another_sends_it
+    })
+}
+
+/// Each keyboard's Modifier Keys remaps, as (source, destination) usages.
+/// Empty when no keyboard has any. The standard search list includes the
+/// current host's global domain, where the remaps live.
+fn modifier_remaps() -> Vec<Vec<(i64, i64)>> {
+    let (keys, values) = NSUserDefaults::standardUserDefaults()
+        .dictionaryRepresentation()
+        .to_vecs();
+    keys.iter()
+        .zip(values)
+        .filter(|(key, _)| key.to_string().starts_with(MODIFIER_MAPPING_PREFIX))
+        .filter_map(|(_, remaps)| remaps.downcast::<NSArray>().ok())
+        .map(|remaps| remaps.to_vec().into_iter().filter_map(remap).collect())
+        .collect()
+}
+
+fn remap(entry: Retained<AnyObject>) -> Option<(i64, i64)> {
+    let entry = entry.downcast::<NSDictionary>().ok()?;
+    Some((
+        hid_usage_in(&entry, MAPPING_SOURCE)?,
+        hid_usage_in(&entry, MAPPING_DESTINATION)?,
+    ))
+}
+
+fn hid_usage_in(remap: &NSDictionary, field: &str) -> Option<i64> {
+    let value = remap.objectForKey(&NSString::from_str(field))?;
+    Some(value.downcast::<NSNumber>().ok()?.longLongValue())
 }
 
 /// Creates the tap and hooks it into this thread's run loop. A tap created
@@ -416,6 +485,67 @@ mod tests {
             true,
         );
         assert!(posted_shift.is_none());
+    }
+
+    const KEYBOARD_PAGE: i64 = 0x7_0000_0000;
+    const CAPS_LOCK: i64 = KEYBOARD_PAGE | 0x39;
+    const LEFT_CONTROL: i64 = KEYBOARD_PAGE | 0xE0;
+    const LEFT_OPTION_USAGE: i64 = KEYBOARD_PAGE | 0xE2;
+    const RIGHT_CONTROL: i64 = KEYBOARD_PAGE | 0xE4;
+    const RIGHT_OPTION_USAGE: i64 = KEYBOARD_PAGE | 0xE6;
+    const RIGHT_COMMAND: i64 = KEYBOARD_PAGE | 0xE7;
+
+    #[test]
+    fn a_keyboard_with_no_remaps_keeps_both_keys() {
+        assert!(!remaps_away(&[], AriaKey::RightOption));
+        assert!(!remaps_away(&[], AriaKey::Fn));
+    }
+
+    #[test]
+    fn mapping_keys_onto_option_or_option_onto_itself_keeps_it() {
+        let keyboards = [vec![
+            (RIGHT_CONTROL, RIGHT_OPTION_USAGE),
+            (RIGHT_OPTION_USAGE, RIGHT_OPTION_USAGE),
+            (CAPS_LOCK, RIGHT_CONTROL),
+            (LEFT_CONTROL, LEFT_OPTION_USAGE),
+            (LEFT_OPTION_USAGE, LEFT_OPTION_USAGE),
+        ]];
+        assert!(!remaps_away(&keyboards, AriaKey::RightOption));
+    }
+
+    #[test]
+    fn an_option_and_command_swap_still_sends_right_option() {
+        let keyboards = [vec![
+            (RIGHT_OPTION_USAGE, RIGHT_COMMAND),
+            (RIGHT_COMMAND, RIGHT_OPTION_USAGE),
+        ]];
+        assert!(!remaps_away(&keyboards, AriaKey::RightOption));
+    }
+
+    #[test]
+    fn one_keyboard_that_sends_right_option_away_is_enough() {
+        let keyboards = [
+            vec![(RIGHT_OPTION_USAGE, RIGHT_OPTION_USAGE)],
+            vec![(RIGHT_OPTION_USAGE, CAPS_LOCK)],
+        ];
+        assert!(remaps_away(&keyboards, AriaKey::RightOption));
+    }
+
+    #[test]
+    fn option_turned_into_caps_lock_takes_right_option_away() {
+        let keyboards = [vec![
+            (LEFT_OPTION_USAGE, CAPS_LOCK),
+            (RIGHT_OPTION_USAGE, CAPS_LOCK),
+        ]];
+        assert!(remaps_away(&keyboards, AriaKey::RightOption));
+        assert!(!remaps_away(&keyboards, AriaKey::Fn));
+    }
+
+    #[test]
+    fn fn_turned_into_control_takes_fn_away() {
+        let keyboards = [vec![(AriaKey::Fn.hid_usage(), LEFT_CONTROL)]];
+        assert!(remaps_away(&keyboards, AriaKey::Fn));
+        assert!(!remaps_away(&keyboards, AriaKey::RightOption));
     }
 
     #[test]

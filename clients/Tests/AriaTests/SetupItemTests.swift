@@ -41,6 +41,15 @@ final class SetupItemTests: XCTestCase {
             "Aria can’t start because your settings file isn’t valid.")
     }
 
+    func testARemappedKeyIsNotAPermissionItem() {
+        var inspection = Aria_Setup_V1_Inspection()
+        var remapped = Aria_Setup_V1_Missing()
+        remapped.kind = .keyRemapped
+        inspection.missing = [remapped]
+
+        XCTAssertEqual(SetupItem.items(in: inspection), [.ariaKeyRemapped])
+    }
+
     func testAGenericStartFailureIsNoItem() {
         XCTAssertEqual(SetupItem.all(inspected: [], settingsStatus: nil, startFailure: .start), [])
     }

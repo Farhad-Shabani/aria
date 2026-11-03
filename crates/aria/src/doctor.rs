@@ -36,6 +36,7 @@ const SEGMENTATION_MODEL: &str = "segmentation model";
 const LISTEN: &str = "listen";
 const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
+const ARIA_KEY: &str = "aria key";
 
 const SETTINGS_FAILED: &str = "not checked: the settings failed to load";
 
@@ -92,6 +93,7 @@ pub fn diagnose() -> Report {
                 prepared.as_ref().ok(),
                 config.as_ref().ok().map(|config| &config.wake),
             ),
+            aria_key(),
         ],
     }
 }
@@ -434,6 +436,20 @@ fn not_running(socket: &Path, wake: Option<&WakeConfig>) -> Check {
             socket.display()
         ),
     )
+}
+
+/// Modifier Keys acts before any app sees a key, so a remapped Aria key
+/// leaves an armed hotkey that never fires.
+fn aria_key() -> Check {
+    match loaded(|settings, _home| Ok(settings.aria_key())) {
+        Ok(key) if PlatformHotkeyListener::is_remapped(key) => Check::warning(
+            ARIA_KEY,
+            "Modifier Keys turns it into another key, so Aria never sees it; restore it in \
+             System Settings → Keyboard → Keyboard Shortcuts → Modifier Keys",
+        ),
+        Ok(_) => Check::ok(ARIA_KEY, "reaches Aria unchanged"),
+        Err(_) => Check::warning(ARIA_KEY, SETTINGS_FAILED),
+    }
 }
 
 impl Check {
