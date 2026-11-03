@@ -3,7 +3,7 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SettingsAttention")
 
-/// The settings file's problems and notices, in the menu and in Settings.
+/// Settings notices that aren't setup items, at the top of Settings.
 struct SettingsAttentionView: View {
     @ObservedObject var health: SettingsHealth
     @ObservedObject var poller: StatusPoller
@@ -12,7 +12,6 @@ struct SettingsAttentionView: View {
     private var items: [SettingsAttention] {
         SettingsAttention.all(
             status: health.status,
-            startFailure: poller.failure,
             isReadOnly: settings.isReadOnlyFailure,
             hasUnsavedChange: settings.hasUnsavedChange && !settings.isReadOnlyFailure
         )
@@ -25,11 +24,6 @@ struct SettingsAttentionView: View {
                     .font(.caption)
                     .foregroundStyle(item.isProblem ? AnyShapeStyle(.failure) : AnyShapeStyle(.secondary))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if item.opensFile {
-                    Button("Open Settings File") {
-                        Task { await health.openSettingsFile() }
-                    }
-                }
                 if item == .restartNeeded {
                     HStack {
                         Button("Restart to Apply") {

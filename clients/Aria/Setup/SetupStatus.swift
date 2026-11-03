@@ -8,11 +8,10 @@ enum TranscriptionLocation: Equatable {
     case server
 }
 
-/// The last setup inspection, as Settings shows it. Only steps dictation
-/// needs raise the badge.
+/// The last setup inspection, as Settings shows it.
 @MainActor
 final class SetupStatus: ObservableObject {
-    @Published private(set) var required: [Aria_Setup_V1_Missing] = []
+    @Published private(set) var items: [SetupItem] = []
     /// Optimistic until inspected: a failed inspection should not lock out
     /// voice setup, and enrolling reports a missing model itself.
     @Published private(set) var hasSpeakerModelOnDisk = true
@@ -28,11 +27,9 @@ final class SetupStatus: ObservableObject {
         self.inspect = inspect
     }
 
-    var reason: String? { required.first.map(Self.explanation) }
-
     func show(_ inspection: Aria_Setup_V1_Inspection) {
         inspectionID = nil
-        required = Self.required(in: inspection)
+        items = SetupItem.items(in: inspection)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
         transcription = inspection.defaults.transcriptionEngineID == Self.serverEngine ? .server : .thisMac
@@ -50,32 +47,19 @@ final class SetupStatus: ObservableObject {
         }
     }
 
-    nonisolated static func required(in inspection: Aria_Setup_V1_Inspection) -> [Aria_Setup_V1_Missing] {
-        let recognition = Set(
-            inspection.models.filter { $0.engineID == inspection.defaults.transcriptionEngineID }.map(\.id))
-        return inspection.missing.filter { missing in
-            switch missing.kind {
-            case .grant: true
-            case .model: recognition.contains(missing.modelID)
-            case .settings, .wakeword, .service, .unspecified, .UNRECOGNIZED: false
-            }
+    nonisolated static func isMissingTranscriptionModel(in inspection: Aria_Setup_V1_Inspection) -> Bool {
+        SetupItem.items(in: inspection).contains {
+            if case .speechModel = $0 { return true }
+            return false
         }
     }
 
-    nonisolated static func isMissingTranscriptionModel(in inspection: Aria_Setup_V1_Inspection) -> Bool {
-        required(in: inspection).contains { $0.kind == .model }
-    }
-
-    static let serverEngine = "server"
+    nonisolated static let serverEngine = "server"
 
     /// Setup's name for the embedding model an enrollment needs.
     static let speakerModel = "speaker"
 
     static func hasSpeakerModelOnDisk(in inspection: Aria_Setup_V1_Inspection) -> Bool {
         inspection.models.contains { $0.id == speakerModel && ($0.onDisk == .complete || $0.external) }
-    }
-
-    private static func explanation(_ missing: Aria_Setup_V1_Missing) -> String {
-        missing.kind == .grant ? "Aria key needs permission." : "Speech model isn’t downloaded."
     }
 }

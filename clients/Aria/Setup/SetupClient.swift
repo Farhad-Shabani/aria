@@ -104,6 +104,11 @@ enum SetupClient {
         return .failure(.failed(failure(status: run.status, stderr: run.stderr)))
     }
 
+    static func openAccessibility() {
+        let pane = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+        if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
+    }
+
     /// Waits for a signalled daemon to let go of the socket. One that will
     /// not is left for the service install to refuse loudly.
     static func awaitDaemonSocketClosed(probes: Int = 40, every: Duration = .milliseconds(250)) async {
@@ -170,11 +175,7 @@ extension SetupState.Effects {
                 return AriaKey.isReady(
                     key: key, isServing: await HealthClient.isServing(HealthClient.hotkeyService))
             },
-            openAccessibility: {
-                let pane =
-                    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
-                if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
-            },
+            openAccessibility: { SetupClient.openAccessibility() },
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },
             transcribe: { try await TryOutClient.transcribe() },

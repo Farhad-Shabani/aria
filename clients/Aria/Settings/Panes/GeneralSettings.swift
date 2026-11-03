@@ -2,7 +2,6 @@ import SwiftUI
 
 struct GeneralSettings: View {
     @Environment(\.openWindow) private var openWindow
-    @ObservedObject var setup: SetupStatus
     @ObservedObject var settings: DaemonSettings
     @ObservedObject var catalog: AssistantCatalog
     let openAssistant: () -> Void
@@ -50,21 +49,8 @@ struct GeneralSettings: View {
                 }
             }
             Section {
-                LabeledContent {
-                    if setup.required.isEmpty {
-                        Button("Open…") { openWindow(id: WindowID.setup) }
-                    } else {
-                        Button("Finish Setup…") { openWindow(id: WindowID.setup) }
-                            .buttonStyle(.borderedProminent)
-                    }
-                } label: {
-                    // One branch per line count, so the row stays centered.
-                    if let reason = setup.reason {
-                        Text("Aria Setup")
-                        Text(reason)
-                    } else {
-                        Text("Aria Setup")
-                    }
+                LabeledContent("Aria Setup") {
+                    Button("Open…") { openWindow(id: WindowID.setup) }
                 }
             }
         }

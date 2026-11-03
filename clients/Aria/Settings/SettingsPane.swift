@@ -1,4 +1,6 @@
 enum SettingsPane: String, CaseIterable, Identifiable {
+    /// Listed above the others only while something is left to set up.
+    case finishSetup
     case general
     case dictation
     case recognition
@@ -20,6 +22,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .finishSetup: "Finish Setting Up Aria"
         case .general: "General"
         case .dictation: "Dictation"
         case .recognition: "Recognition"
@@ -34,6 +37,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .finishSetup: "checklist"
         case .general: "gearshape.fill"
         case .dictation: "mic.fill"
         case .recognition: "waveform"

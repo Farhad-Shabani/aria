@@ -29,6 +29,11 @@ struct SettingsHistory {
         current = page
     }
 
+    /// Swaps the current page without keeping it in the history.
+    mutating func replace(with page: SettingsPage) {
+        current = page
+    }
+
     mutating func goBack() {
         guard let previous = backward.popLast() else { return }
         forward.append(current)

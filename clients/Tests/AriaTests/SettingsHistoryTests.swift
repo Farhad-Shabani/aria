@@ -18,6 +18,17 @@ final class SettingsHistoryTests: XCTestCase {
         XCTAssertTrue(history.canGoForward)
     }
 
+    func testAReplacedPageLeavesNothingToGoBackTo() {
+        var history = SettingsHistory(current: .pane(.general))
+        history.open(.pane(.finishSetup))
+
+        history.replace(with: .pane(.dictation))
+        history.goBack()
+
+        XCTAssertEqual(history.current, .pane(.general))
+        XCTAssertFalse(history.canGoBack)
+    }
+
     func testOpenAfterGoingBackDropsTheForwardPanes() {
         var history = SettingsHistory(current: .pane(.general))
         history.open(.pane(.dictation))

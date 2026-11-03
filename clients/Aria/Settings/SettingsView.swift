@@ -10,21 +10,27 @@ struct SettingsView: View {
     let askChord: ChordBinding
     let promptListChord: ChordBinding
     @ObservedObject var setupStatus: SetupStatus
+    let modelDownload: ModelDownload
+    let setupState: SetupState
     let voices: VoiceProfiles
     let serverTranscription: ServerTranscription
-    let settingsHealth: SettingsHealth
+    @ObservedObject var settingsHealth: SettingsHealth
     @ObservedObject var paneRequest: SettingsPaneRequest
     @StateObject private var assistantCatalog = AssistantCatalog()
     @State private var history = SettingsHistory(
         current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
     )
 
+    private var setupItems: [SetupItem] {
+        SetupItem.all(setup: setupStatus, health: settingsHealth, poller: poller)
+    }
+
     var body: some View {
         SidebarWindow {
             SettingsSidebar(
                 selection: Binding(get: { history.current.pane }, set: { history.open(.pane($0)) }),
                 daemon: poller.state,
-                setup: setupStatus
+                items: setupItems
             )
         } detail: {
             page
@@ -48,7 +54,9 @@ struct SettingsView: View {
         }
         .onChange(of: history.current.pane) { _, pane in
             UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
+            leaveFinishSetupIfDone()
         }
+        .onChange(of: setupItems.isEmpty, initial: true) { leaveFinishSetupIfDone() }
         .onChange(of: paneRequest.pane, initial: true) { _, pane in
             guard let pane else { return }
             history.open(.pane(pane))
@@ -102,8 +110,12 @@ struct SettingsView: View {
     private func page(_ pane: SettingsPane) -> some View {
         let openPrompt = { history.open(.item(.prompts, id: $0)) }
         switch pane {
+        case .finishSetup:
+            FinishSetupSettings(
+                items: setupItems, setup: setupStatus, download: modelDownload, wizard: setupState,
+                health: settingsHealth, poller: poller, open: { history.open(.pane($0)) })
         case .general:
-            GeneralSettings(setup: setupStatus, settings: settings, catalog: assistantCatalog) {
+            GeneralSettings(settings: settings, catalog: assistantCatalog) {
                 history.open(.assistant)
             }
         case .dictation: DictationSettings(settings: settings)
@@ -127,6 +139,14 @@ struct SettingsView: View {
         case .privacy: PrivacySettings(settings: settings)
         case .phone: PhoneSettings(poller: poller)
         case .about: AboutSettings(updates: updates)
+        }
+    }
+
+    /// Finish Setting Up Aria with nothing left in it is an empty page, so
+    /// General takes its place, also when Back or a saved pane reaches it.
+    private func leaveFinishSetupIfDone() {
+        if setupItems.isEmpty && history.current.pane == .finishSetup {
+            history.replace(with: .pane(.general))
         }
     }
 
