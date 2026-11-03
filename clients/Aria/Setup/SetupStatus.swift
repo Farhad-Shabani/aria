@@ -50,7 +50,7 @@ final class SetupStatus: ObservableObject {
         }
     }
 
-    static func required(in inspection: Aria_Setup_V1_Inspection) -> [Aria_Setup_V1_Missing] {
+    nonisolated static func required(in inspection: Aria_Setup_V1_Inspection) -> [Aria_Setup_V1_Missing] {
         let recognition = Set(
             inspection.models.filter { $0.engineID == inspection.defaults.transcriptionEngineID }.map(\.id))
         return inspection.missing.filter { missing in
@@ -60,6 +60,10 @@ final class SetupStatus: ObservableObject {
             case .settings, .wakeword, .service, .unspecified, .UNRECOGNIZED: false
             }
         }
+    }
+
+    nonisolated static func isMissingTranscriptionModel(in inspection: Aria_Setup_V1_Inspection) -> Bool {
+        required(in: inspection).contains { $0.kind == .model }
     }
 
     static let serverEngine = "server"

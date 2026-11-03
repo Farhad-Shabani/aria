@@ -13,6 +13,7 @@ enum DaemonControlFailure: Equatable {
     case unresponsive
     case backgroundItemOff
     case settingsInvalid(InvalidSettings)
+    case transcriptionModelMissing
 
     /// Aria turned off in Login Items is the one start failure the user can
     /// fix directly, so it gets its own message.
@@ -37,6 +38,8 @@ enum DaemonControlFailure: Equatable {
             "Aria isn’t allowed to run in the background. Turn it on in System Settings > General > Login Items & Extensions."
         case .settingsInvalid(let invalid):
             "Aria couldn’t start because \(invalid.mistake). Fix it, then turn Aria on."
+        case .transcriptionModelMissing:
+            "Aria couldn’t start because its speech model isn’t downloaded. Click **Aria Setup…** to download it."
         }
     }
 }
@@ -123,12 +126,15 @@ final class StatusPoller: ObservableObject {
         }
     }
 
-    /// An invalid file ends the daemon at startup, and the generic failure
-    /// can't say so. Login Items keeps its own message: nothing ran to fail.
+    /// An invalid file or a missing transcription model ends the daemon at startup,
+    /// and the generic failure can't say so. Login Items keeps its own
+    /// message: nothing ran to fail.
     private func explainFailedStart() async {
         guard state != .running, failure != .backgroundItemOff else { return }
         if let invalid = await client.invalidSettings() {
             failure = .settingsInvalid(invalid)
+        } else if await client.isMissingTranscriptionModel() {
+            failure = .transcriptionModelMissing
         }
     }
 

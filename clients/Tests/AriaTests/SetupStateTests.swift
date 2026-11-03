@@ -412,7 +412,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.blockedBy, "Parakeet-Mlx: needs MLX")
         state.next()
         XCTAssertEqual(state.step, .choices, "an engine this Mac cannot run does not pass")
-        XCTAssertFalse(SetupState.shouldOffer(missing: inspection.missing, offeredBefore: false))
+        XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: false))
     }
 
     func testPlanFollowsTheChosenEngines() {
@@ -496,9 +496,27 @@ final class SetupStateTests: XCTestCase {
     func testWizardIsOfferedOnce() {
         var missing = Aria_Setup_V1_Missing()
         missing.kind = .grant
-        XCTAssertTrue(SetupState.shouldOffer(missing: [missing], offeredBefore: false))
-        XCTAssertFalse(SetupState.shouldOffer(missing: [missing], offeredBefore: true))
-        XCTAssertFalse(SetupState.shouldOffer(missing: [], offeredBefore: false))
+        var inspection = Aria_Setup_V1_Inspection()
+        XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: false))
+        inspection.missing = [missing]
+        XCTAssertTrue(SetupState.shouldOffer(inspection, offeredBefore: false))
+        XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: true))
+    }
+
+    func testAMissingTranscriptionModelReopensTheWizard() throws {
+        var inspection = SetupStateTests.freshMac()
+        let model = try XCTUnwrap(
+            inspection.models.first { $0.engineID == inspection.defaults.transcriptionEngineID })
+        var missing = Aria_Setup_V1_Missing()
+        missing.kind = .model
+        missing.modelID = model.id
+        inspection.missing = [missing]
+
+        XCTAssertTrue(SetupState.shouldOffer(inspection, offeredBefore: true))
+
+        missing.modelID = "another-engine"
+        inspection.missing = [missing]
+        XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: true))
     }
 
     func testAFailedEnrollmentShowsTheSpeakerFailure() async {

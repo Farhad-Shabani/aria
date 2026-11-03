@@ -139,19 +139,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.start()
         ghost.start()
         events.start()
-        offerSetupOnce()
+        offerSetup()
     }
 
-    /// A Mac with something missing gets the setup wizard once; after that,
-    /// setup waits in Settings → General.
-    private func offerSetupOnce() {
+    /// A Mac with something missing gets the setup wizard once, and one without
+    /// its transcription model gets it at every launch. Otherwise, setup waits in
+    /// Settings → General.
+    private func offerSetup() {
         let defaults = UserDefaults.standard
         Task { [weak self] in
             do {
                 let inspection = try await SetupClient.inspect()
                 self?.setupStatus.show(inspection)
                 let offeredBefore = defaults.bool(forKey: Self.setupOfferedKey)
-                guard SetupState.shouldOffer(missing: inspection.missing, offeredBefore: offeredBefore) else { return }
+                guard SetupState.shouldOffer(inspection, offeredBefore: offeredBefore) else { return }
                 defaults.set(true, forKey: Self.setupOfferedKey)
                 self?.setup.request()
             } catch {
