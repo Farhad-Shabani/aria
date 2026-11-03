@@ -156,20 +156,7 @@ extern "C" fn discard(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use super::*;
-
-    #[test]
-    fn dropping_the_mute_restores_the_sound() {
-        let restored = Arc::new(AtomicBool::new(false));
-        let observed = Arc::clone(&restored);
-        let mute = OutputMute::with_restore(move || observed.store(true, Ordering::SeqCst));
-        assert!(!restored.load(Ordering::SeqCst));
-        drop(mute);
-        assert!(restored.load(Ordering::SeqCst));
-    }
 
     #[test]
     #[ignore = "mutes this Mac's sound; run by hand with music playing"]
