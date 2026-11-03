@@ -249,7 +249,7 @@ mod tests {
             .update(
                 first.revision,
                 SettingsPatch {
-                    mute_sound: Some(true),
+                    mute_sound: Some(false),
                     ..Default::default()
                 },
             )

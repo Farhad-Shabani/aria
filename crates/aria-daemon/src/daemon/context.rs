@@ -7,6 +7,7 @@ use aria_platform::runtime::PreparedRuntimePaths;
 #[cfg(not(test))]
 use aria_settings::config::home_directory;
 use aria_settings::config::{ConfigError, UNATTENDED_ENV, unattended};
+use aria_voice::dictation::SoundMuting;
 
 use super::host::DaemonLifetime;
 
@@ -46,6 +47,14 @@ impl<'runtime> Context<'runtime> {
             lifetime,
             attended,
         })
+    }
+
+    pub(super) fn sound_muting(&self) -> SoundMuting {
+        if self.attended {
+            SoundMuting::Allowed
+        } else {
+            SoundMuting::Never
+        }
     }
 }
 

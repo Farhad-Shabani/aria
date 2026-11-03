@@ -509,6 +509,8 @@ where
         }
         sinks.recording_finished(&mut recording, result.as_ref().map(|_| ()));
         if let Ok(transcript) = &result {
+            // The stop cue plays on this stage, so the sound must be back first.
+            control.await_capture_release();
             events.emit(DictationStage::delivered(
                 sinks.delivered(),
                 &transcript.text,

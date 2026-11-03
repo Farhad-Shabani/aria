@@ -19,6 +19,7 @@ final class ServerTranscriptionTests: XCTestCase {
         var forgotten = 0
         var forgetFails = false
         var inspectFailsAfterApply = false
+        var inspectFailsAfterPair = false
         var applyFails = false
 
         init(_ inspection: Aria_Setup_V1_Inspection) {
@@ -29,6 +30,7 @@ final class ServerTranscriptionTests: XCTestCase {
             .init(
                 inspect: {
                     if self.inspectFailsAfterApply && !self.requests.isEmpty { throw Refused() }
+                    if self.inspectFailsAfterPair && !self.paired.isEmpty { throw Refused() }
                     return self.inspection
                 },
                 pair: { invitation in
@@ -112,11 +114,14 @@ final class ServerTranscriptionTests: XCTestCase {
         unpaired.clearServer()
 
         setup.show(unpaired)
+        XCTAssertTrue(server.needsPairing)
         XCTAssertFalse(server.canChooseLocation)
         unpaired.defaults.transcriptionEngineID = "server"
         setup.show(unpaired)
+        XCTAssertFalse(server.needsPairing)
         XCTAssertTrue(server.canChooseLocation)
         setup.show(Self.mac(runningOn: "whisper"))
+        XCTAssertFalse(server.needsPairing)
         XCTAssertTrue(server.canChooseLocation)
     }
 
@@ -176,33 +181,30 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(server.notice, .failed(ServerTranscription.readBackFailure))
     }
 
-    func testPairingReappliesOnlyAServerAlreadyInUse() async {
-        let local = Spy(Self.mac(runningOn: "whisper"))
-        let pairedLocally = await ServerTranscription(effects: local.effects, setup: SetupStatus())
-            .pair(invitation: "{}")
-        XCTAssertTrue(pairedLocally)
-        XCTAssertEqual(local.paired, ["{}"])
-        XCTAssertEqual(local.applied, [])
+    func testPairingAloneLeavesTranscriptionOnYourMac() async {
+        let spy = Spy(Self.mac(runningOn: "whisper"))
+        let setup = SetupStatus()
 
-        let remote = Spy(Self.mac(runningOn: "server"))
-        let pairedRemotely = await ServerTranscription(effects: remote.effects, setup: SetupStatus())
-            .pair(invitation: "{}")
-        XCTAssertTrue(pairedRemotely)
-        XCTAssertEqual(remote.applied, ["server"])
+        let paired = await ServerTranscription(effects: spy.effects, setup: setup).pair(invitation: "{}")
+
+        XCTAssertTrue(paired)
+        XCTAssertEqual(spy.paired, ["{}"])
+        XCTAssertEqual(spy.applied, [])
+        XCTAssertEqual(setup.transcription, .thisMac)
     }
 
     /// The invitation works once, so a pairing that landed must not ask
-    /// for it again when only the follow-up apply failed.
-    func testAPairingThatLandedSucceedsEvenWhenItsApplyFails() async {
-        let spy = Spy(Self.mac(runningOn: "server"))
-        spy.applyFails = true
+    /// for it again when only the read-back failed.
+    func testAPairingThatLandedSucceedsEvenWhenItsReadBackFails() async {
+        let spy = Spy(Self.mac(runningOn: "whisper"))
+        spy.inspectFailsAfterPair = true
         let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
 
         let paired = await server.pair(invitation: "{}")
 
         XCTAssertTrue(paired)
         XCTAssertNil(server.pairingFailure)
-        XCTAssertEqual(server.notice, .failed(ServerTranscription.switchFailure))
+        XCTAssertEqual(server.notice, .failed(ServerTranscription.readBackFailure))
     }
 
     func testAFailedPairingShowsTheFallbackAndAppliesNothing() async {

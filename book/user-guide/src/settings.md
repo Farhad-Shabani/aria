@@ -13,10 +13,10 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 - **General** controls launch at login, the status pill, the inline preview,
   captions, and the speaking rate. Open **Assistant** here to choose the app
   and model for Ask and Prompts. **Aria Setup** reopens setup.
-- **Dictation** sets output, delivery, spoken corrections, auto-stop, the
-  wake-word pause, and muting sound while recording.
-- **Recognition** sets where transcription runs, the language, voice
-  filtering, and project vocabulary.
+- **Dictation** sets output, delivery, spoken corrections, auto-stop, and
+  muting sound while recording.
+- **Recognition** sets the language, voice filtering, project vocabulary,
+  and where transcription runs.
 - **Shortcuts** chooses right Option, Fn, or Off for the Aria key, and what
   starts Ask and the prompt list: an Aria key combo, a shortcut of your own, or
   nothing.
@@ -91,8 +91,8 @@ Keep the invitation private. It works once, within 60 seconds. Copy it, then
 pair:
 
 - **On a Mac:** in **Settings → Recognition**, click **Pair…**, then
-  **Paste Invitation**. Check the address, click **Pair**, and set **Runs on**
-  to **My server**.
+  **Paste Invitation**. Check the address, click **Pair**, and turn on
+  **Transcribe on your server**.
 - **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
   Then run `aria setup` and choose **Paired inference server**.
 
@@ -102,15 +102,15 @@ previews depend on its engine. If the connection fails, the request stops
 instead of switching to a local engine.
 
 Speech output, wake words and voice profiles stay on the device. System-audio
-listening needs its own local `listen.backend`. To go back, set **Runs on** to
-**This Mac**, or choose a local engine in `aria setup`.
+listening needs its own local `listen.backend`. To go back, turn off
+**Transcribe on your server**, or choose a local engine in `aria setup`.
 
-To unpair, set **Runs on** to **This Mac** and click **Forget…**, or run
+To unpair, turn off **Transcribe on your server** and click **Forget…**, or run
 `aria remote forget`. The server keeps trusting the device until you block it.
 
 To block a device, run `aria remote revoke FINGERPRINT` on the server.
-`aria remote pair` prints the fingerprint. In Settings, Control-click the
-**This Mac:** line and choose **Copy Fingerprint**. If revoking reports a
+`aria remote pair` prints the fingerprint. In Settings, **Forget…** can copy
+the whole command. If revoking reports a
 storage error, fix it and revoke again before restarting the server.
 
 ## Apply changes

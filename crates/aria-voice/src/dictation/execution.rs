@@ -15,9 +15,23 @@ use aria_settings::rpc::RpcErrorCode;
 #[cfg(target_os = "macos")]
 use super::output::OutputMute;
 
+/// How long a start waits for other apps to go quiet. Past it, recording
+/// starts anyway and the mute lands once it's ready.
+#[cfg(target_os = "macos")]
+const MUTE_WAIT: Duration = Duration::from_millis(150);
+
+/// A released slot stays empty, so a mute that lands after the recording
+/// ended restores at once.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct OutputSlot {
+    mute: Option<OutputMute>,
+    is_released: bool,
+}
+
 use super::{
     DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings, DictationStage,
-    RecordingId, Rewriting, StopMode,
+    RecordingId, Rewriting, SoundMuting, StopMode,
 };
 
 /// What a recording said, and the engine that heard it.
@@ -274,9 +288,11 @@ pub struct ExecutionControl {
     /// scope's late end says nothing after it.
     capture_abandoned: AtomicBool,
     #[cfg(target_os = "macos")]
-    mute_sound: bool,
+    sound_muting: SoundMuting,
     #[cfg(target_os = "macos")]
-    output: std::sync::Mutex<Option<OutputMute>>,
+    acquire_mute: fn() -> Option<OutputMute>,
+    #[cfg(target_os = "macos")]
+    output: std::sync::Mutex<OutputSlot>,
 }
 
 impl ExecutionControl {
@@ -285,7 +301,7 @@ impl ExecutionControl {
         stop_mode: StopMode,
         cancellation: CancelToken,
         deadline: Deadline,
-        _mute_sound: bool,
+        _sound_muting: SoundMuting,
     ) -> Self {
         Self {
             id,
@@ -296,9 +312,11 @@ impl ExecutionControl {
             capture_polled: AtomicBool::new(false),
             capture_abandoned: AtomicBool::new(false),
             #[cfg(target_os = "macos")]
-            mute_sound: _mute_sound,
+            sound_muting: _sound_muting,
             #[cfg(target_os = "macos")]
-            output: std::sync::Mutex::new(None),
+            acquire_mute: OutputMute::acquire,
+            #[cfg(target_os = "macos")]
+            output: std::sync::Mutex::default(),
         }
     }
 
@@ -327,7 +345,7 @@ impl ExecutionControl {
             stop_mode,
             cancellation,
             policy.deadline(),
-            false,
+            SoundMuting::Never,
         ))
     }
 
@@ -387,16 +405,48 @@ impl ExecutionControl {
             control: Arc::clone(self),
             events: events.clone(),
         };
+        // Before `Recording`, whose start cue must play into silence.
         #[cfg(target_os = "macos")]
-        if self.mute_sound {
-            *self.output() = OutputMute::acquire();
-        }
+        self.mute_other_apps();
         events.emit(DictationStage::Recording(self.id));
         Ok(guard)
     }
 
     #[cfg(target_os = "macos")]
-    fn output(&self) -> std::sync::MutexGuard<'_, Option<OutputMute>> {
+    fn mute_other_apps(self: &Arc<Self>) {
+        if self.sound_muting == SoundMuting::Never {
+            return;
+        }
+        let (muted, waiting) = std::sync::mpsc::channel();
+        let control = Arc::clone(self);
+        let spawned = thread::Builder::new()
+            .name("aria-output-mute".into())
+            .spawn(move || {
+                let mute = (control.acquire_mute)();
+                let mut output = control.output();
+                if !output.is_released {
+                    output.mute = mute;
+                }
+                drop(output);
+                let _ = muted.send(());
+            });
+        match spawned {
+            Ok(_) => {
+                if waiting.recv_timeout(MUTE_WAIT).is_err() {
+                    tracing::warn!(
+                        recording = %self.id,
+                        "muting other apps is slow; recording starts without waiting"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not mute other apps; recording continues");
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn output(&self) -> std::sync::MutexGuard<'_, OutputSlot> {
         self.output.lock().unwrap_or_else(|poisoned| {
             tracing::error!("the output mute lock was poisoned; recovering");
             poisoned.into_inner()
@@ -408,7 +458,8 @@ impl ExecutionControl {
         {
             // Keep admission blocked until the native restore finishes.
             let mut output = self.output();
-            drop(output.take());
+            output.is_released = true;
+            drop(output.mute.take());
         }
     }
 
@@ -441,6 +492,8 @@ impl ExecutionControl {
                 recording = %self.id,
                 "capture did not let go of the recording in time"
             );
+            // The terminal stage's cue has to be audible.
+            self.restore_output();
         }
     }
 
@@ -505,6 +558,7 @@ pub struct DictationCoordinator<E> {
     policy: DictationPolicy,
     executor: E,
     microphone: Arc<Gate>,
+    sound_muting: SoundMuting,
     /// Counts from one; zero is what the wire refuses.
     next_recording: AtomicU64,
 }
@@ -518,8 +572,15 @@ where
             policy,
             executor,
             microphone,
+            sound_muting: SoundMuting::Never,
             next_recording: AtomicU64::new(1),
         }
+    }
+
+    #[must_use]
+    pub fn with_sound_muting(mut self, sound_muting: SoundMuting) -> Self {
+        self.sound_muting = sound_muting;
+        self
     }
 
     pub fn execute(
@@ -559,7 +620,11 @@ where
             settings.stop_mode,
             cancellation,
             self.policy.deadline(),
-            settings.mute_sound,
+            if self.sound_muting == SoundMuting::Allowed && settings.mute_sound {
+                SoundMuting::Allowed
+            } else {
+                SoundMuting::Never
+            },
         ));
         match self
             .microphone
@@ -939,7 +1004,7 @@ mod tests {
             StopMode::Manual,
             cancel.clone(),
             policy.deadline(),
-            false,
+            SoundMuting::Never,
         ));
 
         let guard = control.start_recording(&events).expect("recording starts");
@@ -973,13 +1038,126 @@ mod tests {
         );
     }
 
+    /// Records 1 when it mutes and 0 when it restores.
     #[cfg(target_os = "macos")]
     fn fake_output(writes: &Arc<std::sync::Mutex<Vec<u32>>>) -> OutputMute {
+        writes.lock().unwrap().push(1);
         let writes = Arc::clone(writes);
-        OutputMute::with_state(0, move |value| {
-            writes.lock().unwrap().push(value);
-            Ok(())
-        })
+        OutputMute::with_restore(move || writes.lock().unwrap().push(0))
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_capture_that_never_lets_go_still_gets_its_sound_back() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        control.output().mute = Some(fake_output(&writes));
+        let stuck = control
+            .start_recording(&DictationEventEmitter::unsubscribed())
+            .unwrap();
+
+        control.await_capture_release();
+
+        assert_eq!(*writes.lock().unwrap(), [1, 0]);
+        drop(stuck);
+        assert_eq!(*writes.lock().unwrap(), [1, 0]);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn muting_control(acquire_mute: fn() -> Option<OutputMute>) -> Arc<ExecutionControl> {
+        let mut control = ExecutionControl::new(
+            RecordingId(0),
+            StopMode::Manual,
+            CancelToken::new(),
+            Deadline::after(Duration::from_secs(5)),
+            SoundMuting::Allowed,
+        );
+        control.acquire_mute = acquire_mute;
+        Arc::new(control)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn other_apps_go_quiet_before_the_start_cue() {
+        static MUTED: AtomicBool = AtomicBool::new(false);
+        fn mute() -> Option<OutputMute> {
+            MUTED.store(true, Ordering::SeqCst);
+            Some(OutputMute::with_restore(|| {
+                MUTED.store(false, Ordering::SeqCst);
+            }))
+        }
+        let control = muting_control(mute);
+        let (sender, quiet_at_start) = std::sync::mpsc::channel();
+        let events = DictationEventEmitter::forwarded_by(move |event| {
+            if let crate::dictation::DictationEvent::Stage(DictationStage::Recording(_)) = event {
+                let _ = sender.send(MUTED.load(Ordering::SeqCst));
+            }
+        });
+
+        let _guard = control.start_recording(&events).unwrap();
+
+        assert!(quiet_at_start.recv().unwrap());
+        control.restore_output();
+        assert!(!MUTED.load(Ordering::SeqCst));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_slow_mute_never_holds_the_start_or_outlives_the_recording() {
+        static RESTORED: AtomicBool = AtomicBool::new(false);
+        fn slow_mute() -> Option<OutputMute> {
+            thread::sleep(MUTE_WAIT * 3);
+            Some(OutputMute::with_restore(|| {
+                RESTORED.store(true, Ordering::SeqCst);
+            }))
+        }
+        let control = muting_control(slow_mute);
+
+        let started = Instant::now();
+        let _guard = control
+            .start_recording(&DictationEventEmitter::unsubscribed())
+            .unwrap();
+        assert!(started.elapsed() < MUTE_WAIT * 2);
+        control.restore_output();
+
+        let waited = Instant::now();
+        while !RESTORED.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(2) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(RESTORED.load(Ordering::SeqCst));
+        assert!(control.output().mute.is_none());
+    }
+
+    /// Tests resolve default settings, so only a coordinator allowed to mute
+    /// may reach the real output.
+    #[test]
+    fn only_a_coordinator_allowed_to_mute_does_when_the_setting_is_on() {
+        for (sound_muting, mute_sound, expected) in [
+            (SoundMuting::Never, true, false),
+            (SoundMuting::Allowed, false, false),
+            (SoundMuting::Allowed, true, true),
+        ] {
+            let (executor, _edges) = RecordsUntilStopped::new();
+            let coordinator = DictationCoordinator::new(
+                DictationPolicy::new(Duration::from_secs(5)).unwrap(),
+                executor,
+                crate::microphone::Gate::new(),
+            )
+            .with_sound_muting(sound_muting);
+            let mut request = settings(StopMode::Manual);
+            request.mute_sound = mute_sound;
+
+            let Ok(Admission::Execute(control, _claim)) =
+                coordinator.admit(&request, CancelToken::never())
+            else {
+                panic!("the microphone is free");
+            };
+
+            #[cfg(target_os = "macos")]
+            assert_eq!(control.sound_muting == SoundMuting::Allowed, expected);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (control, expected);
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -997,10 +1175,10 @@ mod tests {
                 StopMode::Manual,
                 CancelToken::new(),
                 Deadline::after(timeout),
-                false,
+                SoundMuting::Never,
             ));
             let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
-            *control.output() = Some(fake_output(&writes));
+            control.output().mute = Some(fake_output(&writes));
             let guard = control.start_recording(&events).unwrap();
             match ending {
                 "stop" => assert!(control.request_recording_stop()),
@@ -1040,7 +1218,7 @@ mod tests {
                 control: &Arc<ExecutionControl>,
                 events: &DictationEventEmitter,
             ) -> Result<DictationResult, DictationError> {
-                *control.output() = Some(fake_output(&self.writes));
+                control.output().mute = Some(fake_output(&self.writes));
                 let guard = control.start_recording(events)?;
                 assert!(!guard.should_stop());
                 *self.retained.lock().unwrap() = Some(guard);
@@ -1084,7 +1262,7 @@ mod tests {
         else {
             panic!("the failed execution must release admission");
         };
-        *next.output() = Some(fake_output(&writes));
+        next.output().mute = Some(fake_output(&writes));
         let next_recording = next
             .start_recording(&DictationEventEmitter::unsubscribed())
             .unwrap();

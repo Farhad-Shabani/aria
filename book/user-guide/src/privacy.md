@@ -17,6 +17,9 @@ Recording also uses temporary plaintext audio files. Aria deletes them when
 it no longer needs them. File deletion is not secure erasure and
 cannot remove backups or snapshots.
 
+On a Mac, **Mute while recording** asks macOS to silence other apps. Aria
+doesn't record, save, or send their sound.
+
 ## Server inference
 
 When you [use a server](./settings.md#server-inference), your audio goes
@@ -35,7 +38,7 @@ transcription ends, though crashes and backups can keep them. Encryption
 protects audio on the way, not from the person running the server. Pairing
 keys sit unencrypted in `~/.aria/inference/`, readable only by your account.
 
-To stop uploads, set **Runs on** to **This Mac** in **Settings → Recognition**,
+To stop uploads, turn off **Transcribe on your server** in **Settings → Recognition**,
 or choose a local engine in `aria setup`. Cancelling a dictation or revoking
 your device stops what comes next. Neither can take back audio the server
 already has.

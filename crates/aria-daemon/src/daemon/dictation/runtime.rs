@@ -34,12 +34,6 @@ const CALL_EVENT_THREAD: &str = "aria-dictation-call";
 /// that asks for it runs on the configured backend.
 const DEFERRED_ENGINE: &str = "local";
 
-#[derive(Clone)]
-struct DaemonEvent {
-    event: DictationEvent,
-    suppress_cues: bool,
-}
-
 /// What one dictation runtime is built from. Read together at startup, so
 /// they travel together.
 pub(in crate::daemon) struct DictationSetup {
@@ -66,7 +60,7 @@ pub(in crate::daemon) enum AutoStopRule {
 }
 
 pub(in crate::daemon) struct DictationRuntime {
-    emitter: EventEmitter<DaemonEvent>,
+    emitter: EventEmitter<DictationEvent>,
     settings: Arc<SettingsStore>,
     coordinator: CoordinatorState,
     transcripts: Arc<TranscriptStore>,
@@ -117,6 +111,7 @@ impl DictationRuntime {
         let delivery = context.delivery.clone();
         let spool_dir = context.paths.spool_dir().to_path_buf();
         let home = context.home.clone();
+        let sound_muting = context.sound_muting();
         let retry_home = home.clone();
         let retry_vocabulary = Arc::clone(&vocabulary);
         let retry_cache = Arc::clone(&cache);
@@ -157,6 +152,7 @@ impl DictationRuntime {
                         Arc::clone(&transcripts),
                         ModelLoading::OnFirstUse,
                         Arc::clone(&microphone),
+                        sound_muting,
                     )
                     .map(|built| ReadyDictation {
                         coordinator: built.coordinator,
@@ -223,6 +219,7 @@ impl DictationRuntime {
             Arc::clone(&transcripts),
             ModelLoading::Eager,
             Arc::clone(&microphone),
+            context.sound_muting(),
         )?;
         let runtime = Self {
             emitter: event_emitter(context, subscriptions),
@@ -267,10 +264,7 @@ impl DictationRuntime {
     /// status pill and captions see a relayed recording too. Callers never
     /// announce Recording: nothing was captured here.
     pub(in crate::daemon) fn announce(&self, stage: DictationStage) {
-        self.emitter.emit(DaemonEvent {
-            event: stage.into(),
-            suppress_cues: false,
-        });
+        self.emitter.emit(stage);
     }
 
     pub(in crate::daemon) fn emitter_for_call(
@@ -288,18 +282,11 @@ impl DictationRuntime {
         })
     }
 
-    fn operation_emitter(
-        &self,
-        suppress_cues: bool,
-        sink: Option<&DictationEventEmitter>,
-    ) -> DictationEventEmitter {
+    fn operation_emitter(&self, sink: Option<&DictationEventEmitter>) -> DictationEventEmitter {
         let daemon = self.emitter.clone();
         let sink = sink.cloned();
         DictationEventEmitter::forwarded_by(move |event: DictationEvent| {
-            daemon.emit(DaemonEvent {
-                event: event.clone(),
-                suppress_cues,
-            });
+            daemon.emit(event.clone());
             if let Some(sink) = &sink {
                 sink.emit(event);
             }
@@ -452,7 +439,7 @@ impl DictationRuntime {
             .settings
             .snapshot()
             .map_err(DictationRuntimeError::Settings)?;
-        let events = self.operation_emitter(snapshot.settings.mute_sound, events);
+        let events = self.operation_emitter(events);
         let coordinator = match self.coordinator() {
             Ok(coordinator) => coordinator,
             Err(_) if cancellation.is_cancelled() => {
@@ -588,31 +575,31 @@ impl From<&DictationRuntimeError> for RpcErrorCode {
 fn event_emitter(
     context: &Context<'_>,
     subscriptions: Arc<Subscriptions>,
-) -> EventEmitter<DaemonEvent> {
+) -> EventEmitter<DictationEvent> {
     let local = context
         .attended
         .then(|| DictationSubscribers::new(context.paths.status_path()));
-    forward_events(subscriptions, move |message| {
-        if let (Some(local), DictationEvent::Stage(stage)) = (&local, &message.event) {
-            local.observe(stage, message.suppress_cues);
+    forward_events(subscriptions, move |event| {
+        if let (Some(local), DictationEvent::Stage(stage)) = (&local, &event) {
+            local.observe(stage);
         }
     })
 }
 
 fn forward_events(
     subscriptions: Arc<Subscriptions>,
-    local: impl Fn(DaemonEvent) + Send + 'static,
-) -> EventEmitter<DaemonEvent> {
+    local: impl Fn(DictationEvent) + Send + 'static,
+) -> EventEmitter<DictationEvent> {
     let local = EventEmitter::subscribed_by(aria_voice::dictation::EVENT_THREAD, local);
-    EventEmitter::forwarded_by(move |message: DaemonEvent| match &message.event {
+    EventEmitter::forwarded_by(move |event: DictationEvent| match &event {
         DictationEvent::Level(_) | DictationEvent::Ghost(_) => {
-            subscriptions.broadcast_lossy(message.event);
+            subscriptions.broadcast_lossy(event);
         }
         DictationEvent::Stage(_) => {
-            subscriptions.broadcast(message.event.clone());
-            local.emit(message);
+            subscriptions.broadcast(event.clone());
+            local.emit(event);
         }
-        DictationEvent::Caption(_) => subscriptions.broadcast(message.event),
+        DictationEvent::Caption(_) => subscriptions.broadcast(event),
     })
 }
 
@@ -622,16 +609,8 @@ mod event_tests {
     use std::time::Duration;
 
     use crate::daemon::subscriptions::EVENT_BUFFER;
-    use aria_settings::SettingsPatch;
 
     use super::*;
-
-    fn uncued(event: impl Into<DictationEvent>) -> DaemonEvent {
-        DaemonEvent {
-            event: event.into(),
-            suppress_cues: true,
-        }
-    }
 
     #[tokio::test]
     async fn stage_events_reach_subscribers_while_local_feedback_is_blocked() {
@@ -646,10 +625,10 @@ mod event_tests {
                 let _ = blocked.recv();
             }
         });
-        emitter.emit(uncued(DictationStage::Recording(RecordingId(1))));
+        emitter.emit(DictationStage::Recording(RecordingId(1)));
         waiting.recv_timeout(Duration::from_secs(2)).unwrap();
         let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
-        emitter.emit(uncued(voice.clone()));
+        emitter.emit(voice.clone());
         let observed = tokio::time::timeout(Duration::from_millis(100), async {
             stream.next().await.unwrap().unwrap();
             stream.next().await.unwrap().unwrap()
@@ -667,12 +646,12 @@ mod event_tests {
         let mut stream = subscriptions.subscribe().unwrap();
         let emitter = forward_events(Arc::clone(&subscriptions), |_| {});
         for _level in 0..EVENT_BUFFER {
-            emitter.emit(uncued(aria_voice::dictation::MicLevel {
+            emitter.emit(aria_voice::dictation::MicLevel {
                 recording: RecordingId(1),
                 level: 0.5,
-            }));
+            });
         }
-        emitter.emit(uncued(DictationStage::Transcribing));
+        emitter.emit(DictationStage::Transcribing);
         let closed = tokio::time::timeout(Duration::from_millis(100), async {
             while stream.next().await.is_some() {}
         })
@@ -687,12 +666,12 @@ mod event_tests {
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
         let mut runtime = DictationRuntime::detached(settings);
         let (broadcast, received) = channel();
-        runtime.emitter = EventEmitter::forwarded_by(move |message: DaemonEvent| {
-            broadcast.send(message.event).unwrap();
+        runtime.emitter = EventEmitter::forwarded_by(move |event: DictationEvent| {
+            broadcast.send(event).unwrap();
         });
         let (call, progress) = channel();
         let events = runtime.emitter_for_call(move |stage| call.send(stage).unwrap());
-        let operation = runtime.operation_emitter(false, Some(&events));
+        let operation = runtime.operation_emitter(Some(&events));
         let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
         operation.emit(voice.clone());
         operation.emit(DictationStage::Transcribing);
@@ -717,8 +696,8 @@ mod event_tests {
         runtime.emitter = EventEmitter::forwarded_by(move |message| {
             sent.send((std::thread::current().id(), message)).unwrap();
         });
-        let first = runtime.operation_emitter(true, None);
-        let second = runtime.operation_emitter(false, None);
+        let first = runtime.operation_emitter(None);
+        let second = runtime.operation_emitter(None);
         let delivered = DictationStage::Delivered {
             outcome: None,
             words: 0,
@@ -727,30 +706,23 @@ mod event_tests {
         first.emit(delivered.clone());
         second.emit(recording.clone());
 
-        for (stage, suppress_cues) in [(delivered, true), (recording, false)] {
-            let (thread, message) = received.recv_timeout(Duration::from_secs(2)).unwrap();
+        for stage in [delivered, recording] {
+            let (thread, event) = received.recv_timeout(Duration::from_secs(2)).unwrap();
             assert_eq!(thread, std::thread::current().id());
-            assert_eq!(message.event, DictationEvent::Stage(stage));
-            assert_eq!(message.suppress_cues, suppress_cues);
+            assert_eq!(event, DictationEvent::Stage(stage));
         }
     }
 
     #[test]
-    fn delayed_events_keep_operation_policy_and_reach_each_sink_once() {
+    fn delayed_events_reach_each_sink_once() {
         let directory = tempfile::tempdir().unwrap();
         let settings =
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
-        settings
-            .modify(SettingsPatch {
-                mute_sound: Some(true),
-                ..Default::default()
-            })
-            .unwrap();
-        let mut runtime = DictationRuntime::detached(Arc::clone(&settings));
+        let mut runtime = DictationRuntime::detached(settings);
         let (entered, waiting) = channel();
         let (release, blocked) = channel();
         let (daemon, daemon_events) = channel();
-        runtime.emitter = EventEmitter::subscribed_by("aria-test-cue-policy", move |event| {
+        runtime.emitter = EventEmitter::subscribed_by("aria-test-delayed-events", move |event| {
             entered.send(()).unwrap();
             blocked.recv().unwrap();
             daemon.send(event).unwrap();
@@ -768,12 +740,6 @@ mod event_tests {
                 .is_err()
         );
         waiting.recv_timeout(Duration::from_secs(2)).unwrap();
-        settings
-            .modify(SettingsPatch {
-                mute_sound: Some(false),
-                ..Default::default()
-            })
-            .unwrap();
         assert!(
             runtime
                 .execute(
@@ -793,23 +759,16 @@ mod event_tests {
         for _ in 0..3 {
             release.send(()).unwrap();
         }
-        let mut failures = Vec::new();
+        let mut failures = 0;
         let mut relay = 0;
         for _ in 0..3 {
-            let message = daemon_events.recv_timeout(Duration::from_secs(2)).unwrap();
-            match message.event {
-                DictationEvent::Stage(DictationStage::Failed(_)) => {
-                    failures.push(message.suppress_cues);
-                }
-                DictationEvent::Stage(DictationStage::Delivered { .. }) => {
-                    assert!(!message.suppress_cues);
-                    relay += 1;
-                }
+            match daemon_events.recv_timeout(Duration::from_secs(2)).unwrap() {
+                DictationEvent::Stage(DictationStage::Failed(_)) => failures += 1,
+                DictationEvent::Stage(DictationStage::Delivered { .. }) => relay += 1,
                 other => panic!("unexpected event: {other:?}"),
             }
         }
-        failures.sort();
-        assert_eq!(failures, [false, true]);
+        assert_eq!(failures, 2);
         assert_eq!(relay, 1);
         assert!(matches!(
             daemon_events.recv_timeout(Duration::from_secs(2)),
@@ -1183,6 +1142,7 @@ mod history_tests {
                 Arc::clone(&fixture.runtime.transcripts),
                 ModelLoading::Eager,
                 Arc::clone(&fixture.runtime.microphone),
+                aria_voice::dictation::SoundMuting::Never,
             )
             .unwrap();
             assert_eq!(built.engine, backend::SERVER);

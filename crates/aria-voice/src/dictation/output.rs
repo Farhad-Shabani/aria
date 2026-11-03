@@ -1,174 +1,155 @@
 use std::fmt;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use cidre::{cf, core_audio as ca, os};
+use cidre::core_audio::{self as ca, aggregate_device_keys as aggregate, hardware};
+use cidre::{cf, ns, os};
 
-const CONFIRM_TIMEOUT: Duration = Duration::from_millis(100);
-const CONFIRM_POLL: Duration = Duration::from_millis(5);
-const RESTORE_ATTEMPTS: usize = 2;
-
+/// Silences every app but this process while it lives, so cues stay audible.
 pub(super) struct OutputMute {
-    original: u32,
-    write: Box<dyn FnMut(u32) -> Result<(), OutputError> + Send>,
+    restore: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl fmt::Debug for OutputMute {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("OutputMute")
-            .field("original", &self.original)
-            .finish_non_exhaustive()
+        formatter.debug_struct("OutputMute").finish_non_exhaustive()
     }
 }
 
 impl OutputMute {
     pub(super) fn acquire() -> Option<Self> {
-        let result = snapshot()
-            .map(|(uid, original)| Self::with_state(original, move |value| set_mute(&uid, value)));
-        match result {
-            Ok(output) => Some(output),
+        let started = Instant::now();
+        match OtherAppsMuted::start() {
+            Ok(muted) => {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "muted other apps"
+                );
+                Some(Self::with_restore(move || drop(muted)))
+            }
             Err(error) => {
-                tracing::warn!(%error, "could not mute output; recording continues");
+                tracing::warn!(%error, "could not mute other apps; recording continues");
                 None
             }
         }
     }
 
-    pub(super) fn with_state(
-        original: u32,
-        write: impl FnMut(u32) -> Result<(), OutputError> + Send + 'static,
-    ) -> Self {
-        let mut output = Self {
-            original,
-            write: Box::new(write),
-        };
-        if original == 0
-            && let Err(error) = (output.write)(1)
-        {
-            tracing::warn!(%error, "could not confirm output mute; recording continues");
+    pub(super) fn with_restore(restore: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            restore: Some(Box::new(restore)),
         }
-        output
     }
 }
 
 impl Drop for OutputMute {
     fn drop(&mut self) {
-        for attempt in 1..=RESTORE_ATTEMPTS {
-            match (self.write)(self.original) {
-                Ok(()) => return,
-                Err(error) => {
-                    tracing::error!(%error, attempt, "could not restore output mute state");
-                }
-            }
+        if let Some(restore) = self.restore.take() {
+            restore();
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum OutputError {
-    #[error("CoreAudio output operation failed: {0}")]
+enum MuteError {
+    #[error("CoreAudio refused: {0}")]
     Native(#[from] os::Error),
-    #[error("the output device is unavailable")]
-    Unavailable,
-    #[error("the output device has no writable main mute control")]
-    Unsupported,
-    #[error("the output device returned an invalid mute value")]
-    InvalidMute,
-    #[error("the output device did not confirm its mute state")]
-    Unconfirmed,
+    /// Excluding an unknown process excludes nothing, so the tap would mute
+    /// Aria's own cues too.
+    #[error("CoreAudio doesn't know this process yet")]
+    UnknownProcess,
 }
 
-fn snapshot() -> Result<(String, u32), OutputError> {
-    let device = ca::System::default_output_device()?;
-    check_device(device)?;
-    let original: u32 = device.prop(&ca::PropSelector::DEVICE_MUTE.output_addr())?;
-    if original > 1 {
-        return Err(OutputError::InvalidMute);
-    }
-    Ok((device.uid()?.to_string(), original))
+/// A process tap mutes only while a running device reads it, so a private
+/// aggregate device holds the tap and runs. Both belong to this process, so
+/// the sound comes back if it dies.
+struct OtherAppsMuted {
+    // Drop order: stop reading before the tap goes.
+    reader: Option<hardware::StartedDevice<ca::AggregateDevice>>,
+    _tap: ca::TapGuard,
 }
 
-fn check_device(device: ca::Device) -> Result<(), OutputError> {
-    if device.is_unknown() || !device.is_alive()? {
-        return Err(OutputError::Unavailable);
+impl OtherAppsMuted {
+    fn start() -> Result<Self, MuteError> {
+        let tap = tap_all_but_this_process()?;
+        let reader = aggregate_reading(&tap)?;
+        Ok(Self {
+            reader: Some(ca::device_start(reader, None)?),
+            _tap: tap,
+        })
     }
-    let address = ca::PropSelector::DEVICE_MUTE.output_addr();
-    if !device.has_prop(&address) || !device.is_prop_settable(&address)? {
-        return Err(OutputError::Unsupported);
-    }
-    Ok(())
 }
 
-fn set_mute(uid: &str, value: u32) -> Result<(), OutputError> {
-    // The original device stays pinned. Following route changes would need
-    // per-device restoration.
-    let device = ca::Device::with_uid(&cf::String::from_str(uid))?;
-    check_device(device)?;
-    let address = ca::PropSelector::DEVICE_MUTE.output_addr();
-    device.set_prop(&address, &value)?;
-    let deadline = Instant::now() + CONFIRM_TIMEOUT;
-    loop {
-        if device.prop::<u32>(&address)? == value {
-            return Ok(());
+impl Drop for OtherAppsMuted {
+    fn drop(&mut self) {
+        // `stop` reports a failure that the device's own drop would assert on.
+        if let Some(reader) = self.reader.take()
+            && let Err(error) = reader.stop()
+        {
+            tracing::warn!(%error, "could not stop reading the muted apps' sound");
         }
-        if Instant::now() >= deadline {
-            return Err(OutputError::Unconfirmed);
-        }
-        thread::sleep(CONFIRM_POLL);
     }
+}
+
+fn tap_all_but_this_process() -> Result<ca::TapGuard, MuteError> {
+    let pid = ns::ProcessInfo::current().process_id();
+    let process = ca::Process::with_pid(pid)?;
+    if process.0 == ca::Obj::UNKNOWN {
+        return Err(MuteError::UnknownProcess);
+    }
+    let this_process = ns::Number::with_u32(process.0.0);
+    let mut description =
+        ca::TapDesc::with_stereo_global_tap_excluding_processes(&ns::Array::from_slice(&[
+            this_process.as_ref(),
+        ]));
+    description.set_private(true);
+    description.set_mute_behavior(ca::TapMuteBehavior::Muted);
+    Ok(description.create_process_tap()?)
+}
+
+/// The output device drives the IO cycle; a tap alone never runs it.
+fn aggregate_reading(tap: &ca::TapGuard) -> os::Result<ca::AggregateDevice> {
+    let output = ca::System::default_output_device()?.uid()?;
+    let output_entry =
+        cf::DictionaryOf::with_keys_values(&[ca::sub_device_keys::uid()], &[output.as_type_ref()]);
+    let tap_uid = tap.uid()?;
+    let tap_entry = cf::DictionaryOf::with_keys_values(
+        &[hardware::sub_tap_keys::uid()],
+        &[tap_uid.as_type_ref()],
+    );
+    let sub_devices = cf::ArrayOf::from_slice(&[output_entry.as_ref()]);
+    let taps = cf::ArrayOf::from_slice(&[tap_entry.as_ref()]);
+    let uid = cf::Uuid::new().to_cf_string();
+    let description = cf::DictionaryOf::with_keys_values(
+        &[
+            aggregate::uid(),
+            aggregate::name(),
+            aggregate::is_private(),
+            aggregate::main_sub_device(),
+            aggregate::sub_device_list(),
+            aggregate::tap_list(),
+            aggregate::tap_auto_start(),
+        ],
+        &[
+            uid.as_type_ref(),
+            cf::str!(c"Aria mute"),
+            cf::Boolean::value_true(),
+            &output,
+            sub_devices.as_type_ref(),
+            taps.as_type_ref(),
+            cf::Boolean::value_true(),
+        ],
+    );
+    ca::AggregateDevice::with_desc(&description)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use super::*;
 
     #[test]
-    fn mute_restores_the_saved_state_including_already_muted() {
-        for (original, expected) in [(0, vec![1, 0]), (1, vec![1])] {
-            let writes = Arc::new(Mutex::new(Vec::new()));
-            let received = Arc::clone(&writes);
-            let output = OutputMute::with_state(original, move |value| {
-                received.lock().unwrap().push(value);
-                Ok(())
-            });
-            drop(output);
-            assert_eq!(*writes.lock().unwrap(), expected);
-        }
-    }
-
-    #[test]
-    fn failed_mute_keeps_the_saved_state_until_recording_ends() {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let received = Arc::clone(&writes);
-        let output = OutputMute::with_state(0, move |value| {
-            received.lock().unwrap().push(value);
-            if value == 1 {
-                Err(OutputError::Unconfirmed)
-            } else {
-                Ok(())
-            }
-        });
-        assert_eq!(*writes.lock().unwrap(), [1]);
-        drop(output);
-        assert_eq!(*writes.lock().unwrap(), [1, 0]);
-    }
-
-    #[test]
-    fn restore_retries_are_bounded() {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let received = Arc::clone(&writes);
-        let output = OutputMute::with_state(0, move |value| {
-            received.lock().unwrap().push(value);
-            if value == 0 {
-                Err(OutputError::Unavailable)
-            } else {
-                Ok(())
-            }
-        });
-        drop(output);
-        assert_eq!(*writes.lock().unwrap(), [1, 0, 0]);
+    #[ignore = "mutes this Mac's sound; run by hand with music playing"]
+    fn other_apps_go_quiet_for_five_seconds() {
+        let muted = OtherAppsMuted::start().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        drop(muted);
     }
 }

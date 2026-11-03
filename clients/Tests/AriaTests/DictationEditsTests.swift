@@ -12,11 +12,6 @@ final class DictationEditsTests: XCTestCase {
         XCTAssertEqual(DictationEdits.effectiveDelivery(in: settings), .streaming)
     }
 
-    func testSilenceMillisecondsRoundsToWholeMilliseconds() {
-        XCTAssertEqual(DictationEdits.silenceMilliseconds(seconds: 1.5), 1500)
-        XCTAssertEqual(DictationEdits.silenceMilliseconds(seconds: 0.2999999), 300)
-    }
-
     func testLanguageChoicesAppendOnlyAnUnknownStoredCode() {
         XCTAssertEqual(DictationEdits.languageChoices(including: "en"), ["auto", "en"])
         XCTAssertEqual(DictationEdits.languageChoices(including: ""), ["auto", "en"])

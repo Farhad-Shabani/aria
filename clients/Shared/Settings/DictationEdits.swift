@@ -3,7 +3,6 @@ import Foundation
 enum DictationEdits {
     static let outputModes: [Aria_Daemon_V1_OutputMode] = [.insert, .insertAndSubmit, .insertOrCopy, .copy]
     static let deliveryModes: [Aria_Daemon_V1_DeliveryMode] = [.streaming, .complete]
-    static let silenceSecondsRange = 0.5...3.0
     static let speakingRateRange = 0.25...4.0
     static let speakingRateStep = 0.05
     /// Milliseconds; 0 is off.
@@ -19,12 +18,6 @@ enum DictationEdits {
     /// when the output mode changes.
     static func effectiveDelivery(in settings: Aria_Daemon_V1_Settings) -> Aria_Daemon_V1_DeliveryMode {
         locksDelivery(settings.outputMode) ? .complete : settings.deliveryMode
-    }
-
-    /// Whole milliseconds; the slider already keeps the value in the
-    /// daemon's 100 ms to 10 s window.
-    static func silenceMilliseconds(seconds: Double) -> UInt64 {
-        UInt64((seconds * 1000).rounded())
     }
 
     static func roundedSpeakingRate(_ rate: Double) -> Double {

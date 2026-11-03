@@ -347,7 +347,7 @@ mod tests {
         update(
             &store,
             SettingsPatch {
-                mute_sound: Some(true),
+                mute_sound: Some(false),
                 ..Default::default()
             },
         );
@@ -371,7 +371,7 @@ mod tests {
         update(
             &reopened,
             SettingsPatch {
-                mute_sound: Some(false),
+                mute_sound: Some(true),
                 ..Default::default()
             },
         );

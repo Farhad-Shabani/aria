@@ -39,10 +39,8 @@ impl DictationSubscribers {
         }
     }
 
-    pub fn observe(&self, stage: &DictationStage, _suppress_cues: bool) {
-        #[cfg(target_os = "macos")]
-        self.feedback.observe(stage, _suppress_cues);
-        #[cfg(target_os = "linux")]
+    pub fn observe(&self, stage: &DictationStage) {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         self.feedback.observe(stage);
         self.status.observe(stage);
     }

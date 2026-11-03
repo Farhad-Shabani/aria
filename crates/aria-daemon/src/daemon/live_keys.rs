@@ -209,7 +209,9 @@ fn change(key: Key) -> Patch {
         Key::DictationSilenceDurationMs => set(key, 2000),
         Key::DictationAutoStopMs => set(key, 20000),
         Key::SttLanguage => set(key, "de"),
-        Key::DictationVocabularyEnabled | Key::HistoryEnabled => set(key, false),
+        Key::DictationMuteSound | Key::DictationVocabularyEnabled | Key::HistoryEnabled => {
+            set(key, false)
+        }
         Key::DictationVocabularyDir => set(key, "/other"),
         Key::AssistantId => set(key, "codex"),
         Key::AssistantModels => entry(key, "codex", "\"a-model\""),
@@ -234,8 +236,7 @@ fn change(key: Key) -> Patch {
         Key::ListenModel => set(key, "/model"),
         Key::ListenDevice => set(key, "gpu"),
         Key::ListenTranscriptsDir => set(key, "/transcripts"),
-        Key::DictationMuteSound
-        | Key::DictationCleanup
+        Key::DictationCleanup
         | Key::DictationBacktrack
         | Key::DictationOwnVoiceOnly
         | Key::HistoryKeepAudio

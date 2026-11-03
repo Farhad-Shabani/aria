@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct TranscriptionSection: View {
+    private static let rowTitle = "Transcribe on your server"
+
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var server: ServerTranscription
     @ObservedObject var setup: SetupStatus
@@ -9,11 +11,6 @@ struct TranscriptionSection: View {
 
     var body: some View {
         Section {
-            Picker("Runs on", selection: location) {
-                Text("Your Mac").tag(TranscriptionLocation.thisMac)
-                Text("Your server").tag(TranscriptionLocation.server)
-            }
-            .disabled(!server.canChooseLocation)
             serverRow
             if server.notice == .needsSetup {
                 LabeledContent {
@@ -23,13 +20,11 @@ struct TranscriptionSection: View {
                     Text("No speech model is on your Mac yet.")
                 }
             }
-        } header: {
-            Text("Transcription")
         } footer: {
             footer
         }
         .sheet(isPresented: $isPairing) {
-            PairServerSheet(server: server, runsOnServer: setup.transcription == .server, isPresented: $isPairing)
+            PairServerSheet(server: server, isPresented: $isPairing)
         }
         .confirmationDialog(
             "Forget This Server?", isPresented: $isConfirmingForget, presenting: setup.server
@@ -45,39 +40,41 @@ struct TranscriptionSection: View {
         }
     }
 
-    private var location: Binding<TranscriptionLocation> {
+    private var usesServer: Binding<Bool> {
         Binding(
-            get: { setup.transcription },
-            set: { location in Task { await server.use(location) } }
+            get: { setup.transcription == .server },
+            set: { isOn in Task { await server.use(isOn ? .server : .thisMac) } }
         )
     }
 
+    @ViewBuilder
     private var serverRow: some View {
-        LabeledContent {
-            HStack {
-                if setup.server != nil {
-                    Button("Forget…", role: .destructive) { isConfirmingForget = true }
-                        .disabled(!server.canForget)
-                        .help(setup.transcription == .server ? "Set Runs on to Your Mac first." : "")
-                }
-                Button(setup.server == nil ? "Pair…" : "Pair Again…") {
+        if server.needsPairing {
+            LabeledContent(Self.rowTitle) {
+                Button("Pair…") {
                     server.beginPairing()
                     isPairing = true
                 }
                 .disabled(server.isBusy)
             }
-        } label: {
-            Text("Server")
-            if let paired = setup.server {
-                Text(ServerTranscription.address(of: paired.endpoint) ?? paired.endpoint)
-                Text("Your Mac: \(paired.clientFingerprint.prefix(4))…\(paired.clientFingerprint.suffix(4))")
-                    .help(paired.clientFingerprint)
-                    .contextMenu {
-                        Button("Copy Fingerprint") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(paired.clientFingerprint, forType: .string)
-                        }
+        } else {
+            LabeledContent {
+                HStack {
+                    if setup.server != nil {
+                        Button("Forget…", role: .destructive) { isConfirmingForget = true }
+                            .disabled(!server.canForget)
+                            .help(setup.transcription == .server ? "Turn off \(Self.rowTitle) first." : "")
                     }
+                    Toggle(Self.rowTitle, isOn: usesServer)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .disabled(!server.canChooseLocation)
+                }
+            } label: {
+                Text(Self.rowTitle)
+                if let paired = setup.server {
+                    Text(ServerTranscription.address(of: paired.endpoint) ?? paired.endpoint)
+                }
             }
         }
     }
@@ -94,7 +91,7 @@ struct TranscriptionSection: View {
             case .failed(let message):
                 Text(message).foregroundStyle(.failure)
             case .needsSetup, nil:
-                Text("Audio goes to the server only when Runs on is Your server.")
+                Text("Recordings stay on your Mac unless you pair a server and turn this on.")
             }
         }
     }
@@ -105,7 +102,6 @@ private struct PairServerSheet: View {
     private static let inviteCommand = "aria remote invite --endpoint https://your-server:9851"
 
     @ObservedObject var server: ServerTranscription
-    let runsOnServer: Bool
     @Binding var isPresented: Bool
 
     var body: some View {
@@ -162,7 +158,7 @@ private struct PairServerSheet: View {
     private func confirmation(_ address: String) -> some View {
         VStack(spacing: 6) {
             Text(address).font(.body.monospaced())
-            Text(runsOnServer ? "Dictation audio will go to this server." : "Pairing alone sends no audio.")
+            Text("Pairing alone sends no audio.")
                 .foregroundStyle(.secondary)
         }
     }

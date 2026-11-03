@@ -51,6 +51,14 @@ impl fmt::Display for RecordingId {
     }
 }
 
+/// Whether a recording may silence other apps' sound. Only a person at the
+/// machine wants that, so tests and harness runs never do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SoundMuting {
+    Never,
+    Allowed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopMode {
     OnSilence,
