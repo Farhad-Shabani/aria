@@ -125,8 +125,9 @@ aria settings show
 aria settings show tts.rate
 ```
 
-If the file has a mistake, Aria keeps your last good settings and names the
-line. A service that's starting won't run until you fix it.
+If the file isn't valid, Aria keeps your last good settings. On a Mac,
+**Finish Setting Up Aria** in Settings names the line when there is one. A
+service that's starting won't run until you fix it.
 
 To change one key without an editor, or return it to its default:
 

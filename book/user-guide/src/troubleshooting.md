@@ -21,9 +21,9 @@ If registered but stopped, run `aria service start`. If not registered, complete
 choosing **Quit Aria** stops it.
 
 The background service can't start without the speech model your settings
-choose, or Parakeet if they choose none. On a Mac, Aria opens **Aria Setup** at
-launch so you can download it. On Linux, run `aria setup`. Setup reuses models you already
-downloaded.
+choose, or Parakeet if they choose none. On a Mac, open Settings and click
+**Download** in **Finish Setting Up Aria**. On Linux, run `aria setup`. Setup
+reuses models you already downloaded.
 
 ## No recording
 
