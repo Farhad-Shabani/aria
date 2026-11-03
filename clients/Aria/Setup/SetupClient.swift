@@ -170,11 +170,7 @@ extension SetupState.Effects {
             apply: { request, onEvent in try await SetupClient.apply(request, onEvent: onEvent) },
             stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
             startDaemon: { await SetupClient.startDaemonAfterFailedApply() },
-            hotkeyArmed: {
-                let key = try? await UnixSocketSettings().snapshot().settings.storedAriaKey
-                return AriaKey.isReady(
-                    key: key, isServing: await HealthClient.isServing(HealthClient.hotkeyService))
-            },
+            hotkeyArmed: { await HealthClient.isServing(HealthClient.hotkeyService) },
             openAccessibility: { SetupClient.openAccessibility() },
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },

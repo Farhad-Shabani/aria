@@ -83,7 +83,7 @@ pub struct SettingsCache {
     home: PathBuf,
     startup: StartupSettings,
     state: Mutex<State>,
-    aria_key: watch::Sender<Option<AriaKey>>,
+    aria_key: watch::Sender<AriaKey>,
     project_vocabulary: watch::Sender<Option<Directory>>,
     status: watch::Sender<SettingsStatus>,
 }
@@ -140,9 +140,9 @@ impl SettingsCache {
         Arc::clone(&self.lock_state().effective)
     }
 
-    /// The Aria key, `None` while it is off. Fires only when the key
-    /// changes, so the listener is not re-armed by unrelated writes.
-    pub fn aria_key(&self) -> watch::Receiver<Option<AriaKey>> {
+    /// The Aria key. Fires only when it changes, so the listener is not
+    /// re-armed by unrelated writes.
+    pub fn aria_key(&self) -> watch::Receiver<AriaKey> {
         self.aria_key.subscribe()
     }
 
@@ -496,15 +496,15 @@ mod tests {
         hand_edit(&store, "[shortcuts]\naria_key = \"fn\"\n");
         reloaded(store.poll().expect("polls"));
         assert!(aria_key.has_changed().expect("alive"));
-        assert_eq!(*aria_key.borrow_and_update(), Some(AriaKey::Fn));
+        assert_eq!(*aria_key.borrow_and_update(), AriaKey::Fn);
 
         let mut vocabulary = store.project_vocabulary();
         hand_edit(
             &store,
-            "[shortcuts]\naria_key = \"off\"\n[dictation.vocabulary]\nenabled = true\ndir = \"/src/writ\"\n",
+            "[shortcuts]\naria_key = \"right_option\"\n[dictation.vocabulary]\nenabled = true\ndir = \"/src/writ\"\n",
         );
         reloaded(store.poll().expect("polls"));
-        assert_eq!(*aria_key.borrow_and_update(), None);
+        assert_eq!(*aria_key.borrow_and_update(), AriaKey::RightOption);
         assert!(vocabulary.has_changed().expect("alive"));
         assert_eq!(
             vocabulary

@@ -411,8 +411,8 @@ final class SetupState: ObservableObject {
 
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
-        isHotkeyReady = selections.ariaKey && summary.grant == .armed
-        if selections.ariaKey && summary.grant != .armed {
+        isHotkeyReady = summary.grant == .armed
+        if summary.grant != .armed {
             step = .grant
             watchGrant()
         } else {

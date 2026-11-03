@@ -9,14 +9,6 @@ struct EnginesPage: View {
                 picker("Speech to text", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID)
                 picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)
             }
-            Section {
-                if state.inspection.macos {
-                    Toggle(isOn: $state.selections.ariaKey) {
-                        Text("Start dictation with the Aria key")
-                        Text("Setup asks for permission next.")
-                    }
-                }
-            }
             DownloadsSection(state: state)
         }
     }

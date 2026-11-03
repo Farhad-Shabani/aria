@@ -113,12 +113,11 @@ message Missing {
   string model_id = 2;
 }
 
-// The four answers, as settings.toml spells them.
+// The three answers, as settings.toml spells them.
 message Selections {
   string transcription_engine_id = 1;
   string synthesis_engine_id = 2;
   bool wake = 4;
-  bool aria_key = 5;
 }
 
 message ApplyRequest {
@@ -191,7 +190,6 @@ enum Outcome {
 // Accessibility grant.
 enum Grant {
   GRANT_UNSPECIFIED = 0;
-  GRANT_NOT_NEEDED = 1;
   GRANT_ARMED = 2;
   // The daemon runs but the listener has not armed; the grant is owed.
   GRANT_WAITING = 3;

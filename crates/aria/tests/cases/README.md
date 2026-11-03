@@ -10,8 +10,9 @@ just rust-acceptance -- history-fresh   # only cases whose name contains this
 
 Each case starts from scratch. It gets a temporary home directory holding
 only its settings, and its own runtime directory. Your `ARIA_*` variables are
-cleared, sounds and banners are off, and the Aria key is off. A command
-that would ask for input reads nothing, so it fails instead of waiting.
+cleared, and the run is unattended, so sounds, banners, and the Aria key are
+off. A command that would ask for input reads nothing, so it fails instead of
+waiting.
 
 ## Writing a case
 

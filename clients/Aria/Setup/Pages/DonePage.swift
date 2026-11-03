@@ -8,18 +8,14 @@ struct DonePage: View {
 
     var body: some View {
         Form {
-            if state.selections.ariaKey {
-                Section("How to Use Aria") {
-                    if ariaKey == .off {
-                        LabeledContent("Aria key", value: ariaKey.title)
-                    } else if state.isHotkeyReady {
-                        LabeledContent("Dictate", value: "Tap \(ariaKey.title)")
-                        if let askCombo {
-                            LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))
-                        }
-                    } else {
-                        LabeledContent("Dictate", value: "Needs permission")
+            Section("How to Use Aria") {
+                if state.isHotkeyReady {
+                    LabeledContent("Dictate", value: "Tap \(ariaKey.title)")
+                    if let askCombo {
+                        LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))
                     }
+                } else {
+                    LabeledContent("Dictate", value: "Needs permission")
                 }
             }
             if let summary = state.summary {

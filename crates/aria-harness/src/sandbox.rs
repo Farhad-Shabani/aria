@@ -1,6 +1,6 @@
 //! Test environment with a temporary home and runtime directory. Aria environment
-//! variables are cleared, unattended mode suppresses sound and banners, and the
-//! Aria key is off so no case taps the developer's keyboard.
+//! variables are cleared, and unattended mode suppresses sound, banners, and
+//! the Aria key, so no case reacts to the developer's keyboard.
 
 use std::path::Path;
 use std::process::Command;
@@ -9,8 +9,6 @@ use tempfile::TempDir;
 
 const SETTINGS_DIRECTORY: &str = ".aria";
 const SETTINGS_FILE: &str = "settings.toml";
-/// Comes last, so the line numbers in a case's errors are the case's own.
-const ARIA_KEY_OFF: &str = "\n[shortcuts]\naria_key = \"off\"\n";
 const HOME_ENV: &str = "HOME";
 const RUNTIME_DIR_ENV: &str = "ARIA_RUNTIME_DIR";
 const RUNTIME_SUBDIRECTORY: &str = "runtime";
@@ -57,7 +55,7 @@ impl Sandbox {
         self.home.path()
     }
 
-    /// `settings` is the case's `settings.toml`, without the Aria key line.
+    /// `settings` is the case's `settings.toml`.
     pub fn create(settings: &str) -> Result<Self, SandboxError> {
         let home = tempfile::tempdir().map_err(SandboxError::CreateHome)?;
         write_settings(home.path(), settings)?;
@@ -95,9 +93,5 @@ impl Sandbox {
 fn write_settings(home: &Path, settings: &str) -> Result<(), SandboxError> {
     let directory = home.join(SETTINGS_DIRECTORY);
     std::fs::create_dir(&directory).map_err(SandboxError::CreateConfigDirectory)?;
-    std::fs::write(
-        directory.join(SETTINGS_FILE),
-        format!("{settings}{ARIA_KEY_OFF}"),
-    )
-    .map_err(SandboxError::WriteConfig)
+    std::fs::write(directory.join(SETTINGS_FILE), settings).map_err(SandboxError::WriteConfig)
 }

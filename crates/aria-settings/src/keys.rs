@@ -211,8 +211,8 @@ keys! {
         "What to make of a recording, keyed by id. At most 16, each chord once, listed in file order.";
     ApplicationOverrides: "application_overrides", Live, Mac, [], Kind::Overrides, None,
         "Settings for one app while it's in front, keyed by bundle id. At most 64.";
-    ShortcutsAriaKey: "shortcuts.aria_key", Live, Mac, [], Kind::Choice(&["right_option", "fn", "off"]), Some("right_option"),
-        "The Aria key: right_option, fn or off. Tap to dictate, hold to talk.";
+    ShortcutsAriaKey: "shortcuts.aria_key", Live, Mac, [], Kind::Choice(&["right_option", "fn"]), Some("right_option"),
+        "The Aria key: right_option or fn. Tap to dictate, hold to talk.";
     ShortcutsAsk: "shortcuts.ask", Live, Mac, [], Kind::ShortcutEntry, Some("\"shift\""),
         "Starts an ask: shift or command held with the Aria key, a chord, or off.";
     ShortcutsPromptList: "shortcuts.prompt_list", Live, Mac, [], Kind::ShortcutEntry, Some("\"command\""),

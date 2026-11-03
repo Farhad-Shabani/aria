@@ -406,7 +406,6 @@ fn eager_workers(
     let DaemonConfig {
         dictation: dictation_config,
         wake,
-        hotkey,
         relay,
     } = DaemonConfig::load(startup, &context.home, wake_word)
         .map_err(DaemonError::Configuration)?;
@@ -475,7 +474,7 @@ fn eager_workers(
             Arc::clone(settings),
         )),
         monitor,
-        hotkey,
+        hotkey: context.hotkey(),
         relay_delivery,
     })
 }

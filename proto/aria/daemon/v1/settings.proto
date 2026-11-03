@@ -291,8 +291,6 @@ enum AriaKey {
   ARIA_KEY_UNSPECIFIED = 0;
   ARIA_KEY_RIGHT_OPTION = 1;
   ARIA_KEY_FN = 2;
-  // No Aria key: presses of either key do nothing.
-  ARIA_KEY_OFF = 3;
 }
 
 // The Aria key held with Shift or Command alone.

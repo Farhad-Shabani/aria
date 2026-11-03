@@ -55,9 +55,11 @@ but they may not. The udev rule that lets the hotkey read your keyboard lets
 every program you run read every key and inject input too. Aria reads key presses only to tell its
 hotkey apart from typing, and never records what you type.
 
-On a Mac, Aria reads two characters before the cursor and one after it, to
-decide where spaces go. It skips password fields, and never saves or logs
-these characters.
+On a Mac, Aria sees which keys you press, to notice the Aria key. It never
+records what you type.
+
+To place spaces, Aria reads two characters before the cursor and one after
+it. It skips password fields and never saves or logs them.
 
 ## Questions
 

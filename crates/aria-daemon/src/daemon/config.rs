@@ -15,7 +15,6 @@ use aria_voice::config::{CaptureConfig, DictationConfig};
 pub struct DaemonConfig {
     pub dictation: DictationConfig,
     pub wake: WakeConfig,
-    pub hotkey: HotkeyConfig,
     pub relay: RelayConfig,
 }
 
@@ -89,7 +88,6 @@ impl DaemonConfig {
         Ok(Self {
             dictation,
             wake,
-            hotkey: HotkeyConfig::Enabled,
             relay: relay(&settings.phone),
         })
     }

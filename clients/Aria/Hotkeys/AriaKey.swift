@@ -3,7 +3,6 @@
 enum AriaKey: CaseIterable {
     case rightOption
     case fn
-    case off
 
     /// The key the daemon uses when none is stored.
     static let `default` = AriaKey.rightOption
@@ -12,24 +11,17 @@ enum AriaKey: CaseIterable {
         switch self {
         case .rightOption: return "Right Option"
         case .fn: return "Fn"
-        case .off: return "Off"
         }
     }
 
     func gesture(for combo: Aria_Daemon_V1_ShortcutCombo) -> String {
-        self == .off ? title : "\(title) + \(combo.symbol)"
-    }
-
-    /// With the key off, nothing is owed: an idle listener isn't a failure.
-    static func isReady(key: AriaKey?, isServing: Bool) -> Bool {
-        key == .off || isServing
+        "\(title) + \(combo.symbol)"
     }
 
     var wire: Aria_Daemon_V1_AriaKey {
         switch self {
         case .rightOption: return .rightOption
         case .fn: return .fn
-        case .off: return .off
         }
     }
 
@@ -38,7 +30,6 @@ enum AriaKey: CaseIterable {
         switch wire {
         case .rightOption: self = .rightOption
         case .fn: self = .fn
-        case .off: self = .off
         case .unspecified, .UNRECOGNIZED: return nil
         }
     }

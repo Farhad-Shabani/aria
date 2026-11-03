@@ -306,7 +306,6 @@ public nonisolated enum Aria_Setup_V1_Outcome: SwiftProtobuf.Enum, Swift.CaseIte
 public nonisolated enum Aria_Setup_V1_Grant: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
-  case notNeeded // = 1
   case armed // = 2
 
   /// The daemon runs but the listener has not armed; the grant is owed.
@@ -320,7 +319,6 @@ public nonisolated enum Aria_Setup_V1_Grant: SwiftProtobuf.Enum, Swift.CaseItera
   public init?(rawValue: Int) {
     switch rawValue {
     case 0: self = .unspecified
-    case 1: self = .notNeeded
     case 2: self = .armed
     case 3: self = .waiting
     default: self = .UNRECOGNIZED(rawValue)
@@ -330,7 +328,6 @@ public nonisolated enum Aria_Setup_V1_Grant: SwiftProtobuf.Enum, Swift.CaseItera
   public var rawValue: Int {
     switch self {
     case .unspecified: return 0
-    case .notNeeded: return 1
     case .armed: return 2
     case .waiting: return 3
     case .UNRECOGNIZED(let i): return i
@@ -340,7 +337,6 @@ public nonisolated enum Aria_Setup_V1_Grant: SwiftProtobuf.Enum, Swift.CaseItera
   // The compiler won't synthesize support with the UNRECOGNIZED case.
   public static let allCases: [Aria_Setup_V1_Grant] = [
     .unspecified,
-    .notNeeded,
     .armed,
     .waiting,
   ]
@@ -655,7 +651,7 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
   public init() {}
 }
 
-/// The four answers, as settings.toml spells them.
+/// The three answers, as settings.toml spells them.
 public nonisolated struct Aria_Setup_V1_Selections: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -666,8 +662,6 @@ public nonisolated struct Aria_Setup_V1_Selections: Sendable {
   public var synthesisEngineID: String = String()
 
   public var wake: Bool = false
-
-  public var ariaKey: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -886,7 +880,7 @@ nonisolated extension Aria_Setup_V1_Outcome: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Aria_Setup_V1_Grant: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GRANT_UNSPECIFIED\0\u{1}GRANT_NOT_NEEDED\0\u{1}GRANT_ARMED\0\u{1}GRANT_WAITING\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GRANT_UNSPECIFIED\0\u{2}\u{2}GRANT_ARMED\0\u{1}GRANT_WAITING\0")
 }
 
 nonisolated extension Aria_Setup_V1_Job: SwiftProtobuf._ProtoNameProviding {
@@ -1228,7 +1222,7 @@ nonisolated extension Aria_Setup_V1_Missing.Kind: SwiftProtobuf._ProtoNameProvid
 
 nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Selections"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transcription_engine_id\0\u{3}synthesis_engine_id\0\u{2}\u{2}wake\0\u{3}aria_key\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transcription_engine_id\0\u{3}synthesis_engine_id\0\u{2}\u{2}wake\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1239,7 +1233,6 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
       case 1: try { try decoder.decodeSingularStringField(value: &self.transcriptionEngineID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.synthesisEngineID) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.wake) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.ariaKey) }()
       default: break
       }
     }
@@ -1255,9 +1248,6 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
     if self.wake != false {
       try visitor.visitSingularBoolField(value: self.wake, fieldNumber: 4)
     }
-    if self.ariaKey != false {
-      try visitor.visitSingularBoolField(value: self.ariaKey, fieldNumber: 5)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1265,7 +1255,6 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
     if lhs.transcriptionEngineID != rhs.transcriptionEngineID {return false}
     if lhs.synthesisEngineID != rhs.synthesisEngineID {return false}
     if lhs.wake != rhs.wake {return false}
-    if lhs.ariaKey != rhs.ariaKey {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1364,25 +1364,22 @@ impl WireEnum for wire::DeliveryMode {
     }
 }
 
-/// `None` is the Aria key switched off.
-impl From<Option<AriaKey>> for wire::AriaKey {
-    fn from(key: Option<AriaKey>) -> Self {
+impl From<AriaKey> for wire::AriaKey {
+    fn from(key: AriaKey) -> Self {
         match key {
-            Some(AriaKey::RightOption) => Self::RightOption,
-            Some(AriaKey::Fn) => Self::Fn,
-            None => Self::Off,
+            AriaKey::RightOption => Self::RightOption,
+            AriaKey::Fn => Self::Fn,
         }
     }
 }
 
 impl WireEnum for wire::AriaKey {
-    type Domain = Option<AriaKey>;
+    type Domain = AriaKey;
 
     fn into_domain(self) -> Option<Self::Domain> {
         match self {
-            Self::RightOption => Some(Some(AriaKey::RightOption)),
-            Self::Fn => Some(Some(AriaKey::Fn)),
-            Self::Off => Some(None),
+            Self::RightOption => Some(AriaKey::RightOption),
+            Self::Fn => Some(AriaKey::Fn),
             Self::Unspecified => None,
         }
     }
@@ -2275,8 +2272,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_aria_key_that_is_off_round_trips_and_unspecified_is_refused() {
-        for key in [None, Some(AriaKey::RightOption), Some(AriaKey::Fn)] {
+    fn an_aria_key_round_trips_and_unspecified_is_refused() {
+        for key in [AriaKey::RightOption, AriaKey::Fn] {
             let snapshot = SettingsSnapshot {
                 revision: 1,
                 settings: Settings {
@@ -2294,11 +2291,15 @@ mod tests {
             .unwrap();
             assert_eq!(patch.aria_key, Some(key));
         }
-        let mut snapshot = wire::SettingsSnapshot::from(&SettingsSnapshot::default());
-        if let Some(settings) = snapshot.settings.as_mut() {
-            settings.aria_key = wire::AriaKey::Unspecified as i32;
+        // An older client may still send `off`'s tag.
+        const OFF_TAG: i32 = 3;
+        for refused in [wire::AriaKey::Unspecified as i32, OFF_TAG] {
+            let mut snapshot = wire::SettingsSnapshot::from(&SettingsSnapshot::default());
+            if let Some(settings) = snapshot.settings.as_mut() {
+                settings.aria_key = refused;
+            }
+            assert!(SettingsSnapshot::try_from(snapshot).is_err(), "{refused}");
         }
-        assert!(SettingsSnapshot::try_from(snapshot).is_err());
     }
 
     #[test]
