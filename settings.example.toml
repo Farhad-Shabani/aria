@@ -100,7 +100,7 @@ dir = "~/.aria/memory"
 # ---- How Aria starts, and where text goes
 
 [shortcuts]
-# The Aria key: right_option or fn. Tap to dictate, hold to talk. On Linux, right_option is the Right Alt key, and fn is unavailable.
+# The Aria key: right_option or fn. Tap to dictate, hold to talk. On a Mac, fn stops running its own macOS action. On Linux, right_option is the Right Alt key, and fn is unavailable.
 aria_key = "right_option"
 # Starts an ask: shift or command held with the Aria key, a chord, or off.
 ask = "shift"
