@@ -803,8 +803,16 @@ fn lock_setup(settings_path: &Path) -> Result<fs::File, SetupError> {
         path: path.clone(),
         source,
     };
+    // Setup runs before the daemon ever has, so it makes `~/.aria` private
+    // before downloads put anything in it.
     if let Some(directory) = path.parent() {
-        fs::create_dir_all(directory).map_err(io_error)?;
+        crate::primitives::private_fs::prepare_directory(directory).map_err(|error| {
+            SetupError::Io {
+                action: "secure",
+                path: directory.to_path_buf(),
+                source: io::Error::other(error),
+            }
+        })?;
     }
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -1510,6 +1518,20 @@ mod tests {
             forget_server_at(home.path()),
             Ok(Forgotten::Server { .. })
         ));
+    }
+
+    #[test]
+    fn setup_makes_the_aria_folder_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let aria = home.path().join(".aria");
+        fs::create_dir(&aria).unwrap();
+        fs::set_permissions(&aria, fs::Permissions::from_mode(0o755)).unwrap();
+
+        drop(lock_setup(&aria_settings::default_path(home.path())).unwrap());
+
+        let mode = fs::metadata(&aria).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[test]

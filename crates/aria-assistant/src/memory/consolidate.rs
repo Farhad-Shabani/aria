@@ -56,6 +56,9 @@ pub(crate) fn consolidate_backlog(
         }
     }
     if !cancel.is_cancelled() {
+        if let Err(error) = store.prune_turns() {
+            tracing::warn!(error = %error_chain(&error), "old memory asks were not pruned");
+        }
         write_profile(store, dir)?;
     }
     Ok(report)
@@ -79,10 +82,13 @@ fn consolidate_one(
     };
     let outcome = (|| {
         let turns = store.turns(session, start, history_len)?;
+        // A prune or clear since `sessions()` can leave fewer turns than
+        // `history_len`. The watermark moves past only the turns read.
         let window = Window {
             session,
             turns: &turns,
-            end: history_len,
+            end: start + turns.len() as u32,
+            claimed: history_len,
         };
         consolidate_session(store, extractor, cancel, window, max_facts, terms)
     })();
@@ -215,6 +221,61 @@ mod tests {
         let results = backlog(&store, &extractor, dir.path());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].turns, 1);
+    }
+
+    #[test]
+    fn a_stale_turn_count_moves_the_watermark_only_past_the_turns_read() {
+        let (dir, store) = fixture();
+        speak(&store, "a", "hi");
+        let extractor = Scripted::new(vec![]);
+
+        consolidate_one(&store, &extractor, &CancelToken::never(), "a", 5, 10, &[]).expect("runs");
+        assert_eq!(store.consolidated_history_len("a").expect("reads"), 1);
+
+        speak(&store, "a", "more");
+        let results = backlog(&store, &extractor, dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].turns, 1);
+    }
+
+    /// Makes the run's claim stale and clears memory while the run waits on
+    /// its extraction.
+    struct ClearsMidway {
+        path: std::path::PathBuf,
+    }
+
+    impl Extractor for ClearsMidway {
+        fn extract(&self, _message: &str, _cancel: &CancelToken) -> Result<String, AssistantError> {
+            Connection::open(&self.path)
+                .expect("opens")
+                .execute(
+                    "UPDATE consolidations SET claimed_at = \
+                     strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', '-601 seconds')",
+                    [],
+                )
+                .expect("ages the claim");
+            Store::open(&self.path)
+                .expect("opens")
+                .clear()
+                .expect("clears");
+            Ok(ONE_FACT.to_owned())
+        }
+    }
+
+    #[test]
+    fn a_run_whose_memory_was_cleared_writes_nothing() {
+        let (dir, store) = fixture();
+        speak(&store, "a", "hi");
+        let extractor = ClearsMidway {
+            path: dir.path().join(DB_FILE),
+        };
+
+        let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
+            .expect("runs");
+
+        assert_eq!(report.failed, 1);
+        assert!(store.active_facts().expect("reads").is_empty());
+        assert_eq!(store.consolidated_history_len("a").expect("reads"), 0);
     }
 
     #[test]

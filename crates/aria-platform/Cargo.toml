@@ -11,9 +11,13 @@ publish              = false
 [lints]
 workspace = true
 
+[features]
+sqlite = [ "dep:rusqlite" ]
+
 [dependencies]
 aria-kit        = { workspace = true, features = [ "playback" ] }
 aria-primitives = { workspace = true }
+rusqlite        = { workspace = true, optional = true }
 rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde           = { workspace = true }
 tempfile        = { workspace = true }

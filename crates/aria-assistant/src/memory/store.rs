@@ -2,16 +2,31 @@
 //! watermarks, in one SQLite file.
 
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::time::Duration;
 
-use aria_kit::primitives::private_fs::{self, PRIVATE_FILE_MODE, PrivateDirectoryError};
+use aria_kit::cancel::CancelToken;
+use aria_kit::primitives::private_fs::PrivateDirectoryError;
+use aria_platform::sqlite::{self, DriftedMode, Ownership, Policy, PrivateDatabase};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 const SCHEMA_VERSION: i64 = 4;
 
+// The daemon and the `aria memory` commands share the file, so a blocked
+// writer waits a while before it fails. The file may have been created under
+// the umask.
+const DATABASE_POLICY: Policy = Policy {
+    max_bytes: 64 * 1024 * 1024,
+    busy_timeout: Duration::from_secs(5),
+    ownership: Ownership::Shared,
+    drifted_mode: DriftedMode::Repair,
+};
+
 /// Claims older than this can be retried, even if their original run is still active.
 const STALE_CLAIM_SECONDS: i64 = 600;
+
+/// Consolidated turns are kept as long as dictation history keeps text.
+const TURN_RETENTION: &str = "-30 days";
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS memories (
@@ -97,61 +112,41 @@ pub struct Turn {
 pub enum StoreError {
     #[error("failed to prepare the memory directory")]
     Directory(#[source] PrivateDirectoryError),
-    #[error("failed to secure the memory database")]
-    Permissions(#[source] io::Error),
+    #[error("failed to open the memory database")]
+    Open(#[source] sqlite::Error),
     #[error("memory database error")]
     Sqlite(#[from] rusqlite::Error),
     #[error("memory database schema version {0} is not one this build reads")]
     UnsupportedSchema(i64),
+    #[error("memory is being updated from recent asks; try again in a few minutes")]
+    Busy,
     #[error("failed to write the memory profile")]
     Profile(#[source] io::Error),
 }
 
 pub struct Store {
     conn: Connection,
+    _handles: sqlite::Handles,
 }
 
 impl Store {
     /// Opens or creates the database, readable by its owner alone: it
     /// holds what the user said.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        if let Some(parent) = path.parent() {
-            private_fs::prepare_directory(parent).map_err(StoreError::Directory)?;
+        let PrivateDatabase {
+            connection,
+            handles,
+        } = sqlite::open(path, &DATABASE_POLICY, &CancelToken::never())
+            .map_err(StoreError::Open)?;
+        connection.pragma_update(None, "secure_delete", true)?;
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version != SCHEMA_VERSION {
+            migrate(&connection)?;
         }
-        let conn = Connection::open(path)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))
-            .map_err(StoreError::Permissions)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        let transaction = Transaction::new_unchecked(&conn, TransactionBehavior::Immediate)?;
-        let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if !(0..=SCHEMA_VERSION).contains(&version) {
-            return Err(StoreError::UnsupportedSchema(version));
-        }
-        transaction.execute_batch(SCHEMA)?;
-        if matches!(version, 1 | 2) {
-            let columns = transaction
-                .prepare("PRAGMA table_info(memories)")?
-                .query_map([], |row| row.get::<_, String>(1))?
-                .collect::<Result<Vec<_>, _>>()?;
-            for (name, definition) in [
-                ("embedding", "embedding BLOB"),
-                (
-                    "retrieval_count",
-                    "retrieval_count INTEGER NOT NULL DEFAULT 0",
-                ),
-                ("last_retrieved_at", "last_retrieved_at TEXT"),
-            ] {
-                if !columns.iter().any(|column| column == name) {
-                    transaction
-                        .execute_batch(&format!("ALTER TABLE memories ADD COLUMN {definition}"))?;
-                }
-            }
-        }
-        if version < SCHEMA_VERSION {
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        }
-        transaction.commit()?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: connection,
+            _handles: handles,
+        })
     }
 
     pub(crate) fn add_fact(
@@ -387,6 +382,125 @@ impl Store {
         )?;
         Ok(())
     }
+
+    /// The transaction a run writes its results in, or `None` when its claim
+    /// no longer stands.
+    pub(crate) fn begin_claimed(
+        &self,
+        session: &str,
+        claimed: u32,
+    ) -> Result<Option<Transaction<'_>>, StoreError> {
+        let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let standing: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM consolidations \
+             WHERE session_id = ?1 AND candidates = -1 AND history_len = ?2)",
+            params![session, claimed],
+            |row| row.get(0),
+        )?;
+        Ok(standing.then_some(transaction))
+    }
+
+    /// Deletes consolidated turns older than `TURN_RETENTION`. A window is read by
+    /// position, so each session's watermarks drop by the number deleted.
+    /// A session with a claim in flight waits for the next run.
+    pub(crate) fn prune_turns(&self) -> Result<(), StoreError> {
+        let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let covered: Vec<(String, u32)> = transaction
+            .prepare("SELECT session_id, history_len FROM consolidations WHERE candidates >= 0")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        for (session, history_len) in covered {
+            let deleted = transaction.execute(
+                &format!(
+                    "DELETE FROM turns WHERE id IN \
+                     (SELECT id FROM turns WHERE session = ?1 ORDER BY id LIMIT ?2) \
+                     AND created_at < strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', \
+                     '{TURN_RETENTION}')"
+                ),
+                params![session, history_len],
+            )?;
+            if deleted > 0 {
+                let deleted = i64::try_from(deleted)
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
+                transaction.execute(
+                    "UPDATE consolidations SET history_len = history_len - ?1, \
+                     prev_len = prev_len - ?1 WHERE session_id = ?2",
+                    params![deleted, session],
+                )?;
+            }
+        }
+        transaction.execute(
+            "DELETE FROM consolidations WHERE history_len = 0 AND candidates >= 0",
+            [],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn clear(&self) -> Result<(), StoreError> {
+        let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let claimed: bool = transaction.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM consolidations \
+                 WHERE candidates = -1 AND {})",
+                fresh_claim()
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        if claimed {
+            return Err(StoreError::Busy);
+        }
+        transaction.execute_batch(
+            "DELETE FROM memories; DELETE FROM derived_pairs; \
+             DELETE FROM turns; DELETE FROM consolidations;",
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+}
+
+/// Takes the write lock, so two processes opening an old file migrate it once.
+fn migrate(connection: &Connection) -> Result<(), StoreError> {
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if !(0..=SCHEMA_VERSION).contains(&version) {
+        return Err(StoreError::UnsupportedSchema(version));
+    }
+    transaction.execute_batch(SCHEMA)?;
+    if matches!(version, 1 | 2) {
+        let columns = transaction
+            .prepare("PRAGMA table_info(memories)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (name, definition) in [
+            ("embedding", "embedding BLOB"),
+            (
+                "retrieval_count",
+                "retrieval_count INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("last_retrieved_at", "last_retrieved_at TEXT"),
+        ] {
+            if !columns.iter().any(|column| column == name) {
+                transaction
+                    .execute_batch(&format!("ALTER TABLE memories ADD COLUMN {definition}"))?;
+            }
+        }
+    }
+    if version < SCHEMA_VERSION {
+        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+/// `claimed_at` is local wall time. The `'utc'` modifier converts it to
+/// compare with `'now'`.
+fn fresh_claim() -> String {
+    format!(
+        "(claimed_at IS NOT NULL AND \
+         strftime('%s', 'now') - strftime('%s', claimed_at, 'utc') < {STALE_CLAIM_SECONDS})"
+    )
 }
 
 fn claim_window(
@@ -394,15 +508,14 @@ fn claim_window(
     session: &str,
     history_len: u32,
 ) -> Result<Option<u32>, StoreError> {
-    // `claimed_at` is local wall time; the `'utc'` modifier converts it so it
-    // compares with `'now'`.
     let row: Option<(u32, u32, i64, bool)> = conn
         .query_row(
-            "SELECT history_len, prev_len, candidates, \
-             claimed_at IS NOT NULL AND \
-             strftime('%s', 'now') - strftime('%s', claimed_at, 'utc') < ?2 \
-             FROM consolidations WHERE session_id = ?1",
-            params![session, STALE_CLAIM_SECONDS],
+            &format!(
+                "SELECT history_len, prev_len, candidates, {} \
+                 FROM consolidations WHERE session_id = ?1",
+                fresh_claim()
+            ),
+            [session],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
@@ -447,6 +560,8 @@ fn fact_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Fact> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
 
     fn store() -> (tempfile::TempDir, Store) {
@@ -491,12 +606,22 @@ mod tests {
     }
 
     #[test]
-    fn the_file_is_private_to_its_owner() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("memory.db");
-        Store::open(&path).expect("opens");
+    fn the_database_erases_deleted_content() {
+        let (_dir, store) = store();
+        let erases: bool = store
+            .conn
+            .query_row("PRAGMA secure_delete", [], |row| row.get(0))
+            .expect("reads the pragma");
+        assert!(erases);
+    }
+
+    #[test]
+    fn a_public_legacy_file_is_made_private() {
+        let (_dir, path) = with_version(4);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        drop(Store::open(&path).expect("opens"));
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
-        assert_eq!(mode & 0o777, PRIVATE_FILE_MODE);
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
@@ -771,5 +896,94 @@ mod tests {
             )
             .expect("writes the claim");
         assert_eq!(store.claim_consolidation("s", 6).expect("claims"), None);
+    }
+
+    fn age_turns(store: &Store, texts: &[&str]) {
+        for text in texts {
+            store
+                .conn
+                .execute(
+                    "UPDATE turns SET created_at = \
+                     strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', '-31 days') \
+                     WHERE text = ?1",
+                    [text],
+                )
+                .expect("ages the turn");
+        }
+    }
+
+    fn turn_texts(store: &Store) -> Vec<String> {
+        store
+            .conn
+            .prepare("SELECT text FROM turns ORDER BY id")
+            .expect("prepares")
+            .query_map([], |row| row.get(0))
+            .expect("reads")
+            .collect::<Result<_, _>>()
+            .expect("reads")
+    }
+
+    #[test]
+    fn pruning_drops_old_covered_turns_and_the_next_window_still_lines_up() {
+        let (_dir, store) = store();
+        for text in ["old one", "old two", "recent covered", "uncovered"] {
+            store.add_turn("s", text, "sam").expect("adds");
+        }
+        store
+            .record_consolidation("s", 3, 0, 0, 0, 0)
+            .expect("records");
+        age_turns(&store, &["old one", "old two", "uncovered"]);
+
+        store.prune_turns().expect("prunes");
+
+        assert_eq!(turn_texts(&store), ["recent covered", "uncovered"]);
+        assert_eq!(store.consolidated_history_len("s").expect("reads"), 1);
+        let (_, history_len) = store.sessions().expect("reads")[0].clone();
+        let start = store
+            .claim_consolidation("s", history_len)
+            .expect("claims")
+            .expect("has new turns");
+        assert_eq!(
+            store.turns("s", start, history_len).expect("reads"),
+            [Turn {
+                text: "uncovered".to_owned(),
+                speaker: "sam".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn pruning_leaves_a_session_with_a_claim_in_flight_alone() {
+        let (_dir, store) = store();
+        store.add_turn("s", "old", "sam").expect("adds");
+        store
+            .record_consolidation("s", 1, 0, 0, 0, 0)
+            .expect("records");
+        store.add_turn("s", "new", "sam").expect("adds");
+        store.claim_consolidation("s", 2).expect("claims");
+        age_turns(&store, &["old"]);
+
+        store.prune_turns().expect("prunes");
+
+        assert_eq!(turn_texts(&store), ["old", "new"]);
+    }
+
+    #[test]
+    fn clearing_removes_everything_and_waits_for_a_run_in_flight() {
+        let (_dir, store) = store();
+        add(&store, "a", STATUS_ACTIVE);
+        store.add_pair("d b two", "db2", "llm", "s").expect("adds");
+        store.add_turn("s", "hello", "sam").expect("adds");
+        store.claim_consolidation("s", 1).expect("claims");
+
+        assert!(matches!(store.clear(), Err(StoreError::Busy)));
+        assert_eq!(turn_texts(&store), ["hello"]);
+
+        store.release_consolidation("s", 1, 0).expect("releases");
+        store.clear().expect("clears");
+        assert!(store.active_facts().expect("reads").is_empty());
+        assert!(store.list_pairs().expect("reads").is_empty());
+        assert!(turn_texts(&store).is_empty());
+        assert!(store.sessions().expect("reads").is_empty());
     }
 }

@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 aria-kit        = { workspace = true }
-aria-platform   = { workspace = true }
+aria-platform   = { workspace = true, features = [ "sqlite" ] }
 aria-primitives = { workspace = true }
 aria-settings   = { workspace = true }
 rusqlite        = { workspace = true }

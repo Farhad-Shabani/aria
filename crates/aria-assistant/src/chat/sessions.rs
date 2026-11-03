@@ -1,5 +1,6 @@
 //! The conversation record: which assistant session continues each key.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -91,10 +92,17 @@ fn write_records(path: &Path, records: &[SessionRecord]) -> Result<(), SessionSt
         action: "encode",
         source: std::io::Error::other(error),
     })?;
-    std::fs::write(path, json).map_err(|source| SessionStoreError {
+    let write = |source| SessionStoreError {
         action: "write",
         source,
-    })
+    };
+    // A temp file opens private to its owner, and the rename replaces a file
+    // that may have been written under the umask.
+    let mut file =
+        tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new("."))).map_err(write)?;
+    file.write_all(json.as_bytes()).map_err(write)?;
+    file.persist(path).map_err(|error| write(error.error))?;
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -103,4 +111,30 @@ pub struct SessionStoreError {
     action: &'static str,
     #[source]
     source: std::io::Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    #[test]
+    fn a_public_record_file_becomes_private_on_the_next_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("chat-session.json");
+        std::fs::write(&path, "[]").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let store = SessionStore::open(&path);
+        let key = SessionKey {
+            assistant_id: "claude".to_owned(),
+            name: "/tmp".to_owned(),
+        };
+
+        store.record(key.clone(), "resume").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(store.recall(&key).unwrap().as_deref(), Some("resume"));
+    }
 }

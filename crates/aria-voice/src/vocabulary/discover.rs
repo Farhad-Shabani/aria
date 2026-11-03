@@ -444,7 +444,7 @@ fn check_cancelled<E: std::error::Error + 'static>(cancel: &CancelToken) -> Resu
         Ok(())
     }
 }
-pub(super) fn open_directory(path: &Path) -> Result<File, io::Error> {
+fn open_directory(path: &Path) -> Result<File, io::Error> {
     if !path.is_absolute() {
         return Err(io::Error::other("expected an absolute directory"));
     }

@@ -1,8 +1,9 @@
 //! The transcript file a listen session writes as it hears.
 
-use std::fs::{self, File};
+use std::fs::{DirBuilder, File};
 use std::io::{self, Read, Write};
 use std::ops::Range;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -70,12 +71,30 @@ impl TranscriptFile {
         Self::create_at(directory.join(format!("{stamp}.txt")))
     }
 
-    /// The caller's exact file, appended to when it already exists.
+    /// The caller's exact file, appended to when it already exists. A file or
+    /// folder this creates is private to its owner. An existing file keeps
+    /// its mode.
     pub fn create_at(path: PathBuf) -> io::Result<(Self, PathBuf)> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)?;
         }
-        let file = File::options().create(true).append(true).open(&path)?;
+        let file = File::options()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(&path)?;
+        // In a shared folder another user can plant the file first.
+        let metadata = file.metadata()?;
+        if metadata.uid() != rustix::process::getuid().as_raw() || metadata.nlink() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the transcript file belongs to another user or has other links",
+            ));
+        }
         let preamble = file.metadata()?.len();
         let now = Instant::now();
         Ok((
@@ -161,8 +180,8 @@ impl TranscriptFile {
         }
 
         let existing = File::open(&self.path)?;
-        // A temp file opens private to its owner. The transcript was not, and
-        // a rewrite is not the moment to change who can read a session.
+        // A temp file opens private to its owner. The transcript may not be,
+        // and a rewrite is not the moment to change who can read a session.
         let permissions = existing.metadata()?.permissions();
         let mut preamble = Vec::new();
         existing.take(self.preamble).read_to_end(&mut preamble)?;
@@ -388,6 +407,7 @@ mod tests {
     use super::*;
     use crate::speaker::SpeakerName;
     use aria_kit::audio::CANONICAL_SAMPLE_RATE;
+    use std::fs;
 
     fn enrolled(name: &str) -> Label {
         Label::Enrolled(SpeakerName::new(name).expect("a usable name"))
@@ -398,6 +418,39 @@ mod tests {
         let (sink, path) =
             TranscriptFile::create(directory.path()).expect("the transcript file is created");
         (directory, sink, path)
+    }
+
+    #[test]
+    fn a_planted_link_or_second_name_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target.txt");
+        fs::write(&target, "").unwrap();
+
+        let link = directory.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(TranscriptFile::create_at(link).is_err());
+
+        let second = directory.path().join("second.txt");
+        fs::hard_link(&target, &second).unwrap();
+        assert!(TranscriptFile::create_at(second).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "");
+    }
+
+    #[test]
+    fn a_new_transcript_and_its_folder_are_private_and_an_existing_file_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let directory = tempfile::tempdir().unwrap();
+        let folder = directory.path().join("transcripts");
+        let (_sink, path) = TranscriptFile::create(&folder).unwrap();
+        assert_eq!(mode(&folder), 0o700);
+        assert_eq!(mode(&path), 0o600);
+
+        let shared = directory.path().join("shared.txt");
+        fs::write(&shared, "").unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o644)).unwrap();
+        drop(TranscriptFile::create_at(shared.clone()).unwrap());
+        assert_eq!(mode(&shared), 0o644);
     }
 
     #[test]

@@ -159,7 +159,11 @@ pub struct ConsolidationResult {
 pub(crate) struct Window<'a> {
     pub(crate) session: &'a str,
     pub(crate) turns: &'a [Turn],
+    /// Where `turns` end, which becomes the session's watermark.
     pub(crate) end: u32,
+    /// The end the claim recorded. Results are written only while that claim
+    /// still stands.
+    pub(crate) claimed: u32,
 }
 
 fn message(turns: &[&Turn], store: &Store, terms: &[String]) -> Result<String, StoreError> {
@@ -202,6 +206,8 @@ pub(crate) enum ConsolidateError {
     /// window is left for the next run.
     #[error("memory extraction returned output that could not be read")]
     Unreadable,
+    #[error("memory changed while extracting; the window is left for the next run")]
+    ClaimLost,
 }
 
 /// Extracts from the window and moves the session's watermark to its end.
@@ -218,6 +224,7 @@ pub(crate) fn consolidate_session(
         session,
         turns,
         end,
+        claimed,
     } = window;
     let eligible: Vec<&Turn> = turns.iter().filter(|turn| !turn.text.is_empty()).collect();
     let transcript = eligible
@@ -242,6 +249,10 @@ pub(crate) fn consolidate_session(
         }
     };
     result.candidates = candidates.len();
+    // A `clear`, or another run's claim, can end this one. Writing anyway would bring back what the user deleted.
+    let Some(transaction) = store.begin_claimed(session, claimed)? else {
+        return Err(ConsolidateError::ClaimLost);
+    };
 
     let listed: Vec<String> = terms.iter().map(|term| term.to_lowercase()).collect();
     let mut discarded = 0;
@@ -312,6 +323,7 @@ pub(crate) fn consolidate_session(
         result.noops,
         result.pending,
     )?;
+    transaction.commit().map_err(StoreError::from)?;
     Ok(result)
 }
 
@@ -405,10 +417,12 @@ mod tests {
     ) -> (Result<ConsolidationResult, ConsolidateError>, Scripted) {
         let extractor = Scripted::new(reply);
         let terms: Vec<String> = terms.iter().map(|term| (*term).to_owned()).collect();
+        store.claim_consolidation("s1", end).expect("claims");
         let window = Window {
             session: "s1",
             turns,
             end,
+            claimed: end,
         };
         let result = consolidate_session(
             store,
@@ -579,7 +593,8 @@ mod tests {
             [("d b two", "correction"), ("dee bee", "llm")]
         );
 
-        let (result, _) = ok(&store, &reply, &turns, 10, &[]);
+        let (_unlisted_dir, unlisted) = self::store();
+        let (result, _) = ok(&unlisted, &reply, &turns, 10, &[]);
         assert_eq!(result.pairs_added, 0);
     }
 

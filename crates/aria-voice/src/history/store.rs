@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{self, File, TryLockError};
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use aria_platform::sqlite::{self, DriftedMode, Ownership, Policy, PrivateDatabase};
+use rusqlite::{Connection, OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
 use super::{
@@ -27,6 +29,14 @@ const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ENTRY_BYTES: usize = 128 * 1024;
 const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
+const DATABASE_POLICY: Policy = Policy {
+    max_bytes: MAX_DATABASE_BYTES,
+    busy_timeout: Duration::from_millis(250),
+    ownership: Ownership::Exclusive {
+        lock: "history.lock",
+    },
+    drifted_mode: DriftedMode::Refuse,
+};
 const TEXT_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const AUDIO_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
 const CLEANUP_WARNING: &str = "Some history files could not be removed. Cleanup will be retried.";
@@ -46,10 +56,8 @@ struct State {
     connection: Connection,
     pinned: HashSet<u64>,
     warning: Option<String>,
-    _database: File,
-    _directory: File,
     // Release ownership after closing SQLite.
-    _ownership: File,
+    _handles: sqlite::Handles,
 }
 
 pub struct RetryLease {
@@ -72,54 +80,26 @@ impl Drop for RetryLease {
 
 impl Store {
     pub fn open(directory: &Path) -> Result<Arc<Self>, HistoryError> {
-        private_fs::prepare_directory(directory).map_err(|_| HistoryError::Storage)?;
+        let PrivateDatabase {
+            connection,
+            handles,
+        } = sqlite::open(
+            &directory.join("history.db"),
+            &DATABASE_POLICY,
+            &CancelToken::never(),
+        )?;
         let directory = directory
             .canonicalize()
             .map_err(|_| HistoryError::Storage)?;
-        let directory_file = open_directory(&directory)?;
-        let ownership = open_private(&directory_file, "history.lock", true)?;
-        ownership.try_lock().map_err(|error| match error {
-            TryLockError::WouldBlock => HistoryError::Busy,
-            TryLockError::Error(_) => HistoryError::Storage,
-        })?;
-        let database = open_private(&directory_file, "history.db", true)?;
-        check_size(&database, MAX_DATABASE_BYTES)?;
-        for name in ["history.db-journal", "history.db-wal", "history.db-shm"] {
-            match open_private(&directory_file, name, false) {
-                Ok(file) => check_size(&file, MAX_DATABASE_BYTES + 1024 * 1024)?,
-                Err(HistoryError::Missing) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        let before = database.metadata().map_err(|_| HistoryError::Storage)?;
-        let connection = Connection::open_with_flags(
-            directory.join("history.db"),
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        )?;
-        let after = fs::symlink_metadata(directory.join("history.db"))
-            .map_err(|_| HistoryError::Storage)?;
-        if !after.is_file() || before.ino() != after.ino() || before.dev() != after.dev() {
-            return Err(HistoryError::Storage);
-        }
-        connection.busy_timeout(Duration::from_millis(250))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > 1 {
             return Err(HistoryError::Unavailable);
         }
         connection.execute_batch(
-            "PRAGMA trusted_schema=OFF;
-             PRAGMA journal_mode=DELETE;
+            "PRAGMA journal_mode=DELETE;
              PRAGMA synchronous=FULL;
              PRAGMA journal_size_limit=0;
              PRAGMA secure_delete=ON;",
-        )?;
-        let page_size: u32 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
-        connection.pragma_update(
-            None,
-            "max_page_count",
-            sql_integer(MAX_DATABASE_BYTES / u64::from(page_size))?,
         )?;
         connection.execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS entries (
@@ -138,7 +118,8 @@ impl Store {
         ))?;
         private_fs::prepare_directory(&directory.join("audio"))
             .map_err(|_| HistoryError::Storage)?;
-        let audio_directory = open_directory(&directory.join("audio"))?;
+        let audio_directory =
+            sqlite::open_directory(&directory.join("audio")).map_err(|_| HistoryError::Storage)?;
         let store = Arc::new(Self {
             directory,
             audio_directory,
@@ -146,9 +127,7 @@ impl Store {
                 connection,
                 pinned: HashSet::new(),
                 warning: None,
-                _database: database,
-                _directory: directory_file,
-                _ownership: ownership,
+                _handles: handles,
             }),
         });
         store.maintenance()?;
@@ -308,7 +287,7 @@ impl Store {
         }
         let audio_path = self.audio_path(id);
         let validated = (|| -> Result<RecordingReader, HistoryError> {
-            let file = open_private(&self.audio_directory, &audio_name(id), false)?;
+            let file = open_private(&self.audio_directory, &audio_name(id))?;
             check_size(&file, MAX_AUDIO_BYTES)?;
             RecordingReader::from_open_wav(file, &audio_path)
                 .map_err(|_| HistoryError::AudioUnavailable)
@@ -418,7 +397,7 @@ impl Store {
                     state.warning = Some(CLEANUP_WARNING.to_owned());
                 }
             } else if matches!(entry.audio, AudioAvailability::Available { .. })
-                && open_private(&self.audio_directory, &audio_name(entry.id), false).is_err()
+                && open_private(&self.audio_directory, &audio_name(entry.id)).is_err()
             {
                 self.invalidate_audio(state, entry.id)?;
             }
@@ -545,7 +524,7 @@ impl Store {
         }
         let mut retained_audio = 0;
         for entry in &entries {
-            match open_private(&self.audio_directory, &audio_name(entry.id), false) {
+            match open_private(&self.audio_directory, &audio_name(entry.id)) {
                 Ok(file) => {
                     retained_audio += file.metadata().map_err(|_| HistoryError::Storage)?.len();
                 }
@@ -560,7 +539,7 @@ impl Store {
             if state.pinned.contains(&entry.id) {
                 continue;
             }
-            if let Ok(file) = open_private(&self.audio_directory, &audio_name(entry.id), false) {
+            if let Ok(file) = open_private(&self.audio_directory, &audio_name(entry.id)) {
                 let size = file.metadata().map_err(|_| HistoryError::Storage)?.len();
                 self.remove_audio(state, entry.id)?;
                 retained_audio = retained_audio.saturating_sub(size);
@@ -684,34 +663,20 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn open_directory(path: &Path) -> Result<File, HistoryError> {
-    let descriptor = rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+fn open_private(directory: &File, name: &str) -> Result<File, HistoryError> {
+    let descriptor = rustix::fs::openat(
+        directory,
+        name,
+        OFlags::RDWR | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )
-    .map_err(|_| HistoryError::Storage)?;
-    let file = File::from(descriptor);
-    let metadata = file.metadata().map_err(|_| HistoryError::Storage)?;
-    if metadata.uid() != rustix::process::getuid().as_raw() || metadata.mode() & 0o777 != 0o700 {
-        return Err(HistoryError::Storage);
-    }
-    Ok(file)
-}
-
-fn open_private(directory: &File, name: &str, create: bool) -> Result<File, HistoryError> {
-    let mut flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    if create {
-        flags |= OFlags::CREATE;
-    }
-    let descriptor =
-        rustix::fs::openat(directory, name, flags, Mode::RUSR | Mode::WUSR).map_err(|error| {
-            if error == rustix::io::Errno::NOENT {
-                HistoryError::Missing
-            } else {
-                HistoryError::Storage
-            }
-        })?;
+    .map_err(|error| {
+        if error == rustix::io::Errno::NOENT {
+            HistoryError::Missing
+        } else {
+            HistoryError::Storage
+        }
+    })?;
     let file = File::from(descriptor);
     let metadata = private_fs::verify_file(&file).map_err(|_| HistoryError::Storage)?;
     if metadata.nlink() != 1 {
@@ -1759,7 +1724,7 @@ mod tests {
         }
         let lease = store.begin_retry(ids[0]).unwrap();
         for id in &ids {
-            let file = open_private(&store.audio_directory, &audio_name(*id), false).unwrap();
+            let file = open_private(&store.audio_directory, &audio_name(*id)).unwrap();
             file.set_len(40 * 1024 * 1024).unwrap();
         }
         store.maintenance().unwrap();

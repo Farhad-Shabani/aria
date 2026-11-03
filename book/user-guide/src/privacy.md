@@ -81,6 +81,24 @@ Each run starts without a project, earlier conversation, or Aria memory.
 Aria also disables the assistant's tools and leaves out its saved instructions
 and settings. Prompt recordings are not kept in dictation history.
 
+## Memory
+
+**Memory** is off by default. Turn it on in **Settings → Privacy**.
+
+With **Memory** on, Aria saves the text of what you ask in your own voice. It
+sends that text to Claude to find facts about you and words Aria mishears. Aria
+adds those facts to later asks. Memory needs your voice profile. Without one,
+Aria saves nothing.
+
+Memory lives in `~/.aria/memory/`, or the folder `memory.dir` names. Only your
+user account and administrators can read it. Aria deletes an ask once it's 30
+days old and Aria has checked it for facts. Facts and learned substitutions
+stay until you delete them.
+
+Turning **Memory** off keeps what's stored. To delete it, run
+`aria memory clear`. This keeps `lexicon.txt` and assistant conversations.
+Deletion isn't secure erasure and can't remove backups.
+
 ## Updates
 
 The Mac app checks GitHub for a new release about once a day. The check sends
