@@ -2,7 +2,7 @@ use std::fmt;
 use std::time::Instant;
 
 use cidre::core_audio::{self as ca, aggregate_device_keys as aggregate, hardware};
-use cidre::{cat, cf, ns, os};
+use cidre::{cf, ns, os};
 
 /// Silences every app but this process while it lives, so cues stay audible.
 pub(super) struct OutputMute {
@@ -58,9 +58,9 @@ enum MuteError {
     UnknownProcess,
 }
 
-/// A process tap mutes only while something reads it, so a private aggregate
-/// device reads the tap and discards the audio. Both belong to this process,
-/// so the sound comes back if it dies.
+/// A process tap mutes only while a running device reads it, so a private
+/// aggregate device holds the tap and runs. Both belong to this process, so
+/// the sound comes back if it dies.
 struct OtherAppsMuted {
     // Drop order: stop reading before the tap goes.
     reader: Option<hardware::StartedDevice<ca::AggregateDevice>>,
@@ -71,9 +71,8 @@ impl OtherAppsMuted {
     fn start() -> Result<Self, MuteError> {
         let tap = tap_all_but_this_process()?;
         let reader = aggregate_reading(&tap)?;
-        let discarding = reader.create_io_proc_id(discard, None)?;
         Ok(Self {
-            reader: Some(ca::device_start(reader, Some(discarding))?),
+            reader: Some(ca::device_start(reader, None)?),
             _tap: tap,
         })
     }
@@ -140,18 +139,6 @@ fn aggregate_reading(tap: &ca::TapGuard) -> os::Result<ca::AggregateDevice> {
         ],
     );
     ca::AggregateDevice::with_desc(&description)
-}
-
-extern "C" fn discard(
-    _device: ca::Device,
-    _now: &cat::AudioTimeStamp,
-    _input: &cat::AudioBufList<1>,
-    _input_time: &cat::AudioTimeStamp,
-    _output: &mut cat::AudioBufList<1>,
-    _output_time: &cat::AudioTimeStamp,
-    _client: Option<&mut std::ffi::c_void>,
-) -> os::Status {
-    os::Status::NO_ERR
 }
 
 #[cfg(test)]

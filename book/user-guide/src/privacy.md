@@ -17,9 +17,8 @@ Recording also uses temporary plaintext audio files. Aria deletes them when
 it no longer needs them. File deletion is not secure erasure and
 cannot remove backups or snapshots.
 
-On a Mac, **Mute while recording** works by having Aria read other apps' sound
-during the recording. Aria discards that sound at once. It doesn't save it or
-send it anywhere.
+On a Mac, **Mute while recording** asks macOS to silence other apps. Aria
+doesn't record, save, or send their sound.
 
 ## Server inference
 
