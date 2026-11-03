@@ -75,9 +75,6 @@ public nonisolated enum Aria_Daemon_V1_AriaKey: SwiftProtobuf.Enum, Swift.CaseIt
   case unspecified // = 0
   case rightOption // = 1
   case fn // = 2
-
-  /// No Aria key: presses of either key do nothing.
-  case off // = 3
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -89,7 +86,6 @@ public nonisolated enum Aria_Daemon_V1_AriaKey: SwiftProtobuf.Enum, Swift.CaseIt
     case 0: self = .unspecified
     case 1: self = .rightOption
     case 2: self = .fn
-    case 3: self = .off
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -99,7 +95,6 @@ public nonisolated enum Aria_Daemon_V1_AriaKey: SwiftProtobuf.Enum, Swift.CaseIt
     case .unspecified: return 0
     case .rightOption: return 1
     case .fn: return 2
-    case .off: return 3
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -109,7 +104,6 @@ public nonisolated enum Aria_Daemon_V1_AriaKey: SwiftProtobuf.Enum, Swift.CaseIt
     .unspecified,
     .rightOption,
     .fn,
-    .off,
   ]
 
 }
@@ -994,7 +988,7 @@ nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProvidi
 }
 
 nonisolated extension Aria_Daemon_V1_AriaKey: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ARIA_KEY_UNSPECIFIED\0\u{1}ARIA_KEY_RIGHT_OPTION\0\u{1}ARIA_KEY_FN\0\u{1}ARIA_KEY_OFF\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ARIA_KEY_UNSPECIFIED\0\u{1}ARIA_KEY_RIGHT_OPTION\0\u{1}ARIA_KEY_FN\0")
 }
 
 nonisolated extension Aria_Daemon_V1_ShortcutCombo: SwiftProtobuf._ProtoNameProviding {

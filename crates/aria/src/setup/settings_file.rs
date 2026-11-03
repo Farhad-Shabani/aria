@@ -1,21 +1,20 @@
-//! What Aria writes into `~/.aria/settings.toml` for setup: its four choices,
+//! What Aria writes into `~/.aria/settings.toml` for setup: its three choices,
 //! each a key write that keeps the rest of the file as it is.
 
 use std::path::Path;
 
 use aria_settings::config::{ServerEndpoint, backend, tts_backend};
-use aria_settings::{AriaKeyName, Key, Patch, Refusal, SettingsError, SettingsFile, Written};
+use aria_settings::{Key, Patch, Refusal, SettingsError, SettingsFile, Written};
 
 use super::SetupError;
 
-/// The four choices as the file carries them, whether or not setup knows
+/// The three choices as the file carries them, whether or not setup knows
 /// them. A name it does not know still belongs to the user.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Existing {
     pub stt: Option<String>,
     pub tts: Option<String>,
     pub wake: Option<bool>,
-    pub aria_key: Option<bool>,
 }
 
 /// The answers, as settings.toml spells them.
@@ -24,7 +23,6 @@ pub struct Selections {
     pub stt: String,
     pub tts: String,
     pub wake: bool,
-    pub aria_key: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,10 +37,6 @@ impl Existing {
             stt: settings.stt.backend.clone(),
             tts: settings.tts.backend.clone(),
             wake: settings.wake.enabled,
-            aria_key: settings
-                .shortcuts
-                .aria_key
-                .map(|key| key != AriaKeyName::Off),
         }
     }
 }
@@ -123,16 +117,6 @@ impl Selections {
         if current.wake.enabled != Some(self.wake) {
             patch.set(Key::WakeEnabled, self.wake);
         }
-        let key_is_on = current.shortcuts.aria_key != Some(AriaKeyName::Off);
-        match (self.aria_key, key_is_on) {
-            (false, true) => {
-                patch.set_encoded(Key::ShortcutsAriaKey, &AriaKeyName::Off)?;
-            }
-            (true, false) => {
-                patch.set_encoded(Key::ShortcutsAriaKey, &AriaKeyName::RightOption)?;
-            }
-            (true, true) | (false, false) => {}
-        }
         Ok(patch)
     }
 }
@@ -166,7 +150,6 @@ mod tests {
             stt: "parakeet".to_owned(),
             tts: "kokoro".to_owned(),
             wake: true,
-            aria_key: false,
         }
     }
 
@@ -194,7 +177,6 @@ mod tests {
                 stt: Some("parakeet".to_owned()),
                 tts: Some("kokoro".to_owned()),
                 wake: Some(true),
-                aria_key: Some(false),
             }
         );
     }
@@ -334,29 +316,5 @@ mod tests {
             fs::read_to_string(settings_path(home.path())).unwrap(),
             broken
         );
-    }
-
-    #[test]
-    fn turning_the_aria_key_back_on_names_the_default_key() {
-        let current = read_text("[shortcuts]\naria_key = \"off\"\n");
-        let on = Selections {
-            aria_key: true,
-            ..selections()
-        };
-        let keys: Vec<Key> = on.patch(&current, None).unwrap().keys().collect();
-        assert!(keys.contains(&Key::ShortcutsAriaKey), "{keys:?}");
-
-        let fn_key = read_text("[shortcuts]\naria_key = \"fn\"\n");
-        let keys: Vec<Key> = on.patch(&fn_key, None).unwrap().keys().collect();
-        assert!(
-            !keys.contains(&Key::ShortcutsAriaKey),
-            "a chosen key stays: {keys:?}"
-        );
-    }
-
-    fn read_text(text: &str) -> SettingsFile {
-        aria_settings::Loaded::parse(text, Path::new("/Users/you"))
-            .unwrap()
-            .into_settings()
     }
 }

@@ -107,18 +107,20 @@ message Missing {
     // Reported only when a serving daemon's hotkey listener has not armed.
     // A stopped daemon reports no grant state.
     KIND_GRANT = 5;
+    // Modifier Keys in Keyboard settings turns the Aria key into another key,
+    // so the hotkey listener never sees it.
+    KIND_KEY_REMAPPED = 7;
   }
   Kind kind = 1;
   // The model ID when kind is KIND_MODEL.
   string model_id = 2;
 }
 
-// The four answers, as settings.toml spells them.
+// The three answers, as settings.toml spells them.
 message Selections {
   string transcription_engine_id = 1;
   string synthesis_engine_id = 2;
   bool wake = 4;
-  bool aria_key = 5;
 }
 
 message ApplyRequest {
@@ -191,7 +193,6 @@ enum Outcome {
 // Accessibility grant.
 enum Grant {
   GRANT_UNSPECIFIED = 0;
-  GRANT_NOT_NEEDED = 1;
   GRANT_ARMED = 2;
   // The daemon runs but the listener has not armed; the grant is owed.
   GRANT_WAITING = 3;

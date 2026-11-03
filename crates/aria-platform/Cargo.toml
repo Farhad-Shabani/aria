@@ -44,4 +44,4 @@ objc2                 = { workspace = true }
 objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
 objc2-core-graphics   = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
-objc2-foundation      = { workspace = true, features = [ "NSString", "std" ] }
+objc2-foundation      = { workspace = true, features = [ "NSArray", "NSDictionary", "NSString", "NSUserDefaults", "NSValue", "std" ] }

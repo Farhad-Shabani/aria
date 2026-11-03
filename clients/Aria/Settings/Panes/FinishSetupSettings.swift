@@ -29,6 +29,8 @@ struct FinishSetupSettings: View {
                         }
                     case .ariaKey:
                         row(item) { Button("Open System Settings") { SetupClient.openAccessibility() } }
+                    case .ariaKeyRemapped:
+                        row(item) { Button("Open Keyboard Settings") { SetupClient.openKeyboard() } }
                     }
                 }
             }

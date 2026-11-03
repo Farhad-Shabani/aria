@@ -58,8 +58,7 @@ final class ModelDownloadTests: XCTestCase {
     func testADownloadSendsTheChoicesReadWhenItStartsAndReportsItsProgress() async {
         let gate = Gate()
         let spy = Spy()
-        var inspection = Self.appRunMac()
-        inspection.defaults.ariaKey = false
+        let inspection = Self.appRunMac()
         let download = download(spy: spy, inspection: inspection) { request, onEvent in
             await MainActor.run { spy.request = request }
             onEvent(Self.progress(received: 50, of: 100))

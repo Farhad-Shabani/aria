@@ -39,6 +39,8 @@ If you forget the second tap, **Auto-stop** ends the recording once you stop
 speaking. It waits 10 seconds by default. Change or turn it off under
 **Settings → Dictation**.
 Change the key to **Fn** under **Settings → Shortcuts** if you prefer.
+Fn then stops running the action set in **Press fn key to** in Keyboard
+settings, such as changing the input source.
 
 Other keyboard or mouse input while you hold the key can cancel the recording.
 

@@ -369,7 +369,7 @@ mod tests {
             silence_duration: SilenceDuration::new(Duration::from_millis(2000)).expect("valid"),
             auto_stop: None,
             own_voice_only: true,
-            aria_key: Some(AriaKey::Fn),
+            aria_key: AriaKey::Fn,
             ask_shortcut: Some(Shortcut::Chord(chord)),
             prompt_list_shortcut: None,
             vocabulary_enabled: true,
@@ -421,17 +421,5 @@ mod tests {
         let current =
             Settings::from_file(&settings("[dictation]\nmute_sound = true\n")).expect("valid");
         assert!(patch(&current, &current).expect("encodes").is_empty());
-    }
-
-    #[test]
-    fn an_aria_key_that_is_off_survives_an_unrelated_write() {
-        let current =
-            Settings::from_file(&settings("[shortcuts]\naria_key = \"off\"\n")).expect("valid");
-        let next = Settings {
-            mute_sound: false,
-            ..current.clone()
-        };
-        let keys: Vec<Key> = patch(&current, &next).expect("encodes").keys().collect();
-        assert_eq!(keys, [Key::DictationMuteSound]);
     }
 }

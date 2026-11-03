@@ -223,7 +223,8 @@ fn change(key: Key) -> Patch {
         Key::AssistantTimeoutSecs => set(key, 60.0),
         Key::MemoryExtractModel => set(key, "opus"),
         Key::MemoryMaxFactsPerSession => set(key, 3),
-        Key::ShortcutsAriaKey | Key::ShortcutsAsk | Key::ShortcutsPromptList => set(key, "off"),
+        Key::ShortcutsAriaKey => set(key, "fn"),
+        Key::ShortcutsAsk | Key::ShortcutsPromptList => set(key, "off"),
         Key::Prompts => entry(
             key,
             "reply",

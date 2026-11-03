@@ -109,7 +109,6 @@ final class SetupStateTests: XCTestCase {
         inspection.synthesisChoices = [engine("system", default: true), engine("kokoro")]
         inspection.defaults.transcriptionEngineID = "parakeet"
         inspection.defaults.synthesisEngineID = "system"
-        inspection.defaults.ariaKey = true
         inspection.models = [
             model("parakeet", engine: "parakeet"),
             model("kokoro", engine: "kokoro"),
@@ -266,7 +265,6 @@ final class SetupStateTests: XCTestCase {
 
         XCTAssertEqual(state.selections.transcriptionEngineID, "parakeet")
         XCTAssertEqual(state.selections.synthesisEngineID, "system")
-        XCTAssertTrue(state.selections.ariaKey)
         XCTAssertFalse(state.selections.wake)
         XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"], "the speaker model is off by default")
         XCTAssertEqual(harness.stoppedDaemon, 1, "a spawned daemon must give the socket to the service")
@@ -501,6 +499,14 @@ final class SetupStateTests: XCTestCase {
         inspection.missing = [missing]
         XCTAssertTrue(SetupState.shouldOffer(inspection, offeredBefore: false))
         XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: true))
+    }
+
+    func testARemappedKeyAloneDoesNotOpenTheWizard() {
+        var inspection = Aria_Setup_V1_Inspection()
+        var remapped = Aria_Setup_V1_Missing()
+        remapped.kind = .keyRemapped
+        inspection.missing = [remapped]
+        XCTAssertFalse(SetupState.shouldOffer(inspection, offeredBefore: false))
     }
 
     func testAMissingTranscriptionModelReopensTheWizard() throws {

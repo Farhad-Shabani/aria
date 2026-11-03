@@ -23,8 +23,7 @@ use tonic_health::server::HealthReporter;
 type Listener = fn(AriaKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
 
 pub(super) struct HotkeyTrigger {
-    /// `None` while the Aria key is off: the trigger then waits for one.
-    key: watch::Receiver<Option<AriaKey>>,
+    key: watch::Receiver<AriaKey>,
     dictation: DictationHandle,
     /// Cancels a run a client's press started, so a tap does not dictate
     /// over it.
@@ -60,28 +59,9 @@ impl Supervised for HotkeyTrigger {
     }
 }
 
-/// With the Aria key off nothing listens, so presses reach nothing. The
-/// next change of the key re-arms.
-async fn wait_for_a_key(
-    key: &mut watch::Receiver<Option<AriaKey>>,
-    shutdown: &CancellationToken,
-) -> HotkeyExit {
-    tracing::info!(trigger = "hotkey", "the Aria key is off");
-    tokio::select! {
-        () = shutdown.cancelled() => HotkeyExit::Shutdown,
-        changed = key.changed() => match changed {
-            Ok(()) => HotkeyExit::Rearm,
-            Err(_) => {
-                tracing::error!("hotkey listener lost the settings store");
-                HotkeyExit::Failed
-            }
-        },
-    }
-}
-
 impl HotkeyTrigger {
     pub(super) fn new(
-        key: watch::Receiver<Option<AriaKey>>,
+        key: watch::Receiver<AriaKey>,
         dictation: DictationHandle,
         chat: ChatHandle,
         runtime: Arc<DictationRuntime>,
@@ -125,12 +105,10 @@ impl HotkeyTrigger {
 
     async fn listen_once(
         &self,
-        key: &mut watch::Receiver<Option<AriaKey>>,
+        key: &mut watch::Receiver<AriaKey>,
         shutdown: &CancellationToken,
     ) -> HotkeyExit {
-        let Some(current) = *key.borrow_and_update() else {
-            return wait_for_a_key(key, shutdown).await;
-        };
+        let current = *key.borrow_and_update();
         // Bounded, and fed with try_send: the listener thread must never
         // block, and a full channel just means a press was already queued.
         let (events, mut incoming) = tokio::sync::mpsc::channel::<ListenerEvent>(8);
@@ -207,7 +185,7 @@ impl HotkeyTrigger {
     fn classify(
         &self,
         exit: HotkeyExit,
-        key: &watch::Receiver<Option<AriaKey>>,
+        key: &watch::Receiver<AriaKey>,
         shutdown: &CancellationToken,
     ) -> HotkeyExit {
         if exit != HotkeyExit::Shutdown || shutdown.is_cancelled() {
@@ -444,7 +422,7 @@ mod tests {
     /// A trigger with no dictation behind it. The directory holds its
     /// settings and must outlive it.
     fn trigger(
-        key: watch::Receiver<Option<AriaKey>>,
+        key: watch::Receiver<AriaKey>,
         subscriptions: Arc<Subscriptions>,
         listener: Listener,
         directory: &tempfile::TempDir,
@@ -476,7 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_key_change_rearms_on_the_new_key() {
-        let (key, watch) = watch::channel(Some(AriaKey::RightOption));
+        let (key, watch) = watch::channel(AriaKey::RightOption);
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
         let trigger = trigger(
             watch,
@@ -491,8 +469,7 @@ mod tests {
         let running = tokio::spawn(trigger.run(shutdown.clone()));
 
         armed_count_reaches(1).await;
-        key.send(Some(AriaKey::Fn))
-            .expect("the trigger is listening");
+        key.send(AriaKey::Fn).expect("the trigger is listening");
         armed_count_reaches(2).await;
         shutdown.cancel();
         running.await.expect("the trigger should stop cleanly");
@@ -503,56 +480,9 @@ mod tests {
         );
     }
 
-    /// Its own record, so it never races the re-arm test over [`ARMED`].
-    static ARMED_FROM_OFF: Mutex<Vec<AriaKey>> = Mutex::new(Vec::new());
-
-    async fn armed_from_off(count: usize) {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while ARMED_FROM_OFF.lock().expect("armed keys").len() < count {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .expect("the listener should arm in time");
-    }
-
-    #[tokio::test]
-    async fn an_aria_key_that_is_off_arms_nothing_until_it_is_on() {
-        let (key, watch) = watch::channel(None);
-        let directory = tempfile::TempDir::new().expect("the test directory should be created");
-        let trigger = trigger(
-            watch,
-            Arc::new(Subscriptions::new()),
-            |key, _events, should_stop| {
-                ARMED_FROM_OFF.lock().expect("armed keys").push(key);
-                park_until(should_stop);
-            },
-            &directory,
-        );
-        let shutdown = CancellationToken::new();
-        let running = tokio::spawn(trigger.run(shutdown.clone()));
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(ARMED_FROM_OFF.lock().expect("armed keys").is_empty());
-        key.send(Some(AriaKey::Fn)).expect("the trigger is waiting");
-        armed_from_off(1).await;
-        key.send(None).expect("the trigger is listening");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        key.send(Some(AriaKey::RightOption))
-            .expect("the trigger is waiting");
-        armed_from_off(2).await;
-        shutdown.cancel();
-        running.await.expect("the trigger should stop cleanly");
-
-        assert_eq!(
-            *ARMED_FROM_OFF.lock().expect("armed keys"),
-            [AriaKey::Fn, AriaKey::RightOption]
-        );
-    }
-
     #[tokio::test]
     async fn a_combo_reaches_subscribers() {
-        let (_key, watch) = watch::channel(Some(AriaKey::RightOption));
+        let (_key, watch) = watch::channel(AriaKey::RightOption);
         let directory = tempfile::TempDir::new().expect("the test directory should be created");
         let subscriptions = Arc::new(Subscriptions::new());
         let mut events = subscriptions.subscribe().expect("a subscriber fits");
@@ -617,7 +547,7 @@ mod tests {
         dictation.execute_with(Box::new(executor));
         let dictation = Arc::new(dictation);
         let (handle, dictation_actor) = dictation_channel(Arc::clone(&dictation));
-        let (_key, watch) = watch::channel(Some(AriaKey::RightOption));
+        let (_key, watch) = watch::channel(AriaKey::RightOption);
         let (health, _server) = tonic_health::server::health_reporter();
         let trigger = HotkeyTrigger {
             key: watch,

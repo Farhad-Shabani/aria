@@ -91,6 +91,7 @@ pub struct Inspection {
     pub wakeword_installed: bool,
     pub service: Status,
     pub grant: Grant,
+    pub key_remapped: bool,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
@@ -163,6 +164,8 @@ pub enum Missing {
     Service,
     /// A serving daemon whose hotkey listener has not armed.
     Grant,
+    /// Modifier Keys turns the Aria key into another key.
+    KeyRemapped,
 }
 
 /// The steps `apply` announces as it starts them.
@@ -255,7 +258,6 @@ impl Outcome {
 /// Hotkey readiness after requesting Accessibility access on macOS or keyboard access on Linux.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grant {
-    NotNeeded,
     Armed,
     /// The daemon runs but the listener has not armed; the grant is owed.
     Waiting,
@@ -294,11 +296,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.status())
         .map_err(SetupError::Service)?;
-    let grant = if existing.aria_key == Some(true) {
-        hotkey_grant(&service.socket, Duration::ZERO)
-    } else {
-        Grant::NotNeeded
-    };
+    let grant = hotkey_grant(&service.socket, Duration::ZERO);
     Ok(Inspection {
         settings_path,
         macos: host.macos,
@@ -311,6 +309,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
         configured_server: file.stt.server.clone(),
+        key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
         existing,
         service,
         grant,
@@ -367,10 +366,8 @@ impl Inspection {
     pub fn missing(&self) -> Vec<Missing> {
         let existing = &self.existing;
         let mut missing = Vec::new();
-        let configured = existing.stt.is_some()
-            && existing.tts.is_some()
-            && existing.wake.is_some()
-            && existing.aria_key.is_some();
+        let configured =
+            existing.stt.is_some() && existing.tts.is_some() && existing.wake.is_some();
         if !configured || self.server_is_unusable() {
             missing.push(Missing::Settings);
         }
@@ -395,8 +392,11 @@ impl Inspection {
             missing.push(Missing::Service);
         }
         let serving = matches!(self.service.daemon, DaemonState::Ready { .. });
-        if existing.aria_key == Some(true) && serving && self.grant != Grant::Armed {
+        if serving && self.grant != Grant::Armed {
             missing.push(Missing::Grant);
+        }
+        if self.key_remapped {
+            missing.push(Missing::KeyRemapped);
         }
         missing
     }
@@ -456,7 +456,6 @@ impl Selections {
             stt: configured(&existing.stt, &inspection.stt),
             tts: configured(&existing.tts, &inspection.tts),
             wake: existing.wake.unwrap_or(false),
-            aria_key: existing.aria_key.unwrap_or(true),
         }
     }
 }
@@ -536,11 +535,7 @@ pub fn apply(
     let service = Supervisor::open()
         .and_then(|supervisor| supervisor.install())
         .map_err(SetupError::Service)?;
-    let grant = if selections.aria_key {
-        hotkey_grant(&service.socket, GRANT_WAIT)
-    } else {
-        Grant::NotNeeded
-    };
+    let grant = hotkey_grant(&service.socket, GRANT_WAIT);
 
     Ok(Summary {
         selections: selections.clone(),
@@ -637,13 +632,6 @@ fn ask_selections(
         } else {
             existing.wake.unwrap_or(false)
         },
-        aria_key: prompts.confirm(
-            &format!(
-                "Start dictation with a hotkey (needs {})?",
-                PlatformHotkeyListener::PERMISSION
-            ),
-            existing.aria_key.unwrap_or(true),
-        )?,
     })
 }
 
@@ -1165,7 +1153,8 @@ mod tests {
                 socket: PathBuf::from("/nonexistent/daemon.sock"),
                 daemon: supervisor::DaemonState::NotRunning,
             },
-            grant: Grant::NotNeeded,
+            grant: Grant::Waiting,
+            key_remapped: false,
             home,
             exe: PathBuf::from("/nonexistent/aria"),
         }
@@ -1191,7 +1180,6 @@ mod tests {
             stt: Some("whisper".to_owned()),
             tts: Some("kokoro".to_owned()),
             wake: Some(false),
-            aria_key: Some(true),
         }
     }
 
@@ -1229,7 +1217,6 @@ mod tests {
         assert_eq!(defaults.stt, aria_settings::config::backend::DEFAULT);
         assert_eq!(defaults.tts, aria_settings::config::tts_backend::DEFAULT);
         assert!(!defaults.wake);
-        assert!(defaults.aria_key);
     }
 
     #[test]
@@ -1397,7 +1384,6 @@ mod tests {
         inspection.wakeword_bundled = false;
         let selections = ask(&inspection);
         assert!(!selections.wake);
-        assert!(selections.aria_key);
     }
 
     /// Setup cannot install models that don't ship, so it doesn't owe them.
@@ -1422,6 +1408,15 @@ mod tests {
 
         inspection.grant = Grant::Armed;
         assert!(!inspection.missing().contains(&Missing::Grant));
+    }
+
+    #[test]
+    fn a_remapped_key_is_missing_until_it_clears() {
+        let mut inspection = inspection(configured());
+        assert!(!inspection.missing().contains(&Missing::KeyRemapped));
+
+        inspection.key_remapped = true;
+        assert!(inspection.missing().contains(&Missing::KeyRemapped));
     }
 
     #[test]

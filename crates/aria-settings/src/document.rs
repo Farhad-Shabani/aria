@@ -719,22 +719,18 @@ impl From<PromptKindName> for PromptKind {
     }
 }
 
-/// The Aria key, or `Off`, which runs no listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AriaKeyName {
     RightOption,
     Fn,
-    Off,
 }
 
-/// `None` is off.
-impl From<Option<AriaKey>> for AriaKeyName {
-    fn from(key: Option<AriaKey>) -> Self {
+impl From<AriaKey> for AriaKeyName {
+    fn from(key: AriaKey) -> Self {
         match key {
-            Some(AriaKey::RightOption) => Self::RightOption,
-            Some(AriaKey::Fn) => Self::Fn,
-            None => Self::Off,
+            AriaKey::RightOption => Self::RightOption,
+            AriaKey::Fn => Self::Fn,
         }
     }
 }
@@ -1292,12 +1288,10 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// The Aria key, `None` while it is off.
-    pub fn aria_key(&self) -> Option<AriaKey> {
+    pub fn aria_key(&self) -> AriaKey {
         match self.shortcuts.aria_key {
-            None | Some(AriaKeyName::RightOption) => Some(AriaKey::RightOption),
-            Some(AriaKeyName::Fn) => Some(AriaKey::Fn),
-            Some(AriaKeyName::Off) => None,
+            None | Some(AriaKeyName::RightOption) => AriaKey::RightOption,
+            Some(AriaKeyName::Fn) => AriaKey::Fn,
         }
     }
 
@@ -2017,6 +2011,7 @@ pub(super) mod tests {
             "[capture]\npace = \"double\"\n",
             "[stt]\ndevice = \"tpu\"\n",
             "[tts]\nfallback = \"maybe\"\n",
+            "[shortcuts]\naria_key = \"off\"\n",
         ] {
             let error = Loaded::parse(text, Path::new(HOME)).expect_err(text);
             assert_eq!(error.position().map(|position| position.line), Some(2));

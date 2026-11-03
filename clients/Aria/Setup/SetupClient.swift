@@ -109,6 +109,11 @@ enum SetupClient {
         if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
     }
 
+    static func openKeyboard() {
+        let pane = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"
+        if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
+    }
+
     /// Waits for a signalled daemon to let go of the socket. One that will
     /// not is left for the service install to refuse loudly.
     static func awaitDaemonSocketClosed(probes: Int = 40, every: Duration = .milliseconds(250)) async {
@@ -170,11 +175,7 @@ extension SetupState.Effects {
             apply: { request, onEvent in try await SetupClient.apply(request, onEvent: onEvent) },
             stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
             startDaemon: { await SetupClient.startDaemonAfterFailedApply() },
-            hotkeyArmed: {
-                let key = try? await UnixSocketSettings().snapshot().settings.storedAriaKey
-                return AriaKey.isReady(
-                    key: key, isServing: await HealthClient.isServing(HealthClient.hotkeyService))
-            },
+            hotkeyArmed: { await HealthClient.isServing(HealthClient.hotkeyService) },
             openAccessibility: { SetupClient.openAccessibility() },
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },

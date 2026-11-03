@@ -40,7 +40,7 @@ pub struct SettingsPatch {
     pub prompts: Option<Prompts>,
     /// Replaces every entry.
     pub application_overrides: Option<ApplicationOverrides>,
-    pub aria_key: Option<Option<AriaKey>>,
+    pub aria_key: Option<AriaKey>,
     pub ask_shortcut: Option<Option<Shortcut>>,
     pub prompt_list_shortcut: Option<Option<Shortcut>>,
     pub stt_language: Option<Language>,
@@ -79,8 +79,7 @@ impl SettingsStore {
         Ok(Self::new(Arc::new(SettingsCache::open(path, home)?)))
     }
 
-    /// The Aria key, `None` while it is off.
-    pub fn aria_key(&self) -> watch::Receiver<Option<AriaKey>> {
+    pub fn aria_key(&self) -> watch::Receiver<AriaKey> {
         self.cache.aria_key()
     }
 
@@ -609,12 +608,12 @@ mod tests {
         assert!(!watcher.has_changed().expect("sender alive"));
 
         let key = SettingsPatch {
-            aria_key: Some(Some(AriaKey::Fn)),
+            aria_key: Some(AriaKey::Fn),
             ..Default::default()
         };
         store.update(revision(&store), key).expect("updates");
         assert!(watcher.has_changed().expect("sender alive"));
-        assert_eq!(*watcher.borrow_and_update(), Some(AriaKey::Fn));
+        assert_eq!(*watcher.borrow_and_update(), AriaKey::Fn);
     }
 
     const PROMPTS: &str = "[prompts.reply]\n# keep me\nname = \"Reply\"\nkind = \"compose\"\nfile = \"~/p/reply.md\" # mine\n\n# the second\n[prompts.polish]\nname = \"Polish\"\nkind = \"rewrite\"\nfile = \"/p/polish.md\"\n";

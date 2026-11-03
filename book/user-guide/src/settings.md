@@ -17,7 +17,7 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   muting sound while recording.
 - **Recognition** sets the language, voice filtering, project vocabulary,
   and where transcription runs.
-- **Shortcuts** chooses right Option, Fn, or Off for the Aria key, and what
+- **Shortcuts** chooses right Option or Fn for the Aria key, and what
   starts Ask and the prompt list: an Aria key combo, a shortcut of your own, or
   nothing.
 - **Prompts** lists Markdown files that say what to make of what you say,

@@ -8,14 +8,11 @@ use std::time::Duration;
 use crate::audio::{WavReplayCapture, check_default_input_device};
 use crate::primitives::error_chain;
 use aria_daemon::RELAY_SERVICE_TYPE;
-use aria_daemon::config::{
-    DaemonConfig, HotkeyConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride,
-};
+use aria_daemon::config::{DaemonConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride};
 use aria_daemon::ipc::{DaemonClient, Liveness, probe_daemon};
 use aria_daemon::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
-use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
@@ -39,6 +36,7 @@ const SEGMENTATION_MODEL: &str = "segmentation model";
 const LISTEN: &str = "listen";
 const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
+const ARIA_KEY: &str = "aria key";
 
 const SETTINGS_FAILED: &str = "not checked: the settings failed to load";
 
@@ -76,14 +74,8 @@ impl Report {
 pub fn diagnose() -> Report {
     // The report describes what is configured, never what a command would
     // force on top of it.
-    let config = loaded(|settings, home| {
-        let mut config = DaemonConfig::load(settings, home, WakeWordOverride::Inherit)?;
-        // An Aria key switched off has nothing to arm, so no grant is owed.
-        if settings.aria_key().is_none() {
-            config.hotkey = HotkeyConfig::Disabled;
-        }
-        Ok(config)
-    });
+    let config =
+        loaded(|settings, home| DaemonConfig::load(settings, home, WakeWordOverride::Inherit));
     let prepared = PreparedRuntimePaths::for_current_user();
 
     Report {
@@ -100,8 +92,8 @@ pub fn diagnose() -> Report {
             daemon(
                 prepared.as_ref().ok(),
                 config.as_ref().ok().map(|config| &config.wake),
-                config.as_ref().ok().map(|config| config.hotkey),
             ),
+            aria_key(),
         ],
     }
 }
@@ -362,34 +354,25 @@ fn relay_is_listening(port: u16) -> bool {
     TcpStream::connect_timeout(&address, RELAY_PROBE_TIMEOUT).is_ok()
 }
 
-fn daemon(
-    paths: Option<&PreparedRuntimePaths>,
-    wake: Option<&WakeConfig>,
-    hotkey: Option<HotkeyConfig>,
-) -> Check {
+fn daemon(paths: Option<&PreparedRuntimePaths>, wake: Option<&WakeConfig>) -> Check {
     match paths {
-        Some(paths) => daemon_at(paths.socket_path(), wake, hotkey),
+        Some(paths) => daemon_at(paths.socket_path(), wake),
         None => Check::warning(DAEMON, "not checked: the runtime directory failed"),
     }
 }
 
-fn daemon_at(socket: &Path, wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> Check {
+fn daemon_at(socket: &Path, wake: Option<&WakeConfig>) -> Check {
     match probe_daemon(socket) {
-        Ok(Liveness::Ready(mut client)) => running_daemon(socket, &mut client, wake, hotkey),
+        Ok(Liveness::Ready(mut client)) => running_daemon(socket, &mut client, wake),
         Ok(Liveness::Starting(_)) => {
             Check::warning(DAEMON, format!("starting at {}", socket.display()))
         }
-        Ok(Liveness::NotRunning(_)) => not_running(socket, wake, hotkey),
+        Ok(Liveness::NotRunning(_)) => not_running(socket, wake),
         Err(error) => Check::failed(DAEMON, error_chain(&error)),
     }
 }
 
-fn running_daemon(
-    socket: &Path,
-    client: &mut DaemonClient,
-    wake: Option<&WakeConfig>,
-    hotkey: Option<HotkeyConfig>,
-) -> Check {
+fn running_daemon(socket: &Path, client: &mut DaemonClient, wake: Option<&WakeConfig>) -> Check {
     if wake_is_enabled(wake)
         && let Err(error) = client.check_service_ready(WAKE_WORD_HEALTH_SERVICE)
     {
@@ -404,7 +387,7 @@ fn running_daemon(
     }
     // A missing Accessibility grant is the expected first-run state, so an
     // unarmed hotkey warns with the fix instead of failing.
-    if hotkey_is_enabled(hotkey) && client.check_service_ready(HOTKEY_HEALTH_SERVICE).is_err() {
+    if client.check_service_ready(HOTKEY_HEALTH_SERVICE).is_err() {
         return Check::warning(
             DAEMON,
             format!(
@@ -416,28 +399,22 @@ fn running_daemon(
     }
     Check::ok(
         DAEMON,
-        format!(
-            "running at {}{}",
-            socket.display(),
-            serving_suffix(wake, hotkey)
-        ),
+        format!("running at {}{}", socket.display(), serving_suffix(wake)),
     )
 }
 
-fn serving_suffix(wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> &'static str {
-    match (wake_is_enabled(wake), hotkey_is_enabled(hotkey)) {
-        (true, true) => "; wake-word monitoring and the dictation hotkey are serving",
-        (true, false) => "; wake-word monitoring is serving",
-        (false, true) => "; the dictation hotkey is armed",
-        (false, false) => "",
+fn serving_suffix(wake: Option<&WakeConfig>) -> &'static str {
+    if wake_is_enabled(wake) {
+        "; wake-word monitoring and the dictation hotkey are serving"
+    } else {
+        "; the dictation hotkey is armed"
     }
 }
 
 /// Why the dictation hotkey is not armed, and the fix when one exists.
 pub fn hotkey_unarmed_reason() -> String {
     match loaded(|settings, _home| Ok(settings.aria_key())) {
-        Ok(Some(key)) => PlatformHotkeyListener::unarmed_reason(key),
-        Ok(None) => "the Aria key is off in the settings file".to_owned(),
+        Ok(key) => PlatformHotkeyListener::unarmed_reason(key),
         Err(error) => format!("the settings file could not be read: {error}"),
     }
 }
@@ -446,33 +423,33 @@ fn wake_is_enabled(wake: Option<&WakeConfig>) -> bool {
     matches!(wake, Some(WakeConfig::Enabled { .. }))
 }
 
-fn hotkey_is_enabled(hotkey: Option<HotkeyConfig>) -> bool {
-    matches!(hotkey, Some(HotkeyConfig::Enabled))
-}
-
-/// Where the clipboard is served by the process that filled it, a press needs
-/// a daemon that is already running. Elsewhere a press starts one itself.
-fn not_running(socket: &Path, wake: Option<&WakeConfig>, hotkey: Option<HotkeyConfig>) -> Check {
-    if wake_is_enabled(wake) || hotkey_is_enabled(hotkey) {
-        return Check::failed(
-            DAEMON,
-            format!(
-                "not running at {}; wake-word monitoring and the dictation hotkey \
-                 need the persistent daemon: `aria service install`",
-                socket.display()
-            ),
-        );
-    }
-    if PlatformTextDelivery::OUTLIVES_PROCESS {
-        return Check::warning(DAEMON, "not running; a press starts one on demand");
-    }
+fn not_running(socket: &Path, wake: Option<&WakeConfig>) -> Check {
+    let needs = if wake_is_enabled(wake) {
+        "wake-word monitoring and the dictation hotkey need"
+    } else {
+        "the dictation hotkey needs"
+    };
     Check::failed(
         DAEMON,
         format!(
-            "not running at {}; run `aria service install`",
+            "not running at {}; {needs} the persistent daemon: `aria service install`",
             socket.display()
         ),
     )
+}
+
+/// Modifier Keys acts before any app sees a key, so a remapped Aria key
+/// leaves an armed hotkey that never fires.
+fn aria_key() -> Check {
+    match loaded(|settings, _home| Ok(settings.aria_key())) {
+        Ok(key) if PlatformHotkeyListener::is_remapped(key) => Check::warning(
+            ARIA_KEY,
+            "Modifier Keys turns it into another key, so Aria never sees it; restore it in \
+             System Settings → Keyboard → Keyboard Shortcuts → Modifier Keys",
+        ),
+        Ok(_) => Check::ok(ARIA_KEY, "reaches Aria unchanged"),
+        Err(_) => Check::warning(ARIA_KEY, SETTINGS_FAILED),
+    }
 }
 
 impl Check {
@@ -630,7 +607,7 @@ mod tests {
     fn a_socket_nobody_listens_on_reports_a_stopped_daemon() {
         let directory = tempfile::TempDir::new().expect("test directory should be created");
 
-        let check = daemon_at(&directory.path().join("daemon.sock"), None, None);
+        let check = daemon_at(&directory.path().join("daemon.sock"), None);
 
         assert_ne!(check.status, Status::Ok);
         assert!(check.detail.contains("not running"));
@@ -646,7 +623,7 @@ mod tests {
         let _listener = std::os::unix::net::UnixListener::bind(&socket)
             .expect("the test socket should be bound");
 
-        let check = daemon_at(&socket, None, None);
+        let check = daemon_at(&socket, None);
 
         assert_eq!(check.status, Status::Warning);
         assert!(check.detail.contains("starting"));

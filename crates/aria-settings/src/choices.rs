@@ -36,8 +36,7 @@ pub struct Settings {
     pub memory_enabled: bool,
     pub prompts: Prompts,
     pub application_overrides: ApplicationOverrides,
-    /// `None` is off: no listener runs.
-    pub aria_key: Option<AriaKey>,
+    pub aria_key: AriaKey,
     /// Only the Mac app reads these. `None` is off.
     pub ask_shortcut: Option<Shortcut>,
     pub prompt_list_shortcut: Option<Shortcut>,
@@ -128,7 +127,7 @@ impl Default for Settings {
             memory_enabled: false,
             prompts: Prompts::default(),
             application_overrides: ApplicationOverrides::default(),
-            aria_key: Some(AriaKey::RightOption),
+            aria_key: AriaKey::RightOption,
             ask_shortcut: Some(Shortcut::Combo(Combo::Shift)),
             prompt_list_shortcut: Some(Shortcut::Combo(Combo::Command)),
             stt_language: Language::Specific(LanguageCode::english()),

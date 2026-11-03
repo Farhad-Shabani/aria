@@ -9,6 +9,7 @@ use aria_settings::config::home_directory;
 use aria_settings::config::{ConfigError, UNATTENDED_ENV, unattended};
 use aria_voice::dictation::SoundMuting;
 
+use super::config::HotkeyConfig;
 use super::host::DaemonLifetime;
 
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
@@ -56,6 +57,16 @@ impl<'runtime> Context<'runtime> {
             SoundMuting::Never
         }
     }
+
+    /// Nobody is at the keyboard of an unattended run, such as a test
+    /// sandbox, so a key press there belongs to someone else.
+    pub(super) fn hotkey(&self) -> HotkeyConfig {
+        if self.attended {
+            HotkeyConfig::Enabled
+        } else {
+            HotkeyConfig::Disabled
+        }
+    }
 }
 
 fn attended(unattended: Option<&str>) -> bool {
@@ -90,5 +101,21 @@ mod tests {
         assert!(!attended(Some("1")));
         assert!(!attended(Some("true")));
         assert!(attended(Some("yes")), "an unrecognized value is attended");
+    }
+
+    #[test]
+    fn only_an_attended_run_arms_the_hotkey() {
+        let directory = tempfile::TempDir::new().expect("the test directory should be created");
+        let paths =
+            aria_platform::runtime::RuntimePaths::in_directory(directory.path().to_path_buf())
+                .prepare()
+                .expect("the runtime paths should prepare");
+        let mut context =
+            Context::detect(&paths, DaemonLifetime::Persistent).expect("a test context");
+
+        context.attended = false;
+        assert_eq!(context.hotkey(), HotkeyConfig::Disabled);
+        context.attended = true;
+        assert_eq!(context.hotkey(), HotkeyConfig::Enabled);
     }
 }

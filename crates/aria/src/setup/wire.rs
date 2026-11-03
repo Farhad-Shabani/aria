@@ -80,7 +80,6 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
                 stt: selections.transcription_engine_id,
                 tts: selections.synthesis_engine_id,
                 wake: selections.wake,
-                aria_key: selections.aria_key,
             },
             ApplyOptions {
                 downloads: request.downloads,
@@ -128,7 +127,6 @@ impl From<&Selections> for generated::Selections {
             transcription_engine_id: selections.stt.clone(),
             synthesis_engine_id: selections.tts.clone(),
             wake: selections.wake,
-            aria_key: selections.aria_key,
         }
     }
 }
@@ -176,6 +174,7 @@ impl From<&Missing> for generated::Missing {
             Missing::Model(name) => (Kind::Model, *name),
             Missing::Service => (Kind::Service, ""),
             Missing::Grant => (Kind::Grant, ""),
+            Missing::KeyRemapped => (Kind::KeyRemapped, ""),
         };
         Self {
             kind: kind as i32,
@@ -231,7 +230,6 @@ impl From<OnDisk> for generated::OnDisk {
 impl From<Grant> for generated::Grant {
     fn from(grant: Grant) -> Self {
         match grant {
-            Grant::NotNeeded => Self::NotNeeded,
             Grant::Armed => Self::Armed,
             Grant::Waiting => Self::Waiting,
         }
@@ -333,7 +331,6 @@ mod tests {
             transcription_engine_id: String::new(),
             synthesis_engine_id: "system".to_owned(),
             wake: false,
-            aria_key: true,
         };
         let error = <(Selections, ApplyOptions)>::try_from(request(Some(empty))).unwrap_err();
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
@@ -345,14 +342,12 @@ mod tests {
             transcription_engine_id: "whisper".to_owned(),
             synthesis_engine_id: "system".to_owned(),
             wake: false,
-            aria_key: true,
         };
 
         let (selections, options) =
             <(Selections, ApplyOptions)>::try_from(request(Some(selections))).unwrap();
 
         assert_eq!(selections.stt, "whisper");
-        assert!(selections.aria_key);
         assert_eq!(options.downloads, ["whisper"]);
         assert!(
             !options.transfer_meter,

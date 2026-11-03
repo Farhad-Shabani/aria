@@ -36,7 +36,6 @@ pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
     println!("speech       {}", selections.stt);
     println!("voice        {}", selections.tts);
     println!("wake word    {}", on_off(selections.wake));
-    println!("hotkey       {}", on_off(selections.aria_key));
     println!("settings     {}", settings_write_message(&summary.settings));
     match &summary.wakeword {
         Some(dir) => println!("wake model   {}", dir.display()),
