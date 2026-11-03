@@ -21,10 +21,4 @@ struct InvalidSettings: Equatable, Sendable {
         }
         line = report.error?.line
     }
-
-    /// Never the parser's own text, which can quote the file.
-    var mistake: String {
-        guard let line else { return "your settings file has a mistake" }
-        return "your settings file has a mistake on line \(line)"
-    }
 }

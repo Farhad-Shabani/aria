@@ -127,9 +127,7 @@ final class StatusPollerTests: XCTestCase {
         await poller.toggle()
 
         XCTAssertEqual(poller.failure, .settingsInvalid(InvalidSettings(line: 3)))
-        XCTAssertEqual(
-            poller.failure?.message,
-            "Aria couldn’t start because your settings file has a mistake on line 3. Fix it, then turn Aria on.")
+        XCTAssertNil(poller.failure?.message, "Finish Setting Up Aria explains it")
     }
 
     func testADaemonThatNeverListensWithAnInvalidFileNamesTheFile() async {
@@ -189,7 +187,7 @@ final class StatusPollerTests: XCTestCase {
         await poller.pollOnce()
         await poller.toggle()
         XCTAssertEqual(poller.failure, .stop)
-        XCTAssertFalse(poller.failure?.message.contains("launchctl") ?? true)
+        XCTAssertFalse(poller.failure?.message?.contains("launchctl") ?? true)
     }
 
     func testTogglePointsAtLoginItemsWhenTheAgentIsOff() async {

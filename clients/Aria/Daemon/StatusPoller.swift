@@ -15,31 +15,21 @@ enum DaemonControlFailure: Equatable {
     case settingsInvalid(InvalidSettings)
     case transcriptionModelMissing
 
-    /// Aria turned off in Login Items is the one start failure the user can
-    /// fix directly, so it gets its own message.
+    /// Aria turned off in Login Items is a setup step, not a generic failure.
     static func starting(_ error: any Error, otherwise failure: Self) -> Self {
         if case DaemonClientError.agentDisabled = error { return .backgroundItemOff }
         return failure
     }
 
-    var isSettingsInvalid: Bool {
-        if case .settingsInvalid = self { return true }
-        return false
-    }
-
-    var message: String {
+    /// Nil when Finish Setting Up Aria explains the failure as a step.
+    var message: String? {
         switch self {
         case .start: "Aria couldn’t start. Run `aria doctor` in Terminal to see why."
         case .stop: "Aria couldn’t stop. Run `aria doctor` in Terminal to see why."
         case .restart: "Aria couldn’t restart. Run `aria doctor` in Terminal to see why."
         case .stillRunning: "Aria didn’t stop in time. Try again."
         case .unresponsive: "Aria started but didn’t respond. Run `aria doctor` in Terminal to see why."
-        case .backgroundItemOff:
-            "Aria isn’t allowed to run in the background. Turn it on in System Settings > General > Login Items & Extensions."
-        case .settingsInvalid(let invalid):
-            "Aria couldn’t start because \(invalid.mistake). Fix it, then turn Aria on."
-        case .transcriptionModelMissing:
-            "Aria couldn’t start because its speech model isn’t downloaded. Click **Aria Setup…** to download it."
+        case .backgroundItemOff, .settingsInvalid, .transcriptionModelMissing: nil
         }
     }
 }

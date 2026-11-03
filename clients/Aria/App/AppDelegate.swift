@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setup = WindowPresentation()
     let setupState = SetupState(effects: .live)
     let setupStatus = SetupStatus()
+    let modelDownload = ModelDownload(effects: .live)
     let voices: VoiceProfiles
     lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus)
     let updates = UpdateController()

@@ -1,29 +1,28 @@
 import SwiftUI
 
 struct SettingsSidebar: View {
-    @Environment(\.openWindow) private var openWindow
     @Binding var selection: SettingsPane
     let daemon: DaemonState
-    @ObservedObject var setup: SetupStatus
+    let items: [SetupItem]
 
     var body: some View {
         List(selection: listSelection) {
             Section {
                 SidebarHeader { DaemonStatusLabel(state: daemon) }
             }
-            if !setup.required.isEmpty {
+            if !items.isEmpty {
                 Section {
-                    Button {
-                        openWindow(id: WindowID.setup)
-                    } label: {
+                    HStack {
                         Label {
-                            Text("Finish Setting Up Aria")
+                            Text(SettingsPane.finishSetup.title)
                         } icon: {
-                            SettingsIcon(symbol: "exclamationmark.circle.fill", isWarning: true)
+                            SettingsIcon(pane: .finishSetup)
                         }
+                        Spacer()
+                        CountBadge(count: items.count)
                     }
-                    .buttonStyle(.plain)
-                    .badge(setup.required.count)
+                    .accessibilityElement(children: .combine)
+                    .tag(SettingsPane.finishSetup)
                 }
             }
             ForEach(SettingsPane.sidebarGroups, id: \.self) { group in

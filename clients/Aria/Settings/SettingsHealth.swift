@@ -5,29 +5,20 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SettingsHealth")
 
-/// One thing the person should know about the settings file.
+/// One notice about changing settings. An invalid file is a setup item instead.
 enum SettingsAttention: Equatable, Hashable {
-    case invalid(line: Int?)
-    case startBlocked(line: Int?)
     case readOnly
     case unsaved
     case restartNeeded
     case reverted
 
-    /// Worst first, so a broken file reads before what waits on it.
+    /// Problems first.
     static func all(
         status: Aria_Daemon_V1_SettingsStatus?,
-        startFailure: DaemonControlFailure?,
         isReadOnly: Bool,
         hasUnsavedChange: Bool = false
     ) -> [SettingsAttention] {
         var items: [SettingsAttention] = []
-        if case .settingsInvalid(let invalid) = startFailure {
-            items.append(.startBlocked(line: invalid.line))
-        }
-        if let status, status.hasFault {
-            items.append(.invalid(line: status.fault.hasPosition ? Int(status.fault.position.line) : nil))
-        }
         if isReadOnly { items.append(.readOnly) }
         if hasUnsavedChange { items.append(.unsaved) }
         if let status {
@@ -39,11 +30,6 @@ enum SettingsAttention: Equatable, Hashable {
 
     var message: String {
         switch self {
-        case .invalid(let line):
-            let mistake = InvalidSettings(line: line).mistake
-            return "\(mistake.prefix(1).uppercased())\(mistake.dropFirst()). Fix it and save the file."
-        case .startBlocked(let line):
-            return DaemonControlFailure.settingsInvalid(InvalidSettings(line: line)).message
         case .readOnly:
             return
                 "Aria can’t save settings because your settings file is read-only. Change it where it’s managed."
@@ -58,15 +44,8 @@ enum SettingsAttention: Equatable, Hashable {
 
     var isProblem: Bool {
         switch self {
-        case .invalid, .startBlocked, .readOnly, .unsaved: true
+        case .readOnly, .unsaved: true
         case .restartNeeded, .reverted: false
-        }
-    }
-
-    var opensFile: Bool {
-        switch self {
-        case .invalid, .startBlocked: true
-        case .readOnly, .unsaved, .restartNeeded, .reverted: false
         }
     }
 }

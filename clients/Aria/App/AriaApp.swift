@@ -31,22 +31,18 @@ struct AriaApp: App {
                 }
                 .padding(8)
                 ListenStatusRow(status: appDelegate.listenStatus)
-                SettingsAttentionView(
-                    health: appDelegate.settingsHealth, poller: poller, settings: settings
-                )
-                .padding(.horizontal, 8)
-                if let failure = poller.failure, !failure.isSettingsInvalid {
-                    Text(markdown: failure.message)
+                if let message = poller.failure?.message {
+                    Text(markdown: message)
                         .font(.caption)
                         .foregroundStyle(.failure)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 8)
-                    if failure == .transcriptionModelMissing {
-                        Button("Aria Setup…") {
-                            appDelegate.setup.request()
-                        }
-                        .padding(.horizontal, 8)
-                    }
+                }
+                FinishSetupMenuItem(
+                    setup: appDelegate.setupStatus, health: appDelegate.settingsHealth, poller: poller
+                ) {
+                    appDelegate.settingsPaneRequest.pane = .finishSetup
+                    appDelegate.settings.request()
                 }
                 Divider()
                 VStack(spacing: 2) {
@@ -83,6 +79,10 @@ struct AriaApp: App {
             .buttonStyle(MenuActionStyle())
             .padding(8)
             .frame(width: 280)
+            .onAppear {
+                let setup = appDelegate.setupStatus
+                Task { await setup.refresh() }
+            }
         } label: {
             MenuBarLabel(
                 poller: poller,
@@ -106,6 +106,8 @@ struct AriaApp: App {
                 askChord: appDelegate.askShortcut.chord,
                 promptListChord: appDelegate.promptList.chord,
                 setupStatus: appDelegate.setupStatus,
+                modelDownload: appDelegate.modelDownload,
+                setupState: appDelegate.setupState,
                 voices: appDelegate.voices,
                 serverTranscription: appDelegate.serverTranscription,
                 settingsHealth: appDelegate.settingsHealth,
@@ -195,6 +197,11 @@ private struct MenuBarLabel: View {
                 let health = controller.settingsHealth
                 Task { await health.refresh() }
             }
+            // A start that failed may have found something left to set up.
+            .onChange(of: poller.failure) { _, _ in
+                let setup = controller.setupStatus
+                Task { await setup.refresh() }
+            }
             // A daemon that came up after launch has settings nobody read.
             .onChange(of: poller.state) { _, state in
                 guard state == .running else { return }
@@ -202,6 +209,26 @@ private struct MenuBarLabel: View {
                 let health = controller.settingsHealth
                 Task { await health.refresh() }
             }
+    }
+}
+
+private struct FinishSetupMenuItem: View {
+    @ObservedObject var setup: SetupStatus
+    @ObservedObject var health: SettingsHealth
+    @ObservedObject var poller: StatusPoller
+    let open: () -> Void
+
+    var body: some View {
+        let items = SetupItem.all(setup: setup, health: health, poller: poller)
+        if !items.isEmpty {
+            Button(action: open) {
+                HStack {
+                    Text("Finish Setting Up Aria…")
+                    Spacer()
+                    CountBadge(count: items.count)
+                }
+            }
+        }
     }
 }
 

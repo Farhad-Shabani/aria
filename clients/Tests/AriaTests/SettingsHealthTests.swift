@@ -66,29 +66,19 @@ final class SettingsHealthTests: XCTestCase {
 
     // MARK: What the person sees
 
-    func testAnInvalidFileNamesItsLineAndNeverTheParserText() {
-        let items = SettingsAttention.all(
-            status: invalidStatus(line: 3), startFailure: nil, isReadOnly: false)
-
-        XCTAssertEqual(items, [.invalid(line: 3)])
-        XCTAssertEqual(items[0].message, "Your settings file has a mistake on line 3. Fix it and save the file.")
-        XCTAssertFalse(items[0].message.contains("secret"))
-        XCTAssertTrue(items[0].opensFile)
-    }
-
     func testARestartKeyAsksForARestartAndARevertNamesItsSetting() {
         var status = Aria_Daemon_V1_SettingsStatus()
         status.restartRequired = ["phone.port"]
         status.reverted = ["memory.enabled"]
 
-        let items = SettingsAttention.all(status: status, startFailure: nil, isReadOnly: false)
+        let items = SettingsAttention.all(status: status, isReadOnly: false)
 
         XCTAssertEqual(items, [.restartNeeded, .reverted])
         XCTAssertEqual(items[1].message, "A save in another app undid a change you made in Aria.")
     }
 
     func testAReadOnlyFileSaysItCantSave() {
-        let items = SettingsAttention.all(status: nil, startFailure: nil, isReadOnly: true)
+        let items = SettingsAttention.all(status: nil, isReadOnly: true)
 
         XCTAssertEqual(
             items[0].message,
@@ -108,14 +98,6 @@ final class SettingsHealthTests: XCTestCase {
         await settings.set { $0.muteSound = true }
 
         XCTAssertTrue(settings.isReadOnlyFailure)
-    }
-
-    func testAStartBlockedByTheFileShowsThatCause() {
-        let items = SettingsAttention.all(
-            status: nil, startFailure: .settingsInvalid(InvalidSettings(line: 2)), isReadOnly: false)
-
-        XCTAssertEqual(items, [.startBlocked(line: 2)])
-        XCTAssertTrue(items[0].opensFile)
     }
 
     func testTheCheckReportReadsItsLineAndAValidFileIsNil() {
@@ -164,7 +146,7 @@ final class SettingsHealthTests: XCTestCase {
 
     func testAnUnsavedChangeIsAProblemToShow() {
         let items = SettingsAttention.all(
-            status: nil, startFailure: nil, isReadOnly: false, hasUnsavedChange: true)
+            status: nil, isReadOnly: false, hasUnsavedChange: true)
 
         XCTAssertEqual(items, [.unsaved])
         XCTAssertTrue(items[0].isProblem)

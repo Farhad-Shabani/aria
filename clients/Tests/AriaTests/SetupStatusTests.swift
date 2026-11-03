@@ -11,7 +11,7 @@ final class SetupStatusTests: XCTestCase {
         return missing
     }
 
-    func testOnlyTheGrantAndTheRecognitionModelAreRequired() {
+    func testOnlyTheGrantAndTheRecognitionModelAreItemsOnAMacThatTranscribes() {
         var inspection = SetupStateTests.freshMac()
         inspection.missing = [
             Self.missing(.settings),
@@ -22,10 +22,17 @@ final class SetupStatusTests: XCTestCase {
             Self.missing(.grant),
         ]
 
-        XCTAssertEqual(
-            SetupStatus.required(in: inspection),
-            [Self.missing(.model, model: "parakeet"), Self.missing(.grant)]
-        )
+        XCTAssertEqual(SetupItem.items(in: inspection), [.speechModel(id: "parakeet"), .ariaKey])
+    }
+
+    func testASettingsGapIsAnItemOnlyForAServerNobodyPaired() {
+        var inspection = SetupStateTests.freshMac()
+        inspection.defaults.transcriptionEngineID = SetupStatus.serverEngine
+        inspection.missing = [Self.missing(.settings)]
+
+        XCTAssertEqual(SetupItem.items(in: inspection), [.server])
+        inspection.server = Aria_Setup_V1_PairedServer()
+        XCTAssertEqual(SetupItem.items(in: inspection), [])
     }
 
     func testAnInspectionStartedBeforeAChangeDoesNotLandOverIt() async {
