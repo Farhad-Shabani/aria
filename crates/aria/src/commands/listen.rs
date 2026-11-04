@@ -46,13 +46,15 @@ pub(super) fn run(command: ListenCommand) -> anyhow::Result<()> {
         ListenCommand::Stop => stop(&session),
         ListenCommand::Status => {
             let status = session.listen_status()?;
-            if status.listening {
-                println!("listening -> {}", status.transcript_path);
-            } else if status.error.is_empty() {
-                println!("not listening");
-            } else {
-                println!("not listening; the last session failed: {}", status.error);
-                std::process::exit(1);
+            match status.error {
+                _ if status.listening => {
+                    println!("listening -> {}", status.transcript.display());
+                }
+                None => println!("not listening"),
+                Some(failure) => {
+                    println!("not listening; the last session failed: {failure}");
+                    std::process::exit(1);
+                }
             }
             Ok(())
         }
@@ -73,7 +75,7 @@ fn start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow:
     } else {
         ""
     };
-    println!("{already}listening -> {}", started.transcript_path);
+    println!("{already}listening -> {}", started.transcript.display());
     Ok(())
 }
 
@@ -82,7 +84,7 @@ fn start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow:
 /// file's final rewrite may settle on others.
 fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
     let follow = session.follow_listen()?;
-    let transcript_path = follow.transcript_path.clone();
+    let transcript_path = follow.transcript.display().to_string();
 
     // Paragraph-style streaming, mirroring the transcript file's look: a
     // pause or a speaker change opens a fresh timestamped line, and the words
@@ -155,7 +157,7 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
 fn stop(session: &DaemonSession) -> anyhow::Result<()> {
     let stopped = session.listen_stop()?;
     if stopped.was_listening {
-        println!("stopped -> {}", stopped.transcript_path);
+        println!("stopped -> {}", stopped.transcript.display());
     } else {
         println!("nothing was listening");
     }

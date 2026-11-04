@@ -231,7 +231,7 @@ async fn public_router(
         .await;
     let authentication = Arc::clone(&access);
     let paired = move |request: tonic::Request<()>| {
-        authenticate(&authentication, &request)?;
+        authenticate("InferenceService/Transcribe", &authentication, &request)?;
         Ok(request)
     };
     tonic::transport::Server::builder()

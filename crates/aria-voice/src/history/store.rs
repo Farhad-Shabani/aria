@@ -339,7 +339,7 @@ impl Store {
 
     pub fn attempt_failed(&self, id: u64, error: HistoryError) -> Result<(), HistoryError> {
         validate_id(id)?;
-        let error = encode_error(&error.into())?;
+        let error = encode_error(&RpcFailure::from(&error))?;
         let state = self.lock()?;
         if !state.pinned.contains(&id) {
             return Err(HistoryError::InvalidRequest);
@@ -1030,7 +1030,7 @@ mod tests {
                 RpcErrorCode::DeliveryTargetChanged,
                 "Delivery target changed.",
             ),
-            HistoryError::ProjectUnavailable.into(),
+            (&HistoryError::ProjectUnavailable).into(),
             RpcFailure::new(RpcErrorCode::Unknown(9123), "Unrecognized failure."),
         ];
         let mut saved = Vec::new();
@@ -1326,7 +1326,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             store.get(failed.id).unwrap().error,
-            Some(HistoryError::Cancelled.into())
+            Some((&HistoryError::Cancelled).into())
         );
         assert_eq!(store.get(failed.id).unwrap().text, "partial");
         let recovered = store

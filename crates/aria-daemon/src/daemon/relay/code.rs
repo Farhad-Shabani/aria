@@ -15,10 +15,10 @@ const CODE_LIFETIME: Duration = Duration::from_secs(60);
 
 /// Its `Debug` never prints the value.
 #[derive(Clone, PartialEq, Eq)]
-pub(in crate::daemon) struct PairingCode(String);
+pub(crate) struct PairingCode(String);
 
 impl PairingCode {
-    pub(in crate::daemon) fn raw(&self) -> &str {
+    pub(crate) fn raw(&self) -> &str {
         &self.0
     }
 
@@ -41,6 +41,16 @@ impl fmt::Debug for PairingCode {
 struct Live {
     code: PairingCode,
     expires_at: Instant,
+}
+
+/// What the Mac app draws as a QR: the live code, and the Mac it pairs with.
+pub(crate) struct Invite {
+    pub(crate) instance: String,
+    pub(crate) code: PairingCode,
+    pub(crate) fingerprint: [u8; 32],
+    pub(crate) expires_in: Duration,
+    /// Phones paired since the daemon started.
+    pub(crate) pairing_count: u64,
 }
 
 /// Holds at most one live code. Issuing again while it is live returns the

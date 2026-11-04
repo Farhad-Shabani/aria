@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use aria_settings::rpc::RpcFailure;
 
 use super::super::subscriptions::Subscriptions;
 use super::failed;
@@ -37,13 +36,10 @@ impl wire::events_service_server::EventsService for EventsService {
         const METHOD: &str = "EventsService/Subscribe";
         match self.subscriptions.subscribe() {
             Ok(stream) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(stream))
             }
-            Err(refusal) => Err(failed(
-                METHOD,
-                RpcFailure::new((&refusal).into(), refusal.to_string()),
-            )),
+            Err(refusal) => Err(failed(METHOD, &refusal)),
         }
     }
 }

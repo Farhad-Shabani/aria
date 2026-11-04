@@ -153,6 +153,7 @@ fn compose(
         context.home.join(".aria/vocabulary"),
         lexicon,
         matches!(context.lifetime, DaemonLifetime::Persistent),
+        Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
             aria_voice::vocabulary::extract::LocalExtractor,
         ),
@@ -267,7 +268,7 @@ fn compose(
             Arc::clone(&vocabulary),
         ))),
         settings: settings_rpc,
-        vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary), settings),
+        vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary)),
         speaker: SpeakerRpc::new(speaker),
         events: EventsService::new(Arc::clone(&subscriptions)),
         relay,

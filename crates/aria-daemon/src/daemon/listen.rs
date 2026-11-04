@@ -35,7 +35,7 @@ enum Slot {
     /// reports why when it failed.
     Ended {
         transcript: PathBuf,
-        error: Option<String>,
+        error: Option<RpcFailure>,
     },
 }
 
@@ -48,15 +48,21 @@ struct ActiveListen {
     transcript: PathBuf,
 }
 
-pub(super) struct ListenStatus {
-    pub(super) listening: bool,
-    pub(super) transcript: PathBuf,
-    pub(super) error: Option<String>,
+pub struct ListenStarted {
+    pub already_listening: bool,
+    pub transcript: PathBuf,
 }
 
-pub(super) struct StopOutcome {
-    pub(super) was_listening: bool,
-    pub(super) transcript: PathBuf,
+pub struct ListenStopped {
+    pub was_listening: bool,
+    pub transcript: PathBuf,
+}
+
+pub struct ListenSnapshot {
+    pub listening: bool,
+    pub transcript: PathBuf,
+    /// How the last session ended, when it failed after Start answered.
+    pub error: Option<RpcFailure>,
 }
 
 impl ListenState {
@@ -80,7 +86,7 @@ impl ListenState {
     /// Accepts a session; capture and model initialization run on worker threads.
     /// `output` overrides the configured transcripts directory with an exact
     /// file for this session.
-    pub(super) fn start(&self, output: Option<PathBuf>) -> Result<(PathBuf, bool), RpcFailure> {
+    pub(super) fn start(&self, output: Option<PathBuf>) -> Result<ListenStarted, RpcFailure> {
         if self.lifetime == DaemonLifetime::OnDemand {
             return Err(RpcFailure::new(
                 RpcErrorCode::Unsupported,
@@ -90,7 +96,10 @@ impl ListenState {
         let mut slot = self.lock();
         harvest(&mut slot);
         if let Slot::Running(active) = &*slot {
-            return Ok((active.transcript.clone(), true));
+            return Ok(ListenStarted {
+                already_listening: true,
+                transcript: active.transcript.clone(),
+            });
         }
 
         let internal = |error: aria_settings::config::ConfigError| {
@@ -104,7 +113,8 @@ impl ListenState {
             None => TranscriptFile::create(&config.transcripts_dir),
         }
         .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
-        let (capture, recording) = SystemAudioCapture::spawn().map_err(failure)?;
+        let (capture, recording) =
+            SystemAudioCapture::spawn().map_err(|error| RpcFailure::from(&error))?;
         let stopper = capture.stopper();
         let cancel = CancelToken::new();
         // Listen has no focused project: the user's own word list only. The
@@ -132,22 +142,25 @@ impl ListenState {
             thread,
             transcript: transcript.clone(),
         });
-        Ok((transcript, false))
+        Ok(ListenStarted {
+            already_listening: false,
+            transcript,
+        })
     }
 
     /// Stops the running session, reporting a session that failed instead of
     /// stopping cleanly as that failure.
-    pub(super) fn stop(&self) -> Result<StopOutcome, RpcFailure> {
+    pub(super) fn stop(&self) -> Result<ListenStopped, RpcFailure> {
         // The lock is held through the join so a concurrent Start cannot
         // open a second capture while this one winds down.
         let mut slot = self.lock();
         let previous = std::mem::replace(&mut *slot, Slot::Idle);
         match previous {
-            Slot::Idle => Ok(StopOutcome {
+            Slot::Idle => Ok(ListenStopped {
                 was_listening: false,
                 transcript: PathBuf::new(),
             }),
-            Slot::Ended { transcript, .. } => Ok(StopOutcome {
+            Slot::Ended { transcript, .. } => Ok(ListenStopped {
                 was_listening: false,
                 transcript,
             }),
@@ -155,7 +168,7 @@ impl ListenState {
                 let transcript = active.transcript.clone();
                 join(active).map(|()| {
                     tracing::info!(transcript = %transcript.display(), "listen session stopped");
-                    StopOutcome {
+                    ListenStopped {
                         was_listening: true,
                         transcript,
                     }
@@ -164,21 +177,21 @@ impl ListenState {
         }
     }
 
-    pub(super) fn status(&self) -> ListenStatus {
+    pub(super) fn status(&self) -> ListenSnapshot {
         let mut slot = self.lock();
         harvest(&mut slot);
         match &*slot {
-            Slot::Idle => ListenStatus {
+            Slot::Idle => ListenSnapshot {
                 listening: false,
                 transcript: PathBuf::new(),
                 error: None,
             },
-            Slot::Running(active) => ListenStatus {
+            Slot::Running(active) => ListenSnapshot {
                 listening: true,
                 transcript: active.transcript.clone(),
                 error: None,
             },
-            Slot::Ended { transcript, error } => ListenStatus {
+            Slot::Ended { transcript, error } => ListenSnapshot {
                 listening: false,
                 transcript: transcript.clone(),
                 error: error.clone(),
@@ -229,7 +242,7 @@ fn harvest(slot: &mut Slot) {
                 message = failure.message,
                 "listen session ended with an error"
             );
-            Some(failure.message)
+            Some(failure)
         }
     };
     *slot = Slot::Ended { transcript, error };
@@ -240,14 +253,10 @@ fn join(active: ActiveListen) -> Result<(), RpcFailure> {
     active.stopper.stop();
     match active.thread.join() {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(failure(error)),
+        Ok(Err(error)) => Err(RpcFailure::from(&error)),
         Err(_panic) => Err(RpcFailure::new(
             RpcErrorCode::Internal,
             "the listen session thread panicked",
         )),
     }
-}
-
-fn failure(error: ListenError) -> RpcFailure {
-    RpcFailure::new(error.code(), error_chain(&error))
 }

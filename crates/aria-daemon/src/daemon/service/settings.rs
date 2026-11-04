@@ -4,13 +4,10 @@ use tokio::sync::watch;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use aria_primitives::error_chain;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{SettingsError, SettingsStatus};
-use aria_settings::{SettingsPatch, StoreError};
+use aria_settings::SettingsPatch;
+use aria_settings::SettingsStatus;
 
-use super::super::operation::CallError;
-use super::super::settings::{SettingsCallError, SettingsHandle};
+use super::super::settings::SettingsHandle;
 use super::invalid_request;
 
 /// A project vocabulary change reaches the vocabulary runtime through the
@@ -39,10 +36,10 @@ impl wire::settings_service_server::SettingsService for SettingsRpc {
         const METHOD: &str = "SettingsService/Get";
         match self.settings.get().await {
             Ok(snapshot) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new((&snapshot).into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure("read", error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -55,10 +52,10 @@ impl wire::settings_service_server::SettingsService for SettingsRpc {
             .map_err(|error| invalid_request(METHOD, &error))?;
         match self.settings.update(expected_revision, patch).await {
             Ok(update) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(update.into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure("update", error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -71,10 +68,10 @@ impl wire::settings_service_server::SettingsService for SettingsRpc {
             .map_err(|error| invalid_request(METHOD, &error))?;
         match self.settings.check(patch).await {
             Ok(()) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(wire::CheckSettingsResponse {}))
             }
-            Err(error) => Err(super::failed(METHOD, failure("check", error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -83,85 +80,21 @@ impl wire::settings_service_server::SettingsService for SettingsRpc {
         _request: Request<wire::GetSettingsStatusRequest>,
     ) -> Result<Response<wire::GetSettingsStatusResponse>, Status> {
         const METHOD: &str = "SettingsService/GetStatus";
-        let status = wire::SettingsStatus::from(&*self.status.borrow());
-        tracing::info!(method = METHOD, status = "ok", "request served");
-        Ok(Response::new(wire::GetSettingsStatusResponse {
-            status: Some(status),
-        }))
+        let response = wire::GetSettingsStatusResponse::from(&*self.status.borrow());
+        super::served(METHOD);
+        Ok(Response::new(response))
     }
-}
-
-fn failure(operation: &'static str, error: SettingsCallError) -> RpcFailure {
-    match error {
-        CallError::Unavailable => RpcFailure::new(
-            RpcErrorCode::ShuttingDown,
-            "the daemon is not accepting settings requests",
-        ),
-        CallError::JobFailed => RpcFailure::new(
-            RpcErrorCode::Internal,
-            "the settings operation ended unexpectedly",
-        ),
-        CallError::Runtime(error) => store_error(operation, error),
-    }
-}
-
-pub(super) fn store_error(operation: &'static str, error: StoreError) -> RpcFailure {
-    let code = match &error {
-        StoreError::FileInvalid(fault) => {
-            return RpcFailure::new(RpcErrorCode::SettingsInvalid, error_chain(&error))
-                .with_settings_position(fault.position());
-        }
-        // A change the file cannot take names the key, never the value.
-        StoreError::Settings(SettingsError::Invalid { key, .. }) => {
-            return RpcFailure::new(
-                RpcErrorCode::InvalidRequest,
-                format!("{key} does not accept that value"),
-            );
-        }
-        StoreError::Settings(SettingsError::Parse(_)) => {
-            return RpcFailure::new(
-                RpcErrorCode::InvalidRequest,
-                "the change does not fit settings.toml",
-            );
-        }
-        StoreError::BindingInUse | StoreError::InvalidModelId => RpcErrorCode::InvalidRequest,
-        StoreError::ChangedRecently | StoreError::Settings(SettingsError::Locked { .. }) => {
-            RpcErrorCode::Busy
-        }
-        StoreError::Settings(SettingsError::ReadOnly { .. }) => RpcErrorCode::PermissionDenied,
-        StoreError::Settings(
-            SettingsError::Io { .. }
-            | SettingsError::TooLarge { .. }
-            | SettingsError::InvalidUtf8 { .. }
-            | SettingsError::NotAFile { .. }
-            | SettingsError::TornRead { .. }
-            | SettingsError::UnknownKey(_)
-            | SettingsError::SerializedTooLarge
-            | SettingsError::Encode { .. }
-            | SettingsError::Freeze(_)
-            | SettingsError::Thread(_)
-            | SettingsError::KeyAndAlias { .. },
-        ) => RpcErrorCode::Internal,
-    };
-    if code != RpcErrorCode::Internal {
-        return RpcFailure::new(code, error_chain(&error));
-    }
-    tracing::error!(operation, error = %error_chain(&error), "settings store operation failed");
-    RpcFailure::new(
-        RpcErrorCode::Internal,
-        format!("failed to {operation} settings"),
-    )
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::*;
     use crate::daemon::DaemonEvent;
     use crate::daemon::testing::HostedDaemon;
     use crate::ipc::ClientError;
     use aria_settings::Position;
+    use aria_settings::rpc::RpcErrorCode;
     use aria_settings::{SettingsPatch, UpdateResult};
 
     const INVALID: &str = "[memory]\nenabled = maybe\n";
@@ -198,24 +131,9 @@ mod tests {
             .update_settings(before.revision, mute())
             .expect_err("an invalid file is never written over");
 
-        let ClientError::Rpc { code, message } = refused else {
+        let ClientError::Rpc(failure) = refused else {
             panic!("{refused}");
         };
-        assert_eq!(code, RpcErrorCode::SettingsInvalid);
-        assert!(message.contains("line 2, column 11"), "{message}");
-        assert_eq!(
-            std::fs::read_to_string(daemon.settings_path()).expect("read"),
-            INVALID
-        );
-        drop(session);
-        daemon.stop();
-    }
-
-    #[test]
-    fn a_refused_write_carries_the_position_as_a_field() {
-        let fault = aria_settings::Loaded::parse(INVALID, std::path::Path::new("/home"))
-            .expect_err("invalid");
-        let failure = store_error("update", StoreError::FileInvalid(fault));
         assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);
         assert_eq!(
             failure.settings_position,
@@ -224,6 +142,12 @@ mod tests {
                 column: 11
             })
         );
+        assert_eq!(
+            std::fs::read_to_string(daemon.settings_path()).expect("read"),
+            INVALID
+        );
+        drop(session);
+        daemon.stop();
     }
 
     /// The poll thread's reload reaches every subscriber without a request.

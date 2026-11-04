@@ -520,6 +520,14 @@ fn retry_transcription(
 mod tests {
     use super::*;
 
+    /// A settings store over `home`, with no file yet.
+    fn settings_store(home: &Path) -> Arc<aria_settings::SettingsStore> {
+        let cache =
+            aria_settings::SettingsCache::open(home.join("settings.toml"), home.to_path_buf())
+                .unwrap();
+        Arc::new(aria_settings::SettingsStore::new(Arc::new(cache)))
+    }
+
     use crate::daemon::config::WakeConfig;
     use aria_kit::audio::ReplayPace;
     use aria_voice::config::CaptureConfig;
@@ -544,6 +552,7 @@ mod tests {
                 root.join("vocabulary"),
                 None,
                 false,
+                settings_store(&root),
                 aria_voice::vocabulary::discover::LocalCollector::new(
                     aria_voice::vocabulary::extract::LocalExtractor,
                 ),
@@ -637,6 +646,7 @@ mod tests {
             home.path().join("vocabulary"),
             None,
             false,
+            settings_store(home.path()),
             aria_voice::vocabulary::discover::LocalCollector::new(
                 aria_voice::vocabulary::extract::LocalExtractor,
             ),
@@ -687,6 +697,7 @@ mod tests {
             home.path().join("vocabulary"),
             None,
             false,
+            settings_store(home.path()),
             aria_voice::vocabulary::discover::LocalCollector::new(
                 aria_voice::vocabulary::extract::LocalExtractor,
             ),

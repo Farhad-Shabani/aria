@@ -1,17 +1,16 @@
 //! Pairing a phone: the Mac app shows a one-time code, and the phone
 //! presents it to have its certificate pinned.
 
-use crate::ipc::protocol::failure_status;
 use std::sync::Arc;
 use std::time::Instant;
 
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
-use super::super::relay::{PairingCodes, PairingError, Phones, presented};
+use super::super::relay::{Invite, PairingCodes, Phones, presented};
+use aria_primitives::error_chain;
 
 /// Served on the LAN to unpaired phones too: the code is the credential.
 pub(in crate::daemon) struct PairingRpc {
@@ -35,51 +34,26 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
         let phone = presented(&request);
         let code = request.into_inner().code;
         let Some(phone) = phone.filter(|_| self.codes.redeem(&code, Instant::now())) else {
-            let failure = RpcFailure::new(
-                RpcErrorCode::Unauthenticated,
-                "the pairing code is wrong, used, or expired",
-            );
-            // Unpaired phones reach this method, so a stranger can make it
-            // log. Quieter than `super::failed`, and never the code.
-            tracing::debug!(
-                method = METHOD,
-                status = failure.code.label(),
-                "request failed"
-            );
-            return Err(failure_status(failure));
+            return Err(super::failed(
+                METHOD,
+                RpcFailure::new(
+                    RpcErrorCode::Unauthenticated,
+                    "the pairing code is wrong, used, or expired",
+                ),
+            ));
         };
         let phones = Arc::clone(&self.phones);
         tokio::task::spawn_blocking(move || phones.admit(phone))
             .await
             .map_err(|_panicked| {
-                tracing::error!(method = METHOD, "the pairing job panicked");
                 super::failed(
                     METHOD,
                     RpcFailure::new(RpcErrorCode::Internal, "pinning the phone failed"),
                 )
             })?
-            .map_err(|error| {
-                let code = match error {
-                    PairingError::Full => RpcErrorCode::PermissionDenied,
-                    PairingError::Document(_)
-                    | PairingError::Random(_)
-                    | PairingError::Certificate(_)
-                    | PairingError::Missing => {
-                        tracing::error!(
-                            method = METHOD,
-                            error = %error_chain(&error),
-                            "failed to pin the phone"
-                        );
-                        RpcErrorCode::Internal
-                    }
-                };
-                crate::daemon::relay::redacted(super::failed(
-                    METHOD,
-                    RpcFailure::new(code, error_chain(&error)),
-                ))
-            })?;
+            .map_err(|error| crate::daemon::relay::redacted(super::failed(METHOD, &error)))?;
         self.codes.record_pairing();
-        tracing::info!(method = METHOD, status = "ok", "request served");
+        super::served(METHOD);
         Ok(Response::new(wire::PairResponse {}))
     }
 }
@@ -112,30 +86,26 @@ impl wire::invite_service_server::InviteService for InviteRpc {
         _request: Request<wire::IssueInviteRequest>,
     ) -> Result<Response<wire::IssueInviteResponse>, Status> {
         const METHOD: &str = "InviteService/IssueInvite";
-        let (code, remaining) = self.codes.issue(Instant::now()).map_err(|error| {
+        let (code, expires_in) = self
+            .codes
+            .issue(Instant::now())
+            .map_err(|error| super::failed(METHOD, &error))?;
+        let invite = Invite {
+            instance: self.instance.clone(),
+            code,
+            fingerprint: self.fingerprint,
+            expires_in,
+            pairing_count: self.codes.pairing_count(),
+        };
+        let response = wire::IssueInviteResponse::try_from(invite).map_err(|error| {
             super::failed(
                 METHOD,
                 RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)),
             )
         })?;
-        let expires_in_ms = u32::try_from(remaining.as_millis()).map_err(|_| {
-            super::failed(
-                METHOD,
-                RpcFailure::new(
-                    RpcErrorCode::Internal,
-                    "the code lifetime overflows u32 milliseconds",
-                ),
-            )
-        })?;
         // The Mac app polls this while its pairing pane is open.
         tracing::debug!(method = METHOD, status = "ok", "request served");
-        Ok(Response::new(wire::IssueInviteResponse {
-            instance_name: self.instance.clone(),
-            code: code.raw().to_owned(),
-            fingerprint: self.fingerprint.to_vec(),
-            expires_in_ms,
-            pairing_count: self.codes.pairing_count(),
-        }))
+        Ok(Response::new(response))
     }
 }
 

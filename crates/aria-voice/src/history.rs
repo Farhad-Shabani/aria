@@ -120,21 +120,20 @@ pub enum HistoryError {
     Storage,
 }
 
-impl From<HistoryError> for RpcFailure {
-    fn from(error: HistoryError) -> Self {
-        let code = match error {
-            HistoryError::Missing => RpcErrorCode::HistoryMissing,
-            HistoryError::AudioUnavailable => RpcErrorCode::HistoryAudioUnavailable,
-            HistoryError::Busy => RpcErrorCode::Busy,
-            HistoryError::InvalidRequest => RpcErrorCode::InvalidRequest,
-            HistoryError::ProjectUnavailable => RpcErrorCode::HistoryProjectUnavailable,
-            HistoryError::Unavailable | HistoryError::Storage => RpcErrorCode::HistoryUnavailable,
-            HistoryError::TooLarge => RpcErrorCode::PayloadTooLarge,
-            HistoryError::Cancelled => RpcErrorCode::Cancelled,
-            HistoryError::Timeout => RpcErrorCode::OverallTimeout,
-            HistoryError::Transcription => RpcErrorCode::TranscriptionFailed,
-        };
-        Self::new(code, error.to_string())
+impl From<&HistoryError> for RpcErrorCode {
+    fn from(error: &HistoryError) -> Self {
+        match error {
+            HistoryError::Missing => Self::HistoryMissing,
+            HistoryError::AudioUnavailable => Self::HistoryAudioUnavailable,
+            HistoryError::Busy => Self::Busy,
+            HistoryError::InvalidRequest => Self::InvalidRequest,
+            HistoryError::ProjectUnavailable => Self::HistoryProjectUnavailable,
+            HistoryError::Unavailable | HistoryError::Storage => Self::HistoryUnavailable,
+            HistoryError::TooLarge => Self::PayloadTooLarge,
+            HistoryError::Cancelled => Self::Cancelled,
+            HistoryError::Timeout => Self::OverallTimeout,
+            HistoryError::Transcription => Self::TranscriptionFailed,
+        }
     }
 }
 

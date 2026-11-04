@@ -16,7 +16,7 @@ use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_settings::config::{AssistantId, ConfigError};
-use aria_settings::rpc::RpcErrorCode;
+use aria_settings::rpc::RpcFailure;
 use aria_settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
 use aria_voice::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
@@ -353,14 +353,9 @@ impl DaemonSession {
                     .map_err(|_error| ListenCommandError::UnresolvableOutput(path))
             })
             .transpose()?;
-        let response = self
-            .client
+        self.client
             .listen_start(output.map(|path| path.display().to_string()))
-            .map_err(ListenCommandError::Call)?;
-        Ok(ListenStarted {
-            already_listening: response.already_listening,
-            transcript_path: response.transcript_path,
-        })
+            .map_err(ListenCommandError::Call)
     }
 
     /// Records the samples and stores the voice they agree on. Progress
@@ -383,26 +378,13 @@ impl DaemonSession {
     }
 
     pub fn listen_stop(&self) -> Result<ListenStopped, ListenCommandError> {
-        let response = self
-            .client
-            .listen_stop()
-            .map_err(ListenCommandError::Call)?;
-        Ok(ListenStopped {
-            was_listening: response.was_listening,
-            transcript_path: response.transcript_path,
-        })
+        self.client.listen_stop().map_err(ListenCommandError::Call)
     }
 
     pub fn listen_status(&self) -> Result<ListenSnapshot, ListenCommandError> {
-        let response = self
-            .client
+        self.client
             .listen_status()
-            .map_err(ListenCommandError::Call)?;
-        Ok(ListenSnapshot {
-            listening: response.listening,
-            transcript_path: response.transcript_path,
-            error: response.error_message,
-        })
+            .map_err(ListenCommandError::Call)
     }
 
     /// Follows the running listen session. Subscribed before the status
@@ -415,7 +397,7 @@ impl DaemonSession {
         }
         Ok(ListenFollow {
             events,
-            transcript_path: status.transcript_path,
+            transcript: status.transcript,
             ended: false,
         })
     }
@@ -425,7 +407,7 @@ impl DaemonSession {
 /// `Failed`. Ends early when the daemon closes the stream.
 pub struct ListenFollow {
     events: EventStream,
-    pub transcript_path: String,
+    pub transcript: PathBuf,
     ended: bool,
 }
 
@@ -485,7 +467,7 @@ fn reply_from(
             ChatStageKind::Working(..) => {}
             ChatStageKind::Replied(reply) => return Ok(reply),
             ChatStageKind::Failed { code, message } => {
-                return Err(AskError::Failed { code, message });
+                return Err(AskError::Failed(RpcFailure::new(code, message)));
             }
         }
     }
@@ -541,8 +523,8 @@ pub enum RouteError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
-    #[error("{}", code.reason(message))]
-    Failed { code: RpcErrorCode, message: String },
+    #[error(transparent)]
+    Failed(RpcFailure),
 
     #[error("the daemon stopped before answering ticket {0}")]
     DaemonStopped(Ticket),
@@ -551,21 +533,7 @@ pub enum AskError {
     Stream(#[from] ClientError),
 }
 
-pub struct ListenStarted {
-    pub already_listening: bool,
-    pub transcript_path: String,
-}
-
-pub struct ListenStopped {
-    pub was_listening: bool,
-    pub transcript_path: String,
-}
-
-pub struct ListenSnapshot {
-    pub listening: bool,
-    pub transcript_path: String,
-    pub error: String,
-}
+pub use super::listen::{ListenSnapshot, ListenStarted, ListenStopped};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListenCommandError {

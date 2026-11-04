@@ -2,7 +2,6 @@
 //! One private file holds both. Deleting it and restarting the daemon
 //! revokes every phone.
 
-use crate::ipc::protocol::failure_status;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -251,13 +250,13 @@ pub(in crate::daemon) fn require_paired(
 ) -> impl FnMut(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync + 'static {
     move |request| match presented(&request) {
         Some(fingerprint) if phones.contains(&fingerprint) => Ok(request),
-        _ => {
-            tracing::debug!("refused a request from a phone that is not paired");
-            Err(failure_status(RpcFailure::new(
+        _ => Err(crate::daemon::service::failed(
+            "lan",
+            RpcFailure::new(
                 RpcErrorCode::Unauthenticated,
                 "pair this device with the Mac first",
-            )))
-        }
+            ),
+        )),
     }
 }
 
@@ -277,6 +276,18 @@ pub enum PairingError {
 
     #[error("the pairing file is gone")]
     Missing,
+}
+
+impl From<&PairingError> for RpcErrorCode {
+    fn from(error: &PairingError) -> Self {
+        match error {
+            PairingError::Full => Self::PermissionDenied,
+            PairingError::Document(_)
+            | PairingError::Random(_)
+            | PairingError::Certificate(_)
+            | PairingError::Missing => Self::Internal,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -19,3 +19,4 @@ pub const HOTKEY_HEALTH_SERVICE: &str = "aria.hotkey";
 
 pub use client::{ClientError, ConnectError, DaemonEvent, EventStream};
 pub use client::{DaemonClient, Liveness, ProbeError, probe_daemon};
+pub use protocol::TransportFailure;

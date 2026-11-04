@@ -1,7 +1,6 @@
 //! Receives LAN audio, transcribes it, and delivers text using dictation settings.
 //! [`crate::daemon::relay`] validates and collects the upload.
 
-use crate::ipc::protocol::failure_status;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -79,23 +78,20 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         // than from an event it has to interpret.
         let opening = relay::open(&mut requests)
             .await
-            .map_err(|error| relay::redacted(super::failed(METHOD, error.failure())))?;
+            .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
         let claim = self
             .microphone
             .admit_relay()
-            .ok_or_else(|| relay::redacted(super::failed(METHOD, RelayError::Busy.failure())))?;
+            .ok_or_else(|| relay::redacted(super::failed(METHOD, &RelayError::Busy)))?;
 
-        let settings = self.dictation.relay_settings().map_err(|error| {
-            relay::redacted(super::failed(
-                METHOD,
-                failure(RpcErrorCode::Internal, &error),
-            ))
-        })?;
+        let settings = self
+            .dictation
+            .relay_settings()
+            .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
         if settings.application_excluded() {
-            let excluded = DictationError::ApplicationExcluded;
             return Err(relay::redacted(super::failed(
                 METHOD,
-                failure((&excluded).into(), &excluded),
+                &DictationError::ApplicationExcluded,
             )));
         }
         let mut history = self.dictation.history();
@@ -115,12 +111,6 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         tokio::spawn(session.run(requests));
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
-}
-
-/// Every failure here reads the same way: a code, and the error's own chain
-/// as the message a client sees.
-fn failure(code: RpcErrorCode, error: &dyn std::error::Error) -> RpcFailure {
-    RpcFailure::new(code, aria_primitives::error_chain(error))
 }
 
 /// One relayed recording, from the first chunk to the pasted text. Owns the
@@ -148,14 +138,7 @@ impl Session {
                 return;
             }
             Err(error) => {
-                let failure = error.failure();
-                tracing::info!(
-                    method = METHOD,
-                    status = failure.code.label(),
-                    message = failure.message,
-                    "request failed"
-                );
-                self.emit(Err(relay::redacted(failure_status(failure))))
+                self.emit(Err(relay::redacted(super::failed(METHOD, &error))))
                     .await;
                 return;
             }
@@ -187,22 +170,18 @@ impl Session {
                 Ok(stage(wire::RelayStage::NoSpeech))
             }
             Ok(Err(failure)) => {
-                tracing::info!(
-                    method = METHOD,
-                    status = failure.code.label(),
-                    message = failure.message,
-                    "request failed"
-                );
                 announcer.announce(DictationStage::ended_by(failure.code));
-                Err(relay::redacted(failure_status(failure)))
+                Err(relay::redacted(super::failed(METHOD, failure)))
             }
             Err(_join) => {
-                tracing::error!(method = METHOD, "the relay job panicked");
                 announcer.announce(DictationStage::Failed(RpcErrorCode::Internal));
-                Err(failure_status(RpcFailure::new(
-                    RpcErrorCode::Internal,
-                    "the relay operation ended unexpectedly",
-                )))
+                Err(super::failed(
+                    METHOD,
+                    RpcFailure::new(
+                        RpcErrorCode::Internal,
+                        "the relay operation ended unexpectedly",
+                    ),
+                ))
             }
         };
         drop(events.send(event).await);
@@ -239,14 +218,14 @@ fn hear(
         _claim,
         ..
     } = session;
-    let samples = relay::decode(opening, &audio).map_err(|error| error.failure())?;
+    let samples = relay::decode(opening, &audio).map_err(|error| RpcFailure::from(&error))?;
     // A full recording is about 19 MB as bytes and again as samples, and
     // transcription reads neither.
     drop(audio);
 
     // File-based engines need a WAV. The recording owns its temporary file.
     let mut recording = RecordingReader::from_pcm16_in(&spool_dir, &samples)
-        .map_err(|error| failure(RpcErrorCode::CaptureFailed, &error))?;
+        .map_err(|error| RpcFailure::from(&DictationError::from(error)))?;
     drop(samples);
 
     let text = match dictation.transcribe(&mut recording, &settings, cancel) {
@@ -262,18 +241,18 @@ fn hear(
                 }
                 _ => history.transcription_failed(&mut recording),
             }
-            return Err(failure((&error).into(), &error));
+            return Err(RpcFailure::from(&error));
         }
     };
     history
         .completed(Utterance::anonymous(&text))
-        .map_err(|error| failure(RpcErrorCode::Internal, &error))?;
+        .map_err(|error| RpcFailure::from(&error))?;
 
     // Honor the same output setting as local dictation.
     dictation.announce(DictationStage::Delivering);
     let delivered = deliver(&*delivery, &settings, &text, cancel).map_err(DictationError::from);
     history.recording_finished(&mut recording, delivered.as_ref().map(|_| ()));
-    let delivered = delivered.map_err(|error| failure(RpcErrorCode::from(&error), &error))?;
+    let delivered = delivered.map_err(|error| RpcFailure::from(&error))?;
     Ok(Some((text, delivered)))
 }
 

@@ -4,11 +4,9 @@
 use tonic::{Request, Response, Status};
 
 use crate::ipc::{protocol, wire};
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::enrollment::{EnrollError, EnrollmentRequest};
+use aria_voice::enrollment::EnrollmentRequest;
 
-use super::super::operation::CallError;
-use super::super::speaker::{SpeakerCallError, SpeakerHandle};
+use super::super::speaker::SpeakerHandle;
 use super::invalid_request;
 
 pub(in crate::daemon) struct SpeakerRpc {
@@ -32,13 +30,10 @@ impl wire::speaker_service_server::SpeakerService for SpeakerRpc {
             .map_err(|error| invalid_request(METHOD, &error))?;
         match self.speaker.enroll(request).await {
             Ok(result) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
-                Ok(Response::new(wire::EnrollSpeakerResponse {
-                    role: wire::SpeakerRole::from(result.role) as i32,
-                    consistency: result.consistency,
-                }))
+                super::served(METHOD);
+                Ok(Response::new(result.into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -49,12 +44,10 @@ impl wire::speaker_service_server::SpeakerService for SpeakerRpc {
         const METHOD: &str = "SpeakerService/List";
         match self.speaker.list().await {
             Ok(speakers) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
-                Ok(Response::new(wire::ListSpeakersResponse {
-                    speakers: speakers.iter().map(wire::EnrolledSpeaker::from).collect(),
-                }))
+                super::served(METHOD);
+                Ok(Response::new(speakers.into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -67,10 +60,10 @@ impl wire::speaker_service_server::SpeakerService for SpeakerRpc {
             .map_err(|error| invalid_request(METHOD, &error))?;
         match self.speaker.remove(name).await {
             Ok(()) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(wire::RemoveSpeakerResponse {}))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -83,30 +76,10 @@ impl wire::speaker_service_server::SpeakerService for SpeakerRpc {
             .map_err(|error| invalid_request(METHOD, &error))?;
         match self.speaker.set_owner(name).await {
             Ok(()) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(wire::SetOwnerResponse {}))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
-}
-
-fn failure(error: SpeakerCallError) -> RpcFailure {
-    match error {
-        CallError::Unavailable => RpcFailure::new(
-            RpcErrorCode::ShuttingDown,
-            "the daemon is not accepting speaker requests",
-        ),
-        CallError::JobFailed => RpcFailure::new(
-            RpcErrorCode::Internal,
-            "the speaker operation ended unexpectedly",
-        ),
-        CallError::Runtime(error) => enroll_failure(error),
-    }
-}
-
-/// The message a client sees. Every variant already says what went wrong in
-/// terms the person who ran the command can act on.
-fn enroll_failure(error: EnrollError) -> RpcFailure {
-    RpcFailure::new(error.code(), error.to_string())
 }

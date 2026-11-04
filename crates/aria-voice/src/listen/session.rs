@@ -88,7 +88,7 @@ pub fn spawn_session(
             };
             match &result {
                 Ok(()) => events.emit(ListenStage::Stopped),
-                Err(error) => events.emit(ListenStage::Failed(error.code())),
+                Err(error) => events.emit(ListenStage::Failed(error.into())),
             }
             result
         })

@@ -562,8 +562,7 @@ pub(in crate::daemon) enum DictationRuntimeError {
 impl From<&DictationRuntimeError> for RpcErrorCode {
     fn from(error: &DictationRuntimeError) -> Self {
         match error {
-            // Reading settings is the daemon's own fault, not the caller's.
-            DictationRuntimeError::Settings(_) => Self::Internal,
+            DictationRuntimeError::Settings(error) => error.into(),
             DictationRuntimeError::Initialization(error) => error.into(),
             DictationRuntimeError::Execution(error) => error.into(),
         }
@@ -1062,7 +1061,7 @@ mod history_tests {
         assert_eq!(unchanged.text, fixture.original.text);
         assert_eq!(unchanged.engine, fixture.original.engine);
         assert_eq!(unchanged.language, fixture.original.language);
-        assert_eq!(unchanged.error, Some(HistoryError::Transcription.into()));
+        assert_eq!(unchanged.error, Some((&HistoryError::Transcription).into()));
         assert!(matches!(
             unchanged.audio,
             AudioAvailability::Available { .. }
@@ -1125,6 +1124,7 @@ mod history_tests {
                 home.join("vocabulary"),
                 None,
                 false,
+                Arc::clone(&fixture.runtime.settings),
                 aria_voice::vocabulary::discover::LocalCollector::new(
                     aria_voice::vocabulary::extract::LocalExtractor,
                 ),
@@ -1215,7 +1215,7 @@ mod history_tests {
             .get(fixture.original.id)
             .unwrap();
         assert_eq!(entry.text, "partial");
-        assert_eq!(entry.error, Some(HistoryError::Cancelled.into()));
+        assert_eq!(entry.error, Some((&HistoryError::Cancelled).into()));
         assert_eq!(entry.status, HistoryStatus::TranscriptionFailed);
         assert!(!entry.retrying);
         assert!(matches!(entry.audio, AudioAvailability::Available { .. }));

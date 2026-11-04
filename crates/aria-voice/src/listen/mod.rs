@@ -41,16 +41,16 @@ pub enum ListenError {
     Transcript(#[source] std::io::Error),
 }
 
-impl ListenError {
-    /// The category a client sees, whether the failure ends a `stop` call or
-    /// reaches a follower as an event.
-    pub fn code(&self) -> RpcErrorCode {
-        match self {
-            Self::UnsupportedOs => RpcErrorCode::ListenUnsupportedOs,
-            Self::PermissionDenied => RpcErrorCode::ListenPermissionDenied,
-            Self::Spawn(_) | Self::CaptureFailed { .. } => RpcErrorCode::ListenCaptureFailed,
-            Self::Transcription(_) => RpcErrorCode::TranscriptionFailed,
-            Self::Transcript(_) => RpcErrorCode::Internal,
+/// The category a client sees, whether the failure ends a `stop` call or
+/// reaches a follower as an event.
+impl From<&ListenError> for RpcErrorCode {
+    fn from(error: &ListenError) -> Self {
+        match error {
+            ListenError::UnsupportedOs => Self::ListenUnsupportedOs,
+            ListenError::PermissionDenied => Self::ListenPermissionDenied,
+            ListenError::Spawn(_) | ListenError::CaptureFailed { .. } => Self::ListenCaptureFailed,
+            ListenError::Transcription(_) => Self::TranscriptionFailed,
+            ListenError::Transcript(_) => Self::Internal,
         }
     }
 }

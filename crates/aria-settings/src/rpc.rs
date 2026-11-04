@@ -3,8 +3,17 @@
 //! One vocabulary, shared by the domain that raises a failure, the transport
 //! that carries it, and the logs that record it. How a code is encoded on the
 //! wire belongs to the IPC boundary; nothing here knows about it.
+//!
+//! A domain error declares its category once, beside itself, as
+//! `impl From<&E> for RpcErrorCode`. That alone makes `RpcFailure::from(&error)`
+//! available: the category, the whole cause chain as the message, and for a
+//! settings fault its place in the file.
 
 use std::fmt;
+
+use aria_primitives::error_chain;
+
+use crate::SettingsError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // Declared in the wire enum's numeric order: generic, dictation, speech, chat,
@@ -145,6 +154,74 @@ impl RpcFailure {
     pub fn with_settings_position(mut self, position: Option<crate::Position>) -> Self {
         self.settings_position = position;
         self
+    }
+}
+
+impl fmt::Display for RpcFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.code.reason(&self.message))
+    }
+}
+
+impl std::error::Error for RpcFailure {}
+
+impl<'a, E> From<&'a E> for RpcFailure
+where
+    E: std::error::Error + 'static,
+    RpcErrorCode: From<&'a E>,
+{
+    fn from(error: &'a E) -> Self {
+        let code = RpcErrorCode::from(error);
+        let fault = settings_fault(error);
+        if code == RpcErrorCode::SettingsInvalid {
+            let position = fault.and_then(SettingsError::position);
+            return Self::new(code, error_chain(error)).with_settings_position(position);
+        }
+        // A change the file cannot take names the key, never the value: the
+        // message may cross to a phone, and the value may be a path.
+        let message = match fault {
+            Some(SettingsError::Invalid { key, .. }) => format!("{key} does not accept that value"),
+            Some(SettingsError::Parse(_)) => "the change does not fit settings.toml".to_owned(),
+            _ => error_chain(error),
+        };
+        Self::new(code, message)
+    }
+}
+
+/// The settings fault somewhere in the cause chain.
+fn settings_fault<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<&'a SettingsError> {
+    let mut cause = Some(error);
+    while let Some(error) = cause {
+        if let Some(fault) = error.downcast_ref::<SettingsError>() {
+            return Some(fault);
+        }
+        cause = error.source();
+    }
+    None
+}
+
+/// Every error that declares its category, as one bound. A generic wrapper
+/// such as an actor's call error bounds its payload on this rather than on
+/// `From<&E>`: the solver would otherwise chase `From<&Wrapper<Wrapper<_>>>`
+/// forever while the payload type is still being inferred.
+pub trait Categorized: std::error::Error {
+    fn category(&self) -> RpcErrorCode;
+}
+
+impl<E> Categorized for E
+where
+    E: std::error::Error,
+    for<'a> RpcErrorCode: From<&'a E>,
+{
+    fn category(&self) -> RpcErrorCode {
+        self.into()
+    }
+}
+
+/// An actor whose work cannot fail still reports the actor's own failures.
+impl From<&std::convert::Infallible> for RpcErrorCode {
+    fn from(never: &std::convert::Infallible) -> Self {
+        match *never {}
     }
 }
 

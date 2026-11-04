@@ -58,14 +58,16 @@ pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
 pub use inference::Paths as InferencePaths;
+pub(crate) use inference::identity::Invitation;
 pub use inference::pairing::forget as forget_paired_server;
 #[cfg(any(test, feature = "test-support"))]
 pub use inference::pin_server_for_tests;
 pub use inference::{PairedServer, paired_server};
+pub(crate) use relay::Invite;
 /// What `aria doctor` needs to report about the relay without owning one.
 pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 
-pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
+pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream, TransportFailure};
 pub use aria_assistant::chat::{
     Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
     Focus, Project, ProjectsError, Step, Ticket,

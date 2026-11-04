@@ -36,7 +36,6 @@ tempfile           = { workspace = true }
 thiserror          = { workspace = true }
 time               = { workspace = true }
 toml_edit          = { workspace = true, features = [ "display", "parse", "serde" ] }
-tonic              = { version = "0.14", features = [ "tls-ring" ] }
 tracing            = { workspace = true }
 tracing-log        = "0.2"
 tracing-subscriber = { workspace = true }
@@ -56,6 +55,7 @@ objc2-foundation = { workspace = true, features = [ "NSString", "std" ] }
 cidre            = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
 
 [dev-dependencies]
+tonic              = { version = "0.14", features = [ "tls-ring" ] }
 aria-daemon   = { workspace = true, features = [ "test-support" ] }
 aria-voice    = { workspace = true }
 aria-settings = { workspace = true, features = [ "test-support" ] }

@@ -1,4 +1,3 @@
-use crate::ipc::protocol::failure_status;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::{protocol, wire};
-use aria_settings::rpc::RpcFailure;
 use aria_voice::history::{
     ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, RetryOptions,
 };
@@ -77,19 +75,26 @@ impl HistoryRpc {
 
     async fn submit<T>(
         &self,
+        method: &'static str,
         command: Command,
         pending: Pending<T, HistoryError>,
     ) -> Result<T, Status> {
         self.commands
             .try_send(command)
             .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => failure(HistoryError::Busy),
-                mpsc::error::TrySendError::Closed(_) => failure(HistoryError::Unavailable),
+                mpsc::error::TrySendError::Full(_) => super::failed(method, &HistoryError::Busy),
+                mpsc::error::TrySendError::Closed(_) => {
+                    super::failed(method, &HistoryError::Unavailable)
+                }
             })?;
-        pending.wait().await.map_err(|error| match error {
-            CallError::Runtime(error) => failure(error),
-            CallError::Unavailable | CallError::JobFailed => failure(HistoryError::Unavailable),
-        })
+        let served = pending.wait().await.map_err(|error| match error {
+            CallError::Runtime(error) => super::failed(method, &error),
+            CallError::Unavailable | CallError::JobFailed => {
+                super::failed(method, &HistoryError::Unavailable)
+            }
+        })?;
+        super::served(method);
+        Ok(served)
     }
 }
 
@@ -172,11 +177,12 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         &self,
         mut request: Request<wire::ListHistoryRequest>,
     ) -> Result<Response<wire::ListHistoryResponse>, Status> {
+        const METHOD: &str = "HistoryService/List";
         let activity = ActivityGuard::take(&mut request);
         let query = HistoryQuery::try_from(request.into_inner())
-            .map_err(|error| super::invalid_request("HistoryService/List", &error))?;
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
         let (command, pending) = call(|reply| Command::List(query, reply, activity));
-        self.submit(command, pending)
+        self.submit(METHOD, command, pending)
             .await
             .map(|page| Response::new(page.into()))
     }
@@ -185,11 +191,12 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         &self,
         mut request: Request<wire::GetHistoryRequest>,
     ) -> Result<Response<wire::HistoryEntry>, Status> {
+        const METHOD: &str = "HistoryService/Get";
         let activity = ActivityGuard::take(&mut request);
         let id = protocol::history_id(request.into_inner().id)
-            .map_err(|error| super::invalid_request("HistoryService/Get", &error))?;
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
         let (command, pending) = call(|reply| Command::Get(id, reply, activity));
-        self.submit(command, pending)
+        self.submit(METHOD, command, pending)
             .await
             .map(|entry| Response::new(entry.into()))
     }
@@ -198,11 +205,12 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         &self,
         mut request: Request<wire::DeleteHistoryRequest>,
     ) -> Result<Response<wire::DeleteHistoryResponse>, Status> {
+        const METHOD: &str = "HistoryService/Delete";
         let activity = ActivityGuard::take(&mut request);
         let id = protocol::history_id(request.into_inner().id)
-            .map_err(|error| super::invalid_request("HistoryService/Delete", &error))?;
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
         let (command, pending) = call(|reply| Command::Delete(id, reply, activity));
-        self.submit(command, pending).await?;
+        self.submit(METHOD, command, pending).await?;
         Ok(Response::new(wire::DeleteHistoryResponse {}))
     }
 
@@ -210,30 +218,25 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         &self,
         mut request: Request<wire::ClearHistoryRequest>,
     ) -> Result<Response<wire::ClearHistoryResponse>, Status> {
+        const METHOD: &str = "HistoryService/Clear";
         let activity = ActivityGuard::take(&mut request);
         let (command, pending) = call(|reply| Command::Clear(reply, activity));
-        let result = self.submit(command, pending).await?;
-        Ok(Response::new(wire::ClearHistoryResponse {
-            deleted_entry_count: result.deleted_entries,
-            audio_cleanup_pending: result.cleanup_pending,
-        }))
+        let result = self.submit(METHOD, command, pending).await?;
+        Ok(Response::new(result.into()))
     }
 
     async fn regenerate(
         &self,
         mut request: Request<wire::RegenerateHistoryRequest>,
     ) -> Result<Response<wire::HistoryEntry>, Status> {
+        const METHOD: &str = "HistoryService/Regenerate";
         let activity = ActivityGuard::take(&mut request);
         let (id, options) = <(u64, RetryOptions)>::try_from(request.into_inner())
-            .map_err(|error| super::invalid_request("HistoryService/Regenerate", &error))?;
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
         let (command, pending) =
             cancellable_call(|cancel, reply| Command::Retry(id, options, cancel, reply, activity));
-        self.submit(command, pending)
+        self.submit(METHOD, command, pending)
             .await
             .map(|entry| Response::new(entry.into()))
     }
-}
-
-fn failure(error: HistoryError) -> Status {
-    failure_status(RpcFailure::from(error))
 }

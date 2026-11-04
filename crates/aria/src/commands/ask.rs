@@ -7,7 +7,7 @@ use aria_daemon::{
     AskError, AssistantId, ChatRequest, ChatStageKind, Clarify, DaemonSession, DeliveryMode,
     Routing, StopMode, Ticket,
 };
-use aria_settings::rpc::RpcErrorCode;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use clap::Args;
 
 use super::runtime_paths;
@@ -208,10 +208,10 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
         eprintln!("warning: {pending_ticket} could not be cancelled: {error:#}");
     }
     let reply = match reply {
-        Err(AskError::Failed {
+        Err(AskError::Failed(RpcFailure {
             code: RpcErrorCode::Cancelled,
             ..
-        }) if working.cancelled() => std::process::exit(INTERRUPTED),
+        })) if working.cancelled() => std::process::exit(INTERRUPTED),
         reply => reply?,
     };
     match reply.delivery_error {

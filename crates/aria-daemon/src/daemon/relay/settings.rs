@@ -3,14 +3,13 @@
 //! Mac-side audio control, and no folder path on this Mac. Prompt paths, the
 //! vocabulary folder and per-app choices stay on the Mac in reads too.
 
-use crate::ipc::protocol::failure_status;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{Key, Scope};
 
-use super::super::service::SettingsRpc;
+use super::super::service::{self, SettingsRpc};
 use super::redacted;
 
 pub(in crate::daemon) struct LanSettings {
@@ -75,10 +74,13 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         &self,
         _request: Request<wire::CheckSettingsRequest>,
     ) -> Result<Response<wire::CheckSettingsResponse>, Status> {
-        Err(failure_status(RpcFailure::new(
-            RpcErrorCode::PermissionDenied,
-            "a patch is checked on the Mac",
-        )))
+        Err(service::failed(
+            "SettingsService/Check",
+            RpcFailure::new(
+                RpcErrorCode::PermissionDenied,
+                "a patch is checked on the Mac",
+            ),
+        ))
     }
 
     /// The status names keys and quotes the file, which stay on the Mac.
@@ -86,10 +88,13 @@ impl wire::settings_service_server::SettingsService for LanSettings {
         &self,
         _request: Request<wire::GetSettingsStatusRequest>,
     ) -> Result<Response<wire::GetSettingsStatusResponse>, Status> {
-        Err(failure_status(RpcFailure::new(
-            RpcErrorCode::PermissionDenied,
-            "the settings status is read on the Mac",
-        )))
+        Err(service::failed(
+            "SettingsService/GetStatus",
+            RpcFailure::new(
+                RpcErrorCode::PermissionDenied,
+                "the settings status is read on the Mac",
+            ),
+        ))
     }
 }
 
@@ -111,6 +116,7 @@ fn without_mac_choices(snapshot: &mut wire::SettingsSnapshot) {
 /// is allowed; choosing one from a phone is not. Copy output cannot stream,
 /// so it carries the delivery switch the Mac app would have sent alongside.
 pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, Status> {
+    const METHOD: &str = "SettingsService/Update";
     let wire::SettingsPatch {
         output_mode,
         delivery_mode,
@@ -169,19 +175,25 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         .iter()
         .find(|(key, set)| *set && key.scope() != Scope::Phone)
     {
-        return Err(failure_status(RpcFailure::new(
-            RpcErrorCode::PermissionDenied,
-            format!("{key} is only changed on the Mac"),
-        )));
+        return Err(service::failed(
+            METHOD,
+            RpcFailure::new(
+                RpcErrorCode::PermissionDenied,
+                format!("{key} is only changed on the Mac"),
+            ),
+        ));
     }
     if vocabulary_dir
         .as_deref()
         .is_some_and(|path| !path.is_empty())
     {
-        return Err(failure_status(RpcFailure::new(
-            RpcErrorCode::PermissionDenied,
-            "choose the vocabulary folder on the Mac; a phone can only clear it",
-        )));
+        return Err(service::failed(
+            METHOD,
+            RpcFailure::new(
+                RpcErrorCode::PermissionDenied,
+                "choose the vocabulary folder on the Mac; a phone can only clear it",
+            ),
+        ));
     }
     let copies = output_mode == Some(wire::OutputMode::Copy as i32);
     Ok(wire::SettingsPatch {
@@ -207,6 +219,7 @@ mod tests {
     use super::super::super::tasks::Supervised;
     use super::super::SETTINGS_NEED_FIXING;
     use super::*;
+    use crate::ipc::protocol::failure_status;
     use aria_settings::SettingsStatus;
     use aria_settings::SettingsStore;
     use wire::settings_service_server::SettingsService;

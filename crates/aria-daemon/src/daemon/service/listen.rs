@@ -1,11 +1,11 @@
 //! The listen service: wire translation over the daemon's listen slot.
 
-use crate::ipc::protocol::failure_status;
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::listen::ListenState;
 
@@ -28,16 +28,17 @@ impl ListenRpc {
     /// Slot operations lock and join threads, so they run off the async pool.
     async fn blocking<T: Send + 'static>(
         &self,
+        method: &'static str,
         operation: impl FnOnce(&ListenState) -> T + Send + 'static,
     ) -> Result<T, Status> {
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || operation(&state))
             .await
             .map_err(|_join| {
-                failure_status(aria_settings::rpc::RpcFailure::new(
-                    aria_settings::rpc::RpcErrorCode::Internal,
-                    "the listen operation panicked",
-                ))
+                super::failed(
+                    method,
+                    RpcFailure::new(RpcErrorCode::Internal, "the listen operation panicked"),
+                )
             })
     }
 }
@@ -51,13 +52,13 @@ impl wire::listen_service_server::ListenService for ListenRpc {
         const METHOD: &str = "ListenService/Start";
         let output = Option::<std::path::PathBuf>::try_from(request.into_inner())
             .map_err(|error| super::invalid_request(METHOD, &error))?;
-        match self.blocking(move |state| state.start(output)).await? {
-            Ok((transcript, already_listening)) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
-                Ok(Response::new(wire::StartListenResponse {
-                    already_listening,
-                    transcript_path: transcript.display().to_string(),
-                }))
+        match self
+            .blocking(METHOD, move |state| state.start(output))
+            .await?
+        {
+            Ok(started) => {
+                super::served(METHOD);
+                Ok(Response::new(started.into()))
             }
             Err(failure) => Err(super::failed(METHOD, failure)),
         }
@@ -68,13 +69,10 @@ impl wire::listen_service_server::ListenService for ListenRpc {
         _request: Request<wire::StopListenRequest>,
     ) -> Result<Response<wire::StopListenResponse>, Status> {
         const METHOD: &str = "ListenService/Stop";
-        match self.blocking(ListenState::stop).await? {
-            Ok(outcome) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
-                Ok(Response::new(wire::StopListenResponse {
-                    was_listening: outcome.was_listening,
-                    transcript_path: outcome.transcript.display().to_string(),
-                }))
+        match self.blocking(METHOD, ListenState::stop).await? {
+            Ok(stopped) => {
+                super::served(METHOD);
+                Ok(Response::new(stopped.into()))
             }
             Err(failure) => Err(super::failed(METHOD, failure)),
         }
@@ -85,13 +83,9 @@ impl wire::listen_service_server::ListenService for ListenRpc {
         _request: Request<wire::GetListenStatusRequest>,
     ) -> Result<Response<wire::GetListenStatusResponse>, Status> {
         const METHOD: &str = "ListenService/GetStatus";
-        let status = self.blocking(ListenState::status).await?;
+        let status = self.blocking(METHOD, ListenState::status).await?;
         // The app polls this, so info would fill the log.
         tracing::debug!(method = METHOD, status = "ok", "request served");
-        Ok(Response::new(wire::GetListenStatusResponse {
-            listening: status.listening,
-            transcript_path: status.transcript.display().to_string(),
-            error_message: status.error.unwrap_or_default(),
-        }))
+        Ok(Response::new(status.into()))
     }
 }
