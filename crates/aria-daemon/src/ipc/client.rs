@@ -3,7 +3,6 @@
 //! Synchronous: each client owns a single-threaded tokio runtime and blocks on it.
 
 use super::{protocol, wire};
-use crate::daemon::{ListenSnapshot, ListenStarted, ListenStopped};
 use aria_assistant::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
@@ -12,7 +11,7 @@ use aria_voice::dictation::{DictationOutcome, DictationRequest, DictationStage, 
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
-use aria_voice::listen::ListenStage;
+use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use protocol::TransportFailure;
 use std::path::{Path, PathBuf};

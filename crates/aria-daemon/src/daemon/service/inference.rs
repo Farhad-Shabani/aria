@@ -18,7 +18,6 @@ use crate::daemon::inference::{IDLE_INPUT_TIMEOUT, OVERALL_TIMEOUT, QUEUE_CAPACI
 use crate::daemon::relay::presented;
 use crate::inference::{Completion, Event, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, Start};
 use crate::ipc::wire;
-use aria_primitives::error_chain;
 use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
@@ -409,14 +408,13 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
             .access
             .issue(&endpoint)
             .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
-        let response = wire::InferenceInviteResponse::try_from(&invitation).map_err(|error| {
-            super::failed(
-                INVITE,
-                RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)),
-            )
-        })?;
+        let invitation_json = invitation
+            .to_json()
+            .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
         super::served(INVITE);
-        Ok(Response::new(response))
+        Ok(Response::new(wire::InferenceInviteResponse {
+            invitation_json,
+        }))
     }
 
     async fn revoke(

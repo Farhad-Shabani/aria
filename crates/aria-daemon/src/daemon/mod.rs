@@ -58,7 +58,6 @@ pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
 pub use inference::Paths as InferencePaths;
-pub(crate) use inference::identity::Invitation;
 pub use inference::pairing::forget as forget_paired_server;
 #[cfg(any(test, feature = "test-support"))]
 pub use inference::pin_server_for_tests;

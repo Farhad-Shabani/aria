@@ -758,6 +758,7 @@ pub(super) fn identity_error(error: super::identity::Error) -> RemoteClientError
         | Error::Stopped
         | Error::Certificate(_)
         | Error::Invite(_)
+        | Error::Encode(_)
         | Error::Tls(_) => RemoteClientError::Identity,
     }
 }

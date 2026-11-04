@@ -8,22 +8,6 @@ use crate::ipc::wire;
 use aria_voice::transcription::{TranscriptSegment, TranscriptUpdate};
 
 use super::ProtocolError;
-use crate::daemon::Invitation;
-
-impl TryFrom<&Invitation> for wire::InferenceInviteResponse {
-    type Error = ProtocolError;
-
-    fn try_from(invitation: &Invitation) -> Result<Self, Self::Error> {
-        Ok(Self {
-            invitation_json: serde_json::to_vec(invitation).map_err(|source| {
-                ProtocolError::Encode {
-                    field: "invitation",
-                    source,
-                }
-            })?,
-        })
-    }
-}
 
 impl From<Strategy> for i32 {
     fn from(strategy: Strategy) -> Self {

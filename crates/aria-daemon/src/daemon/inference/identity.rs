@@ -29,6 +29,13 @@ pub(crate) struct Invitation {
     pub(super) code: String,
 }
 
+impl Invitation {
+    /// The document a client pairs from.
+    pub(in crate::daemon) fn to_json(&self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(self).map_err(Error::Encode)
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UncheckedInvitation {
@@ -452,6 +459,8 @@ pub enum Error {
     Certificate(#[from] rcgen::Error),
     #[error("failed to issue an invitation")]
     Invite(#[from] PairingError),
+    #[error("failed to encode the invitation")]
+    Encode(#[source] serde_json::Error),
     #[error("the remote TLS access is not usable")]
     Tls(#[from] super::tls::Error),
 }
@@ -485,6 +494,7 @@ impl From<Error> for RpcFailure {
             | Error::InvalidIdentity
             | Error::Certificate(_)
             | Error::Invite(_)
+            | Error::Encode(_)
             | Error::Tls(_) => (RpcErrorCode::Internal, "remote access operation failed"),
         };
         Self::new(code, message)

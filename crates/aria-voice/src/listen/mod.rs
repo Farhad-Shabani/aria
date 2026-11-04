@@ -14,8 +14,27 @@ pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
 pub use tap::SystemAudioCapture;
 
+use std::path::PathBuf;
+
 use crate::transcription::TranscriptionError;
-use aria_settings::rpc::RpcErrorCode;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+
+pub struct ListenStarted {
+    pub already_listening: bool,
+    pub transcript: PathBuf,
+}
+
+pub struct ListenStopped {
+    pub was_listening: bool,
+    pub transcript: PathBuf,
+}
+
+pub struct ListenSnapshot {
+    pub listening: bool,
+    pub transcript: PathBuf,
+    /// How the last session ended, when it failed after Start answered.
+    pub error: Option<RpcFailure>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListenError {

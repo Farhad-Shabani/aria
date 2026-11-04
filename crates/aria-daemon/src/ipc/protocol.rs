@@ -1,7 +1,7 @@
 //! Translation between generated wire messages and domain types.
 
 use super::wire;
-use crate::daemon::{Invite, ListenSnapshot, ListenStarted, ListenStopped, RelayStage};
+use crate::daemon::{Invite, RelayStage};
 use aria_assistant::chat::{
     AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
     PromptCall, Step, Ticket,
@@ -28,7 +28,7 @@ use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
 use aria_voice::history::ClearHistoryResult;
-use aria_voice::listen::ListenStage;
+use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::transcription::LanguageCodeError;
@@ -2502,13 +2502,6 @@ pub enum ProtocolError {
 
     #[error("{0} is out of range")]
     OutOfRange(&'static str),
-
-    #[error("cannot encode {field}")]
-    Encode {
-        field: &'static str,
-        #[source]
-        source: serde_json::Error,
-    },
 
     #[error("the prompt must not be empty")]
     EmptyPrompt,

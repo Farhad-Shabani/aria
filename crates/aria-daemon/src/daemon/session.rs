@@ -533,7 +533,7 @@ pub enum AskError {
     Stream(#[from] ClientError),
 }
 
-pub use super::listen::{ListenSnapshot, ListenStarted, ListenStopped};
+pub use aria_voice::listen::{ListenSnapshot, ListenStarted, ListenStopped};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListenCommandError {

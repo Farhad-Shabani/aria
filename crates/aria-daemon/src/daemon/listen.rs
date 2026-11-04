@@ -14,7 +14,8 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::config::{ListenConfig, SpeakerConfig};
 use aria_voice::listen::{
-    ListenError, ListenEventEmitter, SystemAudioCapture, TranscriptFile, spawn_session,
+    ListenError, ListenEventEmitter, ListenSnapshot, ListenStarted, ListenStopped,
+    SystemAudioCapture, TranscriptFile, spawn_session,
 };
 
 use super::host::DaemonLifetime;
@@ -46,23 +47,6 @@ struct ActiveListen {
     cancel: CancelToken,
     thread: JoinHandle<Result<(), ListenError>>,
     transcript: PathBuf,
-}
-
-pub struct ListenStarted {
-    pub already_listening: bool,
-    pub transcript: PathBuf,
-}
-
-pub struct ListenStopped {
-    pub was_listening: bool,
-    pub transcript: PathBuf,
-}
-
-pub struct ListenSnapshot {
-    pub listening: bool,
-    pub transcript: PathBuf,
-    /// How the last session ended, when it failed after Start answered.
-    pub error: Option<RpcFailure>,
 }
 
 impl ListenState {

@@ -15,6 +15,7 @@ mod code;
 mod decode;
 mod pairing;
 mod settings;
+mod stage;
 
 use crate::ipc::protocol::failure_status;
 use std::time::Duration;
@@ -36,6 +37,7 @@ pub(super) use pairing::{
     load_or_create as load_pairing, mint, presented, require_paired, to_hex,
 };
 pub(super) use settings::LanSettings;
+pub(crate) use stage::RelayStage;
 
 /// The longest recording's PCM, so an oversized upload stops as it streams.
 const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;
@@ -215,13 +217,6 @@ impl From<&RelayError> for RpcErrorCode {
             RelayError::ClientStream(_) => Self::Cancelled,
         }
     }
-}
-
-/// What a relay session tells the phone as it goes.
-pub(crate) enum RelayStage {
-    Transcribing,
-    Completed(String),
-    NoSpeech,
 }
 
 /// What a phone learns of a settings fault: that the Mac needs it fixed.
