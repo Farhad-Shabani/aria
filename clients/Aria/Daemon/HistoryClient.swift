@@ -95,8 +95,7 @@ enum HistoryClient {
             }
         } catch let failure as DaemonFailure {
             throw HistoryFailure(failure)
-        } catch {
-            // Only a cancellation leaves `call` undecoded.
+        } catch is CancellationError {
             throw HistoryFailure.cancelled
         }
     }

@@ -4,8 +4,8 @@
 /// show an error from a global key press, and every outcome that matters to
 /// the user is already on the event stream.
 enum PressClient {
-    /// Bounded like the Rust client: the daemon ends a press sooner itself,
-    /// so this only catches one that stopped answering.
+    /// The daemon ends a press sooner itself, so this only catches one that
+    /// stopped answering.
     private static let pressTimeout = Duration.seconds(670)
 
     /// Reads one press to its transcript. Nil for a stop-accepted and for a

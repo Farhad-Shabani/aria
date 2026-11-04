@@ -7,7 +7,7 @@ final class PhonePairingTests: XCTestCase {
     func testStatusTellsRelayOffFromDaemonOffFromTheRest() {
         XCTAssertEqual(PhonePairing.status(for: DaemonFailure.unimplemented), .relayOff)
         XCTAssertEqual(PhonePairing.status(for: DaemonFailure.unavailable), .daemonOff)
-        XCTAssertEqual(PhonePairing.status(for: DaemonFailure.transport(.internalError)), .failed)
+        XCTAssertEqual(PhonePairing.status(for: DaemonFailure.other), .failed)
     }
 
     func testNextPollWaitsForExpiryWhenSoonerAndNeverSpins() {

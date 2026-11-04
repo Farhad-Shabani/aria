@@ -1,7 +1,6 @@
 import GRPCCore
 import GRPCProtobuf
 
-/// The daemon's SpeechService.
 enum SpeechClient {
     /// Returns once the text has been read aloud.
     static func speak(_ text: String) async throws {

@@ -6,7 +6,7 @@ final class SpeakerClientTests: XCTestCase {
     private let fallback = "Aria couldn’t save the voice. Try again."
 
     func testAFailureWithoutItsOwnCopyUsesTheFallback() {
-        XCTAssertEqual(SpeakerFailure(.transport(.internalError), fallback: fallback).errorDescription, fallback)
+        XCTAssertEqual(SpeakerFailure(.other, fallback: fallback).errorDescription, fallback)
         XCTAssertEqual(SpeakerFailure(.refused(.internal), fallback: fallback).errorDescription, fallback)
     }
 

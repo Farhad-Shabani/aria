@@ -42,8 +42,8 @@ enum DictationClient {
             request.projectDirectory = projectDirectory
         }
         // A transcript handed back has nowhere to stream to, so the daemon
-        // refuses the pairing. Left absent this inherits the stored mode,
-        // which is streaming by default.
+        // refuses transcript-only with streaming delivery. Left absent, the
+        // mode comes from settings, where streaming is the default.
         request.deliveryMode = .complete
         let sent = request
         return try await DaemonTransport.call(timeout: timeout) { client, options in

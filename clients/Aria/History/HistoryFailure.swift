@@ -17,9 +17,7 @@ enum HistoryFailure: Error, Equatable {
             case .timeout: .timeout
             case .cancelled: .cancelled
             case .unimplemented: .unsupported
-            case .transport(.resourceExhausted): .busy
-            case .transport(.notFound): .missing
-            case .refused, .transport, .invalidResponse: .failed
+            case .refused, .other, .invalidResponse: .failed
             }
     }
 

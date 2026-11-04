@@ -8,7 +8,7 @@ final class DaemonTransportTests: XCTestCase {
     private var directory: URL!
 
     override func setUpWithError() throws {
-        // Unix socket paths are short-lived and length-limited, so a temp dir of our own.
+        // A Unix socket path is length-limited, so a short temp dir.
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("aria-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }

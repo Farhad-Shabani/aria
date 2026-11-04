@@ -32,12 +32,22 @@ final class DaemonFailureTests: XCTestCase {
         XCTAssertEqual(DaemonFailure(RPCError(code: .unimplemented, message: "")), .unimplemented)
         XCTAssertEqual(DaemonFailure(RPCError(code: .deadlineExceeded, message: "")), .timeout)
         XCTAssertEqual(DaemonFailure(RPCError(code: .cancelled, message: "")), .cancelled)
-        XCTAssertEqual(DaemonFailure(RPCError(code: .internalError, message: "raw")), .transport(.internalError))
+        XCTAssertEqual(DaemonFailure(RPCError(code: .internalError, message: "raw")), .other)
     }
 
-    func testAnErrorOutsideGRPCIsUnknownTransport() {
+    func testAnErrorOutsideGRPCIsOther() {
         struct Broken: Error {}
-        XCTAssertEqual(DaemonFailure(Broken()), .transport(.unknown))
+        XCTAssertEqual(DaemonFailure(Broken()), .other)
+    }
+
+    func testARawRefusedStatusIsDecodedBeforeItIsJudged() throws {
+        XCTAssertTrue(DaemonSettings.refusesPatch(try refusal(.permissionDenied, under: .permissionDenied)))
+        XCTAssertTrue(DaemonSettings.refusesPatch(DaemonFailure.refused(.invalidRequest)))
+        XCTAssertFalse(DaemonSettings.refusesPatch(RPCError(code: .unavailable, message: "")))
+    }
+
+    func testAnInvalidSettingsFileKeepsTheEditWaiting() {
+        XCTAssertFalse(DaemonSettings.refusesPatch(DaemonFailure.refused(.settingsInvalid)))
     }
 
     func testHistoryReadsTheVerdictBeforeTheProjection() {
@@ -46,8 +56,7 @@ final class DaemonFailureTests: XCTestCase {
         XCTAssertEqual(HistoryFailure(.refused(.shuttingDown)), .offline)
         XCTAssertEqual(HistoryFailure(.unavailable), .offline)
         XCTAssertEqual(HistoryFailure(.timeout), .timeout)
-        XCTAssertEqual(HistoryFailure(.transport(.resourceExhausted)), .busy)
-        XCTAssertEqual(HistoryFailure(.transport(.notFound)), .missing)
+        XCTAssertEqual(HistoryFailure(.other), .failed)
         XCTAssertEqual(HistoryFailure(.invalidResponse), .failed)
     }
 }

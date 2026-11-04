@@ -49,16 +49,15 @@ struct AssistantModel: Equatable, Sendable {
     let name: String
 }
 
-/// Where an ask goes: the project in front and the assistant settings chose.
+/// Where an ask goes: the project in front, and the assistant chosen in settings.
 struct AskTarget: Sendable {
     let workdir: String
     let assistantID: Aria_Daemon_V1_AssistantId
 }
 
-/// The daemon's ChatService.
 enum ChatClient {
     static func assistants() async throws -> [Assistant] {
-        try await DaemonTransport.call(timeout: .seconds(5)) { client, options in
+        try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .listAssistants(request: ClientRequest(message: .init()), options: options) {
                     try assistants(from: $0.message.assistants)

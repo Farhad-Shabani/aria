@@ -481,7 +481,7 @@ final class SetupState: ObservableObject {
     private static func notice(
         for error: any Error, during step: String, otherwise fallback: String = unknownFailure
     ) -> String? {
-        DaemonTransport.isCancellation(error) ? nil : message(for: error, during: step, otherwise: fallback)
+        error is CancellationError ? nil : message(for: error, during: step, otherwise: fallback)
     }
 }
 

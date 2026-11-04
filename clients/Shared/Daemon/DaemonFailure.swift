@@ -15,13 +15,14 @@ enum DaemonFailure: Error, Equatable {
     /// An answer this build cannot read.
     case invalidResponse
     case refused(Aria_Daemon_V1_ErrorCode)
-    case transport(RPCError.Code)
+    /// Any other status without a detail. The code is in the transport's log.
+    case other
 
     private static let detailTypeURL = "type.googleapis.com/aria.daemon.v1.RpcError"
 
     init(_ error: any Error) {
         guard let rpc = error as? RPCError else {
-            self = .transport(.unknown)
+            self = .other
             return
         }
         if let code = Self.refusal(in: rpc) {
@@ -33,7 +34,7 @@ enum DaemonFailure: Error, Equatable {
         case .unimplemented: self = .unimplemented
         case .deadlineExceeded: self = .timeout
         case .cancelled: self = .cancelled
-        default: self = .transport(rpc.code)
+        default: self = .other
         }
     }
 

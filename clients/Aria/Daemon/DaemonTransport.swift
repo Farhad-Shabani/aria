@@ -48,8 +48,4 @@ enum DaemonTransport {
             transportSecurity: .plaintext
         )
     }
-
-    static func isCancellation(_ error: any Error) -> Bool {
-        error is CancellationError
-    }
 }

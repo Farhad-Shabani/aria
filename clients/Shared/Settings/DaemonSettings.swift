@@ -117,11 +117,14 @@ final class DaemonSettings: ObservableObject {
     }
 
     /// True when the daemon rejected the edit itself, so retrying won't help.
-    /// False for any other error, such as an unreachable daemon.
-    static func refusesPatch(_ error: any Error) -> Bool {
-        guard case .refused(let code) = error as? DaemonFailure else { return false }
+    /// An invalid settings file is not a refusal: the edit waits for the fix.
+    /// False for any other error, such as an unreachable daemon. The phone's
+    /// transport throws the raw status, so it is decoded here.
+    nonisolated static func refusesPatch(_ error: any Error) -> Bool {
+        let failure = error as? DaemonFailure ?? DaemonFailure(error)
+        guard case .refused(let code) = failure else { return false }
         switch code {
-        case .invalidRequest, .permissionDenied, .unauthenticated, .settingsInvalid: return true
+        case .invalidRequest, .permissionDenied, .unauthenticated: return true
         default: return false
         }
     }
