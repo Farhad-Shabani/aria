@@ -98,8 +98,11 @@ fn write_records(path: &Path, records: &[SessionRecord]) -> Result<(), SessionSt
     };
     // A temp file opens private to its owner, and the rename replaces a file
     // that may have been written under the umask.
-    let mut file =
-        tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new("."))).map_err(write)?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let mut file = tempfile::NamedTempFile::new_in(directory).map_err(write)?;
     file.write_all(json.as_bytes()).map_err(write)?;
     file.persist(path).map_err(|error| write(error.error))?;
     Ok(())

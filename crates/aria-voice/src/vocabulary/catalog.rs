@@ -83,7 +83,9 @@ impl From<sqlite::Error> for Error {
             sqlite::Error::Cancelled => Self::Cancelled,
             error @ sqlite::Error::Io { .. } => Self::Io(io::Error::other(error)),
             sqlite::Error::Database(error) => error.into(),
-            sqlite::Error::Path | sqlite::Error::Linked => Self::InvalidData,
+            sqlite::Error::Path | sqlite::Error::Linked | sqlite::Error::DirectoryNotPrivate => {
+                Self::InvalidData
+            }
             sqlite::Error::Busy => Self::Io(io::ErrorKind::WouldBlock.into()),
         }
     }

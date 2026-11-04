@@ -147,6 +147,7 @@ impl From<aria_platform::sqlite::Error> for HistoryError {
             Error::Database(error) => error.into(),
             Error::Path
             | Error::Directory(_)
+            | Error::DirectoryNotPrivate
             | Error::File(_)
             | Error::Linked
             | Error::Replaced

@@ -69,8 +69,10 @@ impl DerefMut for Database {
 pub enum Error {
     #[error("the database path has no directory or file name")]
     Path,
-    #[error("the database directory is not private")]
+    #[error("the database directory could not be prepared")]
     Directory(#[from] PrivateDirectoryError),
+    #[error("the database directory is not private")]
+    DirectoryNotPrivate,
     #[error("a database file is not private")]
     File(#[from] PrivateFileError),
     #[error("a database file has more than one link")]
@@ -131,7 +133,7 @@ impl Database {
                     &sidecar,
                     &stat,
                     policy.max_bytes + SIDECAR_ALLOWANCE,
-                    &DriftedMode::Refuse,
+                    &policy.drifted_mode,
                 )?;
             }
         }
@@ -168,6 +170,9 @@ impl Database {
 /// Opens a directory private to the current user, walking down from `/` one
 /// component at a time so no link on the way is followed.
 pub fn open_directory(path: &Path) -> Result<File, Error> {
+    if !path.is_absolute() {
+        return Err(Error::Path);
+    }
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let mut current = File::from(
         rustix::fs::open("/", flags, Mode::empty()).map_err(io("open the database directory"))?,
@@ -189,8 +194,16 @@ pub fn open_directory(path: &Path) -> Result<File, Error> {
     let metadata = current
         .metadata()
         .map_err(io("inspect the database directory"))?;
-    if metadata.uid() != rustix::process::getuid().as_raw() || metadata.mode() & 0o777 != 0o700 {
-        return Err(Error::Replaced);
+    let expected_uid = rustix::process::getuid().as_raw();
+    if metadata.uid() != expected_uid {
+        return Err(PrivateDirectoryError::WrongOwner {
+            expected_uid,
+            actual_uid: metadata.uid(),
+        }
+        .into());
+    }
+    if metadata.mode() & 0o777 != 0o700 {
+        return Err(Error::DirectoryNotPrivate);
     }
     Ok(current)
 }
@@ -369,6 +382,14 @@ mod tests {
             .is_err()
         );
         assert!(!real.join("data.db").exists());
+    }
+
+    #[test]
+    fn a_relative_directory_is_refused() {
+        assert!(matches!(
+            open_directory(Path::new("store")),
+            Err(Error::Path)
+        ));
     }
 
     #[test]

@@ -552,9 +552,13 @@ mod tests {
     }
 
     #[test]
-    fn a_public_legacy_file_is_made_private() {
-        let (_dir, path) = with_version(0);
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    fn a_public_legacy_file_and_its_journal_are_made_private() {
+        let (dir, path) = with_version(0);
+        let journal = dir.path().join("memory.db-journal");
+        std::fs::write(&journal, "").expect("writes a journal");
+        for file in [&path, &journal] {
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        }
         drop(Store::open(&path).expect("opens"));
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);

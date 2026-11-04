@@ -85,11 +85,17 @@ impl TranscriptFile {
             .create(true)
             .append(true)
             .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .custom_flags(
+                (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+            )
             .open(&path)?;
-        // In a shared folder another user can plant the file first.
+        // In a shared folder another user can plant the file first. A planted
+        // FIFO would block the open without `NONBLOCK`.
         let metadata = file.metadata()?;
-        if metadata.uid() != rustix::process::getuid().as_raw() || metadata.nlink() != 1 {
+        if !metadata.is_file()
+            || metadata.uid() != rustix::process::getuid().as_raw()
+            || metadata.nlink() != 1
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "the transcript file belongs to another user or has other links",
@@ -434,6 +440,19 @@ mod tests {
         fs::hard_link(&target, &second).unwrap();
         assert!(TranscriptFile::create_at(second).is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "");
+
+        let fifo = directory.path().join("fifo.txt");
+        let mut mkfifo = std::process::Command::new("mkfifo");
+        mkfifo.arg(&fifo);
+        let outcome = aria_primitives::process::ChildProcess::spawn(&mut mkfifo)
+            .unwrap()
+            .wait_until(Instant::now() + Duration::from_secs(5), || false)
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            aria_primitives::process::WaitOutcome::Exited(status) if status.success()
+        ));
+        assert!(TranscriptFile::create_at(fifo).is_err());
     }
 
     #[test]
