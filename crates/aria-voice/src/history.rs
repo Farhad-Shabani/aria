@@ -138,6 +138,25 @@ impl From<HistoryError> for RpcFailure {
     }
 }
 
+impl From<aria_platform::sqlite::Error> for HistoryError {
+    fn from(error: aria_platform::sqlite::Error) -> Self {
+        use aria_platform::sqlite::Error;
+        match error {
+            Error::Busy => Self::Busy,
+            Error::TooLarge => Self::TooLarge,
+            Error::Database(error) => error.into(),
+            Error::Path
+            | Error::Directory(_)
+            | Error::DirectoryNotPrivate
+            | Error::File(_)
+            | Error::Linked
+            | Error::Replaced
+            | Error::Cancelled
+            | Error::Io { .. } => Self::Storage,
+        }
+    }
+}
+
 impl From<rusqlite::Error> for HistoryError {
     fn from(error: rusqlite::Error) -> Self {
         match error {

@@ -344,6 +344,7 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "objc2-ui-kit",
+ "rusqlite",
  "rustix",
  "serde",
  "tempfile",

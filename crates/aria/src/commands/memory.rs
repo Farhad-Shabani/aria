@@ -18,6 +18,8 @@ pub(super) enum MemoryCommand {
     Why { id: i64 },
     /// Delete a fact for good
     Forget { id: i64 },
+    /// Delete every fact, learned substitution, and remembered ask
+    Clear,
     /// Approve or reject each fact waiting for review
     Review,
     /// Extract facts from every session with new turns, now
@@ -87,6 +89,16 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             store.forget(id)?;
             aria_assistant::memory::write_profile(&store, &dir)?;
             println!("Forgotten");
+        }
+        MemoryCommand::Clear => {
+            let (store, dir) = open_store()?;
+            if answer("Delete every fact, learned substitution, and remembered ask? [y/N] ")? != "y"
+            {
+                return Ok(());
+            }
+            store.clear()?;
+            aria_assistant::memory::write_profile(&store, &dir)?;
+            println!("Memory cleared");
         }
         MemoryCommand::Review => {
             let (store, dir) = open_store()?;

@@ -33,18 +33,12 @@ pub(crate) fn consolidate_backlog(
     let terms = load_terms(&dir.join(LEXICON_FILE));
     let sessions = store.sessions()?;
     let mut report = ConsolidationReport::default();
-    for (session, history_len) in sessions {
+    for (session, through) in sessions {
         if cancel.is_cancelled() {
             break;
         }
         let outcome = consolidate_one(
-            store,
-            extractor,
-            cancel,
-            &session,
-            history_len,
-            max_facts,
-            &terms,
+            store, extractor, cancel, &session, through, max_facts, &terms,
         );
         match outcome {
             Ok(Some(result)) => report.results.push(result),
@@ -56,6 +50,9 @@ pub(crate) fn consolidate_backlog(
         }
     }
     if !cancel.is_cancelled() {
+        if let Err(error) = store.prune_turns() {
+            tracing::warn!(error = %error_chain(&error), "old memory asks were not pruned");
+        }
         write_profile(store, dir)?;
     }
     Ok(report)
@@ -67,29 +64,29 @@ fn consolidate_one(
     extractor: &dyn Extractor,
     cancel: &CancelToken,
     session: &str,
-    history_len: u32,
+    through: i64,
     max_facts: u32,
     terms: &[String],
 ) -> Result<Option<ConsolidationResult>, ConsolidateError> {
-    if history_len <= store.consolidated_history_len(session)? {
+    if through <= store.consolidated_through(session)? {
         return Ok(None);
     }
-    let Some(start) = store.claim_consolidation(session, history_len)? else {
+    let Some(after) = store.claim_consolidation(session, through)? else {
         return Ok(None);
     };
     let outcome = (|| {
-        let turns = store.turns(session, start, history_len)?;
+        let turns = store.turns(session, after, through)?;
         let window = Window {
             session,
             turns: &turns,
-            end: history_len,
+            through,
         };
         consolidate_session(store, extractor, cancel, window, max_facts, terms)
     })();
     match outcome {
         Ok(result) => Ok(Some(result)),
         Err(error) => {
-            store.release_consolidation(session, history_len, start)?;
+            store.release_consolidation(session, through, after)?;
             Err(error)
         }
     }
@@ -217,6 +214,46 @@ mod tests {
         assert_eq!(results[0].turns, 1);
     }
 
+    /// Makes the run's claim stale and clears memory while the run waits on
+    /// its extraction.
+    struct ClearsMidway {
+        path: std::path::PathBuf,
+    }
+
+    impl Extractor for ClearsMidway {
+        fn extract(&self, _message: &str, _cancel: &CancelToken) -> Result<String, AssistantError> {
+            Connection::open(&self.path)
+                .expect("opens")
+                .execute(
+                    "UPDATE consolidations SET claimed_at = \
+                     strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', '-601 seconds')",
+                    [],
+                )
+                .expect("ages the claim");
+            Store::open(&self.path)
+                .expect("opens")
+                .clear()
+                .expect("clears");
+            Ok(ONE_FACT.to_owned())
+        }
+    }
+
+    #[test]
+    fn a_run_whose_memory_was_cleared_writes_nothing() {
+        let (dir, store) = fixture();
+        speak(&store, "a", "hi");
+        let extractor = ClearsMidway {
+            path: dir.path().join(DB_FILE),
+        };
+
+        let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
+            .expect("runs");
+
+        assert_eq!(report.failed, 1);
+        assert!(store.active_facts().expect("reads").is_empty());
+        assert_eq!(store.consolidated_through("a").expect("reads"), 0);
+    }
+
     #[test]
     fn an_unreadable_reply_is_retried_next_run() {
         let (dir, store) = fixture();
@@ -257,8 +294,8 @@ mod tests {
         assert_eq!(report.failed, 1);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].added, 1);
-        assert_eq!(store.consolidated_history_len("a").expect("watermark"), 0);
-        assert_eq!(store.consolidated_history_len("b").expect("watermark"), 1);
+        assert_eq!(store.consolidated_through("a").expect("watermark"), 0);
+        assert_eq!(store.consolidated_through("b").expect("watermark"), 2);
     }
 
     #[test]
@@ -291,7 +328,7 @@ mod tests {
             consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10),
             Err(StoreError::Profile(_))
         ));
-        assert_eq!(store.consolidated_history_len("a").expect("watermark"), 1);
+        assert_eq!(store.consolidated_through("a").expect("watermark"), 1);
         std::fs::rename(&profile, dir.path().join("blocked-profile"))
             .expect("restores profile publication");
         assert!(backlog(&store, &extractor, dir.path()).is_empty());

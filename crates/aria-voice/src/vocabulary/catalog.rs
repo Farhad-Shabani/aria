@@ -1,15 +1,13 @@
 use std::ffi::OsString;
-use std::fs::File;
 use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
-use rustix::fs::{Mode, OFlags};
+use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
+use rusqlite::{OptionalExtension, params};
 
 use super::{
     Candidate, Discovery, MAX_CANDIDATES, MAX_SOURCE_BYTES, MAX_TERMS, Source, SourceKind,
@@ -18,12 +16,16 @@ use super::{
 
 const SCHEMA_VERSION: u32 = 2;
 const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
+const DATABASE_POLICY: Policy = Policy {
+    max_bytes: MAX_DATABASE_BYTES,
+    busy_timeout: Duration::from_millis(250),
+    ownership: Ownership::Shared,
+    drifted_mode: DriftedMode::Refuse,
+};
 
 pub struct Catalog {
-    connection: Connection,
+    connection: Database,
     cancelled: CancelToken,
-    _directory: File,
-    _database: File,
 }
 
 pub struct CachedScope {
@@ -71,93 +73,35 @@ impl From<rusqlite::Error> for Error {
     }
 }
 
+impl From<sqlite::Error> for Error {
+    fn from(error: sqlite::Error) -> Self {
+        match error {
+            sqlite::Error::Directory(error) => Self::Directory(error),
+            sqlite::Error::File(error) => Self::File(error),
+            sqlite::Error::TooLarge => Self::TooLarge,
+            sqlite::Error::Replaced => Self::Replaced,
+            sqlite::Error::Cancelled => Self::Cancelled,
+            error @ sqlite::Error::Io { .. } => Self::Io(io::Error::other(error)),
+            sqlite::Error::Database(error) => error.into(),
+            sqlite::Error::Path | sqlite::Error::Linked | sqlite::Error::DirectoryNotPrivate => {
+                Self::InvalidData
+            }
+            sqlite::Error::Busy => Self::Io(io::ErrorKind::WouldBlock.into()),
+        }
+    }
+}
+
 impl Catalog {
     pub fn open(directory: &Path, cancelled: CancelToken) -> Result<Self, Error> {
-        check_cancelled(&cancelled)?;
-        private_fs::prepare_directory(directory)?;
-        check_cancelled(&cancelled)?;
-        let directory = directory.canonicalize()?;
-        check_cancelled(&cancelled)?;
-        let directory_handle = super::discover::open_directory(&directory)?;
-        check_cancelled(&cancelled)?;
-        let metadata = directory_handle.metadata()?;
-        check_cancelled(&cancelled)?;
-        if !metadata.is_dir()
-            || metadata.uid() != rustix::process::getuid().as_raw()
-            || metadata.mode() & 0o777 != 0o700
-        {
-            return Err(Error::InvalidData);
-        }
-        let flags =
-            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-        let descriptor = rustix::fs::openat(
-            &directory_handle,
-            "catalog.db",
-            flags,
-            Mode::RUSR | Mode::WUSR,
-        )
-        .map_err(io::Error::from)?;
-        check_cancelled(&cancelled)?;
-        let database = File::from(descriptor);
-        let before = private_fs::verify_file(&database)?;
-        check_cancelled(&cancelled)?;
-        if before.nlink() != 1 {
-            return Err(Error::InvalidData);
-        }
-        if before.len() > MAX_DATABASE_BYTES {
-            return Err(Error::TooLarge);
-        }
-        for sidecar in ["catalog.db-journal", "catalog.db-wal", "catalog.db-shm"] {
-            check_cancelled(&cancelled)?;
-            match rustix::fs::openat(
-                &directory_handle,
-                sidecar,
-                OFlags::RDWR | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-                Mode::empty(),
-            ) {
-                Ok(descriptor) => {
-                    let metadata = private_fs::verify_file(&File::from(descriptor))?;
-                    check_cancelled(&cancelled)?;
-                    if metadata.nlink() != 1 {
-                        return Err(Error::InvalidData);
-                    }
-                    if metadata.len() > MAX_DATABASE_BYTES {
-                        return Err(Error::TooLarge);
-                    }
-                }
-                Err(rustix::io::Errno::NOENT) => {}
-                Err(error) => return Err(Error::Io(error.into())),
-            }
-        }
-        check_cancelled(&cancelled)?;
-        let path = directory.join("catalog.db");
-        let connection = Connection::open_with_flags(
-            &path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        )?;
-        check_cancelled(&cancelled)?;
+        let connection =
+            Database::open(&directory.join("catalog.db"), &DATABASE_POLICY, &cancelled)?;
         let progress = cancelled.clone();
         connection.progress_handler(1_000, Some(move || progress.is_cancelled()))?;
-        let after = std::fs::symlink_metadata(&path)?;
-        check_cancelled(&cancelled)?;
-        if before.dev() != after.dev() || before.ino() != after.ino() || !after.is_file() {
-            return Err(Error::Replaced);
-        }
-        connection.busy_timeout(Duration::from_millis(250))?;
         let schema: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if schema > SCHEMA_VERSION {
             return Err(Error::UnsupportedSchema(schema));
         }
         connection.pragma_update(None, "foreign_keys", true)?;
-        connection.pragma_update(None, "trusted_schema", false)?;
-        let page_size: u32 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
-        connection.pragma_update(
-            None,
-            "max_page_count",
-            (MAX_DATABASE_BYTES / u64::from(page_size)) as u32,
-        )?;
         check_cancelled(&cancelled)?;
         if schema < SCHEMA_VERSION {
             let transaction = rusqlite::Transaction::new_unchecked(
@@ -204,8 +148,6 @@ impl Catalog {
         Ok(Self {
             connection,
             cancelled,
-            _directory: directory_handle,
-            _database: database,
         })
     }
 
@@ -577,8 +519,9 @@ fn validate_candidate(candidate: &Candidate, input_bytes: usize) -> Result<(), E
 mod tests {
     use super::super::Coverage;
     use super::*;
+    use rusqlite::Connection;
     use std::fs;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
     fn discovery(root: &Path) -> Discovery {
         Discovery {

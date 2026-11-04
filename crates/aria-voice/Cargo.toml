@@ -16,7 +16,7 @@ test-support = [ "aria-kit/test-support" ]
 
 [dependencies]
 aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
-aria-platform     = { workspace = true }
+aria-platform     = { workspace = true, features = [ "sqlite" ] }
 aria-primitives   = { workspace = true }
 aria-segmentation = { workspace = true }
 aria-settings     = { workspace = true }
