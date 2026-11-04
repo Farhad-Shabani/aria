@@ -867,10 +867,7 @@ impl TryFrom<&wire::EnrolledSpeaker> for EnrolledSpeaker {
     fn try_from(speaker: &wire::EnrolledSpeaker) -> Result<Self, Self::Error> {
         Ok(Self {
             name: speaker_name(&speaker.name)?,
-            role: decode_role(speaker.role)?.ok_or(ProtocolError::InvalidEnum {
-                field: "role",
-                value: speaker.role,
-            })?,
+            role: role(speaker.role)?,
             enrolled_at: speaker.enrolled_at_seconds,
         })
     }
