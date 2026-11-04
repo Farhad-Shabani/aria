@@ -317,7 +317,7 @@ impl<C: AudioCapture> Enroller<C> {
                 tracing::info!(status = "cancelled", "a speaker enrollment ended");
                 events.emit(EnrollmentStage::Cancelled);
             }
-            Err(error) => events.emit(EnrollmentStage::Failed(error.code())),
+            Err(error) => events.emit(EnrollmentStage::Failed(error.into())),
         }
         result
     }
@@ -503,26 +503,26 @@ impl From<EnrollmentError> for EnrollError {
     }
 }
 
-impl EnrollError {
-    pub fn code(&self) -> RpcErrorCode {
-        match self {
-            Self::Busy => RpcErrorCode::Busy,
-            Self::Unsupported => RpcErrorCode::Unsupported,
-            Self::Cancelled => RpcErrorCode::Cancelled,
-            Self::Timeout(_) => RpcErrorCode::OverallTimeout,
-            Self::Model(_) => RpcErrorCode::SpeakerModelMissing,
-            Self::AlreadyEnrolled | Self::Profile(ProfileError::AlreadyStored) => {
-                RpcErrorCode::SpeakerAlreadyEnrolled
+impl From<&EnrollError> for RpcErrorCode {
+    fn from(error: &EnrollError) -> Self {
+        match error {
+            EnrollError::Busy => Self::Busy,
+            EnrollError::Unsupported => Self::Unsupported,
+            EnrollError::Cancelled => Self::Cancelled,
+            EnrollError::Timeout(_) => Self::OverallTimeout,
+            EnrollError::Model(_) => Self::SpeakerModelMissing,
+            EnrollError::AlreadyEnrolled | EnrollError::Profile(ProfileError::AlreadyStored) => {
+                Self::SpeakerAlreadyEnrolled
             }
-            Self::NotEnrolled => RpcErrorCode::SpeakerNotEnrolled,
-            Self::SampleCount { .. } => RpcErrorCode::InvalidRequest,
-            Self::NoSpeech => RpcErrorCode::SpeakerNoSpeech,
-            Self::Enrollment(EnrollmentError::Inconsistent { .. }) => {
-                RpcErrorCode::SpeakerInconsistentSamples
+            EnrollError::NotEnrolled => Self::SpeakerNotEnrolled,
+            EnrollError::SampleCount { .. } => Self::InvalidRequest,
+            EnrollError::NoSpeech => Self::SpeakerNoSpeech,
+            EnrollError::Enrollment(EnrollmentError::Inconsistent { .. }) => {
+                Self::SpeakerInconsistentSamples
             }
-            Self::Enrollment(_) => RpcErrorCode::Internal,
-            Self::Capture(_) => RpcErrorCode::CaptureFailed,
-            Self::Profile(_) => RpcErrorCode::SpeakerProfileWriteFailed,
+            EnrollError::Enrollment(_) => Self::Internal,
+            EnrollError::Capture(_) => Self::CaptureFailed,
+            EnrollError::Profile(_) => Self::SpeakerProfileWriteFailed,
         }
     }
 }

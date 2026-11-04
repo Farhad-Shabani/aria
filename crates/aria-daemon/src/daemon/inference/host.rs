@@ -231,7 +231,7 @@ async fn public_router(
         .await;
     let authentication = Arc::clone(&access);
     let paired = move |request: tonic::Request<()>| {
-        authenticate(&authentication, &request)?;
+        authenticate("InferenceService/Transcribe", &authentication, &request)?;
         Ok(request)
     };
     tonic::transport::Server::builder()
@@ -249,10 +249,9 @@ async fn public_router(
             .max_encoding_message_size(MAX_RESPONSE_BYTES),
         )
         .add_service(
-            wire::pairing_service_server::PairingServiceServer::new(InferencePairingRpc::new(
-                Arc::clone(&access),
-                jobs.clone(),
-            ))
+            wire::inference_pairing_service_server::InferencePairingServiceServer::new(
+                InferencePairingRpc::new(Arc::clone(&access), jobs.clone()),
+            )
             .max_decoding_message_size(1024),
         )
         .add_service(InterceptedService::new(service, paired))
@@ -504,12 +503,14 @@ pub(in crate::daemon) mod tests {
         }
 
         async fn pair(&mut self) {
-            wire::pairing_service_client::PairingServiceClient::new(self.channel.clone())
-                .pair(wire::PairRequest {
-                    code: self.invite.code.clone(),
-                })
-                .await
-                .unwrap();
+            wire::inference_pairing_service_client::InferencePairingServiceClient::new(
+                self.channel.clone(),
+            )
+            .pair(wire::InferencePairRequest {
+                code: self.invite.code.clone(),
+            })
+            .await
+            .unwrap();
             self.client.remember(&self.invite).unwrap();
             self.channel = tls::endpoint(
                 &self.client,
@@ -718,13 +719,14 @@ pub(in crate::daemon) mod tests {
             tonic::Code::Unauthenticated
         );
         fixture.pair().await;
-        let replay =
-            wire::pairing_service_client::PairingServiceClient::new(fixture.channel.clone())
-                .pair(wire::PairRequest {
-                    code: fixture.invite.code.clone(),
-                })
-                .await
-                .unwrap_err();
+        let replay = wire::inference_pairing_service_client::InferencePairingServiceClient::new(
+            fixture.channel.clone(),
+        )
+        .pair(wire::InferencePairRequest {
+            code: fixture.invite.code.clone(),
+        })
+        .await
+        .unwrap_err();
         assert_eq!(replay.code(), tonic::Code::Unauthenticated);
         assert_eq!(
             info(fixture.channel.clone()).await.unwrap().engine_id,
@@ -753,7 +755,7 @@ pub(in crate::daemon) mod tests {
         let admin = wire::inference_admin_service_client::InferenceAdminServiceClient::new(
             fixture.channel.clone(),
         )
-        .issue_invite(wire::InferenceInviteRequest {
+        .invite(wire::InferenceInviteRequest {
             endpoint: fixture.invite.endpoint.to_string(),
         })
         .await

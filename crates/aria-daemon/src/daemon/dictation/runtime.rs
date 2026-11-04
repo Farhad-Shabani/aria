@@ -2,7 +2,7 @@
 
 use super::super::context::Context;
 use super::super::subscriptions::Subscriptions;
-use super::super::transcripts::{History, TranscriptStore};
+use super::super::transcripts::TranscriptStore;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::assembly::{
     BuiltDictation, DictationInitializationError, ModelLoading, RetryTarget, RuntimeExecutor,
@@ -23,7 +23,7 @@ use aria_voice::dictation::{
     DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
     subscribers::DictationSubscribers,
 };
-use aria_voice::history::{HistoryEntry, HistoryError, RetryOptions};
+use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
 use aria_voice::transcription::Language;
 use std::sync::Arc;
@@ -260,13 +260,6 @@ impl DictationRuntime {
             .is_some_and(|ready| ready.coordinator.stop_recording(recording))
     }
 
-    /// Announces a stage on the same channel a press uses, so the Mac's
-    /// status pill and captions see a relayed recording too. Callers never
-    /// announce Recording: nothing was captured here.
-    pub(in crate::daemon) fn announce(&self, stage: DictationStage) {
-        self.emitter.emit(stage);
-    }
-
     pub(in crate::daemon) fn emitter_for_call(
         &self,
         sink: impl Fn(DictationStage) + Send + 'static,
@@ -297,35 +290,65 @@ impl DictationRuntime {
     pub(in crate::daemon) fn history_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(None)
+        self.settings_for(None, HistorySource::Local)
     }
 
     /// A phone's dictation lands in whatever app is in front on this Mac.
     pub(in crate::daemon) fn relay_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(aria_platform::delivery::frontmost_application())
+        self.settings_for(
+            aria_platform::delivery::frontmost_application(),
+            HistorySource::Relay,
+        )
     }
 
     fn settings_for(
         &self,
         application: Option<aria_platform::delivery::Application>,
+        source: HistorySource,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings
+        let snapshot = self
+            .settings
             .snapshot()
-            .map(|snapshot| {
-                DictationSettings::resolve(
-                    snapshot.settings,
-                    DictationRequest::new(StopMode::OnSilence),
-                    application,
-                )
-            })
-            .map_err(DictationRuntimeError::Settings)
+            .map_err(DictationRuntimeError::Settings)?;
+        let mut settings = DictationSettings::resolve(
+            snapshot.settings,
+            DictationRequest::new(StopMode::OnSilence),
+            application,
+        );
+        settings.source = source;
+        Ok(settings)
     }
 
-    pub(in crate::daemon) fn history(&self) -> History {
-        let engine = self.ready().map_or(DEFERRED_ENGINE, |ready| ready.engine);
-        History::new(Arc::clone(&self.transcripts), engine)
+    /// Announces a failure the pipeline never saw: a relay job that panicked.
+    pub(in crate::daemon) fn announce_failure(&self, code: RpcErrorCode) {
+        self.emitter.emit(DictationStage::Failed(code));
+    }
+
+    /// Delivers a recording captured elsewhere through the press pipeline.
+    /// The same stages reach every subscriber, so the Mac's status pill
+    /// follows a relayed recording as it follows a press.
+    pub(in crate::daemon) fn dictate_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        cancel: CancelToken,
+    ) -> Result<String, DictationRuntimeError> {
+        if cancel.is_cancelled() {
+            return Err(DictationError::Cancelled.into());
+        }
+        let events = self.operation_emitter(None);
+        let coordinator = match self.coordinator() {
+            Ok(coordinator) => coordinator,
+            Err(error) => {
+                events.emit(DictationStage::Failed((&error).into()));
+                return Err(error.into());
+            }
+        };
+        coordinator
+            .deliver_recording(recording, settings, cancel, &events)
+            .map_err(DictationRuntimeError::Execution)
     }
 
     pub(in crate::daemon) fn transcribe(
@@ -562,8 +585,7 @@ pub(in crate::daemon) enum DictationRuntimeError {
 impl From<&DictationRuntimeError> for RpcErrorCode {
     fn from(error: &DictationRuntimeError) -> Self {
         match error {
-            // Reading settings is the daemon's own fault, not the caller's.
-            DictationRuntimeError::Settings(_) => Self::Internal,
+            DictationRuntimeError::Settings(error) => error.into(),
             DictationRuntimeError::Initialization(error) => error.into(),
             DictationRuntimeError::Execution(error) => error.into(),
         }
@@ -750,7 +772,7 @@ mod event_tests {
                 )
                 .is_err()
         );
-        runtime.announce(DictationStage::Delivered {
+        runtime.emitter.emit(DictationStage::Delivered {
             outcome: None,
             words: 0,
         });
@@ -810,6 +832,16 @@ mod event_tests {
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             panic!("a press never retries history");
+        }
+
+        fn deliver_recording(
+            &self,
+            _: &mut RecordingReader,
+            _: DictationSettings,
+            _: &Arc<aria_voice::dictation::ExecutionControl>,
+            _: &DictationEventEmitter,
+        ) -> Result<String, DictationError> {
+            panic!("this test never delivers a relayed recording");
         }
     }
 
@@ -890,6 +922,16 @@ mod history_tests {
                 transcript: aria_voice::transcription::Transcript::new("recovered words").unwrap(),
                 engine: "test",
             })
+        }
+
+        fn deliver_recording(
+            &self,
+            _: &mut RecordingReader,
+            _: DictationSettings,
+            _: &Arc<aria_voice::dictation::ExecutionControl>,
+            _: &DictationEventEmitter,
+        ) -> Result<String, DictationError> {
+            panic!("this test never delivers a relayed recording");
         }
     }
 
@@ -1062,7 +1104,7 @@ mod history_tests {
         assert_eq!(unchanged.text, fixture.original.text);
         assert_eq!(unchanged.engine, fixture.original.engine);
         assert_eq!(unchanged.language, fixture.original.language);
-        assert_eq!(unchanged.error, Some(HistoryError::Transcription.into()));
+        assert_eq!(unchanged.error, Some((&HistoryError::Transcription).into()));
         assert!(matches!(
             unchanged.audio,
             AudioAvailability::Available { .. }
@@ -1125,6 +1167,7 @@ mod history_tests {
                 home.join("vocabulary"),
                 None,
                 false,
+                Arc::clone(&fixture.runtime.settings),
                 aria_voice::vocabulary::discover::LocalCollector::new(
                     aria_voice::vocabulary::extract::LocalExtractor,
                 ),
@@ -1215,7 +1258,7 @@ mod history_tests {
             .get(fixture.original.id)
             .unwrap();
         assert_eq!(entry.text, "partial");
-        assert_eq!(entry.error, Some(HistoryError::Cancelled.into()));
+        assert_eq!(entry.error, Some((&HistoryError::Cancelled).into()));
         assert_eq!(entry.status, HistoryStatus::TranscriptionFailed);
         assert!(!entry.retrying);
         assert!(matches!(entry.audio, AudioAvailability::Available { .. }));

@@ -1,10 +1,4 @@
 import Foundation
-import GRPCCore
-import GRPCNIOTransportHTTP2
-import GRPCProtobuf
-import os
-
-private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "ListenStatus")
 
 /// Whether a listen session is running, whichever caller started it.
 @MainActor
@@ -24,8 +18,8 @@ final class ListenStatus: ObservableObject {
     private var reconciling: Task<Void, Never>?
 
     init(
-        readStatus: @escaping ReadStatus = ListenStatus.readFromDaemon,
-        stopSession: @escaping StopSession = ListenStatus.stopOnDaemon,
+        readStatus: @escaping ReadStatus = ListenClient.isListening,
+        stopSession: @escaping StopSession = ListenClient.stop,
         reconcileInterval: Duration = .seconds(15)
     ) {
         self.readStatus = readStatus
@@ -78,15 +72,11 @@ final class ListenStatus: ObservableObject {
     }
 
     /// The stream doesn't replay a session that started before it connected.
+    /// A read that fails leaves the state alone; the transport logs why.
     func catchUp() async {
         let stagesAtRead = stagesSeen
-        do {
-            let isRunning = try await readStatus()
-            guard stagesSeen == stagesAtRead else { return }
-            self.isRunning = isRunning
-        } catch {
-            log.error("Reading the listen status failed: \(String(describing: error), privacy: .private)")
-        }
+        guard let isRunning = try? await readStatus(), stagesSeen == stagesAtRead else { return }
+        self.isRunning = isRunning
     }
 
     /// A session that failed while stopping reports that failure from Stop, yet
@@ -100,30 +90,8 @@ final class ListenStatus: ObservableObject {
             try await stopSession()
             isRunning = false
         } catch {
-            log.error("Stopping the listen session failed: \(String(describing: error), privacy: .private)")
             await catchUp()
             didFailToStop = isRunning
-        }
-    }
-
-    private static let stopOnDaemon: StopSession = {
-        try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
-            // Stop answers once the session's final decode has drained.
-            var options = CallOptions.defaults
-            options.timeout = .seconds(30)
-            _ = try await Aria_Daemon_V1_ListenService.Client(wrapping: client).stop(
-                request: ClientRequest(message: .init()), options: options
-            ) { try $0.message }
-        }
-    }
-
-    private static let readFromDaemon: ReadStatus = {
-        try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
-            var options = CallOptions.defaults
-            options.timeout = .seconds(10)
-            return try await Aria_Daemon_V1_ListenService.Client(wrapping: client).getStatus(
-                request: ClientRequest(message: .init()), options: options
-            ) { try $0.message.listening }
         }
     }
 }

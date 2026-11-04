@@ -213,6 +213,26 @@ mod tests {
     }
 
     #[test]
+    fn nothing_is_typed_when_the_overridden_app_is_not_in_front() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let settings = DictationSettings {
+            target: aria_platform::delivery::TargetPolicy {
+                overridden_for: Some("com.example.not-in-front".into()),
+                excluded: Vec::new(),
+            },
+            ..settings(DeliveryMode::Complete, OutputMode::InsertAndSubmit)
+        };
+
+        let error = cursor
+            .dictation_started(&settings, &control)
+            .expect_err("another app is in front");
+
+        assert!(matches!(error, DeliveryError::TargetChanged));
+        assert!(log.entries().is_empty());
+    }
+
+    #[test]
     fn failed_streaming_delivery_prevents_submission_at_completion() {
         let (log, mut cursor) = cursor();
         let control = ExecutionControl::for_test(StopMode::Manual);

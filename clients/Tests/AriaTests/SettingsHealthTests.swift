@@ -1,4 +1,3 @@
-import GRPCCore
 import XCTest
 
 @testable import Aria
@@ -90,7 +89,7 @@ final class SettingsHealthTests: XCTestCase {
         var loaded = Aria_Daemon_V1_SettingsSnapshot()
         loaded.revision = 1
         transport.snapshots = [loaded, loaded]
-        transport.updateError = RPCError(code: .permissionDenied, message: "settings.toml is read-only")
+        transport.updateError = DaemonFailure.refused(.permissionDenied)
         let settings = DaemonSettings(transport: transport)
         await settings.sync()
         XCTAssertFalse(settings.isReadOnlyFailure)

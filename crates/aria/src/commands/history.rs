@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 
 use aria_daemon::DaemonSession;
-use aria_settings::rpc::RpcErrorCode;
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use clap::Subcommand;
 
 use super::answer;
@@ -144,26 +144,27 @@ fn clear_message(result: aria_voice::history::ClearHistoryResult) -> anyhow::Res
 }
 
 fn clear_error(error: aria_daemon::ClientError) -> anyhow::Error {
-    use aria_daemon::ClientError;
+    use aria_daemon::{ClientError, TransportFailure};
     let context = match &error {
-        ClientError::Status(status) if status.code() == tonic::Code::Unimplemented => {
-            "this daemon does not support clearing history; update Aria and restart the daemon"
+        ClientError::Transport {
+            kind: TransportFailure::Unimplemented,
+            ..
         }
-        ClientError::Rpc {
+        | ClientError::Rpc(RpcFailure {
             code: RpcErrorCode::Unsupported,
             ..
-        } => "this daemon does not support clearing history; update Aria and restart the daemon",
+        }) => "this daemon does not support clearing history; update Aria and restart the daemon",
         ClientError::Timeout(_)
-        | ClientError::Status(_)
+        | ClientError::Transport { .. }
         | ClientError::MalformedResponse(_)
-        | ClientError::Rpc {
+        | ClientError::Rpc(RpcFailure {
             code:
                 RpcErrorCode::Cancelled
                 | RpcErrorCode::OverallTimeout
                 | RpcErrorCode::ShuttingDown
                 | RpcErrorCode::HistoryUnavailable,
             ..
-        } => {
+        }) => {
             "history clearing could not be confirmed; check history before retrying, as a retry also removes newer dictations"
         }
         _ => return error.into(),
@@ -299,11 +300,11 @@ mod tests {
                 .contains("some recordings could not be removed")
         );
         for error in [
-            ClientError::Status(tonic::Status::unimplemented("unknown method")),
-            ClientError::Rpc {
-                code: RpcErrorCode::Unsupported,
-                message: "unsupported".into(),
+            ClientError::Transport {
+                kind: aria_daemon::TransportFailure::Unimplemented,
+                message: "unknown method".into(),
             },
+            ClientError::Rpc(RpcFailure::new(RpcErrorCode::Unsupported, "unsupported")),
         ] {
             assert!(
                 clear_error(error)
@@ -313,7 +314,10 @@ mod tests {
         }
         for error in [
             ClientError::Timeout(std::time::Duration::from_secs(10)),
-            ClientError::Status(tonic::Status::unavailable("disconnected")),
+            ClientError::Transport {
+                kind: aria_daemon::TransportFailure::Unavailable,
+                message: "disconnected".into(),
+            },
         ]
         .into_iter()
         .chain(
@@ -323,10 +327,7 @@ mod tests {
                 RpcErrorCode::ShuttingDown,
                 RpcErrorCode::HistoryUnavailable,
             ]
-            .map(|code| ClientError::Rpc {
-                code,
-                message: "operation interrupted".into(),
-            }),
+            .map(|code| ClientError::Rpc(RpcFailure::new(code, "operation interrupted"))),
         ) {
             assert!(
                 clear_error(error)
@@ -334,10 +335,10 @@ mod tests {
                     .contains("could not be confirmed")
             );
         }
-        let busy = clear_error(ClientError::Rpc {
-            code: RpcErrorCode::Busy,
-            message: "a history retry is active".into(),
-        });
+        let busy = clear_error(ClientError::Rpc(RpcFailure::new(
+            RpcErrorCode::Busy,
+            "a history retry is active",
+        )));
         assert!(busy.to_string().contains("a history retry is active"));
     }
 

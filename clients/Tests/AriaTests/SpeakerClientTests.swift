@@ -1,4 +1,3 @@
-import GRPCCore
 import XCTest
 
 @testable import Aria
@@ -6,18 +5,22 @@ import XCTest
 final class SpeakerClientTests: XCTestCase {
     private let fallback = "Aria couldn’t save the voice. Try again."
 
-    func testFailureKeepsDaemonTextOutOfTheMessage() {
-        let raw = RPCError(code: .internalError, message: "raw daemon detail")
-        XCTAssertEqual(SpeakerClient.failure(raw, fallback: fallback).errorDescription, fallback)
+    func testAFailureWithoutItsOwnCopyUsesTheFallback() {
+        XCTAssertEqual(SpeakerFailure(.other, fallback: fallback).errorDescription, fallback)
+        XCTAssertEqual(SpeakerFailure(.refused(.internal), fallback: fallback).errorDescription, fallback)
     }
 
-    func testFailureSaysWhenAriaIsNotRunning() {
-        let failure = SpeakerClient.failure(RPCError(code: .unavailable, message: ""), fallback: fallback)
+    func testAFailureSaysWhenAriaIsNotRunning() {
+        let failure = SpeakerFailure(.unavailable, fallback: fallback)
         XCTAssertEqual(failure.errorDescription, "Aria isn’t running. Turn it on in the menu bar.")
     }
 
-    func testFailureUsesTheFallbackForAnErrorOutsideGRPC() {
-        struct Broken: Error {}
-        XCTAssertEqual(SpeakerClient.failure(Broken(), fallback: fallback).errorDescription, fallback)
+    func testADaemonRefusalGetsItsOwnCopy() {
+        XCTAssertEqual(
+            SpeakerFailure(.refused(.speakerAlreadyEnrolled), fallback: fallback).errorDescription,
+            "That name is already in use.")
+        XCTAssertEqual(
+            SpeakerFailure(.refused(.busy), fallback: fallback).errorDescription,
+            "The microphone is in use. Try again when dictation ends.")
     }
 }

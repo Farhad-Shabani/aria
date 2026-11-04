@@ -8,17 +8,12 @@ use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::dictation::{DictationRequest, RecordingId};
 
-use super::super::dictation::DictationRuntimeError;
-use super::super::dictation::{
-    AutoStopRule, DictationCallError, DictationHandle, DictationRuntime,
-};
-use super::super::operation::CallError;
+use super::super::dictation::{AutoStopRule, DictationHandle, DictationRuntime};
 use super::super::server::ActivityGuard;
-use super::{invalid_request, settings};
+use super::invalid_request;
 
 /// Buffers progress without blocking the daemon. Full queues drop stages;
 /// clients use `Recording` to enable stop and `Transcribing` to release input.
@@ -73,7 +68,7 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
             .dictation
             .submit(request, AutoStopRule::Setting, Some(events))
             .await
-            .map_err(|error| super::failed(METHOD, failure(error)))?;
+            .map_err(|error| super::failed(METHOD, &error))?;
 
         // The worker owns `pending`: dropping it cancels the press, which is
         // what a client hanging up should do. The stream ends once every
@@ -85,10 +80,10 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
                 outcome = pending.wait() => {
                     let message = match outcome {
                         Ok(outcome) => {
-                            tracing::info!(method = METHOD, status = "ok", "request served");
+                            super::served(METHOD);
                             Ok(outcome.into())
                         }
-                        Err(error) => Err(super::failed(METHOD, failure(error))),
+                        Err(error) => Err(super::failed(METHOD, &error)),
                     };
                     let _ = stages.send(message).await;
                 }
@@ -124,28 +119,6 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
     }
 }
 
-fn failure(error: DictationCallError) -> RpcFailure {
-    match error {
-        CallError::Unavailable => RpcFailure::new(
-            RpcErrorCode::ShuttingDown,
-            "the daemon is not accepting dictation requests",
-        ),
-        CallError::JobFailed => RpcFailure::new(
-            RpcErrorCode::Internal,
-            "the dictation operation ended unexpectedly",
-        ),
-        CallError::Runtime(DictationRuntimeError::Settings(error)) => {
-            settings::store_error("read", error)
-        }
-        CallError::Runtime(DictationRuntimeError::Initialization(error)) => {
-            RpcFailure::new((&error).into(), error_chain(&error))
-        }
-        CallError::Runtime(DictationRuntimeError::Execution(error)) => {
-            RpcFailure::new((&error).into(), error_chain(&error))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -175,7 +148,7 @@ mod tests {
 
     fn rpc_code(error: &ClientError) -> RpcErrorCode {
         match error {
-            ClientError::Rpc { code, .. } => *code,
+            ClientError::Rpc(failure) => failure.code,
             other => panic!("expected a typed daemon failure, got {other}"),
         }
     }

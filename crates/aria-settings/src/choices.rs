@@ -8,6 +8,7 @@ use aria_kit::transcription::{Language, LanguageCode};
 use super::{ApplicationOverrides, Chord, Prompts};
 use super::{SettingsError, is_valid_model_id};
 use crate::config::AssistantId;
+use crate::rpc::RpcErrorCode;
 use aria_kit::audio::{AutoStop, SilenceDuration};
 use aria_platform::delivery::{OutputMode, PlatformTextDelivery, TextDelivery};
 use aria_platform::hotkey::{AriaKey, Combo};
@@ -162,4 +163,72 @@ pub enum StoreError {
 
     #[error("settings.toml kept changing; try again")]
     ChangedRecently,
+}
+
+impl From<&StoreError> for RpcErrorCode {
+    fn from(error: &StoreError) -> Self {
+        match error {
+            StoreError::FileInvalid(_) => Self::SettingsInvalid,
+            StoreError::BindingInUse
+            | StoreError::InvalidModelId
+            | StoreError::Settings(SettingsError::Invalid { .. } | SettingsError::Parse(_)) => {
+                Self::InvalidRequest
+            }
+            StoreError::ChangedRecently | StoreError::Settings(SettingsError::Locked { .. }) => {
+                Self::Busy
+            }
+            StoreError::Settings(SettingsError::ReadOnly { .. }) => Self::PermissionDenied,
+            StoreError::Settings(
+                SettingsError::Io { .. }
+                | SettingsError::TooLarge { .. }
+                | SettingsError::InvalidUtf8 { .. }
+                | SettingsError::NotAFile { .. }
+                | SettingsError::TornRead { .. }
+                | SettingsError::UnknownKey(_)
+                | SettingsError::SerializedTooLarge
+                | SettingsError::Encode { .. }
+                | SettingsError::Freeze(_)
+                | SettingsError::Thread(_)
+                | SettingsError::KeyAndAlias { .. },
+            ) => Self::Internal,
+        }
+    }
+}
+
+#[cfg(test)]
+mod rpc_tests {
+    use super::*;
+    use crate::rpc::RpcFailure;
+
+    #[test]
+    fn a_change_the_file_cannot_parse_quotes_nothing_from_it() {
+        let fault =
+            crate::Loaded::parse("[memory]\nenabled = maybe\n", std::path::Path::new("/home"))
+                .expect_err("invalid");
+
+        let failure = RpcFailure::from(&StoreError::Settings(fault));
+
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
+        assert_eq!(failure.message, "the change does not fit settings.toml");
+        assert!(!failure.message.contains("maybe"));
+        assert_eq!(failure.settings_position, None);
+    }
+
+    #[test]
+    fn a_rejected_value_names_its_key_and_never_the_value() {
+        let key = crate::Key::ALL[0];
+        let fault = crate::invalid(
+            key,
+            crate::InvalidValue::Unsupported {
+                value: "/Users/someone/private".to_owned(),
+                supported: "a, b".to_owned(),
+            },
+        );
+
+        let failure = RpcFailure::from(&StoreError::Settings(fault));
+
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
+        assert_eq!(failure.message, format!("{key} does not accept that value"));
+        assert!(!failure.message.contains("private"));
+    }
 }

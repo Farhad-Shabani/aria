@@ -96,7 +96,7 @@ final class PressController {
     }
 
     /// Nil for silence as well as for a recording that failed.
-    private func record(projectDirectory: String?) async -> Aria_Daemon_V1_DictationResult? {
+    private func record(projectDirectory: String?) async -> DictationClient.Transcript? {
         let heard = await PressClient.transcribe(projectDirectory: projectDirectory) { [weak self] id in
             self?.started(.recording(id))
         }

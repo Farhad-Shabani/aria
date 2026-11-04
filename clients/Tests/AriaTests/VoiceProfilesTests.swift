@@ -6,13 +6,13 @@ import XCTest
 final class VoiceProfilesTests: XCTestCase {
     private struct Enrolled: Equatable {
         let name: String
-        let role: Aria_Daemon_V1_SpeakerRole
+        let role: SpeakerRole
         let replace: Bool
     }
 
     @MainActor
     private final class Harness {
-        var speakers = [Aria_Daemon_V1_EnrolledSpeaker]()
+        var speakers = [EnrolledSpeaker]()
         var enrolled = [Enrolled]()
         var enrollError: Error?
         var enrollContinuation: CheckedContinuation<Void, Error>?
@@ -53,11 +53,8 @@ final class VoiceProfilesTests: XCTestCase {
         }
     }
 
-    private static func speaker(_ name: String, _ role: Aria_Daemon_V1_SpeakerRole) -> Aria_Daemon_V1_EnrolledSpeaker {
-        var speaker = Aria_Daemon_V1_EnrolledSpeaker()
-        speaker.name = name
-        speaker.role = role
-        return speaker
+    private static func speaker(_ name: String, _ role: SpeakerRole) -> EnrolledSpeaker {
+        EnrolledSpeaker(name: name, role: role)
     }
 
     private static func event(_ stage: Aria_Daemon_V1_SpeakerStage, index: UInt32) -> Aria_Daemon_V1_SpeakerEvent {
@@ -181,7 +178,7 @@ final class VoiceProfilesTests: XCTestCase {
 
     func testAFailedRecordingReturnsToTheNameWithTheReason() async {
         let harness = Harness()
-        harness.enrollError = TryOutError.stopped
+        harness.enrollError = TryOutFailure.stopped
         let voices = VoiceProfiles(effects: harness.effects)
         voices.beginAdding()
         voices.name = " alex "
@@ -189,7 +186,7 @@ final class VoiceProfilesTests: XCTestCase {
         await waitUntil { voices.enrollment?.phase == .naming }
 
         XCTAssertEqual(harness.enrolled.map(\.name), ["alex"])
-        XCTAssertEqual(voices.enrollment?.failure, TryOutError.stopped.localizedDescription)
+        XCTAssertEqual(voices.enrollment?.failure, TryOutFailure.stopped.localizedDescription)
     }
 
     func testEverySampleHasASentenceToRead() {

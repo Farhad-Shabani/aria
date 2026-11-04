@@ -1,4 +1,3 @@
-use crate::ipc::protocol::failure_status;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -21,6 +20,12 @@ use crate::inference::{Completion, Event, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYT
 use crate::ipc::wire;
 use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+
+const GET_INFO: &str = "InferenceService/GetInfo";
+const TRANSCRIBE: &str = "InferenceService/Transcribe";
+const PAIR: &str = "InferencePairingService/Pair";
+const INVITE: &str = "InferenceAdminService/Invite";
+const REVOKE: &str = "InferenceAdminService/Revoke";
 
 pub(in crate::daemon) struct InferenceRpc {
     engine: Arc<Engine>,
@@ -50,7 +55,7 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         &self,
         request: Request<wire::InferenceInfoRequest>,
     ) -> Result<Response<wire::InferenceInfoResponse>, Status> {
-        authenticate(&self.access, &request)?;
+        authenticate(GET_INFO, &self.access, &request)?;
         Ok(Response::new(self.engine.info().into()))
     }
 
@@ -58,19 +63,24 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         &self,
         request: Request<tonic::Streaming<wire::InferenceRequest>>,
     ) -> Result<Response<Self::TranscribeStream>, Status> {
-        let deadline = Instant::now() + request_timeout(&request).map_err(failure_status)?;
-        let peer = presented(&request).ok_or_else(unauthenticated)?;
+        let deadline = Instant::now()
+            + request_timeout(&request).map_err(|failure| super::failed(TRANSCRIBE, failure))?;
+        let peer =
+            presented(&request).ok_or_else(|| super::failed(TRANSCRIBE, unauthenticated()))?;
         let admission = self
             .access
             .admit(peer)
-            .map_err(|error| failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| super::failed(TRANSCRIBE, RpcFailure::from(error)))?;
         let cancel = admission.async_cancel().clone();
         let cancel_on_drop = cancel.clone().drop_guard();
         let mut requests = request.into_inner();
         let start = until(&cancel, deadline, read_start(&mut requests))
             .await
-            .map_err(failure_status)?;
-        let (prepared, input) = self.engine.prepare(start).map_err(failure_status)?;
+            .map_err(|failure| super::failed(TRANSCRIBE, failure))?;
+        let (prepared, input) = self
+            .engine
+            .prepare(start)
+            .map_err(|failure| super::failed(TRANSCRIBE, failure))?;
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         let (finish, terminal) = oneshot::channel();
         let engine = Arc::clone(&self.engine);
@@ -204,8 +214,11 @@ impl Stream for Output {
                         self.stage = Stage::Done;
                         self.updates.close();
                         let error = match failure {
-                            Ok(Err(error)) => failure_status(error),
-                            _ => internal("the inference supervisor stopped unexpectedly"),
+                            Ok(Err(error)) => super::failed(TRANSCRIBE, error),
+                            _ => super::failed(
+                                TRANSCRIBE,
+                                internal("the inference supervisor stopped unexpectedly"),
+                            ),
                         };
                         return Poll::Ready(Some(Err(error)));
                     }
@@ -353,20 +366,21 @@ impl InferencePairingRpc {
 }
 
 #[tonic::async_trait]
-impl wire::pairing_service_server::PairingService for InferencePairingRpc {
+impl wire::inference_pairing_service_server::InferencePairingService for InferencePairingRpc {
     async fn pair(
         &self,
-        request: Request<wire::PairRequest>,
-    ) -> Result<Response<wire::PairResponse>, Status> {
-        let peer = presented(&request).ok_or_else(unauthenticated)?;
+        request: Request<wire::InferencePairRequest>,
+    ) -> Result<Response<wire::InferencePairResponse>, Status> {
+        let peer = presented(&request).ok_or_else(|| super::failed(PAIR, unauthenticated()))?;
         let code = request.into_inner().code;
         let access = Arc::clone(&self.access);
         self.jobs
             .spawn_blocking(move || access.pair(peer, &code))
             .await
-            .map_err(|_| internal("pairing stopped unexpectedly"))?
-            .map_err(|error| failure_status(RpcFailure::from(error)))?;
-        Ok(Response::new(wire::PairResponse {}))
+            .map_err(|_| super::failed(PAIR, internal("pairing stopped unexpectedly")))?
+            .map_err(|error| super::failed(PAIR, RpcFailure::from(error)))?;
+        super::served(PAIR);
+        Ok(Response::new(wire::InferencePairResponse {}))
     }
 }
 
@@ -383,19 +397,21 @@ impl InferenceAdminRpc {
 
 #[tonic::async_trait]
 impl wire::inference_admin_service_server::InferenceAdminService for InferenceAdminRpc {
-    async fn issue_invite(
+    async fn invite(
         &self,
         request: Request<wire::InferenceInviteRequest>,
     ) -> Result<Response<wire::InferenceInviteResponse>, Status> {
         let endpoint = ServerEndpoint::parse(&request.into_inner().endpoint)
             .ok_or(identity::Error::InvalidEndpoint)
-            .map_err(|error| failure_status(RpcFailure::from(error)))?;
+            .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
         let invitation = self
             .access
             .issue(&endpoint)
-            .map_err(|error| failure_status(RpcFailure::from(error)))?;
-        let invitation_json = serde_json::to_vec(&invitation)
-            .map_err(|_| internal("encoding the invitation failed"))?;
+            .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
+        let invitation_json = invitation
+            .into_json()
+            .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
+        super::served(INVITE);
         Ok(Response::new(wire::InferenceInviteResponse {
             invitation_json,
         }))
@@ -405,37 +421,38 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
         &self,
         request: Request<wire::InferenceRevokeRequest>,
     ) -> Result<Response<wire::InferenceRevokeResponse>, Status> {
-        let pin: [u8; 32] = request
-            .into_inner()
-            .fingerprint
-            .try_into()
-            .map_err(|_| failure_status(invalid("a fingerprint must contain 32 bytes")))?;
+        let pin: [u8; 32] =
+            request.into_inner().fingerprint.try_into().map_err(|_| {
+                super::failed(REVOKE, invalid("a fingerprint must contain 32 bytes"))
+            })?;
         let access = Arc::clone(&self.access);
         self.jobs
             .spawn_blocking(move || access.revoke(pin))
             .await
-            .map_err(|_| internal("revocation stopped unexpectedly"))?
-            .map_err(|error| failure_status(RpcFailure::from(error)))?;
+            .map_err(|_| super::failed(REVOKE, internal("revocation stopped unexpectedly")))?
+            .map_err(|error| super::failed(REVOKE, RpcFailure::from(error)))?;
+        super::served(REVOKE);
         Ok(Response::new(wire::InferenceRevokeResponse {}))
     }
 }
 
 /// Admits a call only from a client this server has paired.
 pub(in crate::daemon) fn authenticate<T>(
+    method: &'static str,
     access: &ServerAccess,
     request: &Request<T>,
 ) -> Result<(), Status> {
     match presented(request) {
         Some(pin) if access.contains(&pin) => Ok(()),
-        _ => Err(unauthenticated()),
+        _ => Err(super::failed(method, unauthenticated())),
     }
 }
 
-fn unauthenticated() -> Status {
-    failure_status(RpcFailure::new(
+fn unauthenticated() -> RpcFailure {
+    RpcFailure::new(
         RpcErrorCode::Unauthenticated,
         "pair this client with the inference server first",
-    ))
+    )
 }
 
 fn invalid(message: &'static str) -> RpcFailure {
@@ -444,8 +461,8 @@ fn invalid(message: &'static str) -> RpcFailure {
 fn timeout(message: &'static str) -> RpcFailure {
     RpcFailure::new(RpcErrorCode::OverallTimeout, message)
 }
-fn internal(message: &'static str) -> Status {
-    failure_status(RpcFailure::new(RpcErrorCode::Internal, message))
+fn internal(message: &'static str) -> RpcFailure {
+    RpcFailure::new(RpcErrorCode::Internal, message)
 }
 
 #[cfg(test)]

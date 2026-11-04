@@ -2,16 +2,16 @@ import SwiftUI
 
 /// Bottom-centre caption strip, in the shape of a video-call caption.
 struct CaptionView: View {
-    let committed: String
+    let finalized: String
     let provisional: String
 
     private var separator: String {
-        committed.isEmpty || provisional.isEmpty ? "" : " "
+        finalized.isEmpty || provisional.isEmpty ? "" : " "
     }
 
     var body: some View {
         let tail = Text(provisional).italic().foregroundStyle(.white.opacity(0.85))
-        Text("\(committed)\(separator)\(tail)")
+        Text("\(finalized)\(separator)\(tail)")
             .font(OverlayStyle.captionFont)
             .foregroundStyle(OverlayStyle.ink)
             .lineLimit(2)

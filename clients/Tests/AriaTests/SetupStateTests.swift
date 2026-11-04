@@ -16,7 +16,7 @@ final class SetupStateTests: XCTestCase {
         var stoppedDaemon = 0
         var startedDaemon = 0
         var armed = false
-        var speakers = [Aria_Daemon_V1_EnrolledSpeaker]()
+        var speakers = [EnrolledSpeaker]()
         var enrolledNames = [String]()
         var enrollError: Error?
         var heard = "hello there"
@@ -44,9 +44,6 @@ final class SetupStateTests: XCTestCase {
                 enroll: { name in
                     self.enrolledNames.append(name)
                     if let error = self.enrollError { throw error }
-                    var response = Aria_Daemon_V1_EnrollSpeakerResponse()
-                    response.consistency = 0.9
-                    return response
                 },
                 transcribe: {
                     if let error = self.transcribeError { throw error }
@@ -369,9 +366,7 @@ final class SetupStateTests: XCTestCase {
 
     func testVoiceIsSkippedWhenSomeoneIsEnrolledOrTheModelWasSkipped() async {
         let harness = Harness()
-        var ada = Aria_Daemon_V1_EnrolledSpeaker()
-        ada.name = "Ada"
-        harness.speakers = [ada]
+        harness.speakers = [EnrolledSpeaker(name: "Ada", role: .owner)]
         let state = await walkToApplying(harness)
         harness.applyContinuation?.resume(returning: harness.summary)
         await waitUntil { state.step == .tryOut }

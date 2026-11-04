@@ -1,4 +1,5 @@
 use super::{DictationRequest, DictationSettings, Rewriting};
+use crate::history::HistorySource;
 use crate::vocabulary::Context;
 use aria_platform::delivery::{
     Application, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
@@ -73,6 +74,7 @@ impl DictationSettings {
                 None
             },
             application,
+            source: HistorySource::Local,
             target,
         }
     }

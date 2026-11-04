@@ -1,4 +1,3 @@
-import GRPCCore
 import XCTest
 
 @testable import Aria
@@ -7,7 +6,7 @@ import XCTest
 final class SettingsLoadFailureTests: XCTestCase {
     func testLoadFailureWaitsOutADaemonThatIsNotListening() async {
         let transport = FakeSettingsTransport()
-        transport.snapshotError = RPCError(code: .unavailable, message: "")
+        transport.snapshotError = DaemonFailure.unavailable
         let settings = DaemonSettings(transport: transport)
 
         await settings.sync()

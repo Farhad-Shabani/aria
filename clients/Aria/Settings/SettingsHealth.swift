@@ -125,13 +125,13 @@ enum SettingsFile {
 extension SettingsFile.Effects {
     @MainActor static var live: Self {
         .init(
-            path: { try await DaemonClient.settingsPath() },
+            path: { try await DaemonProcess.settingsPath() },
             exists: { FileManager.default.fileExists(atPath: $0.path) },
-            create: { try await DaemonClient.createSettingsFile() },
+            create: { try await DaemonProcess.createSettingsFile() },
             openInTextEditor: { url in
                 // A .toml has no default app of its own, so ask for the plain text one.
                 guard let editor = NSWorkspace.shared.urlForApplication(toOpen: .plainText) else {
-                    throw DaemonClientError.commandFailed("no app opens plain text")
+                    throw DaemonProcessError.commandFailed("no app opens plain text")
                 }
                 _ = try await NSWorkspace.shared.open(
                     [url], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
@@ -143,7 +143,7 @@ extension SettingsFile.Effects {
 extension SettingsHealth.Effects {
     @MainActor static func live(reloadSettings: @escaping () async -> Void) -> Self {
         .init(
-            status: { try await UnixSocketSettings().status() },
+            status: { try await SettingsClient().status() },
             reloadSettings: reloadSettings,
             settingsFile: .live
         )

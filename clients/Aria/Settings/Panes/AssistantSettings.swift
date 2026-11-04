@@ -90,7 +90,7 @@ private struct AssistantStatusRow<Action: View>: View {
     }
 }
 
-extension Aria_Daemon_V1_Assistant {
+extension Assistant {
     /// The daemon writes its hint as a clause, with commands in backticks.
     fileprivate var fixSentence: String {
         guard let first = fix.first else { return fix }
@@ -103,7 +103,7 @@ extension Aria_Daemon_V1_Assistant {
         case .notInstalled: return "\(name) isn’t installed"
         case .signedOut: return "\(name) isn’t signed in"
         case .unchecked: return "Aria couldn’t check \(name)"
-        case .ready, .unspecified, .UNRECOGNIZED: return nil
+        case .ready: return nil
         }
     }
 }

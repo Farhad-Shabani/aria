@@ -79,7 +79,7 @@ struct SetupView: View {
         settings.snapshot?.storedAriaKey ?? .default
     }
 
-    private var askCombo: Aria_Daemon_V1_ShortcutCombo? {
+    private var askCombo: ShortcutCombo? {
         guard let hotkey = settings.snapshot?.askShortcut else { return .shift }
         if case .combo(let combo) = hotkey.storedBinding { return combo }
         return nil

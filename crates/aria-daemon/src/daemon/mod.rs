@@ -20,7 +20,7 @@ mod live_keys;
 mod log;
 mod memory;
 mod operation;
-mod relay;
+pub(crate) mod relay;
 mod server;
 mod service;
 mod session;
@@ -65,7 +65,7 @@ pub use inference::{PairedServer, paired_server};
 /// What `aria doctor` needs to report about the relay without owning one.
 pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 
-pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream};
+pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream, TransportFailure};
 pub use aria_assistant::chat::{
     Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
     Focus, Project, ProjectsError, Step, Ticket,

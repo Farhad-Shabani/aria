@@ -5,8 +5,8 @@ import Foundation
 @MainActor
 final class VoiceProfiles: ObservableObject {
     struct Effects {
-        var list: () async throws -> [Aria_Daemon_V1_EnrolledSpeaker]
-        var enroll: (_ name: String, _ role: Aria_Daemon_V1_SpeakerRole, _ replace: Bool) async throws -> Void
+        var list: () async throws -> [EnrolledSpeaker]
+        var enroll: (_ name: String, _ role: SpeakerRole, _ replace: Bool) async throws -> Void
         var remove: (_ name: String) async throws -> Void
         var setOwner: (_ name: String) async throws -> Void
     }
@@ -17,7 +17,7 @@ final class VoiceProfiles: ObservableObject {
             case recording(taken: Int, listening: Bool)
         }
 
-        let role: Aria_Daemon_V1_SpeakerRole
+        let role: SpeakerRole
         let replacing: String?
         var phase = Phase.naming
         var failure: String?
@@ -36,7 +36,7 @@ final class VoiceProfiles: ObservableObject {
     ]
 
     /// Nil until the first list arrives, so the pane never flashes an empty state.
-    @Published private(set) var speakers: [Aria_Daemon_V1_EnrolledSpeaker]?
+    @Published private(set) var speakers: [EnrolledSpeaker]?
     @Published private(set) var failure: String?
     @Published private(set) var enrollment: Enrollment?
     @Published var name = ""
@@ -83,7 +83,7 @@ final class VoiceProfiles: ObservableObject {
         enrollment = Enrollment(role: hasOwner ? .guest : .owner, replacing: nil)
     }
 
-    func beginRerecording(_ speaker: Aria_Daemon_V1_EnrolledSpeaker) {
+    func beginRerecording(_ speaker: EnrolledSpeaker) {
         name = speaker.name
         enrollment = Enrollment(role: speaker.role, replacing: speaker.name)
     }
@@ -155,9 +155,7 @@ extension VoiceProfiles.Effects {
     @MainActor static var live: Self {
         Self(
             list: { try await SpeakerClient.list() },
-            enroll: { name, role, replace in
-                _ = try await SpeakerClient.enroll(name: name, role: role, replace: replace)
-            },
+            enroll: { name, role, replace in try await SpeakerClient.enroll(name: name, role: role, replace: replace) },
             remove: { name in try await SpeakerClient.remove(name: name) },
             setOwner: { name in try await SpeakerClient.setOwner(name: name) }
         )

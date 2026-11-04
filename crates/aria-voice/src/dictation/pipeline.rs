@@ -231,6 +231,31 @@ where
         engine: &'static str,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
+        let (transcript, served_by) = self.transcribe_served(
+            recording,
+            language,
+            own_voice_only,
+            vocabulary,
+            rewriting,
+            cancel,
+        )?;
+        Ok(Transcribed {
+            transcript,
+            engine: served_by.unwrap_or(engine),
+        })
+    }
+
+    /// The transcript, and the engine that served it when that was not this
+    /// pipeline's own.
+    fn transcribe_served(
+        &self,
+        recording: &mut RecordingReader,
+        language: &Language,
+        own_voice_only: bool,
+        vocabulary: Option<&Vocabulary>,
+        rewriting: Rewriting,
+        cancel: &CancelToken,
+    ) -> Result<(Transcript, Option<&'static str>), DictationError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
@@ -274,12 +299,11 @@ where
                 (operation.finish(recording)?, served_by)
             }
         };
-        Ok(Transcribed {
-            transcript: self
-                .rewrites
+        Ok((
+            self.rewrites
                 .finish(transcript, rewriting, vocabulary, cancel)?,
-            engine: served_by.unwrap_or(engine),
-        })
+            served_by,
+        ))
     }
 
     fn collect_completed(
@@ -425,6 +449,90 @@ where
             // announces.
             control.await_capture_release();
             events.emit(DictationStage::ended_by(error.into()));
+        }
+        result
+    }
+
+    /// A recording captured elsewhere, delivered as a complete press would
+    /// be: the sinks hear the same calls in the same order. Nothing was
+    /// captured here, so there are no captions and no recording stage.
+    pub fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+        vocabulary: Option<&Vocabulary>,
+    ) -> Result<String, DictationError> {
+        let mut sinks = self.sinks();
+        let result = self.deliver_recording_stages(
+            recording,
+            &settings,
+            control,
+            events,
+            &mut *sinks,
+            vocabulary,
+        );
+        sinks.dictation_finished();
+        if let Err(error) = &result {
+            events.emit(DictationStage::ended_by(error.into()));
+        }
+        result
+    }
+
+    fn deliver_recording_stages(
+        &self,
+        recording: &mut RecordingReader,
+        settings: &DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+        sinks: &mut S,
+        vocabulary: Option<&Vocabulary>,
+    ) -> Result<String, DictationError> {
+        check_execution(control)?;
+        let stage_started = Instant::now();
+        sinks
+            .dictation_started(settings, control)
+            .map_err(|error| map_sink_error(error, control))
+            .map_err(|error| log_delivery_error(stage_started.elapsed(), error))?;
+        events.emit(DictationStage::Transcribing);
+        tracing::info!(stage = "transcription", "dictation stage started");
+        let cancel = CancelToken::from_fn({
+            let control = Arc::clone(control);
+            move || control.is_cancelled()
+        });
+        let result = (|| {
+            let (transcript, served_by) = self.transcribe_served(
+                recording,
+                &settings.stt_language,
+                settings.own_voice_only,
+                vocabulary,
+                settings.rewriting,
+                &cancel,
+            )?;
+            if let Some(engine) = served_by {
+                sinks.served_by(engine);
+            }
+            tracing::info!(
+                stage = "transcription",
+                status = "completed",
+                elapsed_ms = stage_started.elapsed().as_millis(),
+                "dictation stage completed"
+            );
+            check_execution(control)?;
+            events.emit(DictationStage::Delivering);
+            deliver_transcript(
+                &transcript,
+                &mut Completion::Pending,
+                recording,
+                control,
+                sinks,
+            )?;
+            Ok(transcript.into_text())
+        })();
+        sinks.recording_finished(recording, result.as_ref().map(|_| ()));
+        if let Ok(text) = &result {
+            events.emit(DictationStage::delivered(sinks.delivered(), text));
         }
         result
     }
@@ -892,8 +1000,8 @@ impl<'a> Published<'a> {
     /// typed.
     fn announce(&mut self, text: &str, speaker: Option<SpeakerName>) {
         if let Some(caption) = &mut self.caption {
-            let spaced = Caret::between(&caption.committed, "").insert(text);
-            caption.committed = caption_suffix(&format!("{}{spaced}", caption.committed));
+            let spaced = Caret::between(&caption.finalized, "").insert(text);
+            caption.finalized = caption_suffix(&format!("{}{spaced}", caption.finalized));
             self.events.emit(caption.clone());
         }
         self.events.emit(DictationStage::SegmentTranscribed {
@@ -1797,7 +1905,7 @@ mod tests {
         assert!(
             snapshots
                 .iter()
-                .any(|snapshot| snapshot.committed.as_ref() == "turn left")
+                .any(|snapshot| snapshot.finalized.as_ref() == "turn left")
         );
         assert_eq!(result.text, "turn left");
         assert!(log.entries().iter().all(|entry| !entry.contains("lift")));
@@ -1867,7 +1975,7 @@ mod tests {
         assert_eq!(snapshots[0].provisional.as_ref(), "turn lift at the light");
         assert_eq!(snapshots[1].provisional.as_ref(), "turn left");
         assert!(snapshots[2].provisional.is_empty());
-        assert_eq!(snapshots.last().unwrap().committed.as_ref(), "turn left");
+        assert_eq!(snapshots.last().unwrap().finalized.as_ref(), "turn left");
         assert!(snapshots.last().unwrap().provisional.is_empty());
     }
 
@@ -1912,7 +2020,7 @@ mod tests {
             assert!(!snapshots.first().unwrap().ended);
             let terminal = snapshots.last().unwrap();
             assert!(terminal.ended);
-            assert!(terminal.committed.is_empty() && terminal.provisional.is_empty());
+            assert!(terminal.finalized.is_empty() && terminal.provisional.is_empty());
             assert!(
                 snapshots
                     .iter()
@@ -1923,7 +2031,7 @@ mod tests {
                 assert!(
                     snapshots
                         .iter()
-                        .any(|snapshot| snapshot.committed.as_ref() == text)
+                        .any(|snapshot| snapshot.finalized.as_ref() == text)
                 );
             }
         }
@@ -1969,12 +2077,12 @@ mod tests {
         assert!(
             snapshots
                 .iter()
-                .all(|snapshot| snapshot.committed.is_empty() && snapshot.provisional.is_empty())
+                .all(|snapshot| snapshot.finalized.is_empty() && snapshot.provisional.is_empty())
         );
     }
 
     #[test]
-    fn own_voice_captions_publish_only_accepted_committed_text() {
+    fn own_voice_captions_publish_only_accepted_finalized_text() {
         for voice in [OWN, OTHER] {
             let (_directory, capture) = judged_capture();
             let pipeline = filtered_pipeline(
@@ -1999,7 +2107,7 @@ mod tests {
             assert_eq!(
                 snapshots
                     .iter()
-                    .any(|snapshot| snapshot.committed.as_ref() == "hello"),
+                    .any(|snapshot| snapshot.finalized.as_ref() == "hello"),
                 voice == OWN
             );
             assert!(snapshots.last().unwrap().ended);
@@ -2027,7 +2135,7 @@ mod tests {
             assert_eq!(
                 snapshots
                     .iter()
-                    .any(|snapshot| snapshot.committed.as_ref() == "hello"),
+                    .any(|snapshot| snapshot.finalized.as_ref() == "hello"),
                 captioned
             );
             assert_eq!(snapshots.last().is_some_and(|last| last.ended), captioned);
@@ -2096,6 +2204,166 @@ mod tests {
         }
     }
 
+    /// The relay goes through this path, so a change to how a press reaches
+    /// history and the cursor reaches relayed recordings too.
+    #[test]
+    fn a_relayed_recording_reaches_the_sinks_in_the_same_order_as_a_press() {
+        fn stages_after_capture(
+            stages: &std::sync::mpsc::Receiver<DictationStage>,
+        ) -> Vec<&'static str> {
+            stages
+                .try_iter()
+                .filter(|stage| !matches!(stage, DictationStage::Recording(_)))
+                .map(|stage| stage.label())
+                .collect()
+        }
+        let press = CallLog::default();
+        let (directory, pressed_capture) = capture();
+        let pipeline = DictationPipeline::new(
+            pressed_capture,
+            Transcription::complete_samples(Answering("hello")),
+            (press.history(), press.cursor()),
+        );
+        let (events, pressed) = stage_events();
+        let pressed_text = pipeline
+            .run_observed(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &events,
+            )
+            .expect("the press completes")
+            .text;
+
+        let relayed = CallLog::default();
+        let (_unused, relayed_capture) = capture();
+        let pipeline = DictationPipeline::new(
+            relayed_capture,
+            Transcription::complete_samples(Answering("hello")),
+            (relayed.history(), relayed.cursor()),
+        );
+        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
+            .expect("the fixture reads");
+        let (events, delivered) = stage_events();
+        let relayed_text = pipeline
+            .deliver_recording(
+                &mut recording,
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &events,
+                None,
+            )
+            .expect("the relayed recording completes");
+
+        assert_eq!(relayed_text, pressed_text);
+        // A press streams each segment to history while capture is live; a
+        // finished recording is heard whole, so only the segments differ.
+        let without_segments = |log: &CallLog| {
+            log.entries()
+                .into_iter()
+                .filter(|entry| !entry.starts_with("segment:"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(relayed.entries(), without_segments(&press));
+        // A press announces each segment as capture runs; both end the same way.
+        let relayed_stages = stages_after_capture(&delivered);
+        let pressed_stages = stages_after_capture(&pressed);
+        assert_eq!(relayed_stages, ["transcribing", "delivering", "delivered"]);
+        assert_eq!(
+            pressed_stages[pressed_stages.len() - 2..],
+            relayed_stages[1..]
+        );
+    }
+
+    /// History learns how a recording ended from the pipeline alone, so a
+    /// relayed failure is recorded as a press's would be.
+    #[test]
+    fn a_relayed_recording_that_fails_ends_in_history_as_a_press_does() {
+        struct Failing;
+        impl Transcriber for Failing {
+            fn validate_language(
+                &self,
+                _language: &Language,
+                _cancel: &CancelToken,
+            ) -> Result<(), TranscriptionError> {
+                Ok(())
+            }
+            fn transcribe_with(
+                &self,
+                _audio: TranscriptionAudio<'_>,
+                _language: &Language,
+                _cancel: &CancelToken,
+            ) -> Result<Hypothesis, TranscriptionError> {
+                Err(TranscriptionError::LoadPanicked)
+            }
+        }
+        /// Logs how each recording ended, which `RecordingSink` leaves out.
+        struct Ending(Arc<Mutex<Vec<String>>>);
+        impl crate::dictation::transcripts::TranscriptSink for Ending {
+            type Error = DictationError;
+            fn segment(
+                &mut self,
+                _utterance: crate::dictation::transcripts::Utterance<'_>,
+            ) -> Result<(), DictationError> {
+                Ok(())
+            }
+            fn completed(
+                &mut self,
+                _utterance: crate::dictation::transcripts::Utterance<'_>,
+            ) -> Result<(), DictationError> {
+                Ok(())
+            }
+            fn recording_finished(
+                &mut self,
+                _recording: &mut RecordingReader,
+                result: Result<(), &DictationError>,
+            ) {
+                self.0.lock().unwrap().push(match result {
+                    Ok(()) => "ok".to_owned(),
+                    Err(error) => error.to_string(),
+                });
+            }
+        }
+
+        let pressed = Arc::new(Mutex::new(Vec::new()));
+        let (directory, pressed_capture) = capture();
+        let pipeline = DictationPipeline::new(
+            pressed_capture,
+            Transcription::complete_samples(Failing),
+            (Ending(Arc::clone(&pressed)), CallLog::default().cursor()),
+        );
+        let (events, _stages) = stage_events();
+        pipeline
+            .run_observed(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &events,
+            )
+            .expect_err("the press fails");
+
+        let relayed = Arc::new(Mutex::new(Vec::new()));
+        let (_unused, relayed_capture) = capture();
+        let pipeline = DictationPipeline::new(
+            relayed_capture,
+            Transcription::complete_samples(Failing),
+            (Ending(Arc::clone(&relayed)), CallLog::default().cursor()),
+        );
+        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
+            .expect("the fixture reads");
+        let (events, _stages) = stage_events();
+        pipeline
+            .deliver_recording(
+                &mut recording,
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &events,
+                None,
+            )
+            .expect_err("the relayed recording fails");
+
+        let pressed = pressed.lock().unwrap().clone();
+        assert_eq!(pressed.len(), 1);
+        assert_ne!(pressed[0], "ok");
+        assert_eq!(*relayed.lock().unwrap(), pressed);
+    }
+
     #[test]
     fn a_transcript_only_press_hands_the_text_back_and_types_nothing() {
         let (_directory, capture) = capture();
@@ -2143,7 +2411,7 @@ mod tests {
     }
 
     #[test]
-    fn a_committed_segment_reaches_history_before_the_cursor() {
+    fn a_finalized_segment_reaches_history_before_the_cursor() {
         let (_directory, capture) = capture();
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
@@ -3832,7 +4100,7 @@ mod tests {
                 assert!(
                     captions
                         .try_iter()
-                        .all(|caption| caption.committed.is_empty()
+                        .all(|caption| caption.finalized.is_empty()
                             && caption.provisional.is_empty())
                 );
             } else {

@@ -142,6 +142,11 @@ impl ChatRuntime {
         &self,
         mut request: ChatRequest,
     ) -> Result<ChatRequest, ChatError> {
+        if !request.workdir.is_dir() {
+            return Err(ChatError::Assistant(AssistantError::NoWorkdir(
+                request.workdir,
+            )));
+        }
         if request.model_id.is_none() {
             request.model_id = self
                 .settings
@@ -880,6 +885,23 @@ pub(super) mod tests {
             application: None,
             tap_cancels: false,
         }
+    }
+
+    #[test]
+    fn an_ask_into_a_missing_workdir_is_refused_as_invalid() {
+        let home = tempfile::tempdir().unwrap();
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let missing = home.path().join("gone");
+
+        let error = runtime
+            .prepare_ask(request("hello", &missing, false))
+            .expect_err("a missing workdir is refused");
+
+        assert!(matches!(
+            error,
+            ChatError::Assistant(AssistantError::NoWorkdir(ref path)) if *path == missing
+        ));
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import GRPCCore
-import GRPCNIOTransportHTTP2
+import GRPCProtobuf
 
 /// The daemon's health checks. `hotkeyService` is not a gRPC service; the
 /// daemon reports its hotkey listener under that name.
@@ -12,12 +12,13 @@ enum HealthClient {
     static func isServing(_ service: String) async -> Bool {
         var request = Grpc_Health_V1_HealthCheckRequest()
         request.service = service
+        let sent = request
         do {
-            return try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
-                let health = Grpc_Health_V1_Health.Client(wrapping: client)
-                return try await health.check(request: ClientRequest(message: request)) {
-                    try $0.message.status == .serving
-                }
+            return try await DaemonTransport.call { client, options in
+                try await Grpc_Health_V1_Health.Client(wrapping: client)
+                    .check(request: ClientRequest(message: sent), options: options) {
+                        try $0.message.status == .serving
+                    }
             }
         } catch {
             return false

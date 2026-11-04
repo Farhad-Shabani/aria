@@ -15,6 +15,7 @@ mod code;
 mod decode;
 mod pairing;
 mod settings;
+mod stage;
 
 use crate::ipc::protocol::failure_status;
 use std::time::Duration;
@@ -28,6 +29,7 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 pub use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
+pub(crate) use code::Invite;
 pub(super) use code::{PairingCode, PairingCodes};
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
 pub(super) use pairing::{
@@ -35,6 +37,7 @@ pub(super) use pairing::{
     load_or_create as load_pairing, mint, presented, require_paired, to_hex,
 };
 pub(super) use settings::LanSettings;
+pub(crate) use stage::RelayStage;
 
 /// The longest recording's PCM, so an oversized upload stops as it streams.
 const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;
@@ -195,25 +198,23 @@ pub(super) enum RelayError {
     ClientStream(#[source] Status),
 }
 
-impl RelayError {
-    pub(super) fn failure(&self) -> RpcFailure {
-        RpcFailure::new(self.code(), aria_primitives::error_chain(self))
-    }
-
-    fn code(&self) -> RpcErrorCode {
+impl From<&RelayError> for RpcErrorCode {
+    fn from(error: &RelayError) -> Self {
         use decode::DecodeError;
-        match self {
-            Self::NotStarted
-            | Self::RestartedMidStream
-            | Self::UnsupportedFormat
-            | Self::Decode(DecodeError::Empty | DecodeError::OddPcmLength { .. }) => {
-                RpcErrorCode::InvalidRequest
+        match error {
+            RelayError::NotStarted
+            | RelayError::RestartedMidStream
+            | RelayError::UnsupportedFormat
+            | RelayError::Decode(DecodeError::Empty | DecodeError::OddPcmLength { .. }) => {
+                Self::InvalidRequest
             }
-            Self::TooLarge | Self::Decode(DecodeError::TooLong) => RpcErrorCode::PayloadTooLarge,
-            Self::Busy => RpcErrorCode::Busy,
-            Self::SessionTimeout | Self::UploadStalled => RpcErrorCode::OverallTimeout,
-            Self::ShuttingDown => RpcErrorCode::ShuttingDown,
-            Self::ClientStream(_) => RpcErrorCode::Cancelled,
+            RelayError::TooLarge | RelayError::Decode(DecodeError::TooLong) => {
+                Self::PayloadTooLarge
+            }
+            RelayError::Busy => Self::Busy,
+            RelayError::SessionTimeout | RelayError::UploadStalled => Self::OverallTimeout,
+            RelayError::ShuttingDown => Self::ShuttingDown,
+            RelayError::ClientStream(_) => Self::Cancelled,
         }
     }
 }
@@ -364,7 +365,7 @@ mod tests {
             .await
             .expect_err("Start has an idle deadline");
 
-        assert_eq!(error.failure().code, RpcErrorCode::InvalidRequest);
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
     }
 
     #[tokio::test]
@@ -469,12 +470,12 @@ mod tests {
             .expect_err("the cap holds");
 
         assert!(matches!(error, RelayError::TooLarge));
-        assert_eq!(error.failure().code, RpcErrorCode::PayloadTooLarge);
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::PayloadTooLarge);
     }
 
     #[test]
     fn audio_the_client_got_wrong_is_not_reported_as_a_daemon_fault() {
-        let code = |error| RelayError::Decode(error).failure().code;
+        let code = |error| RpcErrorCode::from(&RelayError::Decode(error));
 
         assert_eq!(
             code(decode::DecodeError::TooLong),

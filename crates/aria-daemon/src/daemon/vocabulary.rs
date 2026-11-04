@@ -1,7 +1,8 @@
 use super::tasks::Supervised;
 use aria_assistant::memory::Lexicon;
 use aria_kit::cancel::{CancelToken, Deadline};
-use aria_settings::Directory;
+use aria_settings::rpc::RpcErrorCode;
+use aria_settings::{Directory, SettingsStore};
 use aria_voice::vocabulary::{
     MatchError, PersonalRules, State, Status, Term, Vocabulary,
     catalog::{self, Catalog},
@@ -36,6 +37,20 @@ pub(super) enum Error {
     TooLarge,
     #[error("vocabulary refresh requires a persistent daemon")]
     Unsupported,
+    #[error("select a vocabulary directory first")]
+    NoDirectory,
+}
+
+impl From<&Error> for RpcErrorCode {
+    fn from(error: &Error) -> Self {
+        match error {
+            Error::Busy => Self::Busy,
+            Error::Unavailable => Self::Internal,
+            Error::Unsupported => Self::Unsupported,
+            Error::TooLarge => Self::PayloadTooLarge,
+            Error::NoDirectory => Self::InvalidRequest,
+        }
+    }
 }
 
 impl From<catalog::Error> for Error {
@@ -120,6 +135,8 @@ pub(super) struct Runtime {
     interrupt: Arc<AtomicBool>,
     stopping: Arc<AtomicBool>,
     persistent: bool,
+    /// Names the folder a request leaves unnamed, and whether vocabulary is on.
+    settings: Arc<SettingsStore>,
 }
 
 pub(super) struct Snapshot {
@@ -163,6 +180,7 @@ impl Runtime {
         directory: PathBuf,
         lexicon: Option<Lexicon>,
         persistent: bool,
+        settings: Arc<SettingsStore>,
         collector: C,
     ) -> (Arc<Self>, Worker<C>) {
         let (requests, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
@@ -183,6 +201,7 @@ impl Runtime {
             interrupt: Arc::new(AtomicBool::new(false)),
             stopping: Arc::new(AtomicBool::new(false)),
             persistent,
+            settings,
         });
         let worker = Worker {
             project: None,
@@ -240,7 +259,37 @@ impl Runtime {
         }
     }
 
-    pub(super) fn status(&self, directory: Option<&Directory>) -> Status {
+    /// What a client sees for the folder it names, else the configured one:
+    /// disabled while the setting is off, whatever the catalog holds.
+    pub(super) fn status(&self, requested: Option<Directory>) -> Result<Status, Error> {
+        let settings = self
+            .settings
+            .snapshot()
+            .map_err(|_| Error::Unavailable)?
+            .settings;
+        let directory = requested.or(settings.vocabulary_dir);
+        let mut status = self.catalog_status(directory.as_ref());
+        if !settings.vocabulary_enabled {
+            status.state = State::Disabled;
+        }
+        Ok(status)
+    }
+
+    /// The folder a change applies to: the one named, else the configured one.
+    fn selected(&self, requested: Option<Directory>) -> Result<Directory, Error> {
+        match requested {
+            Some(directory) => Ok(directory),
+            None => self
+                .settings
+                .snapshot()
+                .map_err(|_| Error::Unavailable)?
+                .settings
+                .vocabulary_dir
+                .ok_or(Error::NoDirectory),
+        }
+    }
+
+    fn catalog_status(&self, directory: Option<&Directory>) -> Status {
         let Some(directory) = directory else {
             return Status {
                 state: State::Disabled,
@@ -274,7 +323,8 @@ impl Runtime {
         }
     }
 
-    pub(super) async fn refresh(&self, directory: Directory) -> Result<Status, Error> {
+    pub(super) async fn refresh(&self, requested: Option<Directory>) -> Result<Status, Error> {
+        let directory = self.selected(requested)?;
         if !self.persistent {
             return Err(Error::Unsupported);
         }
@@ -289,7 +339,8 @@ impl Runtime {
         response.await.map_err(|_| Error::Unavailable)?
     }
 
-    pub(super) async fn forget(&self, directory: Directory) -> Result<Status, Error> {
+    pub(super) async fn forget(&self, requested: Option<Directory>) -> Result<Status, Error> {
+        let directory = self.selected(requested)?;
         let (reply, response) = oneshot::channel();
         {
             let mut registry = self.registry.lock().map_err(|_| Error::Unavailable)?;
@@ -876,7 +927,7 @@ impl<C: Collector> Worker<C> {
                 .remember_alias(directory.as_path(), &root)?;
         }
         if !self.runtime.persistent {
-            return Ok(self.runtime.status(Some(directory)));
+            return Ok(self.runtime.catalog_status(Some(directory)));
         }
         self.reserve(DISCOVERY_RESERVE, Some(directory))?;
         let previous = cached.map(|cached| cached.sources).unwrap_or_default();
@@ -906,7 +957,7 @@ impl<C: Collector> Worker<C> {
         }
         self.runtime
             .publish(directory, &root, revision, matcher, cancel)?;
-        Ok(self.runtime.status(Some(directory)))
+        Ok(self.runtime.catalog_status(Some(directory)))
     }
 
     fn compile(&self, terms: &[Term], token: &CancelToken) -> Result<Arc<Vocabulary>, Error> {
@@ -1001,6 +1052,28 @@ mod tests {
         Directory::new(path.to_path_buf()).unwrap()
     }
 
+    /// A settings file under `home` with the given vocabulary section.
+    fn settings_with(home: &Path, vocabulary: &str) -> Arc<SettingsStore> {
+        let path = home.join("settings.toml");
+        std::fs::write(&path, format!("[dictation.vocabulary]\n{vocabulary}\n")).unwrap();
+        let cache = aria_settings::SettingsCache::open(path, home.to_path_buf()).unwrap();
+        Arc::new(SettingsStore::new(Arc::new(cache)))
+    }
+
+    fn settings(home: &Path) -> Arc<SettingsStore> {
+        settings_with(home, "enabled = true")
+    }
+
+    fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
+        Runtime::new(
+            root.join("catalog"),
+            None,
+            true,
+            settings(root),
+            LocalCollector::new(LocalExtractor),
+        )
+    }
+
     fn project(base: &Path, name: &str) -> Directory {
         let path = base.join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -1058,8 +1131,13 @@ mod tests {
             root,
             previous_counts: Vec::new(),
         };
-        let (runtime, mut worker) =
-            Runtime::new(temporary.path().join("catalog"), None, true, collector);
+        let (runtime, mut worker) = Runtime::new(
+            temporary.path().join("catalog"),
+            None,
+            true,
+            settings(temporary.path()),
+            collector,
+        );
         let mut catalog = None;
         for _ in 0..2 {
             runtime.prepare(Some(selected.clone()));
@@ -1088,8 +1166,13 @@ mod tests {
             root: temporary.path().join("other-project"),
             previous_counts: Vec::new(),
         };
-        let (runtime, mut worker) =
-            Runtime::new(temporary.path().join("catalog"), None, true, collector);
+        let (runtime, mut worker) = Runtime::new(
+            temporary.path().join("catalog"),
+            None,
+            true,
+            settings(temporary.path()),
+            collector,
+        );
         runtime.prepare(Some(selected.clone()));
         let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
             panic!("refresh expected")
@@ -1099,7 +1182,7 @@ mod tests {
             worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
         worker.finished(Some(&selected), &cancel, &result);
         assert!(matches!(result, Err(Error::Unavailable)));
-        assert_eq!(runtime.status(Some(&selected)).runtime_revision, 0);
+        assert_eq!(runtime.catalog_status(Some(&selected)).runtime_revision, 0);
         assert_eq!(
             runtime
                 .snapshot(Some(&selected))
@@ -1120,14 +1203,70 @@ mod tests {
     }
 
     #[test]
-    fn cold_admission_coalesces_and_bounds_work_without_filesystem_access() {
+    fn a_request_without_a_directory_uses_the_configured_one() {
         let root = tempfile::tempdir().unwrap();
+        let configured = project(root.path(), "configured");
+        let (runtime, mut worker) = Runtime::new(
+            root.path().join("catalog"),
+            None,
+            true,
+            settings_with(
+                root.path(),
+                &format!("enabled = true\ndir = {:?}", configured.as_path()),
+            ),
+            LocalCollector::new(LocalExtractor),
+        );
+        runtime.prepare(Some(configured.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+        let mut catalog = None;
+        let result =
+            worker.refresh_project(&configured, &cancel, &CancelToken::never(), &mut catalog);
+        worker.finished(Some(&configured), &cancel, &result);
+
+        let status = runtime.status(None).unwrap();
+
+        assert_eq!(status.state, State::Ready);
+        assert_eq!(status, runtime.catalog_status(Some(&configured)));
+    }
+
+    #[test]
+    fn a_disabled_vocabulary_reports_disabled() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = project(root.path(), "project");
         let (runtime, _worker) = Runtime::new(
             root.path().join("catalog"),
             None,
             true,
+            settings_with(root.path(), "enabled = false"),
             LocalCollector::new(LocalExtractor),
         );
+
+        let status = runtime.status(Some(selected)).unwrap();
+
+        assert_eq!(status.state, State::Disabled);
+    }
+
+    #[tokio::test]
+    async fn a_change_without_a_directory_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _worker) = local_runtime(root.path());
+
+        assert!(matches!(
+            runtime.refresh(None).await,
+            Err(Error::NoDirectory)
+        ));
+        assert!(matches!(
+            runtime.forget(None).await,
+            Err(Error::NoDirectory)
+        ));
+    }
+
+    #[test]
+    fn cold_admission_coalesces_and_bounds_work_without_filesystem_access() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _worker) = local_runtime(root.path());
         for index in 0..100 {
             let selected = directory(&root.path().join(format!("missing-{index}")));
             let snapshot = runtime.snapshot(Some(&selected));
@@ -1150,6 +1289,7 @@ mod tests {
             root.path().join("catalog"),
             Some(Lexicon::new(root.path())),
             true,
+            settings(root.path()),
             LocalCollector::new(LocalExtractor),
         );
         worker.initialize_personal().unwrap();
@@ -1170,19 +1310,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let a = project(root.path(), "aria-stt");
         let b = project(root.path(), "other-stt");
-        let (runtime, worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, worker) = local_runtime(root.path());
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
         assert_eq!(
-            runtime.refresh(a.clone()).await.unwrap().state,
+            runtime.refresh(Some(a.clone())).await.unwrap().state,
             State::Ready
         );
-        runtime.refresh(b.clone()).await.unwrap();
+        runtime.refresh(Some(b.clone())).await.unwrap();
         {
             let snapshot = runtime.snapshot(Some(&a));
             assert_eq!(
@@ -1190,11 +1325,14 @@ mod tests {
                 Some("aria-stt")
             );
             assert_eq!(snapshot.matcher.correct("other dash stt"), None);
-            assert!(matches!(runtime.refresh(a.clone()).await, Err(Error::Busy)));
+            assert!(matches!(
+                runtime.refresh(Some(a.clone())).await,
+                Err(Error::Busy)
+            ));
         }
         std::fs::rename(a.as_path(), root.path().join("moved")).unwrap();
-        assert!(runtime.refresh(a.clone()).await.is_err());
-        assert_eq!(runtime.status(Some(&a)).state, State::Stale);
+        assert!(runtime.refresh(Some(a.clone())).await.is_err());
+        assert_eq!(runtime.catalog_status(Some(&a)).state, State::Stale);
         assert_eq!(
             runtime
                 .snapshot(Some(&a))
@@ -1213,20 +1351,15 @@ mod tests {
         let parent = project(root.path(), "parent");
         let child = project(parent.as_path(), "aria-kit");
         let catalog_dir = root.path().join("catalog");
-        let (runtime, worker) = Runtime::new(
-            catalog_dir.clone(),
-            None,
-            true,
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, worker) = local_runtime(root.path());
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
-        runtime.refresh(parent.clone()).await.unwrap();
-        runtime.refresh(child.clone()).await.unwrap();
+        runtime.refresh(Some(parent.clone())).await.unwrap();
+        runtime.refresh(Some(child.clone())).await.unwrap();
         let pinned = runtime.snapshot(Some(&parent));
         let forget_runtime = Arc::clone(&runtime);
         let forgotten = child.clone();
-        let forget = tokio::spawn(async move { forget_runtime.forget(forgotten).await });
+        let forget = tokio::spawn(async move { forget_runtime.forget(Some(forgotten)).await });
         while runtime.registry.lock().unwrap().removals.is_empty() {
             tokio::task::yield_now().await;
         }
@@ -1301,6 +1434,7 @@ mod tests {
             root.path().join("catalog"),
             None,
             true,
+            settings(root.path()),
             LocalCollector::new(BlockingExtractor {
                 entered: entered_tx,
                 exited: exited_tx,
@@ -1330,12 +1464,7 @@ mod tests {
     #[test]
     fn expired_deadline_cancels_backend_work() {
         let root = tempfile::tempdir().unwrap();
-        let (_, worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            LocalCollector::new(LocalExtractor),
-        );
+        let (_, worker) = local_runtime(root.path());
         let token = worker.control(
             Arc::new(AtomicBool::new(false)),
             Deadline::after(Duration::ZERO),
@@ -1363,8 +1492,7 @@ mod tests {
         catalog
             .refresh_cancellable(&discovery, &key, &CancelToken::never())
             .unwrap();
-        let (_, worker) =
-            Runtime::new(catalog_dir, None, true, LocalCollector::new(LocalExtractor));
+        let (_, worker) = local_runtime(temporary.path());
         let mut catalog = Some(catalog);
         worker
             .remove(
@@ -1387,12 +1515,7 @@ mod tests {
     fn obsolete_generation_cannot_publish_and_resource_failure_keeps_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let selected = directory(&root.path().join("project"));
-        let (runtime, worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, worker) = local_runtime(root.path());
         runtime.prepare(Some(selected.clone()));
         let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
             panic!("refresh expected")

@@ -105,7 +105,7 @@ enum HeardSpeaker {
 
 message CaptionSnapshot {
   uint64 recording_id = 1;
-  string committed = 2;
+  string finalized = 2;
   string provisional = 3;
   bool ended = 4;
 }

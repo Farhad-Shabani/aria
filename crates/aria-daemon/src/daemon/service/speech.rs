@@ -3,13 +3,9 @@
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use aria_primitives::error_chain;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::speech::SpeechRequest;
 
-use super::super::operation::CallError;
-use super::super::speech::SpeechRuntimeError;
-use super::super::speech::{SpeechCallError, SpeechHandle};
+use super::super::speech::SpeechHandle;
 use super::invalid_request;
 
 pub(in crate::daemon) struct SpeechRpc {
@@ -36,10 +32,10 @@ impl wire::speech_service_server::SpeechService for SpeechRpc {
         // out its deadline — cancels the submitted operation.
         match self.speech.speak(request).await {
             Ok(outcome) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(outcome.into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -50,29 +46,10 @@ impl wire::speech_service_server::SpeechService for SpeechRpc {
         const METHOD: &str = "SpeechService/Stop";
         match self.speech.stop().await {
             Ok(stop_requested) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(wire::StopSpeechResponse { stop_requested }))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
-        }
-    }
-}
-
-fn failure(error: SpeechCallError) -> RpcFailure {
-    match error {
-        CallError::Unavailable => RpcFailure::new(
-            RpcErrorCode::ShuttingDown,
-            "the daemon is not accepting speech requests",
-        ),
-        CallError::JobFailed => RpcFailure::new(
-            RpcErrorCode::Internal,
-            "the speech operation ended unexpectedly",
-        ),
-        CallError::Runtime(SpeechRuntimeError::Initialization(error)) => {
-            RpcFailure::new((&error).into(), error_chain(&error))
-        }
-        CallError::Runtime(SpeechRuntimeError::Execution(error)) => {
-            RpcFailure::new((&error).into(), error_chain(&error))
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 }

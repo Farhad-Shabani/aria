@@ -46,39 +46,67 @@ fn invalid_request(method: &'static str, error: &dyn std::error::Error) -> Statu
     )
 }
 
-fn failed(method: &'static str, failure: RpcFailure) -> Status {
+/// Runs domain work off the async pool. Domain code is synchronous and may
+/// lock or join threads, so it never runs on a runtime worker. A panic inside
+/// is the daemon's own fault and answers as Internal.
+pub(super) async fn blocking<T: Send + 'static>(
+    method: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, Status> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_panicked| {
+            failed(
+                method,
+                RpcFailure::new(RpcErrorCode::Internal, "the operation panicked"),
+            )
+        })
+}
+
+pub(in crate::daemon) fn served(method: &'static str) {
+    tracing::info!(method, status = "ok", "request served");
+}
+
+/// Every failure a handler returns goes through here, so each is logged once
+/// and encoded once. A domain error converts by the category it declares.
+pub(in crate::daemon) fn failed(method: &'static str, failure: impl Into<RpcFailure>) -> Status {
+    let failure = failure.into();
     log_failure(method, &failure);
     failure_status(failure)
 }
 
+/// One level rule. Unauthenticated is what a stranger on the LAN can cause,
+/// so it stays quiet; Internal is the daemon's own fault, so it stands out.
 /// A settings fault's message can quote the file, so only its place is
 /// logged.
 fn log_failure(method: &'static str, failure: &RpcFailure) {
-    if failure.code != aria_settings::rpc::RpcErrorCode::SettingsInvalid {
-        tracing::info!(
-            method,
-            status = failure.code.label(),
-            message = failure.message,
-            "request failed"
-        );
-        return;
-    }
-    match failure.settings_position {
-        Some(position) => tracing::info!(
-            method,
-            status = failure.code.label(),
-            line = position.line,
-            column = position.column,
-            "request failed"
-        ),
-        None => tracing::info!(method, status = failure.code.label(), "request failed"),
+    let status = failure.code.label();
+    if failure.code == RpcErrorCode::Unauthenticated {
+        tracing::debug!(method, status, "request failed");
+    } else if failure.code == RpcErrorCode::Internal {
+        tracing::warn!(method, status, message = failure.message, "request failed");
+    } else if failure.code == RpcErrorCode::SettingsInvalid {
+        match failure.settings_position {
+            Some(position) => tracing::info!(
+                method,
+                status,
+                line = position.line,
+                column = position.column,
+                "request failed"
+            ),
+            None => tracing::info!(method, status, "request failed"),
+        }
+    } else {
+        tracing::info!(method, status, message = failure.message, "request failed");
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
     use std::sync::{Arc, Mutex};
 
+    use super::super::operation::CallError;
     use super::*;
     use aria_settings::Position;
     use aria_settings::rpc::RpcErrorCode;
@@ -120,5 +148,70 @@ mod tests {
             !log.contains("secret-value") && !log.contains("tts.voice"),
             "{log}"
         );
+    }
+
+    /// An actor's own failures carry the daemon's category, whatever its
+    /// payload declares; the chat actor's payload declares none.
+    #[test]
+    fn an_actor_failure_logs_the_daemons_category() {
+        let captured = Captured::default();
+        let sink = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || sink.clone())
+            .with_ansi(false)
+            .finish();
+
+        let status = tracing::subscriber::with_default(subscriber, || {
+            failed("Method", &CallError::<Infallible>::Unavailable)
+        });
+
+        let log = String::from_utf8(captured.0.lock().expect("the sink").clone()).expect("text");
+        assert!(log.contains(r#"status="shutting_down""#), "{log}");
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(
+            crate::ipc::protocol::rpc_failure(&status).map(|failure| failure.code),
+            Some(RpcErrorCode::ShuttingDown)
+        );
+    }
+
+    /// A settings fault keeps its place however deep it sits in the chain,
+    /// so a press refused by an invalid file points at the line.
+    #[test]
+    fn a_settings_fault_keeps_its_place_through_a_runtime_error() {
+        use super::super::dictation::DictationRuntimeError;
+
+        let fault = aria_settings::Loaded::parse(
+            "[memory]\nenabled = maybe\n",
+            std::path::Path::new("/home"),
+        )
+        .expect_err("invalid");
+        let error = DictationRuntimeError::Settings(aria_settings::StoreError::FileInvalid(fault));
+
+        let failure = RpcFailure::from(&error);
+
+        assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);
+        assert_eq!(
+            failure.settings_position,
+            Some(Position {
+                line: 2,
+                column: 11
+            })
+        );
+    }
+
+    /// Every handler encodes a failure through `failed`, so each one is
+    /// logged once and the level rule holds everywhere.
+    #[test]
+    fn every_service_fails_through_failed() {
+        let services = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/daemon/service");
+        for entry in std::fs::read_dir(services).expect("the service directory") {
+            let path = entry.expect("an entry").path();
+            let source = std::fs::read_to_string(&path).expect("readable");
+            assert!(
+                !source.contains("failure_status("),
+                "{} encodes a failure outside `failed`",
+                path.display()
+            );
+        }
     }
 }

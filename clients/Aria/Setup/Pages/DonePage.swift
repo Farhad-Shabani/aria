@@ -4,7 +4,7 @@ struct DonePage: View {
     @ObservedObject var state: SetupState
     let ariaKey: AriaKey
     /// Nil when the ask holds a chord or nothing.
-    let askCombo: Aria_Daemon_V1_ShortcutCombo?
+    let askCombo: ShortcutCombo?
 
     var body: some View {
         Form {

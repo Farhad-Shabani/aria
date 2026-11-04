@@ -109,7 +109,7 @@ final class StatusPollerTests: XCTestCase {
 
     func testToggleStartFailureSurfacesErrorAndRepolls() async {
         let fake = FakeDaemonControl()
-        fake.startError = DaemonClientError.ariaBinaryMissing("/nope/bin/aria")
+        fake.startError = DaemonProcessError.ariaBinaryMissing("/nope/bin/aria")
         let poller = self.poller(fake)
         await poller.pollOnce()
         await poller.toggle()
@@ -119,7 +119,7 @@ final class StatusPollerTests: XCTestCase {
 
     func testAStartStoppedByAnInvalidFileNamesItsLineAndNotTheGenericFailure() async {
         let fake = FakeDaemonControl()
-        fake.startError = DaemonClientError.commandFailed("boom")
+        fake.startError = DaemonProcessError.commandFailed("boom")
         fake.invalid = InvalidSettings(line: 3)
         let poller = self.poller(fake)
         await poller.pollOnce()
@@ -169,7 +169,7 @@ final class StatusPollerTests: XCTestCase {
 
     func testLoginItemsKeepsItsOwnMessageOverAnInvalidFile() async {
         let fake = FakeDaemonControl()
-        fake.startError = DaemonClientError.agentDisabled
+        fake.startError = DaemonProcessError.agentDisabled
         fake.invalid = InvalidSettings(line: 3)
         let poller = self.poller(fake)
         await poller.pollOnce()
@@ -182,7 +182,7 @@ final class StatusPollerTests: XCTestCase {
     func testToggleNamesTheFailedActionWithoutItsDetail() async {
         let fake = FakeDaemonControl()
         fake.running = true
-        fake.stopError = DaemonClientError.commandFailed("launchctl kill exited with 3: No such process")
+        fake.stopError = DaemonProcessError.commandFailed("launchctl kill exited with 3: No such process")
         let poller = self.poller(fake)
         await poller.pollOnce()
         await poller.toggle()
@@ -192,7 +192,7 @@ final class StatusPollerTests: XCTestCase {
 
     func testTogglePointsAtLoginItemsWhenTheAgentIsOff() async {
         let fake = FakeDaemonControl()
-        fake.startError = DaemonClientError.agentDisabled
+        fake.startError = DaemonProcessError.agentDisabled
         let poller = self.poller(fake)
         await poller.toggle()
         XCTAssertEqual(poller.failure, .backgroundItemOff)
@@ -208,7 +208,7 @@ final class StatusPollerTests: XCTestCase {
 
     func testToggleClearsPreviousError() async {
         let fake = FakeDaemonControl()
-        fake.startError = DaemonClientError.commandFailed("boom")
+        fake.startError = DaemonProcessError.commandFailed("boom")
         let poller = self.poller(fake)
         await poller.toggle()
         XCTAssertNotNil(poller.failure)
@@ -229,7 +229,7 @@ final class StatusPollerTests: XCTestCase {
     func testEnsureRunningLeavesARunningDaemonAlone() async {
         let fake = FakeDaemonControl()
         fake.running = true
-        fake.startError = DaemonClientError.commandFailed("must not start")
+        fake.startError = DaemonProcessError.commandFailed("must not start")
         let poller = self.poller(fake)
         await poller.ensureRunning()
         XCTAssertNil(poller.failure)
@@ -238,7 +238,7 @@ final class StatusPollerTests: XCTestCase {
 
     func testEnsureRunningStartsNothingAfterAFailedRetirement() async {
         let fake = FakeDaemonControl()
-        fake.retireError = DaemonClientError.commandFailed("uninstall failed")
+        fake.retireError = DaemonProcessError.commandFailed("uninstall failed")
         let poller = self.poller(fake)
         await poller.ensureRunning()
         XCTAssertEqual(poller.failure, .start)

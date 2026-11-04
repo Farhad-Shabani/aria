@@ -1,34 +1,26 @@
-use super::super::vocabulary::{Error, Runtime};
-use crate::ipc::protocol::failure_status;
+//! The vocabulary service: wire translation over the vocabulary runtime.
+
+use super::super::vocabulary::Runtime;
 use crate::ipc::wire;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{Directory, SettingsStore};
-use aria_voice::vocabulary::State;
+use aria_settings::Directory;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 pub(in crate::daemon) struct VocabularyRpc {
     runtime: Arc<Runtime>,
-    settings: Arc<SettingsStore>,
 }
 
 impl VocabularyRpc {
-    pub(in crate::daemon) fn new(runtime: Arc<Runtime>, settings: Arc<SettingsStore>) -> Self {
-        Self { runtime, settings }
+    pub(in crate::daemon) fn new(runtime: Arc<Runtime>) -> Self {
+        Self { runtime }
     }
+}
 
-    fn directory(&self, request: wire::VocabularyRequest) -> Result<Option<Directory>, Status> {
-        match Option::<Directory>::try_from(request)
-            .map_err(|error| super::invalid_request("VocabularyService", &error))?
-        {
-            Some(directory) => Ok(Some(directory)),
-            None => self
-                .settings
-                .snapshot()
-                .map(|snapshot| snapshot.settings.vocabulary_dir)
-                .map_err(|_| failure(Error::Unavailable)),
-        }
-    }
+fn requested(
+    method: &'static str,
+    request: wire::VocabularyRequest,
+) -> Result<Option<Directory>, Status> {
+    Option::<Directory>::try_from(request).map_err(|error| super::invalid_request(method, &error))
 }
 
 #[tonic::async_trait]
@@ -37,15 +29,14 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         &self,
         request: Request<wire::VocabularyRequest>,
     ) -> Result<Response<wire::VocabularyStatus>, Status> {
-        let directory = self
-            .directory(request.into_inner())?
-            .ok_or_else(|| -> Status {
-                failure_status(RpcFailure::new(
-                    RpcErrorCode::InvalidRequest,
-                    "select a vocabulary directory first",
-                ))
-            })?;
-        let status = self.runtime.refresh(directory).await.map_err(failure)?;
+        const METHOD: &str = "VocabularyService/Refresh";
+        let requested = requested(METHOD, request.into_inner())?;
+        let status = self
+            .runtime
+            .refresh(requested)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
         Ok(Response::new(status.into()))
     }
 
@@ -53,17 +44,14 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         &self,
         request: Request<wire::VocabularyRequest>,
     ) -> Result<Response<wire::VocabularyStatus>, Status> {
-        let directory = self.directory(request.into_inner())?;
-        let mut status = self.runtime.status(directory.as_ref());
-        let enabled = self
-            .settings
-            .snapshot()
-            .map_err(|_| failure(Error::Unavailable))?
-            .settings
-            .vocabulary_enabled;
-        if !enabled {
-            status.state = State::Disabled;
-        }
+        const METHOD: &str = "VocabularyService/GetStatus";
+        let requested = requested(METHOD, request.into_inner())?;
+        let status = self
+            .runtime
+            .status(requested)
+            .map_err(|error| super::failed(METHOD, &error))?;
+        // The app polls this, so info would fill the log.
+        tracing::debug!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(status.into()))
     }
 
@@ -71,25 +59,14 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         &self,
         request: Request<wire::VocabularyRequest>,
     ) -> Result<Response<wire::VocabularyStatus>, Status> {
-        let directory = self
-            .directory(request.into_inner())?
-            .ok_or_else(|| -> Status {
-                failure_status(RpcFailure::new(
-                    RpcErrorCode::InvalidRequest,
-                    "select a vocabulary directory first",
-                ))
-            })?;
-        let status = self.runtime.forget(directory).await.map_err(failure)?;
+        const METHOD: &str = "VocabularyService/Forget";
+        let requested = requested(METHOD, request.into_inner())?;
+        let status = self
+            .runtime
+            .forget(requested)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
         Ok(Response::new(status.into()))
     }
-}
-
-fn failure(error: Error) -> Status {
-    let code = match error {
-        Error::Busy => RpcErrorCode::Busy,
-        Error::Unavailable => RpcErrorCode::Internal,
-        Error::Unsupported => RpcErrorCode::Unsupported,
-        Error::TooLarge => RpcErrorCode::PayloadTooLarge,
-    };
-    failure_status(RpcFailure::new(code, error.to_string()))
 }

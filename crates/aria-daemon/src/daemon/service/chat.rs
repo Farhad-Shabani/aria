@@ -9,14 +9,12 @@ use tonic::{Request, Response, Status};
 
 use super::super::chat::ChatError;
 use crate::ipc::wire;
-use aria_assistant::chat::{AssistantError, ChatRequest, PromptCall, Ticket};
-use aria_primitives::error_chain;
+use aria_assistant::chat::{ChatRequest, PromptCall, Ticket};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
-use super::super::chat::{ChatCallError, ChatHandle, ChatRuntime};
+use super::super::chat::{ChatHandle, ChatRuntime};
 use super::super::host::DaemonLifetime;
-use super::super::operation::CallError;
 use super::invalid_request;
 
 pub(in crate::daemon) struct ChatRpc {
@@ -55,18 +53,9 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         let cancellation = self.shutdown.child_token();
         let _cancel_on_drop = cancellation.clone().drop_guard();
         let cancel = CancelToken::from_fn(move || cancellation.is_cancelled());
-        let assistants = tokio::task::spawn_blocking(move || runtime.assistants(&cancel))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "checking assistants failed"),
-                )
-            })?;
-        tracing::info!(method = METHOD, status = "ok", "request served");
-        Ok(Response::new(wire::ListAssistantsResponse {
-            assistants: assistants.into_iter().map(wire::Assistant::from).collect(),
-        }))
+        let assistants = super::blocking(METHOD, move || runtime.assistants(&cancel)).await?;
+        super::served(METHOD);
+        Ok(Response::new(assistants.into()))
     }
 
     async fn list_models(
@@ -80,31 +69,11 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         let cancellation = self.shutdown.child_token();
         let _cancel_on_drop = cancellation.clone().drop_guard();
         let cancel = CancelToken::from_fn(move || cancellation.is_cancelled());
-        let models = tokio::task::spawn_blocking(move || runtime.models(assistant_id, &cancel))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "reading assistant models failed"),
-                )
-            })?
-            .map_err(|error| {
-                let error = ChatError::Assistant(error);
-                super::failed(
-                    METHOD,
-                    RpcFailure::new((&error).into(), error_chain(&error)),
-                )
-            })?;
-        tracing::info!(method = METHOD, status = "ok", "request served");
-        Ok(Response::new(wire::ListAssistantModelsResponse {
-            models: models
-                .into_iter()
-                .map(|model| wire::AssistantModel {
-                    id: model.id,
-                    name: model.name,
-                })
-                .collect(),
-        }))
+        let models = super::blocking(METHOD, move || runtime.models(assistant_id, &cancel))
+            .await?
+            .map_err(|error| super::failed(METHOD, &ChatError::Assistant(error)))?;
+        super::served(METHOD);
+        Ok(Response::new(models.into()))
     }
 
     async fn ask(
@@ -115,34 +84,17 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         self.require_persistent(METHOD)?;
         let request = ChatRequest::try_from(request.into_inner())
             .map_err(|error| invalid_request(METHOD, &error))?;
-        if !request.workdir.is_dir() {
-            return Err(invalid_request(
-                METHOD,
-                &AssistantError::NoWorkdir(request.workdir),
-            ));
-        }
 
         let runtime = Arc::clone(&self.runtime);
-        let request = tokio::task::spawn_blocking(move || runtime.prepare_ask(request))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "reading assistant settings failed"),
-                )
-            })?
-            .map_err(|error| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new((&error).into(), error_chain(&error)),
-                )
-            })?;
+        let request = super::blocking(METHOD, move || runtime.prepare_ask(request))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
         match self.chat.ask(request).await {
             Ok(ticket) => {
                 tracing::info!(method = METHOD, status = "ok", %ticket, "request served");
                 Ok(Response::new(ticket.into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -159,7 +111,7 @@ impl wire::chat_service_server::ChatService for ChatRpc {
                 tracing::info!(method = METHOD, status = "ok", %ticket, was_pending, "request served");
                 Ok(Response::new(wire::CancelAskResponse { was_pending }))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -172,26 +124,15 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         let call = PromptCall::try_from(request.into_inner())
             .map_err(|error| invalid_request(METHOD, &error))?;
         let runtime = Arc::clone(&self.runtime);
-        let request = tokio::task::spawn_blocking(move || runtime.prompt_request(call))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "reading the prompt failed"),
-                )
-            })?
-            .map_err(|error| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new((&error).into(), error_chain(&error)),
-                )
-            })?;
+        let request = super::blocking(METHOD, move || runtime.prompt_request(call))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
         match self.chat.run_prompt(request).await {
             Ok(ticket) => {
                 tracing::info!(method = METHOD, status = "ok", %ticket, "request served");
                 Ok(Response::new(ticket.into()))
             }
-            Err(error) => Err(super::failed(METHOD, failure(error))),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 
@@ -202,24 +143,14 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         const METHOD: &str = "ChatService/Resolve";
         self.require_persistent(METHOD)?;
         let runtime = Arc::clone(&self.runtime);
-        let resolved = tokio::task::spawn_blocking(move || runtime.resolve_target())
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "resolving the ask target failed"),
-                )
-            })?;
+        let resolved = super::blocking(METHOD, move || runtime.resolve_target()).await?;
 
         match resolved {
             Ok(target) => {
-                tracing::info!(method = METHOD, status = "ok", "request served");
+                super::served(METHOD);
                 Ok(Response::new(target.into()))
             }
-            Err(error) => Err(super::failed(
-                METHOD,
-                RpcFailure::new((&error).into(), error_chain(&error)),
-            )),
+            Err(error) => Err(super::failed(METHOD, &error)),
         }
     }
 }
@@ -238,19 +169,5 @@ impl ChatRpc {
             ));
         }
         Ok(())
-    }
-}
-
-fn failure(error: ChatCallError) -> RpcFailure {
-    match error {
-        CallError::Unavailable => RpcFailure::new(
-            RpcErrorCode::ShuttingDown,
-            "the daemon is not accepting chat requests",
-        ),
-        CallError::JobFailed => RpcFailure::new(
-            RpcErrorCode::Internal,
-            "the chat operation ended unexpectedly",
-        ),
-        CallError::Runtime(never) => match never {},
     }
 }

@@ -11,8 +11,9 @@ use aria_voice::dictation::{DictationOutcome, DictationRequest, DictationStage, 
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
-use aria_voice::listen::ListenStage;
+use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+use protocol::TransportFailure;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +30,8 @@ const SPEECH_TIMEOUT_BYTES_PER_SECOND: u64 = 10;
 /// For everything that answers immediately: settings, subscriptions.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MODEL_LIST_TIMEOUT: Duration = Duration::from_secs(40);
+/// A refresh walks the project folder and rebuilds the catalog.
+const VOCABULARY_REFRESH_TIMEOUT: Duration = Duration::from_secs(120);
 /// Stop waits for the listen session's final decode to drain.
 const LISTEN_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 /// One enrollment sample waits out the daemon's no-speech timeout and then
@@ -99,11 +102,16 @@ pub enum ClientError {
     #[error("failed to build the daemon client runtime")]
     Runtime(#[source] std::io::Error),
 
-    #[error("{}", code.reason(message))]
-    Rpc { code: RpcErrorCode, message: String },
+    /// The daemon refused the request and said why.
+    #[error(transparent)]
+    Rpc(RpcFailure),
 
-    #[error("daemon request failed with status {}: {}", .0.code().description(), .0.message())]
-    Status(tonic::Status),
+    /// The request did not reach a handler that could answer it.
+    #[error("daemon request failed ({kind:?}): {message}")]
+    Transport {
+        kind: TransportFailure,
+        message: String,
+    },
 
     #[error("the daemon is not ready to serve")]
     NotServing,
@@ -121,14 +129,22 @@ pub enum ClientError {
 impl ClientError {
     pub(crate) fn is_transient_readiness_failure(&self) -> bool {
         match self {
-            Self::NotServing | Self::Timeout(_) => true,
             // Cancelled covers a daemon torn down mid-request.
-            Self::Status(status) => matches!(
-                status.code(),
-                tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled
-            ),
-            Self::Runtime(_)
-            | Self::Rpc { .. }
+            Self::NotServing
+            | Self::Timeout(_)
+            | Self::Transport {
+                kind:
+                    TransportFailure::Unavailable
+                    | TransportFailure::DeadlineExceeded
+                    | TransportFailure::Cancelled,
+                ..
+            } => true,
+            Self::Transport {
+                kind: TransportFailure::Unimplemented | TransportFailure::Other,
+                ..
+            }
+            | Self::Runtime(_)
+            | Self::Rpc(_)
             | Self::NotProvided
             | Self::MalformedResponse(_) => false,
         }
@@ -141,6 +157,25 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    /// One unary call: the deadline is announced to the daemon and enforced
+    /// here, and a failed status becomes the client's error.
+    fn call<T, R, F>(
+        &self,
+        deadline: Duration,
+        message: T,
+        send: impl FnOnce(tonic::Request<T>) -> F,
+    ) -> Result<R, ClientError>
+    where
+        F: std::future::Future<Output = Result<tonic::Response<R>, tonic::Status>>,
+    {
+        let mut request = tonic::Request::new(message);
+        request.set_timeout(deadline);
+        self.runtime
+            .block_on(with_deadline(deadline, send(request)))?
+            .map(tonic::Response::into_inner)
+            .map_err(status_error)
+    }
+
     /// Probes the socket synchronously, so an absent daemon surfaces here;
     /// the gRPC channel itself connects on first use.
     pub(crate) fn connect(socket_path: impl AsRef<Path>) -> Result<Self, ConnectError> {
@@ -296,19 +331,11 @@ impl DaemonClient {
             );
         let mut speech =
             wire::speech_service_client::SpeechServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                deadline,
-                speech.speak(request_with_timeout(
-                    wire::SpeakRequest::from(request),
-                    deadline,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(deadline, wire::SpeakRequest::from(request), |request| {
+            speech.speak(request)
+        })?;
 
-        SpeechOutcome::try_from(response.into_inner())
-            .map_err(|error| ClientError::MalformedResponse(error.to_string()))
+        SpeechOutcome::try_from(response).map_err(ClientError::from)
     }
 
     /// Ends the named recording; answers whether it was the one running.
@@ -316,20 +343,15 @@ impl DaemonClient {
     pub(crate) fn stop_dictation(&self, recording: RecordingId) -> Result<bool, ClientError> {
         let mut dictation =
             wire::dictation_service_client::DictationServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                dictation.stop(request_with_timeout(
-                    wire::StopDictationRequest {
-                        recording_id: recording.0,
-                    },
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::StopDictationRequest {
+                recording_id: recording.0,
+            },
+            |request| dictation.stop(request),
+        )?;
 
-        Ok(response.into_inner().was_recording)
+        Ok(response.was_recording)
     }
 
     pub(crate) fn list_assistant_models(
@@ -337,106 +359,60 @@ impl DaemonClient {
         assistant_id: AssistantId,
     ) -> Result<Vec<AssistantModel>, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                MODEL_LIST_TIMEOUT,
-                chat.list_models(request_with_timeout(
-                    wire::ListAssistantModelsRequest {
-                        assistant_id: wire::AssistantId::from(assistant_id) as i32,
-                    },
-                    MODEL_LIST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
-        response
-            .into_inner()
-            .models
-            .into_iter()
-            .map(|model| {
-                let model = AssistantModel {
-                    id: model.id,
-                    name: model.name,
-                };
-                if !model.is_valid() {
-                    return Err(ClientError::MalformedResponse(
-                        "invalid assistant model".to_owned(),
-                    ));
-                }
-                Ok(model)
-            })
-            .collect()
+        let response = self.call(
+            MODEL_LIST_TIMEOUT,
+            wire::ListAssistantModelsRequest {
+                assistant_id: wire::AssistantId::from(assistant_id) as i32,
+            },
+            |request| chat.list_models(request),
+        )?;
+        Ok(response.try_into()?)
     }
 
     /// Where an ask goes when the caller has no working directory.
     pub(crate) fn resolve_ask(&self) -> Result<AskTarget, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                chat.resolve(request_with_timeout(
-                    wire::ResolveAskRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(REQUEST_TIMEOUT, wire::ResolveAskRequest {}, |request| {
+            chat.resolve(request)
+        })?;
 
-        AskTarget::try_from(response.into_inner())
-            .map_err(|error| ClientError::MalformedResponse(error.to_string()))
+        AskTarget::try_from(response).map_err(ClientError::from)
     }
 
     /// Answers with the ticket as soon as the ask is taken; the reply
     /// follows on the event stream.
     pub(crate) fn ask(&self, request: ChatRequest) -> Result<Ticket, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                chat.ask(request_with_timeout(
-                    wire::AskRequest::from(request),
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::AskRequest::from(request),
+            |request| chat.ask(request),
+        )?;
 
-        Ok(Ticket::from(response.into_inner()))
+        Ok(Ticket::from(response))
     }
 
     /// Ends the ask; answers whether it was still pending.
     pub(crate) fn cancel_ask(&self, ticket: Ticket) -> Result<bool, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                chat.cancel(request_with_timeout(
-                    wire::CancelAskRequest::from(ticket),
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::CancelAskRequest::from(ticket),
+            |request| chat.cancel(request),
+        )?;
 
-        Ok(response.into_inner().was_pending)
+        Ok(response.was_pending)
     }
 
     /// Stops the current utterance, if any; answers whether one was running.
     pub(crate) fn stop_speech(&self) -> Result<bool, ClientError> {
         let mut speech =
             wire::speech_service_client::SpeechServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                speech.stop(request_with_timeout(
-                    wire::StopSpeechRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(REQUEST_TIMEOUT, wire::StopSpeechRequest {}, |request| {
+            speech.stop(request)
+        })?;
 
-        Ok(response.into_inner().stop_requested)
+        Ok(response.stop_requested)
     }
 
     pub(crate) fn list_history(
@@ -448,24 +424,15 @@ impl DaemonClient {
         let request = wire::ListHistoryRequest {
             query: query.query,
             before_id: query.before_id,
-            limit: u32::try_from(query.limit).map_err(|_| ClientError::Rpc {
-                code: RpcErrorCode::InvalidRequest,
-                message: "invalid history limit".to_owned(),
+            limit: u32::try_from(query.limit).map_err(|_| {
+                ClientError::Rpc(RpcFailure::new(
+                    RpcErrorCode::InvalidRequest,
+                    "invalid history limit",
+                ))
             })?,
         };
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                history.list(request_with_timeout(request, REQUEST_TIMEOUT)),
-            ))?
-            .map_err(status_error)?;
-        response
-            .into_inner()
-            .try_into()
-            .map_err(|error: protocol::ProtocolError| {
-                ClientError::MalformedResponse(error.to_string())
-            })
+        let response = self.call(REQUEST_TIMEOUT, request, |request| history.list(request))?;
+        response.try_into().map_err(ClientError::from)
     }
 
     pub(crate) fn clear_history(
@@ -473,21 +440,10 @@ impl DaemonClient {
     ) -> Result<aria_voice::history::ClearHistoryResult, ClientError> {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                history.clear(request_with_timeout(
-                    wire::ClearHistoryRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?
-            .into_inner();
-        Ok(aria_voice::history::ClearHistoryResult {
-            deleted_entries: response.deleted_entry_count,
-            cleanup_pending: response.audio_cleanup_pending,
-        })
+        let response = self.call(REQUEST_TIMEOUT, wire::ClearHistoryRequest {}, |request| {
+            history.clear(request)
+        })?;
+        Ok(response.into())
     }
 
     pub(crate) fn retry_history(
@@ -504,19 +460,10 @@ impl DaemonClient {
                 .language
                 .map(|language| language.as_str().to_owned()),
         };
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                DICTATION_TIMEOUT,
-                history.regenerate(request_with_timeout(request, DICTATION_TIMEOUT)),
-            ))?
-            .map_err(status_error)?;
-        response
-            .into_inner()
-            .try_into()
-            .map_err(|error: protocol::ProtocolError| {
-                ClientError::MalformedResponse(error.to_string())
-            })
+        let response = self.call(DICTATION_TIMEOUT, request, |request| {
+            history.regenerate(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
     }
 
     pub(crate) fn vocabulary_status(
@@ -528,20 +475,10 @@ impl DaemonClient {
         let request = wire::VocabularyRequest {
             directory: directory.map(|path| path.as_str().to_owned()),
         };
-        let timeout = REQUEST_TIMEOUT;
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                timeout,
-                vocabulary.get_status(request_with_timeout(request, timeout)),
-            ))?
-            .map_err(status_error)?;
-        response
-            .into_inner()
-            .try_into()
-            .map_err(|error: crate::ipc::protocol::ProtocolError| {
-                ClientError::MalformedResponse(error.to_string())
-            })
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            vocabulary.get_status(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
     }
 
     pub(crate) fn vocabulary_refresh(
@@ -553,20 +490,10 @@ impl DaemonClient {
         let request = wire::VocabularyRequest {
             directory: directory.map(|path| path.as_str().to_owned()),
         };
-        let timeout = Duration::from_secs(120);
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                timeout,
-                vocabulary.refresh(request_with_timeout(request, timeout)),
-            ))?
-            .map_err(status_error)?;
-        response
-            .into_inner()
-            .try_into()
-            .map_err(|error: crate::ipc::protocol::ProtocolError| {
-                ClientError::MalformedResponse(error.to_string())
-            })
+        let response = self.call(VOCABULARY_REFRESH_TIMEOUT, request, |request| {
+            vocabulary.refresh(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
     }
 
     pub(crate) fn vocabulary_forget(
@@ -578,57 +505,31 @@ impl DaemonClient {
         let request = wire::VocabularyRequest {
             directory: directory.map(|path| path.as_str().to_owned()),
         };
-        let timeout = REQUEST_TIMEOUT;
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                timeout,
-                vocabulary.forget(request_with_timeout(request, timeout)),
-            ))?
-            .map_err(status_error)?;
-        response
-            .into_inner()
-            .try_into()
-            .map_err(|error: crate::ipc::protocol::ProtocolError| {
-                ClientError::MalformedResponse(error.to_string())
-            })
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            vocabulary.forget(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
     }
 
     pub(crate) fn get_settings(&self) -> Result<SettingsSnapshot, ClientError> {
         let mut settings =
             wire::settings_service_client::SettingsServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                settings.get(request_with_timeout(
-                    wire::GetSettingsRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(REQUEST_TIMEOUT, wire::GetSettingsRequest {}, |request| {
+            settings.get(request)
+        })?;
 
-        SettingsSnapshot::try_from(response.into_inner())
-            .map_err(|error| ClientError::MalformedResponse(error.to_string()))
+        SettingsSnapshot::try_from(response).map_err(ClientError::from)
     }
 
     pub(crate) fn settings_status(&self) -> Result<SettingsStatus, ClientError> {
         let mut settings =
             wire::settings_service_client::SettingsServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                settings.get_status(request_with_timeout(
-                    wire::GetSettingsStatusRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
-        let status = response.into_inner().status.ok_or_else(|| {
-            ClientError::MalformedResponse("the settings status is missing".to_owned())
-        })?;
-        Ok(status.into())
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::GetSettingsStatusRequest {},
+            |request| settings.get_status(request),
+        )?;
+        Ok(SettingsStatus::try_from(response)?)
     }
 
     pub(crate) fn update_settings(
@@ -639,35 +540,23 @@ impl DaemonClient {
         let mut settings =
             wire::settings_service_client::SettingsServiceClient::new(self.channel.clone());
         let request = wire::UpdateSettingsRequest::from((expected_revision, patch));
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                settings.update(request_with_timeout(request, REQUEST_TIMEOUT)),
-            ))?
-            .map_err(status_error)?;
+        let response = self.call(REQUEST_TIMEOUT, request, |request| settings.update(request))?;
 
-        UpdateResult::try_from(response.into_inner())
-            .map_err(|error| ClientError::MalformedResponse(error.to_string()))
+        UpdateResult::try_from(response).map_err(ClientError::from)
     }
 
     pub(crate) fn listen_start(
         &self,
         transcript_path: Option<String>,
-    ) -> Result<wire::StartListenResponse, ClientError> {
+    ) -> Result<ListenStarted, ClientError> {
         let mut listen =
             wire::listen_service_client::ListenServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                listen.start(request_with_timeout(
-                    wire::StartListenRequest { transcript_path },
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
-        Ok(response.into_inner())
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::StartListenRequest { transcript_path },
+            |request| listen.start(request),
+        )?;
+        Ok(response.into())
     }
 
     pub(crate) fn enroll(
@@ -677,106 +566,59 @@ impl DaemonClient {
         let name = request.name.clone();
         let mut speaker =
             wire::speaker_service_client::SpeakerServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                ENROLL_TIMEOUT,
-                speaker.enroll(request_with_timeout(request.into(), ENROLL_TIMEOUT)),
-            ))?
-            .map_err(status_error)?
-            .into_inner();
-        Ok(EnrollmentResult {
-            name,
-            role: protocol::role(response.role)
-                .map_err(|error| ClientError::MalformedResponse(error.to_string()))?,
-            consistency: response.consistency,
-        })
+        let response = self.call(ENROLL_TIMEOUT, request.into(), |request| {
+            speaker.enroll(request)
+        })?;
+        Ok(protocol::enrollment_result(name, response)?)
     }
 
     pub(crate) fn list_speakers(&self) -> Result<Vec<EnrolledSpeaker>, ClientError> {
         let mut speaker =
             wire::speaker_service_client::SpeakerServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                speaker.list(request_with_timeout(
-                    wire::ListSpeakersRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?
-            .into_inner();
-        response
-            .speakers
-            .iter()
-            .map(|speaker| {
-                EnrolledSpeaker::try_from(speaker)
-                    .map_err(|error| ClientError::MalformedResponse(error.to_string()))
-            })
-            .collect()
+        let response = self.call(REQUEST_TIMEOUT, wire::ListSpeakersRequest {}, |request| {
+            speaker.list(request)
+        })?;
+        Ok(response.try_into()?)
     }
 
     pub(crate) fn remove_speaker(&self, name: String) -> Result<(), ClientError> {
         let mut speaker =
             wire::speaker_service_client::SpeakerServiceClient::new(self.channel.clone());
-        self.runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                speaker.remove(request_with_timeout(
-                    wire::RemoveSpeakerRequest { name },
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        self.call(
+            REQUEST_TIMEOUT,
+            wire::RemoveSpeakerRequest { name },
+            |request| speaker.remove(request),
+        )?;
         Ok(())
     }
 
     pub(crate) fn set_owner(&self, name: String) -> Result<(), ClientError> {
         let mut speaker =
             wire::speaker_service_client::SpeakerServiceClient::new(self.channel.clone());
-        self.runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                speaker.set_owner(request_with_timeout(
-                    wire::SetOwnerRequest { name },
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
+        self.call(REQUEST_TIMEOUT, wire::SetOwnerRequest { name }, |request| {
+            speaker.set_owner(request)
+        })?;
         Ok(())
     }
 
-    pub(crate) fn listen_stop(&self) -> Result<wire::StopListenResponse, ClientError> {
+    pub(crate) fn listen_stop(&self) -> Result<ListenStopped, ClientError> {
         let mut listen =
             wire::listen_service_client::ListenServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                LISTEN_STOP_TIMEOUT,
-                listen.stop(request_with_timeout(
-                    wire::StopListenRequest {},
-                    LISTEN_STOP_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
-        Ok(response.into_inner())
+        let response = self.call(LISTEN_STOP_TIMEOUT, wire::StopListenRequest {}, |request| {
+            listen.stop(request)
+        })?;
+        Ok(response.into())
     }
 
-    pub(crate) fn listen_status(&self) -> Result<wire::GetListenStatusResponse, ClientError> {
+    pub(crate) fn listen_status(&self) -> Result<ListenSnapshot, ClientError> {
         let mut listen =
             wire::listen_service_client::ListenServiceClient::new(self.channel.clone());
-        let response = self
-            .runtime
-            .block_on(with_deadline(
-                REQUEST_TIMEOUT,
-                listen.get_status(request_with_timeout(
-                    wire::GetListenStatusRequest {},
-                    REQUEST_TIMEOUT,
-                )),
-            ))?
-            .map_err(status_error)?;
-        Ok(response.into_inner())
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::GetListenStatusRequest {},
+            |request| listen.get_status(request),
+        )?;
+        Ok(response.into())
     }
 
     /// The stream shares this client's runtime: the channel only makes
@@ -808,26 +650,17 @@ fn outcome_from(
     mut observe: impl FnMut(&DictationStage),
 ) -> Result<DictationOutcome, ClientError> {
     use wire::start_dictation_response::Body;
-    let malformed =
-        |error: protocol::ProtocolError| ClientError::MalformedResponse(error.to_string());
     for message in messages {
         match message?.body {
             Some(Body::Progress(stage)) => {
-                observe(&DictationStage::try_from(&stage).map_err(malformed)?);
+                observe(&DictationStage::try_from(&stage)?);
             }
             Some(Body::Result(result)) => {
-                return Ok(DictationOutcome::Completed(
-                    aria_voice::dictation::DictationResult {
-                        text: result.text,
-                        own_voice: result.own_voice,
-                    },
-                ));
+                return Ok(DictationOutcome::Completed(result.into()));
             }
             Some(Body::StopAccepted(_)) => return Ok(DictationOutcome::StopAccepted),
             None => {
-                return Err(malformed(protocol::ProtocolError::MissingBody(
-                    "dictation response",
-                )));
+                return Err(protocol::ProtocolError::MissingBody("dictation response").into());
             }
         }
     }
@@ -937,7 +770,8 @@ fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> 
     }
 }
 
-/// Enforces the deadline locally; `request_with_timeout` announces it.
+/// Enforces the deadline locally. Unary calls announce it too, through
+/// [`DaemonClient::call`]; a stream's deadline covers only its opening.
 async fn with_deadline<T>(
     deadline: Duration,
     call: impl std::future::Future<Output = T>,
@@ -947,18 +781,21 @@ async fn with_deadline<T>(
         .map_err(|_elapsed| ClientError::Timeout(deadline))
 }
 
-fn request_with_timeout<T>(message: T, deadline: Duration) -> tonic::Request<T> {
-    let mut request = tonic::Request::new(message);
-    request.set_timeout(deadline);
-    request
-}
-
-/// An Aria failure when the status details carry one, the raw status
-/// otherwise.
+/// An Aria failure when the status details carry one, the transport's
+/// category otherwise.
 fn status_error(status: tonic::Status) -> ClientError {
     match protocol::rpc_failure(&status) {
-        Some(RpcFailure { code, message, .. }) => ClientError::Rpc { code, message },
-        None => ClientError::Status(status),
+        Some(failure) => ClientError::Rpc(failure),
+        None => ClientError::Transport {
+            kind: protocol::transport_failure(status.code()),
+            message: status.message().to_owned(),
+        },
+    }
+}
+
+impl From<protocol::ProtocolError> for ClientError {
+    fn from(error: protocol::ProtocolError) -> Self {
+        Self::MalformedResponse(error.to_string())
     }
 }
 
@@ -971,7 +808,7 @@ mod tests {
         let event = wire::Event {
             payload: Some(wire::event::Payload::Caption(wire::CaptionSnapshot {
                 recording_id: 42,
-                committed: "hello".to_owned(),
+                finalized: "hello".to_owned(),
                 provisional: "world".to_owned(),
                 ended: false,
             })),
@@ -1107,30 +944,27 @@ mod tests {
 
         assert!(matches!(
             error,
-            ClientError::Rpc {
+            ClientError::Rpc(RpcFailure {
                 code: RpcErrorCode::DeliveryTargetChanged,
                 ..
-            }
+            })
         ));
     }
 
     #[test]
     fn an_rpc_failure_reads_as_its_message_without_its_code() {
-        let named = ClientError::Rpc {
-            code: RpcErrorCode::DeliveryTargetChanged,
-            message: "the window changed".to_owned(),
-        };
-        let bare = ClientError::Rpc {
-            code: RpcErrorCode::HistoryUnavailable,
-            message: String::new(),
-        };
+        let named = ClientError::Rpc(RpcFailure::new(
+            RpcErrorCode::DeliveryTargetChanged,
+            "the window changed".to_owned(),
+        ));
+        let bare = ClientError::Rpc(RpcFailure::new(
+            RpcErrorCode::HistoryUnavailable,
+            String::new(),
+        ));
 
         assert_eq!(named.to_string(), "the window changed");
         assert_eq!(bare.to_string(), "history unavailable");
-        let newer = ClientError::Rpc {
-            code: RpcErrorCode::Unknown(42),
-            message: String::new(),
-        };
+        let newer = ClientError::Rpc(RpcFailure::new(RpcErrorCode::Unknown(42), String::new()));
         assert_eq!(newer.to_string(), "unknown (42)");
     }
 }

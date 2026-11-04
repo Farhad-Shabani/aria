@@ -3,7 +3,6 @@
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
 use aria_assistant::memory::Lexicon;
 use aria_kit::audio::{WakeWordMonitor, remove_all_spools};
-use aria_platform::delivery::PlatformTextDelivery;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
@@ -153,6 +152,7 @@ fn compose(
         context.home.join(".aria/vocabulary"),
         lexicon,
         matches!(context.lifetime, DaemonLifetime::Persistent),
+        Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
             aria_voice::vocabulary::extract::LocalExtractor,
         ),
@@ -188,7 +188,7 @@ fn compose(
         speaker: speaker_runtime,
         monitor,
         hotkey,
-        relay_delivery,
+        relay_port,
     } = workers;
     // A daemon that lives on catches up on what the last one left and keeps
     // up with the owner's asks; one serving a single press has no time for
@@ -227,7 +227,7 @@ fn compose(
     let (history, history_actor) = HistoryRpc::new(transcripts, Arc::clone(&dictation_runtime));
     let settings_rpc = SettingsRpc::new(settings_handle, cache.status());
     // Without usable pairing the relay stays off, but the Mac still dictates.
-    let relay = relay_delivery.and_then(|(delivery, port)| {
+    let relay = relay_port.and_then(|port| {
         let path = context.home.join(super::relay::PAIRING_RELATIVE_PATH);
         let instance = super::relay::instance_name();
         let pairing = super::relay::load_pairing(&path, &instance)
@@ -243,7 +243,6 @@ fn compose(
             rpc: RelayRpc::new(
                 relay_runtime,
                 relay_microphone,
-                delivery,
                 context.paths.spool_dir(),
                 tasks.cancellation(),
             ),
@@ -267,7 +266,7 @@ fn compose(
             Arc::clone(&vocabulary),
         ))),
         settings: settings_rpc,
-        vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary), settings),
+        vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary)),
         speaker: SpeakerRpc::new(speaker),
         events: EventsService::new(Arc::clone(&subscriptions)),
         relay,
@@ -329,7 +328,7 @@ struct Workers {
     /// settings a persistent daemon loads. An on-demand one — which
     /// never advertises and exits after one press — carries none and serves
     /// no relay.
-    relay_delivery: Option<(PlatformTextDelivery, u16)>,
+    relay_port: Option<u16>,
 }
 
 fn enrollment_event_emitter(subscriptions: Arc<Subscriptions>) -> EnrollmentEventEmitter {
@@ -409,17 +408,9 @@ fn eager_workers(
         relay,
     } = DaemonConfig::load(startup, &context.home, wake_word)
         .map_err(DaemonError::Configuration)?;
-    // Relayed recordings have no key press, so they need a separate delivery adapter.
-    let relay_delivery = match relay {
+    let relay_port = match relay {
         RelayConfig::Disabled => None,
-        RelayConfig::Enabled { port } => Some((
-            context
-                .delivery
-                .create(dictation_config.dictation_timeouts.delivery)
-                .map_err(DictationInitializationError::Delivery)
-                .map_err(DaemonError::Dictation)?,
-            port,
-        )),
+        RelayConfig::Enabled { port } => Some(port),
     };
     let speech = SpeechRuntime::new(
         context,
@@ -475,7 +466,7 @@ fn eager_workers(
         )),
         monitor,
         hotkey: context.hotkey(),
-        relay_delivery,
+        relay_port,
     })
 }
 
@@ -535,7 +526,7 @@ fn deferred_workers(
         // An on-demand daemon serves one request and exits. A hotkey, like
         // the wake word and the relay, needs a persistent daemon.
         hotkey: HotkeyConfig::Disabled,
-        relay_delivery: None,
+        relay_port: None,
     }
 }
 

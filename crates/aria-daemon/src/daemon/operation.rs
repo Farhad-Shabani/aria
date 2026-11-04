@@ -2,6 +2,7 @@
 //! the reply an actor owes its caller, and the wait on the other side.
 
 use aria_kit::cancel::CancelToken;
+use aria_settings::rpc::{Categorized, RpcErrorCode};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -26,16 +27,26 @@ impl Drop for DisconnectGuard {
 /// the actor itself; only the last comes from the capability's own work.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum CallError<E> {
-    #[error("the actor is not accepting requests")]
+    #[error("the daemon is not accepting requests")]
     Unavailable,
 
     /// The job panicked. The actor stays operational; the operation's own
     /// resources were released by unwinding.
-    #[error("the job failed unexpectedly")]
+    #[error("the operation ended unexpectedly")]
     JobFailed,
 
     #[error(transparent)]
     Runtime(#[from] E),
+}
+
+impl<E: Categorized> From<&CallError<E>> for RpcErrorCode {
+    fn from(error: &CallError<E>) -> Self {
+        match error {
+            CallError::Unavailable => Self::ShuttingDown,
+            CallError::JobFailed => Self::Internal,
+            CallError::Runtime(error) => error.category(),
+        }
+    }
 }
 
 /// The answer an actor owes one caller. Every path out of it answers, so a

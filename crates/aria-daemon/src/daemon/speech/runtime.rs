@@ -7,6 +7,7 @@ use aria_kit::cancel::CancelToken;
 
 use aria_primitives::lazy::Lazy;
 use aria_settings::SettingsCache;
+use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::{SpeechDefaults, TtsConfig, TtsEngine};
 use aria_voice::speech::{
     SpeechError, SpeechEventEmitter, SpeechOutcome, SpeechRequest, SpeechSettings, SpeechStage,
@@ -122,6 +123,15 @@ pub(in crate::daemon) enum SpeechRuntimeError {
 
     #[error(transparent)]
     Execution(#[from] SpeechError),
+}
+
+impl From<&SpeechRuntimeError> for RpcErrorCode {
+    fn from(error: &SpeechRuntimeError) -> Self {
+        match error {
+            SpeechRuntimeError::Initialization(error) => error.into(),
+            SpeechRuntimeError::Execution(error) => error.into(),
+        }
+    }
 }
 
 #[cfg(test)]

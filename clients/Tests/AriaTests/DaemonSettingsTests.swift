@@ -1,4 +1,3 @@
-import GRPCCore
 import XCTest
 
 @testable import Aria
@@ -194,7 +193,7 @@ final class DaemonSettingsTests: XCTestCase {
     func testARefusedEditDoesNotTakeTheOnesBehindItWithIt() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3)]
-        transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
+        transport.updateError = DaemonFailure.refused(.permissionDenied)
         transport.updates = [accepted(snapshot(revision: 4, language: "auto"))]
         let settings = DaemonSettings(transport: transport)
         await settings.sync()
@@ -211,7 +210,8 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(transport.sentUpdates.last?.patch.sttLanguage, "auto")
         XCTAssertEqual(settings.snapshot?.muteSound, false, "the refused edit leaves the view")
         XCTAssertEqual(settings.snapshot?.sttLanguage, "auto")
-        XCTAssertEqual((settings.lastError as? RPCError)?.code, .permissionDenied, "the refusal outlives later edits")
+        XCTAssertEqual(
+            settings.lastError as? DaemonFailure, .refused(.permissionDenied), "the refusal outlives later edits")
         XCTAssertFalse(settings.hasUnsavedChange)
     }
 
@@ -222,7 +222,7 @@ final class DaemonSettingsTests: XCTestCase {
         saved.settings.prompts.entries = [prompt("a"), prompt("b", name: "B renamed")]
         let transport = FakeSettingsTransport()
         transport.snapshots = [initial]
-        transport.updateError = RPCError(code: .invalidArgument, message: "shortcut in use")
+        transport.updateError = DaemonFailure.refused(.invalidRequest)
         transport.updates = [accepted(saved)]
         let settings = DaemonSettings(transport: transport)
         await settings.sync()
@@ -239,7 +239,7 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(rename?.first { $0.id == "b" }?.name, "B renamed")
         XCTAssertEqual(settings.snapshot?.prompts.entries.first { $0.id == "a" }?.hasChord, false)
         XCTAssertEqual(settings.snapshot?.prompts.entries.first { $0.id == "b" }?.name, "B renamed")
-        XCTAssertEqual((settings.lastError as? RPCError)?.code, .invalidArgument)
+        XCTAssertEqual(settings.lastError as? DaemonFailure, .refused(.invalidRequest))
     }
 
     func testATransientFailureKeepsEveryEditInOrder() async {
@@ -365,7 +365,7 @@ final class DaemonSettingsTests: XCTestCase {
         transport.duringUpdate = {
             await settings.set { $0.sttLanguage = "auto" }
             transport.duringUpdate = {
-                transport.updateError = RPCError(code: .permissionDenied, message: "mac only")
+                transport.updateError = DaemonFailure.refused(.permissionDenied)
                 transport.duringUpdate = { transport.updateError = nil }
             }
         }

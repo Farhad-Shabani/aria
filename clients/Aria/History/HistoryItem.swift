@@ -21,24 +21,35 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
         }
     }
 
+    enum Source: Equatable, Sendable {
+        case local, relay
+
+        var title: String {
+            switch self {
+            case .local: "Dictation"
+            case .relay: "iPhone or Apple Watch"
+            }
+        }
+    }
+
     let id: UInt64
     var text: String
     var created: Date
     var status: Status
-    var source: String = "Dictation"
+    var source: Source = .local
     var application: String?
     var duration: Double?
     var isComplete = true
-    var isRetryable = false
+    var canRegenerate = false
     var audio: Audio = .unavailable
-    var isRetrying = false
+    var isRegenerating = false
     var warning: String?
     var message: String?
 
     var preview: String { text.isEmpty ? status.title : text }
 
     var metadata: [(String, String)] {
-        var rows = [("Source", source)]
+        var rows = [("Source", source.title)]
         if let application { rows.append(("Application", application)) }
         rows.append(("Status", status.title))
         rows.append(("Created", created.formatted(date: .abbreviated, time: .shortened)))

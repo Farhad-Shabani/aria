@@ -5,16 +5,15 @@ import os
 final class AssistantModels: ObservableObject {
     private static let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "AssistantModels")
 
-    @Published private(set) var choices: [Aria_Daemon_V1_AssistantModel] = []
+    @Published private(set) var choices: [AssistantModel] = []
     @Published private(set) var isLoading = false
     @Published private(set) var failure: String?
 
-    private let list: @MainActor (Aria_Daemon_V1_AssistantId) async throws -> [Aria_Daemon_V1_AssistantModel]
+    private let list: @MainActor (Aria_Daemon_V1_AssistantId) async throws -> [AssistantModel]
     private var loadID: UUID?
 
     init(
-        list: @escaping @MainActor (Aria_Daemon_V1_AssistantId) async throws -> [Aria_Daemon_V1_AssistantModel] =
-            AssistantClient.models
+        list: @escaping @MainActor (Aria_Daemon_V1_AssistantId) async throws -> [AssistantModel] = ChatClient.models
     ) {
         self.list = list
     }

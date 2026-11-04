@@ -21,7 +21,7 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
         let response =
             wire::inference_admin_service_client::InferenceAdminServiceClient::new(channel)
                 .max_decoding_message_size(MAX_DOCUMENT_BYTES as usize + 1024)
-                .issue_invite(wire::InferenceInviteRequest {
+                .invite(wire::InferenceInviteRequest {
                     endpoint: endpoint.to_string(),
                 })
                 .await

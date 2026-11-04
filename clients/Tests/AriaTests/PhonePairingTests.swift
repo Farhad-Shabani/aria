@@ -1,4 +1,3 @@
-import GRPCCore
 import XCTest
 import os
 
@@ -6,9 +5,9 @@ import os
 
 final class PhonePairingTests: XCTestCase {
     func testStatusTellsRelayOffFromDaemonOffFromTheRest() {
-        XCTAssertEqual(PhonePairing.status(for: RPCError(code: .unimplemented, message: "")), .relayOff)
-        XCTAssertEqual(PhonePairing.status(for: RPCError(code: .unavailable, message: "")), .daemonOff)
-        XCTAssertEqual(PhonePairing.status(for: RPCError(code: .internalError, message: "raw detail")), .failed)
+        XCTAssertEqual(PhonePairing.status(for: DaemonFailure.unimplemented), .relayOff)
+        XCTAssertEqual(PhonePairing.status(for: DaemonFailure.unavailable), .daemonOff)
+        XCTAssertEqual(PhonePairing.status(for: DaemonFailure.other), .failed)
     }
 
     func testNextPollWaitsForExpiryWhenSoonerAndNeverSpins() {
@@ -140,7 +139,7 @@ final class PhonePairingTests: XCTestCase {
         let daemon = PairingDaemon(
             issueInvite: {
                 guard let next = queue.withLock({ $0.isEmpty ? nil : $0.removeFirst() }) else {
-                    throw RPCError(code: .unavailable, message: "")
+                    throw DaemonFailure.unavailable
                 }
                 return next
             },

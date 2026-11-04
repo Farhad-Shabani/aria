@@ -1,9 +1,10 @@
 //! Translation between generated wire messages and domain types.
 
 use super::wire;
+use crate::daemon::relay::{Invite, RelayStage};
 use aria_assistant::chat::{
-    AskTarget, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, PromptCall, Step,
-    Ticket,
+    AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
+    PromptCall, Step, Ticket,
 };
 use aria_kit::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
 use aria_kit::synthesis::{
@@ -20,11 +21,14 @@ use aria_settings::{
     Shortcut, UpdateResult,
 };
 use aria_voice::dictation::{
-    CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationStage,
-    GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
+    CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationResult,
+    DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
 };
-use aria_voice::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentStage};
-use aria_voice::listen::ListenStage;
+use aria_voice::enrollment::{
+    EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
+};
+use aria_voice::history::ClearHistoryResult;
+use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::transcription::LanguageCodeError;
@@ -36,8 +40,9 @@ use tonic::Status;
 
 mod inference;
 
-// Handlers speak domain types; every wire message and status is assembled
-// through the conversions here.
+// Handlers and the client speak domain types; every wire message and status
+// is assembled through the conversions here. A handler builds a wire message
+// by hand only when it is empty or carries one scalar the call returned.
 
 /// `grpc-status-details-bin` carries a `google.rpc.Status` by convention.
 const RPC_ERROR_TYPE_URL: &str = "type.googleapis.com/aria.daemon.v1.RpcError";
@@ -123,6 +128,41 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::SpeakerProfileWriteFailed
         | RpcErrorCode::DurabilityUnconfirmed => tonic::Code::Internal,
         RpcErrorCode::Unknown(_) => tonic::Code::Unknown,
+    }
+}
+
+/// What a status without an Aria failure tells a consumer: the transport
+/// gave out, or the daemon does not know the method. Everything else is
+/// `Other`, so no consumer learns a gRPC code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportFailure {
+    Unavailable,
+    Unimplemented,
+    DeadlineExceeded,
+    Cancelled,
+    Other,
+}
+
+/// The inverse of `grpc_code` for the categories a consumer may act on.
+pub(crate) fn transport_failure(code: tonic::Code) -> TransportFailure {
+    match code {
+        tonic::Code::Unavailable => TransportFailure::Unavailable,
+        tonic::Code::Unimplemented => TransportFailure::Unimplemented,
+        tonic::Code::DeadlineExceeded => TransportFailure::DeadlineExceeded,
+        tonic::Code::Cancelled => TransportFailure::Cancelled,
+        tonic::Code::Ok
+        | tonic::Code::Unknown
+        | tonic::Code::InvalidArgument
+        | tonic::Code::NotFound
+        | tonic::Code::AlreadyExists
+        | tonic::Code::PermissionDenied
+        | tonic::Code::ResourceExhausted
+        | tonic::Code::FailedPrecondition
+        | tonic::Code::Aborted
+        | tonic::Code::OutOfRange
+        | tonic::Code::Internal
+        | tonic::Code::DataLoss
+        | tonic::Code::Unauthenticated => TransportFailure::Other,
     }
 }
 
@@ -228,6 +268,81 @@ impl From<wire::SettingsPosition> for Position {
     }
 }
 
+impl From<&SettingsStatus> for wire::GetSettingsStatusResponse {
+    fn from(status: &SettingsStatus) -> Self {
+        Self {
+            status: Some(status.into()),
+        }
+    }
+}
+
+impl TryFrom<wire::GetSettingsStatusResponse> for SettingsStatus {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::GetSettingsStatusResponse) -> Result<Self, Self::Error> {
+        response
+            .status
+            .map(Self::from)
+            .ok_or(ProtocolError::MissingBody("settings status"))
+    }
+}
+
+impl From<ClearHistoryResult> for wire::ClearHistoryResponse {
+    fn from(result: ClearHistoryResult) -> Self {
+        Self {
+            deleted_entry_count: result.deleted_entries,
+            audio_cleanup_pending: result.cleanup_pending,
+        }
+    }
+}
+
+impl From<wire::ClearHistoryResponse> for ClearHistoryResult {
+    fn from(response: wire::ClearHistoryResponse) -> Self {
+        Self {
+            deleted_entries: response.deleted_entry_count,
+            cleanup_pending: response.audio_cleanup_pending,
+        }
+    }
+}
+
+impl From<wire::DictationResult> for DictationResult {
+    fn from(result: wire::DictationResult) -> Self {
+        Self {
+            text: result.text,
+            own_voice: result.own_voice,
+        }
+    }
+}
+
+impl From<RelayStage> for wire::RelayEvent {
+    fn from(outcome: RelayStage) -> Self {
+        let (stage, text) = match outcome {
+            RelayStage::Transcribing => (wire::RelayStage::Transcribing, String::new()),
+            RelayStage::Completed(text) => (wire::RelayStage::Completed, text),
+            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new()),
+        };
+        Self {
+            stage: stage as i32,
+            text,
+        }
+    }
+}
+
+impl TryFrom<Invite> for wire::IssueInviteResponse {
+    type Error = ProtocolError;
+
+    fn try_from(invite: Invite) -> Result<Self, Self::Error> {
+        Ok(Self {
+            instance_name: invite.instance,
+            code: invite.code.raw().to_owned(),
+            fingerprint: invite.fingerprint.to_vec(),
+            expires_in_ms: u32::try_from(invite.expires_in.as_millis())
+                .map_err(|_| ProtocolError::OutOfRange("expires_in_ms"))?,
+            pairing_count: invite.pairing_count,
+        })
+    }
+}
+
 impl From<&SettingsStatus> for wire::SettingsStatus {
     fn from(status: &SettingsStatus) -> Self {
         Self {
@@ -324,7 +439,7 @@ impl From<CaptionSnapshot> for wire::CaptionSnapshot {
     fn from(caption: CaptionSnapshot) -> Self {
         Self {
             recording_id: caption.recording.0,
-            committed: caption.committed.to_string(),
+            finalized: caption.finalized.to_string(),
             provisional: caption.provisional.to_string(),
             ended: caption.ended,
         }
@@ -695,6 +810,47 @@ impl From<Role> for wire::SpeakerRole {
     }
 }
 
+impl From<EnrollmentResult> for wire::EnrollSpeakerResponse {
+    fn from(result: EnrollmentResult) -> Self {
+        Self {
+            role: wire::SpeakerRole::from(result.role) as i32,
+            consistency: result.consistency,
+        }
+    }
+}
+
+/// The result of enrolling `name`; the response carries the rest.
+pub(crate) fn enrollment_result(
+    name: SpeakerName,
+    response: wire::EnrollSpeakerResponse,
+) -> Result<EnrollmentResult, ProtocolError> {
+    Ok(EnrollmentResult {
+        name,
+        role: role(response.role)?,
+        consistency: response.consistency,
+    })
+}
+
+impl From<Vec<EnrolledSpeaker>> for wire::ListSpeakersResponse {
+    fn from(speakers: Vec<EnrolledSpeaker>) -> Self {
+        Self {
+            speakers: speakers.iter().map(wire::EnrolledSpeaker::from).collect(),
+        }
+    }
+}
+
+impl TryFrom<wire::ListSpeakersResponse> for Vec<EnrolledSpeaker> {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::ListSpeakersResponse) -> Result<Self, Self::Error> {
+        response
+            .speakers
+            .iter()
+            .map(EnrolledSpeaker::try_from)
+            .collect()
+    }
+}
+
 impl From<&EnrolledSpeaker> for wire::EnrolledSpeaker {
     fn from(speaker: &EnrolledSpeaker) -> Self {
         Self {
@@ -711,10 +867,7 @@ impl TryFrom<&wire::EnrolledSpeaker> for EnrolledSpeaker {
     fn try_from(speaker: &wire::EnrolledSpeaker) -> Result<Self, Self::Error> {
         Ok(Self {
             name: speaker_name(&speaker.name)?,
-            role: decode_role(speaker.role)?.ok_or(ProtocolError::InvalidEnum {
-                field: "role",
-                value: speaker.role,
-            })?,
+            role: role(speaker.role)?,
             enrolled_at: speaker.enrolled_at_seconds,
         })
     }
@@ -782,6 +935,62 @@ fn optional_speaker_name(name: &str) -> Result<Option<SpeakerName>, ProtocolErro
     match name {
         "" => Ok(None),
         name => speaker_name(name).map(Some),
+    }
+}
+
+impl From<ListenStarted> for wire::StartListenResponse {
+    fn from(started: ListenStarted) -> Self {
+        Self {
+            already_listening: started.already_listening,
+            transcript_path: started.transcript.display().to_string(),
+        }
+    }
+}
+
+impl From<wire::StartListenResponse> for ListenStarted {
+    fn from(response: wire::StartListenResponse) -> Self {
+        Self {
+            already_listening: response.already_listening,
+            transcript: response.transcript_path.into(),
+        }
+    }
+}
+
+impl From<ListenStopped> for wire::StopListenResponse {
+    fn from(stopped: ListenStopped) -> Self {
+        Self {
+            was_listening: stopped.was_listening,
+            transcript_path: stopped.transcript.display().to_string(),
+        }
+    }
+}
+
+impl From<wire::StopListenResponse> for ListenStopped {
+    fn from(response: wire::StopListenResponse) -> Self {
+        Self {
+            was_listening: response.was_listening,
+            transcript: response.transcript_path.into(),
+        }
+    }
+}
+
+impl From<ListenSnapshot> for wire::GetListenStatusResponse {
+    fn from(snapshot: ListenSnapshot) -> Self {
+        Self {
+            listening: snapshot.listening,
+            transcript_path: snapshot.transcript.display().to_string(),
+            error_message: snapshot.error.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<wire::GetListenStatusResponse> for ListenSnapshot {
+    fn from(response: wire::GetListenStatusResponse) -> Self {
+        Self {
+            listening: response.listening,
+            transcript: response.transcript_path.into(),
+            error: Some(response.error_message).filter(|message| !message.is_empty()),
+        }
     }
 }
 
@@ -1506,6 +1715,58 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
     }
 }
 
+impl From<Vec<(AssistantId, AssistantStatus)>> for wire::ListAssistantsResponse {
+    fn from(assistants: Vec<(AssistantId, AssistantStatus)>) -> Self {
+        Self {
+            assistants: assistants.into_iter().map(wire::Assistant::from).collect(),
+        }
+    }
+}
+
+impl From<AssistantModel> for wire::AssistantModel {
+    fn from(model: AssistantModel) -> Self {
+        Self {
+            id: model.id,
+            name: model.name,
+        }
+    }
+}
+
+impl TryFrom<wire::AssistantModel> for AssistantModel {
+    type Error = ProtocolError;
+
+    fn try_from(model: wire::AssistantModel) -> Result<Self, Self::Error> {
+        let model = Self {
+            id: model.id,
+            name: model.name,
+        };
+        if !model.is_valid() {
+            return Err(ProtocolError::InvalidModelId);
+        }
+        Ok(model)
+    }
+}
+
+impl From<Vec<AssistantModel>> for wire::ListAssistantModelsResponse {
+    fn from(models: Vec<AssistantModel>) -> Self {
+        Self {
+            models: models.into_iter().map(wire::AssistantModel::from).collect(),
+        }
+    }
+}
+
+impl TryFrom<wire::ListAssistantModelsResponse> for Vec<AssistantModel> {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::ListAssistantModelsResponse) -> Result<Self, Self::Error> {
+        response
+            .models
+            .into_iter()
+            .map(AssistantModel::try_from)
+            .collect()
+    }
+}
+
 impl From<(AssistantId, AssistantStatus)> for wire::Assistant {
     fn from((id, status): (AssistantId, AssistantStatus)) -> Self {
         Self {
@@ -2219,6 +2480,9 @@ pub enum ProtocolError {
     #[error("missing {0}")]
     MissingBody(&'static str),
 
+    #[error("{0} is out of range")]
+    OutOfRange(&'static str),
+
     #[error("the prompt must not be empty")]
     EmptyPrompt,
 
@@ -2523,6 +2787,67 @@ mod tests {
     }
 
     #[test]
+    fn a_listen_failure_crosses_as_its_message_and_no_failure_as_none() {
+        let failed = ListenSnapshot::from(wire::GetListenStatusResponse::from(ListenSnapshot {
+            listening: false,
+            transcript: "/tmp/listen.txt".into(),
+            error: Some("screen recording is not allowed".to_owned()),
+        }));
+        let running = wire::GetListenStatusResponse::from(ListenSnapshot {
+            listening: true,
+            transcript: "/tmp/listen.txt".into(),
+            error: None,
+        });
+
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("screen recording is not allowed")
+        );
+        assert_eq!(running.error_message, "");
+        assert_eq!(ListenSnapshot::from(running).error, None);
+    }
+
+    #[test]
+    fn an_invalid_assistant_model_is_refused() {
+        let invalid = wire::ListAssistantModelsResponse {
+            models: vec![wire::AssistantModel {
+                id: String::new(),
+                name: "Nameless".to_owned(),
+            }],
+        };
+
+        assert!(matches!(
+            Vec::<AssistantModel>::try_from(invalid),
+            Err(ProtocolError::InvalidModelId)
+        ));
+    }
+
+    #[test]
+    fn an_empty_settings_status_answer_is_refused() {
+        assert!(matches!(
+            SettingsStatus::try_from(wire::GetSettingsStatusResponse { status: None }),
+            Err(ProtocolError::MissingBody("settings status"))
+        ));
+    }
+
+    #[test]
+    fn a_transport_category_is_the_inverse_of_its_grpc_code() {
+        for (code, transport) in [
+            (RpcErrorCode::ShuttingDown, TransportFailure::Unavailable),
+            (RpcErrorCode::Unsupported, TransportFailure::Unimplemented),
+            (
+                RpcErrorCode::OverallTimeout,
+                TransportFailure::DeadlineExceeded,
+            ),
+            (RpcErrorCode::Cancelled, TransportFailure::Cancelled),
+            (RpcErrorCode::Internal, TransportFailure::Other),
+            (RpcErrorCode::InvalidRequest, TransportFailure::Other),
+        ] {
+            assert_eq!(transport_failure(grpc_code(code)), transport, "{code}");
+        }
+    }
+
+    #[test]
     fn the_zero_code_names_no_failure() {
         let unspecified = wire::ErrorCode::Unspecified as i32;
 
@@ -2535,7 +2860,7 @@ mod tests {
         for ended in [false, true] {
             let caption = CaptionSnapshot {
                 recording: RecordingId(42),
-                committed: Arc::from("private committed words"),
+                finalized: Arc::from("private finalized words"),
                 provisional: Arc::from("private provisional words"),
                 ended,
             };
@@ -2547,7 +2872,7 @@ mod tests {
                 panic!("caption must not become a stage");
             };
             assert_eq!(snapshot.recording_id, 42);
-            assert_eq!(snapshot.committed, "private committed words");
+            assert_eq!(snapshot.finalized, "private finalized words");
             assert_eq!(snapshot.provisional, "private provisional words");
             assert_eq!(snapshot.ended, ended);
         }

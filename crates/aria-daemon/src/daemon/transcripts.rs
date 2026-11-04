@@ -10,7 +10,7 @@ use aria_voice::dictation::{
 };
 use aria_voice::history::{
     AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
-    HistorySource, HistoryStatus, MAX_ENTRY_BYTES, Store as HistoryStore,
+    HistoryStatus, MAX_ENTRY_BYTES, Store as HistoryStore,
 };
 
 pub(super) struct TranscriptStore {
@@ -124,7 +124,7 @@ impl History {
         }
     }
 
-    pub(super) fn start(&mut self, settings: &DictationSettings, source: HistorySource) {
+    fn start(&mut self, settings: &DictationSettings) {
         self.oversized = false;
         self.retain_audio = settings.history_keep_audio;
         self.live = (settings.history_enabled && !settings.transcript_only).then(|| HistoryEntry {
@@ -133,7 +133,7 @@ impl History {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
-            source,
+            source: settings.source,
             application: settings.application.clone(),
             duration_ms: None,
             text: String::new(),
@@ -153,13 +153,6 @@ impl History {
                 .map(|path| Path::new(path.as_str()).to_path_buf()),
         });
     }
-    pub(super) fn transcription_failed(&mut self, recording: &mut RecordingReader) {
-        if let Some(mut entry) = self.live.take() {
-            entry.error = Some(failure_from_code(RpcErrorCode::TranscriptionFailed));
-            self.save_recording(recording, entry);
-        }
-    }
-
     fn save_recording(&self, recording: &mut RecordingReader, mut entry: HistoryEntry) {
         let retain_audio = self.retain_audio || entry.status == HistoryStatus::TranscriptionFailed;
         // A failed decoder may stop before capture publishes its finalized file.
@@ -185,7 +178,7 @@ impl TranscriptSink for History {
         settings: &DictationSettings,
         _control: &Arc<ExecutionControl>,
     ) -> Result<(), DictationError> {
-        self.start(settings, HistorySource::Local);
+        self.start(settings);
         Ok(())
     }
 
@@ -267,6 +260,7 @@ mod tests {
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
     use aria_voice::dictation::{DictationRequest, StopMode};
+    use aria_voice::history::HistorySource;
     use aria_voice::transcription::TranscriptionError;
 
     fn store(directory: &Path) -> Arc<TranscriptStore> {
@@ -475,7 +469,14 @@ mod tests {
         let mut sink = History::new(Arc::clone(&saved), "server");
         let mut recording =
             RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
-        sink.start(&settings(), HistorySource::Relay);
+        sink.dictation_started(
+            &DictationSettings {
+                source: HistorySource::Relay,
+                ..settings()
+            },
+            &ExecutionControl::for_test(StopMode::Manual),
+        )
+        .unwrap();
         sink.served_by("parakeet");
         sink.completed(Utterance::anonymous("from relay")).unwrap();
         sink.recording_finished(&mut recording, Ok(()));
