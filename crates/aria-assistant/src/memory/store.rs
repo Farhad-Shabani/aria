@@ -10,7 +10,7 @@ use aria_kit::primitives::private_fs::PrivateDirectoryError;
 use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 1;
 
 // The daemon and the `aria memory` commands share the file, so a blocked
 // writer waits a while before it fails. The file may have been created under
@@ -116,8 +116,6 @@ pub enum StoreError {
     Open(#[source] sqlite::Error),
     #[error("memory database error")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("memory database schema version {0} is not one this build reads")]
-    UnsupportedSchema(i64),
     #[error("failed to write the memory profile")]
     Profile(#[source] io::Error),
 }
@@ -414,16 +412,13 @@ impl Store {
     }
 }
 
-/// Takes the write lock, so two processes opening an old file reset it once.
-/// An older layout starts over empty rather than being converted.
+/// Takes the write lock, so two processes opening another layout reset it
+/// once. Any other version starts over empty rather than being converted.
 fn migrate(connection: &Connection) -> Result<(), StoreError> {
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version == SCHEMA_VERSION {
         return Ok(());
-    }
-    if !(0..SCHEMA_VERSION).contains(&version) {
-        return Err(StoreError::UnsupportedSchema(version));
     }
     transaction.execute_batch(
         "DROP TABLE IF EXISTS memories; DROP TABLE IF EXISTS consolidations; \
@@ -599,27 +594,19 @@ mod tests {
     }
 
     #[test]
-    fn an_older_layout_starts_over_empty() {
-        let (_dir, path) = with_version(4);
-        Connection::open(&path)
-            .expect("opens")
-            .execute_batch(
-                "CREATE TABLE turns (id INTEGER PRIMARY KEY, session TEXT); \
-                 INSERT INTO turns VALUES (1, 's');",
-            )
-            .expect("writes an older layout");
-        let store = Store::open(&path).expect("opens");
-        assert_eq!(version(&store), SCHEMA_VERSION);
-        assert!(store.sessions().expect("reads").is_empty());
-    }
-
-    #[test]
-    fn newer_or_invalid_schema_versions_are_refused() {
-        for other in [-1, SCHEMA_VERSION + 1] {
+    fn any_other_layout_starts_over_empty() {
+        for other in [0, 4, SCHEMA_VERSION + 1] {
             let (_dir, path) = with_version(other);
-            assert!(
-                matches!(Store::open(&path), Err(StoreError::UnsupportedSchema(v)) if v == other)
-            );
+            Connection::open(&path)
+                .expect("opens")
+                .execute_batch(
+                    "CREATE TABLE turns (id INTEGER PRIMARY KEY, session TEXT); \
+                     INSERT INTO turns VALUES (1, 's');",
+                )
+                .expect("writes another layout");
+            let store = Store::open(&path).expect("opens");
+            assert_eq!(version(&store), SCHEMA_VERSION);
+            assert!(store.sessions().expect("reads").is_empty());
         }
     }
 
