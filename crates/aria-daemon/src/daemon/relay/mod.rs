@@ -217,6 +217,13 @@ impl From<&RelayError> for RpcErrorCode {
     }
 }
 
+/// What a relay session tells the phone as it goes.
+pub(crate) enum RelayOutcome {
+    Transcribing,
+    Completed(String),
+    NoSpeech,
+}
+
 /// What a phone learns of a settings fault: that the Mac needs it fixed.
 const SETTINGS_NEED_FIXING: &str = "Settings need fixing on your Mac";
 

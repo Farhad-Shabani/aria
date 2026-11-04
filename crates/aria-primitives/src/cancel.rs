@@ -8,19 +8,29 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy)]
 pub struct Deadline {
     timeout: Duration,
-    expires_at: Instant,
+    /// `None` never expires.
+    expires_at: Option<Instant>,
 }
 
 impl Deadline {
     pub fn after(timeout: Duration) -> Self {
         Self {
             timeout,
-            expires_at: Instant::now() + timeout,
+            expires_at: Some(Instant::now() + timeout),
+        }
+    }
+
+    /// Work whose end another bound sets: a relayed recording ends with its
+    /// client, not with a clock here.
+    pub fn never() -> Self {
+        Self {
+            timeout: Duration::MAX,
+            expires_at: None,
         }
     }
 
     pub fn expired(&self) -> bool {
-        Instant::now() >= self.expires_at
+        self.expires_at.is_some_and(|at| Instant::now() >= at)
     }
 
     /// The budget as granted, for error reporting.

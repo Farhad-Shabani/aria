@@ -138,6 +138,20 @@ where
             )
         })
     }
+
+    fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        let project = settings.project.clone();
+        self.prepared(project.as_ref(), |vocabulary| {
+            self.pipeline
+                .deliver_recording(recording, settings, control, events, Some(vocabulary))
+        })
+    }
 }
 
 impl From<&DictationInitializationError> for RpcErrorCode {

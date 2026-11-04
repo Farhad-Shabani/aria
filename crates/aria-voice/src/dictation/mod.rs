@@ -88,6 +88,8 @@ impl DictationRequest {
     }
 }
 
+use crate::history::HistorySource;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationSettings {
     pub history_enabled: bool,
@@ -106,6 +108,8 @@ pub struct DictationSettings {
     /// The app in front as dictation was admitted.
     pub application: Option<aria_platform::delivery::Application>,
     pub target: aria_platform::delivery::TargetPolicy,
+    /// Where the recording came from, as history records it.
+    pub source: HistorySource,
 }
 
 impl DictationSettings {

@@ -63,9 +63,9 @@ pub use inference::pairing::forget as forget_paired_server;
 #[cfg(any(test, feature = "test-support"))]
 pub use inference::pin_server_for_tests;
 pub use inference::{PairedServer, paired_server};
-pub(crate) use relay::Invite;
 /// What `aria doctor` needs to report about the relay without owning one.
 pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
+pub(crate) use relay::{Invite, RelayOutcome};
 
 pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream, TransportFailure};
 pub use aria_assistant::chat::{

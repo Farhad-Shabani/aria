@@ -1,7 +1,7 @@
 //! Translation between generated wire messages and domain types.
 
 use super::wire;
-use crate::daemon::{Invite, ListenSnapshot, ListenStarted, ListenStopped};
+use crate::daemon::{Invite, ListenSnapshot, ListenStarted, ListenStopped, RelayOutcome};
 use aria_assistant::chat::{
     AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
     PromptCall, Step, Ticket,
@@ -310,6 +310,20 @@ impl From<wire::DictationResult> for DictationResult {
         Self {
             text: result.text,
             own_voice: result.own_voice,
+        }
+    }
+}
+
+impl From<RelayOutcome> for wire::RelayEvent {
+    fn from(outcome: RelayOutcome) -> Self {
+        let (stage, text) = match outcome {
+            RelayOutcome::Transcribing => (wire::RelayStage::Transcribing, String::new()),
+            RelayOutcome::Completed(text) => (wire::RelayStage::Completed, text),
+            RelayOutcome::NoSpeech => (wire::RelayStage::NoSpeech, String::new()),
+        };
+        Self {
+            stage: stage as i32,
+            text,
         }
     }
 }

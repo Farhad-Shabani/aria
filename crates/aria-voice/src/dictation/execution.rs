@@ -62,6 +62,17 @@ pub trait DictationExecutor: Send + Sync + 'static {
         rewriting: Rewriting,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
+
+    /// Hears a recording captured somewhere else and publishes it to the
+    /// sinks exactly as a complete-delivery press would: history first, then
+    /// the cursor. The caller holds the microphone already.
+    fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<String, DictationError>;
 }
 
 impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
@@ -91,6 +102,16 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
             rewriting,
             cancel,
         )
+    }
+
+    fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        (**self).deliver_recording(recording, settings, control, events)
     }
 }
 
@@ -671,6 +692,32 @@ where
         }
     }
 
+    /// Delivers a recording captured elsewhere through the press's own
+    /// sinks. The caller holds the microphone claim, so there is no
+    /// admission here, and its client bounds the work, so no deadline.
+    pub fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        cancellation: CancelToken,
+        events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        let control = Arc::new(ExecutionControl::new(
+            RecordingId(self.next_recording.fetch_add(1, Ordering::Relaxed)),
+            settings.stop_mode,
+            cancellation,
+            Deadline::never(),
+            SoundMuting::Never,
+        ));
+        let _span = tracing::info_span!("dictation", recording = %control.recording_id()).entered();
+        let started = Instant::now();
+        let result = self
+            .executor
+            .deliver_recording(recording, settings, &control, events);
+        log_execution_result(&result, started);
+        result
+    }
+
     /// Hears audio the caller captured, through the engine already loaded.
     pub fn transcribe(
         &self,
@@ -700,7 +747,7 @@ where
     }
 }
 
-fn log_execution_result(result: &Result<DictationResult, DictationError>, started: Instant) {
+fn log_execution_result<T>(result: &Result<T, DictationError>, started: Instant) {
     let elapsed_ms = started.elapsed().as_millis();
     match result {
         Ok(_) => tracing::info!(
@@ -743,9 +790,11 @@ mod tests {
     use aria_settings::DeliveryMode;
 
     use super::*;
+    use crate::history::HistorySource;
 
     fn settings(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
+            source: HistorySource::Local,
             history_enabled: true,
             history_keep_audio: false,
             mute_sound: false,
@@ -898,6 +947,7 @@ mod tests {
 
     fn excluded(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
+            source: HistorySource::Local,
             application: Some(aria_platform::delivery::Application {
                 name: "1Password".into(),
                 bundle_id: Some("com.1password.1password".into()),
@@ -1247,6 +1297,16 @@ mod tests {
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {
                 panic!("this test executes local recording");
+            }
+
+            fn deliver_recording(
+                &self,
+                _: &mut RecordingReader,
+                _: DictationSettings,
+                _: &Arc<ExecutionControl>,
+                _: &DictationEventEmitter,
+            ) -> Result<String, DictationError> {
+                panic!("this test never delivers a relayed recording");
             }
         }
 

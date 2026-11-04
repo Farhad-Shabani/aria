@@ -5,6 +5,7 @@ use super::{
     DictationResult, DictationSettings, ExecutionControl, RecordingId, StopMode, Transcribed,
     TranscriptSink, Utterance,
 };
+use crate::history::HistorySource;
 use crate::transcription::{
     Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
 };
@@ -270,6 +271,7 @@ pub fn timed(text: &str, words: &[(f32, f32)]) -> Hypothesis {
 /// optional behavior off.
 pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> DictationSettings {
     DictationSettings {
+        source: HistorySource::Local,
         history_enabled: true,
         history_keep_audio: false,
         mute_sound: false,
@@ -357,6 +359,16 @@ impl DictationExecutor for RecordsUntilStopped {
             transcript: Transcript::new(HEARD).map_err(DictationError::Transcription)?,
             engine: "test",
         })
+    }
+
+    fn deliver_recording(
+        &self,
+        _recording: &mut RecordingReader,
+        _settings: DictationSettings,
+        _control: &Arc<ExecutionControl>,
+        _events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        Err(DictationError::NoSpeech)
     }
 }
 
