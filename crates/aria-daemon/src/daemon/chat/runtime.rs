@@ -469,13 +469,13 @@ impl ChatRuntime {
     /// the own-voice gate judged reaches here, and only an enrolled owner
     /// can be the one it judged for.
     fn remember(&self, memory: &MemoryConfig, request: &ChatRequest) {
-        let Some(owner) = self.owner_name() else {
+        if !self.owner_enrolled() {
             tracing::warn!("no owner is enrolled; the ask is not remembered");
             return;
-        };
+        }
         let session = request.key().to_string();
         let recorded = Store::open(&memory.dir.join(DB_FILE))
-            .and_then(|store| store.add_turn(&session, &request.text, &owner));
+            .and_then(|store| store.add_turn(&session, &request.text));
         if let Err(error) = recorded {
             tracing::warn!(error = %error_chain(&error), "chat turn not remembered");
             return;
@@ -486,13 +486,12 @@ impl ChatRuntime {
         }
     }
 
-    fn owner_name(&self) -> Option<String> {
+    fn owner_enrolled(&self) -> bool {
         let settings = self.cache.effective();
         let config = SpeakerConfig::load(&settings.speaker, &self.home);
         aria_voice::speaker::usable_profiles(ProfileStore::open(&config.profiles_dir).read_all())
-            .into_iter()
-            .find(|profile| profile.role == Role::Owner)
-            .map(|profile| profile.name.as_str().to_owned())
+            .iter()
+            .any(|profile| profile.role == Role::Owner)
     }
 }
 
@@ -855,14 +854,11 @@ pub(super) mod tests {
         home
     }
 
-    fn turns(home: &Path, request: &ChatRequest) -> Vec<(String, String)> {
+    fn turns(home: &Path, request: &ChatRequest) -> Vec<String> {
         let store = Store::open(&home.join(".aria/memory").join(DB_FILE)).expect("opens");
         store
             .turns(&request.key().to_string(), 0, i64::MAX)
             .expect("reads")
-            .into_iter()
-            .map(|turn| (turn.text, turn.speaker))
-            .collect()
     }
 
     fn enroll_owner(home: &Path) {
@@ -1192,10 +1188,7 @@ pub(super) mod tests {
 
         run(&runtime, &events, 1, heard.clone());
 
-        assert_eq!(
-            turns(home.path(), &heard),
-            [("hello".to_owned(), "sam".to_owned())]
-        );
+        assert_eq!(turns(home.path(), &heard), ["hello"]);
         assert!(woken.try_recv().is_ok());
     }
 
