@@ -315,7 +315,7 @@ fn evaluate_extraction(
         for (window, turns) in case.windows.iter().enumerate() {
             let session = format!("{}-{window}", case.id);
             for text in turns {
-                store.add_turn(&session, text, "synthetic-owner")?;
+                store.add_turn(&session, text)?;
             }
             let report =
                 consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)?;

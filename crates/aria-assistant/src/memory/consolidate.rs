@@ -180,7 +180,7 @@ mod tests {
     }
 
     fn speak(store: &Store, session: &str, text: &str) {
-        store.add_turn(session, text, "sam").expect("adds");
+        store.add_turn(session, text).expect("adds");
     }
 
     fn backlog(store: &Store, extractor: &Scripted, dir: &Path) -> Vec<ConsolidationResult> {

@@ -8,7 +8,7 @@ use std::time::Duration;
 use aria_kit::cancel::CancelToken;
 use serde_json::{Map, Value};
 
-use super::store::{KINDS, STATUS_ACTIVE, STATUS_PENDING, Store, StoreError, Turn};
+use super::store::{KINDS, STATUS_ACTIVE, STATUS_PENDING, Store, StoreError};
 use crate::chat::{AssistantError, claude_command, parse_claude, run_cli};
 
 /// At or above this a fact goes straight into the profile.
@@ -158,13 +158,13 @@ pub struct ConsolidationResult {
 /// The turns of one session past the watermark a run claimed.
 pub(crate) struct Window<'a> {
     pub(crate) session: &'a str,
-    pub(crate) turns: &'a [Turn],
+    pub(crate) turns: &'a [String],
     /// The newest turn id the claim covers. It becomes the watermark, and
     /// results are written only while that claim still stands.
     pub(crate) through: i64,
 }
 
-fn message(turns: &[&Turn], store: &Store, terms: &[String]) -> Result<String, StoreError> {
+fn message(turns: &[&str], store: &Store, terms: &[String]) -> Result<String, StoreError> {
     let existing = store.active_facts()?;
     let facts = match existing.is_empty() {
         true => "  (none yet)".to_owned(),
@@ -176,7 +176,7 @@ fn message(turns: &[&Turn], store: &Store, terms: &[String]) -> Result<String, S
     };
     let transcript = turns
         .iter()
-        .map(|turn| format!("  - {}", turn.text))
+        .map(|turn| format!("  - {turn}"))
         .collect::<Vec<_>>()
         .join("\n");
     let mut message =
@@ -223,13 +223,12 @@ pub(crate) fn consolidate_session(
         turns,
         through,
     } = window;
-    let eligible: Vec<&Turn> = turns.iter().filter(|turn| !turn.text.is_empty()).collect();
-    let transcript = eligible
+    let eligible: Vec<&str> = turns
         .iter()
-        .map(|turn| turn.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
+        .map(String::as_str)
+        .filter(|turn| !turn.is_empty())
+        .collect();
+    let transcript = eligible.join(" ").to_lowercase();
     let mut result = ConsolidationResult {
         turns: eligible.len(),
         candidates: 0,
@@ -313,14 +312,7 @@ pub(crate) fn consolidate_session(
             "memory extraction dropped candidates: the pending queue is full"
         );
     }
-    store.record_consolidation(
-        session,
-        through,
-        result.candidates as u32,
-        result.added,
-        result.noops,
-        result.pending,
-    )?;
+    store.record_consolidation(session, through)?;
     transaction.commit().map_err(StoreError::from)?;
     Ok(result)
 }
@@ -392,11 +384,8 @@ mod tests {
         (dir, store)
     }
 
-    fn spoken(text: &str) -> Turn {
-        Turn {
-            text: text.to_owned(),
-            speaker: "sam".to_owned(),
-        }
+    fn spoken(text: &str) -> String {
+        text.to_owned()
     }
 
     fn add(kind: &str, text: &str, confidence: &str) -> String {
@@ -408,7 +397,7 @@ mod tests {
     fn run(
         store: &Store,
         reply: &str,
-        turns: &[Turn],
+        turns: &[String],
         through: i64,
         max_facts: u32,
         terms: &[&str],
@@ -435,7 +424,7 @@ mod tests {
     fn ok(
         store: &Store,
         reply: &str,
-        turns: &[Turn],
+        turns: &[String],
         max_facts: u32,
         terms: &[&str],
     ) -> (ConsolidationResult, Scripted) {

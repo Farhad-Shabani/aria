@@ -37,22 +37,12 @@ CREATE TABLE IF NOT EXISTS memories (
     confidence REAL NOT NULL,
     source_quote TEXT NOT NULL DEFAULT '',
     source_session TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    invalidated_at TEXT,
-    superseded_by INTEGER REFERENCES memories(id),
-    embedding BLOB,
-    retrieval_count INTEGER NOT NULL DEFAULT 0,
-    last_retrieved_at TEXT
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS consolidations (
     session_id TEXT PRIMARY KEY,
-    consolidated_at TEXT NOT NULL,
     through_id INTEGER NOT NULL,
-    done_id INTEGER NOT NULL DEFAULT 0,
-    candidates INTEGER NOT NULL,
-    added INTEGER NOT NULL,
-    noops INTEGER NOT NULL,
-    pending INTEGER NOT NULL,
+    done_id INTEGER NOT NULL,
     claimed_at TEXT
 );
 CREATE TABLE IF NOT EXISTS derived_pairs (
@@ -67,7 +57,6 @@ CREATE TABLE IF NOT EXISTS turns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session TEXT NOT NULL,
     text TEXT NOT NULL,
-    speaker TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS turns_session ON turns(session, id);
@@ -98,14 +87,6 @@ pub struct DerivedPair {
     pub misheard: String,
     pub correct: String,
     pub source: String,
-}
-
-/// One thing the owner said to the assistant, through the own-voice gate.
-/// Nothing else is kept: only these feed extraction.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Turn {
-    pub text: String,
-    pub speaker: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -181,8 +162,7 @@ impl Store {
     fn by_status(&self, status: &str) -> Result<Vec<Fact>, StoreError> {
         let mut statement = self.conn.prepare(
             "SELECT id, text, kind, status, confidence, source_quote, source_session, \
-             created_at FROM memories \
-             WHERE status = ?1 AND invalidated_at IS NULL ORDER BY id",
+             created_at FROM memories WHERE status = ?1 ORDER BY id",
         )?;
         let facts = statement
             .query_map([status], fact_row)?
@@ -257,13 +237,12 @@ impl Store {
         Ok(changed > 0)
     }
 
-    pub fn add_turn(&self, session: &str, text: &str, speaker: &str) -> Result<(), StoreError> {
+    /// Keeps one thing the owner said to the assistant, through the own-voice
+    /// gate. Nothing else is kept: only these feed extraction.
+    pub fn add_turn(&self, session: &str, text: &str) -> Result<(), StoreError> {
         self.conn.execute(
-            &format!(
-                "INSERT INTO turns (session, text, speaker, created_at) \
-                 VALUES (?1, ?2, ?3, {NOW})"
-            ),
-            params![session, text, speaker],
+            &format!("INSERT INTO turns (session, text, created_at) VALUES (?1, ?2, {NOW})"),
+            params![session, text],
         )?;
         Ok(())
     }
@@ -279,19 +258,18 @@ impl Store {
         Ok(sessions)
     }
 
-    /// The session's turns with ids in `after..=through`.
-    pub fn turns(&self, session: &str, after: i64, through: i64) -> Result<Vec<Turn>, StoreError> {
+    /// The text of the session's turns with ids in `after..=through`.
+    pub fn turns(
+        &self,
+        session: &str,
+        after: i64,
+        through: i64,
+    ) -> Result<Vec<String>, StoreError> {
         let mut statement = self.conn.prepare(
-            "SELECT text, speaker FROM turns \
-             WHERE session = ?1 AND id > ?2 AND id <= ?3 ORDER BY id",
+            "SELECT text FROM turns WHERE session = ?1 AND id > ?2 AND id <= ?3 ORDER BY id",
         )?;
         let turns = statement
-            .query_map(params![session, after, through], |row| {
-                Ok(Turn {
-                    text: row.get(0)?,
-                    speaker: row.get(1)?,
-                })
-            })?
+            .query_map(params![session, after, through], |row| row.get(0))?
             .collect::<Result<_, _>>()?;
         Ok(turns)
     }
@@ -333,19 +311,11 @@ impl Store {
         &self,
         session: &str,
         through: i64,
-        candidates: u32,
-        added: u32,
-        noops: u32,
-        pending: u32,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            &format!(
-                "INSERT OR REPLACE INTO consolidations \
-                 (session_id, consolidated_at, through_id, done_id, candidates, added, \
-                 noops, pending, claimed_at) \
-                 VALUES (?1, {NOW}, ?2, ?2, ?3, ?4, ?5, ?6, NULL)"
-            ),
-            params![session, through, candidates, added, noops, pending],
+            "INSERT OR REPLACE INTO consolidations (session_id, through_id, done_id, claimed_at) \
+             VALUES (?1, ?2, ?2, NULL)",
+            params![session, through],
         )?;
         Ok(())
     }
@@ -359,9 +329,8 @@ impl Store {
         revert_to: i64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE consolidations SET through_id = ?1, done_id = ?1, candidates = 0, \
-             added = 0, noops = 0, pending = 0, claimed_at = NULL \
-             WHERE session_id = ?2 AND through_id = ?3 AND candidates = -1",
+            "UPDATE consolidations SET through_id = ?1, done_id = ?1, claimed_at = NULL \
+             WHERE session_id = ?2 AND through_id = ?3 AND claimed_at IS NOT NULL",
             params![revert_to, session, claimed],
         )?;
         Ok(())
@@ -377,7 +346,7 @@ impl Store {
         let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
         let standing: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM consolidations \
-             WHERE session_id = ?1 AND candidates = -1 AND through_id = ?2)",
+             WHERE session_id = ?1 AND claimed_at IS NOT NULL AND through_id = ?2)",
             params![session, claimed],
             |row| row.get(0),
         )?;
@@ -394,7 +363,7 @@ impl Store {
              '{TURN_RETENTION}') \
              AND id <= COALESCE((SELECT done_id FROM consolidations \
              WHERE session_id = turns.session), 0); \
-             DELETE FROM consolidations WHERE candidates >= 0 \
+             DELETE FROM consolidations WHERE claimed_at IS NULL \
              AND NOT EXISTS (SELECT 1 FROM turns WHERE session = session_id);"
         ))?;
         transaction.commit()?;
@@ -430,22 +399,15 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// `claimed_at` is local wall time. The `'utc'` modifier converts it to
-/// compare with `'now'`.
-fn fresh_claim() -> String {
-    format!(
-        "(claimed_at IS NOT NULL AND \
-         strftime('%s', 'now') - strftime('%s', claimed_at, 'utc') < {STALE_CLAIM_SECONDS})"
-    )
-}
-
+/// A claim is `claimed_at` set; a finished run clears it. `claimed_at` is
+/// local wall time, and the `'utc'` modifier converts it to compare with `'now'`.
 fn claim_window(conn: &Connection, session: &str, through: i64) -> Result<Option<i64>, StoreError> {
     let row: Option<(i64, bool)> = conn
         .query_row(
             &format!(
-                "SELECT done_id, candidates = -1 AND {} \
-                 FROM consolidations WHERE session_id = ?1",
-                fresh_claim()
+                "SELECT done_id, claimed_at IS NOT NULL AND \
+                 strftime('%s', 'now') - strftime('%s', claimed_at, 'utc') < {STALE_CLAIM_SECONDS} \
+                 FROM consolidations WHERE session_id = ?1"
             ),
             [session],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -461,15 +423,10 @@ fn claim_window(conn: &Connection, session: &str, through: i64) -> Result<Option
     }
     conn.execute(
         &format!(
-            "INSERT INTO consolidations \
-             (session_id, consolidated_at, through_id, done_id, candidates, added, \
-             noops, pending, claimed_at) \
-             VALUES (?1, {NOW}, ?2, ?3, -1, 0, 0, 0, {NOW}) \
-             ON CONFLICT(session_id) DO UPDATE SET \
-             consolidated_at = excluded.consolidated_at, \
-             through_id = excluded.through_id, done_id = excluded.done_id, \
-             candidates = -1, added = 0, noops = 0, pending = 0, \
-             claimed_at = excluded.claimed_at"
+            "INSERT INTO consolidations (session_id, through_id, done_id, claimed_at) \
+             VALUES (?1, ?2, ?3, {NOW}) \
+             ON CONFLICT(session_id) DO UPDATE SET through_id = excluded.through_id, \
+             done_id = excluded.done_id, claimed_at = excluded.claimed_at"
         ),
         params![session, through, after],
     )?;
@@ -629,24 +586,11 @@ mod tests {
     #[test]
     fn turns_are_kept_per_session_in_order() {
         let (_dir, store) = store();
-        store.add_turn("b", "second session", "sam").expect("adds");
-        store.add_turn("a", "hello", "sam").expect("adds");
-        store.add_turn("a", "again", "sam").expect("adds");
+        store.add_turn("b", "second session").expect("adds");
+        store.add_turn("a", "hello").expect("adds");
+        store.add_turn("a", "again").expect("adds");
 
-        let turns = store.turns("a", 0, 3).expect("reads");
-        assert_eq!(
-            turns,
-            [
-                Turn {
-                    text: "hello".to_owned(),
-                    speaker: "sam".to_owned(),
-                },
-                Turn {
-                    text: "again".to_owned(),
-                    speaker: "sam".to_owned(),
-                },
-            ]
-        );
+        assert_eq!(store.turns("a", 0, 3).expect("reads"), ["hello", "again"]);
         assert_eq!(
             store.sessions().expect("reads"),
             [("b".to_owned(), 1), ("a".to_owned(), 3)]
@@ -656,20 +600,17 @@ mod tests {
     #[test]
     fn a_turn_window_reads_only_ids_in_its_range() {
         let (_dir, store) = store();
-        store.add_turn("s", "old", "sam").expect("adds");
-        store.add_turn("other", "unrelated", "sam").expect("adds");
-        store.add_turn("s", "claimed", "sam").expect("adds");
-        store.add_turn("s", "later", "sam").expect("adds");
+        store.add_turn("s", "old").expect("adds");
+        store.add_turn("other", "unrelated").expect("adds");
+        store.add_turn("s", "claimed").expect("adds");
+        store.add_turn("s", "later").expect("adds");
         store
             .conn
             .execute("UPDATE turns SET text = X'00' WHERE text != 'claimed'", [])
             .expect("makes unclaimed text unreadable");
         assert_eq!(
             store.turns("s", 1, 3).expect("reads only the window"),
-            [Turn {
-                text: "claimed".to_owned(),
-                speaker: "sam".to_owned(),
-            }]
+            ["claimed"]
         );
         assert!(store.turns("s", 3, 3).expect("empty window").is_empty());
     }
@@ -678,9 +619,7 @@ mod tests {
     fn a_finished_run_moves_the_watermark() {
         let (_dir, store) = store();
         assert_eq!(store.consolidated_through("s").expect("reads"), 0);
-        store
-            .record_consolidation("s", 4, 2, 1, 1, 0)
-            .expect("records");
+        store.record_consolidation("s", 4).expect("records");
         assert_eq!(store.consolidated_through("s").expect("reads"), 4);
     }
 
@@ -699,9 +638,7 @@ mod tests {
     #[test]
     fn a_claim_starts_at_the_last_finished_watermark() {
         let (_dir, store) = store();
-        store
-            .record_consolidation("s", 4, 0, 0, 0, 0)
-            .expect("records");
+        store.record_consolidation("s", 4).expect("records");
         assert_eq!(store.claim_consolidation("s", 4).expect("claims"), None);
         assert_eq!(store.claim_consolidation("s", 7).expect("claims"), Some(4));
     }
@@ -710,9 +647,7 @@ mod tests {
     fn a_release_ignores_a_claim_it_did_not_make() {
         let (_dir, store) = store();
         store.claim_consolidation("s", 4).expect("claims");
-        store
-            .record_consolidation("s", 4, 1, 1, 0, 0)
-            .expect("records");
+        store.record_consolidation("s", 4).expect("records");
         store.release_consolidation("s", 4, 0).expect("releases");
         assert_eq!(store.consolidated_through("s").expect("reads"), 4);
     }
@@ -720,9 +655,7 @@ mod tests {
     #[test]
     fn a_stale_claim_is_taken_over_from_its_start() {
         let (_dir, store) = store();
-        store
-            .record_consolidation("s", 2, 0, 0, 0, 0)
-            .expect("records");
+        store.record_consolidation("s", 2).expect("records");
         assert_eq!(store.claim_consolidation("s", 5).expect("claims"), Some(2));
         store
             .conn
@@ -786,11 +719,9 @@ mod tests {
     fn pruning_drops_only_old_consolidated_turns() {
         let (_dir, store) = store();
         for text in ["old one", "old two", "recent covered", "uncovered"] {
-            store.add_turn("s", text, "sam").expect("adds");
+            store.add_turn("s", text).expect("adds");
         }
-        store
-            .record_consolidation("s", 3, 0, 0, 0, 0)
-            .expect("records");
+        store.record_consolidation("s", 3).expect("records");
         age_turns(&store, &["old one", "old two", "uncovered"]);
 
         store.prune_turns().expect("prunes");
@@ -801,11 +732,9 @@ mod tests {
     #[test]
     fn pruning_keeps_the_window_a_claim_is_reading() {
         let (_dir, store) = store();
-        store.add_turn("s", "old", "sam").expect("adds");
-        store
-            .record_consolidation("s", 1, 0, 0, 0, 0)
-            .expect("records");
-        store.add_turn("s", "new", "sam").expect("adds");
+        store.add_turn("s", "old").expect("adds");
+        store.record_consolidation("s", 1).expect("records");
+        store.add_turn("s", "new").expect("adds");
         store.claim_consolidation("s", 2).expect("claims");
         age_turns(&store, &["old", "new"]);
 
@@ -817,9 +746,9 @@ mod tests {
     #[test]
     fn a_turn_after_clearing_never_reuses_an_id() {
         let (_dir, store) = store();
-        store.add_turn("s", "old", "sam").expect("adds");
+        store.add_turn("s", "old").expect("adds");
         store.clear().expect("clears");
-        store.add_turn("s", "new", "sam").expect("adds");
+        store.add_turn("s", "new").expect("adds");
         assert_eq!(store.sessions().expect("reads"), [("s".to_owned(), 2)]);
     }
 
@@ -828,7 +757,7 @@ mod tests {
         let (_dir, store) = store();
         add(&store, "a", STATUS_ACTIVE);
         store.add_pair("d b two", "db2", "llm", "s").expect("adds");
-        store.add_turn("s", "hello", "sam").expect("adds");
+        store.add_turn("s", "hello").expect("adds");
         store.claim_consolidation("s", 1).expect("claims");
 
         store.clear().expect("clears");
