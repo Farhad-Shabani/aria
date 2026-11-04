@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs;
-use aria_platform::sqlite::{self, DriftedMode, Ownership, Policy, PrivateDatabase};
-use rusqlite::{Connection, OptionalExtension, params};
+use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
+use rusqlite::{OptionalExtension, params};
 
 use super::{
     Candidate, Discovery, MAX_CANDIDATES, MAX_SOURCE_BYTES, MAX_TERMS, Source, SourceKind,
@@ -24,9 +24,8 @@ const DATABASE_POLICY: Policy = Policy {
 };
 
 pub struct Catalog {
-    connection: Connection,
+    connection: Database,
     cancelled: CancelToken,
-    _handles: sqlite::Handles,
 }
 
 pub struct CachedScope {
@@ -92,10 +91,8 @@ impl From<sqlite::Error> for Error {
 
 impl Catalog {
     pub fn open(directory: &Path, cancelled: CancelToken) -> Result<Self, Error> {
-        let PrivateDatabase {
-            connection,
-            handles,
-        } = sqlite::open(&directory.join("catalog.db"), &DATABASE_POLICY, &cancelled)?;
+        let connection =
+            Database::open(&directory.join("catalog.db"), &DATABASE_POLICY, &cancelled)?;
         let progress = cancelled.clone();
         connection.progress_handler(1_000, Some(move || progress.is_cancelled()))?;
         let schema: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -149,7 +146,6 @@ impl Catalog {
         Ok(Self {
             connection,
             cancelled,
-            _handles: handles,
         })
     }
 
@@ -521,6 +517,7 @@ fn validate_candidate(candidate: &Candidate, input_bytes: usize) -> Result<(), E
 mod tests {
     use super::super::Coverage;
     use super::*;
+    use rusqlite::Connection;
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 

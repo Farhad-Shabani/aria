@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs::PrivateDirectoryError;
-use aria_platform::sqlite::{self, DriftedMode, Ownership, Policy, PrivateDatabase};
+use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 const SCHEMA_VERSION: i64 = 4;
@@ -125,28 +125,21 @@ pub enum StoreError {
 }
 
 pub struct Store {
-    conn: Connection,
-    _handles: sqlite::Handles,
+    conn: Database,
 }
 
 impl Store {
     /// Opens or creates the database, readable by its owner alone: it
     /// holds what the user said.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let PrivateDatabase {
-            connection,
-            handles,
-        } = sqlite::open(path, &DATABASE_POLICY, &CancelToken::never())
+        let connection = Database::open(path, &DATABASE_POLICY, &CancelToken::never())
             .map_err(StoreError::Open)?;
         connection.pragma_update(None, "secure_delete", true)?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version != SCHEMA_VERSION {
             migrate(&connection)?;
         }
-        Ok(Self {
-            conn: connection,
-            _handles: handles,
-        })
+        Ok(Self { conn: connection })
     }
 
     pub(crate) fn add_fact(

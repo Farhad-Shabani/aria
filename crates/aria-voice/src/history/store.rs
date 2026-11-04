@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs;
-use aria_platform::sqlite::{self, DriftedMode, Ownership, Policy, PrivateDatabase};
-use rusqlite::{Connection, OptionalExtension, params};
+use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
+use rusqlite::{OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
 use super::{
@@ -53,11 +53,9 @@ pub struct Store {
 }
 
 struct State {
-    connection: Connection,
+    connection: Database,
     pinned: HashSet<u64>,
     warning: Option<String>,
-    // Release ownership after closing SQLite.
-    _handles: sqlite::Handles,
 }
 
 pub struct RetryLease {
@@ -80,10 +78,7 @@ impl Drop for RetryLease {
 
 impl Store {
     pub fn open(directory: &Path) -> Result<Arc<Self>, HistoryError> {
-        let PrivateDatabase {
-            connection,
-            handles,
-        } = sqlite::open(
+        let connection = Database::open(
             &directory.join("history.db"),
             &DATABASE_POLICY,
             &CancelToken::never(),
@@ -127,7 +122,6 @@ impl Store {
                 connection,
                 pinned: HashSet::new(),
                 warning: None,
-                _handles: handles,
             }),
         });
         store.maintenance()?;
@@ -959,6 +953,7 @@ fn all(state: &State) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     use super::*;

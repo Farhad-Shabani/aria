@@ -5,6 +5,7 @@
 use std::ffi::OsStr;
 use std::fs::{File, TryLockError};
 use std::io;
+use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
 use std::time::Duration;
@@ -43,16 +44,25 @@ pub enum DriftedMode {
     Repair,
 }
 
-pub struct PrivateDatabase {
-    pub connection: Connection,
-    pub handles: Handles,
-}
-
-/// Keep these until the connection is dropped: the lock must outlive SQLite's
-/// last use of the file.
-pub struct Handles {
+/// Fields drop in order: the lock must outlive SQLite's last use of the file.
+pub struct Database {
+    connection: Connection,
     _directory: File,
     _ownership: Option<File>,
+}
+
+impl Deref for Database {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        &self.connection
+    }
+}
+
+impl DerefMut for Database {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,73 +93,76 @@ pub enum Error {
     Database(#[from] rusqlite::Error),
 }
 
-/// Sets the busy timeout, `max_page_count` from the cap, and `trusted_schema`
-/// off. The caller owns the schema, its version, and every other pragma.
-pub fn open(path: &Path, policy: &Policy, cancel: &CancelToken) -> Result<PrivateDatabase, Error> {
-    let (Some(directory), Some(name)) = (path.parent(), path.file_name()) else {
-        return Err(Error::Path);
-    };
-    check_cancelled(cancel)?;
-    private_fs::prepare_directory(directory)?;
-    let directory = directory
-        .canonicalize()
-        .map_err(io("resolve the database directory"))?;
-    let directory_handle = open_directory(&directory)?;
-    let ownership = match policy.ownership {
-        Ownership::Shared => None,
-        Ownership::Exclusive { lock } => Some(take_lock(&directory_handle, lock)?),
-    };
-    check_cancelled(cancel)?;
-
-    create_if_missing(&directory_handle, name)?;
-    let before = inspect(&directory_handle, name)?.ok_or(Error::Replaced)?;
-    check_private(
-        &directory_handle,
-        name,
-        &before,
-        policy.max_bytes,
-        &policy.drifted_mode,
-    )?;
-    for suffix in SIDECAR_SUFFIXES {
+impl Database {
+    /// Sets the busy timeout, `max_page_count` from the cap, and `trusted_schema`
+    /// off. The caller owns the schema, its version, and every other pragma.
+    pub fn open(path: &Path, policy: &Policy, cancel: &CancelToken) -> Result<Self, Error> {
+        let (Some(directory), Some(name)) = (path.parent(), path.file_name()) else {
+            return Err(Error::Path);
+        };
         check_cancelled(cancel)?;
-        let mut sidecar = name.to_owned();
-        sidecar.push(suffix);
-        if let Some(stat) = inspect(&directory_handle, &sidecar)? {
-            check_private(
-                &directory_handle,
-                &sidecar,
-                &stat,
-                policy.max_bytes + SIDECAR_ALLOWANCE,
-                &DriftedMode::Refuse,
-            )?;
-        }
-    }
-    check_cancelled(cancel)?;
+        private_fs::prepare_directory(directory)?;
+        let directory = directory
+            .canonicalize()
+            .map_err(io("resolve the database directory"))?;
+        let directory_handle = open_directory(&directory)?;
+        let ownership = match policy.ownership {
+            Ownership::Shared => None,
+            Ownership::Exclusive { lock } => Some(take_lock(&directory_handle, lock)?),
+        };
+        check_cancelled(cancel)?;
 
-    let connection = Connection::open_with_flags(
-        directory.join(name),
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )?;
-    let after = inspect(&directory_handle, name)?.ok_or(Error::Replaced)?;
-    if !is_regular_file(&after) || before.st_dev != after.st_dev || before.st_ino != after.st_ino {
-        return Err(Error::Replaced);
-    }
-    connection.busy_timeout(policy.busy_timeout)?;
-    connection.pragma_update(None, "trusted_schema", false)?;
-    let page_size: u32 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
-    let max_pages =
-        i64::try_from(policy.max_bytes / u64::from(page_size)).map_err(|_| Error::TooLarge)?;
-    connection.pragma_update(None, "max_page_count", max_pages)?;
-    check_cancelled(cancel)?;
-    Ok(PrivateDatabase {
-        connection,
-        handles: Handles {
+        create_if_missing(&directory_handle, name)?;
+        let before = inspect(&directory_handle, name)?.ok_or(Error::Replaced)?;
+        check_private(
+            &directory_handle,
+            name,
+            &before,
+            policy.max_bytes,
+            &policy.drifted_mode,
+        )?;
+        for suffix in SIDECAR_SUFFIXES {
+            check_cancelled(cancel)?;
+            let mut sidecar = name.to_owned();
+            sidecar.push(suffix);
+            if let Some(stat) = inspect(&directory_handle, &sidecar)? {
+                check_private(
+                    &directory_handle,
+                    &sidecar,
+                    &stat,
+                    policy.max_bytes + SIDECAR_ALLOWANCE,
+                    &DriftedMode::Refuse,
+                )?;
+            }
+        }
+        check_cancelled(cancel)?;
+
+        let connection = Connection::open_with_flags(
+            directory.join(name),
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        let after = inspect(&directory_handle, name)?.ok_or(Error::Replaced)?;
+        if !is_regular_file(&after)
+            || before.st_dev != after.st_dev
+            || before.st_ino != after.st_ino
+        {
+            return Err(Error::Replaced);
+        }
+        connection.busy_timeout(policy.busy_timeout)?;
+        connection.pragma_update(None, "trusted_schema", false)?;
+        let page_size: u32 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
+        let max_pages =
+            i64::try_from(policy.max_bytes / u64::from(page_size)).map_err(|_| Error::TooLarge)?;
+        connection.pragma_update(None, "max_page_count", max_pages)?;
+        check_cancelled(cancel)?;
+        Ok(Self {
+            connection,
             _directory: directory_handle,
             _ownership: ownership,
-        },
-    })
+        })
+    }
 }
 
 /// Opens a directory private to the current user, walking down from `/` one
@@ -304,9 +317,9 @@ mod tests {
     #[test]
     fn a_database_opens_with_its_schema_untrusted() {
         let temp = tempfile::tempdir().unwrap();
-        let opened = open(&temp.path().join("data.db"), &POLICY, &CancelToken::never()).unwrap();
+        let opened =
+            Database::open(&temp.path().join("data.db"), &POLICY, &CancelToken::never()).unwrap();
         let trusted: bool = opened
-            .connection
             .pragma_query_value(None, "trusted_schema", |row| row.get(0))
             .unwrap();
         assert!(!trusted);
@@ -316,11 +329,11 @@ mod tests {
     fn a_second_link_or_an_oversized_file_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");
-        drop(open(&path, &POLICY, &CancelToken::never()).unwrap());
+        drop(Database::open(&path, &POLICY, &CancelToken::never()).unwrap());
 
         fs::hard_link(&path, temp.path().join("second")).unwrap();
         assert!(matches!(
-            open(&path, &POLICY, &CancelToken::never()),
+            Database::open(&path, &POLICY, &CancelToken::never()),
             Err(Error::Linked)
         ));
         fs::remove_file(temp.path().join("second")).unwrap();
@@ -332,7 +345,7 @@ mod tests {
             .set_len(POLICY.max_bytes + 1)
             .unwrap();
         assert!(matches!(
-            open(&path, &POLICY, &CancelToken::never()),
+            Database::open(&path, &POLICY, &CancelToken::never()),
             Err(Error::TooLarge)
         ));
     }
@@ -344,7 +357,7 @@ mod tests {
         private_fs::prepare_directory(&real).unwrap();
         symlink(&real, temp.path().join("store")).unwrap();
         assert!(
-            open(
+            Database::open(
                 &temp.path().join("store/data.db"),
                 &POLICY,
                 &CancelToken::never()
@@ -361,7 +374,7 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
-            open(&path, &POLICY, &cancel),
+            Database::open(&path, &POLICY, &cancel),
             Err(Error::Cancelled)
         ));
         assert!(!path.parent().unwrap().exists());
@@ -371,11 +384,8 @@ mod tests {
     fn an_open_database_has_no_descriptor_but_sqlites() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");
-        let opened = open(&path, &POLICY, &CancelToken::never()).unwrap();
-        opened
-            .connection
-            .execute_batch("CREATE TABLE t(x)")
-            .unwrap();
+        let opened = Database::open(&path, &POLICY, &CancelToken::never()).unwrap();
+        opened.execute_batch("CREATE TABLE t(x)").unwrap();
         let database = fs::metadata(&path).unwrap();
         let descriptors = fs::read_dir("/dev/fd")
             .unwrap()
