@@ -1,9 +1,5 @@
-import Foundation
 import GRPCCore
-import GRPCNIOTransportHTTP2
-import os
-
-private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonEvents")
+import GRPCProtobuf
 
 /// Subscribes to the daemon's event stream over its Unix socket.
 ///
@@ -18,7 +14,7 @@ final class DaemonEvents {
     private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
     private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
     private var levelHandlers: [(Float) -> Void] = []
-    private var hotkeyHandlers: [(Aria_Daemon_V1_ShortcutCombo) -> Void] = []
+    private var hotkeyHandlers: [(ShortcutCombo) -> Void] = []
     private var settingsHandlers: [(Aria_Daemon_V1_SettingsStatus?) -> Void] = []
     private var listenHandlers: [(Aria_Daemon_V1_ListenEvent?) -> Void] = []
     private var streamOpenedHandlers: [() -> Void] = []
@@ -56,9 +52,10 @@ final class DaemonEvents {
         speakerHandlers.append(handle)
     }
 
-    /// Called for every Aria key combo the daemon reads. A combo is over the
-    /// moment it arrives, so a lost stream leaves nothing to clear.
-    func onHotkey(_ handle: @escaping (Aria_Daemon_V1_ShortcutCombo) -> Void) {
+    /// Called for every Aria key combo the daemon reads that this build
+    /// knows. A combo is over the moment it arrives, so a lost stream leaves
+    /// nothing to clear.
+    func onHotkey(_ handle: @escaping (ShortcutCombo) -> Void) {
         hotkeyHandlers.append(handle)
     }
 
@@ -82,8 +79,6 @@ final class DaemonEvents {
     private static let retryDelay = Duration.seconds(2)
 
     private var task: Task<Void, Never>?
-    /// Every retry while the daemon is down fails the same way.
-    private var lastFailure: String?
 
     func start() {
         guard task == nil else { return }
@@ -134,28 +129,24 @@ final class DaemonEvents {
         for handler in levelHandlers { handler(level) }
     }
 
-    private func publish(hotkey: Aria_Daemon_V1_ShortcutCombo) {
+    private func publish(hotkey: ShortcutCombo) {
         for handler in hotkeyHandlers { handler(hotkey) }
     }
 
+    /// A stream has no deadline; it ends when the daemon does. How it ended
+    /// is logged by the transport, and `start` subscribes again.
     private func subscribeOnce() async {
         do {
-            try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
+            try await DaemonTransport.call(timeout: nil) { client, options in
                 let events = Aria_Daemon_V1_EventsService.Client(wrapping: client)
-                try await events.subscribe(request: ClientRequest(message: .init())) { response in
+                try await events.subscribe(request: ClientRequest(message: .init()), options: options) { response in
                     await MainActor.run {
-                        self.lastFailure = nil
                         for handler in self.streamOpenedHandlers { handler() }
                     }
                     for try await event in response.messages {
                         switch event.payload {
                         case .dictation(let dictation):
-                            await MainActor.run {
-                                self.publish(dictation: dictation)
-                                if [.delivered, .failed, .cancelled].contains(dictation.stage) {
-                                    NotificationCenter.default.post(name: .dictationHistoryChanged, object: nil)
-                                }
-                            }
+                            await MainActor.run { self.publish(dictation: dictation) }
                         case .caption(let caption):
                             await MainActor.run { self.publish(caption: caption) }
                         case .ghost(let ghost):
@@ -167,7 +158,8 @@ final class DaemonEvents {
                         case .speaker(let speaker):
                             await MainActor.run { self.publish(speaker: speaker) }
                         case .hotkey(let hotkey):
-                            await MainActor.run { self.publish(hotkey: hotkey.combo) }
+                            guard let combo = ShortcutCombo(wire: hotkey.combo) else { continue }
+                            await MainActor.run { self.publish(hotkey: combo) }
                         case .listen(let listen):
                             await MainActor.run { self.publish(listen: listen) }
                         case .settings(let settings):
@@ -178,16 +170,6 @@ final class DaemonEvents {
                     }
                 }
             }
-        } catch {
-            let failure = String(describing: error)
-            if failure != lastFailure {
-                log.notice("Subscription ended: \(failure, privacy: .private)")
-            }
-            lastFailure = failure
-        }
+        } catch {}
     }
-}
-
-extension Notification.Name {
-    static let dictationHistoryChanged = Notification.Name("dictationHistoryChanged")
 }

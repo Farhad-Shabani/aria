@@ -2,7 +2,7 @@ import Foundation
 import ServiceManagement
 import os
 
-private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonClient")
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonProcess")
 
 enum DaemonState: Equatable {
     case running
@@ -25,7 +25,7 @@ protocol DaemonControlling: Sendable {
     func isMissingTranscriptionModel() async -> Bool
 }
 
-enum DaemonClientError: LocalizedError {
+enum DaemonProcessError: LocalizedError {
     case ariaBinaryMissing(String)
     case agentDisabled
     case commandFailed(String)
@@ -52,7 +52,7 @@ enum StartMethod: Equatable {
 /// binary during development. Probes the Unix socket for liveness and stops
 /// the PID recorded in the lock file. Runtime paths and the agent's label
 /// mirror the Rust daemon.
-struct DaemonClient: DaemonControlling {
+struct DaemonProcess: DaemonControlling {
     private static let serviceLabel = "io.github.farhad-shabani.aria.daemon"
     private static let legacyRetiredKey = "legacyServiceRetired"
     private static let agentLoadProbes = 20
@@ -80,8 +80,8 @@ struct DaemonClient: DaemonControlling {
         switch agentStatus {
         case .enabled: return jobLoaded ? .kickstart : .register
         case .notRegistered, .notFound: return .register
-        case .requiresApproval: throw DaemonClientError.agentDisabled
-        @unknown default: throw DaemonClientError.agentDisabled
+        case .requiresApproval: throw DaemonProcessError.agentDisabled
+        @unknown default: throw DaemonProcessError.agentDisabled
         }
     }
 
@@ -118,7 +118,7 @@ struct DaemonClient: DaemonControlling {
     static func ariaBinary() throws -> URL {
         let candidates = daemonBinaryCandidates()
         guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
-            throw DaemonClientError.ariaBinaryMissing(candidates.map(\.path).joined(separator: ", "))
+            throw DaemonProcessError.ariaBinaryMissing(candidates.map(\.path).joined(separator: ", "))
         }
         return bin
     }
@@ -177,7 +177,7 @@ struct DaemonClient: DaemonControlling {
             throw launchFailed("aria remote", error)
         }
         guard output.status == 0 else {
-            throw DaemonClientError.commandFailed(cliFailure(stderr: output.stderr, fallback: fallback))
+            throw DaemonProcessError.commandFailed(cliFailure(stderr: output.stderr, fallback: fallback))
         }
     }
 
@@ -236,7 +236,7 @@ struct DaemonClient: DaemonControlling {
             do {
                 try Self.agent.register()
             } catch {
-                throw DaemonClientError.commandFailed(
+                throw DaemonProcessError.commandFailed(
                     "could not register Aria's background item: \(error.localizedDescription)"
                 )
             }
@@ -245,7 +245,7 @@ struct DaemonClient: DaemonControlling {
         case .spawn(let bin):
             log.notice("Starting the daemon: spawn")
             guard FileManager.default.isExecutableFile(atPath: bin.path) else {
-                throw DaemonClientError.ariaBinaryMissing(bin.path)
+                throw DaemonProcessError.ariaBinaryMissing(bin.path)
             }
             try Self.spawnDaemon(at: bin)
         }
@@ -284,11 +284,11 @@ struct DaemonClient: DaemonControlling {
         }
     }
 
-    private static func launchFailed(_ name: String, _ error: any Error) -> DaemonClientError {
+    private static func launchFailed(_ name: String, _ error: any Error) -> DaemonProcessError {
         .commandFailed("\(name) failed to launch: \(error.localizedDescription)")
     }
 
-    private static func exitFailed(_ name: String, status: Int32, stderr: Data) -> DaemonClientError {
+    private static func exitFailed(_ name: String, status: Int32, stderr: Data) -> DaemonProcessError {
         let message = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return .commandFailed("\(name) exited with \(status): \(message)")
     }
@@ -371,12 +371,12 @@ struct DaemonClient: DaemonControlling {
         let lock = RuntimeFiles.daemonLockURL
         let pid = try Self.heldLockPid(lock)
         guard Self.isAriaProcess(pid) else {
-            throw DaemonClientError.commandFailed(
+            throw DaemonProcessError.commandFailed(
                 "PID \(pid) from \(lock.path) is not an aria process"
             )
         }
         guard kill(pid, SIGTERM) == 0 else {
-            throw DaemonClientError.commandFailed(
+            throw DaemonProcessError.commandFailed(
                 "failed to signal daemon PID \(pid): \(String(cString: strerror(errno)))"
             )
         }
@@ -386,18 +386,18 @@ struct DaemonClient: DaemonControlling {
     /// lock means no owner — its contents are a leftover, not a PID.
     private static func heldLockPid(_ lock: URL) throws -> pid_t {
         guard FileManager.default.fileExists(atPath: lock.path) else {
-            throw DaemonClientError.commandFailed(
+            throw DaemonProcessError.commandFailed(
                 "daemon is not running: no lock file at \(lock.path)"
             )
         }
         guard lockIsHeld(lock) else {
-            throw DaemonClientError.commandFailed(
+            throw DaemonProcessError.commandFailed(
                 "daemon is not running: nothing holds \(lock.path)"
             )
         }
         let contents = try? String(contentsOf: lock, encoding: .utf8)
         guard let pid = lockedPid(contents) else {
-            throw DaemonClientError.commandFailed(
+            throw DaemonProcessError.commandFailed(
                 "no daemon PID recorded at \(lock.path)"
             )
         }

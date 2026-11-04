@@ -223,8 +223,8 @@ final class ServerTranscriptionTests: XCTestCase {
 
     func testAKnownPairingFailureSaysWhatToDo() {
         func message(forCLI stderr: String) -> String {
-            let detail = DaemonClient.cliFailure(stderr: Data(stderr.utf8), fallback: "")
-            return ServerTranscription.pairingMessage(for: DaemonClientError.commandFailed(detail))
+            let detail = DaemonProcess.cliFailure(stderr: Data(stderr.utf8), fallback: "")
+            return ServerTranscription.pairingMessage(for: DaemonProcessError.commandFailed(detail))
         }
 
         XCTAssertEqual(

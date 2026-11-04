@@ -218,8 +218,8 @@ proto-swift: (_swift-stubs "clients/Generated")
 swift-stubs: (_swift-stubs "clients/build/stubs")
     diff -r clients/build/stubs clients/Generated
 
-# Health comes along so clients can probe the daemon. The Rust side gets its
-# own copy from tonic-health.
+# Only protos the Mac app consumes. Health comes along so clients can probe
+# the daemon. The Rust side gets its own copy from tonic-health.
 _swift-stubs out: _swift-plugins
     rm -rf {{ out }}/Messages {{ out }}/Rpc
     mkdir -p {{ out }}/Messages {{ out }}/Rpc
@@ -240,7 +240,6 @@ _swift-stubs out: _swift-plugins
         proto/aria/daemon/v1/relay.proto \
         proto/aria/daemon/v1/speaker.proto \
         proto/aria/daemon/v1/speech.proto \
-        proto/aria/daemon/v1/vocabulary.proto \
         proto/aria/setup/v1/setup.proto \
         proto/grpc/health/v1/health.proto
 

@@ -6,10 +6,10 @@ struct AriaApp: App {
 
     @Environment(\.openWindow) private var openWindow
     @StateObject private var poller = StatusPoller(
-        client: DaemonClient()
+        client: DaemonProcess()
     )
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var settings = DaemonSettings(transport: UnixSocketSettings())
+    @StateObject private var settings = DaemonSettings(transport: SettingsClient())
 
     var body: some Scene {
         MenuBarExtra {
@@ -118,7 +118,7 @@ struct AriaApp: App {
         .commandsRemoved()
 
         Window("Dictation History", id: WindowID.dictationHistory) {
-            DictationHistoryView()
+            DictationHistoryView(state: appDelegate.history)
         }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)

@@ -1,51 +1,21 @@
 import Foundation
-import GRPCCore
-import GRPCNIOTransportHTTP2
 
-enum TryOutError: LocalizedError {
+enum TryOutFailure: LocalizedError {
     case stopped
-    case ended
 
     var errorDescription: String? {
         switch self {
-        case .stopped: return "The recording stopped before Aria heard anything. Try again."
-        case .ended: return "Aria didn’t return a transcript. Try again."
+        case .stopped: "The recording stopped before Aria heard anything. Try again."
         }
     }
 }
 
-/// The test press: one recording handed back as text, and one spoken reply.
+/// The test press: one recording handed back as text.
 enum TryOutClient {
     static func transcribe() async throws -> String {
-        var request = Aria_Daemon_V1_StartDictationRequest()
-        request.stopMode = .onSilence
-        request.transcriptOnly = true
-        request.deliveryMode = .complete
-        var options = CallOptions.defaults
-        options.timeout = .seconds(120)
-        return try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
-            let dictation = Aria_Daemon_V1_DictationService.Client(wrapping: client)
-            return try await dictation.start(request: ClientRequest(message: request), options: options) { response in
-                for try await message in response.messages {
-                    switch message.body {
-                    case .result(let result): return result.text
-                    case .stopAccepted: throw TryOutError.stopped
-                    case .progress, nil: continue
-                    }
-                }
-                throw TryOutError.ended
-            }
-        }
-    }
-
-    static func speak(_ text: String) async throws {
-        var request = Aria_Daemon_V1_SpeakRequest()
-        request.text = text
-        var options = CallOptions.defaults
-        options.timeout = .seconds(60)
-        try await withGRPCClient(transport: DaemonTransport.unixSocket()) { client in
-            let speech = Aria_Daemon_V1_SpeechService.Client(wrapping: client)
-            _ = try await speech.speak(request: ClientRequest(message: request), options: options) { try $0.message }
+        switch try await DictationClient.start(stop: .onSilence, projectDirectory: nil, timeout: .seconds(120)) {
+        case .heard(let transcript): return transcript.text
+        case .stopAccepted: throw TryOutFailure.stopped
         }
     }
 }

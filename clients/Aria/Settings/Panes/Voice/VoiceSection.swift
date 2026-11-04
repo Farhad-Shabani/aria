@@ -7,7 +7,7 @@ struct VoiceSection: View {
     @ObservedObject var voices: VoiceProfiles
     @ObservedObject var setup: SetupStatus
     let editor: SettingsEditor
-    @State private var removing: Aria_Daemon_V1_EnrolledSpeaker?
+    @State private var removing: EnrolledSpeaker?
 
     var body: some View {
         Section {
@@ -47,7 +47,7 @@ struct VoiceSection: View {
     }
 
     @ViewBuilder
-    private func profiles(_ speakers: [Aria_Daemon_V1_EnrolledSpeaker]) -> some View {
+    private func profiles(_ speakers: [EnrolledSpeaker]) -> some View {
         if !setup.hasSpeakerModelOnDisk {
             LabeledContent {
                 Button("Aria Setup…") { openWindow(id: WindowID.setup) }
@@ -74,7 +74,7 @@ struct VoiceSection: View {
         }
     }
 
-    private func row(_ speaker: Aria_Daemon_V1_EnrolledSpeaker) -> some View {
+    private func row(_ speaker: EnrolledSpeaker) -> some View {
         LabeledContent {
             Menu {
                 if speaker.role != .owner {

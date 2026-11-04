@@ -7,9 +7,9 @@ final class DictationHistoryState: ObservableObject {
         var get: (UInt64) async throws -> HistoryItem
         var delete: (UInt64) async throws -> Void
         var clear: () async throws -> HistoryClearResult
-        var retry: (UInt64) async throws -> HistoryItem
+        var regenerate: (UInt64) async throws -> HistoryItem
         var copy: (String) -> Bool
-        var waitForRetry: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
+        var waitForRegenerate: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
     }
 
     @Published private(set) var items: [HistoryItem] = [] {
@@ -22,16 +22,19 @@ final class DictationHistoryState: ObservableObject {
     @Published private(set) var isLoadingDetail = false
     @Published private(set) var error: HistoryFailure?
     @Published private(set) var notice: String?
-    @Published private(set) var retryingID: UInt64?
+    @Published private(set) var regeneratingID: UInt64?
     @Published private(set) var deletingID: UInt64?
     @Published private(set) var isClearing = false
     @Published private(set) var query = ""
+    /// Whether the window shows, so a dictation ending refreshes only a list
+    /// someone is looking at.
+    private(set) var isOpen = false
     private var next: UInt64?
     private var listGeneration = 0
     private var detailGeneration = 0
     private var listTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
-    private var retryTask: Task<Void, Never>?
+    private var regenerateTask: Task<Void, Never>?
     private var deleteTask: Task<Void, Never>?
     private var clearTask: Task<Void, Never>?
     private var clearNotice: String?
@@ -40,8 +43,17 @@ final class DictationHistoryState: ObservableObject {
     init(effects: Effects) { self.effects = effects }
 
     var canClear: Bool {
-        !isClearing && deletingID == nil && retryingID == nil
-            && detail?.isRetrying != true && !items.contains(where: \.isRetrying)
+        !isClearing && deletingID == nil && regeneratingID == nil
+            && detail?.isRegenerating != true && !items.contains(where: \.isRegenerating)
+    }
+
+    func open() {
+        isOpen = true
+        refresh()
+    }
+
+    func dictationEnded() {
+        if isOpen { refresh() }
     }
 
     func search(_ value: String) {
@@ -135,8 +147,8 @@ final class DictationHistoryState: ObservableObject {
                         items[index] = entry
                     }
                     isLoadingDetail = false
-                    guard entry.isRetrying else { return }
-                    try await effects.waitForRetry()
+                    guard entry.isRegenerating else { return }
+                    try await effects.waitForRegenerate()
                 }
             } catch {
                 guard generation == detailGeneration, !Task.isCancelled else { return }
@@ -151,16 +163,16 @@ final class DictationHistoryState: ObservableObject {
         notice = effects.copy(detail.text) ? "Copied" : "Aria couldn’t copy the text. Try again."
     }
 
-    func retry() {
-        guard !isClearing, let entry = detail, entry.isRetryable, retryingID == nil,
+    func regenerate() {
+        guard !isClearing, let entry = detail, entry.canRegenerate, regeneratingID == nil,
             deletingID != entry.id
         else { return }
-        retryingID = entry.id
+        regeneratingID = entry.id
         notice = nil
-        retryTask = Task {
-            defer { retryingID = nil }
+        regenerateTask = Task {
+            defer { regeneratingID = nil }
             do {
-                let recovered = try await effects.retry(entry.id)
+                let recovered = try await effects.regenerate(entry.id)
                 guard !Task.isCancelled else { return }
                 if let index = items.firstIndex(where: { $0.id == entry.id }) {
                     items[index] = recovered
@@ -176,7 +188,7 @@ final class DictationHistoryState: ObservableObject {
     }
 
     func delete(_ id: UInt64) {
-        guard !isClearing, deletingID == nil, retryingID != id else { return }
+        guard !isClearing, deletingID == nil, regeneratingID != id else { return }
         deletingID = id
         deleteTask = Task {
             defer { deletingID = nil }
@@ -235,11 +247,12 @@ final class DictationHistoryState: ObservableObject {
     }
 
     func close() {
+        isOpen = false
         listGeneration += 1
         detailGeneration += 1
         listTask?.cancel()
         detailTask?.cancel()
-        retryTask?.cancel()
+        regenerateTask?.cancel()
         deleteTask?.cancel()
         clearTask?.cancel()
         if isClearing { error = .clearUncertain }

@@ -1,6 +1,3 @@
-import GRPCCore
-import GRPCProtobuf
-import SwiftProtobuf
 import XCTest
 
 @testable import Aria
@@ -13,7 +10,7 @@ final class DictationHistoryTests: XCTestCase {
         var deletionFails = false
         var copied = [String]()
         var copySucceeds = true
-        var retryContinuation: CheckedContinuation<HistoryItem, Error>?
+        var regenerateContinuation: CheckedContinuation<HistoryItem, Error>?
         var clearCalls = 0
         var clearFailure: HistoryFailure?
         var isCleanupPending = false
@@ -38,7 +35,7 @@ final class DictationHistoryTests: XCTestCase {
                     self.entries = []
                     return HistoryClearResult(deletedEntries: deletedEntries, isCleanupPending: self.isCleanupPending)
                 },
-                retry: { _ in try await withCheckedThrowingContinuation { self.retryContinuation = $0 } },
+                regenerate: { _ in try await withCheckedThrowingContinuation { self.regenerateContinuation = $0 } },
                 copy: { text in
                     self.copied.append(text)
                     return self.copySucceeds
@@ -71,6 +68,32 @@ final class DictationHistoryTests: XCTestCase {
         await waitUntil { state.detail?.text == "Full updated text" }
         XCTAssertEqual(state.selectedID, 1)
         state.close()
+    }
+
+    func testADictationEndingRefreshesOnlyAnOpenWindow() async {
+        let harness = Harness()
+        var lists = 0
+        var effects = harness.effects
+        effects.list = { _, _ in
+            lists += 1
+            return HistoryPage(items: harness.entries)
+        }
+        let state = DictationHistoryState(effects: effects)
+
+        state.dictationEnded()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(lists, 0, "a closed window has nothing to refresh")
+
+        state.open()
+        await waitUntil { state.detail != nil }
+        XCTAssertEqual(lists, 1)
+        state.dictationEnded()
+        await waitUntil { lists == 2 }
+
+        state.close()
+        state.dictationEnded()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(lists, 2)
     }
 
     func testDaysGroupNewestFirstAndKeepOrderWithinADay() {
@@ -183,13 +206,13 @@ final class DictationHistoryTests: XCTestCase {
 
     func testRetryAfterSelectionChangeUpdatesOwnRowWithoutCopy() async {
         let harness = Harness()
-        harness.entries[0].isRetryable = true
+        harness.entries[0].canRegenerate = true
         harness.entries[0].status = .transcriptionFailed
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
-        state.retry()
-        await waitUntil { harness.retryContinuation != nil }
+        state.regenerate()
+        await waitUntil { harness.regenerateContinuation != nil }
         state.clear()
         XCTAssertFalse(state.isClearing)
         XCTAssertEqual(harness.clearCalls, 0)
@@ -199,9 +222,9 @@ final class DictationHistoryTests: XCTestCase {
         await waitUntil { state.detail?.id == 1 }
         harness.entries[0].text = "Recovered text"
         harness.entries[0].status = .recovered
-        harness.entries[0].isRetryable = false
-        harness.retryContinuation?.resume(returning: harness.entries[0])
-        await waitUntil { state.retryingID == nil && !state.isLoading && state.detail?.id == 1 }
+        harness.entries[0].canRegenerate = false
+        harness.regenerateContinuation?.resume(returning: harness.entries[0])
+        await waitUntil { state.regeneratingID == nil && !state.isLoading && state.detail?.id == 1 }
         XCTAssertEqual(state.items.first?.text, "Recovered text")
         XCTAssertEqual(state.detail?.text, "Text 1")
         XCTAssertTrue(harness.copied.isEmpty)
@@ -210,10 +233,10 @@ final class DictationHistoryTests: XCTestCase {
 
     func testCloseCancelsRetryWithoutReplacingEntry() async {
         let harness = Harness()
-        harness.entries[0].isRetryable = true
+        harness.entries[0].canRegenerate = true
         var effects = harness.effects
         var cancelled = false
-        effects.retry = { _ in
+        effects.regenerate = { _ in
             do { try await Task.sleep(for: .seconds(60)) } catch {
                 cancelled = Task.isCancelled
                 throw error
@@ -223,7 +246,7 @@ final class DictationHistoryTests: XCTestCase {
         let state = DictationHistoryState(effects: effects)
         state.refresh()
         await waitUntil { state.detail != nil }
-        state.retry()
+        state.regenerate()
         await Task.yield()
         state.close()
         await waitUntil { cancelled }
@@ -233,28 +256,28 @@ final class DictationHistoryTests: XCTestCase {
     func testReopenDuringCancelledRetryRefreshesWhenServerReleasesEntry() async {
         let harness = Harness()
         harness.entries[0].status = .transcriptionFailed
-        harness.entries[0].isRetryable = true
+        harness.entries[0].canRegenerate = true
         var effects = harness.effects
         var poll: CheckedContinuation<Void, Error>?
-        effects.waitForRetry = { try await withCheckedThrowingContinuation { poll = $0 } }
+        effects.waitForRegenerate = { try await withCheckedThrowingContinuation { poll = $0 } }
         let state = DictationHistoryState(effects: effects)
         state.refresh()
         await waitUntil { state.detail != nil }
-        state.retry()
-        await waitUntil { harness.retryContinuation != nil }
-        harness.entries[0].isRetrying = true
-        harness.entries[0].isRetryable = false
+        state.regenerate()
+        await waitUntil { harness.regenerateContinuation != nil }
+        harness.entries[0].isRegenerating = true
+        harness.entries[0].canRegenerate = false
         state.close()
         state.refresh()
-        await waitUntil { state.detail?.isRetrying == true && poll != nil }
+        await waitUntil { state.detail?.isRegenerating == true && poll != nil }
 
-        harness.entries[0].isRetrying = false
-        harness.entries[0].isRetryable = true
-        harness.retryContinuation?.resume(throwing: HistoryFailure.cancelled)
+        harness.entries[0].isRegenerating = false
+        harness.entries[0].canRegenerate = true
+        harness.regenerateContinuation?.resume(throwing: HistoryFailure.cancelled)
         poll?.resume()
-        await waitUntil { state.detail?.isRetryable == true && state.retryingID == nil }
-        XCTAssertFalse(state.detail?.isRetrying ?? true)
-        XCTAssertFalse(state.items[0].isRetrying)
+        await waitUntil { state.detail?.canRegenerate == true && state.regeneratingID == nil }
+        XCTAssertFalse(state.detail?.isRegenerating ?? true)
+        XCTAssertFalse(state.items[0].isRegenerating)
         XCTAssertNil(state.error)
         XCTAssertTrue(harness.copied.isEmpty)
         state.close()
@@ -262,7 +285,7 @@ final class DictationHistoryTests: XCTestCase {
 
     func testCloseStopsRetryStatusPolling() async {
         let harness = Harness()
-        harness.entries[0].isRetrying = true
+        harness.entries[0].isRegenerating = true
         var effects = harness.effects
         var reads = 0
         var poll: CheckedContinuation<Void, Error>?
@@ -270,7 +293,7 @@ final class DictationHistoryTests: XCTestCase {
             reads += 1
             return harness.entries[0]
         }
-        effects.waitForRetry = { try await withCheckedThrowingContinuation { poll = $0 } }
+        effects.waitForRegenerate = { try await withCheckedThrowingContinuation { poll = $0 } }
         let state = DictationHistoryState(effects: effects)
         state.refresh()
         await waitUntil { poll != nil }
@@ -359,7 +382,7 @@ final class DictationHistoryTests: XCTestCase {
         await waitUntil { clear != nil }
         state.clear()
         state.delete(2)
-        state.retry()
+        state.regenerate()
         state.search("ignored")
         state.refresh()
         state.loadMore(after: 1)
@@ -367,7 +390,7 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertTrue(state.isClearing)
         XCTAssertFalse(state.canClear)
         XCTAssertNil(state.deletingID)
-        XCTAssertNil(state.retryingID)
+        XCTAssertNil(state.regeneratingID)
         XCTAssertEqual(state.query, "")
         XCTAssertEqual(state.selectedID, 2)
         XCTAssertEqual(lists.count, 2)
@@ -405,7 +428,7 @@ final class DictationHistoryTests: XCTestCase {
 
     func testClearIsBlockedByKnownRetry() async {
         let harness = Harness()
-        harness.entries[1].isRetrying = true
+        harness.entries[1].isRegenerating = true
         let state = DictationHistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
@@ -443,12 +466,12 @@ final class DictationHistoryTests: XCTestCase {
     }
 
     func testClearFailuresDistinguishUnsupportedAndUncertainCompletion() {
-        XCTAssertEqual(DictationHistoryClient.failure(RPCError(code: .unimplemented, message: "")), .unsupported)
+        XCTAssertEqual(HistoryFailure(.unimplemented), .unsupported)
         for failure in [HistoryFailure.offline, .storage, .timeout, .cancelled, .failed] {
-            XCTAssertEqual(DictationHistoryClient.clearFailure(failure), .clearUncertain)
+            XCTAssertEqual(HistoryClient.clearFailure(failure), .clearUncertain)
         }
         for failure in [HistoryFailure.busy, .unsupported] {
-            XCTAssertEqual(DictationHistoryClient.clearFailure(failure), failure)
+            XCTAssertEqual(HistoryClient.clearFailure(failure), failure)
         }
     }
 
@@ -458,10 +481,11 @@ final class DictationHistoryTests: XCTestCase {
         wire.source = .relay
         wire.status = .transcriptionFailed
         wire.audioAvailability = .unavailable
-        let item = try DictationHistoryClient.item(wire)
+        let item = try HistoryItem(wire)
         XCTAssertEqual(item.metadata.map(\.0), ["Source", "Status", "Created", "Audio"])
-        XCTAssertEqual(item.source, "iPhone or Apple Watch")
-        XCTAssertFalse(item.isRetryable)
+        XCTAssertEqual(item.source, .relay)
+        XCTAssertEqual(item.source.title, "iPhone or Apple Watch")
+        XCTAssertFalse(item.canRegenerate)
     }
 
     func testTranscriptionErrorShowsExplanationInsteadOfRawCategory() throws {
@@ -472,12 +496,12 @@ final class DictationHistoryTests: XCTestCase {
         wire.audioAvailability = .unavailable
         wire.error.code = .transcriptionFailed
         XCTAssertEqual(
-            try DictationHistoryClient.item(wire).message, "Aria couldn’t finish transcribing this recording.")
+            try HistoryItem(wire).message, "Aria couldn’t finish transcribing this recording.")
         wire.error.code = .UNRECOGNIZED(12345)
         XCTAssertEqual(
-            try DictationHistoryClient.item(wire).message, "Aria couldn’t finish transcribing this recording.")
+            try HistoryItem(wire).message, "Aria couldn’t finish transcribing this recording.")
         wire.error.code = .overallTimeout
-        XCTAssertEqual(try DictationHistoryClient.item(wire).message, "Aria couldn’t finish this recording in time.")
+        XCTAssertEqual(try HistoryItem(wire).message, "Aria couldn’t finish this recording in time.")
     }
 
     func testAudioExpiryMatchesAvailability() throws {
@@ -486,10 +510,10 @@ final class DictationHistoryTests: XCTestCase {
         wire.source = .local
         wire.status = .transcriptionFailed
         wire.audioAvailability = .available
-        XCTAssertThrowsError(try DictationHistoryClient.item(wire))
+        XCTAssertThrowsError(try HistoryItem(wire))
         wire.audioExpiresAtMs = 1_000
         let expiry = Date(timeIntervalSince1970: 1)
-        let available = try DictationHistoryClient.item(wire)
+        let available = try HistoryItem(wire)
         XCTAssertEqual(available.audio, .available(until: expiry))
         XCTAssertEqual(
             available.metadata.first { $0.0 == "Audio" }?.1,
@@ -503,9 +527,9 @@ final class DictationHistoryTests: XCTestCase {
         ]
         for (audio, expected, description) in cases {
             wire.audioAvailability = audio
-            XCTAssertThrowsError(try DictationHistoryClient.item(wire))
+            XCTAssertThrowsError(try HistoryItem(wire))
             wire.clearAudioExpiresAtMs()
-            let item = try DictationHistoryClient.item(wire)
+            let item = try HistoryItem(wire)
             XCTAssertEqual(item.audio, expected)
             XCTAssertEqual(item.metadata.first { $0.0 == "Audio" }?.1, description)
             wire.audioExpiresAtMs = 1_000
@@ -513,34 +537,8 @@ final class DictationHistoryTests: XCTestCase {
         wire.clearAudioExpiresAtMs()
         for audio in [Aria_Daemon_V1_HistoryAudioAvailability.unspecified, .UNRECOGNIZED(12345)] {
             wire.audioAvailability = audio
-            XCTAssertThrowsError(try DictationHistoryClient.item(wire))
+            XCTAssertThrowsError(try HistoryItem(wire))
         }
-    }
-
-    func testErrorDetailsDistinguishStorageFromOffline() throws {
-        var error = Aria_Daemon_V1_RpcError()
-        error.code = .historyUnavailable
-        let status = GoogleRPCStatus(
-            code: .unavailable, message: "", details: .any(try Google_Protobuf_Any(message: error)))
-        let bytes: [UInt8] = try status.serializedBytes()
-        var metadata = Metadata()
-        metadata.addBinary(bytes, forKey: "grpc-status-details-bin")
-        XCTAssertEqual(
-            DictationHistoryClient.failure(RPCError(code: .unavailable, message: "", metadata: metadata)), .storage)
-        XCTAssertEqual(DictationHistoryClient.failure(RPCError(code: .unavailable, message: "")), .offline)
-    }
-
-    func testProjectFailureUsesCodeRegardlessOfMessage() throws {
-        var error = Aria_Daemon_V1_RpcError()
-        error.code = .historyProjectUnavailable
-        error.message = "A differently worded explanation."
-        let status = GoogleRPCStatus(
-            code: .failedPrecondition, message: "", details: .any(try Google_Protobuf_Any(message: error)))
-        var metadata = Metadata()
-        metadata.addBinary(try status.serializedBytes(), forKey: "grpc-status-details-bin")
-        XCTAssertEqual(
-            DictationHistoryClient.failure(RPCError(code: .failedPrecondition, message: "", metadata: metadata)),
-            .projectUnavailable)
     }
 
     func testHistorySettingsPreservesExplicitFalse() throws {

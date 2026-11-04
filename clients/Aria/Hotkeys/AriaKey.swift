@@ -14,7 +14,7 @@ enum AriaKey: CaseIterable {
         }
     }
 
-    func gesture(for combo: Aria_Daemon_V1_ShortcutCombo) -> String {
+    func gesture(for combo: ShortcutCombo) -> String {
         "\(title) + \(combo.symbol)"
     }
 

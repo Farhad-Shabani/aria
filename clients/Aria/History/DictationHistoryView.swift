@@ -4,10 +4,9 @@ import SwiftUI
 struct DictationHistoryView: View {
     private static let edgeInset: CGFloat = 12
 
-    @StateObject private var state = DictationHistoryState(effects: DictationHistoryClient.effects)
+    @ObservedObject var state: DictationHistoryState
     @State private var deletion: HistoryItem?
     @State private var isConfirmingClear = false
-    @State private var isVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,28 +37,15 @@ struct DictationHistoryView: View {
             }
         }
         .onAppear {
-            isVisible = true
             NSApplication.shared.activate()
-            state.refresh()
+            state.open()
         }
-        .onDisappear {
-            isVisible = false
-            state.close()
-        }
+        .onDisappear { state.close() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
-            if ($0.object as? NSWindow)?.title == "Dictation History" {
-                isVisible = true
-                state.refresh()
-            }
+            if ($0.object as? NSWindow)?.title == "Dictation History" { state.open() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) {
-            if ($0.object as? NSWindow)?.title == "Dictation History" {
-                isVisible = false
-                state.close()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .dictationHistoryChanged)) { _ in
-            if isVisible { state.refresh() }
+            if ($0.object as? NSWindow)?.title == "Dictation History" { state.close() }
         }
         .confirmationDialog(
             "Delete This Dictation?",
@@ -197,18 +183,19 @@ struct DictationHistoryView: View {
             if let entry = state.detail {
                 Button("Delete…", role: .destructive) { deletion = entry }
                     .disabled(
-                        state.isClearing || entry.isRetrying || state.retryingID == entry.id || state.deletingID != nil)
-                let isRetrying = entry.isRetrying || state.retryingID == entry.id
+                        state.isClearing || entry.isRegenerating || state.regeneratingID == entry.id
+                            || state.deletingID != nil)
+                let isRegenerating = entry.isRegenerating || state.regeneratingID == entry.id
                 if !entry.text.isEmpty && entry.status != .deletionPending {
                     Button("Copy Text") { state.copy() }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                         .disabled(state.isClearing)
                 }
-                if entry.isRetryable || isRetrying {
-                    Button(isRetrying ? "Transcribing…" : "Transcribe Again") { state.retry() }
+                if entry.canRegenerate || isRegenerating {
+                    Button(isRegenerating ? "Transcribing…" : "Transcribe Again") { state.regenerate() }
                         .buttonStyle(.borderedProminent)
                         .disabled(
-                            state.isClearing || entry.isRetrying || state.retryingID != nil
+                            state.isClearing || entry.isRegenerating || state.regeneratingID != nil
                                 || state.deletingID == entry.id)
                 }
             }

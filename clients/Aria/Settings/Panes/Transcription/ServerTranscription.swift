@@ -110,7 +110,7 @@ final class ServerTranscription: ObservableObject {
     ]
 
     static func pairingMessage(for error: any Error) -> String {
-        guard case .commandFailed(let detail)? = error as? DaemonClientError else { return pairFailure }
+        guard case .commandFailed(let detail)? = error as? DaemonProcessError else { return pairFailure }
         let cause = detail.lowercased()
         return pairCauses.first { cause.hasPrefix($0.cliMessage) }?.message ?? pairFailure
     }
@@ -224,8 +224,8 @@ extension ServerTranscription.Effects {
     @MainActor static var live: Self {
         Self(
             inspect: { try await SetupClient.inspect() },
-            pair: { invitation in try await DaemonClient.pairServer(invitation: invitation) },
-            forget: { try await DaemonClient.forgetServer() },
+            pair: { invitation in try await DaemonProcess.pairServer(invitation: invitation) },
+            forget: { try await DaemonProcess.forgetServer() },
             apply: { request in _ = try await SetupClient.apply(request) { _ in } },
             stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
             startDaemon: { await SetupClient.startDaemonAfterFailedApply() },

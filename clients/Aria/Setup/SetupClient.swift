@@ -18,7 +18,7 @@ enum SetupClientError: Error, Equatable {
 /// service it installs and the Accessibility grant name one executable.
 enum SetupClient {
     static func inspect() async throws -> Aria_Setup_V1_Inspection {
-        let output = try await ChildProcess.run(try DaemonClient.ariaBinary(), ["setup", "inspect"])
+        let output = try await ChildProcess.run(try DaemonProcess.ariaBinary(), ["setup", "inspect"])
         guard output.status == 0 else {
             throw SetupClientError.failed(failure(status: output.status, stderr: output.stderr))
         }
@@ -39,7 +39,7 @@ enum SetupClient {
         onEvent: @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
     ) async throws -> Aria_Setup_V1_Summary {
         let frame = try SetupFrames.encode(request)
-        let child = ChildProcess(try DaemonClient.ariaBinary(), ["setup", "apply"])
+        let child = ChildProcess(try DaemonProcess.ariaBinary(), ["setup", "apply"])
         let frames = Mutex(ApplyFrames())
         try child.launch(input: frame) { chunk in
             let readable = frames.withLock { $0.push(chunk, onEvent: onEvent) }
@@ -117,7 +117,7 @@ enum SetupClient {
     /// Waits for a signalled daemon to let go of the socket. One that will
     /// not is left for the service install to refuse loudly.
     static func awaitDaemonSocketClosed(probes: Int = 40, every: Duration = .milliseconds(250)) async {
-        let client = DaemonClient()
+        let client = DaemonProcess()
         for _ in 0..<probes {
             if await !client.isRunning() { return }
             try? await Task.sleep(for: every)
@@ -144,7 +144,7 @@ enum SetupClient {
 
     static func stopDaemonBeforeApply() async {
         do {
-            try await DaemonClient().stop()
+            try await DaemonProcess().stop()
         } catch {
             log.error("Daemon not stopped before apply: \(String(describing: error), privacy: .private)")
             return
@@ -156,7 +156,7 @@ enum SetupClient {
         do {
             // A new Task, so a cancelled apply cannot cut short the
             // agent-load wait inside `start`.
-            try await Task { try await DaemonClient().start() }.value
+            try await Task { try await DaemonProcess().start() }.value
         } catch {
             log.error("Daemon not restarted after apply: \(String(describing: error), privacy: .private)")
         }
@@ -180,7 +180,7 @@ extension SetupState.Effects {
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },
             transcribe: { try await TryOutClient.transcribe() },
-            speak: { text in try await TryOutClient.speak(text) },
+            speak: { text in try await SpeechClient.speak(text) },
             launchAtLogin: {
                 do {
                     try SMAppService.mainApp.register()

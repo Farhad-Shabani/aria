@@ -1,5 +1,4 @@
 import AppKit
-import GRPCCore
 import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "PhonePairing")
@@ -14,9 +13,6 @@ final class PhonePairing: ObservableObject {
     /// Near expiry the daemon can still serve the old code for a moment, so
     /// polls never come closer together than this.
     nonisolated private static let minimumPoll: Duration = .milliseconds(250)
-
-    /// Asks clipboard managers not to record the code.
-    private static let concealedPasteboardType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
     enum Status: Equatable {
         case loading
@@ -105,7 +101,7 @@ final class PhonePairing: ObservableObject {
     /// unimplemented means the relay is off. Unavailable means the daemon is
     /// not listening at all. Any other error's detail is logged, not shown.
     nonisolated static func status(for error: any Error) -> Status {
-        switch (error as? RPCError)?.code {
+        switch error as? DaemonFailure {
         case .unimplemented: return .relayOff
         case .unavailable: return .daemonOff
         default: return .failed
@@ -193,11 +189,8 @@ final class PhonePairing: ObservableObject {
     /// is a hint clipboard managers may ignore, so the code is also wiped
     /// when it expires, unless something else was copied since.
     func copy(_ invite: PairingInvite, until wipeAt: Date) {
-        guard let text = invite.url?.absoluteString else { return }
+        guard let text = invite.url?.absoluteString, Pasteboard.copyConcealed(text) else { return }
         let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString("", forType: Self.concealedPasteboardType)
-        pasteboard.setString(text, forType: .string)
         let copied = pasteboard.changeCount
         Task {
             try? await Task.sleep(for: .seconds(max(0, wipeAt.timeIntervalSinceNow)))

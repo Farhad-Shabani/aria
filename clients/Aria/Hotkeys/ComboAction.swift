@@ -4,7 +4,7 @@ enum ComboAction {
     case ask
     case promptList
 
-    init?(combo: Aria_Daemon_V1_ShortcutCombo, in settings: Aria_Daemon_V1_Settings) {
+    init?(combo: ShortcutCombo, in settings: Aria_Daemon_V1_Settings) {
         if settings.askShortcut.storedBinding == .combo(combo) {
             self = .ask
         } else if settings.promptListShortcut.storedBinding == .combo(combo) {

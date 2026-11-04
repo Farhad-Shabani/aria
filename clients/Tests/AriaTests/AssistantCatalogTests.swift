@@ -5,13 +5,9 @@ import XCTest
 @MainActor
 final class AssistantCatalogTests: XCTestCase {
     private func assistant(
-        _ id: Aria_Daemon_V1_AssistantId, name: String, status: Aria_Daemon_V1_AssistantStatus = .ready
-    ) -> Aria_Daemon_V1_Assistant {
-        var assistant = Aria_Daemon_V1_Assistant()
-        assistant.id = id
-        assistant.name = name
-        assistant.status = status
-        return assistant
+        _ id: Aria_Daemon_V1_AssistantId, name: String, status: Assistant.Status = .ready
+    ) -> Assistant {
+        Assistant(id: id, name: name, status: status)
     }
 
     func testCatalogUsesDaemonOrderAndNamesAndRecoversAfterFailure() async {
@@ -39,7 +35,7 @@ final class AssistantCatalogTests: XCTestCase {
         struct Failure: Error {}
         @MainActor final class ResponseState {
             var shouldFail = true
-            var status = Aria_Daemon_V1_AssistantStatus.signedOut
+            var status = Assistant.Status.signedOut
             var calls = 0
         }
         let state = ResponseState()
@@ -59,23 +55,9 @@ final class AssistantCatalogTests: XCTestCase {
         XCTAssertEqual(state.calls, 3)
     }
 
-    func testCatalogRejectsEmptyDuplicateUnknownUnnamedAndStatuslessChoices() async {
-        let codex = assistant(.codex, name: "Codex")
-        for choices in [
-            [], [codex, codex], [assistant(.unspecified, name: "Unknown")],
-            [assistant(.UNRECOGNIZED(99), name: "Unknown")], [assistant(.codex, name: " ")],
-            [assistant(.codex, name: "Codex", status: .unspecified)],
-        ] {
-            let catalog = AssistantCatalog { choices }
-            await catalog.load()
-            XCTAssertTrue(catalog.choices.isEmpty)
-            XCTAssertNotNil(catalog.failure)
-        }
-    }
-
     func testOlderResponseCannotReplaceTheLatestCatalog() async {
         let started = expectation(description: "first catalog started")
-        var finishFirst: CheckedContinuation<[Aria_Daemon_V1_Assistant], Never>?
+        var finishFirst: CheckedContinuation<[Assistant], Never>?
         let latest = [assistant(.codex, name: "Latest")]
         var calls = 0
         let catalog = AssistantCatalog {

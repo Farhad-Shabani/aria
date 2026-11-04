@@ -17,7 +17,7 @@ enum DaemonControlFailure: Equatable {
 
     /// Aria turned off in Login Items is a setup step, not a generic failure.
     static func starting(_ error: any Error, otherwise failure: Self) -> Self {
-        if case DaemonClientError.agentDisabled = error { return .backgroundItemOff }
+        if case DaemonProcessError.agentDisabled = error { return .backgroundItemOff }
         return failure
     }
 

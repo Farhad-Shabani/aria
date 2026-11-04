@@ -2,6 +2,27 @@ enum HistoryFailure: Error, Equatable {
     case offline, storage, missing, audioUnavailable, projectUnavailable, tooLarge, busy, cancelled,
         timeout, queryTooLong, unsupported, clearUncertain, failed
 
+    init(_ failure: DaemonFailure) {
+        self =
+            switch failure {
+            case .refused(.historyUnavailable): .storage
+            case .refused(.historyMissing): .missing
+            case .refused(.historyAudioUnavailable): .audioUnavailable
+            case .refused(.payloadTooLarge): .tooLarge
+            case .refused(.historyProjectUnavailable): .projectUnavailable
+            case .refused(.busy): .busy
+            case .refused(.cancelled): .cancelled
+            case .refused(.shuttingDown): .offline
+            case .unavailable: .offline
+            case .timeout: .timeout
+            case .cancelled: .cancelled
+            case .unimplemented: .unsupported
+            case .transport(.resourceExhausted): .busy
+            case .transport(.notFound): .missing
+            case .refused, .transport, .invalidResponse: .failed
+            }
+    }
+
     var message: String {
         switch self {
         case .offline: "Aria isn’t running. Turn it on in the menu bar, then try again."

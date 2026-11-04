@@ -13,8 +13,11 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(Aria_Daemon_V1_Shortcut(.combo(.command)).storedBinding, .combo(.command))
         XCTAssertNil(Aria_Daemon_V1_Shortcut(.combo(.command)).storedChord)
         XCTAssertNil(Aria_Daemon_V1_Shortcut(nil).storedBinding)
-        XCTAssertNil(Aria_Daemon_V1_Shortcut(.combo(.unspecified)).storedBinding)
-        XCTAssertNil(Aria_Daemon_V1_Shortcut(.combo(.UNRECOGNIZED(9))).storedBinding)
+        var unknown = Aria_Daemon_V1_Shortcut()
+        unknown.combo = .unspecified
+        XCTAssertNil(unknown.storedBinding)
+        unknown.combo = .UNRECOGNIZED(9)
+        XCTAssertNil(unknown.storedBinding)
 
         var bare = Aria_Daemon_V1_Shortcut(.chord(chord))
         bare.chord.control = false

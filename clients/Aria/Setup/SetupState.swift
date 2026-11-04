@@ -18,8 +18,8 @@ final class SetupState: ObservableObject {
         var startDaemon: () async -> Void
         var hotkeyArmed: () async -> Bool
         var openAccessibility: () -> Void
-        var speakers: () async throws -> [Aria_Daemon_V1_EnrolledSpeaker]
-        var enroll: (String) async throws -> Aria_Daemon_V1_EnrollSpeakerResponse
+        var speakers: () async throws -> [EnrolledSpeaker]
+        var enroll: (String) async throws -> Void
         var transcribe: () async throws -> String
         var speak: (String) async throws -> Void
         /// Returns what to tell the user when launch at login could not be enabled.
@@ -183,7 +183,7 @@ final class SetupState: ObservableObject {
 
     /// A voice can be recorded once its model is on disk and nobody is
     /// enrolled yet.
-    static func offersVoice(_ summary: Aria_Setup_V1_Summary, speakers: [Aria_Daemon_V1_EnrolledSpeaker]) -> Bool {
+    static func offersVoice(_ summary: Aria_Setup_V1_Summary, speakers: [EnrolledSpeaker]) -> Bool {
         speakers.isEmpty && summary.voiceModelPresent
     }
 
@@ -329,7 +329,7 @@ final class SetupState: ObservableObject {
         voicePrompt = "Starting…"
         Task {
             do {
-                _ = try await effects.enroll(name)
+                try await effects.enroll(name)
                 enrolled = "Voice saved for \(name)."
                 step = .tryOut
             } catch {
@@ -471,9 +471,9 @@ final class SetupState: ObservableObject {
     private static func message(
         for error: any Error, during step: String, otherwise fallback: String = unknownFailure
     ) -> String {
-        if error is SpeakerFailure || error is TryOutError { return error.localizedDescription }
+        if error is SpeakerFailure || error is TryOutFailure { return error.localizedDescription }
         log.error("Setup \(step, privacy: .public) failed: \(String(describing: error), privacy: .private)")
-        if case .ariaBinaryMissing? = error as? DaemonClientError { return missingBinary }
+        if case .ariaBinaryMissing? = error as? DaemonProcessError { return missingBinary }
         return fallback
     }
 

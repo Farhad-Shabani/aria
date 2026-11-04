@@ -47,7 +47,7 @@ struct SettingsEditor {
     func check(_ edit: (inout Aria_Daemon_V1_SettingsPatch) -> Void) async throws {
         var request = Aria_Daemon_V1_CheckSettingsRequest()
         edit(&request.patch)
-        try await UnixSocketSettings().check(request)
+        try await SettingsClient().check(request)
     }
 
     func set<Value>(_ patch: WritableKeyPath<Aria_Daemon_V1_SettingsPatch, Value>, to value: Value) {

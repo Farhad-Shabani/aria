@@ -4,16 +4,13 @@ import XCTest
 
 @MainActor
 final class AssistantModelsTests: XCTestCase {
-    private func model(_ id: String) -> Aria_Daemon_V1_AssistantModel {
-        var model = Aria_Daemon_V1_AssistantModel()
-        model.id = id
-        model.name = id
-        return model
+    private func model(_ id: String) -> AssistantModel {
+        AssistantModel(id: id, name: id)
     }
 
     func testChangingAssistantDiscardsTheOlderModelResponse() async {
         let started = expectation(description: "first list started")
-        var finishFirst: CheckedContinuation<[Aria_Daemon_V1_AssistantModel], Never>?
+        var finishFirst: CheckedContinuation<[AssistantModel], Never>?
         let codex = model("codex-choice")
         let models = AssistantModels { assistantID in
             if assistantID == .claudeCode {

@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let voices: VoiceProfiles
     lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus)
     let updates = UpdateController()
+    let history = DictationHistoryState(effects: HistoryClient.effects)
 
     private static let setupOfferedKey = "setupOffered"
 
@@ -53,10 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         events.onHotkey { [weak self] combo in
             self?.run(combo)
         }
+        events.onDictation { [weak self] event in
+            guard let event, [.delivered, .failed, .cancelled].contains(event.stage) else { return }
+            self?.history.dictationEnded()
+        }
     }
 
     /// Before the first snapshot no action holds a combo, so nothing runs.
-    private func run(_ combo: Aria_Daemon_V1_ShortcutCombo) {
+    private func run(_ combo: ShortcutCombo) {
         guard let snapshot = daemonSettings?.snapshot else { return }
         switch ComboAction(combo: combo, in: snapshot) {
         case .ask: askShortcut.press()
@@ -89,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         do {
-            try DaemonClient.signalStop()
+            try DaemonProcess.signalStop()
         } catch {
             log.error("Daemon not stopped on quit: \(String(describing: error), privacy: .private)")
         }

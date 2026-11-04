@@ -1,5 +1,4 @@
 import Foundation
-import GRPCCore
 import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "DaemonSettings")
@@ -120,9 +119,9 @@ final class DaemonSettings: ObservableObject {
     /// True when the daemon rejected the edit itself, so retrying won't help.
     /// False for any other error, such as an unreachable daemon.
     static func refusesPatch(_ error: any Error) -> Bool {
-        guard let status = error as? RPCError else { return false }
-        switch status.code {
-        case .invalidArgument, .permissionDenied, .unauthenticated: return true
+        guard case .refused(let code) = error as? DaemonFailure else { return false }
+        switch code {
+        case .invalidRequest, .permissionDenied, .unauthenticated, .settingsInvalid: return true
         default: return false
         }
     }

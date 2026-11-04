@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class ListenStatusTests: XCTestCase {
-    private struct DaemonFailure: Error {}
+    private struct Unreachable: Error {}
 
     private func event(_ stage: Aria_Daemon_V1_ListenStage) -> Aria_Daemon_V1_ListenEvent {
         var event = Aria_Daemon_V1_ListenEvent()
@@ -41,7 +41,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testAFailedReadLeavesTheStateAlone() async {
-        let status = ListenStatus(readStatus: { throw DaemonFailure() })
+        let status = ListenStatus(readStatus: { throw Unreachable() })
         status.handle(event(.started))
         await status.catchUp()
         XCTAssertTrue(status.isRunning)
@@ -57,7 +57,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testAStopErrorFromASessionThatEndedIsNotAFailedStop() async {
-        let status = ListenStatus(readStatus: { false }, stopSession: { throw DaemonFailure() })
+        let status = ListenStatus(readStatus: { false }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         XCTAssertFalse(status.isRunning)
@@ -65,7 +65,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testASessionThatOutlivesAStopErrorIsAFailedStop() async {
-        let status = ListenStatus(readStatus: { true }, stopSession: { throw DaemonFailure() })
+        let status = ListenStatus(readStatus: { true }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         XCTAssertTrue(status.isRunning)
@@ -73,7 +73,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testANewSessionClearsAnEarlierFailedStop() async {
-        let status = ListenStatus(readStatus: { true }, stopSession: { throw DaemonFailure() })
+        let status = ListenStatus(readStatus: { true }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         status.handle(event(.stopped))
