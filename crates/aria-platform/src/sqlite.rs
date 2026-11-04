@@ -256,12 +256,16 @@ fn check_private(
         }
         .into());
     }
-    if u64::from(stat.st_nlink) != 1 {
+    if stat.st_nlink != 1 {
         return Err(Error::Linked);
     }
     if u64::try_from(stat.st_size).map_or(true, |len| len > max_bytes) {
         return Err(Error::TooLarge);
     }
+    #[allow(
+        clippy::useless_conversion,
+        reason = "st_mode is u16 on macOS and u32 on Linux"
+    )]
     let actual_mode = u32::from(stat.st_mode) & 0o777;
     if actual_mode == PRIVATE_FILE_MODE {
         return Ok(());
