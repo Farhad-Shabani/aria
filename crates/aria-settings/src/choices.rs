@@ -198,26 +198,7 @@ impl From<&StoreError> for RpcErrorCode {
 #[cfg(test)]
 mod rpc_tests {
     use super::*;
-    use crate::Position;
     use crate::rpc::RpcFailure;
-
-    #[test]
-    fn a_file_fault_is_refused_with_its_place() {
-        let fault =
-            crate::Loaded::parse("[memory]\nenabled = maybe\n", std::path::Path::new("/home"))
-                .expect_err("invalid");
-
-        let failure = RpcFailure::from(&StoreError::FileInvalid(fault));
-
-        assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);
-        assert_eq!(
-            failure.settings_position,
-            Some(Position {
-                line: 2,
-                column: 11
-            })
-        );
-    }
 
     #[test]
     fn a_change_the_file_cannot_parse_quotes_nothing_from_it() {

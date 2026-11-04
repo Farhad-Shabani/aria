@@ -1064,6 +1064,16 @@ mod tests {
         settings_with(home, "enabled = true")
     }
 
+    fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
+        Runtime::new(
+            root.join("catalog"),
+            None,
+            true,
+            settings(root),
+            LocalCollector::new(LocalExtractor),
+        )
+    }
+
     fn project(base: &Path, name: &str) -> Directory {
         let path = base.join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -1241,13 +1251,7 @@ mod tests {
     #[tokio::test]
     async fn a_change_without_a_directory_is_refused() {
         let root = tempfile::tempdir().unwrap();
-        let (runtime, _worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, _worker) = local_runtime(root.path());
 
         assert!(matches!(
             runtime.refresh(None).await,
@@ -1262,13 +1266,7 @@ mod tests {
     #[test]
     fn cold_admission_coalesces_and_bounds_work_without_filesystem_access() {
         let root = tempfile::tempdir().unwrap();
-        let (runtime, _worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, _worker) = local_runtime(root.path());
         for index in 0..100 {
             let selected = directory(&root.path().join(format!("missing-{index}")));
             let snapshot = runtime.snapshot(Some(&selected));
@@ -1312,13 +1310,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let a = project(root.path(), "aria-stt");
         let b = project(root.path(), "other-stt");
-        let (runtime, worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, worker) = local_runtime(root.path());
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
         assert_eq!(
@@ -1359,13 +1351,7 @@ mod tests {
         let parent = project(root.path(), "parent");
         let child = project(parent.as_path(), "aria-kit");
         let catalog_dir = root.path().join("catalog");
-        let (runtime, worker) = Runtime::new(
-            catalog_dir.clone(),
-            None,
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, worker) = local_runtime(root.path());
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
         runtime.refresh(Some(parent.clone())).await.unwrap();
@@ -1478,13 +1464,7 @@ mod tests {
     #[test]
     fn expired_deadline_cancels_backend_work() {
         let root = tempfile::tempdir().unwrap();
-        let (_, worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (_, worker) = local_runtime(root.path());
         let token = worker.control(
             Arc::new(AtomicBool::new(false)),
             Deadline::after(Duration::ZERO),
@@ -1512,13 +1492,7 @@ mod tests {
         catalog
             .refresh_cancellable(&discovery, &key, &CancelToken::never())
             .unwrap();
-        let (_, worker) = Runtime::new(
-            catalog_dir,
-            None,
-            true,
-            settings(temporary.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (_, worker) = local_runtime(temporary.path());
         let mut catalog = Some(catalog);
         worker
             .remove(
@@ -1541,13 +1515,7 @@ mod tests {
     fn obsolete_generation_cannot_publish_and_resource_failure_keeps_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let selected = directory(&root.path().join("project"));
-        let (runtime, worker) = Runtime::new(
-            root.path().join("catalog"),
-            None,
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, worker) = local_runtime(root.path());
         runtime.prepare(Some(selected.clone()));
         let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
             panic!("refresh expected")

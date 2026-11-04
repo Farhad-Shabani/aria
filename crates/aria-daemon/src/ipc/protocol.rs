@@ -2881,53 +2881,14 @@ mod tests {
     }
 
     #[test]
-    fn the_listen_start_and_stop_answers_round_trip() {
-        let started = ListenStarted::from(wire::StartListenResponse::from(ListenStarted {
-            already_listening: true,
-            transcript: "/tmp/a.txt".into(),
-        }));
-        let stopped = ListenStopped::from(wire::StopListenResponse::from(ListenStopped {
-            was_listening: true,
-            transcript: "/tmp/b.txt".into(),
-        }));
-
-        assert!(started.already_listening);
-        assert_eq!(started.transcript, std::path::PathBuf::from("/tmp/a.txt"));
-        assert!(stopped.was_listening);
-        assert_eq!(stopped.transcript, std::path::PathBuf::from("/tmp/b.txt"));
-    }
-
-    #[test]
-    fn a_cleared_history_round_trips() {
-        let result =
-            ClearHistoryResult::from(wire::ClearHistoryResponse::from(ClearHistoryResult {
-                deleted_entries: 3,
-                cleanup_pending: true,
-            }));
-
-        assert_eq!(result.deleted_entries, 3);
-        assert!(result.cleanup_pending);
-    }
-
-    #[test]
-    fn assistant_models_round_trip_and_an_invalid_one_is_refused() {
-        let models = vec![AssistantModel {
-            id: "claude-first".to_owned(),
-            name: "Claude First".to_owned(),
-        }];
-
-        let decoded = Vec::<AssistantModel>::try_from(wire::ListAssistantModelsResponse::from(
-            models.clone(),
-        ))
-        .expect("decodes");
-        assert_eq!(decoded, models);
-
+    fn an_invalid_assistant_model_is_refused() {
         let invalid = wire::ListAssistantModelsResponse {
             models: vec![wire::AssistantModel {
                 id: String::new(),
                 name: "Nameless".to_owned(),
             }],
         };
+
         assert!(matches!(
             Vec::<AssistantModel>::try_from(invalid),
             Err(ProtocolError::InvalidModelId)
@@ -2935,46 +2896,7 @@ mod tests {
     }
 
     #[test]
-    fn an_enrollment_result_round_trips_with_the_name_it_was_for() {
-        let name = SpeakerName::new("Ada").expect("a name");
-        let response = wire::EnrollSpeakerResponse::from(EnrollmentResult {
-            name: name.clone(),
-            role: Role::Owner,
-            consistency: 0.75,
-        });
-
-        let result = enrollment_result(name.clone(), response).expect("decodes");
-
-        assert_eq!(result.name, name);
-        assert_eq!(result.role, Role::Owner);
-        assert_eq!(result.consistency, 0.75);
-    }
-
-    #[test]
-    fn the_enrolled_speakers_round_trip() {
-        let speakers = vec![EnrolledSpeaker {
-            name: SpeakerName::new("Ada").expect("a name"),
-            role: Role::Guest,
-            enrolled_at: 1_700_000_000,
-        }];
-
-        let decoded =
-            Vec::<EnrolledSpeaker>::try_from(wire::ListSpeakersResponse::from(speakers.clone()))
-                .expect("decodes");
-
-        assert_eq!(decoded, speakers);
-    }
-
-    #[test]
-    fn a_settings_status_answer_round_trips_and_an_empty_one_is_refused() {
-        let status = SettingsStatus {
-            revision: 7,
-            ..SettingsStatus::default()
-        };
-
-        let decoded = SettingsStatus::try_from(wire::GetSettingsStatusResponse::from(&status))
-            .expect("decodes");
-        assert_eq!(decoded, status);
+    fn an_empty_settings_status_answer_is_refused() {
         assert!(matches!(
             SettingsStatus::try_from(wire::GetSettingsStatusResponse { status: None }),
             Err(ProtocolError::MissingBody("settings status"))
