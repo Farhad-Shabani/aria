@@ -409,7 +409,7 @@ impl wire::inference_admin_service_server::InferenceAdminService for InferenceAd
             .issue(&endpoint)
             .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
         let invitation_json = invitation
-            .to_json()
+            .into_json()
             .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
         super::served(INVITE);
         Ok(Response::new(wire::InferenceInviteResponse {

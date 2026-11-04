@@ -30,9 +30,8 @@ pub(crate) struct Invitation {
 }
 
 impl Invitation {
-    /// The document a client pairs from.
-    pub(in crate::daemon) fn to_json(&self) -> Result<Vec<u8>, Error> {
-        serde_json::to_vec(self).map_err(Error::Encode)
+    pub(in crate::daemon) fn into_json(self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&self).map_err(Error::Encode)
     }
 }
 

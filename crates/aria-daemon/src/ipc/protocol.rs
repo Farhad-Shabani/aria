@@ -1,7 +1,7 @@
 //! Translation between generated wire messages and domain types.
 
 use super::wire;
-use crate::daemon::{Invite, RelayStage};
+use crate::daemon::relay::{Invite, RelayStage};
 use aria_assistant::chat::{
     AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
     PromptCall, Step, Ticket,
