@@ -439,7 +439,7 @@ impl From<CaptionSnapshot> for wire::CaptionSnapshot {
     fn from(caption: CaptionSnapshot) -> Self {
         Self {
             recording_id: caption.recording.0,
-            committed: caption.committed.to_string(),
+            finalized: caption.finalized.to_string(),
             provisional: caption.provisional.to_string(),
             ended: caption.ended,
         }
@@ -2983,7 +2983,7 @@ mod tests {
         for ended in [false, true] {
             let caption = CaptionSnapshot {
                 recording: RecordingId(42),
-                committed: Arc::from("private committed words"),
+                finalized: Arc::from("private finalized words"),
                 provisional: Arc::from("private provisional words"),
                 ended,
             };
@@ -2995,7 +2995,7 @@ mod tests {
                 panic!("caption must not become a stage");
             };
             assert_eq!(snapshot.recording_id, 42);
-            assert_eq!(snapshot.committed, "private committed words");
+            assert_eq!(snapshot.finalized, "private finalized words");
             assert_eq!(snapshot.provisional, "private provisional words");
             assert_eq!(snapshot.ended, ended);
         }

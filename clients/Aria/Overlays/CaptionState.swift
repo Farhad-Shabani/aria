@@ -4,7 +4,7 @@ struct CaptionState {
     static let enabledKey = "captionsEnabled"
     static let isEnabledByDefault = false
     private static let expiry: TimeInterval = 5
-    private(set) var committed = ""
+    private(set) var finalized = ""
     private(set) var provisional = ""
     private var isEnabled = false
     private var recording: UInt64?
@@ -35,7 +35,7 @@ struct CaptionState {
             clearText()
             return
         }
-        committed = String(String.UnicodeScalarView(snapshot.committed.unicodeScalars.suffix(2048)))
+        finalized = String(String.UnicodeScalarView(snapshot.finalized.unicodeScalars.suffix(2048)))
         provisional = String(String.UnicodeScalarView(snapshot.provisional.unicodeScalars.suffix(2048)))
         updatedAt = now
     }
@@ -46,7 +46,7 @@ struct CaptionState {
     }
 
     private mutating func clearText() {
-        committed = ""
+        finalized = ""
         provisional = ""
         updatedAt = nil
     }

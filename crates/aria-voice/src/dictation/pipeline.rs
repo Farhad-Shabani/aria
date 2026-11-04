@@ -1000,8 +1000,8 @@ impl<'a> Published<'a> {
     /// typed.
     fn announce(&mut self, text: &str, speaker: Option<SpeakerName>) {
         if let Some(caption) = &mut self.caption {
-            let spaced = Caret::between(&caption.committed, "").insert(text);
-            caption.committed = caption_suffix(&format!("{}{spaced}", caption.committed));
+            let spaced = Caret::between(&caption.finalized, "").insert(text);
+            caption.finalized = caption_suffix(&format!("{}{spaced}", caption.finalized));
             self.events.emit(caption.clone());
         }
         self.events.emit(DictationStage::SegmentTranscribed {
@@ -1905,7 +1905,7 @@ mod tests {
         assert!(
             snapshots
                 .iter()
-                .any(|snapshot| snapshot.committed.as_ref() == "turn left")
+                .any(|snapshot| snapshot.finalized.as_ref() == "turn left")
         );
         assert_eq!(result.text, "turn left");
         assert!(log.entries().iter().all(|entry| !entry.contains("lift")));
@@ -1975,7 +1975,7 @@ mod tests {
         assert_eq!(snapshots[0].provisional.as_ref(), "turn lift at the light");
         assert_eq!(snapshots[1].provisional.as_ref(), "turn left");
         assert!(snapshots[2].provisional.is_empty());
-        assert_eq!(snapshots.last().unwrap().committed.as_ref(), "turn left");
+        assert_eq!(snapshots.last().unwrap().finalized.as_ref(), "turn left");
         assert!(snapshots.last().unwrap().provisional.is_empty());
     }
 
@@ -2020,7 +2020,7 @@ mod tests {
             assert!(!snapshots.first().unwrap().ended);
             let terminal = snapshots.last().unwrap();
             assert!(terminal.ended);
-            assert!(terminal.committed.is_empty() && terminal.provisional.is_empty());
+            assert!(terminal.finalized.is_empty() && terminal.provisional.is_empty());
             assert!(
                 snapshots
                     .iter()
@@ -2031,7 +2031,7 @@ mod tests {
                 assert!(
                     snapshots
                         .iter()
-                        .any(|snapshot| snapshot.committed.as_ref() == text)
+                        .any(|snapshot| snapshot.finalized.as_ref() == text)
                 );
             }
         }
@@ -2077,12 +2077,12 @@ mod tests {
         assert!(
             snapshots
                 .iter()
-                .all(|snapshot| snapshot.committed.is_empty() && snapshot.provisional.is_empty())
+                .all(|snapshot| snapshot.finalized.is_empty() && snapshot.provisional.is_empty())
         );
     }
 
     #[test]
-    fn own_voice_captions_publish_only_accepted_committed_text() {
+    fn own_voice_captions_publish_only_accepted_finalized_text() {
         for voice in [OWN, OTHER] {
             let (_directory, capture) = judged_capture();
             let pipeline = filtered_pipeline(
@@ -2107,7 +2107,7 @@ mod tests {
             assert_eq!(
                 snapshots
                     .iter()
-                    .any(|snapshot| snapshot.committed.as_ref() == "hello"),
+                    .any(|snapshot| snapshot.finalized.as_ref() == "hello"),
                 voice == OWN
             );
             assert!(snapshots.last().unwrap().ended);
@@ -2135,7 +2135,7 @@ mod tests {
             assert_eq!(
                 snapshots
                     .iter()
-                    .any(|snapshot| snapshot.committed.as_ref() == "hello"),
+                    .any(|snapshot| snapshot.finalized.as_ref() == "hello"),
                 captioned
             );
             assert_eq!(snapshots.last().is_some_and(|last| last.ended), captioned);
@@ -2320,7 +2320,7 @@ mod tests {
     }
 
     #[test]
-    fn a_committed_segment_reaches_history_before_the_cursor() {
+    fn a_finalized_segment_reaches_history_before_the_cursor() {
         let (_directory, capture) = capture();
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
@@ -2759,7 +2759,7 @@ mod tests {
 
     #[test]
     fn full_recording_transcription_uses_completion_layers_and_cancellation() {
-        let (directory, pressed_capture) = capture();
+        let (directory, capture) = capture();
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
             assert_eq!(text, "meet at 3");
             *text = "Meet at 3.".to_owned();
@@ -4009,7 +4009,7 @@ mod tests {
                 assert!(
                     captions
                         .try_iter()
-                        .all(|caption| caption.committed.is_empty()
+                        .all(|caption| caption.finalized.is_empty()
                             && caption.provisional.is_empty())
                 );
             } else {
@@ -4516,7 +4516,7 @@ mod tests {
 
     #[test]
     fn a_relayed_recording_without_speech_is_refused() {
-        let (directory, pressed_capture) = capture();
+        let (directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("Mm-hmm.")),
@@ -4657,7 +4657,7 @@ mod tests {
 
     #[test]
     fn retry_honors_cancellation() {
-        let (directory, pressed_capture) = capture();
+        let (directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("must not escape")),

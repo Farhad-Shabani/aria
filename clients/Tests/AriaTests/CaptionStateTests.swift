@@ -4,11 +4,11 @@ import XCTest
 
 final class CaptionStateTests: XCTestCase {
     private func snapshot(
-        _ recording: UInt64 = 1, committed: String = "", provisional: String = "", ended: Bool = false
+        _ recording: UInt64 = 1, finalized: String = "", provisional: String = "", ended: Bool = false
     ) -> Aria_Daemon_V1_CaptionSnapshot {
         var snapshot = Aria_Daemon_V1_CaptionSnapshot()
         snapshot.recordingID = recording
-        snapshot.committed = committed
+        snapshot.finalized = finalized
         snapshot.provisional = provisional
         snapshot.ended = ended
         return snapshot
@@ -23,35 +23,35 @@ final class CaptionStateTests: XCTestCase {
     func testRevisionsReplaceAndCommitWithoutDuplication() {
         var state = enabled()
         state.apply(snapshot(provisional: "turn lift here"), now: 0)
-        state.apply(snapshot(committed: "turn", provisional: "left"), now: 1)
-        XCTAssertEqual(state.committed, "turn")
+        state.apply(snapshot(finalized: "turn", provisional: "left"), now: 1)
+        XCTAssertEqual(state.finalized, "turn")
         XCTAssertEqual(state.provisional, "left")
-        state.apply(snapshot(committed: "turn left"), now: 2)
-        XCTAssertEqual(state.committed, "turn left")
+        state.apply(snapshot(finalized: "turn left"), now: 2)
+        XCTAssertEqual(state.finalized, "turn left")
         XCTAssertEqual(state.provisional, "")
         state.apply(snapshot(ended: true), now: 3)
-        XCTAssertEqual(state.committed, "")
+        XCTAssertEqual(state.finalized, "")
     }
 
     func testMissingIntermediateSnapshotRecoversCompleteDisplay() {
         var state = enabled()
         state.apply(snapshot(provisional: "one"), now: 0)
-        state.apply(snapshot(committed: "one two three", provisional: "four"), now: 2)
-        XCTAssertEqual(state.committed, "one two three")
+        state.apply(snapshot(finalized: "one two three", provisional: "four"), now: 2)
+        XCTAssertEqual(state.finalized, "one two three")
         XCTAssertEqual(state.provisional, "four")
     }
 
     func testRecordingTransitionsRejectOldUpdatesAndOldEnds() {
         var state = enabled()
         state.apply(snapshot(2, provisional: "preview"), now: 0)
-        state.apply(snapshot(3, committed: "filtered final"), now: 1)
+        state.apply(snapshot(3, finalized: "filtered final"), now: 1)
         state.apply(snapshot(2, provisional: "late preview"), now: 2)
         state.apply(snapshot(2, ended: true), now: 3)
-        XCTAssertEqual(state.committed, "filtered final")
+        XCTAssertEqual(state.finalized, "filtered final")
         XCTAssertEqual(state.provisional, "")
         state.apply(snapshot(4, provisional: "next preview"), now: 4)
-        state.apply(snapshot(3, committed: "late final"), now: 5)
-        XCTAssertEqual(state.committed, "")
+        state.apply(snapshot(3, finalized: "late final"), now: 5)
+        XCTAssertEqual(state.finalized, "")
         XCTAssertEqual(state.provisional, "next preview")
     }
 
@@ -66,9 +66,9 @@ final class CaptionStateTests: XCTestCase {
 
     func testDisconnectClearsAndResetsRecordingIdentity() {
         var state = enabled()
-        state.apply(snapshot(8, committed: "hello", provisional: "world"), now: 0)
+        state.apply(snapshot(8, finalized: "hello", provisional: "world"), now: 0)
         state.apply(nil, now: 1)
-        XCTAssertEqual(state.committed, "")
+        XCTAssertEqual(state.finalized, "")
         XCTAssertEqual(state.provisional, "")
         state.apply(snapshot(1, provisional: "restarted"), now: 2)
         XCTAssertEqual(state.provisional, "restarted")
@@ -92,15 +92,15 @@ final class CaptionStateTests: XCTestCase {
 
     func testExpiryClearsAfterFiveSecondsAndAllowsFreshUpdate() {
         var state = enabled()
-        state.apply(snapshot(committed: "hello", provisional: "world"), now: 10)
+        state.apply(snapshot(finalized: "hello", provisional: "world"), now: 10)
         state.expire(now: 14.999)
         XCTAssertEqual(state.provisional, "world")
         state.expire(now: 15)
-        XCTAssertEqual(state.committed, "")
+        XCTAssertEqual(state.finalized, "")
         XCTAssertEqual(state.provisional, "")
-        state.apply(snapshot(committed: "hello world"), now: 16)
+        state.apply(snapshot(finalized: "hello world"), now: 16)
         state.expire(now: 20)
-        XCTAssertEqual(state.committed, "hello world")
+        XCTAssertEqual(state.finalized, "hello world")
     }
 
     func testIgnoredOldSnapshotDoesNotExtendExpiry() {
@@ -114,10 +114,10 @@ final class CaptionStateTests: XCTestCase {
     func testUnicodeFieldsKeepBoundedNewestScalars() {
         var state = enabled()
         let text = String(repeating: "🙂", count: 2048) + "終"
-        state.apply(snapshot(committed: text, provisional: text), now: 0)
+        state.apply(snapshot(finalized: text, provisional: text), now: 0)
         let expected = String(repeating: "🙂", count: 2047) + "終"
-        XCTAssertEqual(state.committed, expected)
+        XCTAssertEqual(state.finalized, expected)
         XCTAssertEqual(state.provisional, expected)
-        XCTAssertEqual(state.committed.unicodeScalars.count, 2048)
+        XCTAssertEqual(state.finalized.unicodeScalars.count, 2048)
     }
 }

@@ -85,7 +85,7 @@ impl DictationStage {
 #[derive(Clone, PartialEq, Eq)]
 pub struct CaptionSnapshot {
     pub recording: RecordingId,
-    pub committed: Arc<str>,
+    pub finalized: Arc<str>,
     pub provisional: Arc<str>,
     pub ended: bool,
 }
@@ -95,7 +95,7 @@ impl CaptionSnapshot {
     pub(super) fn empty(recording: RecordingId, ended: bool) -> Self {
         Self {
             recording,
-            committed: Arc::from(""),
+            finalized: Arc::from(""),
             provisional: Arc::from(""),
             ended,
         }

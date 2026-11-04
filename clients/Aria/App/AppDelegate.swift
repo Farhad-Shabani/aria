@@ -167,15 +167,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func render() {
-        guard caption.committed != shownCommitted || caption.provisional != shownProvisional else {
+        guard caption.finalized != shownCommitted || caption.provisional != shownProvisional else {
             return
         }
-        shownCommitted = caption.committed
+        shownCommitted = caption.finalized
         shownProvisional = caption.provisional
-        if caption.committed.isEmpty && caption.provisional.isEmpty {
+        if caption.finalized.isEmpty && caption.provisional.isEmpty {
             panel.hide()
         } else {
-            panel.show(CaptionView(committed: caption.committed, provisional: caption.provisional))
+            panel.show(CaptionView(finalized: caption.finalized, provisional: caption.provisional))
         }
     }
 }

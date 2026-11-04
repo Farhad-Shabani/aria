@@ -74,17 +74,17 @@ extension Aria_Daemon_V1_RelayService {
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
         /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
         /// > audio arrived. Uploads must finish within 120 seconds after Start.
-        /// > Failures arrive as a gRPC status rather than an event:
-        /// >   RESOURCE_EXHAUSTED - a recording is running, an upload limit is exceeded,
-        /// >     or the audio is too long
-        /// >   INVALID_ARGUMENT - an unsupported format, missing/late opening RelayStart,
-        /// >     a second RelayStart, no audio, or PCM ending mid-sample
-        /// >   DEADLINE_EXCEEDED - an unfinished upload stalls or exceeds 120 seconds,
-        /// >     or delivery times out
-        /// >   ABORTED - the delivery target changes
-        /// >   UNAVAILABLE - the daemon is stopping
+        /// > Failures arrive as a status carrying an RpcError, not as an event:
+        /// >   BUSY - a recording is running
+        /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+        /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
+        /// >     RelayStart, no audio, or PCM ending mid-sample
+        /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+        /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
+        /// >   SHUTTING_DOWN - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
-        /// >   INTERNAL - transcription or delivery failed
+        /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+        /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
         /// > Delivery failures do not return the transcript and can include partial delivery.
         ///
         /// - Parameters:
@@ -138,17 +138,17 @@ extension Aria_Daemon_V1_RelayService {
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
         /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
         /// > audio arrived. Uploads must finish within 120 seconds after Start.
-        /// > Failures arrive as a gRPC status rather than an event:
-        /// >   RESOURCE_EXHAUSTED - a recording is running, an upload limit is exceeded,
-        /// >     or the audio is too long
-        /// >   INVALID_ARGUMENT - an unsupported format, missing/late opening RelayStart,
-        /// >     a second RelayStart, no audio, or PCM ending mid-sample
-        /// >   DEADLINE_EXCEEDED - an unfinished upload stalls or exceeds 120 seconds,
-        /// >     or delivery times out
-        /// >   ABORTED - the delivery target changes
-        /// >   UNAVAILABLE - the daemon is stopping
+        /// > Failures arrive as a status carrying an RpcError, not as an event:
+        /// >   BUSY - a recording is running
+        /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+        /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
+        /// >     RelayStart, no audio, or PCM ending mid-sample
+        /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+        /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
+        /// >   SHUTTING_DOWN - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
-        /// >   INTERNAL - transcription or delivery failed
+        /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+        /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
         /// > Delivery failures do not return the transcript and can include partial delivery.
         ///
         /// - Parameters:
@@ -199,17 +199,17 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
     /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
     /// > audio arrived. Uploads must finish within 120 seconds after Start.
-    /// > Failures arrive as a gRPC status rather than an event:
-    /// >   RESOURCE_EXHAUSTED - a recording is running, an upload limit is exceeded,
-    /// >     or the audio is too long
-    /// >   INVALID_ARGUMENT - an unsupported format, missing/late opening RelayStart,
-    /// >     a second RelayStart, no audio, or PCM ending mid-sample
-    /// >   DEADLINE_EXCEEDED - an unfinished upload stalls or exceeds 120 seconds,
-    /// >     or delivery times out
-    /// >   ABORTED - the delivery target changes
-    /// >   UNAVAILABLE - the daemon is stopping
+    /// > Failures arrive as a status carrying an RpcError, not as an event:
+    /// >   BUSY - a recording is running
+    /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+    /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
+    /// >     RelayStart, no audio, or PCM ending mid-sample
+    /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+    /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
+    /// >   SHUTTING_DOWN - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
-    /// >   INTERNAL - transcription or delivery failed
+    /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+    /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
     /// > Delivery failures do not return the transcript and can include partial delivery.
     ///
     /// - Parameters:
@@ -254,17 +254,17 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
     /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
     /// > audio arrived. Uploads must finish within 120 seconds after Start.
-    /// > Failures arrive as a gRPC status rather than an event:
-    /// >   RESOURCE_EXHAUSTED - a recording is running, an upload limit is exceeded,
-    /// >     or the audio is too long
-    /// >   INVALID_ARGUMENT - an unsupported format, missing/late opening RelayStart,
-    /// >     a second RelayStart, no audio, or PCM ending mid-sample
-    /// >   DEADLINE_EXCEEDED - an unfinished upload stalls or exceeds 120 seconds,
-    /// >     or delivery times out
-    /// >   ABORTED - the delivery target changes
-    /// >   UNAVAILABLE - the daemon is stopping
+    /// > Failures arrive as a status carrying an RpcError, not as an event:
+    /// >   BUSY - a recording is running
+    /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+    /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
+    /// >     RelayStart, no audio, or PCM ending mid-sample
+    /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+    /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
+    /// >   SHUTTING_DOWN - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
-    /// >   INTERNAL - transcription or delivery failed
+    /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+    /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
     /// > Delivery failures do not return the transcript and can include partial delivery.
     ///
     /// - Parameters:

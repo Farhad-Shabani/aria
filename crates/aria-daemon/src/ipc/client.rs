@@ -813,7 +813,7 @@ mod tests {
         let event = wire::Event {
             payload: Some(wire::event::Payload::Caption(wire::CaptionSnapshot {
                 recording_id: 42,
-                committed: "hello".to_owned(),
+                finalized: "hello".to_owned(),
                 provisional: "world".to_owned(),
                 ended: false,
             })),

@@ -57,9 +57,9 @@ pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteCli
             .connect()
             .await
             .map_err(|_| RemoteClientError::Connection)?;
-        wire::pairing_service_client::PairingServiceClient::new(channel)
+        wire::inference_pairing_service_client::InferencePairingServiceClient::new(channel)
             .max_decoding_message_size(1024)
-            .pair(wire::PairRequest {
+            .pair(wire::InferencePairRequest {
                 code: invitation.code.clone(),
             })
             .await

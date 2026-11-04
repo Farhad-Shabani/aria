@@ -55,7 +55,7 @@ objc2-foundation = { workspace = true, features = [ "NSString", "std" ] }
 cidre            = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
 
 [dev-dependencies]
-tonic              = { version = "0.14", features = [ "tls-ring" ] }
+tonic         = { version = "0.14", features = [ "tls-ring" ] }
 aria-daemon   = { workspace = true, features = [ "test-support" ] }
 aria-voice    = { workspace = true }
 aria-settings = { workspace = true, features = [ "test-support" ] }

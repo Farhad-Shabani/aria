@@ -24,8 +24,8 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 const GET_INFO: &str = "InferenceService/GetInfo";
 const TRANSCRIBE: &str = "InferenceService/Transcribe";
-const PAIR: &str = "PairingService/Pair";
-const ISSUE_INVITE: &str = "InferenceAdminService/IssueInvite";
+const PAIR: &str = "InferencePairingService/Pair";
+const INVITE: &str = "InferenceAdminService/Invite";
 const REVOKE: &str = "InferenceAdminService/Revoke";
 
 pub(in crate::daemon) struct InferenceRpc {
@@ -367,11 +367,11 @@ impl InferencePairingRpc {
 }
 
 #[tonic::async_trait]
-impl wire::pairing_service_server::PairingService for InferencePairingRpc {
+impl wire::inference_pairing_service_server::InferencePairingService for InferencePairingRpc {
     async fn pair(
         &self,
-        request: Request<wire::PairRequest>,
-    ) -> Result<Response<wire::PairResponse>, Status> {
+        request: Request<wire::InferencePairRequest>,
+    ) -> Result<Response<wire::InferencePairResponse>, Status> {
         let peer = presented(&request).ok_or_else(|| super::failed(PAIR, unauthenticated()))?;
         let code = request.into_inner().code;
         let access = Arc::clone(&self.access);
@@ -381,7 +381,7 @@ impl wire::pairing_service_server::PairingService for InferencePairingRpc {
             .map_err(|_| super::failed(PAIR, internal("pairing stopped unexpectedly")))?
             .map_err(|error| super::failed(PAIR, RpcFailure::from(error)))?;
         super::served(PAIR);
-        Ok(Response::new(wire::PairResponse {}))
+        Ok(Response::new(wire::InferencePairResponse {}))
     }
 }
 
@@ -398,24 +398,24 @@ impl InferenceAdminRpc {
 
 #[tonic::async_trait]
 impl wire::inference_admin_service_server::InferenceAdminService for InferenceAdminRpc {
-    async fn issue_invite(
+    async fn invite(
         &self,
         request: Request<wire::InferenceInviteRequest>,
     ) -> Result<Response<wire::InferenceInviteResponse>, Status> {
         let endpoint = ServerEndpoint::parse(&request.into_inner().endpoint)
             .ok_or(identity::Error::InvalidEndpoint)
-            .map_err(|error| super::failed(ISSUE_INVITE, RpcFailure::from(error)))?;
+            .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
         let invitation = self
             .access
             .issue(&endpoint)
-            .map_err(|error| super::failed(ISSUE_INVITE, RpcFailure::from(error)))?;
+            .map_err(|error| super::failed(INVITE, RpcFailure::from(error)))?;
         let response = wire::InferenceInviteResponse::try_from(&invitation).map_err(|error| {
             super::failed(
-                ISSUE_INVITE,
+                INVITE,
                 RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)),
             )
         })?;
-        super::served(ISSUE_INVITE);
+        super::served(INVITE);
         Ok(Response::new(response))
     }
 

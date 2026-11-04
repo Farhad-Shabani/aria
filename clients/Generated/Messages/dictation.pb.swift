@@ -521,7 +521,7 @@ public nonisolated struct Aria_Daemon_V1_CaptionSnapshot: Sendable {
 
   public var recordingID: UInt64 = 0
 
-  public var committed: String = String()
+  public var finalized: String = String()
 
   public var provisional: String = String()
 
@@ -1029,7 +1029,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
 
 nonisolated extension Aria_Daemon_V1_CaptionSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CaptionSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0\u{1}committed\0\u{1}provisional\0\u{1}ended\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0\u{1}finalized\0\u{1}provisional\0\u{1}ended\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1038,7 +1038,7 @@ nonisolated extension Aria_Daemon_V1_CaptionSnapshot: SwiftProtobuf.Message, Swi
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.recordingID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.committed) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.finalized) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.provisional) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.ended) }()
       default: break
@@ -1050,8 +1050,8 @@ nonisolated extension Aria_Daemon_V1_CaptionSnapshot: SwiftProtobuf.Message, Swi
     if self.recordingID != 0 {
       try visitor.visitSingularUInt64Field(value: self.recordingID, fieldNumber: 1)
     }
-    if !self.committed.isEmpty {
-      try visitor.visitSingularStringField(value: self.committed, fieldNumber: 2)
+    if !self.finalized.isEmpty {
+      try visitor.visitSingularStringField(value: self.finalized, fieldNumber: 2)
     }
     if !self.provisional.isEmpty {
       try visitor.visitSingularStringField(value: self.provisional, fieldNumber: 3)
@@ -1064,7 +1064,7 @@ nonisolated extension Aria_Daemon_V1_CaptionSnapshot: SwiftProtobuf.Message, Swi
 
   public static func ==(lhs: Aria_Daemon_V1_CaptionSnapshot, rhs: Aria_Daemon_V1_CaptionSnapshot) -> Bool {
     if lhs.recordingID != rhs.recordingID {return false}
-    if lhs.committed != rhs.committed {return false}
+    if lhs.finalized != rhs.finalized {return false}
     if lhs.provisional != rhs.provisional {return false}
     if lhs.ended != rhs.ended {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

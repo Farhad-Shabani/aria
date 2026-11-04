@@ -16,11 +16,25 @@ service InferenceService {
   rpc Transcribe(stream InferenceRequest) returns (stream InferenceResponse);
 }
 
+// Served by the inference host over TLS to a client presenting a one-time
+// invitation code. Distinct from PairingService, which pairs phones with a
+// daemon.
+//   UNAUTHENTICATED - the code is wrong, used, or expired
+service InferencePairingService {
+  rpc Pair(InferencePairRequest) returns (InferencePairResponse);
+}
+
 // Same-user Unix socket only. Never registered on the TLS listener.
 service InferenceAdminService {
-  rpc IssueInvite(InferenceInviteRequest) returns (InferenceInviteResponse);
+  rpc Invite(InferenceInviteRequest) returns (InferenceInviteResponse);
   rpc Revoke(InferenceRevokeRequest) returns (InferenceRevokeResponse);
 }
+
+message InferencePairRequest {
+  string code = 1;
+}
+
+message InferencePairResponse {}
 
 message InferenceInfoRequest {}
 
