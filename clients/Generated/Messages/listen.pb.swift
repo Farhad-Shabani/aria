@@ -160,10 +160,6 @@ public nonisolated struct Aria_Daemon_V1_GetListenStatusResponse: Sendable {
   /// denied recording permission surfaces here. Empty otherwise.
   public var errorMessage: String = String()
 
-  /// The category of that failure; UNSPECIFIED when the session did not fail.
-  /// Clients branch on this, never on `error_message`.
-  public var errorCode: Aria_Daemon_V1_ErrorCode = .unspecified
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -350,7 +346,7 @@ nonisolated extension Aria_Daemon_V1_GetListenStatusRequest: SwiftProtobuf.Messa
 
 nonisolated extension Aria_Daemon_V1_GetListenStatusResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetListenStatusResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}listening\0\u{3}transcript_path\0\u{3}error_message\0\u{3}error_code\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}listening\0\u{3}transcript_path\0\u{3}error_message\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -361,7 +357,6 @@ nonisolated extension Aria_Daemon_V1_GetListenStatusResponse: SwiftProtobuf.Mess
       case 1: try { try decoder.decodeSingularBoolField(value: &self.listening) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.transcriptPath) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.errorMessage) }()
-      case 4: try { try decoder.decodeSingularEnumField(value: &self.errorCode) }()
       default: break
       }
     }
@@ -377,9 +372,6 @@ nonisolated extension Aria_Daemon_V1_GetListenStatusResponse: SwiftProtobuf.Mess
     if !self.errorMessage.isEmpty {
       try visitor.visitSingularStringField(value: self.errorMessage, fieldNumber: 3)
     }
-    if self.errorCode != .unspecified {
-      try visitor.visitSingularEnumField(value: self.errorCode, fieldNumber: 4)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -387,7 +379,6 @@ nonisolated extension Aria_Daemon_V1_GetListenStatusResponse: SwiftProtobuf.Mess
     if lhs.listening != rhs.listening {return false}
     if lhs.transcriptPath != rhs.transcriptPath {return false}
     if lhs.errorMessage != rhs.errorMessage {return false}
-    if lhs.errorCode != rhs.errorCode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

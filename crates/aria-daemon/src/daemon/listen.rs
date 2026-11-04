@@ -178,7 +178,7 @@ impl ListenState {
             Slot::Ended { transcript, error } => ListenSnapshot {
                 listening: false,
                 transcript: transcript.clone(),
-                error: error.clone(),
+                error: error.as_ref().map(ToString::to_string),
             },
         }
     }

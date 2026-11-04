@@ -976,41 +976,21 @@ impl From<wire::StopListenResponse> for ListenStopped {
 
 impl From<ListenSnapshot> for wire::GetListenStatusResponse {
     fn from(snapshot: ListenSnapshot) -> Self {
-        let (error_code, error_message) = match snapshot.error {
-            Some(failure) => (error_code_to_wire(failure.code), failure.message),
-            None => (wire::ErrorCode::Unspecified as i32, String::new()),
-        };
         Self {
             listening: snapshot.listening,
             transcript_path: snapshot.transcript.display().to_string(),
-            error_message,
-            error_code,
+            error_message: snapshot.error.unwrap_or_default(),
         }
     }
 }
 
-impl TryFrom<wire::GetListenStatusResponse> for ListenSnapshot {
-    type Error = ProtocolError;
-
-    fn try_from(response: wire::GetListenStatusResponse) -> Result<Self, Self::Error> {
-        // A daemon from before `error_code` fills only the message, and a
-        // running daemon outlives a rebuilt CLI.
-        let error = if response.error_code != wire::ErrorCode::Unspecified as i32 {
-            let code = error_code_from_wire(response.error_code)?;
-            Some(RpcFailure::new(code, response.error_message))
-        } else if response.error_message.is_empty() {
-            None
-        } else {
-            Some(RpcFailure::new(
-                RpcErrorCode::Unknown(response.error_code),
-                response.error_message,
-            ))
-        };
-        Ok(Self {
+impl From<wire::GetListenStatusResponse> for ListenSnapshot {
+    fn from(response: wire::GetListenStatusResponse) -> Self {
+        Self {
             listening: response.listening,
             transcript: response.transcript_path.into(),
-            error,
-        })
+            error: Some(response.error_message).filter(|message| !message.is_empty()),
+        }
     }
 }
 
@@ -2807,67 +2787,24 @@ mod tests {
     }
 
     #[test]
-    fn a_denied_listen_permission_reaches_get_status_as_a_code() {
-        let snapshot = ListenSnapshot {
+    fn a_listen_failure_crosses_as_its_message_and_no_failure_as_none() {
+        let failed = ListenSnapshot::from(wire::GetListenStatusResponse::from(ListenSnapshot {
             listening: false,
             transcript: "/tmp/listen.txt".into(),
-            error: Some(RpcFailure::new(
-                RpcErrorCode::ListenPermissionDenied,
-                "screen recording is not allowed",
-            )),
-        };
-
-        let response = wire::GetListenStatusResponse::from(snapshot);
-
-        assert_eq!(
-            response.error_code,
-            wire::ErrorCode::ListenPermissionDenied as i32
-        );
-        assert_eq!(response.error_message, "screen recording is not allowed");
-        let decoded = ListenSnapshot::try_from(response).expect("decodes");
-        assert_eq!(
-            decoded.error.map(|failure| failure.code),
-            Some(RpcErrorCode::ListenPermissionDenied)
-        );
-        assert_eq!(
-            decoded.transcript,
-            std::path::PathBuf::from("/tmp/listen.txt")
-        );
-    }
-
-    #[test]
-    fn a_failure_from_a_daemon_without_error_codes_is_still_a_failure() {
-        let response = wire::GetListenStatusResponse {
-            listening: false,
-            transcript_path: "/tmp/listen.txt".to_owned(),
-            error_message: "the tap closed".to_owned(),
-            error_code: wire::ErrorCode::Unspecified as i32,
-        };
-
-        let error = ListenSnapshot::try_from(response)
-            .expect("decodes")
-            .error
-            .expect("the session failed");
-
-        assert_eq!(error.code, RpcErrorCode::Unknown(0));
-        assert_eq!(error.message, "the tap closed");
-    }
-
-    #[test]
-    fn a_listen_session_that_did_not_fail_carries_no_error() {
-        let response = wire::GetListenStatusResponse::from(ListenSnapshot {
+            error: Some("screen recording is not allowed".to_owned()),
+        }));
+        let running = wire::GetListenStatusResponse::from(ListenSnapshot {
             listening: true,
             transcript: "/tmp/listen.txt".into(),
             error: None,
         });
 
-        assert_eq!(response.error_code, wire::ErrorCode::Unspecified as i32);
-        assert!(
-            ListenSnapshot::try_from(response)
-                .expect("decodes")
-                .error
-                .is_none()
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("screen recording is not allowed")
         );
+        assert_eq!(running.error_message, "");
+        assert_eq!(ListenSnapshot::from(running).error, None);
     }
 
     #[test]

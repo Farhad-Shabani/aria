@@ -618,7 +618,7 @@ impl DaemonClient {
             wire::GetListenStatusRequest {},
             |request| listen.get_status(request),
         )?;
-        Ok(response.try_into()?)
+        Ok(response.into())
     }
 
     /// The stream shares this client's runtime: the channel only makes

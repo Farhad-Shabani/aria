@@ -17,7 +17,7 @@ pub use tap::SystemAudioCapture;
 use std::path::PathBuf;
 
 use crate::transcription::TranscriptionError;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::rpc::RpcErrorCode;
 
 pub struct ListenStarted {
     pub already_listening: bool,
@@ -33,7 +33,7 @@ pub struct ListenSnapshot {
     pub listening: bool,
     pub transcript: PathBuf,
     /// How the last session ended, when it failed after Start answered.
-    pub error: Option<RpcFailure>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
