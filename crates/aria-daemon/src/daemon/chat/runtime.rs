@@ -858,7 +858,7 @@ pub(super) mod tests {
     fn turns(home: &Path, request: &ChatRequest) -> Vec<(String, String)> {
         let store = Store::open(&home.join(".aria/memory").join(DB_FILE)).expect("opens");
         store
-            .turns(&request.key().to_string(), 0, u32::MAX)
+            .turns(&request.key().to_string(), 0, i64::MAX)
             .expect("reads")
             .into_iter()
             .map(|turn| (turn.text, turn.speaker))

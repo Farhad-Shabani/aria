@@ -159,11 +159,9 @@ pub struct ConsolidationResult {
 pub(crate) struct Window<'a> {
     pub(crate) session: &'a str,
     pub(crate) turns: &'a [Turn],
-    /// Where `turns` end, which becomes the session's watermark.
-    pub(crate) end: u32,
-    /// The end the claim recorded. Results are written only while that claim
-    /// still stands.
-    pub(crate) claimed: u32,
+    /// The newest turn id the claim covers. It becomes the watermark, and
+    /// results are written only while that claim still stands.
+    pub(crate) through: i64,
 }
 
 fn message(turns: &[&Turn], store: &Store, terms: &[String]) -> Result<String, StoreError> {
@@ -223,8 +221,7 @@ pub(crate) fn consolidate_session(
     let Window {
         session,
         turns,
-        end,
-        claimed,
+        through,
     } = window;
     let eligible: Vec<&Turn> = turns.iter().filter(|turn| !turn.text.is_empty()).collect();
     let transcript = eligible
@@ -249,8 +246,9 @@ pub(crate) fn consolidate_session(
         }
     };
     result.candidates = candidates.len();
-    // A `clear`, or another run's claim, can end this one. Writing anyway would bring back what the user deleted.
-    let Some(transaction) = store.begin_claimed(session, claimed)? else {
+    // A `clear`, or another run's claim, can end this one. Writing anyway
+    // would bring back what the user deleted.
+    let Some(transaction) = store.begin_claimed(session, through)? else {
         return Err(ConsolidateError::ClaimLost);
     };
 
@@ -317,7 +315,7 @@ pub(crate) fn consolidate_session(
     }
     store.record_consolidation(
         session,
-        end,
+        through,
         result.candidates as u32,
         result.added,
         result.noops,
@@ -411,18 +409,17 @@ mod tests {
         store: &Store,
         reply: &str,
         turns: &[Turn],
-        end: u32,
+        through: i64,
         max_facts: u32,
         terms: &[&str],
     ) -> (Result<ConsolidationResult, ConsolidateError>, Scripted) {
         let extractor = Scripted::new(reply);
         let terms: Vec<String> = terms.iter().map(|term| (*term).to_owned()).collect();
-        store.claim_consolidation("s1", end).expect("claims");
+        store.claim_consolidation("s1", through).expect("claims");
         let window = Window {
             session: "s1",
             turns,
-            end,
-            claimed: end,
+            through,
         };
         let result = consolidate_session(
             store,
@@ -442,7 +439,7 @@ mod tests {
         max_facts: u32,
         terms: &[&str],
     ) -> (ConsolidationResult, Scripted) {
-        let (result, extractor) = run(store, reply, turns, turns.len() as u32, max_facts, terms);
+        let (result, extractor) = run(store, reply, turns, turns.len() as i64, max_facts, terms);
         (result.expect("runs"), extractor)
     }
 
@@ -485,7 +482,7 @@ mod tests {
             .collect();
         assert_eq!(active, ["high"]);
         assert_eq!(pending, ["mid"]);
-        assert_eq!(store.consolidated_history_len("s1").expect("reads"), 1);
+        assert_eq!(store.consolidated_through("s1").expect("reads"), 1);
     }
 
     #[test]
@@ -531,10 +528,10 @@ mod tests {
         let (_dir, store) = store();
         let (result, _) = run(&store, "sorry", &[spoken("hi")], 1, 10, &[]);
         assert!(matches!(result, Err(ConsolidateError::Unreadable)));
-        assert_eq!(store.consolidated_history_len("s1").expect("reads"), 0);
+        assert_eq!(store.consolidated_through("s1").expect("reads"), 0);
 
         ok(&store, "[]", &[spoken("hi")], 10, &[]);
-        assert_eq!(store.consolidated_history_len("s1").expect("reads"), 1);
+        assert_eq!(store.consolidated_through("s1").expect("reads"), 1);
     }
 
     #[test]
@@ -543,7 +540,7 @@ mod tests {
         let (result, extractor) = ok(&store, "[]", &[spoken("")], 10, &[]);
         assert!(extractor.asked().is_empty());
         assert_eq!(result.turns, 0);
-        assert_eq!(store.consolidated_history_len("s1").expect("reads"), 1);
+        assert_eq!(store.consolidated_through("s1").expect("reads"), 1);
     }
 
     #[test]
@@ -561,7 +558,7 @@ mod tests {
             "EXISTING FACTS:\n  1: [identity] Is Sam\n\n\
              TRANSCRIPT (user statements):\n  - new\n\nLEXICON TERMS:\n  - db2"
         );
-        assert_eq!(store.consolidated_history_len("s1").expect("reads"), 2);
+        assert_eq!(store.consolidated_through("s1").expect("reads"), 2);
     }
 
     #[test]

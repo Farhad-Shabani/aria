@@ -33,18 +33,12 @@ pub(crate) fn consolidate_backlog(
     let terms = load_terms(&dir.join(LEXICON_FILE));
     let sessions = store.sessions()?;
     let mut report = ConsolidationReport::default();
-    for (session, history_len) in sessions {
+    for (session, through) in sessions {
         if cancel.is_cancelled() {
             break;
         }
         let outcome = consolidate_one(
-            store,
-            extractor,
-            cancel,
-            &session,
-            history_len,
-            max_facts,
-            &terms,
+            store, extractor, cancel, &session, through, max_facts, &terms,
         );
         match outcome {
             Ok(Some(result)) => report.results.push(result),
@@ -70,32 +64,29 @@ fn consolidate_one(
     extractor: &dyn Extractor,
     cancel: &CancelToken,
     session: &str,
-    history_len: u32,
+    through: i64,
     max_facts: u32,
     terms: &[String],
 ) -> Result<Option<ConsolidationResult>, ConsolidateError> {
-    if history_len <= store.consolidated_history_len(session)? {
+    if through <= store.consolidated_through(session)? {
         return Ok(None);
     }
-    let Some(start) = store.claim_consolidation(session, history_len)? else {
+    let Some(after) = store.claim_consolidation(session, through)? else {
         return Ok(None);
     };
     let outcome = (|| {
-        let turns = store.turns(session, start, history_len)?;
-        // A prune or clear since `sessions()` can leave fewer turns than
-        // `history_len`. The watermark moves past only the turns read.
+        let turns = store.turns(session, after, through)?;
         let window = Window {
             session,
             turns: &turns,
-            end: start + turns.len() as u32,
-            claimed: history_len,
+            through,
         };
         consolidate_session(store, extractor, cancel, window, max_facts, terms)
     })();
     match outcome {
         Ok(result) => Ok(Some(result)),
         Err(error) => {
-            store.release_consolidation(session, history_len, start)?;
+            store.release_consolidation(session, through, after)?;
             Err(error)
         }
     }
@@ -223,21 +214,6 @@ mod tests {
         assert_eq!(results[0].turns, 1);
     }
 
-    #[test]
-    fn a_stale_turn_count_moves_the_watermark_only_past_the_turns_read() {
-        let (dir, store) = fixture();
-        speak(&store, "a", "hi");
-        let extractor = Scripted::new(vec![]);
-
-        consolidate_one(&store, &extractor, &CancelToken::never(), "a", 5, 10, &[]).expect("runs");
-        assert_eq!(store.consolidated_history_len("a").expect("reads"), 1);
-
-        speak(&store, "a", "more");
-        let results = backlog(&store, &extractor, dir.path());
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].turns, 1);
-    }
-
     /// Makes the run's claim stale and clears memory while the run waits on
     /// its extraction.
     struct ClearsMidway {
@@ -275,7 +251,7 @@ mod tests {
 
         assert_eq!(report.failed, 1);
         assert!(store.active_facts().expect("reads").is_empty());
-        assert_eq!(store.consolidated_history_len("a").expect("reads"), 0);
+        assert_eq!(store.consolidated_through("a").expect("reads"), 0);
     }
 
     #[test]
@@ -318,8 +294,8 @@ mod tests {
         assert_eq!(report.failed, 1);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].added, 1);
-        assert_eq!(store.consolidated_history_len("a").expect("watermark"), 0);
-        assert_eq!(store.consolidated_history_len("b").expect("watermark"), 1);
+        assert_eq!(store.consolidated_through("a").expect("watermark"), 0);
+        assert_eq!(store.consolidated_through("b").expect("watermark"), 2);
     }
 
     #[test]
@@ -352,7 +328,7 @@ mod tests {
             consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10),
             Err(StoreError::Profile(_))
         ));
-        assert_eq!(store.consolidated_history_len("a").expect("watermark"), 1);
+        assert_eq!(store.consolidated_through("a").expect("watermark"), 1);
         std::fs::rename(&profile, dir.path().join("blocked-profile"))
             .expect("restores profile publication");
         assert!(backlog(&store, &extractor, dir.path()).is_empty());

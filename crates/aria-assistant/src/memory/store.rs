@@ -10,7 +10,7 @@ use aria_kit::primitives::private_fs::PrivateDirectoryError;
 use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 // The daemon and the `aria memory` commands share the file, so a blocked
 // writer waits a while before it fails. The file may have been created under
@@ -47,8 +47,8 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE TABLE IF NOT EXISTS consolidations (
     session_id TEXT PRIMARY KEY,
     consolidated_at TEXT NOT NULL,
-    history_len INTEGER NOT NULL,
-    prev_len INTEGER NOT NULL DEFAULT 0,
+    through_id INTEGER NOT NULL,
+    done_id INTEGER NOT NULL DEFAULT 0,
     candidates INTEGER NOT NULL,
     added INTEGER NOT NULL,
     noops INTEGER NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS derived_pairs (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS turns (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     session TEXT NOT NULL,
     text TEXT NOT NULL,
     speaker TEXT NOT NULL,
@@ -118,8 +118,6 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("memory database schema version {0} is not one this build reads")]
     UnsupportedSchema(i64),
-    #[error("memory is being updated from recent asks; try again in a few minutes")]
-    Busy,
     #[error("failed to write the memory profile")]
     Profile(#[source] io::Error),
 }
@@ -272,24 +270,25 @@ impl Store {
         Ok(())
     }
 
-    /// Every session with its turn count, oldest session first.
-    pub(crate) fn sessions(&self) -> Result<Vec<(String, u32)>, StoreError> {
+    /// Every session with its newest turn id, oldest session first.
+    pub(crate) fn sessions(&self) -> Result<Vec<(String, i64)>, StoreError> {
         let mut statement = self
             .conn
-            .prepare("SELECT session, COUNT(*) FROM turns GROUP BY session ORDER BY MIN(id)")?;
+            .prepare("SELECT session, MAX(id) FROM turns GROUP BY session ORDER BY MIN(id)")?;
         let sessions = statement
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<_, _>>()?;
         Ok(sessions)
     }
 
-    pub fn turns(&self, session: &str, start: u32, end: u32) -> Result<Vec<Turn>, StoreError> {
-        assert!(start <= end, "turn range must be ordered");
+    /// The session's turns with ids in `after..=through`.
+    pub fn turns(&self, session: &str, after: i64, through: i64) -> Result<Vec<Turn>, StoreError> {
         let mut statement = self.conn.prepare(
-            "SELECT text, speaker FROM turns WHERE session = ?1 ORDER BY id LIMIT ?2 OFFSET ?3",
+            "SELECT text, speaker FROM turns \
+             WHERE session = ?1 AND id > ?2 AND id <= ?3 ORDER BY id",
         )?;
         let turns = statement
-            .query_map(params![session, end - start, start], |row| {
+            .query_map(params![session, after, through], |row| {
                 Ok(Turn {
                     text: row.get(0)?,
                     speaker: row.get(1)?,
@@ -299,49 +298,43 @@ impl Store {
         Ok(turns)
     }
 
-    /// How many of a session's turns a finished run has covered. A claim in
-    /// flight counts for nothing yet: its window is only safe from where it
-    /// started.
-    pub(crate) fn consolidated_history_len(&self, session: &str) -> Result<u32, StoreError> {
-        let row: Option<(u32, u32, i64)> = self
+    /// The newest turn id a finished run has covered. A claim in flight
+    /// counts for nothing yet.
+    pub(crate) fn consolidated_through(&self, session: &str) -> Result<i64, StoreError> {
+        let done: Option<i64> = self
             .conn
             .query_row(
-                "SELECT history_len, prev_len, candidates FROM consolidations \
-                 WHERE session_id = ?1",
+                "SELECT done_id FROM consolidations WHERE session_id = ?1",
                 [session],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| row.get(0),
             )
             .optional()?;
-        Ok(match row {
-            Some((history_len, _, candidates)) if candidates >= 0 => history_len,
-            Some((_, prev_len, _)) => prev_len,
-            None => 0,
-        })
+        Ok(done.unwrap_or(0))
     }
 
-    /// Claims the window from the current watermark to `history_len` before
-    /// extraction runs, and returns where it starts. `None` when there is
-    /// nothing new or another run holds a fresh claim. A stale claim is
-    /// taken over from its own start: re-extracting a window costs one LLM
-    /// call, and duplicates are settled by the extractor's NOOP.
+    /// Claims the turns after the last finished run, through `through`, and
+    /// returns the id the window starts after. `None` when there is nothing
+    /// new or another run holds a fresh claim. A stale claim is taken over:
+    /// re-extracting a window costs one LLM call, and duplicates are settled
+    /// by the extractor's NOOP.
     pub(crate) fn claim_consolidation(
         &self,
         session: &str,
-        history_len: u32,
-    ) -> Result<Option<u32>, StoreError> {
+        through: i64,
+    ) -> Result<Option<i64>, StoreError> {
         // Rolls back on drop, so a commit that fails leaves nothing open.
         let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
-        let Some(start) = claim_window(&transaction, session, history_len)? else {
+        let Some(after) = claim_window(&transaction, session, through)? else {
             return Ok(None);
         };
         transaction.commit()?;
-        Ok(Some(start))
+        Ok(Some(after))
     }
 
     pub(crate) fn record_consolidation(
         &self,
         session: &str,
-        history_len: u32,
+        through: i64,
         candidates: u32,
         added: u32,
         noops: u32,
@@ -350,28 +343,28 @@ impl Store {
         self.conn.execute(
             &format!(
                 "INSERT OR REPLACE INTO consolidations \
-                 (session_id, consolidated_at, history_len, prev_len, candidates, added, \
+                 (session_id, consolidated_at, through_id, done_id, candidates, added, \
                  noops, pending, claimed_at) \
                  VALUES (?1, {NOW}, ?2, ?2, ?3, ?4, ?5, ?6, NULL)"
             ),
-            params![session, history_len, candidates, added, noops, pending],
+            params![session, through, candidates, added, noops, pending],
         )?;
         Ok(())
     }
 
-    /// Releases an unfinished claim matching the session and end watermark
-    /// so the window can be retried.
+    /// Releases an unfinished claim matching the session and its end, so the
+    /// window can be retried.
     pub(crate) fn release_consolidation(
         &self,
         session: &str,
-        claimed_len: u32,
-        revert_to: u32,
+        claimed: i64,
+        revert_to: i64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE consolidations SET history_len = ?1, prev_len = ?1, candidates = 0, \
+            "UPDATE consolidations SET through_id = ?1, done_id = ?1, candidates = 0, \
              added = 0, noops = 0, pending = 0, claimed_at = NULL \
-             WHERE session_id = ?2 AND history_len = ?3 AND candidates = -1",
-            params![revert_to, session, claimed_len],
+             WHERE session_id = ?2 AND through_id = ?3 AND candidates = -1",
+            params![revert_to, session, claimed],
         )?;
         Ok(())
     }
@@ -381,69 +374,37 @@ impl Store {
     pub(crate) fn begin_claimed(
         &self,
         session: &str,
-        claimed: u32,
+        claimed: i64,
     ) -> Result<Option<Transaction<'_>>, StoreError> {
         let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
         let standing: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM consolidations \
-             WHERE session_id = ?1 AND candidates = -1 AND history_len = ?2)",
+             WHERE session_id = ?1 AND candidates = -1 AND through_id = ?2)",
             params![session, claimed],
             |row| row.get(0),
         )?;
         Ok(standing.then_some(transaction))
     }
 
-    /// Deletes consolidated turns older than `TURN_RETENTION`. A window is read by
-    /// position, so each session's watermarks drop by the number deleted.
-    /// A session with a claim in flight waits for the next run.
+    /// Deletes consolidated turns older than `TURN_RETENTION`, then the
+    /// watermarks of sessions with no turns left.
     pub(crate) fn prune_turns(&self) -> Result<(), StoreError> {
         let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
-        let covered: Vec<(String, u32)> = transaction
-            .prepare("SELECT session_id, history_len FROM consolidations WHERE candidates >= 0")?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<Result<_, _>>()?;
-        for (session, history_len) in covered {
-            let deleted = transaction.execute(
-                &format!(
-                    "DELETE FROM turns WHERE id IN \
-                     (SELECT id FROM turns WHERE session = ?1 ORDER BY id LIMIT ?2) \
-                     AND created_at < strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', \
-                     '{TURN_RETENTION}')"
-                ),
-                params![session, history_len],
-            )?;
-            if deleted > 0 {
-                let deleted = i64::try_from(deleted)
-                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
-                transaction.execute(
-                    "UPDATE consolidations SET history_len = history_len - ?1, \
-                     prev_len = prev_len - ?1 WHERE session_id = ?2",
-                    params![deleted, session],
-                )?;
-            }
-        }
-        transaction.execute(
-            "DELETE FROM consolidations WHERE history_len = 0 AND candidates >= 0",
-            [],
-        )?;
+        transaction.execute_batch(&format!(
+            "DELETE FROM turns \
+             WHERE created_at < strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', \
+             '{TURN_RETENTION}') \
+             AND id <= COALESCE((SELECT done_id FROM consolidations \
+             WHERE session_id = turns.session), 0); \
+             DELETE FROM consolidations WHERE candidates >= 0 \
+             AND NOT EXISTS (SELECT 1 FROM turns WHERE session = session_id);"
+        ))?;
         transaction.commit()?;
         Ok(())
     }
 
     pub fn clear(&self) -> Result<(), StoreError> {
         let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
-        let claimed: bool = transaction.query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM consolidations \
-                 WHERE candidates = -1 AND {})",
-                fresh_claim()
-            ),
-            [],
-            |row| row.get(0),
-        )?;
-        if claimed {
-            return Err(StoreError::Busy);
-        }
         transaction.execute_batch(
             "DELETE FROM memories; DELETE FROM derived_pairs; \
              DELETE FROM turns; DELETE FROM consolidations;",
@@ -453,36 +414,23 @@ impl Store {
     }
 }
 
-/// Takes the write lock, so two processes opening an old file migrate it once.
+/// Takes the write lock, so two processes opening an old file reset it once.
+/// An older layout starts over empty rather than being converted.
 fn migrate(connection: &Connection) -> Result<(), StoreError> {
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if !(0..=SCHEMA_VERSION).contains(&version) {
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if !(0..SCHEMA_VERSION).contains(&version) {
         return Err(StoreError::UnsupportedSchema(version));
     }
+    transaction.execute_batch(
+        "DROP TABLE IF EXISTS memories; DROP TABLE IF EXISTS consolidations; \
+         DROP TABLE IF EXISTS derived_pairs; DROP TABLE IF EXISTS turns;",
+    )?;
     transaction.execute_batch(SCHEMA)?;
-    if matches!(version, 1 | 2) {
-        let columns = transaction
-            .prepare("PRAGMA table_info(memories)")?
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?;
-        for (name, definition) in [
-            ("embedding", "embedding BLOB"),
-            (
-                "retrieval_count",
-                "retrieval_count INTEGER NOT NULL DEFAULT 0",
-            ),
-            ("last_retrieved_at", "last_retrieved_at TEXT"),
-        ] {
-            if !columns.iter().any(|column| column == name) {
-                transaction
-                    .execute_batch(&format!("ALTER TABLE memories ADD COLUMN {definition}"))?;
-            }
-        }
-    }
-    if version < SCHEMA_VERSION {
-        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
 }
@@ -496,46 +444,41 @@ fn fresh_claim() -> String {
     )
 }
 
-fn claim_window(
-    conn: &Connection,
-    session: &str,
-    history_len: u32,
-) -> Result<Option<u32>, StoreError> {
-    let row: Option<(u32, u32, i64, bool)> = conn
+fn claim_window(conn: &Connection, session: &str, through: i64) -> Result<Option<i64>, StoreError> {
+    let row: Option<(i64, bool)> = conn
         .query_row(
             &format!(
-                "SELECT history_len, prev_len, candidates, {} \
+                "SELECT done_id, candidates = -1 AND {} \
                  FROM consolidations WHERE session_id = ?1",
                 fresh_claim()
             ),
             [session],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let start = match row {
-        Some((_, _, -1, true)) => return Ok(None),
-        Some((_, prev_len, -1, false)) => prev_len,
-        Some((history_len, _, _, _)) => history_len,
+    let after = match row {
+        Some((_, true)) => return Ok(None),
+        Some((done, false)) => done,
         None => 0,
     };
-    if history_len <= start {
+    if through <= after {
         return Ok(None);
     }
     conn.execute(
         &format!(
             "INSERT INTO consolidations \
-             (session_id, consolidated_at, history_len, prev_len, candidates, added, \
+             (session_id, consolidated_at, through_id, done_id, candidates, added, \
              noops, pending, claimed_at) \
              VALUES (?1, {NOW}, ?2, ?3, -1, 0, 0, 0, {NOW}) \
              ON CONFLICT(session_id) DO UPDATE SET \
              consolidated_at = excluded.consolidated_at, \
-             history_len = excluded.history_len, prev_len = excluded.prev_len, \
+             through_id = excluded.through_id, done_id = excluded.done_id, \
              candidates = -1, added = 0, noops = 0, pending = 0, \
              claimed_at = excluded.claimed_at"
         ),
-        params![session, history_len, start],
+        params![session, through, after],
     )?;
-    Ok(Some(start))
+    Ok(Some(after))
 }
 
 fn fact_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Fact> {
@@ -610,7 +553,7 @@ mod tests {
 
     #[test]
     fn a_public_legacy_file_is_made_private() {
-        let (_dir, path) = with_version(4);
+        let (_dir, path) = with_version(0);
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
         drop(Store::open(&path).expect("opens"));
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
@@ -652,95 +595,27 @@ mod tests {
     }
 
     #[test]
-    fn a_v3_file_opens_and_becomes_v4() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("memory.db");
-        {
-            let conn = Connection::open(&path).expect("opens");
-            let v3 = SCHEMA
-                .split("CREATE TABLE IF NOT EXISTS turns")
-                .next()
-                .expect("v3 tables");
-            conn.execute_batch(v3).expect("v3 schema");
-            conn.execute(
-                "INSERT INTO derived_pairs (misheard, correct, source, created_at) \
-                 VALUES ('d b two', 'db2', 'llm', '2026-07-18T21:14:00')",
-                [],
+    fn an_older_layout_starts_over_empty() {
+        let (_dir, path) = with_version(4);
+        Connection::open(&path)
+            .expect("opens")
+            .execute_batch(
+                "CREATE TABLE turns (id INTEGER PRIMARY KEY, session TEXT); \
+                 INSERT INTO turns VALUES (1, 's');",
             )
-            .expect("seeds");
-            conn.pragma_update(None, "user_version", 3).expect("v3");
-        }
+            .expect("writes an older layout");
         let store = Store::open(&path).expect("opens");
-        assert_eq!(version(&store), 4);
-        assert_eq!(store.list_pairs().expect("reads").len(), 1);
-        store
-            .add_turn("s", "hi", "sam")
-            .expect("turns table exists");
+        assert_eq!(version(&store), SCHEMA_VERSION);
+        assert!(store.sessions().expect("reads").is_empty());
     }
 
     #[test]
-    fn other_schema_versions_are_refused() {
-        for other in [-1, 5] {
+    fn newer_or_invalid_schema_versions_are_refused() {
+        for other in [-1, SCHEMA_VERSION + 1] {
             let (_dir, path) = with_version(other);
             assert!(
                 matches!(Store::open(&path), Err(StoreError::UnsupportedSchema(v)) if v == other)
             );
-        }
-    }
-
-    #[test]
-    fn older_databases_gain_missing_columns_and_keep_existing_data() {
-        for legacy_version in [1, 2] {
-            let (_dir, path) = with_version(legacy_version);
-            let conn = Connection::open(&path).expect("opens");
-            let mut schema = SCHEMA
-                .split("CREATE TABLE IF NOT EXISTS consolidations")
-                .next()
-                .expect("memories table")
-                .replace("    retrieval_count INTEGER NOT NULL DEFAULT 0,\n", "")
-                .replace("    last_retrieved_at TEXT\n", "")
-                .replace("    embedding BLOB,\n", "    embedding BLOB\n");
-            if legacy_version == 1 {
-                schema = schema.replace("    embedding BLOB\n", "").replace(
-                    "superseded_by INTEGER REFERENCES memories(id),",
-                    "superseded_by INTEGER REFERENCES memories(id)",
-                );
-            }
-            conn.execute_batch(&schema).expect("legacy schema");
-            conn.execute(
-                "INSERT INTO memories (text, kind, confidence, created_at) \
-                 VALUES ('User is Sam', 'identity', 0.9, '2026-07-18T21:14:00')",
-                [],
-            )
-            .expect("seeds fact");
-            if legacy_version == 2 {
-                conn.execute("UPDATE memories SET embedding = X'0102'", [])
-                    .expect("seeds embedding");
-            }
-            drop(conn);
-
-            let store = Store::open(&path).expect("migrates");
-            assert_eq!(version(&store), SCHEMA_VERSION);
-            assert_eq!(
-                store.get(1).expect("reads").expect("fact").text,
-                "User is Sam"
-            );
-            let (embedding, count, retrieved): (Option<Vec<u8>>, i64, Option<String>) = store
-                .conn
-                .query_row(
-                    "SELECT embedding, retrieval_count, last_retrieved_at FROM memories WHERE id = 1",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .expect("reads migrated columns");
-            assert_eq!(embedding, (legacy_version == 2).then(|| vec![1, 2]));
-            assert_eq!(count, 0);
-            assert_eq!(retrieved, None);
-            store
-                .add_turn("s", "hi", "sam")
-                .expect("turns table exists");
-            drop(store);
-            Store::open(&path).expect("reopens migrated file");
         }
     }
 
@@ -767,7 +642,7 @@ mod tests {
         store.add_turn("a", "hello", "sam").expect("adds");
         store.add_turn("a", "again", "sam").expect("adds");
 
-        let turns = store.turns("a", 0, 2).expect("reads");
+        let turns = store.turns("a", 0, 3).expect("reads");
         assert_eq!(
             turns,
             [
@@ -783,12 +658,12 @@ mod tests {
         );
         assert_eq!(
             store.sessions().expect("reads"),
-            [("b".to_owned(), 1), ("a".to_owned(), 2)]
+            [("b".to_owned(), 1), ("a".to_owned(), 3)]
         );
     }
 
     #[test]
-    fn a_turn_window_reads_only_the_claimed_positions() {
+    fn a_turn_window_reads_only_ids_in_its_range() {
         let (_dir, store) = store();
         store.add_turn("s", "old", "sam").expect("adds");
         store.add_turn("other", "unrelated", "sam").expect("adds");
@@ -799,23 +674,23 @@ mod tests {
             .execute("UPDATE turns SET text = X'00' WHERE text != 'claimed'", [])
             .expect("makes unclaimed text unreadable");
         assert_eq!(
-            store.turns("s", 1, 2).expect("reads only the window"),
+            store.turns("s", 1, 3).expect("reads only the window"),
             [Turn {
                 text: "claimed".to_owned(),
                 speaker: "sam".to_owned(),
             }]
         );
-        assert!(store.turns("s", 2, 2).expect("empty window").is_empty());
+        assert!(store.turns("s", 3, 3).expect("empty window").is_empty());
     }
 
     #[test]
     fn a_finished_run_moves_the_watermark() {
         let (_dir, store) = store();
-        assert_eq!(store.consolidated_history_len("s").expect("reads"), 0);
+        assert_eq!(store.consolidated_through("s").expect("reads"), 0);
         store
             .record_consolidation("s", 4, 2, 1, 1, 0)
             .expect("records");
-        assert_eq!(store.consolidated_history_len("s").expect("reads"), 4);
+        assert_eq!(store.consolidated_through("s").expect("reads"), 4);
     }
 
     #[test]
@@ -824,7 +699,7 @@ mod tests {
         assert_eq!(store.claim_consolidation("s", 4).expect("claims"), Some(0));
         assert_eq!(store.claim_consolidation("s", 6).expect("claims"), None);
         // The window in flight counts for nothing until it finishes.
-        assert_eq!(store.consolidated_history_len("s").expect("reads"), 0);
+        assert_eq!(store.consolidated_through("s").expect("reads"), 0);
 
         store.release_consolidation("s", 4, 0).expect("releases");
         assert_eq!(store.claim_consolidation("s", 6).expect("claims"), Some(0));
@@ -848,7 +723,7 @@ mod tests {
             .record_consolidation("s", 4, 1, 1, 0, 0)
             .expect("records");
         store.release_consolidation("s", 4, 0).expect("releases");
-        assert_eq!(store.consolidated_history_len("s").expect("reads"), 4);
+        assert_eq!(store.consolidated_through("s").expect("reads"), 4);
     }
 
     #[test]
@@ -917,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn pruning_drops_old_covered_turns_and_the_next_window_still_lines_up() {
+    fn pruning_drops_only_old_consolidated_turns() {
         let (_dir, store) = store();
         for text in ["old one", "old two", "recent covered", "uncovered"] {
             store.add_turn("s", text, "sam").expect("adds");
@@ -930,23 +805,10 @@ mod tests {
         store.prune_turns().expect("prunes");
 
         assert_eq!(turn_texts(&store), ["recent covered", "uncovered"]);
-        assert_eq!(store.consolidated_history_len("s").expect("reads"), 1);
-        let (_, history_len) = store.sessions().expect("reads")[0].clone();
-        let start = store
-            .claim_consolidation("s", history_len)
-            .expect("claims")
-            .expect("has new turns");
-        assert_eq!(
-            store.turns("s", start, history_len).expect("reads"),
-            [Turn {
-                text: "uncovered".to_owned(),
-                speaker: "sam".to_owned(),
-            }]
-        );
     }
 
     #[test]
-    fn pruning_leaves_a_session_with_a_claim_in_flight_alone() {
+    fn pruning_keeps_the_window_a_claim_is_reading() {
         let (_dir, store) = store();
         store.add_turn("s", "old", "sam").expect("adds");
         store
@@ -954,29 +816,35 @@ mod tests {
             .expect("records");
         store.add_turn("s", "new", "sam").expect("adds");
         store.claim_consolidation("s", 2).expect("claims");
-        age_turns(&store, &["old"]);
+        age_turns(&store, &["old", "new"]);
 
         store.prune_turns().expect("prunes");
 
-        assert_eq!(turn_texts(&store), ["old", "new"]);
+        assert_eq!(turn_texts(&store), ["new"]);
     }
 
     #[test]
-    fn clearing_removes_everything_and_waits_for_a_run_in_flight() {
+    fn a_turn_after_clearing_never_reuses_an_id() {
+        let (_dir, store) = store();
+        store.add_turn("s", "old", "sam").expect("adds");
+        store.clear().expect("clears");
+        store.add_turn("s", "new", "sam").expect("adds");
+        assert_eq!(store.sessions().expect("reads"), [("s".to_owned(), 2)]);
+    }
+
+    #[test]
+    fn clearing_removes_everything_even_during_a_run() {
         let (_dir, store) = store();
         add(&store, "a", STATUS_ACTIVE);
         store.add_pair("d b two", "db2", "llm", "s").expect("adds");
         store.add_turn("s", "hello", "sam").expect("adds");
         store.claim_consolidation("s", 1).expect("claims");
 
-        assert!(matches!(store.clear(), Err(StoreError::Busy)));
-        assert_eq!(turn_texts(&store), ["hello"]);
-
-        store.release_consolidation("s", 1, 0).expect("releases");
         store.clear().expect("clears");
+
         assert!(store.active_facts().expect("reads").is_empty());
         assert!(store.list_pairs().expect("reads").is_empty());
         assert!(turn_texts(&store).is_empty());
-        assert!(store.sessions().expect("reads").is_empty());
+        assert_eq!(store.consolidated_through("s").expect("reads"), 0);
     }
 }
