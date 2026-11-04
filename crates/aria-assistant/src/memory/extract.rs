@@ -148,9 +148,7 @@ pub(crate) fn parse_candidates(raw: &str) -> Option<Vec<Map<String, Value>>> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsolidationResult {
     pub turns: usize,
-    pub candidates: usize,
     pub added: u32,
-    pub noops: u32,
     pub pending: u32,
     pub pairs_added: u32,
 }
@@ -231,9 +229,7 @@ pub(crate) fn consolidate_session(
     let transcript = eligible.join(" ").to_lowercase();
     let mut result = ConsolidationResult {
         turns: eligible.len(),
-        candidates: 0,
         added: 0,
-        noops: 0,
         pending: 0,
         pairs_added: 0,
     };
@@ -244,7 +240,6 @@ pub(crate) fn consolidate_session(
             parse_candidates(&raw).ok_or(ConsolidateError::Unreadable)?
         }
     };
-    result.candidates = candidates.len();
     // A `clear`, or another run's claim, can end this one. Writing anyway
     // would bring back what the user deleted.
     let Some(transaction) = store.begin_claimed(session, through)? else {
@@ -255,7 +250,6 @@ pub(crate) fn consolidate_session(
     let mut discarded = 0;
     for candidate in &candidates {
         match field(candidate, "op") {
-            "NOOP" => result.noops += 1,
             "PAIR" => {
                 let misheard = field(candidate, "misheard").trim();
                 let correct = field(candidate, "correct").trim();
@@ -300,7 +294,8 @@ pub(crate) fn consolidate_session(
                     false => result.pending += 1,
                 }
             }
-            // Anything else is a guess, and a guess is not a fact.
+            // NOOP is the model settling a duplicate. Anything else is a
+            // guess, and a guess is not a fact.
             _ => {}
         }
     }
@@ -384,10 +379,6 @@ mod tests {
         (dir, store)
     }
 
-    fn spoken(text: &str) -> String {
-        text.to_owned()
-    }
-
     fn add(kind: &str, text: &str, confidence: &str) -> String {
         format!(
             r#"{{"op":"ADD","kind":"{kind}","text":"{text}","confidence":{confidence},"quote":"q"}}"#
@@ -455,8 +446,8 @@ mod tests {
             add("preference", "nan", "\"NaN\""),
             add("preference", "inf", "\"inf\"")
         );
-        let (result, _) = ok(&store, &reply, &[spoken("hi")], 10, &[]);
-        assert_eq!((result.added, result.pending, result.candidates), (1, 1, 5));
+        let (result, _) = ok(&store, &reply, &["hi".to_owned()], 10, &[]);
+        assert_eq!((result.added, result.pending), (1, 1));
         let active: Vec<String> = store
             .active_facts()
             .expect("reads")
@@ -481,7 +472,7 @@ mod tests {
         let reply = format!(
             r#"[{{"op":"ADD","kind":"identity","text":"Is\n## Sam\t here","confidence":0.9,"quote":"{long}"}}]"#
         );
-        ok(&store, &reply, &[spoken("hi")], 10, &[]);
+        ok(&store, &reply, &["hi".to_owned()], 10, &[]);
         let fact = store.get(1).expect("reads").expect("exists");
         assert_eq!(fact.text, "Is ## Sam here");
         assert_eq!(fact.source_quote.chars().count(), MAX_FACT_CHARS);
@@ -495,8 +486,8 @@ mod tests {
             add("mood", "x", "0.9"),
             add("identity", "", "0.9")
         );
-        let (result, _) = ok(&store, &reply, &[spoken("hi")], 10, &[]);
-        assert_eq!((result.noops, result.added, result.pending), (1, 0, 0));
+        let (result, _) = ok(&store, &reply, &["hi".to_owned()], 10, &[]);
+        assert_eq!((result.added, result.pending), (0, 0));
         assert!(store.active_facts().expect("reads").is_empty());
     }
 
@@ -507,7 +498,7 @@ mod tests {
             .map(|i| add("identity", &format!("f{i}"), "0.95"))
             .collect();
         let reply = format!("[{}]", items.join(","));
-        let (result, _) = ok(&store, &reply, &[spoken("hi")], 2, &[]);
+        let (result, _) = ok(&store, &reply, &["hi".to_owned()], 2, &[]);
         assert_eq!((result.added, result.pending), (2, 2));
         assert_eq!(store.pending_facts().expect("reads").len(), 2);
     }
@@ -515,18 +506,18 @@ mod tests {
     #[test]
     fn unreadable_output_is_an_error_and_a_valid_empty_list_moves_the_watermark() {
         let (_dir, store) = store();
-        let (result, _) = run(&store, "sorry", &[spoken("hi")], 1, 10, &[]);
+        let (result, _) = run(&store, "sorry", &["hi".to_owned()], 1, 10, &[]);
         assert!(matches!(result, Err(ConsolidateError::Unreadable)));
         assert_eq!(store.consolidated_through("s1").expect("reads"), 0);
 
-        ok(&store, "[]", &[spoken("hi")], 10, &[]);
+        ok(&store, "[]", &["hi".to_owned()], 10, &[]);
         assert_eq!(store.consolidated_through("s1").expect("reads"), 1);
     }
 
     #[test]
     fn no_eligible_turns_skips_the_model_but_moves_the_watermark() {
         let (_dir, store) = store();
-        let (result, extractor) = ok(&store, "[]", &[spoken("")], 10, &[]);
+        let (result, extractor) = ok(&store, "[]", &["".to_owned()], 10, &[]);
         assert!(extractor.asked().is_empty());
         assert_eq!(result.turns, 0);
         assert_eq!(store.consolidated_through("s1").expect("reads"), 1);
@@ -538,7 +529,7 @@ mod tests {
         store
             .add_fact("Is Sam", "identity", STATUS_ACTIVE, 0.9, "", "")
             .expect("adds");
-        let turns = [spoken("new")];
+        let turns = ["new".to_owned()];
         let (result, extractor) = run(&store, "[]", &turns, 2, 10, &["db2"]);
         assert_eq!(result.expect("runs").turns, 1);
         let asked = extractor.asked();
@@ -567,7 +558,7 @@ mod tests {
             pair("db2", "db2", "observed"),
             pair("vex", "db2", "observed"),
         );
-        let turns = [spoken("deploy d b two and dee bee and db and vex")];
+        let turns = ["deploy d b two and dee bee and db and vex".to_owned()];
         let (result, _) = ok(&store, &reply, &turns, 10, &["db2", "vex"]);
         assert_eq!(result.pairs_added, 2);
         let pairs = store.list_pairs().expect("reads");
@@ -595,7 +586,7 @@ mod tests {
             })
             .collect();
         let reply = format!("[{}]", items.join(","));
-        let turns = [spoken("form0 form1 form2 form3 form4 form5 form6")];
+        let turns = ["form0 form1 form2 form3 form4 form5 form6".to_owned()];
         let (result, _) = ok(&store, &reply, &turns, 10, &["db2"]);
         assert_eq!(result.pairs_added, MAX_PAIRS_PER_SESSION);
     }
