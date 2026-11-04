@@ -46,6 +46,23 @@ fn invalid_request(method: &'static str, error: &dyn std::error::Error) -> Statu
     )
 }
 
+/// Runs domain work off the async pool. Domain code is synchronous and may
+/// lock or join threads, so it never runs on a runtime worker. A panic inside
+/// is the daemon's own fault and answers as Internal.
+pub(super) async fn blocking<T: Send + 'static>(
+    method: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, Status> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_panicked| {
+            failed(
+                method,
+                RpcFailure::new(RpcErrorCode::Internal, "the operation panicked"),
+            )
+        })
+}
+
 pub(in crate::daemon) fn served(method: &'static str) {
     tracing::info!(method, status = "ok", "request served");
 }

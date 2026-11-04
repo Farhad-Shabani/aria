@@ -182,7 +182,22 @@ where
         let message = match fault {
             Some(SettingsError::Invalid { key, .. }) => format!("{key} does not accept that value"),
             Some(SettingsError::Parse(_)) => "the change does not fit settings.toml".to_owned(),
-            _ => error_chain(error),
+            Some(
+                SettingsError::Io { .. }
+                | SettingsError::TooLarge { .. }
+                | SettingsError::NotAFile { .. }
+                | SettingsError::TornRead { .. }
+                | SettingsError::InvalidUtf8 { .. }
+                | SettingsError::UnknownKey(_)
+                | SettingsError::Locked { .. }
+                | SettingsError::ReadOnly { .. }
+                | SettingsError::SerializedTooLarge
+                | SettingsError::Encode { .. }
+                | SettingsError::Freeze(_)
+                | SettingsError::Thread(_)
+                | SettingsError::KeyAndAlias { .. },
+            )
+            | None => error_chain(error),
         };
         Self::new(code, message)
     }

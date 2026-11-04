@@ -218,7 +218,7 @@ impl From<&RelayError> for RpcErrorCode {
 }
 
 /// What a relay session tells the phone as it goes.
-pub(crate) enum RelayOutcome {
+pub(crate) enum RelayStage {
     Transcribing,
     Completed(String),
     NoSpeech,

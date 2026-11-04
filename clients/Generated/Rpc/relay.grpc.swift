@@ -72,7 +72,7 @@ extension Aria_Daemon_V1_RelayService {
         /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
         /// > PCM) is refused as it streams.
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-        /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
+        /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
         /// > audio arrived. Uploads must finish within 120 seconds after Start.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
         /// >   BUSY - a recording is running
@@ -136,7 +136,7 @@ extension Aria_Daemon_V1_RelayService {
         /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
         /// > PCM) is refused as it streams.
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-        /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
+        /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
         /// > audio arrived. Uploads must finish within 120 seconds after Start.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
         /// >   BUSY - a recording is running
@@ -197,7 +197,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
     /// > PCM) is refused as it streams.
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-    /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
+    /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
     /// > audio arrived. Uploads must finish within 120 seconds after Start.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
     /// >   BUSY - a recording is running
@@ -252,7 +252,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
     /// > PCM) is refused as it streams.
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-    /// > gap yields NO_SPEECH if no audio bytes arrived, or DEADLINE_EXCEEDED if
+    /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
     /// > audio arrived. Uploads must finish within 120 seconds after Start.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
     /// >   BUSY - a recording is running

@@ -20,8 +20,7 @@ impl Deadline {
         }
     }
 
-    /// Work whose end another bound sets: a relayed recording ends with its
-    /// client, not with a clock here.
+    /// Work whose end another bound sets, such as the caller's own connection.
     pub fn never() -> Self {
         Self {
             timeout: Duration::MAX,

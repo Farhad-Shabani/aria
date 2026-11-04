@@ -18,7 +18,7 @@ use aria_voice::dictation::{DictationError, DictationSettings};
 use aria_voice::microphone::{Claim, Gate};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError};
-use super::super::relay::{self, Collected, Opening, RelayError, RelayOutcome};
+use super::super::relay::{self, Collected, Opening, RelayError, RelayStage};
 
 const METHOD: &str = "RelayService/Relay";
 
@@ -120,7 +120,7 @@ impl Session {
             Ok(Collected::Audio(audio)) => audio,
             Ok(Collected::Silent) => {
                 tracing::info!(method = METHOD, status = "no_speech", "request served");
-                self.emit(Ok(RelayOutcome::NoSpeech.into())).await;
+                self.emit(Ok(RelayStage::NoSpeech.into())).await;
                 return;
             }
             Err(error) => {
@@ -130,7 +130,7 @@ impl Session {
             }
         };
 
-        self.emit(Ok(RelayOutcome::Transcribing.into())).await;
+        self.emit(Ok(RelayStage::Transcribing.into())).await;
 
         let dictation = Arc::clone(&self.dictation);
         let events = self.events.clone();
@@ -144,11 +144,11 @@ impl Session {
         let event = match heard {
             Ok(Ok(Some(text))) => {
                 tracing::info!(method = METHOD, status = "ok", "request served");
-                Ok(RelayOutcome::Completed(text).into())
+                Ok(RelayStage::Completed(text).into())
             }
             Ok(Ok(None)) => {
                 tracing::info!(method = METHOD, status = "no_speech", "request served");
-                Ok(RelayOutcome::NoSpeech.into())
+                Ok(RelayStage::NoSpeech.into())
             }
             Ok(Err(failure)) => Err(relay::redacted(super::failed(METHOD, failure))),
             Err(_join) => {
@@ -207,9 +207,6 @@ fn hear(
 /// Whether the engine heard nothing. A recording of a quiet room is a fact
 /// about the audio, not a fault in the daemon.
 fn is_silence(error: &DictationRuntimeError) -> bool {
-    // The engine heard nothing, or the own-voice gate cut everything it did
-    // hear. To the person holding the watch these are one outcome: nobody
-    // this Mac knows said anything.
     matches!(
         error,
         DictationRuntimeError::Execution(DictationError::NoSpeech)

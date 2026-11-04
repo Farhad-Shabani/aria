@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
-use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 use super::super::listen::ListenState;
 
@@ -24,23 +23,6 @@ impl ListenRpc {
     pub(in crate::daemon) fn state(&self) -> Arc<ListenState> {
         Arc::clone(&self.state)
     }
-
-    /// Slot operations lock and join threads, so they run off the async pool.
-    async fn blocking<T: Send + 'static>(
-        &self,
-        method: &'static str,
-        operation: impl FnOnce(&ListenState) -> T + Send + 'static,
-    ) -> Result<T, Status> {
-        let state = Arc::clone(&self.state);
-        tokio::task::spawn_blocking(move || operation(&state))
-            .await
-            .map_err(|_join| {
-                super::failed(
-                    method,
-                    RpcFailure::new(RpcErrorCode::Internal, "the listen operation panicked"),
-                )
-            })
-    }
 }
 
 #[tonic::async_trait]
@@ -52,10 +34,8 @@ impl wire::listen_service_server::ListenService for ListenRpc {
         const METHOD: &str = "ListenService/Start";
         let output = Option::<std::path::PathBuf>::try_from(request.into_inner())
             .map_err(|error| super::invalid_request(METHOD, &error))?;
-        match self
-            .blocking(METHOD, move |state| state.start(output))
-            .await?
-        {
+        let state = Arc::clone(&self.state);
+        match super::blocking(METHOD, move || state.start(output)).await? {
             Ok(started) => {
                 super::served(METHOD);
                 Ok(Response::new(started.into()))
@@ -69,7 +49,8 @@ impl wire::listen_service_server::ListenService for ListenRpc {
         _request: Request<wire::StopListenRequest>,
     ) -> Result<Response<wire::StopListenResponse>, Status> {
         const METHOD: &str = "ListenService/Stop";
-        match self.blocking(METHOD, ListenState::stop).await? {
+        let state = Arc::clone(&self.state);
+        match super::blocking(METHOD, move || state.stop()).await? {
             Ok(stopped) => {
                 super::served(METHOD);
                 Ok(Response::new(stopped.into()))
@@ -83,7 +64,8 @@ impl wire::listen_service_server::ListenService for ListenRpc {
         _request: Request<wire::GetListenStatusRequest>,
     ) -> Result<Response<wire::GetListenStatusResponse>, Status> {
         const METHOD: &str = "ListenService/GetStatus";
-        let status = self.blocking(METHOD, ListenState::status).await?;
+        let state = Arc::clone(&self.state);
+        let status = super::blocking(METHOD, move || state.status()).await?;
         // The app polls this, so info would fill the log.
         tracing::debug!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(status.into()))

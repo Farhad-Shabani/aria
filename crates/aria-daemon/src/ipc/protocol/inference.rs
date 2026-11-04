@@ -15,8 +15,12 @@ impl TryFrom<&Invitation> for wire::InferenceInviteResponse {
 
     fn try_from(invitation: &Invitation) -> Result<Self, Self::Error> {
         Ok(Self {
-            invitation_json: serde_json::to_vec(invitation)
-                .map_err(|_| ProtocolError::Encode("invitation"))?,
+            invitation_json: serde_json::to_vec(invitation).map_err(|source| {
+                ProtocolError::Encode {
+                    field: "invitation",
+                    source,
+                }
+            })?,
         })
     }
 }

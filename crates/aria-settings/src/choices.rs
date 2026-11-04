@@ -220,7 +220,7 @@ mod rpc_tests {
     }
 
     #[test]
-    fn a_rejected_value_names_its_key_and_never_the_value() {
+    fn a_change_the_file_cannot_parse_quotes_nothing_from_it() {
         let fault =
             crate::Loaded::parse("[memory]\nenabled = maybe\n", std::path::Path::new("/home"))
                 .expect_err("invalid");
@@ -231,5 +231,23 @@ mod rpc_tests {
         assert_eq!(failure.message, "the change does not fit settings.toml");
         assert!(!failure.message.contains("maybe"));
         assert_eq!(failure.settings_position, None);
+    }
+
+    #[test]
+    fn a_rejected_value_names_its_key_and_never_the_value() {
+        let key = crate::Key::ALL[0];
+        let fault = crate::invalid(
+            key,
+            crate::InvalidValue::Unsupported {
+                value: "/Users/someone/private".to_owned(),
+                supported: "a, b".to_owned(),
+            },
+        );
+
+        let failure = RpcFailure::from(&StoreError::Settings(fault));
+
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
+        assert_eq!(failure.message, format!("{key} does not accept that value"));
+        assert!(!failure.message.contains("private"));
     }
 }

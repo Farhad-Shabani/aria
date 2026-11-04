@@ -13,9 +13,7 @@ use aria_voice::history::{
 };
 
 use super::super::dictation::DictationRuntime;
-use super::super::operation::{
-    CallError, Pending, Reply, call, cancellable_call, operation_cancellation,
-};
+use super::super::operation::{Pending, Reply, call, cancellable_call, operation_cancellation};
 use super::super::server::ActivityGuard;
 use super::super::tasks::Supervised;
 use super::super::transcripts::TranscriptStore;
@@ -87,12 +85,10 @@ impl HistoryRpc {
                     super::failed(method, &HistoryError::Unavailable)
                 }
             })?;
-        let served = pending.wait().await.map_err(|error| match error {
-            CallError::Runtime(error) => super::failed(method, &error),
-            CallError::Unavailable | CallError::JobFailed => {
-                super::failed(method, &HistoryError::Unavailable)
-            }
-        })?;
+        let served = pending
+            .wait()
+            .await
+            .map_err(|error| super::failed(method, &error))?;
         super::served(method);
         Ok(served)
     }

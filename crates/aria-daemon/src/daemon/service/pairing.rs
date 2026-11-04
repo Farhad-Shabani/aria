@@ -43,14 +43,8 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
             ));
         };
         let phones = Arc::clone(&self.phones);
-        tokio::task::spawn_blocking(move || phones.admit(phone))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "pinning the phone failed"),
-                )
-            })?
+        super::blocking(METHOD, move || phones.admit(phone))
+            .await?
             .map_err(|error| crate::daemon::relay::redacted(super::failed(METHOD, &error)))?;
         self.codes.record_pairing();
         super::served(METHOD);

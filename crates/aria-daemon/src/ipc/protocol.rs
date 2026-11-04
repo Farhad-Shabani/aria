@@ -1,7 +1,7 @@
 //! Translation between generated wire messages and domain types.
 
 use super::wire;
-use crate::daemon::{Invite, ListenSnapshot, ListenStarted, ListenStopped, RelayOutcome};
+use crate::daemon::{Invite, ListenSnapshot, ListenStarted, ListenStopped, RelayStage};
 use aria_assistant::chat::{
     AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
     PromptCall, Step, Ticket,
@@ -314,12 +314,12 @@ impl From<wire::DictationResult> for DictationResult {
     }
 }
 
-impl From<RelayOutcome> for wire::RelayEvent {
-    fn from(outcome: RelayOutcome) -> Self {
+impl From<RelayStage> for wire::RelayEvent {
+    fn from(outcome: RelayStage) -> Self {
         let (stage, text) = match outcome {
-            RelayOutcome::Transcribing => (wire::RelayStage::Transcribing, String::new()),
-            RelayOutcome::Completed(text) => (wire::RelayStage::Completed, text),
-            RelayOutcome::NoSpeech => (wire::RelayStage::NoSpeech, String::new()),
+            RelayStage::Transcribing => (wire::RelayStage::Transcribing, String::new()),
+            RelayStage::Completed(text) => (wire::RelayStage::Completed, text),
+            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new()),
         };
         Self {
             stage: stage as i32,
@@ -996,13 +996,19 @@ impl TryFrom<wire::GetListenStatusResponse> for ListenSnapshot {
     type Error = ProtocolError;
 
     fn try_from(response: wire::GetListenStatusResponse) -> Result<Self, Self::Error> {
-        let failed = response.error_code != wire::ErrorCode::Unspecified as i32;
-        let error = failed
-            .then(|| {
-                error_code_from_wire(response.error_code)
-                    .map(|code| RpcFailure::new(code, response.error_message))
-            })
-            .transpose()?;
+        // A daemon from before `error_code` fills only the message, and a
+        // running daemon outlives a rebuilt CLI.
+        let error = if response.error_code != wire::ErrorCode::Unspecified as i32 {
+            let code = error_code_from_wire(response.error_code)?;
+            Some(RpcFailure::new(code, response.error_message))
+        } else if response.error_message.is_empty() {
+            None
+        } else {
+            Some(RpcFailure::new(
+                RpcErrorCode::Unknown(response.error_code),
+                response.error_message,
+            ))
+        };
         Ok(Self {
             listening: response.listening,
             transcript: response.transcript_path.into(),
@@ -2500,8 +2506,12 @@ pub enum ProtocolError {
     #[error("{0} is out of range")]
     OutOfRange(&'static str),
 
-    #[error("cannot encode {0}")]
-    Encode(&'static str),
+    #[error("cannot encode {field}")]
+    Encode {
+        field: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
 
     #[error("the prompt must not be empty")]
     EmptyPrompt,
@@ -2833,6 +2843,24 @@ mod tests {
             decoded.transcript,
             std::path::PathBuf::from("/tmp/listen.txt")
         );
+    }
+
+    #[test]
+    fn a_failure_from_a_daemon_without_error_codes_is_still_a_failure() {
+        let response = wire::GetListenStatusResponse {
+            listening: false,
+            transcript_path: "/tmp/listen.txt".to_owned(),
+            error_message: "the tap closed".to_owned(),
+            error_code: wire::ErrorCode::Unspecified as i32,
+        };
+
+        let error = ListenSnapshot::try_from(response)
+            .expect("decodes")
+            .error
+            .expect("the session failed");
+
+        assert_eq!(error.code, RpcErrorCode::Unknown(0));
+        assert_eq!(error.message, "the tap closed");
     }
 
     #[test]

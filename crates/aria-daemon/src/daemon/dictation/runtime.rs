@@ -290,32 +290,35 @@ impl DictationRuntime {
     pub(in crate::daemon) fn history_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(None)
+        self.settings_for(None, HistorySource::Local)
     }
 
     /// A phone's dictation lands in whatever app is in front on this Mac.
     pub(in crate::daemon) fn relay_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        let mut settings = self.settings_for(aria_platform::delivery::frontmost_application())?;
-        settings.source = HistorySource::Relay;
-        Ok(settings)
+        self.settings_for(
+            aria_platform::delivery::frontmost_application(),
+            HistorySource::Relay,
+        )
     }
 
     fn settings_for(
         &self,
         application: Option<aria_platform::delivery::Application>,
+        source: HistorySource,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings
+        let snapshot = self
+            .settings
             .snapshot()
-            .map(|snapshot| {
-                DictationSettings::resolve(
-                    snapshot.settings,
-                    DictationRequest::new(StopMode::OnSilence),
-                    application,
-                )
-            })
-            .map_err(DictationRuntimeError::Settings)
+            .map_err(DictationRuntimeError::Settings)?;
+        let mut settings = DictationSettings::resolve(
+            snapshot.settings,
+            DictationRequest::new(StopMode::OnSilence),
+            application,
+        );
+        settings.source = source;
+        Ok(settings)
     }
 
     /// Announces a failure the pipeline never saw: a relay job that panicked.

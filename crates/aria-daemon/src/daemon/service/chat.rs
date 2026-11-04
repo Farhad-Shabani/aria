@@ -53,14 +53,7 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         let cancellation = self.shutdown.child_token();
         let _cancel_on_drop = cancellation.clone().drop_guard();
         let cancel = CancelToken::from_fn(move || cancellation.is_cancelled());
-        let assistants = tokio::task::spawn_blocking(move || runtime.assistants(&cancel))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "checking assistants failed"),
-                )
-            })?;
+        let assistants = super::blocking(METHOD, move || runtime.assistants(&cancel)).await?;
         super::served(METHOD);
         Ok(Response::new(assistants.into()))
     }
@@ -76,14 +69,8 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         let cancellation = self.shutdown.child_token();
         let _cancel_on_drop = cancellation.clone().drop_guard();
         let cancel = CancelToken::from_fn(move || cancellation.is_cancelled());
-        let models = tokio::task::spawn_blocking(move || runtime.models(assistant_id, &cancel))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "reading assistant models failed"),
-                )
-            })?
+        let models = super::blocking(METHOD, move || runtime.models(assistant_id, &cancel))
+            .await?
             .map_err(|error| super::failed(METHOD, &ChatError::Assistant(error)))?;
         super::served(METHOD);
         Ok(Response::new(models.into()))
@@ -99,14 +86,8 @@ impl wire::chat_service_server::ChatService for ChatRpc {
             .map_err(|error| invalid_request(METHOD, &error))?;
 
         let runtime = Arc::clone(&self.runtime);
-        let request = tokio::task::spawn_blocking(move || runtime.prepare_ask(request))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "reading assistant settings failed"),
-                )
-            })?
+        let request = super::blocking(METHOD, move || runtime.prepare_ask(request))
+            .await?
             .map_err(|error| super::failed(METHOD, &error))?;
         match self.chat.ask(request).await {
             Ok(ticket) => {
@@ -143,14 +124,8 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         let call = PromptCall::try_from(request.into_inner())
             .map_err(|error| invalid_request(METHOD, &error))?;
         let runtime = Arc::clone(&self.runtime);
-        let request = tokio::task::spawn_blocking(move || runtime.prompt_request(call))
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "reading the prompt failed"),
-                )
-            })?
+        let request = super::blocking(METHOD, move || runtime.prompt_request(call))
+            .await?
             .map_err(|error| super::failed(METHOD, &error))?;
         match self.chat.run_prompt(request).await {
             Ok(ticket) => {
@@ -168,14 +143,7 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         const METHOD: &str = "ChatService/Resolve";
         self.require_persistent(METHOD)?;
         let runtime = Arc::clone(&self.runtime);
-        let resolved = tokio::task::spawn_blocking(move || runtime.resolve_target())
-            .await
-            .map_err(|_panicked| {
-                super::failed(
-                    METHOD,
-                    RpcFailure::new(RpcErrorCode::Internal, "resolving the ask target failed"),
-                )
-            })?;
+        let resolved = super::blocking(METHOD, move || runtime.resolve_target()).await?;
 
         match resolved {
             Ok(target) => {

@@ -651,21 +651,17 @@ fn outcome_from(
     mut observe: impl FnMut(&DictationStage),
 ) -> Result<DictationOutcome, ClientError> {
     use wire::start_dictation_response::Body;
-    let malformed =
-        |error: protocol::ProtocolError| ClientError::MalformedResponse(error.to_string());
     for message in messages {
         match message?.body {
             Some(Body::Progress(stage)) => {
-                observe(&DictationStage::try_from(&stage).map_err(malformed)?);
+                observe(&DictationStage::try_from(&stage)?);
             }
             Some(Body::Result(result)) => {
                 return Ok(DictationOutcome::Completed(result.into()));
             }
             Some(Body::StopAccepted(_)) => return Ok(DictationOutcome::StopAccepted),
             None => {
-                return Err(malformed(protocol::ProtocolError::MissingBody(
-                    "dictation response",
-                )));
+                return Err(protocol::ProtocolError::MissingBody("dictation response").into());
             }
         }
     }

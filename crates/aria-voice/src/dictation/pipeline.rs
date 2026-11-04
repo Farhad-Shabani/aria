@@ -2273,6 +2273,97 @@ mod tests {
         );
     }
 
+    /// History learns how a recording ended from the pipeline alone, so a
+    /// relayed failure is recorded as a press's would be.
+    #[test]
+    fn a_relayed_recording_that_fails_ends_in_history_as_a_press_does() {
+        struct Failing;
+        impl Transcriber for Failing {
+            fn validate_language(
+                &self,
+                _language: &Language,
+                _cancel: &CancelToken,
+            ) -> Result<(), TranscriptionError> {
+                Ok(())
+            }
+            fn transcribe_with(
+                &self,
+                _audio: TranscriptionAudio<'_>,
+                _language: &Language,
+                _cancel: &CancelToken,
+            ) -> Result<Hypothesis, TranscriptionError> {
+                Err(TranscriptionError::LoadPanicked)
+            }
+        }
+        /// Logs how each recording ended, which `RecordingSink` leaves out.
+        struct Ending(Arc<Mutex<Vec<String>>>);
+        impl crate::dictation::transcripts::TranscriptSink for Ending {
+            type Error = DictationError;
+            fn segment(
+                &mut self,
+                _utterance: crate::dictation::transcripts::Utterance<'_>,
+            ) -> Result<(), DictationError> {
+                Ok(())
+            }
+            fn completed(
+                &mut self,
+                _utterance: crate::dictation::transcripts::Utterance<'_>,
+            ) -> Result<(), DictationError> {
+                Ok(())
+            }
+            fn recording_finished(
+                &mut self,
+                _recording: &mut RecordingReader,
+                result: Result<(), &DictationError>,
+            ) {
+                self.0.lock().unwrap().push(match result {
+                    Ok(()) => "ok".to_owned(),
+                    Err(error) => error.to_string(),
+                });
+            }
+        }
+
+        let pressed = Arc::new(Mutex::new(Vec::new()));
+        let (directory, pressed_capture) = capture();
+        let pipeline = DictationPipeline::new(
+            pressed_capture,
+            Transcription::complete_samples(Failing),
+            (Ending(Arc::clone(&pressed)), CallLog::default().cursor()),
+        );
+        let (events, _stages) = stage_events();
+        pipeline
+            .run_observed(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &events,
+            )
+            .expect_err("the press fails");
+
+        let relayed = Arc::new(Mutex::new(Vec::new()));
+        let (_unused, relayed_capture) = capture();
+        let pipeline = DictationPipeline::new(
+            relayed_capture,
+            Transcription::complete_samples(Failing),
+            (Ending(Arc::clone(&relayed)), CallLog::default().cursor()),
+        );
+        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
+            .expect("the fixture reads");
+        let (events, _stages) = stage_events();
+        pipeline
+            .deliver_recording(
+                &mut recording,
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &events,
+                None,
+            )
+            .expect_err("the relayed recording fails");
+
+        let pressed = pressed.lock().unwrap().clone();
+        assert_eq!(pressed.len(), 1);
+        assert_ne!(pressed[0], "ok");
+        assert_eq!(*relayed.lock().unwrap(), pressed);
+    }
+
     #[test]
     fn a_transcript_only_press_hands_the_text_back_and_types_nothing() {
         let (_directory, capture) = capture();

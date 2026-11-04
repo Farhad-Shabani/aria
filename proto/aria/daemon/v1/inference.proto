@@ -20,6 +20,7 @@ service InferenceService {
 // invitation code. Distinct from PairingService, which pairs phones with a
 // daemon.
 //   UNAUTHENTICATED - the code is wrong, used, or expired
+//   PERMISSION_DENIED - the host already pairs as many clients as it allows
 service InferencePairingService {
   rpc Pair(InferencePairRequest) returns (InferencePairResponse);
 }
