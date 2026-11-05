@@ -103,8 +103,8 @@ pub enum HistoryError {
     Cancelled,
     #[error("dictation history retry timed out")]
     Timeout,
-    /// Carries the code the failed retry declared, so a retry that heard no
-    /// speech reports `NoSpeech`, not a generic failure.
+    /// Carries the failed retry's own code when it has one, so a retry that
+    /// heard no speech reports `NoSpeech`, not a generic failure.
     #[error("dictation history transcription failed")]
     Transcription {
         code: RpcErrorCode,

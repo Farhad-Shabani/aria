@@ -47,13 +47,13 @@ mod inference;
 /// `grpc-status-details-bin` carries a `google.rpc.Status` by convention.
 const RPC_ERROR_TYPE_URL: &str = "type.googleapis.com/aria.daemon.v1.RpcError";
 
-/// The status code is the lossy projection; the exact Aria code rides in the
-/// status details as a `google.rpc.Status` holding one packed `RpcError`.
-/// The message rides in the trailer three times (`grpc-message`, the status
-/// details, the `RpcError`), and a client's HTTP/2 header list is 16 KiB by
-/// default. Past it the verdict is dropped; far past it the connection resets.
+/// The message goes into the trailer three times: `grpc-message`, the status
+/// details and the `RpcError`. A client caps that header list, so past the cap
+/// the verdict is dropped, and far past it the connection closes.
 const MAX_FAILURE_MESSAGE_BYTES: usize = 1024;
 
+/// The status code is the lossy projection; the exact Aria code rides in the
+/// status details as a `google.rpc.Status` holding one packed `RpcError`.
 pub(crate) fn failure_status(mut failure: RpcFailure) -> Status {
     bound_message(&mut failure.message);
     let code = grpc_code(failure.code);

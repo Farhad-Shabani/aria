@@ -537,7 +537,6 @@ fn retry_target<'a>(
     }
 }
 
-/// A failed retry keeps the code its own error declares.
 fn transcription<E>(error: E) -> HistoryError
 where
     E: Categorized + Send + Sync + 'static,
