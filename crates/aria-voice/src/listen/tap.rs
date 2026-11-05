@@ -2,6 +2,7 @@ use std::thread::{self, JoinHandle};
 
 use super::ListenError;
 use aria_kit::audio::{Recording, RecordingReader, RecordingWriter, Stopper};
+use aria_primitives::error_chain;
 use aria_primitives::thread::raise_scheduling_class;
 
 #[cfg(target_os = "macos")]
@@ -69,14 +70,15 @@ impl Drop for SystemAudioCapture {
     fn drop(&mut self) {
         self.stopper().stop();
         if let Err(error) = self.join() {
-            tracing::warn!(%error, "system-audio capture failed during cleanup");
+            tracing::warn!(error = %error_chain(&error), "system-audio capture failed during cleanup");
         }
     }
 }
 
-fn failure(detail: impl Into<String>) -> ListenError {
+fn failure(operation: &'static str) -> ListenError {
     ListenError::CaptureFailed {
-        detail: detail.into(),
+        operation,
+        source: None,
     }
 }
 

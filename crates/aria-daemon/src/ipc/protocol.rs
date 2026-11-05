@@ -47,9 +47,15 @@ mod inference;
 /// `grpc-status-details-bin` carries a `google.rpc.Status` by convention.
 const RPC_ERROR_TYPE_URL: &str = "type.googleapis.com/aria.daemon.v1.RpcError";
 
+/// The message goes into the trailer three times: `grpc-message`, the status
+/// details and the `RpcError`. A client caps that header list, so past the cap
+/// the verdict is dropped, and far past it the connection closes.
+const MAX_FAILURE_MESSAGE_BYTES: usize = 1024;
+
 /// The status code is the lossy projection; the exact Aria code rides in the
 /// status details as a `google.rpc.Status` holding one packed `RpcError`.
-pub(crate) fn failure_status(failure: RpcFailure) -> Status {
+pub(crate) fn failure_status(mut failure: RpcFailure) -> Status {
+    bound_message(&mut failure.message);
     let code = grpc_code(failure.code);
     let error = wire::RpcError::from(failure.clone());
     let details = tonic_types::pb::Status {
@@ -61,6 +67,19 @@ pub(crate) fn failure_status(failure: RpcFailure) -> Status {
         }],
     };
     Status::with_details(code, failure.message, details.encode_to_vec().into())
+}
+
+fn bound_message(message: &mut String) {
+    if message.len() <= MAX_FAILURE_MESSAGE_BYTES {
+        return;
+    }
+    let ellipsis = "…";
+    let mut end = MAX_FAILURE_MESSAGE_BYTES - ellipsis.len();
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message.truncate(end);
+    message.push_str(ellipsis);
 }
 
 impl From<RpcFailure> for wire::RpcError {
@@ -2534,6 +2553,17 @@ mod tests {
     use aria_voice::dictation::DictationError;
 
     use super::*;
+
+    #[test]
+    fn an_oversized_failure_message_is_bounded_and_keeps_its_verdict() {
+        let long = "é".repeat(MAX_FAILURE_MESSAGE_BYTES);
+        let status = failure_status(RpcFailure::new(RpcErrorCode::SettingsInvalid, long));
+        assert!(status.message().len() <= MAX_FAILURE_MESSAGE_BYTES);
+        let failure = rpc_failure(&status).expect("the verdict survives");
+        assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);
+        assert!(failure.message.len() <= MAX_FAILURE_MESSAGE_BYTES);
+        assert!(failure.message.ends_with('…'));
+    }
 
     #[test]
     fn an_aria_key_round_trips_and_unspecified_is_refused() {

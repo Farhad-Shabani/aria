@@ -1,3 +1,4 @@
+use aria_primitives::Cause;
 use std::collections::VecDeque;
 
 use crate::cancel::CancelToken;
@@ -21,7 +22,7 @@ pub enum Error {
     #[error("processed transcription exceeds 64 KiB")]
     TooLarge,
     #[error("a transcription layer failed")]
-    Failed(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Failed(#[source] Cause),
 }
 
 pub trait Layer: Send + Sync {

@@ -5,7 +5,7 @@
 use candle_core::{IndexOp, Tensor};
 use candle_nn::{Module, VarBuilder};
 
-use super::{CodecError, Result};
+use crate::qwen::{Error, Result};
 
 /// Reshapes a channel vector to broadcast over `[batch, channels, time]`.
 fn channel_bias(t: &Tensor) -> Result<Tensor> {
@@ -60,9 +60,11 @@ impl CausalConv {
             ..Default::default()
         };
         if effective < stride {
-            return Err(CodecError::Load(format!(
-                "kernel {kernel} dilation {dilation} cannot support stride {stride}"
-            )));
+            return Err(Error::InvalidConvolution {
+                kernel,
+                dilation,
+                stride,
+            });
         }
         Ok(Self {
             conv: candle_nn::conv1d(in_channels, out_channels, kernel, cfg, vb)?,

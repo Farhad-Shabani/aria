@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::cancel::CancelToken;
@@ -20,6 +20,7 @@ use super::{
 };
 use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Application;
+use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 const MAX_ENTRIES: usize = 1_000;
@@ -67,11 +68,9 @@ pub struct RetryLease {
 
 impl Drop for RetryLease {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.store.state.lock() {
-            state.pinned.remove(&self.entry.id);
-        }
-        if self.store.maintenance().is_err() {
-            tracing::warn!("dictation history cleanup failed after retry");
+        self.store.lock().pinned.remove(&self.entry.id);
+        if let Err(error) = self.store.maintenance() {
+            tracing::warn!(error = %error_chain(&error), "dictation history cleanup failed after retry");
         }
     }
 }
@@ -83,9 +82,7 @@ impl Store {
             &DATABASE_POLICY,
             &CancelToken::never(),
         )?;
-        let directory = directory
-            .canonicalize()
-            .map_err(|_| HistoryError::Storage)?;
+        let directory = directory.canonicalize().map_err(HistoryError::storage)?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > 1 {
             return Err(HistoryError::Unavailable);
@@ -111,10 +108,9 @@ impl Store {
                 project BLOB, engine TEXT NOT NULL);
              PRAGMA user_version=1;"
         ))?;
-        private_fs::prepare_directory(&directory.join("audio"))
-            .map_err(|_| HistoryError::Storage)?;
+        private_fs::prepare_directory(&directory.join("audio")).map_err(HistoryError::storage)?;
         let audio_directory =
-            sqlite::open_directory(&directory.join("audio")).map_err(|_| HistoryError::Storage)?;
+            sqlite::open_directory(&directory.join("audio")).map_err(HistoryError::storage)?;
         let store = Arc::new(Self {
             directory,
             audio_directory,
@@ -134,20 +130,24 @@ impl Store {
         audio: Option<&Path>,
     ) -> Result<HistoryEntry, HistoryError> {
         validate_entry(&entry)?;
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         self.maintain(&mut state)?;
-        let copy = if state.warning.is_some() && audio.is_some() {
-            Err(HistoryError::Storage)
-        } else {
-            audio.map(|path| self.copy_audio(path)).transpose()
-        };
-        let mut copied = match copy {
-            Ok(copy) => copy,
-            Err(_) => {
-                state.warning = Some(AUDIO_WARNING.to_owned());
-                entry.warning = Some(AUDIO_WARNING.to_owned());
-                None
-            }
+        let mut copied = match audio {
+            None => None,
+            Some(path) => match state.warning.is_none().then(|| self.copy_audio(path)) {
+                Some(Ok(copy)) => Some(copy),
+                Some(Err(error)) => {
+                    tracing::warn!(error = %error_chain(&error), "dictation history audio could not be saved");
+                    state.warning = Some(AUDIO_WARNING.to_owned());
+                    entry.warning = Some(AUDIO_WARNING.to_owned());
+                    None
+                }
+                None => {
+                    state.warning = Some(AUDIO_WARNING.to_owned());
+                    entry.warning = Some(AUDIO_WARNING.to_owned());
+                    None
+                }
+            },
         };
         // Free the space before committing: a full database cannot evict anything.
         if let Err(error) = self.make_room(
@@ -204,7 +204,7 @@ impl Store {
         if let Some(id) = query.before_id {
             validate_id(id)?;
         }
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         self.maintain(&mut state)?;
         let needle = query.query.to_lowercase();
         let (entries, _) = all(&state)?;
@@ -231,14 +231,14 @@ impl Store {
 
     pub fn get(&self, id: u64) -> Result<HistoryEntry, HistoryError> {
         validate_id(id)?;
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         self.maintain(&mut state)?;
         load(&state, id)
     }
 
     pub fn delete(&self, id: u64) -> Result<bool, HistoryError> {
         validate_id(id)?;
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         if state.pinned.contains(&id) {
             return Err(HistoryError::Busy);
         }
@@ -253,7 +253,7 @@ impl Store {
     }
 
     pub fn clear(&self) -> Result<ClearHistoryResult, HistoryError> {
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         if !state.pinned.is_empty() {
             return Err(HistoryError::Busy);
         }
@@ -270,7 +270,7 @@ impl Store {
 
     pub fn begin_retry(self: &Arc<Self>, id: u64) -> Result<RetryLease, HistoryError> {
         validate_id(id)?;
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         self.maintain(&mut state)?;
         let mut entry = load(&state, id)?;
         if state.pinned.contains(&id) {
@@ -311,7 +311,7 @@ impl Store {
         if text.len() > MAX_ENTRY_BYTES {
             return Err(HistoryError::TooLarge);
         }
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         if !state.pinned.contains(&id) {
             return Err(HistoryError::InvalidRequest);
         }
@@ -337,10 +337,12 @@ impl Store {
         Ok(entry)
     }
 
-    pub fn attempt_failed(&self, id: u64, error: HistoryError) -> Result<(), HistoryError> {
+    pub fn attempt_failed(&self, id: u64, error: &HistoryError) -> Result<(), HistoryError> {
         validate_id(id)?;
-        let error = encode_error(&RpcFailure::from(&error))?;
-        let state = self.lock()?;
+        // The top line only: a cause chain can outgrow the stored cap, and it
+        // reaches the log through the handler that returns this error.
+        let error = encode_error(&RpcFailure::new(error.into(), error.to_string()))?;
+        let state = self.lock();
         if !state.pinned.contains(&id) {
             return Err(HistoryError::InvalidRequest);
         }
@@ -352,7 +354,7 @@ impl Store {
     }
 
     pub fn maintenance(&self) -> Result<(), HistoryError> {
-        let mut state = self.lock()?;
+        let mut state = self.lock();
         self.maintain(&mut state)
     }
 
@@ -458,11 +460,11 @@ impl Store {
         match rustix::fs::unlinkat(&self.audio_directory, name, rustix::fs::AtFlags::empty()) {
             Ok(()) => {}
             Err(rustix::io::Errno::NOENT) => return Ok(()),
-            Err(_) => return Err(HistoryError::Storage),
+            Err(error) => return Err(HistoryError::storage(error)),
         }
         self.audio_directory
             .sync_all()
-            .map_err(|_| HistoryError::Storage)?;
+            .map_err(HistoryError::storage)?;
         Ok(())
     }
 
@@ -474,8 +476,8 @@ impl Store {
             .query_map([], |row| unsigned(row.get(0)?, 0))?
             .map(|id| id.map(audio_name))
             .collect::<rusqlite::Result<HashSet<_>>>()?;
-        for item in fs::read_dir(self.directory.join("audio")).map_err(|_| HistoryError::Storage)? {
-            let item = item.map_err(|_| HistoryError::Storage)?;
+        for item in fs::read_dir(self.directory.join("audio")).map_err(HistoryError::storage)? {
+            let item = item.map_err(HistoryError::storage)?;
             let name = item.file_name();
             let Some(name) = name.to_str() else { continue };
             let owned_name = name
@@ -520,10 +522,10 @@ impl Store {
         for entry in &entries {
             match open_private(&self.audio_directory, &audio_name(entry.id)) {
                 Ok(file) => {
-                    retained_audio += file.metadata().map_err(|_| HistoryError::Storage)?.len();
+                    retained_audio += file.metadata().map_err(HistoryError::storage)?.len();
                 }
                 Err(HistoryError::Missing) => {}
-                Err(_) => return Err(HistoryError::Storage),
+                Err(error) => return Err(error),
             }
         }
         for entry in entries.iter().rev() {
@@ -534,7 +536,7 @@ impl Store {
                 continue;
             }
             if let Ok(file) = open_private(&self.audio_directory, &audio_name(entry.id)) {
-                let size = file.metadata().map_err(|_| HistoryError::Storage)?.len();
+                let size = file.metadata().map_err(HistoryError::storage)?.len();
                 self.remove_audio(state, entry.id)?;
                 retained_audio = retained_audio.saturating_sub(size);
             }
@@ -581,15 +583,13 @@ impl Store {
         let mut copy = tempfile::Builder::new()
             .prefix(".copy-")
             .tempfile_in(self.directory.join("audio"))
-            .map_err(|_| HistoryError::Storage)?;
+            .map_err(HistoryError::storage)?;
         let bytes = io::copy(&mut source.take(MAX_AUDIO_BYTES + 1), copy.as_file_mut())
-            .map_err(|_| HistoryError::Storage)?;
+            .map_err(HistoryError::storage)?;
         if bytes > MAX_AUDIO_BYTES || bytes != metadata.len() {
             return Err(HistoryError::AudioUnavailable);
         }
-        copy.as_file()
-            .sync_all()
-            .map_err(|_| HistoryError::Storage)?;
+        copy.as_file().sync_all().map_err(HistoryError::storage)?;
         RecordingReader::from_wav_file(copy.path()).map_err(|_| HistoryError::AudioUnavailable)?;
         Ok((copy, bytes))
     }
@@ -598,8 +598,8 @@ impl Store {
         self.directory.join("audio").join(audio_name(id))
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, State>, HistoryError> {
-        self.state.lock().map_err(|_| HistoryError::Storage)
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -668,19 +668,23 @@ fn open_private(directory: &File, name: &str) -> Result<File, HistoryError> {
         if error == rustix::io::Errno::NOENT {
             HistoryError::Missing
         } else {
-            HistoryError::Storage
+            HistoryError::storage(error)
         }
     })?;
     let file = File::from(descriptor);
-    let metadata = private_fs::verify_file(&file).map_err(|_| HistoryError::Storage)?;
+    let metadata = private_fs::verify_file(&file).map_err(HistoryError::storage)?;
     if metadata.nlink() != 1 {
-        return Err(HistoryError::Storage);
+        return Err(HistoryError::storage(Linked));
     }
     Ok(file)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("a history file has more than one link")]
+struct Linked;
+
 fn check_size(file: &File, limit: u64) -> Result<(), HistoryError> {
-    if file.metadata().map_err(|_| HistoryError::Storage)?.len() > limit {
+    if file.metadata().map_err(HistoryError::storage)?.len() > limit {
         return Err(HistoryError::TooLarge);
     }
     Ok(())
@@ -818,7 +822,7 @@ fn encode_error(error: &RpcFailure) -> Result<String, HistoryError> {
         code: stored_code(error.code),
         message: error.message.clone(),
     };
-    let stored = serde_json::to_string(&stored).map_err(|_| HistoryError::Storage)?;
+    let stored = serde_json::to_string(&stored).map_err(HistoryError::storage)?;
     if stored.len() > MAX_STORED_ERROR_BYTES {
         return Err(HistoryError::InvalidRequest);
     }
@@ -1009,12 +1013,7 @@ mod tests {
     /// Edits the database behind the store's back, as damage or an older
     /// daemon would.
     fn tamper(store: &Store, sql: &str, params: impl rusqlite::Params) {
-        store
-            .lock()
-            .unwrap()
-            .connection
-            .execute(sql, params)
-            .unwrap();
+        store.lock().connection.execute(sql, params).unwrap();
     }
 
     fn listed(store: &Store) -> Vec<HistoryEntry> {
@@ -1177,9 +1176,7 @@ mod tests {
                 last_id = store.insert(saved, Some(&source)).unwrap().id;
             }
         }
-        store
-            .mark_delete(&mut store.lock().unwrap(), last_id)
-            .unwrap();
+        store.mark_delete(&mut store.lock(), last_id).unwrap();
         fs::write(history.join("audio/9999.wav"), "orphan").unwrap();
         fs::write(history.join("audio/.copy-interrupted"), "partial").unwrap();
         assert_eq!(
@@ -1209,20 +1206,23 @@ mod tests {
         let saved = save(&store, "retry", HistoryStatus::Success, Some(&source));
         let other = save(&store, "other", HistoryStatus::Success, None);
         let lease = store.begin_retry(saved.id).unwrap();
-        assert_eq!(store.clear(), Err(HistoryError::Busy));
+        assert!(matches!(store.clear(), Err(HistoryError::Busy)));
         assert_eq!(store.get(other.id).unwrap().text, "other");
         assert!(store.audio_path(lease.entry.id).exists());
         drop(lease);
         store
             .lock()
-            .unwrap()
             .connection
             .pragma_update(None, "query_only", true)
             .unwrap();
-        assert_eq!(store.clear(), Err(HistoryError::Storage));
+        let failure = store.clear().err().unwrap();
+        assert!(matches!(failure, HistoryError::Storage(_)));
+        assert!(
+            std::error::Error::source(&failure)
+                .is_some_and(|cause| cause.downcast_ref::<rusqlite::Error>().is_some())
+        );
         store
             .lock()
-            .unwrap()
             .connection
             .pragma_update(None, "query_only", false)
             .unwrap();
@@ -1303,6 +1303,33 @@ mod tests {
     }
 
     #[test]
+    fn failed_attempt_stores_the_top_line_of_a_long_cause_chain() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = audio(directory.path());
+        let store = Store::open(&directory.path().join("history")).unwrap();
+        let failed = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(&source),
+        );
+        let _lease = store.begin_retry(failed.id).unwrap();
+        let error = HistoryError::transcription(
+            RpcErrorCode::TranscriptionFailed,
+            io::Error::other("x".repeat(MAX_ERROR_MESSAGE_BYTES)),
+        );
+        assert!(error_chain(&error).len() > MAX_ERROR_MESSAGE_BYTES);
+        store.attempt_failed(failed.id, &error).unwrap();
+        assert_eq!(
+            store.get(failed.id).unwrap().error,
+            Some(RpcFailure::new(
+                RpcErrorCode::TranscriptionFailed,
+                "dictation history transcription failed"
+            ))
+        );
+    }
+
+    #[test]
     fn retry_pins_original_audio_and_recovers_the_same_entry() {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
@@ -1322,7 +1349,7 @@ mod tests {
         ));
         assert!(matches!(store.delete(failed.id), Err(HistoryError::Busy)));
         store
-            .attempt_failed(failed.id, HistoryError::Cancelled)
+            .attempt_failed(failed.id, &HistoryError::Cancelled)
             .unwrap();
         assert_eq!(
             store.get(failed.id).unwrap().error,
@@ -1462,7 +1489,7 @@ mod tests {
         let store = Store::open(&directory.path().join("history")).unwrap();
         let pending = save(&store, "pending", HistoryStatus::Success, None);
         {
-            let mut state = store.lock().unwrap();
+            let mut state = store.lock();
             store.mark_delete(&mut state, pending.id).unwrap();
         }
         assert!(matches!(store.get(pending.id), Err(HistoryError::Missing)));
@@ -1672,7 +1699,7 @@ mod tests {
             );
         }
         assert!(matches!(store.get(first.id), Err(HistoryError::Missing)));
-        let state = store.lock().unwrap();
+        let state = store.lock();
         assert_eq!(
             all(&state)
                 .unwrap()
@@ -1696,7 +1723,7 @@ mod tests {
         let store = Store::open(directory.path()).unwrap();
         let first = save(&store, "", HistoryStatus::TranscriptionFailed, None);
         // Seed terminal records directly to avoid a thousand fsyncs in this unit test.
-        let state = store.lock().unwrap();
+        let state = store.lock();
         let transaction = state.connection.unchecked_transaction().unwrap();
         for _ in 1..MAX_ENTRIES {
             transaction.execute("INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine) VALUES(?1,0,'',0,1,'en',1,'test')", [sql_integer(now_ms()).unwrap()]).unwrap();
@@ -1705,7 +1732,7 @@ mod tests {
         drop(state);
         save(&store, "", HistoryStatus::TranscriptionFailed, None);
         assert!(matches!(store.get(first.id), Err(HistoryError::Missing)));
-        assert_eq!(all(&store.lock().unwrap()).unwrap().0.len(), MAX_ENTRIES);
+        assert_eq!(all(&store.lock()).unwrap().0.len(), MAX_ENTRIES);
     }
 
     #[test]
@@ -1742,17 +1769,20 @@ mod tests {
         let history = directory.path().join("history");
         private_fs::prepare_directory(&history).unwrap();
         symlink(&target, history.join("history.db")).unwrap();
-        assert!(matches!(Store::open(&history), Err(HistoryError::Storage)));
+        assert!(matches!(
+            Store::open(&history),
+            Err(HistoryError::Storage(_))
+        ));
         assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
         let other = directory.path().join("other");
         private_fs::prepare_directory(&other).unwrap();
         symlink(&target, other.join("history.db-journal")).unwrap();
-        assert!(matches!(Store::open(&other), Err(HistoryError::Storage)));
+        assert!(matches!(Store::open(&other), Err(HistoryError::Storage(_))));
         let third = directory.path().join("third");
         let store = Store::open(&third).unwrap();
         drop(store);
         fs::set_permissions(third.join("history.db"), fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(matches!(Store::open(&third), Err(HistoryError::Storage)));
+        assert!(matches!(Store::open(&third), Err(HistoryError::Storage(_))));
     }
 
     #[test]
@@ -1774,7 +1804,7 @@ mod tests {
     fn rollback_journal_is_private_and_database_growth_is_bounded() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
-        let state = store.lock().unwrap();
+        let state = store.lock();
         let page_size: i64 = state
             .connection
             .pragma_query_value(None, "page_size", |row| row.get(0))
@@ -1804,7 +1834,7 @@ mod tests {
             Err(HistoryError::Busy)
         ));
         contender.execute_batch("ROLLBACK").unwrap();
-        let state = store.lock().unwrap();
+        let state = store.lock();
         let pages: i64 = state
             .connection
             .pragma_query_value(None, "page_count", |row| row.get(0))

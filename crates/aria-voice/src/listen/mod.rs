@@ -14,6 +14,7 @@ pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
 pub use tap::SystemAudioCapture;
 
+use aria_primitives::Cause;
 use std::path::PathBuf;
 
 use crate::transcription::TranscriptionError;
@@ -50,8 +51,14 @@ pub enum ListenError {
     )]
     PermissionDenied,
 
-    #[error("system-audio capture failed: {detail}")]
-    CaptureFailed { detail: String },
+    // Boxed: the native cause is a macOS type, and this enum is cross-platform.
+    // No source when the fault is a condition, such as an overflowed queue.
+    #[error("system-audio capture failed: {operation}")]
+    CaptureFailed {
+        operation: &'static str,
+        #[source]
+        source: Option<Cause>,
+    },
 
     #[error("listen transcription failed")]
     Transcription(#[source] TranscriptionError),

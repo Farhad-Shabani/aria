@@ -1,6 +1,8 @@
 use super::tasks::Supervised;
 use aria_assistant::memory::Lexicon;
 use aria_kit::cancel::{CancelToken, Deadline};
+use aria_primitives::Cause;
+use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{Directory, SettingsStore};
 use aria_voice::vocabulary::{
@@ -12,7 +14,7 @@ use aria_voice::vocabulary::{
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak, mpsc};
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -32,7 +34,7 @@ pub(super) enum Error {
     #[error("vocabulary worker is busy")]
     Busy,
     #[error("vocabulary worker is unavailable")]
-    Unavailable,
+    Unavailable(#[source] Option<Cause>),
     #[error("vocabulary exceeds its resource limit")]
     TooLarge,
     #[error("vocabulary refresh requires a persistent daemon")]
@@ -41,11 +43,17 @@ pub(super) enum Error {
     NoDirectory,
 }
 
+impl Error {
+    fn unavailable(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Unavailable(Some(Box::new(error)))
+    }
+}
+
 impl From<&Error> for RpcErrorCode {
     fn from(error: &Error) -> Self {
         match error {
             Error::Busy => Self::Busy,
-            Error::Unavailable => Self::Internal,
+            Error::Unavailable(_) => Self::Internal,
             Error::Unsupported => Self::Unsupported,
             Error::TooLarge => Self::PayloadTooLarge,
             Error::NoDirectory => Self::InvalidRequest,
@@ -55,30 +63,20 @@ impl From<&Error> for RpcErrorCode {
 
 impl From<catalog::Error> for Error {
     fn from(error: catalog::Error) -> Self {
-        if !matches!(error, catalog::Error::Cancelled) {
-            tracing::warn!(%error, "vocabulary catalog operation failed");
-        }
         match error {
             catalog::Error::TooLarge => Self::TooLarge,
             catalog::Error::Cancelled => Self::Busy,
-            _ => Self::Unavailable,
+            error => Self::unavailable(error),
         }
     }
 }
 
-impl<E: std::error::Error + 'static> From<collection::Error<E>> for Error {
+impl<E: std::error::Error + Send + Sync + 'static> From<collection::Error<E>> for Error {
     fn from(error: collection::Error<E>) -> Self {
         match error {
             collection::Error::TooLarge => Self::TooLarge,
             collection::Error::Cancelled => Self::Busy,
-            collection::Error::Extractor(_) => {
-                tracing::warn!(stage = "extraction", "vocabulary preparation failed");
-                Self::Unavailable
-            }
-            _ => {
-                tracing::warn!(stage = "discovery", "vocabulary preparation failed");
-                Self::Unavailable
-            }
+            error => Self::unavailable(error),
         }
     }
 }
@@ -98,7 +96,7 @@ impl From<MatchError> for Error {
         match error {
             MatchError::TooLarge => Self::TooLarge,
             MatchError::Cancelled => Self::Busy,
-            MatchError::InvalidName => Self::Unavailable,
+            MatchError::InvalidName => Self::Unavailable(None),
         }
     }
 }
@@ -216,14 +214,15 @@ impl Runtime {
         (runtime, worker)
     }
 
+    fn registry(&self) -> MutexGuard<'_, Registry> {
+        self.registry.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub(super) fn snapshot(&self, directory: Option<&Directory>) -> Snapshot {
         self.active.fetch_add(1, Ordering::AcqRel);
         self.interrupt.store(true, Ordering::Release);
         let matcher = {
-            let mut registry = self
-                .registry
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut registry = self.registry();
             let revision = registry.personal_revision;
             let entry = if registry.removals.is_empty() {
                 directory.and_then(|directory| registry.entries.get_mut(directory))
@@ -250,11 +249,7 @@ impl Runtime {
     }
 
     pub(super) fn prepare(&self, directory: Option<Directory>) {
-        let result = match self.registry.lock() {
-            Ok(mut registry) => self.enqueue(&mut registry, directory, None, true),
-            Err(_) => Err(Error::Unavailable),
-        };
-        if let Err(error) = result {
+        if let Err(error) = self.enqueue(&mut self.registry(), directory, None, true) {
             tracing::debug!(%error, "vocabulary preparation not queued");
         }
     }
@@ -265,7 +260,7 @@ impl Runtime {
         let settings = self
             .settings
             .snapshot()
-            .map_err(|_| Error::Unavailable)?
+            .map_err(Error::unavailable)?
             .settings;
         let directory = requested.or(settings.vocabulary_dir);
         let mut status = self.catalog_status(directory.as_ref());
@@ -282,7 +277,7 @@ impl Runtime {
             None => self
                 .settings
                 .snapshot()
-                .map_err(|_| Error::Unavailable)?
+                .map_err(Error::unavailable)?
                 .settings
                 .vocabulary_dir
                 .ok_or(Error::NoDirectory),
@@ -296,31 +291,28 @@ impl Runtime {
                 ..Status::default()
             };
         };
-        match self.registry.lock() {
-            Ok(registry) if !registry.removals.is_empty() => Status {
+        let registry = self.registry();
+        if !registry.removals.is_empty() {
+            return Status {
                 state: State::Unavailable,
                 error: "removal".into(),
                 ..Status::default()
-            },
-            Ok(registry) => registry
-                .entries
-                .get(directory)
-                .map(|entry| entry.status.clone())
-                .unwrap_or_else(|| {
-                    if registry.pending.contains_key(&Some(directory.clone())) {
-                        Status {
-                            state: State::Refreshing,
-                            ..Status::default()
-                        }
-                    } else {
-                        Status::default()
-                    }
-                }),
-            Err(_) => Status {
-                error: "registry".to_owned(),
-                ..Status::default()
-            },
+            };
         }
+        registry
+            .entries
+            .get(directory)
+            .map(|entry| entry.status.clone())
+            .unwrap_or_else(|| {
+                if registry.pending.contains_key(&Some(directory.clone())) {
+                    Status {
+                        state: State::Refreshing,
+                        ..Status::default()
+                    }
+                } else {
+                    Status::default()
+                }
+            })
     }
 
     pub(super) async fn refresh(&self, requested: Option<Directory>) -> Result<Status, Error> {
@@ -333,17 +325,17 @@ impl Runtime {
         }
         let (reply, response) = oneshot::channel();
         {
-            let mut registry = self.registry.lock().map_err(|_| Error::Unavailable)?;
+            let mut registry = self.registry();
             self.enqueue(&mut registry, Some(directory), Some(reply), true)?;
         }
-        response.await.map_err(|_| Error::Unavailable)?
+        response.await.map_err(|_| Error::Unavailable(None))?
     }
 
     pub(super) async fn forget(&self, requested: Option<Directory>) -> Result<Status, Error> {
         let directory = self.selected(requested)?;
         let (reply, response) = oneshot::channel();
         {
-            let mut registry = self.registry.lock().map_err(|_| Error::Unavailable)?;
+            let mut registry = self.registry();
             if registry.removals.get(&directory) == Some(&RemovalState::Pending)
                 || (registry.removals.len() >= QUEUE_CAPACITY
                     && !registry.removals.contains_key(&directory))
@@ -396,7 +388,7 @@ impl Runtime {
                 .extend(retired.into_iter().filter_map(|entry| entry.snapshot));
             self.interrupt.store(true, Ordering::Release);
         };
-        response.await.map_err(|_| Error::Unavailable)?
+        response.await.map_err(|_| Error::Unavailable(None))?
     }
 
     fn publish(
@@ -408,7 +400,7 @@ impl Runtime {
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
         self.interrupted(cancel)?;
-        let mut registry = self.registry.lock().map_err(|_| Error::Unavailable)?;
+        let mut registry = self.registry();
         self.interrupted(cancel)?;
         if !registry.removals.is_empty() {
             return Err(Error::Busy);
@@ -418,7 +410,7 @@ impl Runtime {
             .get(&Some(directory.clone()))
             .is_some_and(|pending| std::ptr::eq(pending.as_ref(), cancel))
         {
-            return Err(Error::Unavailable);
+            return Err(Error::Unavailable(None));
         }
         let personal_revision = registry.personal_revision;
         registry.live.retain(|(entry, _)| entry.strong_count() != 0);
@@ -461,7 +453,7 @@ impl Runtime {
 
     fn interrupted(&self, cancel: &AtomicBool) -> Result<(), Error> {
         if cancel.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) {
-            Err(Error::Unavailable)
+            Err(Error::Unavailable(None))
         } else if self.interrupt.load(Ordering::Acquire) || self.active.load(Ordering::Acquire) != 0
         {
             Err(Error::Busy)
@@ -478,7 +470,7 @@ impl Runtime {
         force: bool,
     ) -> Result<(), Error> {
         if self.stopping.load(Ordering::Acquire) {
-            return Err(Error::Unavailable);
+            return Err(Error::Unavailable(None));
         }
         if directory.is_some() && !registry.removals.is_empty() {
             return Err(Error::Busy);
@@ -546,10 +538,8 @@ impl Runtime {
     fn stop(&self) {
         self.stopping.store(true, Ordering::Release);
         self.interrupt.store(true, Ordering::Release);
-        if let Ok(registry) = self.registry.lock() {
-            for cancel in registry.pending.values() {
-                cancel.store(true, Ordering::Release);
-            }
+        for cancel in self.registry().pending.values() {
+            cancel.store(true, Ordering::Release);
         }
     }
 }
@@ -557,7 +547,7 @@ impl Runtime {
 fn send_error<T>(error: mpsc::TrySendError<T>) -> Error {
     match error {
         mpsc::TrySendError::Full(_) => Error::Busy,
-        mpsc::TrySendError::Disconnected(_) => Error::Unavailable,
+        mpsc::TrySendError::Disconnected(_) => Error::Unavailable(None),
     }
 }
 
@@ -622,11 +612,8 @@ impl<C: Collector> Worker<C> {
             if self.runtime.active.load(Ordering::Acquire) != 0 {
                 continue;
             }
-            if let Ok(mut registry) = self.runtime.registry.lock() {
-                let retired = std::mem::take(&mut registry.retired);
-                drop(registry);
-                drop(retired);
-            }
+            let retired = std::mem::take(&mut self.runtime.registry().retired);
+            drop(retired);
             let Some(index) = deferred
                 .iter()
                 .position(|(ready, _)| *ready <= Instant::now())
@@ -642,7 +629,7 @@ impl<C: Collector> Worker<C> {
                 } => {
                     if cancel.load(Ordering::Acquire) {
                         if let Some(reply) = reply {
-                            let _ = reply.send(Err(Error::Unavailable));
+                            let _ = reply.send(Err(Error::Unavailable(None)));
                         }
                         continue;
                     }
@@ -650,11 +637,12 @@ impl<C: Collector> Worker<C> {
                         if self.runtime.stopping.load(Ordering::Acquire) {
                             break;
                         }
-                        let result = Err(Error::Unavailable);
-                        self.finished(directory.as_ref(), &cancel, &result);
-                        if let Some(reply) = reply {
-                            let _ = reply.send(result);
-                        }
+                        self.conclude(
+                            directory.as_ref(),
+                            &cancel,
+                            Err(Error::Unavailable(None)),
+                            reply,
+                        );
                         continue;
                     }
                     let deadline = Deadline::after(REFRESH_BUDGET);
@@ -688,10 +676,7 @@ impl<C: Collector> Worker<C> {
                         ));
                         continue;
                     }
-                    self.finished(directory.as_ref(), &cancel, &result);
-                    if let Some(reply) = reply {
-                        let _ = reply.send(result);
-                    }
+                    self.conclude(directory.as_ref(), &cancel, result, reply);
                 }
                 Command::Forget {
                     directory,
@@ -721,17 +706,19 @@ impl<C: Collector> Worker<C> {
                         ));
                         continue;
                     }
-                    if let Ok(mut registry) = self.runtime.registry.lock() {
-                        if result.is_ok() {
-                            registry.removals.remove(&directory);
-                        } else {
-                            registry.removals.insert(directory, RemovalState::Failed);
-                        }
+                    let mut registry = self.runtime.registry();
+                    if result.is_ok() {
+                        registry.removals.remove(&directory);
+                    } else {
+                        registry.removals.insert(directory, RemovalState::Failed);
                     }
-                    if result.is_err() {
-                        tracing::warn!("vocabulary removal failed");
+                    drop(registry);
+                    if let Err(Err(error)) = reply.send(result) {
+                        tracing::warn!(
+                            error = %error_chain(&error),
+                            "vocabulary removal failed; requester gone"
+                        );
                     }
-                    let _ = reply.send(result);
                 }
             }
         }
@@ -759,7 +746,7 @@ impl<C: Collector> Worker<C> {
             match discover::resolve(directory.as_path()) {
                 Ok(root) => Some(root),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(_) => return Err(Error::Unavailable),
+                Err(error) => return Err(Error::unavailable(error)),
             }
         } else {
             None
@@ -771,9 +758,7 @@ impl<C: Collector> Worker<C> {
         )?;
         let retired: Vec<_> = self
             .runtime
-            .registry
-            .lock()
-            .map_err(|_| Error::Unavailable)?
+            .registry()
             .entries
             .extract_if(|key, entry| {
                 roots.iter().any(|root| {
@@ -793,7 +778,7 @@ impl<C: Collector> Worker<C> {
     fn await_idle(&self, cancel: &AtomicBool) -> Result<(), Error> {
         loop {
             if cancel.load(Ordering::Acquire) || self.runtime.stopping.load(Ordering::Acquire) {
-                return Err(Error::Unavailable);
+                return Err(Error::Unavailable(None));
             }
             if self.runtime.active.load(Ordering::Acquire) == 0 {
                 self.runtime.interrupt.store(false, Ordering::Release);
@@ -807,11 +792,7 @@ impl<C: Collector> Worker<C> {
 
     fn reserve(&self, reservation: usize, protected: Option<&Directory>) -> Result<(), Error> {
         loop {
-            let mut registry = self
-                .runtime
-                .registry
-                .lock()
-                .map_err(|_| Error::Unavailable)?;
+            let mut registry = self.runtime.registry();
             registry.live.retain(|(entry, _)| entry.strong_count() != 0);
             let bytes = self.personal.estimated_bytes()
                 + registry.live.iter().map(|(_, bytes)| bytes).sum::<usize>();
@@ -853,7 +834,7 @@ impl<C: Collector> Worker<C> {
         if catalog.is_none() {
             *catalog = Some(Catalog::open(&self.directory, token.clone())?);
         }
-        let catalog = catalog.as_mut().ok_or(Error::Unavailable)?;
+        let catalog = catalog.as_mut().ok_or(Error::Unavailable(None))?;
         catalog.cancel_on(token.clone())?;
         Ok(catalog)
     }
@@ -866,7 +847,7 @@ impl<C: Collector> Worker<C> {
                 if self.runtime.interrupt.load(Ordering::Acquire) {
                     Error::Busy
                 } else {
-                    Error::Unavailable
+                    Error::Unavailable(None)
                 }
             })?,
             None => PersonalRules::default(),
@@ -875,11 +856,7 @@ impl<C: Collector> Worker<C> {
             return Ok(());
         }
         let matcher = Arc::new(Vocabulary::compile_with(&[], rules.clone(), &cancel)?);
-        let mut registry = self
-            .runtime
-            .registry
-            .lock()
-            .map_err(|_| Error::Unavailable)?;
+        let mut registry = self.runtime.registry();
         if self.runtime.interrupt.load(Ordering::Acquire) {
             return Err(Error::Busy);
         }
@@ -910,12 +887,12 @@ impl<C: Collector> Worker<C> {
         catalog: &mut Option<Catalog>,
     ) -> Result<Status, Error> {
         self.runtime.interrupted(cancel)?;
-        let key = self.cache_key.clone().ok_or(Error::Unavailable)?;
+        let key = self.cache_key.clone().ok_or(Error::Unavailable(None))?;
         if self.collector.cache_key().as_ref() != Some(&key) {
             tracing::warn!("vocabulary collector changed its cache identity");
-            return Err(Error::Unavailable);
+            return Err(Error::Unavailable(None));
         }
-        let root = discover::resolve(directory.as_path()).map_err(|_| Error::Unavailable)?;
+        let root = discover::resolve(directory.as_path()).map_err(Error::unavailable)?;
         self.runtime.interrupted(cancel)?;
         let cached = self.catalog(catalog, token)?.load(&root, &key)?;
         if let Some(cached) = &cached {
@@ -934,7 +911,7 @@ impl<C: Collector> Worker<C> {
         let discovery = self.collector.collect(directory, &previous, token)?;
         if discovery.root != root {
             tracing::warn!("vocabulary selection changed during discovery");
-            return Err(Error::Unavailable);
+            return Err(Error::Unavailable(None));
         }
         drop(previous);
         let terms = select::terms(&discovery.sources, token)?;
@@ -975,21 +952,50 @@ impl<C: Collector> Worker<C> {
         Ok(matcher)
     }
 
+    /// A handler that asked logs its own failure, so only a background
+    /// refresh's, or one whose requester left, is logged here.
+    fn conclude(
+        &self,
+        directory: Option<&Directory>,
+        cancel: &AtomicBool,
+        result: Result<Status, Error>,
+        reply: Option<Reply>,
+    ) {
+        let current = self.finished(directory, cancel, &result);
+        match (reply, result) {
+            (Some(reply), result) => {
+                if let Err(Err(error)) = reply.send(result) {
+                    tracing::warn!(
+                        error = %error_chain(&error),
+                        "vocabulary refresh failed; requester gone"
+                    );
+                }
+            }
+            (None, Err(error)) if current => tracing::warn!(
+                error = %error_chain(&error),
+                "vocabulary refresh failed; retaining available snapshot"
+            ),
+            (None, _) => {}
+        }
+    }
+
+    /// Whether `result` is still the folder's latest.
     fn finished(
         &self,
         directory: Option<&Directory>,
         cancel: &AtomicBool,
         result: &Result<Status, Error>,
-    ) {
+    ) -> bool {
         let mut evicted = None;
-        if let Ok(mut registry) = self.runtime.registry.lock() {
+        {
+            let mut registry = self.runtime.registry();
             let key = directory.cloned();
             if !registry
                 .pending
                 .get(&key)
                 .is_some_and(|pending| std::ptr::eq(pending.as_ref(), cancel))
             {
-                return;
+                return false;
             }
             registry.pending.remove(&key);
             if let Err(error) = result {
@@ -1032,10 +1038,10 @@ impl<C: Collector> Worker<C> {
                     }
                     .to_owned();
                 }
-                tracing::warn!(%error, "vocabulary refresh failed; retaining available snapshot");
             }
         }
         drop(evicted);
+        true
     }
 }
 
@@ -1158,6 +1164,113 @@ mod tests {
         );
     }
 
+    fn static_runtime(
+        base: &Path,
+        selected: &Directory,
+    ) -> (Arc<Runtime>, Worker<StaticCollector>) {
+        let collector = StaticCollector {
+            root: selected.as_path().canonicalize().unwrap(),
+            previous_counts: Vec::new(),
+        };
+        Runtime::new(base.join("catalog"), None, true, settings(base), collector)
+    }
+
+    fn refresh_once(
+        runtime: &Runtime,
+        worker: &mut Worker<StaticCollector>,
+        selected: &Directory,
+    ) -> Result<Status, Error> {
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+        let result = worker.refresh_project(selected, &cancel, &CancelToken::never(), &mut None);
+        worker.finished(Some(selected), &cancel, &result);
+        result
+    }
+
+    #[test]
+    fn a_poisoned_registry_still_serves_the_next_refresh() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+        let poisoner = Arc::clone(&runtime);
+        std::thread::spawn(move || {
+            let _registry = poisoner.registry.lock().unwrap();
+            panic!("poison the registry");
+        })
+        .join()
+        .unwrap_err();
+        assert!(runtime.registry.is_poisoned());
+
+        let result = refresh_once(&runtime, &mut worker, &selected);
+
+        assert_eq!(result.unwrap().state, State::Ready);
+        assert_eq!(runtime.status(Some(selected)).unwrap().state, State::Ready);
+    }
+
+    #[test]
+    fn a_catalog_failure_keeps_its_cause_under_the_same_code() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        std::fs::write(temporary.path().join("catalog"), "").unwrap();
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+
+        let error = refresh_once(&runtime, &mut worker, &selected).unwrap_err();
+
+        assert!(
+            std::error::Error::source(&error)
+                .and_then(|cause| cause.downcast_ref::<catalog::Error>())
+                .is_some(),
+            "{error:?}"
+        );
+        assert!(
+            error_chain(&error).starts_with("vocabulary worker is unavailable: vocabulary catalog")
+        );
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::Internal);
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_refresh_whose_requester_left_logs_its_failure() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let (_runtime, worker) = static_runtime(temporary.path(), &selected);
+        let (reply, receiver) = oneshot::channel();
+        drop(receiver);
+        let captured = Captured::default();
+        let sink = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || sink.clone())
+            .with_ansi(false)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            worker.conclude(
+                Some(&selected),
+                &AtomicBool::new(false),
+                Err(Error::Unavailable(None)),
+                Some(reply),
+            );
+        });
+
+        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("requester gone"), "{log}");
+    }
+
     #[test]
     fn injected_collection_cannot_publish_evidence_from_another_root() {
         let temporary = tempfile::tempdir().unwrap();
@@ -1181,7 +1294,7 @@ mod tests {
         let result =
             worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
         worker.finished(Some(&selected), &cancel, &result);
-        assert!(matches!(result, Err(Error::Unavailable)));
+        assert!(matches!(result, Err(Error::Unavailable(None))));
         assert_eq!(runtime.catalog_status(Some(&selected)).runtime_revision, 0);
         assert_eq!(
             runtime
@@ -1555,7 +1668,7 @@ mod tests {
         worker.await_idle(&AtomicBool::new(false)).unwrap();
         assert!(matches!(
             runtime.publish(&selected, selected.as_path(), 2, matcher, &cancel),
-            Err(Error::Unavailable)
+            Err(Error::Unavailable(None))
         ));
     }
 }

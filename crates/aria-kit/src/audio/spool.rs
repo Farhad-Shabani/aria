@@ -1,5 +1,6 @@
 //! The temporary WAV that capture writes, and cleanup of ones left behind.
 
+use aria_primitives::Cause;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::BufWriter;
@@ -199,7 +200,7 @@ pub enum SpoolError {
     },
 
     #[error("failed to initialize the temporary WAV recording")]
-    Initialize(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Initialize(#[source] Cause),
 
     #[error(
         "recording would contain {attempted_samples} samples; maximum is {maximum_samples} samples"
@@ -213,13 +214,13 @@ pub enum SpoolError {
     SampleCountOverflow,
 
     #[error("failed to write PCM samples to the temporary recording")]
-    Write(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Write(#[source] Cause),
 
     #[error("cannot finalize an empty recording")]
     Empty,
 
     #[error("failed to finalize the temporary recording")]
-    Finalize(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Finalize(#[source] Cause),
 }
 
 #[cfg(test)]

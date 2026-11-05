@@ -1,6 +1,8 @@
 //! Voice-activity inference over canonical audio frames: which stretches
 //! carry a human voice rather than music, noise, or silence.
 
+use aria_primitives::Cause;
+
 mod endpointer;
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 mod map;
@@ -51,7 +53,7 @@ impl<V: VoiceActivityDetector> VoiceActivityDetector for &mut V {
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceActivityError {
     #[error("failed to load the bundled voice-activity model")]
-    LoadModel(#[source] Box<dyn std::error::Error + Send + Sync>),
+    LoadModel(#[source] Cause),
 
     #[error("voice-activity frame contains {actual_samples} samples; expected {expected_samples}")]
     InvalidFrameLength {
@@ -60,7 +62,7 @@ pub enum VoiceActivityError {
     },
 
     #[error("voice-activity inference failed")]
-    Inference(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Inference(#[source] Cause),
 
     #[error("voice-activity model returned invalid probability {0}")]
     InvalidProbability(f32),

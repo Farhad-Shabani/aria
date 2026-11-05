@@ -24,39 +24,46 @@ pub fn remote_pair(input: impl std::io::Read) -> Result<String, RemoteClientErro
 
 fn read_invitation(input: impl std::io::Read) -> Result<String, RemoteClientError> {
     use std::io::Read;
-    let mut bytes = Vec::new();
+    let mut invitation = String::new();
     input
         .take(MAX_DOCUMENT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| RemoteClientError::Invitation)?;
-    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-        return Err(RemoteClientError::Invitation);
+        .read_to_string(&mut invitation)
+        .map_err(RemoteClientError::invitation)?;
+    bounded_invitation(&invitation)?;
+    Ok(invitation)
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the invitation exceeds {} KiB", MAX_DOCUMENT_BYTES / 1024)]
+struct InvitationTooLarge;
+
+fn bounded_invitation(invitation: &str) -> Result<(), RemoteClientError> {
+    if invitation.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(RemoteClientError::invitation(InvitationTooLarge));
     }
-    String::from_utf8(bytes).map_err(|_| RemoteClientError::Invitation)
+    Ok(())
 }
 
 pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
-    if invitation.len() as u64 > MAX_DOCUMENT_BYTES {
-        return Err(RemoteClientError::Invitation);
-    }
+    bounded_invitation(invitation)?;
     let invitation: Invitation =
-        serde_json::from_str(invitation).map_err(|_| RemoteClientError::Invitation)?;
+        serde_json::from_str(invitation).map_err(RemoteClientError::invitation)?;
     let paths = Paths::in_home(home);
     if let Some(parent) = paths.directory().parent() {
-        prepare_directory(parent).map_err(|_| RemoteClientError::Storage)?;
+        prepare_directory(parent).map_err(RemoteClientError::storage)?;
     }
-    prepare_directory(paths.directory()).map_err(|_| RemoteClientError::Storage)?;
+    prepare_directory(paths.directory()).map_err(RemoteClientError::storage)?;
     let _lock = ExclusiveListener::bind(paths.pairing_socket(), paths.pairing_lock())
-        .map_err(|_| RemoteClientError::PairingLock)?;
+        .map_err(RemoteClientError::PairingLock)?;
     let mut identity =
         ClientIdentity::load_or_create(&paths.client_identity()).map_err(identity_error)?;
-    let endpoint =
-        tls::invited_endpoint(&identity, &invitation).map_err(|_| RemoteClientError::Identity)?;
+    let endpoint = tls::invited_endpoint(&identity, &invitation)
+        .map_err(|error| RemoteClientError::Identity(error.into()))?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = endpoint
             .connect()
             .await
-            .map_err(|_| RemoteClientError::Connection)?;
+            .map_err(RemoteClientError::Handshake)?;
         wire::inference_pairing_service_client::InferencePairingServiceClient::new(channel)
             .max_decoding_message_size(1024)
             .pair(wire::InferencePairRequest {
@@ -96,10 +103,10 @@ pub fn forget(home: &Path) -> Result<Forgotten, RemoteClientError> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(Forgotten::NothingPaired);
         }
-        Err(_) => return Err(RemoteClientError::Storage),
+        Err(error) => return Err(RemoteClientError::storage(error)),
     }
     let _lock = ExclusiveListener::bind(paths.pairing_socket(), paths.pairing_lock())
-        .map_err(|_| RemoteClientError::PairingLock)?;
+        .map_err(RemoteClientError::PairingLock)?;
     let forgotten = match ClientIdentity::open(&path) {
         Ok(identity) => {
             let client_fingerprint = identity.fingerprint().to_owned();
@@ -113,14 +120,14 @@ pub fn forget(home: &Path) -> Result<Forgotten, RemoteClientError> {
     };
     if !PrivateDocument::new(&path, MAX_DOCUMENT_BYTES)
         .remove()
-        .map_err(|_| RemoteClientError::Storage)?
+        .map_err(RemoteClientError::storage)?
     {
         return Ok(Forgotten::NothingPaired);
     }
-    fs::File::open(paths.directory())
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| RemoteClientError::ForgetUnconfirmed(forgotten.revoke_hint()))?;
-    Ok(forgotten)
+    match fs::File::open(paths.directory()).and_then(|directory| directory.sync_all()) {
+        Ok(()) => Ok(forgotten),
+        Err(source) => Err(RemoteClientError::ForgetUnconfirmed { forgotten, source }),
+    }
 }
 
 impl Forgotten {
@@ -191,6 +198,23 @@ mod tests {
     }
 
     #[test]
+    fn a_storage_failure_keeps_its_cause_under_the_same_message() {
+        let home = tempfile::tempdir().unwrap();
+        prepare_directory(&home.path().join(".aria")).unwrap();
+        fs::write(Paths::in_home(home.path()).directory(), "").unwrap();
+
+        let error = forget(home.path()).unwrap_err();
+        let kind = std::iter::successors(std::error::Error::source(&error), |cause| cause.source())
+            .find_map(|cause| cause.downcast_ref::<io::Error>())
+            .map(io::Error::kind);
+        assert_eq!(kind, Some(io::ErrorKind::NotADirectory));
+        assert!(
+            aria_primitives::error_chain(&error)
+                .starts_with("cannot prepare remote client storage: ")
+        );
+    }
+
+    #[test]
     fn a_pairing_in_progress_is_not_forgotten() {
         let (home, paths) = prepared_home();
         fs::write(paths.client_identity(), "{").unwrap();
@@ -199,7 +223,7 @@ mod tests {
 
         assert!(matches!(
             forget(home.path()),
-            Err(RemoteClientError::PairingLock)
+            Err(RemoteClientError::PairingLock(_))
         ));
         assert!(paths.client_identity().exists());
     }

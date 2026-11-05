@@ -4,8 +4,8 @@
 use candle_core::{IndexOp, Tensor};
 
 use crate::qwen::config::ModelConfig;
-use crate::qwen::generate::{GenerateError, Result};
 use crate::qwen::talker::Talker;
+use crate::qwen::{Error, Result};
 
 /// One assembled CustomVoice prompt: prefill embeddings plus the per-frame
 /// text tail injected additively during decoding.
@@ -37,7 +37,7 @@ pub fn assemble_custom_voice(
     if let Some(lang) = language_id
         && !talker_cfg.codec_language_id.values().any(|v| *v == lang)
     {
-        return Err(GenerateError::UnsupportedLanguage {
+        return Err(Error::UnsupportedLanguage {
             language: format!("id {lang}"),
         });
     }

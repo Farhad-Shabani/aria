@@ -4,6 +4,8 @@
 
 use candle_core::{Device, Tensor};
 
+use crate::qwen::{Error, Result};
+
 const N_FFT: usize = 1024;
 const HOP: usize = 256;
 const WINDOW: usize = 1024;
@@ -17,12 +19,6 @@ const MAG_FLOOR: f32 = 1e-9;
 const LOG_CLAMP: f32 = 1e-5;
 /// ln(6.4) / 27 — the librosa Slaney log-step.
 const LOGSTEP_VALUE: f64 = 0.06875177742057906;
-
-#[derive(Debug, thiserror::Error)]
-#[error("qwen: mel spectrogram failed: {0}")]
-pub struct MelError(pub String);
-
-pub type Result<T> = std::result::Result<T, MelError>;
 
 /// The Slaney-scale Hz↔Mel pair librosa uses when `htk=False`.
 fn hz_to_mel(frequency: f64) -> f64 {
@@ -93,7 +89,7 @@ fn hann_window() -> Vec<f32> {
 fn reflect_pad(samples: &[f32], pad: usize) -> Result<Vec<f32>> {
     let n = samples.len();
     if n < 2 {
-        return Err(MelError("input too short to reflect-pad".to_owned()));
+        return Err(Error::ShortMelInput);
     }
     if pad == 0 {
         return Ok(samples.to_vec());
@@ -177,7 +173,7 @@ pub fn log_mel(samples: &[f32], device: &Device) -> Result<Tensor> {
         *value = (*value).max(LOG_CLAMP).ln();
     }
 
-    Tensor::from_vec(magnitudes, (1, N_MELS, frames), device).map_err(|e| MelError(e.to_string()))
+    Ok(Tensor::from_vec(magnitudes, (1, N_MELS, frames), device)?)
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 //! Shared mel, embedding, and classifier stages for the wake engines.
 
+use aria_kit::primitives::Cause;
 use std::path::{Path, PathBuf};
 
 use ort::{
@@ -242,11 +243,11 @@ pub enum Error {
     Load {
         role: &'static str,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Cause,
     },
 
     #[error("wake-word inference failed")]
-    Inference(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Inference(#[source] Cause),
 
     #[error("the {role} wake-word model is incompatible: {detail}")]
     Incompatible { role: &'static str, detail: String },

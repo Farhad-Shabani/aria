@@ -6,9 +6,10 @@ use candle_core::Tensor;
 
 use candle_nn::VarBuilder;
 
+use crate::qwen::Result;
 use crate::qwen::config::CodePredictorConfig;
 use crate::qwen::nn::rms_norm;
-use crate::qwen::transformer::{DecoderLayer, LayerCache, Result};
+use crate::qwen::transformer::{DecoderLayer, LayerCache};
 
 pub struct CodePredictor {
     embeddings: Vec<Tensor>, // per group 1..15: [2048, hidden]

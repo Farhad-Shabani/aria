@@ -1,23 +1,29 @@
+use aria_primitives::Cause;
 use std::future::Future;
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use aria_kit::audio::{RecordingReader, pcm16_from_f32};
+use aria_kit::audio::{CaptureError, RecordingReader, pcm16_from_f32};
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
 use tonic::transport::Channel;
 
-use super::identity::{ClientIdentity, MAX_DOCUMENT_BYTES};
+use super::identity::{self, ClientIdentity, MAX_DOCUMENT_BYTES};
+use super::pairing::Forgotten;
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT, OVERALL_TIMEOUT, Paths, QUEUE_CAPACITY, tls};
 use crate::inference::{
     Completion, Event, Info, MAX_AUDIO_SAMPLES, MAX_AUDIO_SECONDS, MAX_RESPONSE_BYTES,
     MAX_TEXT_BYTES, Start, Strategy,
 };
-use crate::ipc::{protocol, wire};
+use crate::ipc::protocol;
+use crate::ipc::wire;
+use aria_primitives::local_socket::LocalSocketError;
+use aria_primitives::private_document::DocumentError;
 use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::transcription::{
@@ -34,11 +40,11 @@ pub enum RemoteClientError {
     #[error("cannot load the remote settings")]
     Config(#[source] aria_settings::config::ConfigError),
     #[error("cannot prepare remote client storage")]
-    Storage,
+    Storage(#[source] Cause),
     #[error("another pairing operation is active or its lock is unavailable")]
-    PairingLock,
+    PairingLock(#[source] LocalSocketError),
     #[error("remote invitation is invalid or exceeds {} KiB", MAX_DOCUMENT_BYTES / 1024)]
-    Invitation,
+    Invitation(#[source] Cause),
     #[error(
         "remote endpoint must be an HTTPS origin without credentials, path, query, or fragment"
     )]
@@ -46,19 +52,36 @@ pub enum RemoteClientError {
     #[error("client fingerprint must be 64 hexadecimal digits")]
     InvalidFingerprint,
     #[error("remote identity is missing, invalid or not paired with this endpoint")]
-    Identity,
+    Identity(#[source] identity::Error),
+    /// The server's verdict on its own write.
     #[error(
         "remote trust was written but durability is unconfirmed; pair again before relying on it"
     )]
     DurabilityUnconfirmed,
+    /// This machine's write of the server pin.
+    #[error(
+        "remote trust was written but durability is unconfirmed; pair again before relying on it"
+    )]
+    PinUnconfirmed(#[source] DocumentError),
     #[error(
         "remote revocation durability is unconfirmed; repair persistence before relying on it across restart"
     )]
     RevocationUnconfirmed,
-    #[error("the pairing was removed, but the disk did not confirm it; forget again ({0})")]
-    ForgetUnconfirmed(String),
+    #[error(
+        "the pairing was removed, but the disk did not confirm it; forget again ({})",
+        forgotten.revoke_hint()
+    )]
+    ForgetUnconfirmed {
+        forgotten: Forgotten,
+        #[source]
+        source: io::Error,
+    },
     #[error("cannot start the remote client runtime")]
-    Runtime,
+    Runtime(#[source] io::Error),
+    #[error("cannot establish the authenticated remote connection")]
+    Handshake(#[source] tonic::transport::Error),
+    /// The call ended without a verdict. The status stays out, because its
+    /// message is the server's and untrusted.
     #[error("cannot establish the authenticated remote connection")]
     Connection,
     #[error("remote operation failed ({0})")]
@@ -69,14 +92,34 @@ pub enum RemoteClientError {
     Cancelled,
     #[error("remote server does not provide the selected engine or recognition strategy")]
     Unsupported,
+    /// The messages decode but break the stream's invariants.
     #[error("remote response is invalid")]
     Response,
+    #[error("remote response is invalid")]
+    Decode(#[source] Cause),
     #[error("remote audio exceeds {MAX_AUDIO_SECONDS} seconds")]
     AudioTooLong,
     #[error("cannot read audio for remote transcription")]
-    Audio,
+    Audio(#[source] CaptureError),
+    /// The recording released audio the server must receive.
+    #[error("cannot read audio for remote transcription")]
+    PartialAudio,
     #[error("remote output was not consumed in time")]
     Backpressure,
+}
+
+impl RemoteClientError {
+    pub(super) fn storage(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Storage(Box::new(error))
+    }
+
+    pub(super) fn invitation(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Invitation(Box::new(error))
+    }
+
+    pub(super) fn decode(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Decode(Box::new(error))
+    }
 }
 
 #[derive(Clone)]
@@ -112,7 +155,7 @@ impl RemoteRuntime {
             .thread_name("aria-remote")
             .enable_all()
             .build()
-            .map_err(|_| RemoteClientError::Runtime)?;
+            .map_err(RemoteClientError::Runtime)?;
         Ok(Self {
             handle: runtime.handle().clone(),
             runtime: Some(runtime),
@@ -139,7 +182,8 @@ impl RemoteTranscriber {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
             .map_err(identity_error)?;
         let server = identity.pinned_server(endpoint).map_err(identity_error)?;
-        let endpoint = tls::endpoint(&identity, server).map_err(|_| RemoteClientError::Identity)?;
+        let endpoint = tls::endpoint(&identity, server)
+            .map_err(|error| RemoteClientError::Identity(error.into()))?;
         let runtime = RemoteRuntime::new()?;
         let channel = {
             let _runtime = runtime.handle.enter();
@@ -172,7 +216,7 @@ impl RemoteTranscriber {
                         .get_info(wire::InferenceInfoRequest {})
                         .await
                         .map_err(rpc_error)?;
-                    Info::try_from(response.into_inner()).map_err(|_| RemoteClientError::Response)
+                    Info::try_from(response.into_inner()).map_err(RemoteClientError::decode)
                 }))?;
         let engine = aria_settings::config::backend::local(&info.engine)
             .ok_or(RemoteClientError::Unsupported)?;
@@ -236,7 +280,7 @@ async fn receive(
         .map_err(rpc_error)?
         .into_inner();
     while let Some(response) = responses.message().await.map_err(rpc_error)? {
-        let event = Event::try_from(response).map_err(|_| RemoteClientError::Response)?;
+        let event = Event::try_from(response).map_err(RemoteClientError::decode)?;
         let sent = progress.sent.load(Ordering::Acquire);
         let uploaded = progress.finished.load(Ordering::Acquire);
         match validator.accept(event, sent, uploaded)? {
@@ -634,23 +678,27 @@ fn transcription_error(error: RemoteClientError) -> TranscriptionError {
         RemoteClientError::Cancelled => TranscriptionError::Cancelled,
         RemoteClientError::Rpc(RpcErrorCode::NoSpeech) => TranscriptionError::NoSpeech,
         error @ (RemoteClientError::Config(_)
-        | RemoteClientError::Storage
-        | RemoteClientError::PairingLock
-        | RemoteClientError::Invitation
+        | RemoteClientError::Storage(_)
+        | RemoteClientError::PairingLock(_)
+        | RemoteClientError::Invitation(_)
         | RemoteClientError::InvalidEndpoint
         | RemoteClientError::InvalidFingerprint
-        | RemoteClientError::Identity
+        | RemoteClientError::Identity(_)
         | RemoteClientError::DurabilityUnconfirmed
+        | RemoteClientError::PinUnconfirmed(_)
         | RemoteClientError::RevocationUnconfirmed
-        | RemoteClientError::ForgetUnconfirmed(_)
-        | RemoteClientError::Runtime
+        | RemoteClientError::ForgetUnconfirmed { .. }
+        | RemoteClientError::Runtime(_)
+        | RemoteClientError::Handshake(_)
         | RemoteClientError::Connection
         | RemoteClientError::Rpc(_)
         | RemoteClientError::Timeout
         | RemoteClientError::Unsupported
         | RemoteClientError::Response
+        | RemoteClientError::Decode(_)
         | RemoteClientError::AudioTooLong
-        | RemoteClientError::Audio
+        | RemoteClientError::Audio(_)
+        | RemoteClientError::PartialAudio
         | RemoteClientError::Backpressure) => TranscriptionError::Inference {
             backend: "remote",
             source: BackendError::engine(error),
@@ -666,14 +714,14 @@ async fn upload(
 ) -> Result<(), RemoteClientError> {
     use wire::inference_request::Body;
     if recording.held_from() != 0 {
-        return Err(RemoteClientError::Audio);
+        return Err(RemoteClientError::PartialAudio);
     }
     send_request(&requests, Body::Start(start.into())).await?;
     let mut position = 0;
     loop {
         recording
             .fill_available()
-            .map_err(|_| RemoteClientError::Audio)?;
+            .map_err(RemoteClientError::Audio)?;
         if recording.held_to() > MAX_AUDIO_SAMPLES {
             return Err(RemoteClientError::AudioTooLong);
         }
@@ -713,7 +761,7 @@ pub(super) fn run<T>(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|_| RemoteClientError::Runtime)?;
+        .map_err(RemoteClientError::Runtime)?;
     let result = runtime.block_on(future);
     runtime.shutdown_background();
     result
@@ -742,24 +790,10 @@ pub(super) async fn bounded<T>(
     }
 }
 
-pub(super) fn identity_error(error: super::identity::Error) -> RemoteClientError {
-    use super::identity::Error;
+pub(super) fn identity_error(error: identity::Error) -> RemoteClientError {
     match error {
-        Error::DurabilityUnconfirmed(_) => RemoteClientError::DurabilityUnconfirmed,
-        Error::Document(_)
-        | Error::RevokeUnconfirmed(_)
-        | Error::InvalidIdentity
-        | Error::InvalidInvitation
-        | Error::InvalidEndpoint
-        | Error::Unpaired
-        | Error::Unauthenticated
-        | Error::Full
-        | Error::Busy
-        | Error::Stopped
-        | Error::Certificate(_)
-        | Error::Invite(_)
-        | Error::Encode(_)
-        | Error::Tls(_) => RemoteClientError::Identity,
+        identity::Error::DurabilityUnconfirmed(source) => RemoteClientError::PinUnconfirmed(source),
+        error => RemoteClientError::Identity(error),
     }
 }
 
@@ -1429,7 +1463,9 @@ mod tests {
         let (finished, result) = mpsc::sync_channel(1);
         let worker = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
-            finished.send(Err(RemoteClientError::Identity)).unwrap();
+            finished
+                .send(Err(RemoteClientError::Identity(identity::Error::Unpaired)))
+                .unwrap();
             drop(sender);
         });
         let mut session = Session {
@@ -1439,7 +1475,7 @@ mod tests {
         };
         assert!(matches!(
             session.next(&CancelToken::never()),
-            Err(RemoteClientError::Identity)
+            Err(RemoteClientError::Identity(_))
         ));
         drop(session);
         worker.join().unwrap();
@@ -1617,6 +1653,15 @@ mod tests {
     }
 
     #[test]
+    fn an_unconfirmed_pin_does_not_claim_the_servers_verdict() {
+        let error = identity_error(identity::Error::DurabilityUnconfirmed(
+            DocumentError::NoParentDirectory,
+        ));
+        assert!(matches!(error, RemoteClientError::PinUnconfirmed(_)));
+        assert!(!aria_primitives::error_chain(&error).contains("authorization"));
+    }
+
+    #[test]
     fn an_unpaired_home_builds_nothing_and_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
         assert!(matches!(
@@ -1624,7 +1669,7 @@ mod tests {
                 home.path(),
                 &ServerEndpoint::parse("https://server.example").unwrap(),
             ),
-            Err(RemoteClientError::Identity)
+            Err(RemoteClientError::Identity(_))
         ));
         assert!(!home.path().join(".aria/inference/client.json").exists());
     }

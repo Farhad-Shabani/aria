@@ -59,7 +59,7 @@ impl Drop for Registration {
         if let Err(error) = self.unregister() {
             // Native code may still reference the context. Retaining its memory
             // is safer than freeing it after an unsuccessful unregistration.
-            tracing::error!(%error, "retaining native capture resources after callback teardown failure");
+            tracing::error!(error = %error_chain(&error), "retaining native capture resources after callback teardown failure");
             return;
         }
         // SAFETY: Unregistration prevents further callbacks. Each owner is
@@ -195,11 +195,14 @@ unsafe fn receive_buffer(input: &cat::AudioBufList<1>, context: &mut Callback) {
     }
 }
 
-fn native_error(operation: &str, error: os::Error) -> ListenError {
+fn native_error(operation: &'static str, error: os::Error) -> ListenError {
     if error == ca::hardware_err::PERMISSIONS {
         ListenError::PermissionDenied
     } else {
-        failure(format!("{operation}: {error}"))
+        ListenError::CaptureFailed {
+            operation,
+            source: Some(Box::new(error)),
+        }
     }
 }
 
@@ -335,7 +338,10 @@ pub(super) fn run(mut capture: RecordingWriter, stop: Stopper) -> Result<(), Lis
 }
 
 fn resample_failure(error: ResampleError) -> ListenError {
-    failure(error_chain(&error))
+    ListenError::CaptureFailed {
+        operation: "resample",
+        source: Some(Box::new(error)),
+    }
 }
 
 fn check_callback(failed: &AtomicU8) -> Result<(), ListenError> {
@@ -449,6 +455,16 @@ mod tests {
         );
         assert_eq!(SampleFormat::Int16.sample(&i16::MIN.to_ne_bytes()), -1.0);
         assert_eq!(SampleFormat::Int32.sample(&i32::MIN.to_ne_bytes()), -1.0);
+    }
+
+    #[test]
+    fn native_failure_keeps_its_os_error() {
+        let cause = os::Error::new_unchecked(-50);
+        let error = native_error("create tap", cause);
+        assert_eq!(
+            std::error::Error::source(&error).and_then(|source| source.downcast_ref::<os::Error>()),
+            Some(&cause)
+        );
     }
 
     #[test]

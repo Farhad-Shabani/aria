@@ -27,7 +27,7 @@ pub fn remote_invite(endpoint: &str) -> Result<String, RemoteClientError> {
                 .await
                 .map_err(rpc_error)?;
         String::from_utf8(response.into_inner().invitation_json)
-            .map_err(|_| RemoteClientError::Response)
+            .map_err(|error| RemoteClientError::decode(error.utf8_error()))
     }))
 }
 
@@ -59,8 +59,8 @@ pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
 async fn admin_channel(home: &Path) -> Result<Channel, RemoteClientError> {
     let runtime = Paths::in_home(home).runtime();
     Endpoint::from_shared(format!("unix://{}", runtime.socket_path().display()))
-        .map_err(|_| RemoteClientError::Connection)?
+        .map_err(RemoteClientError::Handshake)?
         .connect()
         .await
-        .map_err(|_| RemoteClientError::Connection)
+        .map_err(RemoteClientError::Handshake)
 }

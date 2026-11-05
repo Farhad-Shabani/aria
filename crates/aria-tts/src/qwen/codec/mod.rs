@@ -24,17 +24,7 @@ const WINDOW_FRAMES: usize = 300;
 /// matches a whole-sequence pass; the context audio is then discarded.
 pub const LEFT_CONTEXT_FRAMES: usize = 25;
 
-#[derive(Debug, thiserror::Error)]
-pub enum CodecError {
-    #[error("qwen: codec expects {expected} codebooks per frame, got {got}")]
-    CodebookCount { expected: usize, got: usize },
-    #[error("qwen: codec decode failed")]
-    Decode(#[from] candle_core::Error),
-    #[error("qwen: codec load failed: {0}")]
-    Load(String),
-}
-
-type Result<T> = std::result::Result<T, CodecError>;
+use crate::qwen::{Error, Result};
 
 /// The full decoder graph. Codes come in as `[num_quantizers, frames]`; audio
 /// leaves as `[1, samples]` at 24 kHz.
@@ -72,7 +62,7 @@ impl SpeechCodecDecoder {
         let codebook_size = config.codebook_size as usize;
         let num_quantizers = config.num_quantizers as usize;
         if quantizer_dim * 2 != codebook_dim {
-            return Err(CodecError::Load("codebook_dim must be even".to_owned()));
+            return Err(Error::OddCodebookDim);
         }
 
         let load_codebook = |vb: VarBuilder<'_>| -> Result<(Tensor, Tensor)> {
@@ -215,7 +205,7 @@ impl SpeechCodecDecoder {
     pub fn decode(&self, codes: &Tensor) -> Result<Tensor> {
         let (book_count, _) = codes.dims2()?;
         if book_count != self.num_quantizers {
-            return Err(CodecError::CodebookCount {
+            return Err(Error::CodebookCount {
                 expected: self.num_quantizers,
                 got: book_count,
             });
@@ -279,7 +269,7 @@ impl SpeechCodecDecoder {
     ) -> Result<impl Iterator<Item = Result<Tensor>> + 'a> {
         let (book_count, frames) = codes.dims2()?;
         if book_count != self.num_quantizers {
-            return Err(CodecError::CodebookCount {
+            return Err(Error::CodebookCount {
                 expected: self.num_quantizers,
                 got: book_count,
             });
@@ -294,12 +284,9 @@ impl SpeechCodecDecoder {
             let context = LEFT_CONTEXT_FRAMES.min(start);
             let decoded = codes
                 .i((.., start - context..end))
-                .map_err(CodecError::from)
+                .map_err(Error::from)
                 .and_then(|window| self.decode(&window))
-                .and_then(|wav| {
-                    wav.i((.., .., context * upsample..))
-                        .map_err(CodecError::from)
-                });
+                .and_then(|wav| wav.i((.., .., context * upsample..)).map_err(Error::from));
             start = end;
             Some(decoded)
         }))

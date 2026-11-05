@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use crate::qwen::{Error, Result};
+
 const CODE_GROUPS: u32 = 16;
 const OUTPUT_SAMPLE_RATE: u32 = 24_000;
 const SAMPLES_PER_FRAME: u32 = 1_920;
@@ -161,41 +163,12 @@ pub struct CodecDecoderConfig {
     pub max_position_embeddings: u32,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("qwen: unsupported tts_model_type {value:?} (expected custom_voice or base)")]
-    UnsupportedModelType { value: String },
-    #[error("qwen: expected qwen3_tts model_type, found {value:?}")]
-    UnexpectedModelType { value: String },
-    #[error("qwen: invalid config.json: {0}")]
-    Parse(String),
-    #[error("qwen: expected 16 code groups, found {value}")]
-    UnexpectedCodeGroups { value: u32 },
-    #[error("qwen: {field} must be between 1 and {maximum}, found {value}")]
-    InvalidDimension {
-        field: &'static str,
-        value: u32,
-        maximum: u32,
-    },
-    #[error("qwen: {heads_field} must be divisible by {kv_heads_field}")]
-    InvalidAttentionGroups {
-        heads_field: &'static str,
-        kv_heads_field: &'static str,
-    },
-    #[error("qwen: mrope_section {:?} does not partition head_dim {head_dim}", .sections)]
-    InvalidMropeSections { sections: [u32; 3], head_dim: u32 },
-    #[error("qwen: expected speech-tokenizer sample rate 24000, found {value}")]
-    UnexpectedSampleRate { value: u32 },
-    #[error("qwen: expected speech-tokenizer samples per frame 1920, found {value}")]
-    UnexpectedSamplesPerFrame { value: u32 },
-    #[error("qwen: speech-tokenizer upsampling factors are invalid")]
-    InvalidUpsampling,
-}
-
 impl ModelConfig {
-    pub fn from_json(json: &str) -> Result<Self, ConfigError> {
-        let config: Self =
-            serde_json::from_str(json).map_err(|e| ConfigError::Parse(e.to_string()))?;
+    pub fn from_json(json: &str) -> Result<Self> {
+        let config: Self = serde_json::from_str(json).map_err(|source| Error::Json {
+            file: "talker config.json",
+            source,
+        })?;
         config.validate()?;
         Ok(config)
     }
@@ -204,14 +177,14 @@ impl ModelConfig {
         ModelType::parse(&self.tts_model_type).expect("validated")
     }
 
-    fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self) -> Result<()> {
         if self.model_type != "qwen3_tts" {
-            return Err(ConfigError::UnexpectedModelType {
+            return Err(Error::UnexpectedModelType {
                 value: self.model_type.clone(),
             });
         }
         if ModelType::parse(&self.tts_model_type).is_none() {
-            return Err(ConfigError::UnsupportedModelType {
+            return Err(Error::UnsupportedModelType {
                 value: self.tts_model_type.clone(),
             });
         }
@@ -282,7 +255,7 @@ impl ModelConfig {
         let sections = talker.rope_scaling.mrope_section;
         if !talker.head_dim.is_multiple_of(2) || sections.iter().sum::<u32>() != talker.head_dim / 2
         {
-            return Err(ConfigError::InvalidMropeSections {
+            return Err(Error::InvalidMropeSections {
                 sections,
                 head_dim: talker.head_dim,
             });
@@ -292,27 +265,29 @@ impl ModelConfig {
 }
 
 impl SpeechTokenizerConfig {
-    pub fn from_json(json: &str) -> Result<Self, ConfigError> {
-        let config: Self =
-            serde_json::from_str(json).map_err(|error| ConfigError::Parse(error.to_string()))?;
+    pub fn from_json(json: &str) -> Result<Self> {
+        let config: Self = serde_json::from_str(json).map_err(|source| Error::Json {
+            file: "speech-tokenizer config.json",
+            source,
+        })?;
         config.validate()?;
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self) -> Result<()> {
         if self.output_sample_rate != OUTPUT_SAMPLE_RATE {
-            return Err(ConfigError::UnexpectedSampleRate {
+            return Err(Error::UnexpectedSampleRate {
                 value: self.output_sample_rate,
             });
         }
         if self.decode_upsample_rate != SAMPLES_PER_FRAME {
-            return Err(ConfigError::UnexpectedSamplesPerFrame {
+            return Err(Error::UnexpectedSamplesPerFrame {
                 value: self.decode_upsample_rate,
             });
         }
         let decoder = &self.decoder_config;
         if decoder.num_quantizers != CODE_GROUPS {
-            return Err(ConfigError::UnexpectedCodeGroups {
+            return Err(Error::UnexpectedCodeGroups {
                 value: decoder.num_quantizers,
             });
         }
@@ -356,9 +331,9 @@ impl SpeechTokenizerConfig {
     }
 }
 
-fn validate_dimension(field: &'static str, value: u32, maximum: u32) -> Result<(), ConfigError> {
+fn validate_dimension(field: &'static str, value: u32, maximum: u32) -> Result<()> {
     if value == 0 || value > maximum {
-        return Err(ConfigError::InvalidDimension {
+        return Err(Error::InvalidDimension {
             field,
             value,
             maximum,
@@ -374,12 +349,12 @@ fn validate_attention(
     kv_heads: u32,
     head_dim_field: &'static str,
     head_dim: u32,
-) -> Result<(), ConfigError> {
+) -> Result<()> {
     validate_dimension(heads_field, heads, MAX_HEADS)?;
     validate_dimension(kv_heads_field, kv_heads, MAX_HEADS)?;
     validate_dimension(head_dim_field, head_dim, MAX_HEAD_DIM)?;
     if !heads.is_multiple_of(kv_heads) {
-        return Err(ConfigError::InvalidAttentionGroups {
+        return Err(Error::InvalidAttentionGroups {
             heads_field,
             kv_heads_field,
         });
@@ -387,7 +362,7 @@ fn validate_attention(
     Ok(())
 }
 
-fn validate_upsampling(decoder: &CodecDecoderConfig, expected: u32) -> Result<(), ConfigError> {
+fn validate_upsampling(decoder: &CodecDecoderConfig, expected: u32) -> Result<()> {
     let factors = decoder
         .upsample_rates
         .iter()
@@ -397,24 +372,24 @@ fn validate_upsampling(decoder: &CodecDecoderConfig, expected: u32) -> Result<()
     for &factor in factors {
         count += 1;
         if factor == 0 || factor > MAX_UPSAMPLE_RATE {
-            return Err(ConfigError::InvalidUpsampling);
+            return Err(Error::InvalidUpsampling);
         }
         product = product
             .checked_mul(factor)
-            .ok_or(ConfigError::InvalidUpsampling)?;
+            .ok_or(Error::InvalidUpsampling)?;
     }
     if count == 0 || count > MAX_UPSAMPLE_STAGES || product != expected {
-        return Err(ConfigError::InvalidUpsampling);
+        return Err(Error::InvalidUpsampling);
     }
     Ok(())
 }
 
-fn validate_code_groups(talker: u32, predictor: u32) -> Result<(), ConfigError> {
+fn validate_code_groups(talker: u32, predictor: u32) -> Result<()> {
     if talker != CODE_GROUPS {
-        return Err(ConfigError::UnexpectedCodeGroups { value: talker });
+        return Err(Error::UnexpectedCodeGroups { value: talker });
     }
     if predictor != CODE_GROUPS {
-        return Err(ConfigError::UnexpectedCodeGroups { value: predictor });
+        return Err(Error::UnexpectedCodeGroups { value: predictor });
     }
     Ok(())
 }
@@ -427,11 +402,11 @@ mod tests {
     fn every_model_component_requires_sixteen_code_groups() {
         assert!(matches!(
             validate_code_groups(8, CODE_GROUPS),
-            Err(ConfigError::UnexpectedCodeGroups { value: 8 })
+            Err(Error::UnexpectedCodeGroups { value: 8 })
         ));
         assert!(matches!(
             validate_code_groups(CODE_GROUPS, 8),
-            Err(ConfigError::UnexpectedCodeGroups { value: 8 })
+            Err(Error::UnexpectedCodeGroups { value: 8 })
         ));
     }
 
@@ -439,7 +414,7 @@ mod tests {
     fn attention_groups_must_divide_evenly() {
         assert!(matches!(
             validate_attention("heads", 10, "kv_heads", 4, "head_dim", 64),
-            Err(ConfigError::InvalidAttentionGroups { .. })
+            Err(Error::InvalidAttentionGroups { .. })
         ));
     }
 }

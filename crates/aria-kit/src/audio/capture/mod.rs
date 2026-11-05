@@ -4,6 +4,7 @@
 mod microphone;
 mod wav_replay;
 
+use aria_primitives::Cause;
 use std::time::Duration;
 
 use crate::audio::{CaptureError, RecordingReader, ResampleError, StopSignal};
@@ -154,10 +155,10 @@ pub enum MicrophoneError {
     NoInputDevice,
 
     #[error("failed to read the default microphone configuration")]
-    DefaultConfiguration(#[source] Box<dyn std::error::Error + Send + Sync>),
+    DefaultConfiguration(#[source] Cause),
 
     #[error("failed to read the default microphone description")]
-    DeviceDescription(#[source] Box<dyn std::error::Error + Send + Sync>),
+    DeviceDescription(#[source] Cause),
 
     #[error("microphone input configuration has no channels")]
     NoInputChannels,
@@ -174,13 +175,13 @@ pub enum MicrophoneError {
     UnsupportedSampleFormat(String),
 
     #[error("failed to build the microphone input stream")]
-    BuildStream(#[source] Box<dyn std::error::Error + Send + Sync>),
+    BuildStream(#[source] Cause),
 
     #[error("failed to start the microphone input stream")]
-    StartStream(#[source] Box<dyn std::error::Error + Send + Sync>),
+    StartStream(#[source] Cause),
 
     #[error("the microphone input stream failed")]
-    Stream(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Stream(#[source] Cause),
 
     #[error("the microphone input stream ended unexpectedly")]
     StreamEnded,
