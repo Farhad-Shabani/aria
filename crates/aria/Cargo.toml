@@ -35,7 +35,6 @@ signal-hook        = { version = "0.4", default-features = false }
 tempfile           = { workspace = true }
 thiserror          = { workspace = true }
 time               = { workspace = true }
-toml_edit          = { workspace = true, features = [ "display", "parse", "serde" ] }
 tracing            = { workspace = true }
 tracing-log        = "0.2"
 tracing-subscriber = { workspace = true }
@@ -63,6 +62,7 @@ aria-kit      = { workspace = true, features = [ "test-support" ] }
 aria-harness  = { workspace = true }
 tokio         = { workspace = true, features = [ "io-util", "macros", "net", "rt-multi-thread", "sync", "time" ] }
 serde         = { workspace = true }
+toml_edit     = { workspace = true, features = [ "display", "parse", "serde" ] }
 
 # Each catalog case is its own test, so the catalog brings its own runner.
 [[test]]
