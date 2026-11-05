@@ -22,6 +22,9 @@ pub mod user_home;
 #[cfg(not(target_family = "wasm"))]
 pub mod wakeup;
 
+/// Why an error happened, when its type is open: printed, never matched on.
+pub type Cause = Box<dyn std::error::Error + Send + Sync>;
+
 /// An error and every cause under it, joined into one line. A cause the
 /// message already ends with is not repeated.
 pub fn error_chain(error: &dyn std::error::Error) -> String {
