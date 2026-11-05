@@ -13,7 +13,10 @@ use tokio::sync::watch;
 use super::Directory;
 use super::document::{self, Loaded, SettingsFile, Stamp, Text};
 use super::write::{self, Refusal, Settled};
-use super::{Apply, Key, Patch, Revision, SettingsError, SettingsFault, SettingsStatus, Written};
+use super::{
+    Apply, CheckedSettings, Key, Patch, Revision, SettingsError, SettingsFault, SettingsStatus,
+    Written,
+};
 use aria_platform::hotkey::AriaKey;
 use aria_primitives::error_chain;
 
@@ -52,13 +55,14 @@ impl StartupSettings {
 
     /// `current` with every restart key put back to its startup value.
     ///
-    /// Each key's value was valid on its own, so the mix always parses.
-    fn apply(&self, current: &SettingsFile) -> Result<SettingsFile, SettingsError> {
+    /// No rule joins a restart key to a live key, so the mix passes the
+    /// check whenever both files did.
+    fn apply(&self, current: &SettingsFile) -> Result<CheckedSettings, SettingsError> {
         let mut values = current.values();
         for (key, frozen) in &self.0 {
             document::replace_at(&mut values, *key, frozen.clone());
         }
-        serde_json::from_value(values).map_err(SettingsError::Freeze)
+        CheckedSettings::new(serde_json::from_value(values).map_err(SettingsError::Freeze)?)
     }
 }
 
@@ -73,7 +77,7 @@ struct State {
     loaded: Arc<Loaded>,
     /// What operations read: live keys from `loaded`, restart keys from the
     /// startup snapshot.
-    effective: Arc<SettingsFile>,
+    effective: Arc<CheckedSettings>,
     stamp: Option<Stamp>,
     recent: Vec<RecentWrite>,
 }
@@ -136,7 +140,7 @@ impl SettingsCache {
     }
 
     /// What an operation admitted now reads: restart keys stay frozen.
-    pub fn effective(&self) -> Arc<SettingsFile> {
+    pub fn effective(&self) -> Arc<CheckedSettings> {
         Arc::clone(&self.lock_state().effective)
     }
 
@@ -201,6 +205,7 @@ impl SettingsCache {
     }
 
     fn remember(&self, loaded: &Loaded, written: &[Key]) -> Result<(), SettingsError> {
+        let effective = self.startup.apply(&loaded.settings)?;
         let mut state = self.lock_state();
         let values = loaded.settings.values();
         let now = Instant::now();
@@ -222,7 +227,7 @@ impl SettingsCache {
         // The poll sees this stamp as already known, so a write of ours is
         // not reloaded. An edit after the write has another stamp, and is.
         state.stamp = loaded.stamp;
-        self.install(&mut state, loaded.clone())?;
+        self.install(&mut state, loaded.clone(), effective);
         self.publish(
             None,
             &self.startup.restart_required(&loaded.settings),
@@ -258,10 +263,16 @@ impl SettingsCache {
         if state.stamp != known {
             return Ok(Reload::Unchanged);
         }
-        let loaded = match parsed {
-            Ok((loaded, stamp)) => {
+        // A merge that fails its check is a fault like a bad file, so the
+        // edit shows instead of being skipped.
+        let parsed = parsed.and_then(|(loaded, stamp)| {
+            let effective = self.startup.apply(&loaded.settings)?;
+            Ok((loaded, effective, stamp))
+        });
+        let (loaded, effective) = match parsed {
+            Ok((loaded, effective, stamp)) => {
                 state.stamp = stamp;
-                loaded
+                (loaded, effective)
             }
             Err(error) => {
                 state.stamp = seen;
@@ -289,7 +300,7 @@ impl SettingsCache {
             .collect();
         state.recent.retain(|write| !reverted.contains(&write.key));
         let revision = loaded.revision.get();
-        self.install(&mut state, loaded)?;
+        self.install(&mut state, loaded, effective);
         self.publish(None, &restart_required, &reverted, revision);
         Ok(Reload::Reloaded {
             restart_required,
@@ -299,15 +310,14 @@ impl SettingsCache {
 
     /// Takes a valid file as the cache. Owns every live watch sender, so a
     /// hand edit re-arms them the same way a write does.
-    fn install(&self, state: &mut State, loaded: Loaded) -> Result<(), SettingsError> {
-        state.effective = Arc::new(self.startup.apply(&loaded.settings)?);
+    fn install(&self, state: &mut State, loaded: Loaded, effective: CheckedSettings) {
+        state.effective = Arc::new(effective);
         send_if_changed(&self.aria_key, loaded.settings.aria_key());
         send_if_changed(
             &self.project_vocabulary,
             loaded.settings.project_vocabulary(),
         );
         state.loaded = Arc::new(loaded);
-        Ok(())
     }
 
     fn publish(
@@ -665,6 +675,55 @@ mod tests {
         assert_eq!(store.effective().history.enabled, Some(false));
     }
 
+    #[test]
+    fn a_merge_that_fails_its_check_is_a_fault_and_keeps_the_last_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(
+            dir.path(),
+            "[stt]\nbackend = \"server\"\nserver = \"https://a.test\"\n",
+        );
+        // No rule joins a restart key to a live key, so only a startup
+        // snapshot broken by hand can make the merge fail.
+        store
+            .startup
+            .0
+            .insert(Key::SttServer, serde_json::Value::Null);
+
+        hand_edit(
+            &store,
+            "[stt]\nbackend = \"server\"\nserver = \"https://a.test\"\n[history]\nenabled = false\n",
+        );
+        let reload = store.poll().expect("polls");
+
+        assert!(
+            matches!(
+                reload,
+                Reload::Invalid(SettingsError::Invalid {
+                    key: Key::SttServer,
+                    ..
+                })
+            ),
+            "{reload:?}"
+        );
+        assert!(store.status.borrow().fault.is_some());
+        assert_eq!(store.effective().history.enabled, None);
+    }
+
+    #[test]
+    fn a_restart_key_edited_live_keeps_its_startup_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path(), "[stt]\nbackend = \"whisper\"\n");
+
+        hand_edit(&store, "[stt]\nbackend = \"moonshine\"\n");
+        let (restart, _reverted) = reloaded(store.poll().expect("polls"));
+
+        assert_eq!(restart, [Key::SttBackend]);
+        assert_eq!(
+            store.effective().choices().stt,
+            crate::SttChoice::Local(crate::LocalStt::Whisper)
+        );
+    }
+
     /// The live switch decides, and the frozen table goes unused.
     #[test]
     fn turning_cleanup_off_leaves_the_frozen_llm_unused_and_loadable() {
@@ -677,12 +736,11 @@ mod tests {
 
         let effective = store.effective();
         let frozen = effective
-            .dictation
-            .cleanup_llm
+            .choices()
+            .cleanup
             .as_ref()
             .expect("the table stays");
-        crate::validate_cleanup_llm(&frozen.endpoint, &frozen.model)
-            .expect("the live switch and the frozen table load together");
+        assert_eq!(frozen.endpoint(), "http://127.0.0.1:1/v1/chat/completions");
     }
 
     /// The app learns of a hand edit from this: it reads the values again

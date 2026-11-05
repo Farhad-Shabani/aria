@@ -111,14 +111,14 @@ impl PreparedCapture {
 mod tests {
     use super::*;
 
-    use crate::daemon::config::WakeBackend;
     use aria_kit::audio::ReplayPace;
+    use aria_settings::WakeEngine;
 
     #[test]
     fn a_wake_word_on_a_replayed_capture_is_refused() {
         let home = tempfile::tempdir().unwrap();
         let wake = WakeConfig::Enabled {
-            backend: WakeBackend::OpenWakeWord,
+            backend: WakeEngine::OpenWakeWord,
             classifier: home.path().join("wake.onnx"),
             threshold: 0.5,
         };

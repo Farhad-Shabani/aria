@@ -3,24 +3,18 @@
 mod load;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use aria_kit::synthesis::{SpeakingRate, Voice};
 use aria_settings::config::{ConfigError, ServerEndpoint, backend, tts_backend};
-
-/// A loopback LLM pass over the transcript, after the rule-based cleanup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LlmCleanupConfig {
-    pub endpoint: String,
-    pub model: String,
-}
+use aria_settings::{CleanupTarget, DictationTimeouts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationConfig {
     pub capture: CaptureConfig,
     pub transcription: TranscriptionBackend,
     pub dictation_timeouts: DictationTimeouts,
-    pub cleanup_llm: Option<LlmCleanupConfig>,
+    /// A loopback LLM pass over the transcript, after the rule-based cleanup.
+    pub cleanup_llm: Option<CleanupTarget>,
 }
 
 /// The engine a daemon builds, and what it falls back to if that fails.
@@ -28,14 +22,6 @@ pub struct DictationConfig {
 pub struct TtsConfig {
     pub backend: TtsBackend,
     pub fallback: TtsFallback,
-}
-
-/// An engine that speaks, which owns its saved voice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TtsEngine {
-    Kokoro,
-    Qwen,
-    System,
 }
 
 /// What an utterance falls back to when its request names no voice or rate.
@@ -235,11 +221,4 @@ use aria_kit::audio::ReplayPace;
 pub enum CaptureConfig {
     Microphone,
     WavFile { path: PathBuf, pace: ReplayPace },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DictationTimeouts {
-    pub recording: Duration,
-    pub delivery: Duration,
-    pub overall: Duration,
 }

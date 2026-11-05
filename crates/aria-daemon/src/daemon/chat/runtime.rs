@@ -21,7 +21,7 @@ use aria_platform::delivery::{
     TargetPolicy, TextDelivery,
 };
 use aria_primitives::error_chain;
-use aria_settings::config::{AssistantId, ConfigError};
+use aria_settings::config::AssistantId;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{ApplicationId, SettingsCache, SettingsStore};
 use aria_voice::config::SpeakerConfig;
@@ -265,7 +265,7 @@ impl ChatRuntime {
     pub(in crate::daemon) fn resolve_target(&self) -> Result<AskTarget, ResolveError> {
         let snapshot = self.settings.snapshot().map_err(ResolveError::Settings)?;
         let assistant_id = snapshot.settings.resolve_assistant_id();
-        let config = self.chat_config().map_err(ResolveError::Config)?;
+        let config = self.chat_config();
         let projects = Projects::load_with(&self.home, &config).map_err(ResolveError::Projects)?;
         let workdir = match projects.focused() {
             Some(project) => project.path.clone(),
@@ -288,9 +288,8 @@ impl ChatRuntime {
         })
     }
 
-    fn chat_config(&self) -> Result<ChatConfig, ConfigError> {
-        let settings = self.cache.effective();
-        load_chat(&settings)
+    fn chat_config(&self) -> ChatConfig {
+        load_chat(&self.cache.effective())
     }
 
     fn ask<A: Assistant>(
@@ -300,7 +299,7 @@ impl ChatRuntime {
         request: ChatRequest,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
-        let config = self.chat_config().map_err(ChatError::Config)?;
+        let config = self.chat_config();
         if !request.workdir.is_dir() {
             return Err(ChatError::Assistant(AssistantError::NoWorkdir(
                 request.workdir,
@@ -368,7 +367,7 @@ impl ChatRuntime {
         request: PromptRequest,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
-        let config = self.chat_config().map_err(ChatError::Config)?;
+        let config = self.chat_config();
         let delivery = Delivery::prepare(
             OutputMode::InsertOrCopy,
             self.target_policy(request.application.as_ref())?,

@@ -28,22 +28,43 @@ pub enum CleanupConfigError {
     Model,
 }
 
-pub fn validate_cleanup_llm(endpoint: &str, model: &str) -> Result<(), CleanupConfigError> {
-    let address = endpoint
-        .strip_prefix("http://")
-        .and_then(|rest| rest.strip_suffix("/v1/chat/completions"))
-        .and_then(|authority| authority.parse::<SocketAddr>().ok())
-        .filter(|address| address.ip().is_loopback() && address.port() != 0);
-    if address.is_none() {
-        return Err(CleanupConfigError::Endpoint);
+/// A `dictation.cleanup_llm` table that can be used: a loopback chat endpoint
+/// and a model name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupTarget {
+    endpoint: String,
+    model: String,
+}
+
+impl CleanupTarget {
+    pub fn new(endpoint: &str, model: &str) -> Result<Self, CleanupConfigError> {
+        let address = endpoint
+            .strip_prefix("http://")
+            .and_then(|rest| rest.strip_suffix("/v1/chat/completions"))
+            .and_then(|authority| authority.parse::<SocketAddr>().ok())
+            .filter(|address| address.ip().is_loopback() && address.port() != 0);
+        if address.is_none() {
+            return Err(CleanupConfigError::Endpoint);
+        }
+        if model.is_empty()
+            || model.len() > 256
+            || model.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err(CleanupConfigError::Model);
+        }
+        Ok(Self {
+            endpoint: endpoint.to_owned(),
+            model: model.to_owned(),
+        })
     }
-    if model.is_empty()
-        || model.len() > 256
-        || model.chars().any(|c| c.is_whitespace() || c.is_control())
-    {
-        return Err(CleanupConfigError::Model);
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
-    Ok(())
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
 }
 
 #[cfg(test)]
@@ -56,7 +77,7 @@ mod tests {
             "http://127.0.0.1:8080/v1/chat/completions",
             "http://[::1]:8080/v1/chat/completions",
         ] {
-            validate_cleanup_llm(endpoint, "local/model:1").unwrap();
+            CleanupTarget::new(endpoint, "local/model:1").unwrap();
         }
         for endpoint in [
             "http://localhost:8080/v1/chat/completions",
@@ -72,7 +93,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    validate_cleanup_llm(endpoint, "local"),
+                    CleanupTarget::new(endpoint, "local"),
                     Err(CleanupConfigError::Endpoint)
                 ),
                 "{endpoint}"
@@ -80,7 +101,7 @@ mod tests {
         }
         for model in ["", " ", "model\nsecret", &"a".repeat(257)] {
             assert!(matches!(
-                validate_cleanup_llm("http://127.0.0.1:80/v1/chat/completions", model),
+                CleanupTarget::new("http://127.0.0.1:80/v1/chat/completions", model),
                 Err(CleanupConfigError::Model)
             ));
         }

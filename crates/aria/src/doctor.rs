@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::audio::{WavReplayCapture, check_default_input_device};
 use crate::primitives::error_chain;
 use aria_daemon::RELAY_SERVICE_TYPE;
-use aria_daemon::config::{DaemonConfig, RelayConfig, WakeBackend, WakeConfig, WakeWordOverride};
+use aria_daemon::config::{DaemonConfig, RelayConfig, WakeConfig, WakeWordOverride};
 use aria_daemon::ipc::{DaemonClient, Liveness, probe_daemon};
 use aria_daemon::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use aria_kit::segmentation::Engine as SegmentationEngine;
@@ -16,7 +16,8 @@ use aria_kit::speaker::Engine as SpeakerEngine;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
-use aria_settings::SettingsFile;
+use aria_settings::CheckedSettings;
+use aria_settings::WakeEngine;
 use aria_settings::config::{ConfigError, ServerEndpoint};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
@@ -115,7 +116,7 @@ fn settings_check(config: Result<&DaemonConfig, &ConfigError>) -> Check {
 
 /// Resolves one part of the config from the settings file.
 fn loaded<T>(
-    load: impl FnOnce(&SettingsFile, &Path) -> Result<T, ConfigError>,
+    load: impl FnOnce(&CheckedSettings, &Path) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
@@ -225,12 +226,12 @@ fn wake_word_model(wake: Option<&WakeConfig>) -> Check {
             threshold,
         }) => {
             let resolved = match backend {
-                WakeBackend::OpenWakeWord => OpenWakeWordConfig::new(classifier, *threshold)
+                WakeEngine::OpenWakeWord => OpenWakeWordConfig::new(classifier, *threshold)
                     .map_err(|error| error_chain(&error))
                     .and_then(|config| {
                         OpenWakeWord::check_from(&config).map_err(|error| error_chain(&error))
                     }),
-                WakeBackend::LiveKit => LiveKitConfig::new(classifier, *threshold)
+                WakeEngine::LiveKit => LiveKitConfig::new(classifier, *threshold)
                     .map_err(|error| error_chain(&error))
                     .and_then(|config| {
                         LiveKitWakeWord::check_from(&config).map_err(|error| error_chain(&error))
@@ -576,7 +577,7 @@ mod tests {
 
     #[test]
     fn a_missing_wake_classifier_fails_the_wake_check() {
-        for backend in [WakeBackend::OpenWakeWord, WakeBackend::LiveKit] {
+        for backend in [WakeEngine::OpenWakeWord, WakeEngine::LiveKit] {
             let check = wake_word_model(Some(&WakeConfig::Enabled {
                 backend,
                 classifier: PathBuf::from("/nonexistent/wake.onnx"),

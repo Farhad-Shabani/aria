@@ -16,16 +16,20 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
+use super::CleanupTarget;
 use super::PromptKind;
+use super::checked::{
+    CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
+    Voices, WakeEngine,
+};
 use super::keys::{LISTEN_BACKENDS, STT_BACKENDS, WAKE_BACKENDS};
 use super::limits::MAX_CHAT_TIMEOUT;
-use super::validate_cleanup_llm;
 use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
 use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
 use super::{InvalidValue, Key, MAX_SETTINGS_BYTES, ParseError, SettingsError};
 use crate::config::{
-    DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, ServerEndpoint, backend, tts_backend,
-    wake_backend,
+    DEFAULT_ASSISTANT_TIMEOUT, DEFAULT_DELIVERY_TIMEOUT, DEFAULT_OVERALL_TIMEOUT,
+    DEFAULT_RECORDING_TIMEOUT, ServerEndpoint, backend, tts_backend, wake_backend,
 };
 use aria_platform::delivery::OutputMode;
 use aria_platform::hotkey::{AriaKey, Combo};
@@ -147,7 +151,7 @@ impl fmt::Display for Revision {
 #[derive(Debug, Clone)]
 pub struct Loaded {
     pub(super) document: DocumentMut,
-    pub(crate) settings: SettingsFile,
+    pub(crate) settings: CheckedSettings,
     pub(crate) revision: Revision,
     /// The file's stamp as the write path saw it, under the lock. `None`
     /// until the write path sets it.
@@ -155,11 +159,11 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    pub fn settings(&self) -> &SettingsFile {
+    pub fn settings(&self) -> &CheckedSettings {
         &self.settings
     }
 
-    pub fn into_settings(self) -> SettingsFile {
+    pub fn into_settings(self) -> CheckedSettings {
         self.settings
     }
 
@@ -189,9 +193,9 @@ impl Loaded {
         };
         settings
             .expand_paths(home)
-            .and_then(|()| settings.validate())
             .map_err(|error| locate(error, text))?;
         let revision = settings.revision();
+        let settings = CheckedSettings::new(settings).map_err(|error| locate(error, text))?;
         Ok(Self {
             document,
             settings,
@@ -994,44 +998,57 @@ impl SettingsFile {
         Ok(())
     }
 
-    fn validate(&self) -> Result<(), SettingsError> {
+    pub(crate) fn check(&self) -> Result<Choices, SettingsError> {
         let settings = Settings::from_file(self)?;
-        self.validate_dictation()?;
-        self.validate_timeouts()?;
-        self.validate_listen()?;
-        self.validate_assistant()?;
+        let cleanup = self.validate_dictation()?;
+        let timeouts = self.validate_timeouts()?;
+        let listen = self.validate_listen()?;
+        let assistant_timeout = self.validate_assistant()?;
         self.validate_memory()?;
         validate_shortcuts(&settings)?;
-        self.validate_wake()?;
-        self.validate_stt()?;
-        self.validate_tts()?;
+        let wake = self.validate_wake()?;
+        let stt = self.validate_stt()?;
+        let (tts, voices) = self.validate_tts()?;
         self.validate_paths()?;
-        self.validate_capture()?;
-        Ok(())
+        let capture = self.validate_capture()?;
+        Ok(Choices {
+            stt,
+            listen,
+            tts,
+            voices,
+            rate: settings.tts_rate,
+            timeouts,
+            cleanup,
+            capture,
+            wake,
+            assistant_timeout,
+        })
     }
 
-    fn validate_dictation(&self) -> Result<(), SettingsError> {
-        let dictation = &self.dictation;
-        if let Some(llm) = &dictation.cleanup_llm {
-            validate_cleanup_llm(&llm.endpoint, &llm.model).map_err(|source| {
+    fn validate_dictation(&self) -> Result<Option<CleanupTarget>, SettingsError> {
+        let Some(llm) = &self.dictation.cleanup_llm else {
+            return Ok(None);
+        };
+        CleanupTarget::new(&llm.endpoint, &llm.model)
+            .map(Some)
+            .map_err(|source| {
                 invalid(
                     Key::DictationCleanupLlmEndpoint,
                     InvalidValue::Cleanup(source),
                 )
-            })?;
-        }
-        Ok(())
+            })
     }
 
-    fn validate_timeouts(&self) -> Result<(), SettingsError> {
+    fn validate_timeouts(&self) -> Result<DictationTimeouts, SettingsError> {
         let written_recording = self
             .dictation
             .max_recording_secs
             .map(|seconds| duration(seconds, Key::DictationMaxRecordingSecs))
             .transpose()?;
-        if let Some(seconds) = self.delivery.timeout_secs {
-            duration(seconds, Key::DeliveryTimeoutSecs)?;
-        }
+        let delivery = match self.delivery.timeout_secs {
+            Some(seconds) => duration(seconds, Key::DeliveryTimeoutSecs)?,
+            None => DEFAULT_DELIVERY_TIMEOUT,
+        };
         let written_overall = self
             .dictation
             .timeout_secs
@@ -1051,7 +1068,11 @@ impl SettingsFile {
         let recording = written_recording.unwrap_or(DEFAULT_RECORDING_TIMEOUT);
         let overall = written_overall.unwrap_or(DEFAULT_OVERALL_TIMEOUT);
         if recording < overall {
-            return Ok(());
+            return Ok(DictationTimeouts {
+                recording,
+                overall,
+                delivery,
+            });
         }
         // The fault is reported at a key the file holds, so it has a place.
         Err(if written_recording.is_some() {
@@ -1067,23 +1088,26 @@ impl SettingsFile {
         })
     }
 
-    fn validate_listen(&self) -> Result<(), SettingsError> {
+    fn validate_listen(&self) -> Result<Option<LocalStt>, SettingsError> {
         let listen = &self.listen;
-        if let Some(backend_name) = &listen.backend {
-            supported(backend_name, LISTEN_BACKENDS, Key::ListenBackend)?;
-            if listen.device.is_some() && backend_name != backend::PARAKEET {
-                return Err(invalid(
-                    Key::ListenDevice,
-                    InvalidValue::NotApplicable {
-                        backend: backend_name.clone(),
-                    },
-                ));
-            }
+        let Some(backend_name) = &listen.backend else {
+            return Ok(None);
+        };
+        let engine = LocalStt::named(backend_name)
+            .filter(|engine| engine.streams())
+            .ok_or_else(|| unsupported(backend_name, LISTEN_BACKENDS, Key::ListenBackend))?;
+        if listen.device.is_some() && engine != LocalStt::Parakeet {
+            return Err(invalid(
+                Key::ListenDevice,
+                InvalidValue::NotApplicable {
+                    backend: backend_name.clone(),
+                },
+            ));
         }
-        Ok(())
+        Ok(Some(engine))
     }
 
-    fn validate_assistant(&self) -> Result<(), SettingsError> {
+    fn validate_assistant(&self) -> Result<Duration, SettingsError> {
         let assistant = &self.assistant;
         for model in assistant.models.values() {
             if !super::is_valid_model_id(model) {
@@ -1093,19 +1117,20 @@ impl SettingsFile {
         if let Some(workdir) = &assistant.workdir {
             absolute_path(workdir, Key::AssistantWorkdir)?;
         }
-        if let Some(seconds) = assistant.timeout_secs {
-            let timeout = duration(seconds, Key::AssistantTimeoutSecs)?;
-            if timeout > MAX_CHAT_TIMEOUT {
-                return Err(invalid(
-                    Key::AssistantTimeoutSecs,
-                    InvalidValue::TooLong {
-                        actual: timeout,
-                        maximum: MAX_CHAT_TIMEOUT,
-                    },
-                ));
-            }
+        let Some(seconds) = assistant.timeout_secs else {
+            return Ok(DEFAULT_ASSISTANT_TIMEOUT);
+        };
+        let timeout = duration(seconds, Key::AssistantTimeoutSecs)?;
+        if timeout > MAX_CHAT_TIMEOUT {
+            return Err(invalid(
+                Key::AssistantTimeoutSecs,
+                InvalidValue::TooLong {
+                    actual: timeout,
+                    maximum: MAX_CHAT_TIMEOUT,
+                },
+            ));
         }
-        Ok(())
+        Ok(timeout)
     }
 
     fn validate_memory(&self) -> Result<(), SettingsError> {
@@ -1115,11 +1140,11 @@ impl SettingsFile {
         Ok(())
     }
 
-    fn validate_wake(&self) -> Result<(), SettingsError> {
+    fn validate_wake(&self) -> Result<WakeEngine, SettingsError> {
         let wake = &self.wake;
-        if let Some(backend) = &wake.backend {
-            supported(backend, WAKE_BACKENDS, Key::WakeBackend)?;
-        }
+        let backend = wake.backend.as_deref().unwrap_or(wake_backend::DEFAULT);
+        let choice = WakeEngine::named(backend)
+            .ok_or_else(|| unsupported(backend, WAKE_BACKENDS, Key::WakeBackend))?;
         if let Some(threshold) = wake.threshold
             && (!threshold.is_finite() || threshold <= 0.0 || threshold > 1.0)
         {
@@ -1129,7 +1154,7 @@ impl SettingsFile {
             ));
         }
         if wake.enabled == Some(true) {
-            if wake.backend.as_deref() == Some(wake_backend::LIVEKIT) && wake.model.is_none() {
+            if choice == WakeEngine::LiveKit && wake.model.is_none() {
                 return Err(invalid(
                     Key::WakeModel,
                     InvalidValue::Required {
@@ -1141,13 +1166,12 @@ impl SettingsFile {
                 return Err(invalid(Key::WakeEnabled, InvalidValue::NeedsMicrophone));
             }
         }
-        Ok(())
+        Ok(choice)
     }
 
-    fn validate_stt(&self) -> Result<(), SettingsError> {
+    fn validate_stt(&self) -> Result<SttChoice, SettingsError> {
         let stt = &self.stt;
         let backend_name = stt.backend.as_deref().unwrap_or(backend::DEFAULT);
-        supported(backend_name, STT_BACKENDS, Key::SttBackend)?;
         let not_applicable = |key: Key, backend: &str| {
             invalid(
                 key,
@@ -1156,62 +1180,80 @@ impl SettingsFile {
                 },
             )
         };
-        if backend_name == backend::SERVER {
-            if stt.model.is_some() {
-                return Err(not_applicable(Key::SttModel, backend::SERVER));
-            }
-            if stt.device.is_some() {
-                return Err(not_applicable(Key::SttDevice, backend::SERVER));
-            }
-            if stt.interpreter.is_some() {
-                return Err(not_applicable(Key::SttInterpreter, backend::SERVER));
-            }
-            let server = stt.server.as_deref().ok_or_else(|| {
-                invalid(
-                    Key::SttServer,
-                    InvalidValue::Required {
-                        backend: backend::SERVER.to_owned(),
-                    },
-                )
-            })?;
-            ServerEndpoint::parse(server)
-                .ok_or_else(|| invalid(Key::SttServer, InvalidValue::ServerEndpoint))?;
-        } else if stt.server.is_some() {
-            return Err(not_applicable(Key::SttServer, backend_name));
-        }
-        if let Some(model) = &stt.model {
-            non_empty(model, Key::SttModel)?;
-            // parakeet-mlx takes a Hugging Face repo ID, not a path.
-            if backend_name != backend::PARAKEET_MLX {
-                absolute_path(Path::new(model), Key::SttModel)?;
-            }
-        }
-        if stt.interpreter.is_some() && backend_name != backend::PARAKEET_MLX {
-            return Err(not_applicable(Key::SttInterpreter, backend_name));
-        }
-        if backend_name == backend::PARAKEET_MLX && stt.interpreter.is_none() {
-            return Err(invalid(
-                Key::SttInterpreter,
+        let required = |key: Key, backend: &str| {
+            invalid(
+                key,
                 InvalidValue::Required {
-                    backend: backend::PARAKEET_MLX.to_owned(),
+                    backend: backend.to_owned(),
                 },
-            ));
-        }
-        if stt.device.is_some() && backend_name != backend::PARAKEET {
+            )
+        };
+        let choice = match backend_name {
+            backend::SERVER => {
+                for (key, set) in [
+                    (Key::SttModel, stt.model.is_some()),
+                    (Key::SttDevice, stt.device.is_some()),
+                    (Key::SttInterpreter, stt.interpreter.is_some()),
+                ] {
+                    if set {
+                        return Err(not_applicable(key, backend::SERVER));
+                    }
+                }
+                let server = stt
+                    .server
+                    .as_deref()
+                    .ok_or_else(|| required(Key::SttServer, backend::SERVER))?;
+                let endpoint = ServerEndpoint::parse(server)
+                    .ok_or_else(|| invalid(Key::SttServer, InvalidValue::ServerEndpoint))?;
+                return Ok(SttChoice::Server(endpoint));
+            }
+            backend::PARAKEET_MLX => {
+                if stt.server.is_some() {
+                    return Err(not_applicable(Key::SttServer, backend_name));
+                }
+                // parakeet-mlx takes a Hugging Face repo ID, not a path.
+                if let Some(model) = &stt.model {
+                    non_empty(model, Key::SttModel)?;
+                }
+                let interpreter = stt
+                    .interpreter
+                    .clone()
+                    .ok_or_else(|| required(Key::SttInterpreter, backend::PARAKEET_MLX))?;
+                SttChoice::ParakeetMlx { interpreter }
+            }
+            name => {
+                let engine = LocalStt::named(name)
+                    .ok_or_else(|| unsupported(name, STT_BACKENDS, Key::SttBackend))?;
+                if stt.server.is_some() {
+                    return Err(not_applicable(Key::SttServer, name));
+                }
+                if let Some(model) = &stt.model {
+                    non_empty(model, Key::SttModel)?;
+                    absolute_path(Path::new(model), Key::SttModel)?;
+                }
+                if stt.interpreter.is_some() {
+                    return Err(not_applicable(Key::SttInterpreter, name));
+                }
+                SttChoice::Local(engine)
+            }
+        };
+        if stt.device.is_some() && choice != SttChoice::Local(LocalStt::Parakeet) {
             return Err(not_applicable(Key::SttDevice, backend_name));
         }
-        Ok(())
+        Ok(choice)
     }
 
-    fn validate_tts(&self) -> Result<(), SettingsError> {
+    fn validate_tts(&self) -> Result<(TtsEngine, Voices), SettingsError> {
         let tts = &self.tts;
         let backend = tts.backend.as_deref().unwrap_or(tts_backend::DEFAULT);
-        supported(
-            backend,
-            &[tts_backend::KOKORO, tts_backend::QWEN, tts_backend::SYSTEM],
-            Key::TtsBackend,
-        )?;
-        if tts.fallback.is_some() && backend == tts_backend::SYSTEM {
+        let choice = TtsEngine::named(backend).ok_or_else(|| {
+            unsupported(
+                backend,
+                &[tts_backend::KOKORO, tts_backend::QWEN, tts_backend::SYSTEM],
+                Key::TtsBackend,
+            )
+        })?;
+        if tts.fallback.is_some() && choice == TtsEngine::System {
             return Err(invalid(
                 Key::TtsFallback,
                 InvalidValue::NotApplicable {
@@ -1219,17 +1261,19 @@ impl SettingsFile {
                 },
             ));
         }
-        for (key, voice) in [
-            (Key::TtsSystemVoice, &tts.system.voice),
-            (Key::TtsKokoroVoice, &tts.kokoro.voice),
-            (Key::TtsQwenVoice, &tts.qwen.voice),
-        ] {
-            if let Some(voice) = voice {
-                Voice::new(voice.clone())
-                    .map_err(|source| invalid(key, InvalidValue::Voice(source)))?;
-            }
-        }
-        Ok(())
+        let voice = |key: Key, name: &Option<String>| {
+            name.clone()
+                .map(|name| {
+                    Voice::new(name).map_err(|source| invalid(key, InvalidValue::Voice(source)))
+                })
+                .transpose()
+        };
+        let voices = Voices {
+            system: voice(Key::TtsSystemVoice, &tts.system.voice)?,
+            kokoro: voice(Key::TtsKokoroVoice, &tts.kokoro.voice)?,
+            qwen: voice(Key::TtsQwenVoice, &tts.qwen.voice)?,
+        };
+        Ok((choice, voices))
     }
 
     fn validate_paths(&self) -> Result<(), SettingsError> {
@@ -1261,31 +1305,28 @@ impl SettingsFile {
         Ok(())
     }
 
-    fn validate_capture(&self) -> Result<(), SettingsError> {
+    fn validate_capture(&self) -> Result<CaptureChoice, SettingsError> {
         let capture = &self.capture;
         match capture.backend.unwrap_or(CaptureBackendName::Microphone) {
-            CaptureBackendName::Microphone => {
-                if capture.pace.is_some() {
-                    return Err(invalid(
-                        Key::CapturePace,
-                        InvalidValue::NotApplicable {
-                            backend: "microphone".to_owned(),
-                        },
-                    ));
-                }
-            }
-            CaptureBackendName::WavFile => {
-                if capture.path.is_none() {
-                    return Err(invalid(
-                        Key::CapturePath,
-                        InvalidValue::Required {
-                            backend: "wav_file".to_owned(),
-                        },
-                    ));
-                }
-            }
+            CaptureBackendName::Microphone => match capture.pace {
+                Some(_) => Err(invalid(
+                    Key::CapturePace,
+                    InvalidValue::NotApplicable {
+                        backend: "microphone".to_owned(),
+                    },
+                )),
+                None => Ok(CaptureChoice::Microphone),
+            },
+            CaptureBackendName::WavFile => match &capture.path {
+                Some(path) => Ok(CaptureChoice::WavFile { path: path.clone() }),
+                None => Err(invalid(
+                    Key::CapturePath,
+                    InvalidValue::Required {
+                        backend: "wav_file".to_owned(),
+                    },
+                )),
+            },
         }
-        Ok(())
     }
 
     pub fn aria_key(&self) -> AriaKey {
@@ -1446,17 +1487,14 @@ fn validate_shortcuts(settings: &Settings) -> Result<(), SettingsError> {
     Err(invalid(key, InvalidValue::SharedBinding))
 }
 
-fn supported(value: &str, names: &[&str], key: Key) -> Result<(), SettingsError> {
-    if names.contains(&value) {
-        return Ok(());
-    }
-    Err(invalid(
+fn unsupported(value: &str, names: &[&str], key: Key) -> SettingsError {
+    invalid(
         key,
         InvalidValue::Unsupported {
             value: value.to_owned(),
             supported: listed(names),
         },
-    ))
+    )
 }
 
 /// "a and b", or "a, b, and c".
@@ -1915,8 +1953,30 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn the_checked_timeouts_take_the_defaults_for_absent_keys() {
+        let choices = load("").settings.choices().clone();
+        assert_eq!(
+            choices.timeouts,
+            DictationTimeouts {
+                recording: DEFAULT_RECORDING_TIMEOUT,
+                overall: DEFAULT_OVERALL_TIMEOUT,
+                delivery: DEFAULT_DELIVERY_TIMEOUT,
+            }
+        );
+        assert_eq!(choices.assistant_timeout, DEFAULT_ASSISTANT_TIMEOUT);
+
+        let written = load("[delivery]\ntimeout_secs = 2.0\n[assistant]\ntimeout_secs = 30.0\n")
+            .settings
+            .choices()
+            .clone();
+        assert_eq!(written.timeouts.delivery, Duration::from_secs(2));
+        assert_eq!(written.assistant_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
     fn a_value_its_rule_forbids_is_refused() {
         refused("[stt]\nbackend = \"server\"\n", Key::SttServer);
+        refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
         refused("[stt]\nserver = \"https://a.test:9851\"\n", Key::SttServer);
         refused(
             "[stt]\ndevice = \"gpu\"\nbackend = \"whisper\"\n",
@@ -1939,6 +1999,31 @@ pub(super) mod tests {
         );
         refused("[capture]\nbackend = \"wav_file\"\n", Key::CapturePath);
         refused("[capture]\npace = \"realtime\"\n", Key::CapturePace);
+        for endpoint in [
+            "http://localhost",
+            "https://user:secret@example.test",
+            "https://example.test?key=secret",
+            "https://example.test#secret",
+            "https://example.test/path",
+            "",
+            "unix:///tmp/server.sock",
+        ] {
+            refused(
+                &format!("[stt]\nbackend = \"server\"\nserver = '{endpoint}'\n"),
+                Key::SttServer,
+            );
+        }
+        for (endpoint, model) in [
+            ("https://example.com/v1/chat/completions", "local-model"),
+            ("http://127.0.0.1:8080/v1/chat/completions", ""),
+        ] {
+            refused(
+                &format!(
+                    "[dictation.cleanup_llm]\nendpoint = \"{endpoint}\"\nmodel = \"{model}\"\n"
+                ),
+                Key::DictationCleanupLlmEndpoint,
+            );
+        }
         refused(
             "[dictation]\nauto_stop_ms = 2999\n",
             Key::DictationAutoStopMs,

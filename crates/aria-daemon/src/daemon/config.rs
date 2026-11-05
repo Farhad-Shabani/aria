@@ -7,8 +7,8 @@ pub use assistant::{load_chat, load_memory};
 
 use std::path::{Path, PathBuf};
 
-use aria_settings::config::{ConfigError, model_location, string_value, wake_backend};
-use aria_settings::{InvalidValue, Key, Phone, SettingsFile, Wake};
+use aria_settings::config::{ConfigError, model_location, wake_backend};
+use aria_settings::{CheckedSettings, InvalidValue, Key, Phone, WakeEngine};
 
 use aria_voice::config::{CaptureConfig, DictationConfig};
 
@@ -56,35 +56,20 @@ impl RelayConfig {
 pub enum WakeConfig {
     Disabled,
     Enabled {
-        backend: WakeBackend,
+        backend: WakeEngine,
         classifier: PathBuf,
         threshold: f32,
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WakeBackend {
-    OpenWakeWord,
-    LiveKit,
-}
-
-impl WakeBackend {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::OpenWakeWord => wake_backend::OPEN_WAKE_WORD,
-            Self::LiveKit => wake_backend::LIVEKIT,
-        }
-    }
-}
-
 impl DaemonConfig {
     pub fn load(
-        settings: &SettingsFile,
+        settings: &CheckedSettings,
         home: &Path,
         wake_word: WakeWordOverride,
     ) -> Result<Self, ConfigError> {
-        let dictation = DictationConfig::load(settings, home)?;
-        let wake = wake(&settings.wake, home, &dictation.capture, wake_word)?;
+        let dictation = DictationConfig::load(settings, home);
+        let wake = wake(settings, home, &dictation.capture, wake_word)?;
         Ok(Self {
             dictation,
             wake,
@@ -110,17 +95,18 @@ fn relay(phone: &Phone) -> RelayConfig {
 }
 
 fn wake(
-    wake: &Wake,
+    settings: &CheckedSettings,
     home: &Path,
     capture: &CaptureConfig,
     wake_word: WakeWordOverride,
 ) -> Result<WakeConfig, ConfigError> {
+    let wake = &settings.wake;
     let enabled = matches!(wake_word, WakeWordOverride::Enable) || wake.enabled.unwrap_or(false);
     if !enabled {
         return Ok(WakeConfig::Disabled);
     }
 
-    let backend = parse_wake_backend(&string_value(wake.backend.clone(), wake_backend::DEFAULT))?;
+    let backend = settings.choices().wake;
 
     if !matches!(capture, CaptureConfig::Microphone) {
         return Err(ConfigError::WakeRequiresMicrophone);
@@ -128,10 +114,10 @@ fn wake(
 
     let model = match (wake.model.as_deref(), backend) {
         (Some(model), _) => Some(model),
-        (None, WakeBackend::OpenWakeWord) => None,
+        (None, WakeEngine::OpenWakeWord) => None,
         // No aria-trained livekit head ships with Aria, and the openWakeWord
         // default would load into the wrong backend.
-        (None, WakeBackend::LiveKit) => {
+        (None, WakeEngine::LiveKit) => {
             return Err(ConfigError::Invalid {
                 key: Key::WakeModel,
                 source: InvalidValue::Required {
@@ -146,20 +132,6 @@ fn wake(
         classifier,
         threshold: wake.threshold.unwrap_or(DEFAULT_WAKE_THRESHOLD),
     })
-}
-
-fn parse_wake_backend(value: &str) -> Result<WakeBackend, ConfigError> {
-    match value {
-        wake_backend::OPEN_WAKE_WORD => Ok(WakeBackend::OpenWakeWord),
-        wake_backend::LIVEKIT => Ok(WakeBackend::LiveKit),
-        _ => Err(ConfigError::Invalid {
-            key: Key::WakeBackend,
-            source: InvalidValue::Unsupported {
-                value: value.to_owned(),
-                supported: "openwakeword and livekit".to_owned(),
-            },
-        }),
-    }
 }
 
 const DEFAULT_WAKE_MODEL: &str = "wakeword/aria.onnx";
@@ -177,7 +149,7 @@ mod tests {
         let file = file("[wake]\nenabled = false\nmodel = \"/missing/model.onnx\"\n");
 
         let wake = wake(
-            &file.wake,
+            &file,
             &test_home(),
             &CaptureConfig::Microphone,
             WakeWordOverride::Inherit,
@@ -190,7 +162,7 @@ mod tests {
     #[test]
     fn a_wake_word_run_outranks_a_disabled_file() {
         let wake = wake(
-            &file("[wake]\nenabled = false\n").wake,
+            &file("[wake]\nenabled = false\n"),
             &test_home(),
             &CaptureConfig::Microphone,
             WakeWordOverride::Enable,
@@ -205,7 +177,7 @@ mod tests {
     #[test]
     fn a_wake_word_run_needs_the_microphone() {
         let error = wake(
-            &file("[wake]\nenabled = false\n").wake,
+            &file("[wake]\nenabled = false\n"),
             &test_home(),
             &CaptureConfig::WavFile {
                 path: PathBuf::from("/fixture.wav"),
@@ -217,14 +189,14 @@ mod tests {
         assert!(matches!(error, ConfigError::WakeRequiresMicrophone));
     }
 
-    fn enabled_wake(rest: &str) -> SettingsFile {
+    fn enabled_wake(rest: &str) -> CheckedSettings {
         file(&format!("[wake]\nenabled = true\n{rest}"))
     }
 
     #[test]
     fn wake_defaults_to_openwakeword_and_its_own_model() {
         let wake = wake(
-            &enabled_wake("").wake,
+            &enabled_wake(""),
             &test_home(),
             &CaptureConfig::Microphone,
             WakeWordOverride::Inherit,
@@ -234,7 +206,7 @@ mod tests {
         assert_eq!(
             wake,
             WakeConfig::Enabled {
-                backend: WakeBackend::OpenWakeWord,
+                backend: WakeEngine::OpenWakeWord,
                 classifier: PathBuf::from("/home/user/.aria/models/wakeword/aria.onnx"),
                 threshold: DEFAULT_WAKE_THRESHOLD,
             }
@@ -246,7 +218,7 @@ mod tests {
         let file = enabled_wake("backend = \"livekit\"\nmodel = \"~/models/hey_livekit.onnx\"\n");
 
         let wake = wake(
-            &file.wake,
+            &file,
             &test_home(),
             &CaptureConfig::Microphone,
             WakeWordOverride::Inherit,
@@ -256,7 +228,7 @@ mod tests {
         assert_eq!(
             wake,
             WakeConfig::Enabled {
-                backend: WakeBackend::LiveKit,
+                backend: WakeEngine::LiveKit,
                 classifier: PathBuf::from("/home/user/models/hey_livekit.onnx"),
                 threshold: DEFAULT_WAKE_THRESHOLD,
             }
@@ -266,7 +238,7 @@ mod tests {
     #[test]
     fn a_wake_word_run_of_livekit_without_a_model_is_refused() {
         let error = wake(
-            &file("[wake]\nbackend = \"livekit\"\n").wake,
+            &file("[wake]\nbackend = \"livekit\"\n"),
             &test_home(),
             &CaptureConfig::Microphone,
             WakeWordOverride::Enable,

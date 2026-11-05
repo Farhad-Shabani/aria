@@ -1,9 +1,9 @@
 //! Composition of a speech capability: backend loading and the coordinator
 //! the runtime executes.
 
-use aria_settings::config::ConfigError;
+use aria_settings::TtsEngine;
 use aria_settings::rpc::RpcErrorCode;
-use aria_voice::config::{TtsConfig, TtsEngine};
+use aria_voice::config::TtsConfig;
 use aria_voice::speech::{SpeechBackend, SpeechBuildError, SpeechCoordinator};
 
 pub(super) struct BuiltSpeech {
@@ -26,9 +26,7 @@ pub(super) fn build_speech(config: TtsConfig) -> Result<BuiltSpeech, SpeechIniti
 impl From<&SpeechInitializationError> for RpcErrorCode {
     fn from(error: &SpeechInitializationError) -> Self {
         match error {
-            SpeechInitializationError::Config(_) | SpeechInitializationError::LoadPanicked => {
-                Self::Internal
-            }
+            SpeechInitializationError::LoadPanicked => Self::Internal,
             SpeechInitializationError::Backend(error) => error.into(),
         }
     }
@@ -36,9 +34,6 @@ impl From<&SpeechInitializationError> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon) enum SpeechInitializationError {
-    #[error("failed to resolve the speech settings")]
-    Config(#[source] ConfigError),
-
     #[error("failed to initialize the speech engine")]
     Backend(#[source] SpeechBuildError),
 

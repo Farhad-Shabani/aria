@@ -329,7 +329,7 @@ mod tests {
     use aria_platform::delivery::OutputMode;
     use aria_platform::hotkey::AriaKey;
 
-    fn settings(text: &str) -> SettingsFile {
+    fn settings(text: &str) -> crate::CheckedSettings {
         crate::Loaded::parse(text, std::path::Path::new("/Users/you"))
             .expect("the text loads")
             .settings

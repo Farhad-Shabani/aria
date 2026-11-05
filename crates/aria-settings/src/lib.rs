@@ -4,6 +4,7 @@
 //! valid file. One write path locks, re-reads, edits only the keys named,
 //! validates the whole result, and replaces the file atomically. Comments and
 //! unrelated keys survive every write.
+mod checked;
 mod choices;
 mod chord;
 pub mod command;
@@ -33,6 +34,10 @@ use aria_kit::transcription::LanguageCodeError;
 
 use aria_kit::audio::{AutoStopError, SilenceDurationError};
 
+pub use checked::{
+    CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
+    Voices, WakeEngine,
+};
 pub use choices::{DeliveryMode, Settings, Shortcut, StoreError};
 pub use chord::{Chord, ChordError, Modifiers};
 pub use directory::{Directory, DirectoryError};
@@ -43,9 +48,7 @@ pub use document::{
 };
 pub use keys::Scope;
 pub use keys::{Apply, Key};
-pub use limits::{
-    CleanupConfigError, MAX_DICTATION_TIMEOUT, is_valid_model_id, validate_cleanup_llm,
-};
+pub use limits::{CleanupConfigError, CleanupTarget, MAX_DICTATION_TIMEOUT, is_valid_model_id};
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
 };
@@ -84,7 +87,7 @@ pub fn default_path(home: &Path) -> PathBuf {
 }
 
 /// The settings a one-shot command reads: the file at `home`.
-pub fn load(home: &Path) -> Result<SettingsFile, SettingsError> {
+pub fn load(home: &Path) -> Result<CheckedSettings, SettingsError> {
     let path = default_path(home);
     let text = document::read_text(&path)?;
     let loaded = Loaded::parse(text.as_ref().map_or("", |text| &text.raw), home)?;

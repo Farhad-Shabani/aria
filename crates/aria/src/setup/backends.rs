@@ -304,11 +304,10 @@ mod tests {
                 backend::PARAKEET_MLX => "interpreter = \"/usr/bin/python3\"\n",
                 _ => "",
             };
-            let file: SettingsFile =
-                toml_edit::de::from_str(&format!("[{section}]\nbackend = \"{key}\"\n{required}"))
-                    .unwrap();
+            let file = aria_settings::testing::file(&format!(
+                "[{section}]\nbackend = \"{key}\"\n{required}"
+            ));
             let loaded: Vec<_> = config::loaded_models(&file, home)
-                .unwrap()
                 .into_iter()
                 .filter(|model| model.section == section)
                 .collect();
@@ -361,7 +360,6 @@ mod tests {
             let home_dir = home.path().to_path_buf();
             let aria_voice::config::TranscriptionBackend::Local(transcription) =
                 DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir)
-                    .unwrap()
                     .transcription
             else {
                 panic!("{} is a local engine", stt.key());
@@ -376,26 +374,23 @@ mod tests {
         {
             let home = home_with_downloads("tts", tts.key(), tts.model().assets());
             let home_dir = home.path().to_path_buf();
-            let checked =
-                match TtsConfig::load(&aria_settings::load(&home_dir).unwrap().tts, &home_dir)
-                    .unwrap()
-                    .backend
-                {
-                    TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
-                        aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
-                            model,
-                            voices,
-                        })
-                    }
-                    TtsBackend::Model(TtsModel::Qwen {
-                        model_dir,
-                        tokenizer_dir,
-                    }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
-                        model_dir,
-                        speech_tokenizer_dir: tokenizer_dir,
-                    }),
-                    TtsBackend::System => panic!("the system voice downloads nothing"),
-                };
+            let settings = aria_settings::load(&home_dir).unwrap();
+            let checked = match TtsConfig::load(&settings, &home_dir).backend {
+                TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
+                    aria_tts::kokoro::Kokoro::check_from(&aria_tts::kokoro::Config {
+                        model,
+                        voices,
+                    })
+                }
+                TtsBackend::Model(TtsModel::Qwen {
+                    model_dir,
+                    tokenizer_dir,
+                }) => aria_tts::qwen::Qwen::check_from(&aria_tts::qwen::model_files::Config {
+                    model_dir,
+                    speech_tokenizer_dir: tokenizer_dir,
+                }),
+                TtsBackend::System => panic!("the system voice downloads nothing"),
+            };
             if let Err(error) = checked {
                 panic!("{}: {}", tts.key(), error_chain(&error));
             }

@@ -7,7 +7,9 @@ use aria_tts::kokoro::Kokoro;
 use aria_tts::qwen::Qwen;
 use aria_tts::system::SystemVoice;
 
-use crate::config::{TtsBackend, TtsEngine, TtsFallback, TtsModel};
+use aria_settings::TtsEngine;
+
+use crate::config::{TtsBackend, TtsFallback, TtsModel};
 use aria_kit::synthesis::{PlaybackError, Session, SpeakerOutput, Synthesis, SynthesisError};
 use aria_settings::rpc::RpcErrorCode;
 

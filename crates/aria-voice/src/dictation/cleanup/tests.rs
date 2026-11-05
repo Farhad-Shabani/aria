@@ -183,7 +183,11 @@ fn request_treats_instructions_as_data_and_commits_only_valid_text() {
         );
     });
     let home = tempfile::tempdir().unwrap();
-    let cleanup = LlmCleanup::new(&endpoint, "local", home.path()).unwrap();
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
     assert!(cleanup.agent.config().proxy().is_none());
     assert_eq!(cleanup.agent.config().max_redirects(), 0);
     let mut text = input.to_owned();
@@ -196,8 +200,7 @@ fn request_treats_instructions_as_data_and_commits_only_valid_text() {
 fn tiny_inputs_skip_network_and_oversized_inputs_fail_without_mutation() {
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        "http://127.0.0.1:1/v1/chat/completions",
-        "local",
+        &CleanupTarget::new("http://127.0.0.1:1/v1/chat/completions", "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -278,7 +281,11 @@ fn http_failures_preserve_text_and_next_request_recovers() {
             }
         });
         let home = tempfile::tempdir().unwrap();
-        let cleanup = LlmCleanup::new(&endpoint, "local", home.path()).unwrap();
+        let cleanup = LlmCleanup::new(
+            &CleanupTarget::new(&endpoint, "local").unwrap(),
+            home.path(),
+        )
+        .unwrap();
         let mut text = INPUT.to_owned();
         let error = cleanup.apply(&mut text, &CancelToken::never()).unwrap_err();
         assert!(!format!("{error:?}").contains("secret"));
@@ -310,7 +317,11 @@ fn global_budget_bounds_stalled_and_trickling_bodies() {
             }
         });
         let home = tempfile::tempdir().unwrap();
-        let cleanup = LlmCleanup::new(&endpoint, "local", home.path()).unwrap();
+        let cleanup = LlmCleanup::new(
+            &CleanupTarget::new(&endpoint, "local").unwrap(),
+            home.path(),
+        )
+        .unwrap();
         let mut text = INPUT.to_owned();
         let started = Instant::now();
         assert_eq!(
@@ -334,7 +345,11 @@ fn a_valid_response_after_the_callers_deadline_is_rejected() {
         );
     });
     let home = tempfile::tempdir().unwrap();
-    let cleanup = LlmCleanup::new(&endpoint, "local", home.path()).unwrap();
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
     let deadline = Instant::now() + Duration::from_millis(10);
     assert_eq!(
         category(
@@ -360,7 +375,11 @@ fn cancellation_while_waiting_prevents_committing_the_response() {
         );
     });
     let home = tempfile::tempdir().unwrap();
-    let cleanup = LlmCleanup::new(&endpoint, "local", home.path()).unwrap();
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
     let mut text = INPUT.to_owned();
     assert!(matches!(
         cleanup.apply(&mut text, &cancel),

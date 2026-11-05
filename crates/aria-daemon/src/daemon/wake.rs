@@ -12,13 +12,13 @@ use tokio_util::sync::CancellationToken;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 
-use crate::daemon::config::WakeBackend;
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 use aria_kit::audio::{
     CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor,
 };
 use aria_primitives::error_chain;
 use aria_settings::DeliveryMode;
+use aria_settings::WakeEngine;
 use aria_voice::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 
 use super::DictationInitializationError;
@@ -35,20 +35,20 @@ pub(in crate::daemon) enum WakeDetector {
 
 impl WakeDetector {
     pub(super) fn load(
-        backend: WakeBackend,
+        backend: WakeEngine,
         classifier: PathBuf,
         threshold: f32,
     ) -> Result<Self, DictationInitializationError> {
         let started = Instant::now();
         let detector = match backend {
-            WakeBackend::OpenWakeWord => {
+            WakeEngine::OpenWakeWord => {
                 let config = OpenWakeWordConfig::new(classifier, threshold)
                     .map_err(DictationInitializationError::WakeConfiguration)?;
                 OpenWakeWord::load_from(&config)
                     .map(|detector| Self::OpenWakeWord(Box::new(detector)))
                     .map_err(DictationInitializationError::WakeModel)?
             }
-            WakeBackend::LiveKit => {
+            WakeEngine::LiveKit => {
                 let config = LiveKitConfig::new(classifier, threshold)
                     .map_err(DictationInitializationError::WakeConfiguration)?;
                 LiveKitWakeWord::load_from(&config)

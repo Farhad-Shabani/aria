@@ -2941,8 +2941,8 @@ mod tests {
     fn oversized_completion_keeps_text_without_contacting_the_model() {
         let home = tempfile::tempdir().unwrap();
         let cleanup = super::super::LlmCleanup::new(
-            "http://127.0.0.1:1/v1/chat/completions",
-            "local",
+            &aria_settings::CleanupTarget::new("http://127.0.0.1:1/v1/chat/completions", "local")
+                .unwrap(),
             home.path(),
         )
         .unwrap();

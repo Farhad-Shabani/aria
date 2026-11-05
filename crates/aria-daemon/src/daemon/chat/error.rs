@@ -2,16 +2,12 @@
 
 use aria_assistant::chat::{AssistantError, InstructionsError, ProjectsError, SessionStoreError};
 use aria_platform::delivery::DeliveryError;
-use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
     #[error("failed to read settings")]
     Settings(#[source] aria_settings::StoreError),
-
-    #[error("failed to resolve the chat settings")]
-    Config(#[source] ConfigError),
 
     #[error("failed to read the known projects")]
     Projects(#[source] ProjectsError),
@@ -29,9 +25,7 @@ pub enum ResolveError {
 impl From<&ResolveError> for RpcErrorCode {
     fn from(error: &ResolveError) -> Self {
         match error {
-            ResolveError::Config(_) | ResolveError::Projects(_) | ResolveError::Settings(_) => {
-                Self::Internal
-            }
+            ResolveError::Projects(_) | ResolveError::Settings(_) => Self::Internal,
             ResolveError::NoTarget | ResolveError::Directory(_) => Self::InvalidRequest,
         }
     }
@@ -39,9 +33,6 @@ impl From<&ResolveError> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChatError {
-    #[error("failed to resolve the chat settings")]
-    Config(#[source] ConfigError),
-
     #[error(transparent)]
     Assistant(#[from] AssistantError),
 
@@ -67,7 +58,7 @@ pub enum ChatError {
 impl From<&ChatError> for RpcErrorCode {
     fn from(error: &ChatError) -> Self {
         match error {
-            ChatError::Config(_) | ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
+            ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
             ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
             ChatError::Assistant(AssistantError::NoWorkdir(_))
             | ChatError::UnknownPrompt

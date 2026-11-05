@@ -46,7 +46,6 @@ cidre    = { workspace = true, features = [ "ax", "core_audio", "dispatch", "mac
 rtrb     = "0.4"
 
 [dev-dependencies]
-toml_edit          = { workspace = true, features = [ "display", "parse", "serde" ] }
 tracing-subscriber = { workspace = true }
 aria-harness       = { workspace = true }
 aria-kit           = { workspace = true, features = [ "test-support" ] }

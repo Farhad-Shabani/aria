@@ -194,7 +194,7 @@ impl DaemonSession {
     ) -> Result<Routing, RouteError> {
         let home = aria_settings::config::home_directory()?;
         let settings = aria_settings::load(&home).map_err(ConfigError::from)?;
-        let config = super::config::load_chat(&settings)?;
+        let config = super::config::load_chat(&settings);
         let projects = Projects::load_with(&home, &config)?;
         let request = ChatRequest::from_config(text, assistant_id, config)?;
         let project = match projects.mentioned(&request.text) {
