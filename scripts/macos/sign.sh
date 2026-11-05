@@ -3,11 +3,11 @@
 # Signs Aria.app from the inside out, so each seal covers the final
 # signatures below it.
 #
-# Usage: sign.sh <Aria.app>
+# Usage: sign.sh <Aria.app> [identity]
 set -euo pipefail
 
 app="${1:?usage: sign.sh <Aria.app>}"
-identity="$("$(dirname "${BASH_SOURCE[0]}")/identity.sh" "$app")"
+identity="${2:-$("$(dirname "${BASH_SOURCE[0]}")/identity.sh" "$app")}"
 # Notarization needs the hardened runtime and a timestamp. Ad-hoc code gets
 # neither. It has no Team ID, so the runtime would refuse the daemon's dylib.
 if [ "$identity" = - ]; then
