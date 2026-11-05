@@ -265,6 +265,12 @@ fn at(position: Option<Position>) -> String {
     position.map_or_else(String::new, |position| format!("{position}: "))
 }
 
+impl fmt::Display for SettingsFault {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}{}", at(self.position), self.message)
+    }
+}
+
 impl fmt::Display for ParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.position {
