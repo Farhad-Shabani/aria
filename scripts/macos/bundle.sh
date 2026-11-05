@@ -16,6 +16,9 @@ root="$(cd "$scripts/../.." && pwd)"
 helpers="$app/Contents/Helpers"
 daemon="$helpers/Aria.app/Contents"
 
+# Runs before Helpers/ changes, so a refused identity leaves the app untouched.
+ARIA_SIGN_IDENTITY="$("$scripts/identity.sh" "$app")"
+export ARIA_SIGN_IDENTITY
 # Only this script writes Helpers/, so a rebuild starts it clean.
 rm -rf "$helpers"
 mkdir -p "$daemon/MacOS" "$daemon/Resources"
