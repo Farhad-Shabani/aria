@@ -32,6 +32,9 @@ jobs:
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
       - name: just release-macos
         run: just release-macos
+        # Ad-hoc whatever identities the runner's keychain holds.
+        env:
+          ARIA_SIGN_IDENTITY: "-"
       # The sign job signs the app, not this ad-hoc DMG. tar keeps the modes
       # and symlinks that upload-artifact drops.
       - name: Pack the app
