@@ -550,26 +550,16 @@ impl From<&EnrollError> for RpcErrorCode {
 /// Nothing is at the model's path, so downloading it is the fix. A model
 /// that is there but won't load is a different fault.
 fn is_missing(error: &SpeakerError) -> bool {
-    let model = match error {
-        SpeakerError::Model { source, .. } => source,
-        SpeakerError::Load { .. } | SpeakerError::Inference { .. } => return false,
-    };
-    match model {
-        ModelError::Missing { .. } => true,
-        ModelError::Path(InspectionError::Inspect { source, .. }) => {
-            source.kind() == std::io::ErrorKind::NotFound
-        }
-        ModelError::Path(
-            InspectionError::NotAbsolute { .. }
-            | InspectionError::NotRegularFile { .. }
-            | InspectionError::NotDirectory { .. }
-            | InspectionError::NotExecutable { .. }
-            | InspectionError::UntrustedOwner { .. }
-            | InspectionError::WritableByOthers { .. },
-        )
-        | ModelError::ReadDirectory { .. }
-        | ModelError::Unreadable { .. }
-        | ModelError::Malformed { .. } => false,
+    match error {
+        SpeakerError::Model {
+            source: ModelError::Missing { .. },
+            ..
+        } => true,
+        SpeakerError::Model {
+            source: ModelError::Path(InspectionError::Inspect { source, .. }),
+            ..
+        } => source.kind() == std::io::ErrorKind::NotFound,
+        _ => false,
     }
 }
 

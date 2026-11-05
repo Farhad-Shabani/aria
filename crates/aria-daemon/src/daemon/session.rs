@@ -536,12 +536,7 @@ impl From<ClientError> for AskError {
     fn from(error: ClientError) -> Self {
         match error {
             ClientError::Rpc(failure) => Self::Failed(failure),
-            error @ (ClientError::Runtime(_)
-            | ClientError::Transport { .. }
-            | ClientError::NotServing
-            | ClientError::NotProvided
-            | ClientError::Timeout(_)
-            | ClientError::MalformedResponse(_)) => Self::Stream(error),
+            error => Self::Stream(error),
         }
     }
 }

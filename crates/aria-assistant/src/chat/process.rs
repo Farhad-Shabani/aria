@@ -81,11 +81,7 @@ pub(crate) fn run_cli(
             }
             RunError::TimedOut(timeout) => AssistantError::Timeout(timeout),
             RunError::Cancelled => AssistantError::Cancelled,
-            error @ (RunError::Spawn(_)
-            | RunError::Write(_)
-            | RunError::Read(_)
-            | RunError::Wait(_)
-            | RunError::OutputTooLarge { .. }) => AssistantError::Run(error),
+            error => AssistantError::Run(error),
         })?;
     lines.finish();
     Ok(Output {
