@@ -77,11 +77,37 @@ impl From<&ChatError> for RpcErrorCode {
             ChatError::Assistant(AssistantError::SignedOut { .. }) => Self::AssistantSignedOut,
             ChatError::Assistant(AssistantError::Cancelled)
             | ChatError::Delivery(DeliveryError::Cancelled) => Self::Cancelled,
-            ChatError::Assistant(_) => Self::AssistantFailed,
+            ChatError::Assistant(
+                AssistantError::Run(_)
+                | AssistantError::RunDirectory(_)
+                | AssistantError::Failed(_)
+                | AssistantError::Malformed(_),
+            ) => Self::AssistantFailed,
             ChatError::Delivery(DeliveryError::Timeout(_)) => Self::DeliveryTimeout,
             ChatError::Delivery(DeliveryError::TargetChanged) => Self::DeliveryTargetChanged,
             ChatError::Delivery(DeliveryError::ApplicationExcluded) => Self::ApplicationExcluded,
-            ChatError::Delivery(_) => Self::DeliveryFailed,
+            ChatError::Delivery(
+                DeliveryError::EmptyText
+                | DeliveryError::TextTooLarge { .. }
+                | DeliveryError::ControlCharacter
+                | DeliveryError::InvalidTimeout { .. }
+                | DeliveryError::ClipboardRejected
+                | DeliveryError::TargetUnavailable
+                | DeliveryError::InsertionUnsupported
+                | DeliveryError::StreamingUnsupported,
+            ) => Self::DeliveryFailed,
+            #[cfg(target_os = "linux")]
+            ChatError::Delivery(
+                DeliveryError::SubmissionUnsupported
+                | DeliveryError::PasteUnconfirmed
+                | DeliveryError::InsertionNotPermitted,
+            ) => Self::DeliveryFailed,
+            #[cfg(target_os = "macos")]
+            ChatError::Delivery(
+                DeliveryError::SubmissionUnconfirmed
+                | DeliveryError::InsertionNotPermitted
+                | DeliveryError::SecureInput,
+            ) => Self::DeliveryFailed,
         }
     }
 }

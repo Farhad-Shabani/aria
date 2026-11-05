@@ -81,7 +81,22 @@ impl From<&SpeechError> for RpcErrorCode {
             // Synthesis reports a failed playback device as part of the utterance.
             #[cfg(not(target_family = "wasm"))]
             SpeechError::Synthesis(SynthesisError::Playback { .. }) => Self::PlaybackFailed,
-            SpeechError::Synthesis(_) => Self::SynthesisFailed,
+            SpeechError::Synthesis(
+                SynthesisError::Model { .. }
+                | SynthesisError::Load { .. }
+                | SynthesisError::Inference { .. }
+                | SynthesisError::Program { .. }
+                | SynthesisError::UnsupportedBackend { .. }
+                | SynthesisError::WorkerPanicked { .. }
+                | SynthesisError::PcmUnavailable { .. }
+                | SynthesisError::EmptyReadBuffer
+                // A requested stop never gets here: the coordinator turns it
+                // into the stopped outcome.
+                | SynthesisError::Cancelled
+                | SynthesisError::SourceGone
+                | SynthesisError::TimedOut { .. }
+                | SynthesisError::AlreadyFailed,
+            ) => Self::SynthesisFailed,
         }
     }
 }
