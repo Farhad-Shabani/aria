@@ -79,13 +79,13 @@ pub(crate) fn run_cli(
                     binary: binary.into(),
                 }
             }
-            RunError::Spawn(source) => AssistantError::Spawn(source),
-            RunError::Write(source) => AssistantError::Input(source),
-            RunError::Read(source) => AssistantError::Io(source),
-            RunError::Wait(source) => AssistantError::Wait(source),
             RunError::TimedOut(timeout) => AssistantError::Timeout(timeout),
             RunError::Cancelled => AssistantError::Cancelled,
-            RunError::OutputTooLarge { limit, .. } => AssistantError::OutputTooLarge(limit),
+            error @ (RunError::Spawn(_)
+            | RunError::Write(_)
+            | RunError::Read(_)
+            | RunError::Wait(_)
+            | RunError::OutputTooLarge { .. }) => AssistantError::Run(error),
         })?;
     lines.finish();
     Ok(Output {
@@ -179,7 +179,7 @@ mod tests {
             .expect_err("the output is too large");
 
         assert!(
-            matches!(error, AssistantError::OutputTooLarge(_)),
+            matches!(error, AssistantError::Run(RunError::OutputTooLarge { .. })),
             "{error:?}"
         );
         assert!(started.elapsed() < PATIENCE);
@@ -202,7 +202,7 @@ mod tests {
         .expect_err("the output is too large");
 
         assert!(
-            matches!(error, AssistantError::OutputTooLarge(_)),
+            matches!(error, AssistantError::Run(RunError::OutputTooLarge { .. })),
             "{error:?}"
         );
         assert_eq!(lines, 0);
