@@ -12,24 +12,9 @@ use crate::qwen::prompt::VoicePrompt;
 
 use crate::qwen::code_predictor::CodePredictor;
 use crate::qwen::config::ModelConfig;
-use crate::qwen::sampling::{Sampler, SamplingError};
+use crate::qwen::sampling::Sampler;
 use crate::qwen::talker::Talker;
-
-#[derive(Debug, thiserror::Error)]
-pub enum GenerateError {
-    #[error("qwen: unsupported language {language:?}")]
-    UnsupportedLanguage { language: String },
-    #[error("qwen: generation was cancelled")]
-    Cancelled,
-    #[error("qwen: generation failed")]
-    Forward(#[from] candle_core::Error),
-    #[error(transparent)]
-    Sampling(#[from] SamplingError),
-    #[error(transparent)]
-    Transformer(#[from] crate::qwen::transformer::TransformerError),
-}
-
-pub type Result<T> = std::result::Result<T, GenerateError>;
+use crate::qwen::{Error, Result};
 
 /// Generation knobs; defaults mirror the reference `generate_config`.
 #[derive(Debug, Clone)]
@@ -147,7 +132,7 @@ impl<'a> CustomVoiceGenerator<'a> {
 
         for frame in 0..self.params.max_frames {
             if cancel.is_cancelled() {
-                return Err(GenerateError::Cancelled);
+                return Err(Error::Cancelled);
             }
             let (logits, last_hidden) = self.talker.forward(&x, offset)?;
             offset += x.dim(1)?;
@@ -174,7 +159,7 @@ impl<'a> CustomVoiceGenerator<'a> {
             let mut frame_codes = vec![c0];
             for step in 0..groups - 1 {
                 if cancel.is_cancelled() {
-                    return Err(GenerateError::Cancelled);
+                    return Err(Error::Cancelled);
                 }
                 let last = hidden.i((hidden.dim(0)? - 1.., ..))?;
                 let step_logits = self.predictor.logits(&last, step)?;
@@ -217,28 +202,5 @@ impl<'a> CustomVoiceGenerator<'a> {
         }
 
         Ok(codes)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use aria_kit::primitives::error_chain;
-
-    use super::GenerateError;
-    use crate::qwen::transformer::TransformerError;
-
-    #[test]
-    fn a_nested_failure_names_its_cause_once() {
-        let cause = candle_core::Error::Msg("shape mismatch".to_owned());
-        let error = GenerateError::from(TransformerError::from(cause));
-
-        let chain = error_chain(&error);
-
-        assert_eq!(chain.matches("shape mismatch").count(), 1, "{chain}");
-        assert_eq!(
-            chain.matches("transformer forward failed").count(),
-            1,
-            "{chain}"
-        );
     }
 }

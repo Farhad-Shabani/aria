@@ -5,11 +5,7 @@
 use candle_core::{Device, Tensor};
 use candle_nn::{Module, VarBuilder};
 
-#[derive(Debug, thiserror::Error)]
-#[error("qwen: speaker encoder failed")]
-pub struct SpeakerError(#[from] candle_core::Error);
-
-pub type Result<T> = std::result::Result<T, SpeakerError>;
+use crate::qwen::Result;
 
 fn relu(x: &Tensor) -> Result<Tensor> {
     Ok(x.relu()?)

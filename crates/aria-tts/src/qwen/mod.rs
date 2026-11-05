@@ -22,6 +22,7 @@ pub mod code_predictor;
 pub mod codec;
 pub mod config;
 pub mod engine;
+mod error;
 pub mod generate;
 pub mod mel;
 pub mod model_files;
@@ -34,15 +35,18 @@ pub mod text;
 pub mod transformer;
 
 pub use code_predictor::CodePredictor;
-pub use codec::{CodecError, SpeechCodecDecoder};
+pub use codec::SpeechCodecDecoder;
 pub use engine::Qwen;
 pub use speaker::SpeakerEncoder;
 pub use talker::Talker;
 
 pub use config::{
-    CodePredictorConfig, CodecDecoderConfig, ConfigError, ModelConfig, ModelType, RopeScaling,
-    SpeakerDialect, SpeechTokenizerConfig, TalkerConfig,
+    CodePredictorConfig, CodecDecoderConfig, ModelConfig, ModelType, RopeScaling, SpeakerDialect,
+    SpeechTokenizerConfig, TalkerConfig,
 };
-pub use text::{ChatTokenizer, TextError};
+pub use error::Error;
+pub use text::ChatTokenizer;
+
+use error::Result;
 
 pub const NAME: &str = "qwen";

@@ -8,9 +8,7 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-#[derive(Debug, thiserror::Error)]
-#[error("qwen: sampling failed: {0}")]
-pub struct SamplingError(String);
+use crate::qwen::{Error, Result};
 
 /// Repeatable with the same seed and inputs. The random stream differs from PyTorch's.
 pub struct Sampler {
@@ -47,14 +45,14 @@ impl Sampler {
         banned: &[u32],
         suppressed: Option<std::ops::Range<u32>>,
         keep: &[u32],
-    ) -> Result<usize, SamplingError> {
+    ) -> Result<usize> {
         self.process(logits, penalized, banned, suppressed, keep);
         let best = logits
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(i, _)| i)
-            .ok_or_else(|| SamplingError("empty distribution".to_owned()))?;
+            .ok_or(Error::EmptyDistribution)?;
         Ok(best)
     }
 
@@ -69,7 +67,7 @@ impl Sampler {
         banned: &[u32],
         suppressed: Option<std::ops::Range<u32>>,
         keep: &[u32],
-    ) -> Result<usize, SamplingError> {
+    ) -> Result<usize> {
         self.process(logits, penalized, banned, suppressed, keep);
         // Float rounding can leave a draw past the accumulated mass; the most
         // probable index catches it instead of a suppressed one.

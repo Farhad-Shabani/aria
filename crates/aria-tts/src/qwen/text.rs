@@ -15,6 +15,8 @@ use tokenizers::models::bpe::{BPE, BpeBuilder};
 use tokenizers::pre_tokenizers::byte_level::ByteLevel;
 use tokenizers::{AddedToken, DecoderWrapper, PostProcessorWrapper, Tokenizer};
 
+use crate::qwen::{Error, Result};
+
 /// Wraps assistant text the way the reference feeds its processor: an open
 /// second assistant turn tells the talker speech is expected next.
 pub fn assistant_text(text: &str) -> String {
@@ -31,28 +33,6 @@ pub fn instruct_text(instruct: &str) -> String {
     format!("<|im_start|>user\n{instruct}<|im_end|>\n")
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum TextError {
-    #[error("qwen: cannot read {file}")]
-    Read {
-        file: &'static str,
-        source: std::io::Error,
-    },
-    #[error("qwen: invalid tokenizer files: {0}")]
-    Load(String),
-    #[error("qwen: text encoding failed: {0}")]
-    Encode(String),
-    #[error(
-        "qwen: special token {token:?} registered as id {got}, config says {expected} \
-         — added_tokens_decoder is not contiguous above the BPE vocabulary"
-    )]
-    SpecialIdMismatch {
-        token: String,
-        expected: u32,
-        got: u32,
-    },
-}
-
 /// Encodes chat-wrapped prompts into Qwen2 token ids.
 pub struct ChatTokenizer {
     tokenizer: Tokenizer,
@@ -61,7 +41,7 @@ pub struct ChatTokenizer {
 impl ChatTokenizer {
     /// Builds the fast tokenizer from a model repo directory holding
     /// `vocab.json`, `merges.txt`, and `tokenizer_config.json`.
-    pub fn load(repo_dir: impl AsRef<Path>) -> Result<Self, TextError> {
+    pub fn load(repo_dir: impl AsRef<Path>) -> Result<Self> {
         let dir = repo_dir.as_ref();
         Self::load_files(
             dir.join("vocab.json"),
@@ -74,8 +54,8 @@ impl ChatTokenizer {
         vocab: impl AsRef<Path>,
         merges: impl AsRef<Path>,
         config: impl AsRef<Path>,
-    ) -> Result<Self, TextError> {
-        let config = std::fs::read(config).map_err(|source| TextError::Read {
+    ) -> Result<Self> {
+        let config = std::fs::read(config).map_err(|source| Error::Read {
             file: "tokenizer_config.json",
             source,
         })?;
@@ -84,13 +64,13 @@ impl ChatTokenizer {
             &vocab.as_ref().to_string_lossy(),
             &merges.as_ref().to_string_lossy(),
         )
-        .map_err(|e| TextError::Load(e.to_string()))?;
+        .map_err(Error::Tokenizer)?;
         // Qwen2 is byte-level BPE over the GPT-2 regex split: no prefix space,
         // no normalization, offsets trimmed on decode.
         let bpe = BpeBuilder::new()
             .vocab_and_merges(vocab, merges)
             .build()
-            .map_err(|e| TextError::Load(e.to_string()))?;
+            .map_err(Error::Tokenizer)?;
         let mut tokenizer = Tokenizer::new(bpe);
         tokenizer.with_pre_tokenizer(Some(ByteLevel::new(false, true, true)));
         let decoder: DecoderWrapper = ByteLevel::default().into();
@@ -106,10 +86,10 @@ impl ChatTokenizer {
                     .values()
                     .map(|content| AddedToken::from(content.as_str(), true)),
             )
-            .map_err(|e| TextError::Load(e.to_string()))?;
+            .map_err(Error::Tokenizer)?;
         for (id, content) in &specials {
             if tokenizer.token_to_id(content) != Some(*id) {
-                return Err(TextError::SpecialIdMismatch {
+                return Err(Error::SpecialIdMismatch {
                     token: content.clone(),
                     expected: *id,
                     got: tokenizer.token_to_id(content).unwrap_or_default(),
@@ -123,23 +103,27 @@ impl ChatTokenizer {
     /// `added_tokens_decoder` keyed by numeric id, ascending. Registration
     /// order matters: added ids are assigned sequentially above the BPE
     /// vocabulary, so ascending order reproduces the configured ids exactly.
-    fn special_ids(config: &[u8]) -> Result<BTreeMap<u32, String>, TextError> {
+    fn special_ids(config: &[u8]) -> Result<BTreeMap<u32, String>> {
         let value: serde_json::Value =
-            serde_json::from_slice(config).map_err(|e| TextError::Load(e.to_string()))?;
+            serde_json::from_slice(config).map_err(|source| Error::Json {
+                file: "tokenizer_config.json",
+                source,
+            })?;
         let decoder = value
             .get("added_tokens_decoder")
             .and_then(|d| d.as_object())
-            .ok_or_else(|| TextError::Load("missing added_tokens_decoder".to_owned()))?;
+            .ok_or(Error::MissingAddedTokens)?;
         decoder
             .iter()
             .map(|(id, entry)| {
-                let id = id
-                    .parse::<u32>()
-                    .map_err(|_| TextError::Load(format!("non-numeric added token id {id:?}")))?;
+                let id = id.parse::<u32>().map_err(|source| Error::AddedTokenId {
+                    id: id.clone(),
+                    source,
+                })?;
                 let content = entry
                     .get("content")
                     .and_then(|c| c.as_str())
-                    .ok_or_else(|| TextError::Load(format!("added token {id} missing content")))?
+                    .ok_or(Error::AddedTokenContent { id })?
                     .to_owned();
                 Ok((id, content))
             })
@@ -149,14 +133,14 @@ impl ChatTokenizer {
     /// Token ids for one wrapped prompt. Specials stay off at encode time: the
     /// wrappers already spell out every control token, and they are matched by
     /// the added-vocabulary before the BPE ever runs.
-    pub fn encode(&self, wrapped: &str) -> Result<Vec<u32>, TextError> {
+    pub fn encode(&self, wrapped: &str) -> Result<Vec<u32>> {
         let encoding = self
             .tokenizer
             .encode(wrapped, false)
-            .map_err(|error| TextError::Encode(error.to_string()))?;
+            .map_err(Error::Encode)?;
         let ids = encoding.get_ids().to_vec();
         if ids.is_empty() {
-            return Err(TextError::Encode("empty prompt".to_owned()));
+            return Err(Error::EmptyPrompt);
         }
         Ok(ids)
     }

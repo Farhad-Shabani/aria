@@ -8,7 +8,7 @@ use crate::qwen::nn::{apply_rope, rms_norm as shared_rms_norm, rope_angles};
 
 use crate::qwen::config::CodecDecoderConfig;
 
-use super::{CodecError, Result};
+use crate::qwen::{Error, Result};
 
 /// Full multi-head attention under a causal sliding-window mask. Windows are
 /// at most a few hundred frames, so eager attention is cheap.
@@ -52,9 +52,9 @@ impl WindowAttention {
         };
         // RoPE over [T, head_dim], broadcast across batch and heads.
         let (cos, sin) =
-            rope_angles(self.head_dim, 0, len, theta, x.device()).map_err(CodecError::from)?;
-        let q = apply_rope(&project(&self.q_proj)?, &cos, &sin).map_err(CodecError::from)?;
-        let k = apply_rope(&project(&self.k_proj)?, &cos, &sin).map_err(CodecError::from)?;
+            rope_angles(self.head_dim, 0, len, theta, x.device()).map_err(Error::from)?;
+        let q = apply_rope(&project(&self.q_proj)?, &cos, &sin).map_err(Error::from)?;
+        let k = apply_rope(&project(&self.k_proj)?, &cos, &sin).map_err(Error::from)?;
         let v = project(&self.v_proj)?;
         let scores = q
             .matmul(&k.transpose(2, 3)?)?

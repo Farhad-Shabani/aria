@@ -3,7 +3,7 @@
 //! sentence-chunked streaming so playback starts before the utterance ends.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use candle_core::Tensor;
 
@@ -13,16 +13,16 @@ use aria_kit::synthesis::{
     Engine, SpeakingRate, SpeechText, SpeechWriter, SynthesisError, Synthesizer, Voice, chunks,
 };
 
-use crate::qwen::NAME;
 use crate::qwen::code_predictor::CodePredictor;
 use crate::qwen::config::{ModelConfig, ModelType, SpeechTokenizerConfig};
-use crate::qwen::generate::{CustomVoiceGenerator, GenerateError, GenerationParams};
+use crate::qwen::generate::{CustomVoiceGenerator, GenerationParams};
 use crate::qwen::model_files::{
-    Detail, MAX_CONFIG_BYTES, MODEL, ModelFiles, TALKER_CONFIG, TALKER_WEIGHTS, TOKENIZER_CONFIG,
-    TOKENIZER_WEIGHTS, load_failed, read_bounded_text,
+    MAX_CONFIG_BYTES, MODEL, ModelFiles, TALKER_CONFIG, TALKER_WEIGHTS, TOKENIZER_CONFIG,
+    TOKENIZER_WEIGHTS, load, read_bounded_text,
 };
 use crate::qwen::talker::Talker;
-use crate::qwen::text::{ChatTokenizer, TextError, assistant_text};
+use crate::qwen::text::{ChatTokenizer, assistant_text};
+use crate::qwen::{Error, NAME};
 
 /// The speaker used when configuration names none. Vivian is the reference
 /// demos' default English voice.
@@ -83,45 +83,42 @@ impl Engine for Qwen {
         let files = ModelFiles::check(&config)?;
 
         let model_json = read_bounded_text(&files.talker_config, TALKER_CONFIG, MAX_CONFIG_BYTES)?;
-        let model_config = ModelConfig::from_json(&model_json)
-            .map_err(|error| load_failed(TALKER_CONFIG, error))?;
+        let model_config =
+            ModelConfig::from_json(&model_json).map_err(|error| load(TALKER_CONFIG, error))?;
         if model_config.model_type() == ModelType::Base {
-            return Err(load_failed(
-                TALKER_CONFIG,
-                Detail("base voice cloning is not available".to_owned()),
-            ));
+            return Err(load(TALKER_CONFIG, Error::BaseModel));
         }
 
         let tokenizer_json =
             read_bounded_text(&files.codec_config, TOKENIZER_CONFIG, MAX_CONFIG_BYTES)?;
         let speech_config = SpeechTokenizerConfig::from_json(&tokenizer_json)
-            .map_err(|error| load_failed(TOKENIZER_CONFIG, error))?;
+            .map_err(|error| load(TOKENIZER_CONFIG, error))?;
 
         let chat_tokenizer =
             ChatTokenizer::load_files(&files.chat_vocab, &files.chat_merges, &files.chat_config)
-                .map_err(|error| load_failed("tokenizer files", error))?;
+                .map_err(|error| load("tokenizer files", error))?;
 
         let device = device();
         let talker_weights = candle_core::safetensors::load(&files.talker_weights, &device)
-            .map_err(|error| load_failed(TALKER_WEIGHTS, error))?;
+            .map_err(|error| load(TALKER_WEIGHTS, error))?;
         let vb =
             candle_nn::VarBuilder::from_tensors(talker_weights, candle_core::DType::F32, &device);
         let talker = Talker::load(vb.pp("talker"), &model_config.talker_config)
-            .map_err(|error| load_failed(TALKER_WEIGHTS, error))?;
+            .map_err(|error| load(TALKER_WEIGHTS, error))?;
         let predictor = CodePredictor::load(
             vb.pp("talker.code_predictor"),
             &model_config.talker_config.code_predictor_config,
         )
-        .map_err(|error| load_failed(TALKER_WEIGHTS, error))?;
+        .map_err(|error| load(TALKER_WEIGHTS, error))?;
         drop(vb);
 
         let codec_weights = candle_core::safetensors::load(&files.codec_weights, &device)
-            .map_err(|error| load_failed(TOKENIZER_WEIGHTS, error))?;
+            .map_err(|error| load(TOKENIZER_WEIGHTS, error))?;
         let codec_vb =
             candle_nn::VarBuilder::from_tensors(codec_weights, candle_core::DType::F32, &device)
                 .pp("decoder");
         let codec = crate::qwen::SpeechCodecDecoder::load(codec_vb, &speech_config.decoder_config)
-            .map_err(|error| load_failed("speech codec", error))?;
+            .map_err(|error| load("speech codec", error))?;
 
         Ok(Self {
             synth: Mutex::new(Synth {
@@ -155,53 +152,33 @@ impl Synthesizer for Qwen {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Checked before any inference: an unusable voice costs nothing.
-        let speaker_row = match self.resolve_speaker(&synth, voice) {
-            Ok(speaker) => speaker,
-            Err(error) => {
-                out.fail(listener_error(&error));
-                return Err(error);
-            }
-        };
-
-        for piece in chunks(text.as_str()) {
-            if cancel.is_cancelled() {
-                out.fail(SynthesisError::Cancelled);
-                return Err(SynthesisError::Cancelled);
-            }
-            if let Err(error) =
-                synth.synthesize_chunk(&piece, speaker_row.as_ref(), rate, &mut out, cancel)
-            {
-                out.fail(listener_error(&error));
-                return Err(error);
-            }
-        }
-        out.finish();
-        Ok(())
-    }
-}
-
-impl Qwen {
-    /// Resolves a CustomVoice preset into its codec-space speaker row.
-    fn resolve_speaker(
-        &self,
-        synth: &Synth,
-        voice: Option<&Voice>,
-    ) -> Result<Option<Tensor>, SynthesisError> {
         let speaker = voice.map_or(DEFAULT_SPEAKER, Voice::as_str);
-        let token = synth
-            .model_config
-            .talker_config
-            .spk_id
-            .get(speaker)
-            .ok_or_else(|| SynthesisError::UnsupportedVoice {
+        let Some(&token) = synth.model_config.talker_config.spk_id.get(speaker) else {
+            let unsupported = || SynthesisError::UnsupportedVoice {
                 backend: NAME,
                 voice: speaker.to_owned(),
-            })?;
-        synth
-            .talker
-            .embed_codec(*token)
-            .map(Some)
-            .map_err(inference_failed)
+            };
+            out.fail(unsupported());
+            return Err(unsupported());
+        };
+
+        match synth.synthesize(text, token, rate, &mut out, cancel) {
+            Ok(()) => {
+                out.finish();
+                Ok(())
+            }
+            Err(Error::Cancelled) => {
+                out.fail(SynthesisError::Cancelled);
+                Err(SynthesisError::Cancelled)
+            }
+            Err(error) => {
+                // An engine error cannot be cloned, so the listener and the
+                // caller share one and both see its cause.
+                let error = Arc::new(error);
+                out.fail(inference(Arc::clone(&error)));
+                Err(inference(error))
+            }
+        }
     }
 }
 
@@ -224,28 +201,43 @@ fn resample(samples: Vec<f32>, factor: f32) -> Vec<f32> {
 }
 
 impl Synth {
+    /// The utterance chunk by chunk, in the preset speaker `token`'s voice.
+    fn synthesize(
+        &mut self,
+        text: &SpeechText,
+        token: u32,
+        rate: SpeakingRate,
+        out: &mut SpeechWriter,
+        cancel: &CancelToken,
+    ) -> Result<(), Error> {
+        let speaker_row = self.talker.embed_codec(token)?;
+        for piece in chunks(text.as_str()) {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            self.synthesize_chunk(&piece, &speaker_row, rate, out, cancel)?;
+        }
+        Ok(())
+    }
+
     /// One chunk of text through the full stack. Each decoded window goes
     /// to `out` as it lands, so playback starts before later windows decode.
     fn synthesize_chunk(
         &mut self,
         text: &str,
-        speaker_row: Option<&Tensor>,
+        speaker_row: &Tensor,
         rate: SpeakingRate,
         out: &mut SpeechWriter,
         cancel: &CancelToken,
-    ) -> Result<(), SynthesisError> {
-        let prompt_ids = self
-            .chat_tokenizer
-            .encode(&assistant_text(text))
-            .map_err(text_failed)?;
+    ) -> Result<(), Error> {
+        let prompt_ids = self.chat_tokenizer.encode(&assistant_text(text))?;
         let prompt = crate::qwen::prompt::assemble_custom_voice(
             &self.talker,
             &self.model_config,
             &prompt_ids,
-            speaker_row.cloned(),
+            Some(speaker_row.clone()),
             None,
-        )
-        .map_err(inference_failed)?;
+        )?;
         self.talker.reset_cache();
         let params = GenerationParams::default();
         let mut generator = CustomVoiceGenerator::new(
@@ -254,30 +246,21 @@ impl Synth {
             &self.model_config,
             params,
         );
-        let frame_codes = generator
-            .generate(prompt, cancel)
-            .map_err(generation_failed)?;
+        let frame_codes = generator.generate(prompt, cancel)?;
         let frames = frame_codes.len();
         if frames == 0 {
             return Ok(());
         }
-        let codes = frame_codes_tensor(frame_codes, &self.device).map_err(inference_failed)?;
-        for window in self
-            .codec
-            .decoded_windows(&codes)
-            .map_err(inference_failed)?
-        {
+        let codes = frame_codes_tensor(frame_codes, &self.device)?;
+        for window in self.codec.decoded_windows(&codes)? {
             if cancel.is_cancelled() {
-                return Err(SynthesisError::Cancelled);
+                return Err(Error::Cancelled);
             }
-            let samples = window
-                .map_err(inference_failed)?
-                .flatten_all()
-                .and_then(|tensor| tensor.to_vec1::<f32>())
-                .map_err(inference_failed)?;
+            let samples = window?.flatten_all()?.to_vec1::<f32>()?;
             let samples = resample(samples, rate.get());
             if out.write(&samples).is_err() {
-                return Err(SynthesisError::Cancelled);
+                // The listener is gone; stopping is what it asked for.
+                return Err(Error::Cancelled);
             }
         }
         Ok(())
@@ -295,53 +278,10 @@ fn frame_codes_tensor(
         .contiguous()
 }
 
-fn text_failed(_error: TextError) -> SynthesisError {
-    unusable("qwen text encoding failed")
-}
-
-fn inference_failed<E: std::error::Error + Send + Sync + 'static>(error: E) -> SynthesisError {
+fn inference(error: Arc<Error>) -> SynthesisError {
     SynthesisError::Inference {
         backend: NAME,
         source: BackendError::engine(error),
-    }
-}
-
-fn generation_failed(error: GenerateError) -> SynthesisError {
-    match error {
-        GenerateError::Cancelled => SynthesisError::Cancelled,
-        error => inference_failed(error),
-    }
-}
-
-fn listener_error(error: &SynthesisError) -> SynthesisError {
-    match error {
-        SynthesisError::Cancelled => SynthesisError::Cancelled,
-        SynthesisError::UnsupportedVoice { backend, voice } => SynthesisError::UnsupportedVoice {
-            backend,
-            voice: voice.clone(),
-        },
-        // A boxed engine error cannot be cloned, so the listener hears one
-        // generic inference failure for all of these.
-        SynthesisError::Model { .. }
-        | SynthesisError::Load { .. }
-        | SynthesisError::Inference { .. }
-        | SynthesisError::Program { .. }
-        | SynthesisError::UnsupportedBackend { .. }
-        | SynthesisError::WorkerPanicked { .. }
-        | SynthesisError::PcmUnavailable { .. }
-        | SynthesisError::EmptyReadBuffer
-        | SynthesisError::SourceGone
-        | SynthesisError::TimedOut { .. }
-        | SynthesisError::AlreadyFailed => unusable("qwen synthesis failed"),
-        #[cfg(not(target_family = "wasm"))]
-        SynthesisError::Playback { .. } => unusable("qwen synthesis failed"),
-    }
-}
-
-fn unusable(detail: &str) -> SynthesisError {
-    SynthesisError::Inference {
-        backend: NAME,
-        source: BackendError::Unusable(detail.to_owned()),
     }
 }
 
@@ -368,5 +308,22 @@ mod tests {
         let samples = (0..8).map(|sample| sample as f32).collect();
 
         assert_eq!(resample(samples, 2.0).len(), 4);
+    }
+
+    #[test]
+    fn a_config_parse_failure_reaches_the_caller_with_its_cause() {
+        let error = ModelConfig::from_json("{")
+            .map_err(|error| load(TALKER_CONFIG, error))
+            .expect_err("truncated json is not a config");
+
+        let chain =
+            std::iter::successors(std::error::Error::source(&error), |cause| cause.source());
+
+        assert!(
+            chain
+                .into_iter()
+                .any(|cause| cause.is::<serde_json::Error>()),
+            "{error:?}"
+        );
     }
 }

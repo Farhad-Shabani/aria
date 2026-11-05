@@ -13,13 +13,7 @@ use candle_nn::kv_cache::KvCache;
 use crate::qwen::config::TalkerConfig;
 use crate::qwen::nn::{apply_rope, rms_norm, rope_angles};
 
-#[derive(Debug, thiserror::Error)]
-pub enum TransformerError {
-    #[error("qwen: transformer forward failed")]
-    Forward(#[from] candle_core::Error),
-}
-
-pub type Result<T> = std::result::Result<T, TransformerError>;
+use crate::qwen::{Error, Result};
 
 /// Per-layer key/value state; sequence axis is dim 2 of `[B, H, S, D]`.
 pub struct LayerCache {
@@ -78,8 +72,7 @@ impl Attention {
     }
 
     fn rope_cos_sin(&self, offset: usize, len: usize, theta: f64) -> Result<(Tensor, Tensor)> {
-        rope_angles(self.head_dim, offset, len, theta, self.q_norm.device())
-            .map_err(TransformerError::from)
+        rope_angles(self.head_dim, offset, len, theta, self.q_norm.device()).map_err(Error::from)
     }
 
     /// `x`: `[1, T, hidden]` appended after `offset` earlier tokens.

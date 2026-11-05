@@ -6,9 +6,10 @@ use candle_core::{IndexOp, Tensor};
 use candle_nn::Module;
 use candle_nn::VarBuilder;
 
+use crate::qwen::Result;
 use crate::qwen::config::TalkerConfig;
 use crate::qwen::nn::rms_norm;
-use crate::qwen::transformer::{DecoderLayer, LayerCache, Result};
+use crate::qwen::transformer::{DecoderLayer, LayerCache};
 
 pub struct Talker {
     text_embedding: Tensor, // [text_vocab, 2048]

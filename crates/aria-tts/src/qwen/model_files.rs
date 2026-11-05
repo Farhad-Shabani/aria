@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::synthesis::{SynthesisError, validate_model_file};
 
+use crate::qwen::Error;
+
 /// Files a talker model directory must carry.
 pub(super) const TALKER_WEIGHTS: &str = "model.safetensors";
 pub(super) const TALKER_CONFIG: &str = "config.json";
@@ -151,13 +153,10 @@ fn checked_file(
 ) -> Result<PathBuf, SynthesisError> {
     let path = validate_model_file(path, crate::qwen::NAME)?;
     let size = std::fs::metadata(&path)
-        .map_err(|error| load_failed(label, error))?
+        .map_err(|error| load(label, error))?
         .len();
     if size > maximum_bytes {
-        return Err(load_failed(
-            label,
-            Detail(format!("file exceeds {maximum_bytes} bytes")),
-        ));
+        return Err(load(label, Error::TooLarge { maximum_bytes }));
     }
     Ok(path)
 }
@@ -170,25 +169,18 @@ pub(super) fn read_bounded_text(
 ) -> Result<String, SynthesisError> {
     use std::io::Read;
 
-    let file = std::fs::File::open(path).map_err(|error| load_failed(label, error))?;
+    let file = std::fs::File::open(path).map_err(|error| load(label, error))?;
     let mut text = String::new();
     file.take(maximum_bytes + 1)
         .read_to_string(&mut text)
-        .map_err(|error| load_failed(label, error))?;
+        .map_err(|error| load(label, error))?;
     if text.len() as u64 > maximum_bytes {
-        return Err(load_failed(
-            label,
-            Detail(format!("file exceeds {maximum_bytes} bytes")),
-        ));
+        return Err(load(label, Error::TooLarge { maximum_bytes }));
     }
     Ok(text)
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub(super) struct Detail(pub(super) String);
-
-pub(super) fn load_failed(
+pub(super) fn load(
     model: impl Into<String>,
     error: impl std::error::Error + Send + Sync + 'static,
 ) -> SynthesisError {
