@@ -88,31 +88,16 @@ final class ServerTranscription: ObservableObject {
     static let pairFailure = "Aria couldn’t pair with the server. Try again."
     static let invitationFailure = "That invitation didn’t work. Make a new invitation and try again."
 
-    /// The first line of each `aria remote pair` failure the user can act on,
-    /// without its `error: ` prefix.
-    private static let pairCauses: [(cliMessage: String, message: String)] = [
-        ("remote invitation is invalid", invitationFailure),
-        ("remote operation failed (unauthenticated)", invitationFailure),
-        ("remote operation failed (invalid_request)", invitationFailure),
-        (
-            "another pairing operation is active",
-            "Another pairing is in progress. Wait for it to finish, then try again."
-        ),
-        (
-            "cannot establish the authenticated remote connection",
-            "Aria couldn’t reach the server. Make sure it’s on and reachable, then try again."
-        ),
-        ("remote operation timed out", "The server didn’t respond in time. Try again."),
-        (
-            "remote operation failed (permission_denied)",
-            "The server can’t pair more devices. Run `aria remote revoke` on the server to remove one, then try again."
-        ),
-    ]
-
     static func pairingMessage(for error: any Error) -> String {
-        guard case .commandFailed(let detail)? = error as? DaemonProcessError else { return pairFailure }
-        let cause = detail.lowercased()
-        return pairCauses.first { cause.hasPrefix($0.cliMessage) }?.message ?? pairFailure
+        switch error as? PairingFailure {
+        case .invitationInvalid: invitationFailure
+        case .busy: "Another pairing is in progress. Wait for it to finish, then try again."
+        case .unreachable: "Aria couldn’t reach the server. Make sure it’s on and reachable, then try again."
+        case .timeout: "The server didn’t respond in time. Try again."
+        case .permissionDenied:
+            "The server can’t pair more devices. Run `aria remote revoke` on the server to remove one, then try again."
+        case .failed, nil: pairFailure
+        }
     }
 
     func beginPairing() {

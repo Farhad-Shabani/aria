@@ -222,18 +222,24 @@ final class ServerTranscriptionTests: XCTestCase {
     }
 
     func testAKnownPairingFailureSaysWhatToDo() {
-        func message(forCLI stderr: String) -> String {
-            let detail = DaemonProcess.cliFailure(stderr: Data(stderr.utf8), fallback: "")
-            return ServerTranscription.pairingMessage(for: DaemonProcessError.commandFailed(detail))
+        func message(forReport json: String) -> String {
+            ServerTranscription.pairingMessage(for: PairingFailure(report: Data(json.utf8)))
         }
 
         XCTAssertEqual(
-            message(forCLI: "error: remote operation failed (permission_denied)\n"),
+            message(forReport: #"{"paired":false,"error":{"code":"permission_denied","message":"x"}}"#),
             "The server can’t pair more devices. Run `aria remote revoke` on the server to remove one, then try again.")
         XCTAssertEqual(
-            message(forCLI: "error: remote operation failed (unauthenticated)\n"), ServerTranscription.invitationFailure
-        )
-        XCTAssertEqual(message(forCLI: "error: cannot load remote configuration\n"), ServerTranscription.pairFailure)
+            message(forReport: #"{"paired":false,"error":{"code":"invitation_invalid","message":"x"}}"#),
+            ServerTranscription.invitationFailure)
+        XCTAssertEqual(
+            message(forReport: #"{"paired":false,"error":{"code":"failed","message":"x"}}"#),
+            ServerTranscription.pairFailure)
+    }
+
+    func testAPairingCodeThisBuildDoesNotKnowIsAPlainFailure() {
+        XCTAssertEqual(PairingFailure(report: Data(#"{"paired":false,"error":{"code":"new_code"}}"#.utf8)), .failed)
+        XCTAssertEqual(PairingFailure(report: Data("error: not json".utf8)), .failed)
     }
 
     func testAnInvitationShowsItsAddressBeforePairing() {

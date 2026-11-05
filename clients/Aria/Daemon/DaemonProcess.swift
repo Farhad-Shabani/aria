@@ -39,6 +39,31 @@ enum DaemonProcessError: LocalizedError {
     }
 }
 
+/// Why `aria remote pair` failed, from the code its `--json` report carries.
+enum PairingFailure: Error, Equatable {
+    /// The invitation couldn’t be read, or the server refused it.
+    case invitationInvalid
+    case busy, unreachable, timeout, permissionDenied
+    /// Any other failure, including a code this build doesn’t name.
+    case failed
+
+    init(report: Data) {
+        struct Report: Decodable {
+            struct Failure: Decodable { var code: String }
+            var error: Failure?
+        }
+        self =
+            switch (try? JSONDecoder().decode(Report.self, from: report))?.error?.code {
+            case "invitation_invalid": .invitationInvalid
+            case "busy": .busy
+            case "unreachable": .unreachable
+            case "timeout": .timeout
+            case "permission_denied": .permissionDenied
+            default: .failed
+            }
+    }
+}
+
 enum StartMethod: Equatable {
     /// `launchctl kickstart` of the app's login agent, which then owns the process.
     case kickstart
@@ -161,7 +186,18 @@ struct DaemonProcess: DaemonControlling {
 
     /// The invitation is a secret, so it goes over stdin, never the arguments.
     static func pairServer(invitation: String) async throws {
-        try await remote(["pair"], input: Data(invitation.utf8), fallback: "Pairing failed.")
+        let binary = try ariaBinary()
+        let output: ChildProcess.Output
+        do {
+            output = try await ChildProcess.run(
+                binary, ["remote", "pair", "--json"], input: Data(invitation.utf8))
+        } catch {
+            throw launchFailed("aria remote", error)
+        }
+        guard output.status != 0 else { return }
+        let report = String(decoding: output.stdout + output.stderr, as: UTF8.self)
+        log.error("aria remote pair failed: \(report, privacy: .private)")
+        throw PairingFailure(report: output.stdout)
     }
 
     static func forgetServer() async throws {

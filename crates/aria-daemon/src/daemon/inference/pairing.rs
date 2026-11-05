@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 
 use aria_kit::cancel::CancelToken;
+use aria_settings::rpc::RpcErrorCode;
 
 use super::client::{ADMIN_TIMEOUT, RemoteClientError, bounded, identity_error, rpc_error, run};
 use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
@@ -63,7 +64,7 @@ pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteCli
         let channel = endpoint
             .connect()
             .await
-            .map_err(RemoteClientError::Handshake)?;
+            .map_err(|error| RemoteClientError::Connection(Some(error)))?;
         wire::inference_pairing_service_client::InferencePairingServiceClient::new(channel)
             .max_decoding_message_size(1024)
             .pair(wire::InferencePairRequest {
@@ -144,9 +145,94 @@ impl Forgotten {
     }
 }
 
+/// Why pairing failed, as `aria remote pair --json` names it for a script or
+/// the app to branch on. A name never changes meaning once shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingFailure {
+    /// The invitation can't be read, or the server refused it.
+    InvitationInvalid,
+    Busy,
+    Unreachable,
+    Timeout,
+    PermissionDenied,
+    Failed,
+}
+
+impl PairingFailure {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::InvitationInvalid => "invitation_invalid",
+            Self::Busy => "busy",
+            Self::Unreachable => "unreachable",
+            Self::Timeout => "timeout",
+            Self::PermissionDenied => "permission_denied",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl From<&RemoteClientError> for PairingFailure {
+    fn from(error: &RemoteClientError) -> Self {
+        match error {
+            RemoteClientError::Invitation(_)
+            | RemoteClientError::InvalidEndpoint
+            | RemoteClientError::Rpc(
+                RpcErrorCode::Unauthenticated | RpcErrorCode::InvalidRequest,
+            ) => Self::InvitationInvalid,
+            RemoteClientError::PairingLock(_) => Self::Busy,
+            RemoteClientError::Connection(_) => Self::Unreachable,
+            RemoteClientError::Timeout => Self::Timeout,
+            RemoteClientError::Rpc(RpcErrorCode::PermissionDenied) => Self::PermissionDenied,
+            RemoteClientError::Rpc(_)
+            | RemoteClientError::Config(_)
+            | RemoteClientError::Storage(_)
+            | RemoteClientError::InvalidFingerprint
+            | RemoteClientError::Identity(_)
+            | RemoteClientError::DurabilityUnconfirmed
+            | RemoteClientError::PinUnconfirmed(_)
+            | RemoteClientError::RevocationUnconfirmed
+            | RemoteClientError::ForgetUnconfirmed { .. }
+            | RemoteClientError::Runtime(_)
+            | RemoteClientError::Cancelled
+            | RemoteClientError::Unsupported
+            | RemoteClientError::Response
+            | RemoteClientError::Decode(_)
+            | RemoteClientError::AudioTooLong
+            | RemoteClientError::Audio(_)
+            | RemoteClientError::PartialAudio
+            | RemoteClientError::Backpressure => Self::Failed,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pairing_failure_the_app_explains_gets_its_code() {
+        let cases = [
+            (RemoteClientError::InvalidEndpoint, "invitation_invalid"),
+            (RemoteClientError::Connection(None), "unreachable"),
+            (RemoteClientError::Timeout, "timeout"),
+            (
+                RemoteClientError::Rpc(RpcErrorCode::Unauthenticated),
+                "invitation_invalid",
+            ),
+            (
+                RemoteClientError::Rpc(RpcErrorCode::InvalidRequest),
+                "invitation_invalid",
+            ),
+            (
+                RemoteClientError::Rpc(RpcErrorCode::PermissionDenied),
+                "permission_denied",
+            ),
+            (RemoteClientError::Rpc(RpcErrorCode::Internal), "failed"),
+        ];
+        for (error, code) in cases {
+            assert_eq!(PairingFailure::from(&error).label(), code, "{error}");
+        }
+    }
 
     #[test]
     fn invitations_are_bounded_utf8() {

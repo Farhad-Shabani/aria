@@ -10,7 +10,11 @@ pub(super) enum RemoteCommand {
         endpoint: String,
     },
     #[command(about = "Pair using a secret invitation read from stdin; does not enable uploads")]
-    Pair,
+    Pair {
+        /// Print one JSON object, with a failure code on failure
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "Revoke a client and cancel its active inference")]
     Revoke { fingerprint: String },
     #[command(about = "Forget the paired server and this machine's key for it")]
@@ -22,10 +26,17 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
         RemoteCommand::Invite { endpoint } => {
             println!("{}", aria_daemon::remote_invite(&endpoint)?);
         }
-        RemoteCommand::Pair => {
+        RemoteCommand::Pair { json: false } => {
             let fingerprint = aria_daemon::remote_pair(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
             println!("To use it, choose the paired inference server in `aria setup`.");
+        }
+        RemoteCommand::Pair { json: true } => {
+            let paired = aria_daemon::remote_pair(std::io::stdin().lock());
+            println!("{}", pair_report(&paired));
+            if paired.is_err() {
+                std::process::exit(1);
+            }
         }
         RemoteCommand::Revoke { fingerprint } => {
             aria_daemon::remote_revoke(&fingerprint)?;
@@ -58,6 +69,19 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn pair_report(paired: &Result<String, aria_daemon::RemoteClientError>) -> serde_json::Value {
+    match paired {
+        Ok(fingerprint) => serde_json::json!({ "paired": true, "fingerprint": fingerprint }),
+        Err(error) => serde_json::json!({
+            "paired": false,
+            "error": {
+                "code": aria_daemon::PairingFailure::from(error).label(),
+                "message": crate::primitives::error_chain(error),
+            },
+        }),
+    }
+}
+
 pub(super) fn serve(bind: std::net::SocketAddr) -> anyhow::Result<()> {
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(log_filter(None))
@@ -66,4 +90,22 @@ pub(super) fn serve(bind: std::net::SocketAddr) -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(subscriber)?;
     aria_stt::whisper::install_logging_hooks();
     Ok(aria_daemon::serve_inference(bind)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_pairing_reports_its_code_and_cause() {
+        let report = pair_report(&Err(aria_daemon::RemoteClientError::Timeout));
+
+        assert_eq!(
+            report,
+            serde_json::json!({
+                "paired": false,
+                "error": { "code": "timeout", "message": "remote operation timed out" },
+            })
+        );
+    }
 }
