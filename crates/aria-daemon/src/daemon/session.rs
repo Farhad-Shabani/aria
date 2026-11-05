@@ -377,21 +377,19 @@ impl DaemonSession {
         self.client.set_owner(name.to_string())
     }
 
-    pub fn listen_stop(&self) -> Result<ListenStopped, ListenCommandError> {
-        self.client.listen_stop().map_err(ListenCommandError::Call)
+    pub fn listen_stop(&self) -> Result<ListenStopped, ClientError> {
+        self.client.listen_stop()
     }
 
-    pub fn listen_status(&self) -> Result<ListenSnapshot, ListenCommandError> {
-        self.client
-            .listen_status()
-            .map_err(ListenCommandError::Call)
+    pub fn listen_status(&self) -> Result<ListenSnapshot, ClientError> {
+        self.client.listen_status()
     }
 
     /// Follows the running listen session. Subscribed before the status
     /// check, so a session ending in between is not missed.
     pub fn follow_listen(&self) -> Result<ListenFollow, ListenCommandError> {
         let events = self.client.subscribe().map_err(ListenCommandError::Call)?;
-        let status = self.listen_status()?;
+        let status = self.listen_status().map_err(ListenCommandError::Call)?;
         if !status.listening {
             return Err(ListenCommandError::NotListening);
         }
@@ -523,6 +521,7 @@ pub enum RouteError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
+    /// The daemon's verdict, whether the ask failed or the stream carrying it did.
     #[error(transparent)]
     Failed(RpcFailure),
 
@@ -530,7 +529,21 @@ pub enum AskError {
     DaemonStopped(Ticket),
 
     #[error(transparent)]
-    Stream(#[from] ClientError),
+    Stream(ClientError),
+}
+
+impl From<ClientError> for AskError {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::Rpc(failure) => Self::Failed(failure),
+            error @ (ClientError::Runtime(_)
+            | ClientError::Transport { .. }
+            | ClientError::NotServing
+            | ClientError::NotProvided
+            | ClientError::Timeout(_)
+            | ClientError::MalformedResponse(_)) => Self::Stream(error),
+        }
+    }
 }
 
 pub use aria_voice::listen::{ListenSnapshot, ListenStarted, ListenStopped};
@@ -788,6 +801,14 @@ mod tests {
                 ChatStageKind::Replied(mine)
             ]
         );
+    }
+
+    #[test]
+    fn a_verdict_on_the_stream_fails_the_ask_like_one_on_the_ask() {
+        let refused = RpcFailure::new(aria_settings::rpc::RpcErrorCode::Cancelled, "cancelled");
+        let reply = reply_from(Ticket(1), [Err(ClientError::Rpc(refused.clone()))], |_| {});
+
+        assert!(matches!(reply, Err(AskError::Failed(failure)) if failure == refused));
     }
 
     #[test]
