@@ -146,7 +146,7 @@ fn runtime_directory(paths: Result<&PreparedRuntimePaths, &RuntimeError>) -> Che
 
 fn audio_capture(config: Option<&DictationConfig>) -> Check {
     match config {
-        Some(config) => capture_source(&config.capture, config.dictation_timeouts.recording),
+        Some(config) => capture_source(&config.capture, config.dictation_timeouts.recording()),
         None => Check::warning(AUDIO_CAPTURE, SETTINGS_FAILED),
     }
 }

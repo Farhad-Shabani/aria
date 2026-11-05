@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "aria"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "aria-assistant",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "aria-assistant"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "aria-harness",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "aria-bench"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "aria-assistant",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "aria-bench-speaker"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "aria-speaker",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "aria-daemon"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-assistant",
  "aria-kit",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "aria-harness"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "aria-primitives",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "aria-kit"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-primitives",
  "cpal",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "aria-platform"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "arboard",
  "aria-kit",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "aria-primitives"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "rustix",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "aria-segmentation"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "ort",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "aria-settings"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "aria-platform",
@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "aria-speaker"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "ort",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "aria-stt"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "aria-harness",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "aria-tts"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "candle-core",
@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "aria-voice"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-harness",
  "aria-kit",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "aria-wake"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "hound",
@@ -484,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "aria-web"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aria-kit",
  "aria-stt",

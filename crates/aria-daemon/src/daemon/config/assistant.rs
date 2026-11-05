@@ -17,7 +17,7 @@ pub fn load_chat(settings: &CheckedSettings) -> ChatConfig {
         workdir: settings.assistant.workdir.clone(),
         project_roots: settings.assistant.project_roots.clone().unwrap_or_default(),
         timeout: choices.assistant_timeout,
-        delivery_timeout: choices.timeouts.delivery,
+        delivery_timeout: choices.timeouts.delivery(),
     }
 }
 

@@ -1969,7 +1969,7 @@ pub(super) mod tests {
             .settings
             .choices()
             .clone();
-        assert_eq!(written.timeouts.delivery, Duration::from_secs(2));
+        assert_eq!(written.timeouts.delivery(), Duration::from_secs(2));
         assert_eq!(written.assistant_timeout, Duration::from_secs(30));
     }
 

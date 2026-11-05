@@ -16,6 +16,8 @@ root="$(cd "$scripts/../.." && pwd)"
 helpers="$app/Contents/Helpers"
 daemon="$helpers/Aria.app/Contents"
 
+# Runs before Helpers/ changes, so a refused identity leaves the helper in place.
+identity="$("$scripts/identity.sh")"
 # Only this script writes Helpers/, so a rebuild starts it clean.
 rm -rf "$helpers"
 mkdir -p "$daemon/MacOS" "$daemon/Resources"
@@ -28,4 +30,4 @@ plutil -insert CFBundlePackageType -string APPL "$daemon/Info.plist"
 plutil -insert CFBundleIconFile -string Aria "$daemon/Info.plist"
 plutil -insert LSUIElement -bool true "$daemon/Info.plist"
 ln -s Aria.app/Contents/MacOS/aria "$helpers/aria"
-"$scripts/sign.sh" "$app"
+"$scripts/sign.sh" "$app" "$identity"
