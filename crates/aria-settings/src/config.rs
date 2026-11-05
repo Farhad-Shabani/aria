@@ -42,18 +42,19 @@ pub mod backend {
     pub const PARAKEET_MLX: &str = "parakeet-mlx";
     pub const DEFAULT: &str = PARAKEET;
 
+    /// The engines that run on this machine: every one but the server.
+    pub const LOCAL: &[&str] = &[
+        WHISPER,
+        WHISPER_CANDLE,
+        PARAKEET,
+        MOONSHINE,
+        NEMOTRON,
+        PARAKEET_MLX,
+    ];
+
     /// The canonical name of a local engine, or `None`.
     pub fn local(name: &str) -> Option<&'static str> {
-        [
-            WHISPER,
-            WHISPER_CANDLE,
-            PARAKEET,
-            MOONSHINE,
-            NEMOTRON,
-            PARAKEET_MLX,
-        ]
-        .into_iter()
-        .find(|engine| *engine == name)
+        LOCAL.iter().copied().find(|engine| *engine == name)
     }
 }
 

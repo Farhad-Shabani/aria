@@ -272,7 +272,7 @@ pub(super) fn transcription_defaults(
             key: Key::SttBackend,
             source: InvalidValue::Unsupported {
                 value: backend.to_owned(),
-                supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server".to_owned(),
+                supported: backend::LOCAL.join(", "),
             },
         }),
     }
@@ -507,12 +507,13 @@ mod tests {
     fn defaults_for_an_unknown_engine_are_refused() {
         let error = transcription_defaults("vosk", Path::new("/home/user"))
             .expect_err("an unknown backend must be rejected");
+        // A retry never names the server, so the list offers only local engines.
         assert!(matches!(
             error,
             ConfigError::Invalid {
                 key: Key::SttBackend,
-                source: InvalidValue::Unsupported { .. },
-            }
+                source: InvalidValue::Unsupported { ref supported, .. },
+            } if !supported.contains(backend::SERVER) && supported.contains(backend::PARAKEET_MLX)
         ));
     }
 
