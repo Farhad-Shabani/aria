@@ -2,6 +2,7 @@ mod store;
 
 pub use store::{MAX_ENTRY_BYTES, RetryLease, Store};
 
+use aria_primitives::Cause;
 use std::path::PathBuf;
 
 use aria_platform::delivery::Application;
@@ -94,7 +95,7 @@ pub struct ClearHistoryResult {
     pub cleanup_pending: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
     #[error("dictation history entry was not found")]
     Missing,
@@ -103,7 +104,7 @@ pub enum HistoryError {
     #[error("dictation history retry timed out")]
     Timeout,
     #[error("dictation history transcription failed")]
-    Transcription,
+    Transcription(#[source] Cause),
     #[error("the recording is unavailable for retry")]
     AudioUnavailable,
     #[error("dictation history is busy")]
@@ -117,7 +118,17 @@ pub enum HistoryError {
     #[error("dictation history exceeds its storage limit")]
     TooLarge,
     #[error("dictation history storage failed")]
-    Storage,
+    Storage(#[source] Cause),
+}
+
+impl HistoryError {
+    pub fn transcription(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Transcription(Box::new(error))
+    }
+
+    pub fn storage(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Storage(Box::new(error))
+    }
 }
 
 impl From<&HistoryError> for RpcErrorCode {
@@ -128,11 +139,11 @@ impl From<&HistoryError> for RpcErrorCode {
             HistoryError::Busy => Self::Busy,
             HistoryError::InvalidRequest => Self::InvalidRequest,
             HistoryError::ProjectUnavailable => Self::HistoryProjectUnavailable,
-            HistoryError::Unavailable | HistoryError::Storage => Self::HistoryUnavailable,
+            HistoryError::Unavailable | HistoryError::Storage(_) => Self::HistoryUnavailable,
             HistoryError::TooLarge => Self::PayloadTooLarge,
             HistoryError::Cancelled => Self::Cancelled,
             HistoryError::Timeout => Self::OverallTimeout,
-            HistoryError::Transcription => Self::TranscriptionFailed,
+            HistoryError::Transcription(_) => Self::TranscriptionFailed,
         }
     }
 }
@@ -144,14 +155,14 @@ impl From<aria_platform::sqlite::Error> for HistoryError {
             Error::Busy => Self::Busy,
             Error::TooLarge => Self::TooLarge,
             Error::Database(error) => error.into(),
-            Error::Path
+            error @ (Error::Path
             | Error::Directory(_)
             | Error::DirectoryNotPrivate
             | Error::File(_)
             | Error::Linked
             | Error::Replaced
             | Error::Cancelled
-            | Error::Io { .. } => Self::Storage,
+            | Error::Io { .. }) => Self::storage(error),
         }
     }
 }
@@ -172,7 +183,7 @@ impl From<rusqlite::Error> for HistoryError {
             {
                 Self::TooLarge
             }
-            _ => Self::Storage,
+            error => Self::storage(error),
         }
     }
 }

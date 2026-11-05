@@ -414,7 +414,7 @@ impl DictationRuntime {
                 Ok(recovered)
             }
             Err(error) => {
-                store.attempt_failed(id, error)?;
+                store.attempt_failed(id, &error)?;
                 Err(error)
             }
         }
@@ -436,16 +436,19 @@ impl DictationRuntime {
         {
             let transcribed = self
                 .transcribe(recording, settings, cancel)
-                .map_err(|_| HistoryError::Transcription)?;
+                .map_err(HistoryError::transcription)?;
             if names_an_engine(requested) && transcribed.engine != requested {
-                return Err(HistoryError::Transcription);
+                return Err(HistoryError::transcription(EngineMismatch {
+                    requested: requested.to_owned(),
+                    ran: transcribed.engine,
+                }));
             }
             return Ok(transcribed);
         }
-        let setup = self.retry.get().map_err(|_| HistoryError::Transcription)?;
+        let setup = self.retry.get().map_err(HistoryError::transcription)?;
         let target = retry_target(setup, requested)?;
         transcribe_retry(setup, target, recording, settings, cancel)
-            .map_err(|_| HistoryError::Transcription)
+            .map_err(HistoryError::transcription)
     }
 
     pub(in crate::daemon) fn execute(
@@ -528,8 +531,15 @@ fn retry_target<'a>(
         (TranscriptionBackend::Local(local), Some(engine)) => local
             .for_backend(engine, &setup.home)
             .map(RetryTarget::Local)
-            .map_err(|_| HistoryError::Transcription),
+            .map_err(HistoryError::transcription),
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the retry ran on {ran}, not the requested {requested}")]
+struct EngineMismatch {
+    requested: String,
+    ran: &'static str,
 }
 
 fn check_retry(cancel: &CancelToken, deadline: Deadline) -> Result<(), HistoryError> {
@@ -1094,7 +1104,7 @@ mod history_tests {
             fixture
                 .runtime
                 .retry_history(fixture.original.id, options, CancelToken::never()),
-            Err(HistoryError::Transcription)
+            Err(HistoryError::Transcription(_))
         ));
         let unchanged = fixture
             .runtime
@@ -1104,7 +1114,13 @@ mod history_tests {
         assert_eq!(unchanged.text, fixture.original.text);
         assert_eq!(unchanged.engine, fixture.original.engine);
         assert_eq!(unchanged.language, fixture.original.language);
-        assert_eq!(unchanged.error, Some((&HistoryError::Transcription).into()));
+        assert_eq!(
+            unchanged.error,
+            Some(aria_settings::rpc::RpcFailure::new(
+                RpcErrorCode::TranscriptionFailed,
+                "dictation history transcription failed"
+            ))
+        );
         assert!(matches!(
             unchanged.audio,
             AudioAvailability::Available { .. }
@@ -1234,7 +1250,7 @@ mod history_tests {
                     },
                     CancelToken::never(),
                 ),
-                Err(HistoryError::Transcription)
+                Err(HistoryError::Transcription(_))
             ));
         })
         .await
@@ -1338,9 +1354,9 @@ mod history_tests {
             ),
             Err(HistoryError::ProjectUnavailable)
         ));
-        assert_eq!(
+        assert!(matches!(
             check_retry(&CancelToken::never(), Deadline::after(Duration::ZERO)),
             Err(HistoryError::Timeout)
-        );
+        ));
     }
 }

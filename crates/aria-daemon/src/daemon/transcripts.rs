@@ -1,9 +1,10 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Caret;
+use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
@@ -22,10 +23,10 @@ impl TranscriptStore {
     pub(super) fn open(directory: &Path) -> Self {
         let opened = directory
             .parent()
-            .ok_or(HistoryError::Storage)
+            .ok_or(HistoryError::Unavailable)
             .and_then(|parent| {
                 aria_primitives::private_fs::prepare_directory(parent)
-                    .map_err(|_| HistoryError::Storage)?;
+                    .map_err(HistoryError::storage)?;
                 HistoryStore::open(directory)
             });
         match opened {
@@ -33,10 +34,13 @@ impl TranscriptStore {
                 storage: Some(storage),
                 warning: Mutex::new(None),
             },
-            Err(error) => Self {
-                storage: None,
-                warning: Mutex::new(Some(error.to_string())),
-            },
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "dictation history could not be opened");
+                Self {
+                    storage: None,
+                    warning: Mutex::new(Some(error.to_string())),
+                }
+            }
         }
     }
 
@@ -59,7 +63,7 @@ impl TranscriptStore {
         if let Some(message) = self
             .warning
             .lock()
-            .map_err(|_| HistoryError::Storage)?
+            .unwrap_or_else(PoisonError::into_inner)
             .take()
         {
             page.warning = Some(message);
@@ -93,7 +97,7 @@ impl TranscriptStore {
         let warning = match self.storage().and_then(|store| store.insert(entry, audio)) {
             Ok(entry) => entry.warning,
             Err(error) => {
-                tracing::warn!(%error, "dictation history could not be saved");
+                tracing::warn!(error = %error_chain(&error), "dictation history could not be saved");
                 Some(format!(
                     "A dictation could not be saved to history: {error}"
                 ))
