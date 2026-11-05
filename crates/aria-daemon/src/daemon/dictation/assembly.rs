@@ -427,11 +427,11 @@ pub(super) fn build_dictation(
         delivery,
     } = setup;
     let delivery = delivery
-        .create(timeouts.delivery)
+        .create(timeouts.delivery())
         .map_err(DictationInitializationError::Delivery)?;
     let policy =
-        DictationPolicy::new(timeouts.overall).map_err(DictationInitializationError::Policy)?;
-    let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording)?;
+        DictationPolicy::new(timeouts.overall()).map_err(DictationInitializationError::Policy)?;
+    let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording())?;
     let engine = select_engine(transcription, loading, home)?;
     let (capture, wake) = capture
         .open()

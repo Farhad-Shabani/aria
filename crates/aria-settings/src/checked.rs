@@ -116,12 +116,27 @@ pub struct Voices {
     pub qwen: Option<Voice>,
 }
 
-/// The timeouts with their defaults filled in.
+/// The timeouts with their defaults filled in. Only the check builds one,
+/// so a recording always ends before the dictation's overall timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DictationTimeouts {
-    pub recording: Duration,
-    pub overall: Duration,
-    pub delivery: Duration,
+    pub(crate) recording: Duration,
+    pub(crate) overall: Duration,
+    pub(crate) delivery: Duration,
+}
+
+impl DictationTimeouts {
+    pub fn recording(&self) -> Duration {
+        self.recording
+    }
+
+    pub fn overall(&self) -> Duration {
+        self.overall
+    }
+
+    pub fn delivery(&self) -> Duration {
+        self.delivery
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
