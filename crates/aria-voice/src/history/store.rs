@@ -1314,8 +1314,10 @@ mod tests {
             Some(&source),
         );
         let _lease = store.begin_retry(failed.id).unwrap();
-        let error =
-            HistoryError::transcription(io::Error::other("x".repeat(MAX_ERROR_MESSAGE_BYTES)));
+        let error = HistoryError::transcription(
+            RpcErrorCode::TranscriptionFailed,
+            io::Error::other("x".repeat(MAX_ERROR_MESSAGE_BYTES)),
+        );
         assert!(error_chain(&error).len() > MAX_ERROR_MESSAGE_BYTES);
         store.attempt_failed(failed.id, &error).unwrap();
         assert_eq!(

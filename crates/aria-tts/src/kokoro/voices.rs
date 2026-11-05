@@ -4,6 +4,7 @@
 //! for an utterance is the row at its token count, so longer utterances get
 //! the style the model learned for longer inputs.
 
+use aria_kit::primitives::Cause;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
@@ -83,7 +84,7 @@ pub(super) enum VoicesError {
     Open(#[source] std::io::Error),
 
     #[error("the voices file is not a readable npz archive")]
-    Archive(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Archive(#[source] Cause),
 
     #[error("voice {voice} has shape {shape:?}; expected [510, 1, 256]")]
     WrongShape { voice: String, shape: Vec<u64> },

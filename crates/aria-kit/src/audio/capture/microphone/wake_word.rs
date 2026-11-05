@@ -1,5 +1,6 @@
 //! Listening for the wake word while the microphone is idle.
 
+use aria_primitives::Cause;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ pub enum WakeWordFailure {
     VoiceActivity(#[source] VoiceActivityError),
 
     #[error("wake-word detection failed")]
-    Detector(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Detector(#[source] Cause),
 }
 
 pub struct WakeWordMonitor {

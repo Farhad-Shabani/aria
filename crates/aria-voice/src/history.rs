@@ -103,8 +103,14 @@ pub enum HistoryError {
     Cancelled,
     #[error("dictation history retry timed out")]
     Timeout,
+    /// Carries the code the failed retry declared, so a retry that heard no
+    /// speech reports `NoSpeech`, not a generic failure.
     #[error("dictation history transcription failed")]
-    Transcription(#[source] Cause),
+    Transcription {
+        code: RpcErrorCode,
+        #[source]
+        cause: Cause,
+    },
     #[error("the recording is unavailable for retry")]
     AudioUnavailable,
     #[error("dictation history is busy")]
@@ -122,8 +128,14 @@ pub enum HistoryError {
 }
 
 impl HistoryError {
-    pub fn transcription(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self::Transcription(Box::new(error))
+    pub fn transcription(
+        code: RpcErrorCode,
+        cause: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Transcription {
+            code,
+            cause: Box::new(cause),
+        }
     }
 
     pub fn storage(error: impl std::error::Error + Send + Sync + 'static) -> Self {
@@ -143,7 +155,7 @@ impl From<&HistoryError> for RpcErrorCode {
             HistoryError::TooLarge => Self::PayloadTooLarge,
             HistoryError::Cancelled => Self::Cancelled,
             HistoryError::Timeout => Self::OverallTimeout,
-            HistoryError::Transcription(_) => Self::TranscriptionFailed,
+            HistoryError::Transcription { code, .. } => *code,
         }
     }
 }

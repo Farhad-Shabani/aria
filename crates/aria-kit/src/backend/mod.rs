@@ -6,6 +6,7 @@
 #[cfg(not(target_family = "wasm"))]
 mod model_path;
 
+use aria_primitives::Cause;
 use std::path::PathBuf;
 
 #[cfg(not(target_family = "wasm"))]
@@ -39,7 +40,7 @@ pub enum Unpack {
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
     #[error(transparent)]
-    Engine(Box<dyn std::error::Error + Send + Sync>),
+    Engine(Cause),
 
     #[error("the backend answered, but the answer is unusable: {0}")]
     Unusable(String),
@@ -81,6 +82,6 @@ pub enum ModelError {
     Malformed {
         path: PathBuf,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Cause,
     },
 }

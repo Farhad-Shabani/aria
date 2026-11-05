@@ -1,5 +1,6 @@
 //! Conversion of mono audio to the canonical sample rate.
 
+use aria_primitives::Cause;
 use rubato::Resampler as _;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync};
@@ -157,10 +158,10 @@ impl FftState {
 #[derive(Debug, thiserror::Error)]
 pub enum ResampleError {
     #[error("failed to set up resampling to {CANONICAL_SAMPLE_RATE} Hz")]
-    Initialize(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Initialize(#[source] Cause),
 
     #[error("failed to resample audio to {CANONICAL_SAMPLE_RATE} Hz")]
-    Process(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Process(#[source] Cause),
 
     #[error("resampler input sample count overflowed")]
     SampleCountOverflow,

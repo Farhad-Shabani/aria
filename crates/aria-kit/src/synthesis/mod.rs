@@ -10,6 +10,7 @@ mod session;
 mod speak;
 mod stream;
 
+use aria_primitives::Cause;
 use std::path::PathBuf;
 
 use crate::backend::{BackendError, ModelDownload, ModelError};
@@ -348,13 +349,13 @@ pub enum PlaybackError {
     NoOutputDevice,
 
     #[error("the output device offers no usable configuration")]
-    NoUsableConfig(#[source] Box<dyn std::error::Error + Send + Sync>),
+    NoUsableConfig(#[source] Cause),
 
     #[error("the output device wants {0} samples, which this build cannot feed")]
     UnsupportedFormat(String),
 
     #[error("the output stream could not be started")]
-    Stream(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Stream(#[source] Cause),
 
     #[error("the output device stopped mid-utterance")]
     DeviceLost,

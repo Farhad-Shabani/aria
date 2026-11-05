@@ -1,6 +1,7 @@
 //! WAV files. Recordings read only the canonical 16 kHz mono 16-bit format;
 //! clips keep the file's own rate on read and write.
 
+use aria_primitives::Cause;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -207,7 +208,7 @@ pub enum WavError {
     Open {
         path: PathBuf,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Cause,
     },
 
     #[error("WAV file must be 16 kHz mono 16-bit PCM: {}", path.display())]
@@ -227,7 +228,7 @@ pub enum WavError {
     Read {
         path: PathBuf,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Cause,
     },
 
     #[error("WAV file contains no samples: {}", path.display())]
@@ -237,7 +238,7 @@ pub enum WavError {
     Write {
         path: PathBuf,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Cause,
     },
 
     #[error(
