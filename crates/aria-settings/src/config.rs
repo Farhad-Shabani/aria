@@ -11,10 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aria_kit::backend::ModelDownload;
-use aria_kit::synthesis::{SpeakingRateError, VoiceError};
 use aria_primitives::user_home::{self, UserHomeError};
 
-use crate::{Delivery, Memory, SettingsError, Stt};
+use crate::{Delivery, InvalidValue, Key, Memory, SettingsError, Stt};
 
 pub mod wake_backend {
     pub const OPEN_WAKE_WORD: &str = "openwakeword";
@@ -117,10 +116,10 @@ impl ServerEndpoint {
 }
 
 impl TryFrom<String> for ServerEndpoint {
-    type Error = ConfigError;
+    type Error = InvalidValue;
 
-    fn try_from(endpoint: String) -> Result<Self, ConfigError> {
-        Self::parse(&endpoint).ok_or(ConfigError::InvalidServerEndpoint)
+    fn try_from(endpoint: String) -> Result<Self, InvalidValue> {
+        Self::parse(&endpoint).ok_or(InvalidValue::ServerEndpoint)
     }
 }
 
@@ -149,13 +148,11 @@ pub enum ConfigError {
     #[error("unknown assistant {0:?}; use aria ask --help to list choices")]
     UnknownAssistant(String),
 
-    #[error("stt.server must be an HTTPS origin without credentials, query or fragment")]
-    InvalidServerEndpoint,
-
+    /// The engine listen would run, its own or the one stt names, can't stream.
     #[error(
-        "listen requires a local engine; set listen.backend to parakeet, moonshine, or nemotron"
+        "listen cannot stream with the {0} engine; set listen.backend to parakeet, moonshine, or nemotron"
     )]
-    ListenRequiresLocal,
+    ListenUnusableEngine(String),
     #[error("cannot locate the Aria settings")]
     Home(#[source] UserHomeError),
 
@@ -165,46 +162,15 @@ pub enum ConfigError {
     #[error("environment variable {variable} is not valid UTF-8")]
     InvalidEnvironmentEncoding { variable: &'static str },
 
-    #[error("{field} must be a finite number of seconds greater than zero; got {seconds}")]
-    InvalidDuration { field: &'static str, seconds: f64 },
-
-    #[error("{field} does not accept {value:?}; supported values are {supported}")]
-    UnsupportedValue {
-        field: &'static str,
-        value: String,
-        supported: &'static str,
-    },
-
-    #[error("{field} does not apply to the {backend} backend")]
-    NotApplicableToBackend {
-        field: &'static str,
-        backend: &'static str,
-    },
-
-    #[error("the {backend} backend requires {field}")]
-    MissingValue {
-        field: &'static str,
-        backend: &'static str,
-    },
-
+    /// The run turned wake-word monitoring on itself, so no key is at fault.
     #[error("wake-word monitoring requires capture.backend to be microphone")]
     WakeRequiresMicrophone,
 
-    #[error("invalid dictation.cleanup_llm settings")]
-    CleanupLlm(#[source] crate::CleanupConfigError),
-
-    #[error("{field} is not a usable speaking rate")]
-    InvalidSpeakingRate {
-        field: &'static str,
+    #[error("{key} {source}")]
+    Invalid {
+        key: Key,
         #[source]
-        source: SpeakingRateError,
-    },
-
-    #[error("{field} is not a usable voice name")]
-    InvalidVoice {
-        field: &'static str,
-        #[source]
-        source: VoiceError,
+        source: InvalidValue,
     },
 }
 
@@ -261,7 +227,7 @@ pub fn models_dir(home: &Path) -> PathBuf {
 pub fn delivery_timeout(delivery: &Delivery) -> Result<Duration, ConfigError> {
     timeout(
         delivery.timeout_secs,
-        "delivery.timeout_secs",
+        Key::DeliveryTimeoutSecs,
         DEFAULT_DELIVERY_TIMEOUT,
     )
 }
@@ -272,11 +238,11 @@ pub fn string_value(file_value: Option<String>, default: &'static str) -> String
 
 pub fn timeout(
     file_value: Option<f64>,
-    field: &'static str,
+    key: Key,
     default: Duration,
 ) -> Result<Duration, ConfigError> {
     match file_value {
-        Some(seconds) => duration(seconds, field),
+        Some(seconds) => duration(seconds, key),
         None => Ok(default),
     }
 }
@@ -291,12 +257,9 @@ fn environment(variable: &'static str) -> Result<Option<String>, ConfigError> {
         .map_err(|_value| ConfigError::InvalidEnvironmentEncoding { variable })
 }
 
-fn duration(seconds: f64, field: &'static str) -> Result<Duration, ConfigError> {
-    if !seconds.is_finite() || seconds <= 0.0 {
-        return Err(ConfigError::InvalidDuration { field, seconds });
-    }
-    Duration::try_from_secs_f64(seconds)
-        .map_err(|_error| ConfigError::InvalidDuration { field, seconds })
+fn duration(seconds: f64, key: Key) -> Result<Duration, ConfigError> {
+    crate::document::positive_duration(seconds)
+        .map_err(|source| ConfigError::Invalid { key, source })
 }
 
 pub fn home_directory() -> Result<PathBuf, ConfigError> {

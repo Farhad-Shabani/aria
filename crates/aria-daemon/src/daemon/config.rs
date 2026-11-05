@@ -8,7 +8,7 @@ pub use assistant::{load_chat, load_memory};
 use std::path::{Path, PathBuf};
 
 use aria_settings::config::{ConfigError, model_location, string_value, wake_backend};
-use aria_settings::{Phone, SettingsFile, Wake};
+use aria_settings::{InvalidValue, Key, Phone, SettingsFile, Wake};
 
 use aria_voice::config::{CaptureConfig, DictationConfig};
 
@@ -132,9 +132,11 @@ fn wake(
         // No aria-trained livekit head ships with Aria, and the openWakeWord
         // default would load into the wrong backend.
         (None, WakeBackend::LiveKit) => {
-            return Err(ConfigError::MissingValue {
-                field: "wake.model",
-                backend: wake_backend::LIVEKIT,
+            return Err(ConfigError::Invalid {
+                key: Key::WakeModel,
+                source: InvalidValue::Required {
+                    backend: wake_backend::LIVEKIT.to_owned(),
+                },
             });
         }
     };
@@ -150,10 +152,12 @@ fn parse_wake_backend(value: &str) -> Result<WakeBackend, ConfigError> {
     match value {
         wake_backend::OPEN_WAKE_WORD => Ok(WakeBackend::OpenWakeWord),
         wake_backend::LIVEKIT => Ok(WakeBackend::LiveKit),
-        _ => Err(ConfigError::UnsupportedValue {
-            field: "wake.backend",
-            value: value.to_owned(),
-            supported: "openwakeword and livekit",
+        _ => Err(ConfigError::Invalid {
+            key: Key::WakeBackend,
+            source: InvalidValue::Unsupported {
+                value: value.to_owned(),
+                supported: "openwakeword and livekit".to_owned(),
+            },
         }),
     }
 }
@@ -271,10 +275,10 @@ mod tests {
 
         assert!(matches!(
             error,
-            ConfigError::MissingValue {
-                field: "wake.model",
-                backend: "livekit",
-            }
+            ConfigError::Invalid {
+                key: Key::WakeModel,
+                source: InvalidValue::Required { ref backend },
+            } if backend == "livekit"
         ));
     }
 

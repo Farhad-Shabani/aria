@@ -6,7 +6,7 @@ use std::time::Duration;
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::memory::MemoryConfig;
 use aria_settings::config::{ConfigError, delivery_timeout, memory_directory, timeout};
-use aria_settings::{Memory, SettingsFile};
+use aria_settings::{Key, Memory, SettingsFile};
 
 /// Long enough for an assistant to read a repo and think.
 const DEFAULT_CHAT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -18,7 +18,7 @@ const DEFAULT_MEMORY_MAX_FACTS: u32 = 10;
 pub fn load_chat(settings: &SettingsFile) -> Result<ChatConfig, ConfigError> {
     let timeout = timeout(
         settings.assistant.timeout_secs,
-        "assistant.timeout_secs",
+        Key::AssistantTimeoutSecs,
         DEFAULT_CHAT_TIMEOUT,
     )?;
     Ok(ChatConfig {

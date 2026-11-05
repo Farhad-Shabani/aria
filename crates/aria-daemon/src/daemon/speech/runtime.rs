@@ -140,6 +140,7 @@ mod tests {
 
     use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
     use aria_settings::config::ConfigError;
+    use aria_settings::{InvalidValue, Key};
 
     use super::*;
 
@@ -199,9 +200,11 @@ mod tests {
     }
 
     fn unusable_model() -> SpeechInitializationError {
-        SpeechInitializationError::Config(ConfigError::MissingValue {
-            field: "tts.kokoro.model",
-            backend: "kokoro",
+        SpeechInitializationError::Config(ConfigError::Invalid {
+            key: Key::TtsKokoroModel,
+            source: InvalidValue::Required {
+                backend: "kokoro".to_owned(),
+            },
         })
     }
 
