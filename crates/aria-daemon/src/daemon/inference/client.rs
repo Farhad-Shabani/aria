@@ -78,12 +78,10 @@ pub enum RemoteClientError {
     },
     #[error("cannot start the remote client runtime")]
     Runtime(#[source] io::Error),
+    /// No verdict arrived. A failed handshake keeps its cause; a status stays
+    /// out, because its message is the server's and untrusted.
     #[error("cannot establish the authenticated remote connection")]
-    Handshake(#[source] tonic::transport::Error),
-    /// The call ended without a verdict. The status stays out, because its
-    /// message is the server's and untrusted.
-    #[error("cannot establish the authenticated remote connection")]
-    Connection,
+    Connection(#[source] Option<tonic::transport::Error>),
     #[error("remote operation failed ({0})")]
     Rpc(RpcErrorCode),
     #[error("remote operation timed out")]
@@ -689,8 +687,7 @@ fn transcription_error(error: RemoteClientError) -> TranscriptionError {
         | RemoteClientError::RevocationUnconfirmed
         | RemoteClientError::ForgetUnconfirmed { .. }
         | RemoteClientError::Runtime(_)
-        | RemoteClientError::Handshake(_)
-        | RemoteClientError::Connection
+        | RemoteClientError::Connection(_)
         | RemoteClientError::Rpc(_)
         | RemoteClientError::Timeout
         | RemoteClientError::Unsupported
@@ -752,7 +749,7 @@ async fn send_request(
     requests
         .send(wire::InferenceRequest { body: Some(body) })
         .await
-        .map_err(|_| RemoteClientError::Connection)
+        .map_err(|_| RemoteClientError::Connection(None))
 }
 
 pub(super) fn run<T>(
@@ -802,7 +799,7 @@ pub(super) fn rpc_error(status: tonic::Status) -> RemoteClientError {
         Some(RpcErrorCode::Cancelled) => RemoteClientError::Cancelled,
         Some(RpcErrorCode::DurabilityUnconfirmed) => RemoteClientError::DurabilityUnconfirmed,
         Some(code) => RemoteClientError::Rpc(code),
-        None => RemoteClientError::Connection,
+        None => RemoteClientError::Connection(None),
     }
 }
 

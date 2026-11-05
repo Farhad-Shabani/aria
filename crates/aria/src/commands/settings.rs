@@ -65,7 +65,7 @@ pub(super) fn run(command: SettingsCommand) -> anyhow::Result<()> {
                 });
                 println!("{report}");
             } else if let Some(fault) = &fault {
-                eprintln!("settings.toml is invalid: {}", fault_line(fault));
+                eprintln!("settings.toml is invalid: {fault}");
             } else {
                 println!("settings.toml is valid");
             }
@@ -153,13 +153,6 @@ fn fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Value {
     })
 }
 
-fn fault_line(fault: &aria_settings::SettingsFault) -> String {
-    match fault.position {
-        Some(position) => format!("{position}: {}", fault.message),
-        None => fault.message.clone(),
-    }
-}
-
 /// `applied`, `applied, restart key changed`, or the refusal, which exits 1.
 fn report_write(outcome: aria_settings::command::Outcome, json: bool) -> anyhow::Result<()> {
     let (restart_key_changed, fault) = match &outcome {
@@ -176,7 +169,7 @@ fn report_write(outcome: aria_settings::command::Outcome, json: bool) -> anyhow:
         });
         println!("{report}");
     } else if let Some(fault) = fault {
-        eprintln!("refused: {}", fault_line(fault));
+        eprintln!("refused: {fault}");
     } else if restart_key_changed {
         println!("applied, restart key changed");
     } else {

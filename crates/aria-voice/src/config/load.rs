@@ -16,8 +16,8 @@ use aria_settings::config::{
     model_file, model_folder, model_location, string_value, timeout, tts_backend,
 };
 use aria_settings::{
-    Capture, CaptureBackendName, Delivery, DeviceName, Dictation, PaceName, SettingsFile, Speaker,
-    Stt, Tts, TtsFallbackName,
+    Capture, CaptureBackendName, Delivery, DeviceName, Dictation, InvalidValue, Key, PaceName,
+    SettingsFile, Speaker, Stt, Tts, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -43,7 +43,9 @@ impl ListenConfig {
             None => match TranscriptionBackend::load(&settings.stt, home)? {
                 TranscriptionBackend::Local(engine) => engine,
                 TranscriptionBackend::Server { .. } => {
-                    return Err(ConfigError::ListenRequiresLocal);
+                    return Err(ConfigError::ListenUnusableEngine(
+                        backend::SERVER.to_owned(),
+                    ));
                 }
             },
         };
@@ -62,11 +64,9 @@ impl ListenConfig {
                 ListenTranscription::Nemotron { model_directory }
             }
             other => {
-                return Err(ConfigError::UnsupportedValue {
-                    field: "listen.backend",
-                    value: other.backend_name().to_owned(),
-                    supported: "parakeet, moonshine, and nemotron",
-                });
+                return Err(ConfigError::ListenUnusableEngine(
+                    other.backend_name().to_owned(),
+                ));
             }
         };
         Ok(Self {
@@ -130,10 +130,12 @@ impl TtsConfig {
             }),
             tts_backend::SYSTEM => TtsBackend::System,
             _ => {
-                return Err(ConfigError::UnsupportedValue {
-                    field: "tts.backend",
-                    value: backend,
-                    supported: "kokoro, qwen, and system",
+                return Err(ConfigError::Invalid {
+                    key: Key::TtsBackend,
+                    source: InvalidValue::Unsupported {
+                        value: backend,
+                        supported: "kokoro, qwen, and system".to_owned(),
+                    },
                 });
             }
         };
@@ -144,15 +146,18 @@ impl TtsConfig {
 
 impl SpeechDefaults {
     pub fn load(tts: &Tts, engine: TtsEngine) -> Result<Self, ConfigError> {
-        let (voice, field) = match engine {
-            TtsEngine::Kokoro => (&tts.kokoro.voice, "tts.kokoro.voice"),
-            TtsEngine::Qwen => (&tts.qwen.voice, "tts.qwen.voice"),
-            TtsEngine::System => (&tts.system.voice, "tts.system.voice"),
+        let (voice, key) = match engine {
+            TtsEngine::Kokoro => (&tts.kokoro.voice, Key::TtsKokoroVoice),
+            TtsEngine::Qwen => (&tts.qwen.voice, Key::TtsQwenVoice),
+            TtsEngine::System => (&tts.system.voice, Key::TtsSystemVoice),
         };
         let voice = voice
             .clone()
             .map(|name| {
-                Voice::new(name).map_err(|source| ConfigError::InvalidVoice { field, source })
+                Voice::new(name).map_err(|source| ConfigError::Invalid {
+                    key,
+                    source: InvalidValue::Voice(source),
+                })
             })
             .transpose()?;
         Ok(Self {
@@ -235,9 +240,9 @@ fn speaking_rate(file_value: Option<f64>) -> Result<SpeakingRate, ConfigError> {
     let Some(rate) = file_value else {
         return Ok(SpeakingRate::standard());
     };
-    SpeakingRate::new(rate as f32).map_err(|source| ConfigError::InvalidSpeakingRate {
-        field: "tts.rate",
-        source,
+    SpeakingRate::new(rate as f32).map_err(|source| ConfigError::Invalid {
+        key: Key::TtsRate,
+        source: InvalidValue::SpeakingRate(source),
     })
 }
 
@@ -256,8 +261,12 @@ fn cleanup_llm(dictation: &Dictation) -> Result<Option<super::LlmCleanupConfig>,
     let Some(config) = &dictation.cleanup_llm else {
         return Ok(None);
     };
-    aria_settings::validate_cleanup_llm(&config.endpoint, &config.model)
-        .map_err(ConfigError::CleanupLlm)?;
+    aria_settings::validate_cleanup_llm(&config.endpoint, &config.model).map_err(|source| {
+        ConfigError::Invalid {
+            key: Key::DictationCleanupLlmEndpoint,
+            source: InvalidValue::Cleanup(source),
+        }
+    })?;
     Ok(Some(super::LlmCleanupConfig {
         endpoint: config.endpoint.clone(),
         model: config.model.clone(),
@@ -268,9 +277,11 @@ fn capture(capture: &Capture) -> Result<CaptureConfig, ConfigError> {
     match capture.backend.unwrap_or(CaptureBackendName::Microphone) {
         CaptureBackendName::Microphone => Ok(CaptureConfig::Microphone),
         CaptureBackendName::WavFile => {
-            let path = capture.path.clone().ok_or(ConfigError::MissingValue {
-                field: "capture.path",
-                backend: WAV_FILE_CAPTURE_BACKEND,
+            let path = capture.path.clone().ok_or_else(|| ConfigError::Invalid {
+                key: Key::CapturePath,
+                source: InvalidValue::Required {
+                    backend: WAV_FILE_CAPTURE_BACKEND.to_owned(),
+                },
             })?;
             Ok(CaptureConfig::WavFile {
                 path,
@@ -332,12 +343,17 @@ impl<'a> TranscriptionSettings<'a> {
         if self.backend != backend::SERVER {
             return self.resolve_local(home).map(TranscriptionBackend::Local);
         }
-        let endpoint = self.server.ok_or(ConfigError::MissingValue {
-            field: "stt.server",
-            backend: backend::SERVER,
+        let invalid = |source| ConfigError::Invalid {
+            key: Key::SttServer,
+            source,
+        };
+        let endpoint = self.server.ok_or_else(|| {
+            invalid(InvalidValue::Required {
+                backend: backend::SERVER.to_owned(),
+            })
         })?;
         Ok(TranscriptionBackend::Server {
-            endpoint: endpoint.try_into()?,
+            endpoint: endpoint.try_into().map_err(invalid)?,
         })
     }
 
@@ -364,9 +380,10 @@ impl<'a> TranscriptionSettings<'a> {
                 model_directory: model_location(self.model, model_folder::NEMOTRON, home),
             }),
             backend::PARAKEET_MLX => {
-                let interpreter = self.interpreter.ok_or(ConfigError::MissingValue {
-                    field: "stt.interpreter",
-                    backend: backend::PARAKEET_MLX,
+                let interpreter = self.interpreter.ok_or_else(|| {
+                    ConfigError::Invalid { key: Key::SttInterpreter, source: InvalidValue::Required {
+                            backend: backend::PARAKEET_MLX.to_owned(),
+                        } }
                 })?;
                 Ok(TranscriptionConfig::ParakeetMlx {
                     // Only `stt.model` reaches this engine, and it
@@ -378,11 +395,10 @@ impl<'a> TranscriptionSettings<'a> {
                     interpreter: interpreter.to_path_buf(),
                 })
             }
-            _ => Err(ConfigError::UnsupportedValue {
-                field: "stt.backend",
-                value: self.backend,
-                supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server",
-            }),
+            _ => Err(ConfigError::Invalid { key: Key::SttBackend, source: InvalidValue::Unsupported {
+                    value: self.backend,
+                    supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server".to_owned(),
+                } }),
         }
     }
 }
@@ -397,12 +413,12 @@ fn transcription_device(device: Option<DeviceName>) -> TranscriptionDevice {
 fn timeouts(dictation: &Dictation, delivery: &Delivery) -> Result<DictationTimeouts, ConfigError> {
     let recording = timeout(
         dictation.max_recording_secs,
-        "dictation.max_recording_secs",
+        Key::DictationMaxRecordingSecs,
         DEFAULT_RECORDING_TIMEOUT,
     )?;
     let overall = timeout(
         dictation.timeout_secs,
-        "dictation.timeout_secs",
+        Key::DictationTimeoutSecs,
         DEFAULT_OVERALL_TIMEOUT,
     )?;
 
@@ -430,9 +446,9 @@ mod tests {
     fn server_requires_an_explicit_https_origin_without_credentials() {
         assert!(matches!(
             settings(backend::SERVER).resolve(Path::new("/missing-home")),
-            Err(ConfigError::MissingValue {
-                field: "stt.server",
-                ..
+            Err(ConfigError::Invalid {
+                key: Key::SttServer,
+                source: InvalidValue::Required { .. },
             })
         ));
         for (endpoint, canonical) in [
@@ -467,7 +483,10 @@ mod tests {
                     ..settings(backend::SERVER)
                 }
                 .resolve(Path::new("/missing-home")),
-                Err(ConfigError::InvalidServerEndpoint)
+                Err(ConfigError::Invalid {
+                    key: Key::SttServer,
+                    source: InvalidValue::ServerEndpoint,
+                })
             ));
         }
     }
@@ -477,7 +496,7 @@ mod tests {
         let server = "[stt]\nbackend = \"server\"\nserver = \"https://example.test\"\n";
         assert!(matches!(
             ListenConfig::load(&file(server), &test_home()),
-            Err(ConfigError::ListenRequiresLocal)
+            Err(ConfigError::ListenUnusableEngine(ref engine)) if engine == backend::SERVER
         ));
         let moonshine = format!("{server}[listen]\nbackend = \"moonshine\"\n");
         assert!(matches!(
@@ -530,7 +549,10 @@ mod tests {
             ));
             assert!(matches!(
                 DictationConfig::load(&file, &test_home()),
-                Err(ConfigError::CleanupLlm(_))
+                Err(ConfigError::Invalid {
+                    key: Key::DictationCleanupLlmEndpoint,
+                    source: InvalidValue::Cleanup(_),
+                })
             ));
         }
     }
@@ -573,9 +595,9 @@ mod tests {
         let error = capture(&file.capture).expect_err("a missing path must be rejected");
         assert!(matches!(
             error,
-            ConfigError::MissingValue {
-                field: "capture.path",
-                ..
+            ConfigError::Invalid {
+                key: Key::CapturePath,
+                source: InvalidValue::Required { .. },
             }
         ));
     }
@@ -688,9 +710,9 @@ mod tests {
             .expect_err("an unknown backend must be rejected");
         assert!(matches!(
             error,
-            ConfigError::UnsupportedValue {
-                field: "stt.backend",
-                ..
+            ConfigError::Invalid {
+                key: Key::SttBackend,
+                source: InvalidValue::Unsupported { .. },
             }
         ));
     }
@@ -857,10 +879,7 @@ mod tests {
             .expect_err("a whole-mode inheritance must be refused");
         assert!(matches!(
             error,
-            ConfigError::UnsupportedValue {
-                field: "listen.backend",
-                ..
-            }
+            ConfigError::ListenUnusableEngine(ref engine) if engine == "whisper"
         ));
     }
 

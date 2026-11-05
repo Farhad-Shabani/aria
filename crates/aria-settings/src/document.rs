@@ -1488,11 +1488,14 @@ fn absolute_path(path: &Path, key: Key) -> Result<(), SettingsError> {
 }
 
 fn duration(seconds: f64, key: Key) -> Result<Duration, SettingsError> {
+    positive_duration(seconds).map_err(|source| invalid(key, source))
+}
+
+pub(crate) fn positive_duration(seconds: f64) -> Result<Duration, InvalidValue> {
     if !seconds.is_finite() || seconds <= 0.0 {
-        return Err(invalid(key, InvalidValue::Duration(seconds)));
+        return Err(InvalidValue::Duration(seconds));
     }
-    Duration::try_from_secs_f64(seconds)
-        .map_err(|_error| invalid(key, InvalidValue::Duration(seconds)))
+    Duration::try_from_secs_f64(seconds).map_err(|_error| InvalidValue::Duration(seconds))
 }
 
 fn expand_home(path: &Path, home: &Path) -> Result<PathBuf, InvalidValue> {

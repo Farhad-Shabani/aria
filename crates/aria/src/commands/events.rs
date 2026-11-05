@@ -90,10 +90,7 @@ pub(super) fn run() -> anyhow::Result<()> {
 /// One line per status: the fault, else what waits for a restart, else ok.
 fn settings_line(status: &aria_settings::SettingsStatus) -> String {
     if let Some(fault) = &status.fault {
-        return match fault.position {
-            Some(position) => format!("settings invalid at {position}: {}", fault.message),
-            None => format!("settings invalid: {}", fault.message),
-        };
+        return format!("settings invalid: {fault}");
     }
     let mut line = "settings ok".to_owned();
     if !status.restart_required.is_empty() {
@@ -109,4 +106,30 @@ fn settings_line(status: &aria_settings::SettingsStatus) -> String {
         ));
     }
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aria_settings::{Position, SettingsFault, SettingsStatus};
+
+    #[test]
+    fn an_invalid_file_reads_as_the_place_then_the_fault() {
+        let status = |position| SettingsStatus {
+            fault: Some(SettingsFault {
+                message: "unknown key stt.nope".to_owned(),
+                position,
+            }),
+            ..SettingsStatus::default()
+        };
+
+        assert_eq!(
+            settings_line(&status(Some(Position { line: 3, column: 5 }))),
+            "settings invalid: line 3, column 5: unknown key stt.nope"
+        );
+        assert_eq!(
+            settings_line(&status(None)),
+            "settings invalid: unknown key stt.nope"
+        );
+    }
 }

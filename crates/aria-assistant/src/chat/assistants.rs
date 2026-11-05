@@ -387,9 +387,9 @@ impl Session for CliSession {
                 Ok(Some(step)) => sink.step(step),
                 // One format drift is worth one line in the log, not one
                 // per line of output, and never a failed ask.
-                Err(error) if !warned => {
+                Err(Unparsed { column }) if !warned => {
                     warned = true;
-                    tracing::warn!(%error, assistant = ?cli, "an assistant line was not understood");
+                    tracing::warn!(column, assistant = ?cli, "an assistant line was not understood");
                 }
                 Ok(None) | Err(_) => {}
             },
@@ -440,8 +440,8 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<Reply, AssistantError> {
         .rev()
         .find(|line| !line.trim().is_empty())
         .unwrap_or_default();
-    let envelope: ClaudeEnvelope =
-        serde_json::from_str(last).map_err(|error| AssistantError::Malformed(error.to_string()))?;
+    let envelope: ClaudeEnvelope = serde_json::from_str(last)
+        .map_err(|_| AssistantError::Malformed("the result is not an envelope".to_owned()))?;
     let ClaudeEnvelope::Result {
         is_error,
         result,
@@ -481,7 +481,7 @@ enum ClaudePromptEnvelope {
 /// `structured_output`; `result` holds the same object as a string.
 fn parse_claude_prompt(stdout: &str) -> Result<String, AssistantError> {
     let envelope: ClaudePromptEnvelope = serde_json::from_str(stdout.trim())
-        .map_err(|error| AssistantError::Malformed(error.to_string()))?;
+        .map_err(|_| AssistantError::Malformed("the output is not an envelope".to_owned()))?;
     let ClaudePromptEnvelope::Result {
         is_error,
         result,
@@ -599,9 +599,8 @@ fn parse_codex_prompt(stdout: &str) -> Result<String, AssistantError> {
     }
     let message =
         last_message.ok_or_else(|| AssistantError::Malformed("no assistant reply".to_owned()))?;
-    let answer = serde_json::from_str(&message).map_err(|error| {
-        AssistantError::Malformed(format!("the assistant reply is not JSON: {error}"))
-    })?;
+    let answer = serde_json::from_str(&message)
+        .map_err(|_| AssistantError::Malformed("the assistant reply is not JSON".to_owned()))?;
     prompt_run::answer_text(answer)
 }
 
@@ -611,19 +610,24 @@ fn codex_events(stdout: &str) -> impl Iterator<Item = Result<CodexEvent, Assista
         .enumerate()
         .filter(|(_index, line)| !line.trim().is_empty())
         .map(|(index, line)| {
-            // The line itself stays out of the message: it may be the reply.
-            serde_json::from_str(line).map_err(|error| {
-                AssistantError::Malformed(format!(
-                    "line {} is not a codex event: {error}",
-                    index + 1
-                ))
+            // Neither the line nor serde's message, which can quote it: it
+            // may be the reply.
+            serde_json::from_str(line).map_err(|_| {
+                AssistantError::Malformed(format!("line {} is not a codex event", index + 1))
             })
         })
 }
 
+/// A stream line that did not parse, known only by where it stopped: serde's
+/// message can quote the line, and the line may carry the reply.
+#[derive(Debug)]
+struct Unparsed {
+    column: usize,
+}
+
 /// What one line of the stream says the assistant moved on to, if anything.
 /// A line that is not an event is an error for the caller to log.
-fn step(cli: Cli, line: &str) -> Result<Option<Step>, serde_json::Error> {
+fn step(cli: Cli, line: &str) -> Result<Option<Step>, Unparsed> {
     if line.trim().is_empty() {
         return Ok(None);
     }
@@ -631,6 +635,9 @@ fn step(cli: Cli, line: &str) -> Result<Option<Step>, serde_json::Error> {
         Cli::Claude => claude_step(line),
         Cli::Codex => codex_step(line),
     }
+    .map_err(|error| Unparsed {
+        column: error.column(),
+    })
 }
 
 #[derive(Deserialize)]
@@ -898,6 +905,42 @@ mod tests {
 
         assert_eq!(reply.text, "hi");
         assert_eq!(reply.session_id, "abc-123");
+    }
+
+    #[test]
+    fn a_reply_in_the_wrong_shape_stays_out_of_every_parse_error() {
+        let reply = "the meeting moved to Friday";
+        let bare = format!("{reply:?}");
+        let errors = [
+            parse_claude(&bare).map(|_| ()).unwrap_err().to_string(),
+            parse_claude_prompt(&bare)
+                .map(|_| ())
+                .unwrap_err()
+                .to_string(),
+            parse_codex(&bare, None)
+                .map(|_| ())
+                .unwrap_err()
+                .to_string(),
+            format!(
+                "{:?}",
+                step(
+                    Cli::Claude,
+                    &format!(r#"{{"type":"assistant","message":{{"content":{bare}}}}}"#),
+                )
+                .unwrap_err()
+            ),
+            format!(
+                "{:?}",
+                step(
+                    Cli::Codex,
+                    &format!(r#"{{"type":"item.started","item":{bare}}}"#),
+                )
+                .unwrap_err()
+            ),
+        ];
+        for error in errors {
+            assert!(!error.contains("Friday"), "{error}");
+        }
     }
 
     #[test]

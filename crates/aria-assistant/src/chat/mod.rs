@@ -21,7 +21,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::primitives::process::ChildProcessError;
+use aria_kit::primitives::process::RunError;
 use serde::{Deserialize, Serialize};
 
 use aria_platform::delivery::OutputMode;
@@ -331,20 +331,11 @@ pub enum AssistantError {
     #[error("the assistant's working directory {} does not exist", .0.display())]
     NoWorkdir(PathBuf),
 
-    #[error("failed to start the assistant")]
-    Spawn(#[source] std::io::Error),
-
-    #[error("failed to write the prompt to the assistant")]
-    Input(#[source] std::io::Error),
+    #[error("the assistant could not run")]
+    Run(#[source] RunError),
 
     #[error("failed to prepare the assistant's run directory")]
     RunDirectory(#[source] std::io::Error),
-
-    #[error("failed to read the assistant's output")]
-    Io(#[source] std::io::Error),
-
-    #[error("failed to wait for the assistant")]
-    Wait(#[source] ChildProcessError),
 
     #[error("the assistant failed: {0}")]
     Failed(String),
@@ -357,9 +348,6 @@ pub enum AssistantError {
 
     #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),
-
-    #[error("the assistant wrote more than {0} bytes")]
-    OutputTooLarge(usize),
 
     #[error("the assistant exceeded its deadline of {0:?}")]
     Timeout(Duration),

@@ -113,9 +113,9 @@ struct Answer {
 
 /// The text from an answer that matches [`SCHEMA`] exactly.
 pub(crate) fn answer_text(answer: serde_json::Value) -> Result<String, AssistantError> {
-    let Answer { text } = serde_json::from_value(answer).map_err(|error| {
-        AssistantError::Malformed(format!("the answer breaks its schema: {error}"))
-    })?;
+    // serde's message can quote the answer, which is the reply itself.
+    let Answer { text } = serde_json::from_value(answer)
+        .map_err(|_| AssistantError::Malformed("the answer breaks its schema".to_owned()))?;
     // Typed into the app in front, so only line breaks and tabs among the
     // control characters survive: an escape or ^C would act on that app.
     let text: String = text
@@ -225,6 +225,13 @@ mod tests {
                 .expect("text"),
             "Send it[2J by Friday.\n\nThanks\t!"
         );
+    }
+
+    #[test]
+    fn a_refused_answer_keeps_its_text_out_of_the_error() {
+        let error = answer_text(json!("the meeting moved to Friday")).expect_err("not an object");
+
+        assert!(!error.to_string().contains("Friday"), "{error}");
     }
 
     #[test]

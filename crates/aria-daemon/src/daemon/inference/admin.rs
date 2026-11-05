@@ -59,8 +59,8 @@ pub fn remote_revoke(fingerprint: &str) -> Result<(), RemoteClientError> {
 async fn admin_channel(home: &Path) -> Result<Channel, RemoteClientError> {
     let runtime = Paths::in_home(home).runtime();
     Endpoint::from_shared(format!("unix://{}", runtime.socket_path().display()))
-        .map_err(RemoteClientError::Handshake)?
+        .map_err(|error| RemoteClientError::Connection(Some(error)))?
         .connect()
         .await
-        .map_err(RemoteClientError::Handshake)
+        .map_err(|error| RemoteClientError::Connection(Some(error)))
 }

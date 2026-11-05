@@ -17,6 +17,9 @@ use crate::speaker::{
 use aria_kit::audio::{
     AudioCapture, CaptureError, RecordingMode, SilenceDuration, StopSignal, WakeWordControl,
 };
+use aria_kit::backend::ModelError;
+use aria_kit::primitives::file_inspection::InspectionError;
+use aria_kit::speaker::SpeakerError;
 use aria_primitives::error_chain;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
@@ -510,7 +513,7 @@ impl From<&EnrollError> for RpcErrorCode {
             EnrollError::Unsupported => Self::Unsupported,
             EnrollError::Cancelled => Self::Cancelled,
             EnrollError::Timeout(_) => Self::OverallTimeout,
-            EnrollError::Model(_) => Self::SpeakerModelMissing,
+            EnrollError::Model(error) if is_missing(error) => Self::SpeakerModelMissing,
             EnrollError::AlreadyEnrolled | EnrollError::Profile(ProfileError::AlreadyStored) => {
                 Self::SpeakerAlreadyEnrolled
             }
@@ -520,10 +523,43 @@ impl From<&EnrollError> for RpcErrorCode {
             EnrollError::Enrollment(EnrollmentError::Inconsistent { .. }) => {
                 Self::SpeakerInconsistentSamples
             }
-            EnrollError::Enrollment(_) => Self::Internal,
             EnrollError::Capture(_) => Self::CaptureFailed,
-            EnrollError::Profile(_) => Self::SpeakerProfileWriteFailed,
+            EnrollError::Profile(ProfileError::Write(_)) => Self::SpeakerProfileWriteFailed,
+            EnrollError::Profile(ProfileError::DurabilityUnconfirmed(_)) => {
+                Self::DurabilityUnconfirmed
+            }
+            EnrollError::Model(_)
+            | EnrollError::Enrollment(
+                EnrollmentError::NoVoice
+                | EnrollmentError::TooFewSamples { .. }
+                | EnrollmentError::NoDirection
+                | EnrollmentError::Engine(_),
+            )
+            | EnrollError::Profile(
+                ProfileError::List(_)
+                | ProfileError::Read(_)
+                | ProfileError::UnreadableMoment
+                | ProfileError::Name(_)
+                | ProfileError::UnnamedFile
+                | ProfileError::NoDirection,
+            ) => Self::Internal,
         }
+    }
+}
+
+/// Nothing is at the model's path, so downloading it is the fix. A model
+/// that is there but won't load is a different fault.
+fn is_missing(error: &SpeakerError) -> bool {
+    match error {
+        SpeakerError::Model {
+            source: ModelError::Missing { .. },
+            ..
+        } => true,
+        SpeakerError::Model {
+            source: ModelError::Path(InspectionError::Inspect { source, .. }),
+            ..
+        } => source.kind() == std::io::ErrorKind::NotFound,
+        _ => false,
     }
 }
 
@@ -619,14 +655,35 @@ mod tests {
     fn a_missing_model_is_refused_before_the_microphone_is_taken() {
         let (_home, enroller) = enroller();
 
-        assert!(matches!(
-            enroll(&enroller, request("ada", 5, false)),
-            EnrollError::Model(_)
-        ));
+        let error = enroll(&enroller, request("ada", 5, false));
+
+        assert!(matches!(error, EnrollError::Model(_)));
+        assert_eq!(
+            RpcErrorCode::from(&error),
+            RpcErrorCode::SpeakerModelMissing
+        );
         assert!(
             enroller.microphone.admit_enrollment().is_some(),
             "a refused enrollment leaves the microphone free"
         );
+    }
+
+    #[test]
+    fn a_model_that_is_there_but_will_not_load_is_not_reported_missing() {
+        let (home, enroller) = enroller();
+        std::fs::write(config(home.path()).model, b"not a model").expect("write the model file");
+
+        let error = enroll(&enroller, request("ada", 5, false));
+
+        assert!(matches!(error, EnrollError::Model(_)), "{error:?}");
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::Internal);
+    }
+
+    #[test]
+    fn a_profile_that_cannot_be_read_is_not_a_failed_write() {
+        let unreadable = EnrollError::Profile(ProfileError::UnnamedFile);
+
+        assert_eq!(RpcErrorCode::from(&unreadable), RpcErrorCode::Internal);
     }
 
     #[test]
