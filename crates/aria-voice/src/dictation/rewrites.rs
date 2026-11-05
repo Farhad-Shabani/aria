@@ -46,7 +46,7 @@ impl Rewrites<ConfiguredLayers> {
         let llm = config
             .cleanup_llm
             .as_ref()
-            .map(|cleanup| LlmCleanup::new(&cleanup.endpoint, &cleanup.model, home))
+            .map(|target| LlmCleanup::new(target, home))
             .transpose()?;
         Ok(Rewrites::new().with(llm))
     }

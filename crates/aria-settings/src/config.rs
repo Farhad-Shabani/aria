@@ -13,7 +13,7 @@ use std::time::Duration;
 use aria_kit::backend::ModelDownload;
 use aria_primitives::user_home::{self, UserHomeError};
 
-use crate::{Delivery, InvalidValue, Key, Memory, SettingsError, Stt};
+use crate::{InvalidValue, Key, Memory, SettingsError, Stt};
 
 pub mod wake_backend {
     pub const OPEN_WAKE_WORD: &str = "openwakeword";
@@ -194,6 +194,8 @@ pub mod model_folder {
 }
 
 pub const DEFAULT_RECORDING_TIMEOUT: Duration = Duration::from_secs(600);
+/// Long enough for an assistant to read a repo and think.
+pub const DEFAULT_ASSISTANT_TIMEOUT: Duration = Duration::from_secs(300);
 pub const DEFAULT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(660);
 
@@ -224,29 +226,6 @@ pub fn models_dir(home: &Path) -> PathBuf {
     home.join(MODELS_DIR)
 }
 
-pub fn delivery_timeout(delivery: &Delivery) -> Result<Duration, ConfigError> {
-    timeout(
-        delivery.timeout_secs,
-        Key::DeliveryTimeoutSecs,
-        DEFAULT_DELIVERY_TIMEOUT,
-    )
-}
-
-pub fn string_value(file_value: Option<String>, default: &'static str) -> String {
-    file_value.unwrap_or_else(|| default.to_owned())
-}
-
-pub fn timeout(
-    file_value: Option<f64>,
-    key: Key,
-    default: Duration,
-) -> Result<Duration, ConfigError> {
-    match file_value {
-        Some(seconds) => duration(seconds, key),
-        None => Ok(default),
-    }
-}
-
 fn environment(variable: &'static str) -> Result<Option<String>, ConfigError> {
     let Some(value) = env::var_os(variable) else {
         return Ok(None);
@@ -255,11 +234,6 @@ fn environment(variable: &'static str) -> Result<Option<String>, ConfigError> {
         .into_string()
         .map(Some)
         .map_err(|_value| ConfigError::InvalidEnvironmentEncoding { variable })
-}
-
-fn duration(seconds: f64, key: Key) -> Result<Duration, ConfigError> {
-    crate::document::positive_duration(seconds)
-        .map_err(|source| ConfigError::Invalid { key, source })
 }
 
 pub fn home_directory() -> Result<PathBuf, ConfigError> {

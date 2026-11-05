@@ -1,46 +1,38 @@
-//! Resolution of settings-file values and defaults.
+//! Resolution of checked settings and defaults.
 
 use std::path::{Path, PathBuf};
 
 use aria_kit::audio::ReplayPace;
 
-use aria_kit::synthesis::{SpeakingRate, Voice};
-
 use super::{
-    CaptureConfig, DictationConfig, DictationTimeouts, ListenConfig, ListenTranscription,
-    SpeakerConfig, SpeechDefaults, TranscriptionBackend, TranscriptionConfig, TranscriptionDevice,
-    TtsBackend, TtsConfig, TtsEngine, TtsFallback, TtsModel,
+    CaptureConfig, DictationConfig, ListenConfig, ListenTranscription, SpeakerConfig,
+    SpeechDefaults, TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend,
+    TtsConfig, TtsFallback, TtsModel,
 };
-use aria_settings::config::{
-    ConfigError, DEFAULT_OVERALL_TIMEOUT, DEFAULT_RECORDING_TIMEOUT, backend, delivery_timeout,
-    model_file, model_folder, model_location, string_value, timeout, tts_backend,
-};
+use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
 use aria_settings::{
-    Capture, CaptureBackendName, Delivery, DeviceName, Dictation, InvalidValue, Key, PaceName,
-    SettingsFile, Speaker, Stt, Tts, TtsFallbackName,
+    CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, Speaker,
+    SttChoice, TtsEngine, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
-const WAV_FILE_CAPTURE_BACKEND: &str = "wav_file";
 
 const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = ".aria/transcripts";
 const DEFAULT_SPEAKERS_DIR: &str = ".aria/speakers";
 impl ListenConfig {
-    pub fn load(settings: &SettingsFile, home: &Path) -> Result<Self, ConfigError> {
-        let backend = settings.listen.backend.clone();
+    pub fn load(settings: &CheckedSettings, home: &Path) -> Result<Self, ConfigError> {
+        let choices = settings.choices();
         // Without its own backend, listen uses the stt engine, when that
         // engine can stream.
-        let transcription = match backend {
-            Some(backend) => TranscriptionSettings {
-                backend,
-                model: settings.listen.model.as_deref(),
-                device: settings.listen.device,
-                interpreter: None,
-                server: None,
-            }
-            .resolve_local(home)?,
-            None => match TranscriptionBackend::load(&settings.stt, home)? {
+        let transcription = match choices.listen {
+            Some(engine) => local(
+                engine,
+                settings.listen.model.as_deref(),
+                settings.listen.device,
+                home,
+            ),
+            None => match TranscriptionBackend::load(settings, home) {
                 TranscriptionBackend::Local(engine) => engine,
                 TranscriptionBackend::Server { .. } => {
                     return Err(ConfigError::ListenUnusableEngine(
@@ -105,10 +97,10 @@ impl SpeakerConfig {
 }
 
 impl TtsConfig {
-    pub fn load(tts: &Tts, home: &Path) -> Result<Self, ConfigError> {
-        let backend = string_value(tts.backend.clone(), tts_backend::DEFAULT);
-        let backend = match backend.as_str() {
-            tts_backend::KOKORO => TtsBackend::Model(TtsModel::Kokoro {
+    pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
+        let tts = &settings.tts;
+        let backend = match settings.choices().tts {
+            TtsEngine::Kokoro => TtsBackend::Model(TtsModel::Kokoro {
                 model: model_location(
                     tts.kokoro.model.as_deref(),
                     model_file(model_folder::KOKORO, &aria_tts::kokoro::MODEL[0]),
@@ -120,7 +112,7 @@ impl TtsConfig {
                     home,
                 ),
             }),
-            tts_backend::QWEN => TtsBackend::Model(TtsModel::Qwen {
+            TtsEngine::Qwen => TtsBackend::Model(TtsModel::Qwen {
                 model_dir: model_location(tts.qwen.model.as_deref(), model_folder::QWEN, home),
                 tokenizer_dir: model_location(
                     tts.qwen.tokenizer.as_deref(),
@@ -128,42 +120,25 @@ impl TtsConfig {
                     home,
                 ),
             }),
-            tts_backend::SYSTEM => TtsBackend::System,
-            _ => {
-                return Err(ConfigError::Invalid {
-                    key: Key::TtsBackend,
-                    source: InvalidValue::Unsupported {
-                        value: backend,
-                        supported: "kokoro, qwen, and system".to_owned(),
-                    },
-                });
-            }
+            TtsEngine::System => TtsBackend::System,
         };
         let fallback = tts_fallback(tts.fallback);
-        Ok(Self { backend, fallback })
+        Self { backend, fallback }
     }
 }
 
 impl SpeechDefaults {
-    pub fn load(tts: &Tts, engine: TtsEngine) -> Result<Self, ConfigError> {
-        let (voice, key) = match engine {
-            TtsEngine::Kokoro => (&tts.kokoro.voice, Key::TtsKokoroVoice),
-            TtsEngine::Qwen => (&tts.qwen.voice, Key::TtsQwenVoice),
-            TtsEngine::System => (&tts.system.voice, Key::TtsSystemVoice),
+    pub fn load(settings: &CheckedSettings, engine: TtsEngine) -> Self {
+        let choices = settings.choices();
+        let voice = match engine {
+            TtsEngine::Kokoro => &choices.voices.kokoro,
+            TtsEngine::Qwen => &choices.voices.qwen,
+            TtsEngine::System => &choices.voices.system,
         };
-        let voice = voice
-            .clone()
-            .map(|name| {
-                Voice::new(name).map_err(|source| ConfigError::Invalid {
-                    key,
-                    source: InvalidValue::Voice(source),
-                })
-            })
-            .transpose()?;
-        Ok(Self {
-            voice,
-            rate: speaking_rate(tts.rate)?,
-        })
+        Self {
+            voice: voice.clone(),
+            rate: choices.rate,
+        }
     }
 }
 
@@ -178,10 +153,7 @@ pub struct LoadedModel {
 }
 
 /// The models `settings` make Aria load.
-pub fn loaded_models(
-    settings: &SettingsFile,
-    home: &Path,
-) -> Result<Vec<LoadedModel>, ConfigError> {
+pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel> {
     let mut models = Vec::new();
     let mut add = |section, engine, path| {
         models.push(LoadedModel {
@@ -190,24 +162,20 @@ pub fn loaded_models(
             path,
         });
     };
-    if let TranscriptionBackend::Local(engine) = TranscriptionBackend::load(&settings.stt, home)? {
+    if let TranscriptionBackend::Local(engine) = TranscriptionBackend::load(settings, home) {
         let name = engine.backend_name();
         if let Some(path) = engine.model_path() {
             add("stt", Some(name), path);
         }
     }
-    match ListenConfig::load(settings, home) {
-        Ok(listen) => {
-            let engine = listen.transcription.backend_name();
-            let path = listen.transcription.model_directory();
-            add("listen", Some(engine), path);
-        }
-        // Listen without a backend inherits transcription's. If that engine
-        // cannot stream, listen is simply off.
-        Err(_) if settings.listen.backend.is_none() => {}
-        Err(error) => return Err(error),
+    // Only an inherited engine that can't stream fails here, and then
+    // listen is simply off.
+    if let Ok(listen) = ListenConfig::load(settings, home) {
+        let engine = listen.transcription.backend_name();
+        let path = listen.transcription.model_directory();
+        add("listen", Some(engine), path);
     }
-    let tts = TtsConfig::load(&settings.tts, home)?;
+    let tts = TtsConfig::load(settings, home);
     let engine = Some(tts.backend.name());
     match tts.backend {
         TtsBackend::Model(TtsModel::Kokoro { model, voices }) => {
@@ -226,7 +194,7 @@ pub fn loaded_models(
     let speaker = SpeakerConfig::load(&settings.speaker, home);
     add("speaker", None, speaker.model);
     add("speaker", None, speaker.segmentation_model);
-    Ok(models)
+    models
 }
 
 fn tts_fallback(file_value: Option<TtsFallbackName>) -> TtsFallback {
@@ -236,57 +204,20 @@ fn tts_fallback(file_value: Option<TtsFallbackName>) -> TtsFallback {
     }
 }
 
-fn speaking_rate(file_value: Option<f64>) -> Result<SpeakingRate, ConfigError> {
-    let Some(rate) = file_value else {
-        return Ok(SpeakingRate::standard());
-    };
-    SpeakingRate::new(rate as f32).map_err(|source| ConfigError::Invalid {
-        key: Key::TtsRate,
-        source: InvalidValue::SpeakingRate(source),
-    })
-}
-
 impl DictationConfig {
-    pub fn load(settings: &SettingsFile, home: &Path) -> Result<Self, ConfigError> {
-        Ok(Self {
-            capture: capture(&settings.capture)?,
-            transcription: TranscriptionBackend::load(&settings.stt, home)?,
-            dictation_timeouts: timeouts(&settings.dictation, &settings.delivery)?,
-            cleanup_llm: cleanup_llm(&settings.dictation)?,
-        })
-    }
-}
-
-fn cleanup_llm(dictation: &Dictation) -> Result<Option<super::LlmCleanupConfig>, ConfigError> {
-    let Some(config) = &dictation.cleanup_llm else {
-        return Ok(None);
-    };
-    aria_settings::validate_cleanup_llm(&config.endpoint, &config.model).map_err(|source| {
-        ConfigError::Invalid {
-            key: Key::DictationCleanupLlmEndpoint,
-            source: InvalidValue::Cleanup(source),
-        }
-    })?;
-    Ok(Some(super::LlmCleanupConfig {
-        endpoint: config.endpoint.clone(),
-        model: config.model.clone(),
-    }))
-}
-
-fn capture(capture: &Capture) -> Result<CaptureConfig, ConfigError> {
-    match capture.backend.unwrap_or(CaptureBackendName::Microphone) {
-        CaptureBackendName::Microphone => Ok(CaptureConfig::Microphone),
-        CaptureBackendName::WavFile => {
-            let path = capture.path.clone().ok_or_else(|| ConfigError::Invalid {
-                key: Key::CapturePath,
-                source: InvalidValue::Required {
-                    backend: WAV_FILE_CAPTURE_BACKEND.to_owned(),
+    pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
+        let choices = settings.choices();
+        Self {
+            capture: match &choices.capture {
+                CaptureChoice::Microphone => CaptureConfig::Microphone,
+                CaptureChoice::WavFile { path } => CaptureConfig::WavFile {
+                    path: path.clone(),
+                    pace: replay_pace(settings.capture.pace),
                 },
-            })?;
-            Ok(CaptureConfig::WavFile {
-                path,
-                pace: replay_pace(capture.pace),
-            })
+            },
+            transcription: TranscriptionBackend::load(settings, home),
+            dictation_timeouts: choices.timeouts,
+            cleanup_llm: choices.cleanup.clone(),
         }
     }
 }
@@ -299,107 +230,81 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 }
 
 impl TranscriptionBackend {
-    pub fn load(file: &Stt, home: &Path) -> Result<Self, ConfigError> {
-        TranscriptionSettings::read(file).resolve(home)
+    pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
+        let stt = &settings.stt;
+        match &settings.choices().stt {
+            SttChoice::Server(endpoint) => Self::Server {
+                endpoint: endpoint.clone(),
+            },
+            SttChoice::ParakeetMlx { interpreter } => {
+                Self::Local(TranscriptionConfig::ParakeetMlx {
+                    model: stt
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_PARAKEET_MLX_MODEL.to_owned()),
+                    interpreter: interpreter.clone(),
+                })
+            }
+            SttChoice::Local(engine) => Self::Local(local(
+                *engine,
+                stt.model.as_deref().map(Path::new),
+                stt.device,
+                home,
+            )),
+        }
     }
 }
 
+/// The defaults of an engine a caller names, not the file.
 pub(super) fn transcription_defaults(
     backend: &str,
     home: &Path,
 ) -> Result<TranscriptionConfig, ConfigError> {
-    TranscriptionSettings {
-        backend: backend.to_owned(),
-        model: None,
-        device: None,
-        interpreter: None,
-        server: None,
+    match LocalStt::named(backend) {
+        Some(engine) => Ok(local(engine, None, None, home)),
+        None if backend == backend::PARAKEET_MLX => Err(ConfigError::Invalid {
+            key: Key::SttInterpreter,
+            source: InvalidValue::Required {
+                backend: backend::PARAKEET_MLX.to_owned(),
+            },
+        }),
+        None => Err(ConfigError::Invalid {
+            key: Key::SttBackend,
+            source: InvalidValue::Unsupported {
+                value: backend.to_owned(),
+                supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server".to_owned(),
+            },
+        }),
     }
-    .resolve_local(home)
 }
 
-/// The transcription settings as written, before a backend claims them. Only
-/// `backend` applies to every backend; the rest belong to some of them.
-struct TranscriptionSettings<'a> {
-    backend: String,
-    model: Option<&'a Path>,
+fn local(
+    engine: LocalStt,
+    model: Option<&Path>,
     device: Option<DeviceName>,
-    interpreter: Option<&'a Path>,
-    server: Option<String>,
-}
-
-impl<'a> TranscriptionSettings<'a> {
-    fn read(file: &'a Stt) -> Self {
-        Self {
-            backend: string_value(file.backend.clone(), backend::DEFAULT),
-            model: file.model.as_deref().map(Path::new),
-            device: file.device,
-            interpreter: file.interpreter.as_deref(),
-            server: file.server.clone(),
-        }
-    }
-
-    fn resolve(self, home: &Path) -> Result<TranscriptionBackend, ConfigError> {
-        if self.backend != backend::SERVER {
-            return self.resolve_local(home).map(TranscriptionBackend::Local);
-        }
-        let invalid = |source| ConfigError::Invalid {
-            key: Key::SttServer,
-            source,
-        };
-        let endpoint = self.server.ok_or_else(|| {
-            invalid(InvalidValue::Required {
-                backend: backend::SERVER.to_owned(),
-            })
-        })?;
-        Ok(TranscriptionBackend::Server {
-            endpoint: endpoint.try_into().map_err(invalid)?,
-        })
-    }
-
-    fn resolve_local(self, home: &Path) -> Result<TranscriptionConfig, ConfigError> {
-        match self.backend.as_str() {
-            backend::WHISPER => Ok(TranscriptionConfig::Whisper {
-                model: model_location(
-                    self.model,
-                    model_file(model_folder::WHISPER, &aria_stt::whisper::MODEL[0]),
-                    home,
-                ),
-            }),
-            backend::WHISPER_CANDLE => Ok(TranscriptionConfig::WhisperCandle {
-                model_directory: model_location(self.model, model_folder::WHISPER_CANDLE, home),
-            }),
-            backend::PARAKEET => Ok(TranscriptionConfig::Parakeet {
-                model_directory: model_location(self.model, model_folder::PARAKEET, home),
-                device: transcription_device(self.device),
-            }),
-            backend::MOONSHINE => Ok(TranscriptionConfig::Moonshine {
-                model_directory: model_location(self.model, model_folder::MOONSHINE, home),
-            }),
-            backend::NEMOTRON => Ok(TranscriptionConfig::Nemotron {
-                model_directory: model_location(self.model, model_folder::NEMOTRON, home),
-            }),
-            backend::PARAKEET_MLX => {
-                let interpreter = self.interpreter.ok_or_else(|| {
-                    ConfigError::Invalid { key: Key::SttInterpreter, source: InvalidValue::Required {
-                            backend: backend::PARAKEET_MLX.to_owned(),
-                        } }
-                })?;
-                Ok(TranscriptionConfig::ParakeetMlx {
-                    // Only `stt.model` reaches this engine, and it
-                    // is a string, so the text comes back whole.
-                    model: self.model.map_or_else(
-                        || DEFAULT_PARAKEET_MLX_MODEL.to_owned(),
-                        |model| model.to_string_lossy().into_owned(),
-                    ),
-                    interpreter: interpreter.to_path_buf(),
-                })
-            }
-            _ => Err(ConfigError::Invalid { key: Key::SttBackend, source: InvalidValue::Unsupported {
-                    value: self.backend,
-                    supported: "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx, and server".to_owned(),
-                } }),
-        }
+    home: &Path,
+) -> TranscriptionConfig {
+    match engine {
+        LocalStt::Whisper => TranscriptionConfig::Whisper {
+            model: model_location(
+                model,
+                model_file(model_folder::WHISPER, &aria_stt::whisper::MODEL[0]),
+                home,
+            ),
+        },
+        LocalStt::WhisperCandle => TranscriptionConfig::WhisperCandle {
+            model_directory: model_location(model, model_folder::WHISPER_CANDLE, home),
+        },
+        LocalStt::Parakeet => TranscriptionConfig::Parakeet {
+            model_directory: model_location(model, model_folder::PARAKEET, home),
+            device: transcription_device(device),
+        },
+        LocalStt::Moonshine => TranscriptionConfig::Moonshine {
+            model_directory: model_location(model, model_folder::MOONSHINE, home),
+        },
+        LocalStt::Nemotron => TranscriptionConfig::Nemotron {
+            model_directory: model_location(model, model_folder::NEMOTRON, home),
+        },
     }
 }
 
@@ -410,47 +315,17 @@ fn transcription_device(device: Option<DeviceName>) -> TranscriptionDevice {
     }
 }
 
-fn timeouts(dictation: &Dictation, delivery: &Delivery) -> Result<DictationTimeouts, ConfigError> {
-    let recording = timeout(
-        dictation.max_recording_secs,
-        Key::DictationMaxRecordingSecs,
-        DEFAULT_RECORDING_TIMEOUT,
-    )?;
-    let overall = timeout(
-        dictation.timeout_secs,
-        Key::DictationTimeoutSecs,
-        DEFAULT_OVERALL_TIMEOUT,
-    )?;
-
-    Ok(DictationTimeouts {
-        recording,
-        delivery: delivery_timeout(delivery)?,
-        overall,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aria_settings::Loaded;
+    use aria_kit::synthesis::{SpeakingRate, Voice};
+    use aria_settings::config::tts_backend;
     use aria_settings::testing::{file, test_home};
+    use aria_settings::{CleanupTarget, Loaded};
     use std::time::Duration;
 
-    /// The typed values of `text`, before the file's own rules, for a state
-    /// only a mix of live and frozen keys or a direct call can produce.
-    fn unchecked(text: &str) -> SettingsFile {
-        toml_edit::de::from_str(text).expect("the TOML parses")
-    }
-
     #[test]
-    fn server_requires_an_explicit_https_origin_without_credentials() {
-        assert!(matches!(
-            settings(backend::SERVER).resolve(Path::new("/missing-home")),
-            Err(ConfigError::Invalid {
-                key: Key::SttServer,
-                source: InvalidValue::Required { .. },
-            })
-        ));
+    fn a_server_is_used_by_its_canonical_origin() {
         for (endpoint, canonical) in [
             ("https://localhost:9851", "https://localhost:9851"),
             ("https://Example.Test/", "https://example.test"),
@@ -460,34 +335,13 @@ mod tests {
                 "[stt]\nbackend = \"server\"\nserver = '{endpoint}'\n"
             ));
             let TranscriptionBackend::Server { endpoint } =
-                TranscriptionBackend::load(&file.stt, &test_home()).unwrap()
+                TranscriptionBackend::load(&file, &test_home())
             else {
                 panic!("expected a server backend");
             };
             assert_eq!(endpoint.to_string(), canonical);
-            let models = loaded_models(&file, Path::new("/missing-home")).expect("resolves");
+            let models = loaded_models(&file, Path::new("/missing-home"));
             assert!(models.iter().all(|model| model.section != "stt"));
-        }
-        for endpoint in [
-            "http://localhost",
-            "https://user:secret@example.test",
-            "https://example.test?key=secret",
-            "https://example.test#secret",
-            "https://example.test/path",
-            "",
-            "unix:///tmp/server.sock",
-        ] {
-            assert!(matches!(
-                TranscriptionSettings {
-                    server: Some(endpoint.into()),
-                    ..settings(backend::SERVER)
-                }
-                .resolve(Path::new("/missing-home")),
-                Err(ConfigError::Invalid {
-                    key: Key::SttServer,
-                    source: InvalidValue::ServerEndpoint,
-                })
-            ));
         }
     }
 
@@ -511,8 +365,7 @@ mod tests {
     fn llm_cleanup_requires_cleanup_and_preserves_settings() {
         let home_dir = test_home();
         assert!(
-            DictationConfig::load(&SettingsFile::default(), &home_dir)
-                .unwrap()
+            DictationConfig::load(&file(""), &home_dir)
                 .cleanup_llm
                 .is_none()
         );
@@ -520,54 +373,27 @@ mod tests {
         let config = DictationConfig::load(
             &file(&format!("[dictation]\ncleanup = true\n{llm}")),
             &home_dir,
-        )
-        .unwrap();
+        );
         assert_eq!(
             config.cleanup_llm,
-            Some(super::super::LlmCleanupConfig {
-                endpoint: "http://127.0.0.1:8080/v1/chat/completions".to_owned(),
-                model: "local-model".to_owned(),
-            })
+            Some(
+                CleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "local-model")
+                    .unwrap()
+            )
         );
-        // With cleanup off the table goes unused: each dictation reads the
-        // switch, so a live change never meets a frozen table as an error.
-        DictationConfig::load(
-            &unchecked(&format!("[dictation]\ncleanup = false\n{llm}")),
-            &home_dir,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn llm_cleanup_rejects_invalid_settings() {
-        for (endpoint, model) in [
-            ("https://example.com/v1/chat/completions", "local-model"),
-            ("http://127.0.0.1:8080/v1/chat/completions", ""),
-        ] {
-            let file = unchecked(&format!(
-                "[dictation]\ncleanup = true\n[dictation.cleanup_llm]\nendpoint = \"{endpoint}\"\nmodel = \"{model}\"\n"
-            ));
-            assert!(matches!(
-                DictationConfig::load(&file, &test_home()),
-                Err(ConfigError::Invalid {
-                    key: Key::DictationCleanupLlmEndpoint,
-                    source: InvalidValue::Cleanup(_),
-                })
-            ));
-        }
     }
 
     #[test]
     fn capture_defaults_to_the_microphone() {
-        let capture = capture(&SettingsFile::default().capture);
-        assert_eq!(capture.expect("resolves"), CaptureConfig::Microphone);
+        let capture = DictationConfig::load(&file(""), &test_home()).capture;
+        assert_eq!(capture, CaptureConfig::Microphone);
     }
 
     #[test]
     fn capture_resolves_a_wav_file_backend() {
         let file = file("[capture]\nbackend = \"wav_file\"\npath = \"~/fixture.wav\"\n");
         assert_eq!(
-            capture(&file.capture).expect("resolves"),
+            DictationConfig::load(&file, &test_home()).capture,
             CaptureConfig::WavFile {
                 path: PathBuf::from("/home/user/fixture.wav"),
                 pace: ReplayPace::Immediate,
@@ -581,37 +407,12 @@ mod tests {
             "[capture]\nbackend = \"wav_file\"\npath = \"/fixture.wav\"\npace = \"realtime\"\n",
         );
         assert!(matches!(
-            capture(&file.capture).expect("resolves"),
+            DictationConfig::load(&file, &test_home()).capture,
             CaptureConfig::WavFile {
                 pace: ReplayPace::Realtime,
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn capture_requires_a_path_for_the_wav_file_backend() {
-        let file = unchecked("[capture]\nbackend = \"wav_file\"\n");
-        let error = capture(&file.capture).expect_err("a missing path must be rejected");
-        assert!(matches!(
-            error,
-            ConfigError::Invalid {
-                key: Key::CapturePath,
-                source: InvalidValue::Required { .. },
-            }
-        ));
-    }
-
-    /// Every setting unset but the backend, so each test names only what it
-    /// is about.
-    fn settings(backend: &str) -> TranscriptionSettings<'static> {
-        TranscriptionSettings {
-            backend: backend.to_owned(),
-            model: None,
-            device: None,
-            interpreter: None,
-            server: None,
-        }
     }
 
     #[test]
@@ -651,8 +452,7 @@ mod tests {
         ];
 
         for (backend, expected) in defaults {
-            let transcription = settings(backend)
-                .resolve_local(Path::new("/home/user"))
+            let transcription = transcription_defaults(backend, Path::new("/home/user"))
                 .expect("a default must resolve");
             assert_eq!(transcription, expected, "{backend}");
         }
@@ -680,7 +480,7 @@ mod tests {
     fn transcription_resolves_a_parakeet_model_directory() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n");
         assert_eq!(
-            TranscriptionBackend::load(&file.stt, &test_home()).expect("parakeet must resolve"),
+            TranscriptionBackend::load(&file, &test_home()),
             TranscriptionBackend::Local(TranscriptionConfig::Parakeet {
                 model_directory: PathBuf::from("/home/user/models/tdt"),
                 device: TranscriptionDevice::Cpu,
@@ -695,7 +495,7 @@ mod tests {
              model = \"mlx-community/whisper\"\n",
         );
         assert_eq!(
-            TranscriptionBackend::load(&file.stt, &test_home()).expect("parakeet-mlx must resolve"),
+            TranscriptionBackend::load(&file, &test_home()),
             TranscriptionBackend::Local(TranscriptionConfig::ParakeetMlx {
                 model: "mlx-community/whisper".to_owned(),
                 interpreter: PathBuf::from("/home/user/py"),
@@ -704,9 +504,8 @@ mod tests {
     }
 
     #[test]
-    fn transcription_rejects_an_unknown_backend() {
-        let error = settings("vosk")
-            .resolve(Path::new("/home/user"))
+    fn defaults_for_an_unknown_engine_are_refused() {
+        let error = transcription_defaults("vosk", Path::new("/home/user"))
             .expect_err("an unknown backend must be rejected");
         assert!(matches!(
             error,
@@ -719,8 +518,8 @@ mod tests {
 
     #[test]
     fn tts_defaults_to_the_system_backend_at_the_natural_pace() {
-        let tts = TtsConfig::load(&SettingsFile::default().tts, &test_home())
-            .expect("defaults must resolve");
+        let defaults = file("");
+        let tts = TtsConfig::load(&defaults, &test_home());
 
         assert_eq!(
             tts,
@@ -735,8 +534,7 @@ mod tests {
     fn tts_resolves_a_voice_and_rate() {
         let file = file("[tts]\nrate = 1.5\n[tts.system]\nvoice = \"Samantha\"\n");
 
-        let saved =
-            SpeechDefaults::load(&file.tts, TtsEngine::System).expect("a voice and rate resolve");
+        let saved = SpeechDefaults::load(&file, TtsEngine::System);
 
         assert_eq!(saved.voice, Some(Voice::new("Samantha").expect("valid")));
         assert_eq!(saved.rate, SpeakingRate::new(1.5).expect("valid"));
@@ -745,11 +543,7 @@ mod tests {
     #[test]
     fn each_engine_keeps_its_own_voice() {
         let voices = "[tts.system]\nvoice = \"Samantha\"\n[tts.kokoro]\nvoice = \"af_heart\"\n";
-        let voice = |engine| {
-            SpeechDefaults::load(&file(voices).tts, engine)
-                .expect("resolves")
-                .voice
-        };
+        let voice = |engine| SpeechDefaults::load(&file(voices), engine).voice;
 
         assert_eq!(
             voice(TtsEngine::System),
@@ -766,7 +560,7 @@ mod tests {
     fn tts_resolves_kokoro_with_its_own_model_defaults() {
         let file = file("[tts]\nbackend = \"kokoro\"\nfallback = \"system\"\n");
 
-        let tts = TtsConfig::load(&file.tts, &test_home()).expect("kokoro must resolve");
+        let tts = TtsConfig::load(&file, &test_home());
 
         assert_eq!(
             tts.backend,
@@ -784,8 +578,7 @@ mod tests {
             "[tts]\nbackend = \"qwen\"\n[tts.kokoro]\nvoices = \"~/models/kokoro/voices.bin\"\n",
         );
 
-        let tts =
-            TtsConfig::load(&file.tts, &test_home()).expect("kokoro's table is dormant under qwen");
+        let tts = TtsConfig::load(&file, &test_home());
 
         assert!(matches!(
             tts.backend,
@@ -795,8 +588,8 @@ mod tests {
 
     #[test]
     fn tts_resolves_qwen_with_its_own_directory_defaults() {
-        let tts = TtsConfig::load(&file("[tts]\nbackend = \"qwen\"\n").tts, &test_home())
-            .expect("qwen must resolve");
+        let qwen = file("[tts]\nbackend = \"qwen\"\n");
+        let tts = TtsConfig::load(&qwen, &test_home());
 
         assert_eq!(
             tts.backend,
@@ -810,8 +603,7 @@ mod tests {
     #[test]
     fn listen_inherits_the_transcription_model() {
         let home = Path::new("/home/user");
-        let loaded =
-            loaded_models(&file("[stt]\nbackend = \"parakeet\"\n"), home).expect("resolves");
+        let loaded = loaded_models(&file("[stt]\nbackend = \"parakeet\"\n"), home);
         let models = home.join(".aria/models");
 
         assert_eq!(
@@ -846,7 +638,7 @@ mod tests {
     fn a_configured_model_path_is_the_one_loaded() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/tdt\"\n");
 
-        let loaded = loaded_models(&file, Path::new("/home/user")).expect("resolves");
+        let loaded = loaded_models(&file, Path::new("/home/user"));
 
         assert!(
             loaded
@@ -921,7 +713,7 @@ mod tests {
         let on_disk = Loaded::parse(&std::fs::read_to_string(&path).unwrap(), dir.path())
             .expect("valid")
             .into_settings();
-        let in_use = DictationConfig::load(&store.effective(), &test_home()).expect("resolves");
+        let in_use = DictationConfig::load(&store.effective(), &test_home());
 
         assert_eq!(
             on_disk.stt.server.as_deref(),
@@ -939,16 +731,16 @@ mod tests {
         let defaults = Loaded::parse(&aria_settings::testing::defaults_text(), home)
             .expect("every default is valid")
             .into_settings();
-        let empty = SettingsFile::default();
+        let empty = file("");
         let home_dir = home.to_path_buf();
 
         assert_eq!(
-            DictationConfig::load(&defaults, &home_dir).unwrap(),
-            DictationConfig::load(&empty, &home_dir).unwrap()
+            DictationConfig::load(&defaults, &home_dir),
+            DictationConfig::load(&empty, &home_dir)
         );
         assert_eq!(
-            TtsConfig::load(&defaults.tts, &home_dir).unwrap(),
-            TtsConfig::load(&empty.tts, &home_dir).unwrap()
+            TtsConfig::load(&defaults, &home_dir),
+            TtsConfig::load(&empty, &home_dir)
         );
         assert_eq!(
             SpeakerConfig::load(&defaults.speaker, &home_dir),

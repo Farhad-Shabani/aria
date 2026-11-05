@@ -769,7 +769,7 @@ mod tests {
         assert!(text.contains("# [dictation]\n"), "{text}");
         assert!(text.contains("# output_mode = \"insert\""), "{text}");
         assert_eq!(
-            Loaded::parse(&text, Path::new(HOME)).unwrap().settings,
+            *Loaded::parse(&text, Path::new(HOME)).unwrap().settings,
             super::super::SettingsFile::default()
         );
         assert!(directory.path().join(SCHEMA_FILE_NAME).is_file());

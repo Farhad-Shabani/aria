@@ -33,7 +33,7 @@ use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::{ServerEndpoint, backend, tts_backend};
-use aria_settings::{SettingsError, SettingsFile};
+use aria_settings::{CheckedSettings, SettingsError};
 use aria_voice::config;
 use aria_voice::speech::SpeechRequest;
 
@@ -404,9 +404,9 @@ impl Inspection {
 
 /// Every model setup knows, in the order it offers them: what the speech
 /// engines want first, then what every install wants.
-fn model_states(home: &Path, file: &SettingsFile) -> Result<Vec<ModelState>, SetupError> {
+fn model_states(home: &Path, file: &CheckedSettings) -> Result<Vec<ModelState>, SetupError> {
     let models_dir = aria_settings::config::models_dir(home);
-    let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
+    let loaded = config::loaded_models(file, home);
     // Only the asset's own section counts. Listen's custom moonshine path
     // does not change where transcription looks.
     let external = |asset: &Asset, engine: Option<&str>, section: &str| {
@@ -1148,7 +1148,7 @@ mod tests {
             macos: true,
             stt: choices::<Stt>(existing.stt.as_deref(), &host),
             tts: choices::<Tts>(existing.tts.as_deref(), &host),
-            models: model_states(&home, &SettingsFile::default()).unwrap(),
+            models: model_states(&home, &aria_settings::testing::file("")).unwrap(),
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
@@ -1234,10 +1234,9 @@ mod tests {
             tts: Some("system".to_owned()),
             ..configured()
         });
-        let file: SettingsFile = toml_edit::de::from_str(
+        let file = aria_settings::testing::file(
             "[stt]\nbackend = \"server\"\nserver = \"https://example.test:9851\"\n",
-        )
-        .unwrap();
+        );
         inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
         assert_eq!(selections.stt, "server");
@@ -1334,11 +1333,10 @@ mod tests {
             stt: Some("parakeet".to_owned()),
             ..configured()
         });
-        let file: SettingsFile = toml_edit::de::from_str(
+        let file = aria_settings::testing::file(
             "[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n\
              [tts]\nbackend = \"kokoro\"\n[tts.kokoro]\nmodel = \"/elsewhere/kokoro.onnx\"\n",
-        )
-        .unwrap();
+        );
         inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
         let wanted: Vec<_> = inspection
@@ -1360,11 +1358,10 @@ mod tests {
             stt: Some("moonshine".to_owned()),
             ..configured()
         });
-        let file: SettingsFile = toml_edit::de::from_str(
+        let file = aria_settings::testing::file(
             "[stt]\nbackend = \"whisper\"\n\
              [listen]\nbackend = \"moonshine\"\nmodel = \"/elsewhere/moonshine\"\n",
-        )
-        .unwrap();
+        );
         inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
 

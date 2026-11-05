@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::primitives::user_home;
-use aria_settings::SettingsFile;
+use aria_settings::CheckedSettings;
 use aria_voice::config::{self, LoadedModel};
 
 use super::assets::{self, Asset};
@@ -60,9 +60,9 @@ pub fn remove(name: &str) -> Result<u64, SetupError> {
     removed(&home, &file, name)
 }
 
-fn listed(home: &Path, file: &SettingsFile) -> Result<Vec<Model>, SetupError> {
+fn listed(home: &Path, file: &CheckedSettings) -> Result<Vec<Model>, SetupError> {
     let models_dir = aria_settings::config::models_dir(home);
-    let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
+    let loaded = config::loaded_models(file, home);
     Ok(model_states(home, file)?
         .into_iter()
         .map(|model| Model {
@@ -74,7 +74,7 @@ fn listed(home: &Path, file: &SettingsFile) -> Result<Vec<Model>, SetupError> {
         .collect())
 }
 
-fn removed(home: &Path, file: &SettingsFile, name: &str) -> Result<u64, SetupError> {
+fn removed(home: &Path, file: &CheckedSettings, name: &str) -> Result<u64, SetupError> {
     let model = model_states(home, file)?
         .into_iter()
         .find(|model| model.name == name)
@@ -82,7 +82,7 @@ fn removed(home: &Path, file: &SettingsFile, name: &str) -> Result<u64, SetupErr
             name: name.to_owned(),
         })?;
     let models_dir = aria_settings::config::models_dir(home);
-    let loaded = config::loaded_models(file, home).map_err(SetupError::Config)?;
+    let loaded = config::loaded_models(file, home);
     if let Some(section) = user(&loaded, &models_dir, model.asset) {
         return Err(SetupError::ModelInUse {
             name: model.name,
@@ -110,14 +110,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use aria_settings::testing::file;
 
-    /// The typed values of `text`, before validation, so a test can reach a
-    /// table that does not resolve.
-    fn config(text: &str) -> SettingsFile {
-        toml_edit::de::from_str(text).unwrap()
-    }
-
-    fn model(home: &Path, file: &SettingsFile, name: &str) -> Model {
+    fn model(home: &Path, file: &CheckedSettings, name: &str) -> Model {
         listed(home, file)
             .unwrap()
             .into_iter()
@@ -125,7 +120,7 @@ mod tests {
             .unwrap()
     }
 
-    fn used_by(file: &SettingsFile, name: &str) -> Option<&'static str> {
+    fn used_by(file: &CheckedSettings, name: &str) -> Option<&'static str> {
         model(Path::new("/home/someone"), file, name).used_by
     }
 
@@ -143,7 +138,7 @@ mod tests {
 
     #[test]
     fn an_empty_config_uses_the_default_models() {
-        let file = config("");
+        let file = file("");
 
         assert_eq!(
             used_by(&file, aria_settings::config::backend::DEFAULT),
@@ -156,7 +151,7 @@ mod tests {
 
     #[test]
     fn each_section_uses_the_model_of_its_engine() {
-        let file = config(
+        let file = file(
             "[stt]\nbackend = \"parakeet\"\n\
              [listen]\nbackend = \"moonshine\"\n\
              [tts]\nbackend = \"qwen\"\n",
@@ -170,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_model_kept_elsewhere_leaves_the_download_unused() {
-        let file = config("[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n");
+        let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n");
 
         assert_eq!(used_by(&file, "parakeet"), None);
     }
@@ -179,7 +174,7 @@ mod tests {
     fn an_unfinished_download_lists_as_partial() {
         let (home, models) = home();
         touch(&models.join("moonshine/base/tokenizer.json.part"));
-        let file = config("");
+        let file = file("");
 
         assert_eq!(
             model(home.path(), &file, "moonshine").on_disk,
@@ -204,7 +199,7 @@ mod tests {
         }
         touch(&models.join("parakeet/mine.onnx"));
 
-        let freed = removed(home.path(), &config(""), "moonshine").unwrap();
+        let freed = removed(home.path(), &file(""), "moonshine").unwrap();
 
         assert_eq!(freed, 3 * b"model".len() as u64);
         assert!(!models.join("moonshine").exists());
@@ -218,24 +213,10 @@ mod tests {
         touch(&model.join("tokenizer.json"));
         touch(&model.join("notes.txt"));
 
-        removed(home.path(), &config(""), "moonshine").unwrap();
+        removed(home.path(), &file(""), "moonshine").unwrap();
 
         assert!(!model.join("tokenizer.json").exists());
         assert!(model.join("notes.txt").exists());
-    }
-
-    /// Nothing is removed while a table that does not resolve might use it.
-    #[test]
-    fn remove_waits_for_a_config_that_resolves() {
-        let (home, models) = home();
-        let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
-        touch(&parakeet);
-        let file = config("[stt]\nbackend = \"parakeet-mlx\"\n");
-
-        let refused = removed(home.path(), &file, "parakeet").unwrap_err();
-
-        assert!(matches!(refused, SetupError::Config(_)));
-        assert!(parakeet.exists());
     }
 
     #[test]
@@ -243,7 +224,7 @@ mod tests {
         let (home, models) = home();
         let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
         touch(&parakeet);
-        let file = config("[stt]\nbackend = \"parakeet\"\n");
+        let file = file("[stt]\nbackend = \"parakeet\"\n");
         let refused = |name| removed(home.path(), &file, name).unwrap_err();
 
         assert!(matches!(

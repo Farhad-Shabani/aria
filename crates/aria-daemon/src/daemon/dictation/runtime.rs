@@ -119,7 +119,7 @@ impl DictationRuntime {
             retry: Lazy::new(move || {
                 let settings = retry_cache.effective();
                 Ok(RetrySetup {
-                    dictation: DictationConfig::load(&settings, &retry_home)?,
+                    dictation: DictationConfig::load(&settings, &retry_home),
                     speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
                     home: retry_home.clone(),
@@ -132,8 +132,7 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
                     let settings = cache.effective();
-                    let config = DictationConfig::load(&settings, &home)
-                        .map_err(DictationInitializationError::Config)?;
+                    let config = DictationConfig::load(&settings, &home);
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
@@ -1214,8 +1213,7 @@ mod history_tests {
                 })
                 .unwrap();
             let home_dir = home.clone();
-            let mut config =
-                DictationConfig::load(&aria_settings::SettingsFile::default(), &home_dir).unwrap();
+            let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
             config.transcription = TranscriptionBackend::Server { endpoint };
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,

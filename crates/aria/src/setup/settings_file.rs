@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use aria_settings::config::{ServerEndpoint, backend, tts_backend};
-use aria_settings::{Key, Patch, Refusal, SettingsError, SettingsFile, Written};
+use aria_settings::{CheckedSettings, Key, Patch, Refusal, SettingsError, SettingsFile, Written};
 
 use super::SetupError;
 
@@ -121,7 +121,7 @@ impl Selections {
     }
 }
 
-pub(super) fn read(home: &Path) -> Result<SettingsFile, SetupError> {
+pub(super) fn read(home: &Path) -> Result<CheckedSettings, SetupError> {
     aria_settings::load(home).map_err(SetupError::Settings)
 }
 

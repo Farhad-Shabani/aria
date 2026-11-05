@@ -7,7 +7,7 @@ use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::{ConfigError, memory_directory};
-use aria_settings::{SettingsCache, SettingsError, SettingsFile};
+use aria_settings::{CheckedSettings, SettingsCache, SettingsError};
 use aria_settings::{SettingsStore, StoreError};
 use aria_voice::config::SpeakerConfig;
 use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
@@ -311,7 +311,7 @@ struct Dependencies<'a> {
     settings: &'a Arc<SettingsStore>,
     cache: &'a Arc<SettingsCache>,
     /// The settings as the daemon started with them.
-    startup: &'a SettingsFile,
+    startup: &'a CheckedSettings,
     transcripts: &'a Arc<TranscriptStore>,
 }
 

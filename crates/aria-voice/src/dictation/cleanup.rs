@@ -9,7 +9,7 @@ use aria_kit::transcription::{
 use aria_primitives::cancel::CancelToken;
 use serde::Deserialize;
 
-use aria_settings::{CleanupConfigError, validate_cleanup_llm};
+use aria_settings::CleanupTarget;
 
 const MIN_WORDS: usize = 4;
 const MAX_INPUT_BYTES: usize = 4 * 1024;
@@ -22,8 +22,6 @@ const OUTPUT_CONTRACT: &str = "Return exactly one JSON object with exactly one f
 
 #[derive(Debug, thiserror::Error)]
 pub enum CleanupError {
-    #[error(transparent)]
-    Config(#[from] CleanupConfigError),
     #[error("cleanup prompt cannot be read as UTF-8")]
     PromptRead,
     #[error("cleanup prompt exceeds 16 KiB")]
@@ -53,8 +51,6 @@ impl From<CleanupError> for TranscriptionError {
 impl CleanupError {
     pub(crate) fn category(&self) -> &'static str {
         match self {
-            Self::Config(CleanupConfigError::Endpoint) => "endpoint",
-            Self::Config(CleanupConfigError::Model) => "model",
             Self::PromptRead => "prompt_read",
             Self::PromptTooLarge => "prompt_size",
             Self::InputTooLarge => "input_size",
@@ -69,15 +65,13 @@ impl CleanupError {
 }
 
 pub struct LlmCleanup {
-    endpoint: String,
-    model: String,
+    target: CleanupTarget,
     prompt: String,
     agent: ureq::Agent,
 }
 
 impl LlmCleanup {
-    pub fn new(endpoint: &str, model: &str, home: &Path) -> Result<Self, CleanupError> {
-        validate_cleanup_llm(endpoint, model)?;
+    pub fn new(target: &CleanupTarget, home: &Path) -> Result<Self, CleanupError> {
         let prompt = build_prompt(home)?;
         let agent = ureq::Agent::config_builder()
             .proxy(None)
@@ -89,8 +83,7 @@ impl LlmCleanup {
             .build()
             .into();
         Ok(Self {
-            endpoint: endpoint.to_owned(),
-            model: model.to_owned(),
+            target: target.clone(),
             prompt,
             agent,
         })
@@ -103,7 +96,7 @@ impl LlmCleanup {
         deadline: Instant,
     ) -> Result<String, TranscriptionError> {
         let request = serde_json::json!({
-            "model": self.model,
+            "model": self.target.model(),
             "messages": [
                 { "role": "system", "content": self.prompt },
                 { "role": "user", "content": text }
@@ -117,7 +110,7 @@ impl LlmCleanup {
         check_budget(cancel, deadline)?;
         let mut response = self
             .agent
-            .post(&self.endpoint)
+            .post(self.target.endpoint())
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .send(request)

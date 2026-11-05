@@ -7,8 +7,9 @@ use aria_kit::cancel::CancelToken;
 
 use aria_primitives::lazy::Lazy;
 use aria_settings::SettingsCache;
+use aria_settings::TtsEngine;
 use aria_settings::rpc::RpcErrorCode;
-use aria_voice::config::{SpeechDefaults, TtsConfig, TtsEngine};
+use aria_voice::config::{SpeechDefaults, TtsConfig};
 use aria_voice::speech::{
     SpeechError, SpeechEventEmitter, SpeechOutcome, SpeechRequest, SpeechSettings, SpeechStage,
 };
@@ -36,9 +37,7 @@ impl SpeechRuntime {
             cache: Arc::clone(&cache),
             speech: speech_load(move || {
                 let settings = cache.effective();
-                let config = TtsConfig::load(&settings.tts, &home)
-                    .map_err(SpeechInitializationError::Config)?;
-                build_speech(config)
+                build_speech(TtsConfig::load(&settings, &home))
             }),
         }
     }
@@ -67,13 +66,7 @@ impl SpeechRuntime {
             }
         };
 
-        let settings = match next_utterance(&self.cache, request, speech.engine) {
-            Ok(settings) => settings,
-            Err(error) => {
-                self.emitter.emit(SpeechStage::Failed((&error).into()));
-                return Err(error.into());
-            }
-        };
+        let settings = next_utterance(&self.cache, request, speech.engine);
         speech
             .coordinator
             .execute(settings, cancellation, &self.emitter)
@@ -105,15 +98,14 @@ pub(in crate::daemon) fn next_utterance(
     cache: &SettingsCache,
     request: SpeechRequest,
     engine: TtsEngine,
-) -> Result<SpeechSettings, SpeechInitializationError> {
+) -> SpeechSettings {
     let effective = cache.effective();
-    let saved =
-        SpeechDefaults::load(&effective.tts, engine).map_err(SpeechInitializationError::Config)?;
-    Ok(SpeechSettings {
+    let saved = SpeechDefaults::load(&effective, engine);
+    SpeechSettings {
         text: request.text,
         voice: request.voice.or(saved.voice),
         rate: request.rate.unwrap_or(saved.rate),
-    })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -138,9 +130,9 @@ impl From<&SpeechRuntimeError> for RpcErrorCode {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use aria_kit::synthesis::SynthesisError;
     use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
-    use aria_settings::config::ConfigError;
-    use aria_settings::{InvalidValue, Key};
+    use aria_voice::speech::SpeechBuildError;
 
     use super::*;
 
@@ -166,7 +158,7 @@ mod tests {
             "[tts]\nrate = 1.5\n[tts.kokoro]\nvoice = \"af_heart\"\n",
         );
 
-        let saved = next_utterance(&store, request(None, None), TtsEngine::Kokoro).unwrap();
+        let saved = next_utterance(&store, request(None, None), TtsEngine::Kokoro);
         assert_eq!(saved.voice, Some(Voice::new("af_heart").unwrap()));
         assert_eq!(saved.rate, SpeakingRate::new(1.5).unwrap());
 
@@ -174,12 +166,11 @@ mod tests {
             &store,
             request(Some("af_sky"), Some(2.0)),
             TtsEngine::Kokoro,
-        )
-        .unwrap();
+        );
         assert_eq!(asked.voice, Some(Voice::new("af_sky").unwrap()));
         assert_eq!(asked.rate, SpeakingRate::new(2.0).unwrap());
 
-        let engine = next_utterance(&store, request(None, None), TtsEngine::Qwen).unwrap();
+        let engine = next_utterance(&store, request(None, None), TtsEngine::Qwen);
         assert_eq!(engine.voice, None);
     }
 
@@ -194,18 +185,15 @@ mod tests {
              [tts.kokoro]\nvoice = \"af_heart\"\n[tts.system]\nvoice = \"Samantha\"\n",
         );
 
-        let spoken = next_utterance(&store, request(None, None), TtsEngine::System).unwrap();
+        let spoken = next_utterance(&store, request(None, None), TtsEngine::System);
 
         assert_eq!(spoken.voice, Some(Voice::new("Samantha").unwrap()));
     }
 
     fn unusable_model() -> SpeechInitializationError {
-        SpeechInitializationError::Config(ConfigError::Invalid {
-            key: Key::TtsKokoroModel,
-            source: InvalidValue::Required {
-                backend: "kokoro".to_owned(),
-            },
-        })
+        SpeechInitializationError::Backend(SpeechBuildError::Synthesis(
+            SynthesisError::UnsupportedBackend { backend: "kokoro" },
+        ))
     }
 
     /// A runtime that loads with `build`, and a count of how often it ran.
@@ -240,7 +228,7 @@ mod tests {
             assert!(matches!(
                 failure,
                 Err(SpeechRuntimeError::Initialization(
-                    SpeechInitializationError::Config(_)
+                    SpeechInitializationError::Backend(_)
                 ))
             ));
         }

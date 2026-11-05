@@ -232,7 +232,7 @@ fn chat_request_from_settings(
 ) -> anyhow::Result<ChatRequest> {
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
-    let config = aria_daemon::config::load_chat(&settings)?;
+    let config = aria_daemon::config::load_chat(&settings);
     Ok(ChatRequest::from_config(text, assistant_id, config)?)
 }
 

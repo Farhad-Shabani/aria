@@ -11,8 +11,9 @@
 
 use super::speech::next_utterance;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
+use aria_settings::TtsEngine;
 use aria_settings::{Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify};
-use aria_voice::config::{ListenConfig, TtsEngine};
+use aria_voice::config::ListenConfig;
 use aria_voice::dictation::{DictationRequest, StopMode};
 use aria_voice::speech::SpeechRequest;
 use std::fs;
@@ -105,7 +106,7 @@ impl LiveHarness {
             voice: None,
             rate: None,
         };
-        let utterance = next_utterance(&self.cache, request, engine).unwrap();
+        let utterance = next_utterance(&self.cache, request, engine);
         format!("{:?} {:?}", utterance.voice, utterance.rate)
     }
 
