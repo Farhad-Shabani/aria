@@ -2,13 +2,10 @@
 #
 # Prints the identity to sign Aria.app with, or - for ad-hoc.
 #
-# A real signature ties the Accessibility grant to the identifier and
-# certificate, so the grant survives a rebuild. Ad-hoc signing ties it to the
-# binary's hash, so every build breaks it. A signed daemon helper keeps its
-# signer, because a Developer ID grant doesn't carry over to Apple
-# Development, or back. The helper decides because Xcode rebuilds the outer
-# app unsigned. Without a signed helper, the first codesigning identity
-# signs, or ad-hoc when none exists. Override with ARIA_SIGN_IDENTITY.
+# Permission grants follow the signing certificate, so a signed daemon helper
+# keeps its signer. Xcode rebuilds the outer app unsigned, so the signer comes
+# from the helper. Ad-hoc grants break on every build, so an unsigned helper
+# gets the first codesigning identity.
 #
 # Usage: identity.sh <Aria.app>
 set -euo pipefail
