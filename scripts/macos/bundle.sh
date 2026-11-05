@@ -17,7 +17,7 @@ helpers="$app/Contents/Helpers"
 daemon="$helpers/Aria.app/Contents"
 
 # Runs before Helpers/ changes, so a refused identity leaves the helper in place.
-identity="$("$scripts/identity.sh" "$app")"
+identity="$("$scripts/identity.sh")"
 # Only this script writes Helpers/, so a rebuild starts it clean.
 rm -rf "$helpers"
 mkdir -p "$daemon/MacOS" "$daemon/Resources"
