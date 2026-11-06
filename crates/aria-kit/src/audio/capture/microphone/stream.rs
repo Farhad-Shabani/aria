@@ -25,10 +25,10 @@ const STREAM_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A playing microphone stream and the state that decodes it.
 pub(super) struct LiveStream {
-    /// Held only to keep the input stream playing.
-    _stream: cpal::Stream,
     /// A macOS input stream stays on this device when the default moves.
     device: cpal::DeviceId,
+    /// Held only to keep the input stream playing.
+    _stream: cpal::Stream,
     consumer: Consumer<i16>,
     status: Arc<CaptureStatus>,
     converter: SampleRateConverter,
@@ -71,8 +71,8 @@ impl LiveStream {
             .play()
             .map_err(|source| MicrophoneError::StartStream(Box::new(source)))?;
         Ok(Self {
-            _stream: stream,
             device: id,
+            _stream: stream,
             consumer,
             status,
             converter,
