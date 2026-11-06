@@ -133,6 +133,37 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState(event))
     }
 
+    func testQueuedWordsWaitForTheStartAppUntilTyped() {
+        let recording = PillState.recording(since: epoch)
+
+        let notes = Waiting(bundle: "com.apple.Notes")
+        let waiting = recording.segment(.segmentQueued, start: notes)
+        XCTAssertEqual(waiting, .recording(since: epoch, waiting: notes))
+        XCTAssertNil(waiting?.label(), "the start app's icon shows instead")
+        let unnamed = Waiting(bundle: nil)
+        XCTAssertEqual(recording.segment(.segmentQueued, start: unnamed)?.label(), "waiting")
+        XCTAssertEqual(waiting?.segment(.segmentDelivered, start: notes), recording)
+        XCTAssertNil(PillState.transcribing.segment(.segmentQueued, start: notes))
+    }
+
+    func testWordsNeverTypedSayWhereTheyAre() {
+        var event = Aria_Daemon_V1_DictationEvent()
+        event.stage = .delivered
+        event.wordCount = 3
+        event.outcome = .inHistory
+        XCTAssertEqual(PillState(event)?.label(), "saved to history · 3 words")
+        XCTAssertEqual(PillState(event)?.life, .seconds(4))
+        event.outcome = .notTyped
+        XCTAssertEqual(PillState(event)?.label(), "not typed · 3 words")
+        XCTAssertEqual(PillState(event)?.life, .seconds(4))
+    }
+
+    func testACopiedNoticeStaysLongerThanATypedOne() {
+        XCTAssertEqual(PillState.delivered(.copied, words: 3).life, .seconds(4))
+        XCTAssertEqual(PillState.replied(copied: true).life, .seconds(4))
+        XCTAssertEqual(PillState.delivered(.inserted, words: 3).life, .milliseconds(1200))
+    }
+
     func testOnlyAFinishedPressLetsGoOfThePill() {
         XCTAssertNil(PillState.recording(since: epoch).life)
         XCTAssertNil(PillState.transcribing.life)

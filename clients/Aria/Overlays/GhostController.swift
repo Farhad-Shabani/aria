@@ -7,7 +7,7 @@ final class GhostController {
     static let enabledKey = "ghostTextEnabled"
     static let isEnabledByDefault = true
     private static let clearingStages: [Aria_Daemon_V1_DictationStage] = [
-        .segmentDelivered, .delivered, .failed, .cancelled,
+        .segmentDelivered, .segmentQueued, .delivered, .failed, .cancelled,
     ]
 
     private let events: DaemonEvents

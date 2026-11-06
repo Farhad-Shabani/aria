@@ -1,5 +1,5 @@
+import AppKit
 import Combine
-import Foundation
 
 /// Shows the status pill while a press or an ask is in flight, and tells
 /// the menu bar what it would show.
@@ -19,6 +19,8 @@ final class StatusController: ObservableObject {
     private var foregroundRun: RunID?
     /// The recording the daemon opened last. Only its opening event names it.
     private var lastRecording: UInt64?
+    /// The app in front when that recording opened: where its words go.
+    private var target = Waiting(bundle: nil)
     private var asks = AsksInFlight()
     /// The last recording an ask press started. Its events carry no sign of
     /// the ask, so the press reports it.
@@ -51,8 +53,15 @@ final class StatusController: ObservableObject {
                 self.show(nil)
                 return
             }
-            if event.stage == .recording { self.lastRecording = event.recordingID }
+            if event.stage == .recording {
+                self.lastRecording = event.recordingID
+                self.target = Waiting(bundle: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            }
             self.hear(event)
+            if let state = self.foregroundState?.segment(event.stage, start: self.target) {
+                self.show(state, run: self.foregroundRun)
+                return
+            }
             guard let state = PillState(event) else { return }
             self.show(state, run: self.lastRecording.map(RunID.recording))
         }
