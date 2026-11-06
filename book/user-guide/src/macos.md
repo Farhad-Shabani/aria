@@ -71,6 +71,10 @@ a panel while you record. Captions work with either delivery choice.
 **Settings → Dictation → Deliver** decides when Aria types. With
 **While speaking**, Aria types finalized segments as you speak. With
 **After recording stops**, it types the completed transcript when you stop.
+If you switch away while Aria types segments, it keeps recording. The status
+pill shows the icon of the app it's waiting for. Aria types what you said once
+you're back in that field. If you stop while away, the status pill says where
+the words went: **copied**, **saved to history**, or **not typed**.
 
 While Aria types segments, words it has heard but not typed yet show faintly
 at the cursor. Aria may still change them before it types them. Apps that do
@@ -90,7 +94,8 @@ dictation starts. Switching apps mid-recording changes nothing. Other apps use
 
 Switch off the switch at the top of an app's page, and Aria starts no
 dictation or Ask and types or copies nothing while that app is in front, even
-from the phone.
+from the phone. A dictation started in another app keeps recording. Its words
+wait for that app.
 
 ## Dictate from iPhone and Apple Watch
 
