@@ -32,21 +32,24 @@ pub enum Anchoring {
 }
 
 impl Anchoring {
-    /// Anchors to the field found by the caret read for the first segment.
+    /// Anchors to the field found by the first read that succeeds. A later
+    /// read before any text only moves the expected caret, and only within
+    /// that field. A busy app that misses one read can still anchor later.
     pub(super) fn start(&mut self, focus: Result<Focus, &'static str>) {
-        if !matches!(self, Self::Pending) {
-            return;
-        }
-        *self = match focus {
-            Ok(focus) => Self::Anchored(Anchor::new(focus)),
-            Err(reason) => {
+        match (&mut *self, focus) {
+            (Self::Anchored(anchor), Ok(focus)) => anchor.refresh(&focus),
+            (Self::Pending | Self::Unavailable, Ok(focus)) => {
+                *self = Self::Anchored(Anchor::new(focus));
+            }
+            (Self::Pending, Err(reason)) => {
                 tracing::info!(
                     reason,
                     "focused field unreadable; streaming checks only the frontmost app"
                 );
-                Self::Unavailable
+                *self = Self::Unavailable;
             }
-        };
+            (Self::Anchored(_) | Self::Unavailable, Err(_)) => {}
+        }
     }
 
     /// Refuses when typing would land away from the text typed last.
@@ -83,6 +86,10 @@ impl Anchoring {
             anchor.after_typing(text);
         }
     }
+
+    pub(super) fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable)
+    }
 }
 
 pub struct Anchor {
@@ -117,12 +124,26 @@ impl Anchor {
         }
     }
 
+    /// The user may have typed or clicked between the press and its first
+    /// segment, so the caret is read again then.
+    fn refresh(&mut self, focus: &Focus) {
+        if self.ending.is_some() || !self.field.equal(&focus.field) {
+            return;
+        }
+        self.expected_caret = focus.selection.loc;
+        self.tracking = Tracking::Untested(focus.selection.loc);
+    }
+
     fn check(&mut self) -> Result<(), DeliveryError> {
-        let Some(ending) = &self.ending else {
-            return Ok(());
-        };
         let started = Instant::now();
         let deadline = started + CATCH_UP_BUDGET;
+        // Before any text, only the field can be checked.
+        let Some(ending) = &self.ending else {
+            return match self.observe_field(deadline) {
+                Settled::Left => Err(target_changed("another field took focus")),
+                _ => Ok(()),
+            };
+        };
         let settled = match self.tracking {
             Tracking::Untested(_) | Tracking::Caret => {
                 wait_for_caret(deadline, || self.observe(ending, deadline))
@@ -154,8 +175,9 @@ impl Anchor {
                 tracing::info!("caret stays put as text lands; only the field is checked");
                 self.tracking = Tracking::Field;
             }
-            Settled::Short(_) => return Err(target_changed("caret short of the typed text")),
-            Settled::Moved(reason) => return Err(target_changed(reason)),
+            Settled::Short(_) => return Err(caret_moved("caret short of the typed text")),
+            Settled::Moved(reason) => return Err(caret_moved(reason)),
+            Settled::Left => return Err(target_changed("another field took focus")),
             Settled::Unknown(reason) => {
                 tracing::debug!(reason, "insertion point unreadable; typing goes on");
             }
@@ -192,7 +214,7 @@ impl Anchor {
     fn observe(&self, ending: &str, deadline: Instant) -> Result<Verdict, &'static str> {
         let focused = element::focused_field(&self.application, deadline)?;
         if !self.field.equal(&focused) {
-            return Ok(Verdict::Moved("another field took focus"));
+            return Ok(Verdict::Left);
         }
         let selection = element::selection(&self.field, deadline)?;
         let at_expected = selection.loc == self.expected_caret;
@@ -214,7 +236,7 @@ impl Anchor {
     fn observe_field(&self, deadline: Instant) -> Settled {
         match element::focused_field(&self.application, deadline) {
             Ok(focused) if self.field.equal(&focused) => Settled::After(self.expected_caret),
-            Ok(_) => Settled::Moved("another field took focus"),
+            Ok(_) => Settled::Left,
             Err(reason) => Settled::Unknown(reason),
         }
     }
@@ -236,7 +258,10 @@ enum Verdict {
     /// The caret sits short of the typed text, at this offset. The app may
     /// still be applying it.
     Behind(cf::Index),
+    /// The caret moved inside the field, away from the typed text.
     Moved(&'static str),
+    /// Another field took focus.
+    Left,
 }
 
 fn judge(
@@ -287,6 +312,7 @@ enum Settled {
     After(cf::Index),
     Short(cf::Index),
     Moved(&'static str),
+    Left,
     /// Every read failed, which is no sign the caret moved.
     Unknown(&'static str),
 }
@@ -302,6 +328,7 @@ fn wait_for_caret(
         let settled = match observe() {
             Ok(Verdict::Continues(caret)) => return Settled::After(caret),
             Ok(Verdict::Moved(reason)) => return Settled::Moved(reason),
+            Ok(Verdict::Left) => return Settled::Left,
             Ok(Verdict::Behind(caret)) => {
                 short = Some(caret);
                 Settled::Short(caret)
@@ -319,8 +346,13 @@ fn wait_for_caret(
 }
 
 pub(super) fn target_changed(reason: &'static str) -> DeliveryError {
-    tracing::info!(reason, "insertion point changed; typing stops");
+    tracing::info!(reason, "insertion point left the field");
     DeliveryError::TargetChanged
+}
+
+fn caret_moved(reason: &'static str) -> DeliveryError {
+    tracing::info!(reason, "caret moved in the field; typing stops");
+    DeliveryError::CaretMoved
 }
 
 #[cfg(test)]
@@ -446,7 +478,7 @@ mod tests {
 
         let result = anchor.settle(Settled::Short(6));
 
-        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+        assert!(matches!(result, Err(DeliveryError::CaretMoved)));
     }
 
     #[test]
@@ -455,7 +487,59 @@ mod tests {
 
         let result = anchor.settle(Settled::Short(4));
 
-        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+        assert!(matches!(result, Err(DeliveryError::CaretMoved)));
+    }
+
+    #[test]
+    fn a_field_unreadable_at_first_can_still_anchor_later() {
+        let focus = || Focus {
+            application: ax::UiElement::with_app_pid(1),
+            field: ax::UiElement::with_app_pid(1),
+            selection: caret(3),
+        };
+        let mut anchoring = Anchoring::Pending;
+
+        anchoring.start(Err("too slow"));
+        assert!(anchoring.is_unavailable());
+        anchoring.start(Err("too slow"));
+        assert!(anchoring.is_unavailable());
+        anchoring.start(Ok(focus()));
+        assert!(matches!(anchoring, Anchoring::Anchored(_)));
+        anchoring.start(Err("too slow"));
+        assert!(matches!(anchoring, Anchoring::Anchored(_)));
+    }
+
+    #[test]
+    fn a_read_before_any_text_moves_only_the_expected_caret() {
+        let focus = |loc| Focus {
+            application: ax::UiElement::with_app_pid(1),
+            field: ax::UiElement::with_app_pid(1),
+            selection: caret(loc),
+        };
+        let mut anchor = typed_anchor();
+        anchor.ending = None;
+
+        anchor.refresh(&focus(3));
+        assert_eq!(anchor.expected_caret, 3);
+        assert_eq!(anchor.tracking, Tracking::Untested(3));
+
+        anchor.ending = Some("hello".to_owned());
+        anchor.refresh(&focus(7));
+        assert_eq!(anchor.expected_caret, 3);
+    }
+
+    #[test]
+    fn another_field_taking_focus_is_told_apart_from_a_moved_caret() {
+        let mut anchor = typed_anchor();
+
+        assert!(matches!(
+            anchor.settle(Settled::Left),
+            Err(DeliveryError::TargetChanged)
+        ));
+        assert!(matches!(
+            anchor.settle(Settled::Moved("caret moved")),
+            Err(DeliveryError::CaretMoved)
+        ));
     }
 
     #[test]
