@@ -44,6 +44,9 @@ pub(crate) enum Event {
     Released(Released),
     /// The provisional text to show, empty to hide it.
     Preview(String),
+    /// A wake that decided nothing new. A caller with work of its own, such
+    /// as text waiting for its field, gets a turn during silence.
+    Idle,
 }
 
 pub(crate) struct Ended {
@@ -319,6 +322,9 @@ impl<'scope> Hearing<'scope> {
             }
             self.decide(snapshot.as_ref());
             self.forget_decided();
+            if self.events.is_empty() && !self.done {
+                return Ok(Some(Event::Idle));
+            }
         }
     }
 
@@ -560,6 +566,7 @@ mod tests {
                     match hearing.next().unwrap() {
                         Some(Event::Timeline(_)) => ring_first = true,
                         Some(Event::Released(released)) => break released,
+                        Some(Event::Idle) => {}
                         Some(Event::Preview(_)) | None => panic!("the word is released"),
                     }
                 };
@@ -573,6 +580,43 @@ mod tests {
                 writer.finish();
                 while hearing.next().unwrap().is_some() {}
                 assert!(hearing.finish().unwrap().own_voice);
+            },
+        );
+        unblock.join().unwrap();
+    }
+
+    #[test]
+    fn silence_still_gives_the_caller_a_turn_without_a_tracker() {
+        let (go_on, waiting) = channel();
+        let (recording, mut writer) = Recording::open();
+        writer.push(&[0.5; 3 * SECOND as usize]);
+        // Without idle wakes the caller would see nothing until this fires.
+        let unblock = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            let _ = go_on.send(());
+        });
+
+        hearing(
+            stalling(waiting),
+            recording,
+            None,
+            Admission::Everyone,
+            |mut hearing| {
+                while !matches!(hearing.next().unwrap(), Some(Event::Released(_))) {}
+                // The decoder stalls; quiet audio keeps arriving, as a live
+                // microphone's does.
+                writer.push(&[0.0; SECOND as usize]);
+                let idled = loop {
+                    match hearing.next().unwrap() {
+                        Some(Event::Idle) => break true,
+                        Some(_) => {}
+                        None => break false,
+                    }
+                };
+                assert!(idled, "a wake with nothing new reaches the caller");
+
+                writer.finish();
+                while hearing.next().unwrap().is_some() {}
             },
         );
         unblock.join().unwrap();
@@ -639,7 +683,7 @@ mod tests {
             let ended = hearing.finish().unwrap();
             written.extend(ended.events.into_iter().filter_map(|event| match event {
                 Event::Released(released) => Some(released.heard.segment.as_str().to_owned()),
-                Event::Timeline(_) | Event::Preview(_) => None,
+                Event::Timeline(_) | Event::Preview(_) | Event::Idle => None,
             }));
             written
         });

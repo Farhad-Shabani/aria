@@ -265,9 +265,12 @@ impl DictationRuntime {
     ) -> DictationEventEmitter {
         DictationEventEmitter::subscribed_by(CALL_EVENT_THREAD, move |event: DictationEvent| {
             // Some callers reject unknown progress stages. Voice feedback
-            // uses the overlay subscription.
+            // and queued segments reach the overlay subscription instead.
             if let DictationEvent::Stage(stage) = event
-                && !matches!(stage, DictationStage::SpeakerChanged(_))
+                && !matches!(
+                    stage,
+                    DictationStage::SpeakerChanged(_) | DictationStage::SegmentQueued
+                )
             {
                 sink(stage);
             }
@@ -700,7 +703,7 @@ mod event_tests {
     }
 
     #[test]
-    fn voice_updates_reach_subscribers_without_changing_call_progress() {
+    fn voice_updates_and_queued_segments_reach_subscribers_without_changing_call_progress() {
         let directory = tempfile::tempdir().unwrap();
         let settings =
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
@@ -714,8 +717,13 @@ mod event_tests {
         let operation = runtime.operation_emitter(Some(&events));
         let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
         operation.emit(voice.clone());
+        operation.emit(DictationStage::SegmentQueued);
         operation.emit(DictationStage::Transcribing);
         assert_eq!(received.recv().unwrap(), DictationEvent::Stage(voice));
+        assert_eq!(
+            received.recv().unwrap(),
+            DictationEvent::Stage(DictationStage::SegmentQueued)
+        );
         assert_eq!(
             received.recv().unwrap(),
             DictationEvent::Stage(DictationStage::Transcribing)

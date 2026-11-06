@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use super::level::MicLevel;
 use crate::speaker::SpeakerName;
-use aria_platform::delivery::{DeliveryOutcome, Placement};
+use aria_platform::delivery::Placement;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 
 use super::RecordingId;
+use super::transcripts::{Delivered, DeliveryOutcome};
 
 /// Where a press has got to. A failure names its category from the same
 /// vocabulary the transport and the logs use.
@@ -36,6 +37,10 @@ pub enum DictationStage {
         speaker: Option<SpeakerName>,
     },
     SegmentDelivered,
+    /// A finalized segment decoded while its field lacks focus. It types
+    /// when the field has focus again, and `SegmentDelivered` follows,
+    /// unless the press ends first.
+    SegmentQueued,
 }
 
 /// What a press does with the current speaker's words.
@@ -50,10 +55,12 @@ pub enum HeardSpeaker {
 }
 
 impl DictationStage {
-    pub fn delivered(outcome: Option<DeliveryOutcome>, text: &str) -> Self {
+    pub fn delivered(delivered: Option<Delivered>, text: &str) -> Self {
         Self::Delivered {
-            outcome,
-            words: text.split_whitespace().count() as u32,
+            outcome: delivered.map(|delivered| delivered.outcome),
+            words: delivered
+                .and_then(|delivered| delivered.words)
+                .unwrap_or_else(|| text.split_whitespace().count() as u32),
         }
     }
 
@@ -77,6 +84,7 @@ impl DictationStage {
             Self::Failed(..) => "failed",
             Self::SegmentTranscribed { .. } => "segment transcribed",
             Self::SegmentDelivered => "segment delivered",
+            Self::SegmentQueued => "segment queued",
             Self::SpeakerChanged(..) => "voice heard",
         }
     }

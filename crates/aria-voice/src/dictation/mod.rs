@@ -23,7 +23,7 @@ pub mod subscribers;
 pub mod testing;
 mod transcripts;
 
-pub use aria_platform::delivery::{DeliveryOutcome, OutputMode};
+pub use aria_platform::delivery::OutputMode;
 pub use cleanup::{CleanupError, LlmCleanup};
 pub use cursor::Cursor;
 pub use event::{
@@ -38,7 +38,7 @@ use level::Meter;
 pub use level::MicLevel;
 pub use pipeline::DictationPipeline;
 pub use rewrites::{ConfiguredLayers, Rewrites, Rewriting};
-pub use transcripts::{TranscriptSink, Utterance};
+pub use transcripts::{Delivered, DeliveryOutcome, TranscriptSink, Utterance};
 
 /// Names one recording for as long as the daemon that took it runs. What
 /// `Stop` names.

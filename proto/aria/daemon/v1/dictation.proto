@@ -160,6 +160,10 @@ enum DictationStage {
   // Another speaker started, announced before any of their words are
   // typed.
   DICTATION_STAGE_SPEAKER_CHANGED = 9;
+  // A streamed segment decoded while its field lacks focus. It types when the
+  // field has focus again, and SEGMENT_DELIVERED follows, unless the press
+  // ends first.
+  DICTATION_STAGE_SEGMENT_QUEUED = 10;
 }
 
 // Where a delivered transcript went.
@@ -167,6 +171,10 @@ enum DeliveryOutcome {
   DELIVERY_OUTCOME_UNSPECIFIED = 0;
   DELIVERY_OUTCOME_INSERTED = 1;
   DELIVERY_OUTCOME_COPIED = 2;
+  // Not typed: the press ended away from its field. History keeps the words.
+  DELIVERY_OUTCOME_IN_HISTORY = 3;
+  // Not typed, and history saving is off, so nothing keeps the words.
+  DELIVERY_OUTCOME_NOT_TYPED = 4;
 }
 
 enum OutputMode {

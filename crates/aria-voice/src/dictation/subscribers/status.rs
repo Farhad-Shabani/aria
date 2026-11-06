@@ -44,6 +44,7 @@ impl StatusFile {
             // A segment lands while the speaker is still talking.
             DictationStage::SegmentTranscribed { .. }
             | DictationStage::SegmentDelivered
+            | DictationStage::SegmentQueued
             | DictationStage::SpeakerChanged(..) => {}
             DictationStage::Delivered { .. }
             | DictationStage::Cancelled

@@ -20,15 +20,15 @@ use crate::transcription::{
 };
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
-use aria_platform::delivery::{Caret, DeliveryOutcome, Placement};
+use aria_platform::delivery::{Caret, Placement};
 use aria_primitives::error_chain;
 use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 
 use super::{
-    CaptionSnapshot, DeliveryMode, DictationError, DictationEventEmitter, DictationResult,
-    DictationSettings, DictationStage, ExecutionControl, GhostSnapshot, HeardSpeaker, StopMode,
-    Transcribed, TranscriptSink, Utterance,
+    CaptionSnapshot, Delivered, DeliveryMode, DictationError, DictationEventEmitter,
+    DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot,
+    HeardSpeaker, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use super::{Meter, Rewrites, Rewriting};
 
@@ -734,10 +734,12 @@ where
             match event {
                 Event::Timeline(timeline) => announced.update(&timeline, events),
                 Event::Preview(shown) => published.provisional(&shown, sinks),
+                Event::Idle => {}
                 Event::Released(released) => {
                     deliver(published, sinks, released)?;
                 }
             }
+            published.retry(sinks);
             Ok(())
         };
         let ended = std::thread::scope(|scope| {
@@ -838,6 +840,9 @@ where
     }
 }
 
+/// The least time between two tries of queued text.
+const QUEUE_RETRY: Duration = Duration::from_millis(250);
+
 /// What one dictation has put out so far, with the events and logs each
 /// step owes.
 struct Published<'a> {
@@ -852,6 +857,9 @@ struct Published<'a> {
     /// lands.
     heard_to: u64,
     failure: Option<DictationError>,
+    /// When queued text last tried to type, so a silent return is noticed
+    /// without asking on every wake.
+    retried: Option<Instant>,
     caption: Option<CaptionSnapshot>,
     completion: Completion,
     control: &'a ExecutionControl,
@@ -873,6 +881,7 @@ impl<'a> Published<'a> {
             sentences: SentenceEnds::default(),
             heard_to: 0,
             failure: None,
+            retried: None,
             caption: (!settings.transcript_only)
                 .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
             completion: Completion::Pending,
@@ -929,23 +938,12 @@ impl<'a> Published<'a> {
             defers_ending: punctuated.defers_ending,
         };
         if let Err(error) = sinks.segment(utterance) {
-            let error = match map_sink_error(error, self.control) {
-                // Text already landed, so typing stopped partway.
-                DictationError::DeliveryTargetChanged if self.streaming && !first => {
-                    DictationError::DeliveryInterrupted
-                }
-                error => error,
-            };
+            let error = stopped_partway(map_sink_error(error, self.control), sinks);
             let error = log_delivery_error(self.started_at.elapsed(), error);
             if !self.streaming {
                 return Err(error);
             }
-            // Stop listening, then drain without typing, so history keeps
-            // everything said up to here.
-            self.control.request_recording_stop();
-            self.failure = Some(error);
-            self.events
-                .emit(GhostSnapshot::empty(self.control.recording_id()));
+            self.give_up(error);
             return Ok(());
         }
         if self.streaming && first {
@@ -955,12 +953,50 @@ impl<'a> Published<'a> {
                 "dictation first segment transcribed"
             );
         }
-        self.announce(&punctuated.text, speaker);
+        self.announce(&punctuated.text, speaker, sinks);
         Ok(())
     }
 
-    /// Types the mark the last segment owes. Every word has landed by
-    /// then, so a failure here is logged, not fatal.
+    /// Stops listening, then drains without typing, so history keeps
+    /// everything said up to here.
+    fn give_up(&mut self, error: DictationError) {
+        self.control.request_recording_stop();
+        self.failure = Some(error);
+        self.events
+            .emit(GhostSnapshot::empty(self.control.recording_id()));
+    }
+
+    /// Types queued text once its field has focus again, on any wake of the
+    /// hearing loop rather than only with a new segment.
+    fn retry<S>(&mut self, sinks: &mut S)
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        if !self.streaming || self.failure.is_some() || !sinks.is_queueing() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .retried
+            .is_some_and(|at| now.duration_since(at) < QUEUE_RETRY)
+        {
+            return;
+        }
+        self.retried = Some(now);
+        if let Err(error) = sinks.retry() {
+            let error = stopped_partway(map_sink_error(error, self.control), sinks);
+            self.give_up(log_delivery_error(self.started_at.elapsed(), error));
+            return;
+        }
+        if !sinks.is_queueing() {
+            self.events.emit(DictationStage::SegmentDelivered);
+        }
+    }
+
+    /// Types the mark the last segment owes. A failure is only logged,
+    /// unless queued words were still waiting: they can't land then, so the
+    /// press fails.
     fn close_last_sentence<S>(&mut self, sinks: &mut S)
     where
         S: TranscriptSink,
@@ -980,7 +1016,13 @@ impl<'a> Published<'a> {
             span: None,
             defers_ending: false,
         };
+        let words_waited = sinks.is_queueing();
         if let Err(error) = sinks.segment(utterance) {
+            if words_waited {
+                let error = stopped_partway(map_sink_error(error, self.control), sinks);
+                self.failure = Some(log_delivery_error(self.started_at.elapsed(), error));
+                return;
+            }
             let error: DictationError = error.into();
             tracing::warn!(
                 error = %error_chain(&error),
@@ -988,7 +1030,7 @@ impl<'a> Published<'a> {
             );
             return;
         }
-        self.announce(&closing, None);
+        self.announce(&closing, None, sinks);
     }
 
     fn keep(&mut self, text: &str) {
@@ -996,9 +1038,9 @@ impl<'a> Published<'a> {
         self.written.push_str(&spaced);
     }
 
-    /// Tells clients what was published, and when streaming, that it was
-    /// typed.
-    fn announce(&mut self, text: &str, speaker: Option<SpeakerName>) {
+    /// Tells clients what was published, and when streaming, whether it
+    /// was typed or waits for its field to regain focus.
+    fn announce<S: TranscriptSink>(&mut self, text: &str, speaker: Option<SpeakerName>, sinks: &S) {
         if let Some(caption) = &mut self.caption {
             let spaced = Caret::between(&caption.finalized, "").insert(text);
             caption.finalized = caption_suffix(&format!("{}{spaced}", caption.finalized));
@@ -1009,7 +1051,11 @@ impl<'a> Published<'a> {
             speaker,
         });
         if self.streaming {
-            self.events.emit(DictationStage::SegmentDelivered);
+            self.events.emit(if sinks.is_queueing() {
+                DictationStage::SegmentQueued
+            } else {
+                DictationStage::SegmentDelivered
+            });
             self.events
                 .emit(GhostSnapshot::empty(self.control.recording_id()));
         }
@@ -1049,7 +1095,7 @@ impl<'a> Published<'a> {
         completed.map_err(|error| {
             log_delivery_error(
                 self.started_at.elapsed(),
-                map_sink_error(error, self.control),
+                stopped_partway(map_sink_error(error, self.control), sinks),
             )
         })?;
         tracing::info!(
@@ -1327,8 +1373,17 @@ where
         self.1.served_by(engine);
     }
 
-    fn delivered(&self) -> Option<DeliveryOutcome> {
+    fn delivered(&self) -> Option<Delivered> {
         self.0.delivered().or(self.1.delivered())
+    }
+
+    fn is_queueing(&self) -> bool {
+        self.0.is_queueing() || self.1.is_queueing()
+    }
+
+    fn retry(&mut self) -> Result<(), DictationError> {
+        self.0.retry().map_err(Into::into)?;
+        self.1.retry().map_err(Into::into)
     }
 
     fn placement(&self) -> Option<Placement> {
@@ -1433,6 +1488,16 @@ fn map_capture_error(error: CaptureError, control: &ExecutionControl) -> Dictati
     }
 }
 
+/// A focus change after text already landed stopped typing partway.
+fn stopped_partway<S: TranscriptSink>(error: DictationError, sinks: &S) -> DictationError {
+    match error {
+        DictationError::DeliveryTargetChanged if sinks.delivered().is_some() => {
+            DictationError::DeliveryInterrupted
+        }
+        error => error,
+    }
+}
+
 /// A cancelled press reports the cancel, whatever a sink said; a sink that
 /// gave up on the deadline reports the timeout.
 fn map_sink_error(error: impl Into<DictationError>, control: &ExecutionControl) -> DictationError {
@@ -1467,7 +1532,7 @@ mod tests {
     use aria_kit::speaker::Embedder;
     use aria_kit::speaker::LevelSegmenter;
     use aria_kit::speaker::{Diarizer, SpeakerError};
-    use aria_platform::delivery::{DeliveryError, OutputMode, TextDelivery};
+    use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
     use aria_settings::rpc::RpcErrorCode;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -3227,8 +3292,9 @@ mod tests {
         let mut published = Published::new(&settings, &control, &events, Instant::now());
         let mut sinks = (
             CallLog::default().history(),
-            Cursor::new(FocusMovesAfter {
+            Cursor::new(FailsAfter {
                 typed: 0,
+                refusal: || DeliveryError::TargetUnavailable,
                 delivered: std::sync::atomic::AtomicUsize::new(0),
             }),
         );
@@ -4214,13 +4280,14 @@ mod tests {
         }
     }
 
-    /// Types the first `typed` segments, then refuses as if focus moved.
-    struct FocusMovesAfter {
+    /// Types the first `typed` segments, then fails with `refusal`.
+    struct FailsAfter {
         typed: usize,
+        refusal: fn() -> DeliveryError,
         delivered: std::sync::atomic::AtomicUsize,
     }
 
-    impl TextDelivery for FocusMovesAfter {
+    impl TextDelivery for FailsAfter {
         type Prepared = ();
         const DEFAULT_MODE: OutputMode = OutputMode::Insert;
         const OUTLIVES_PROCESS: bool = true;
@@ -4257,13 +4324,155 @@ mod tests {
             if delivered < self.typed {
                 Ok(DeliveryOutcome::Inserted)
             } else {
-                Err(DeliveryError::TargetChanged)
+                Err((self.refusal)())
             }
         }
     }
 
     #[test]
-    fn a_focus_change_after_typed_text_reads_as_stopped_partway() {
+    fn a_segment_decoded_while_focus_is_away_is_queued_and_recording_goes_on() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let (events, stages) = stage_events();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let log = CallLog::default();
+        let mut sinks = (
+            log.history(),
+            Cursor::new(FailsAfter {
+                typed: 1,
+                refusal: || DeliveryError::TargetChanged,
+                delivered: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        for text in ["one", "two"] {
+            let heard = heard(directory.path(), text);
+            published.segment(heard, text, None, &mut sinks).unwrap();
+        }
+
+        assert!(published.failure.is_none());
+        assert_eq!(log.entries(), ["segment:one", "segment:two"]);
+        drop(published);
+        drop(events);
+        let typed: Vec<_> = stages
+            .iter()
+            .filter(|stage| {
+                matches!(
+                    stage,
+                    DictationStage::SegmentDelivered | DictationStage::SegmentQueued
+                )
+            })
+            .collect();
+        assert_eq!(
+            typed,
+            [
+                DictationStage::SegmentDelivered,
+                DictationStage::SegmentQueued
+            ]
+        );
+    }
+
+    /// Refuses as if focus moved on the calls in `away`, and types the rest.
+    struct AwayFor {
+        away: std::ops::Range<usize>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl TextDelivery for AwayFor {
+        type Prepared = ();
+        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+        const OUTLIVES_PROCESS: bool = true;
+
+        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
+            None
+        }
+
+        fn prepare(
+            &self,
+            _mode: OutputMode,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+
+        fn finish(
+            &self,
+            _prepared: &(),
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+
+        fn deliver(
+            &self,
+            _prepared: &(),
+            _text: &str,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<DeliveryOutcome, DeliveryError> {
+            let call = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.away.contains(&call) {
+                Err(DeliveryError::TargetChanged)
+            } else {
+                Ok(DeliveryOutcome::Inserted)
+            }
+        }
+    }
+
+    #[test]
+    fn queued_text_types_on_a_silent_return_at_most_once_per_interval() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let (events, stages) = stage_events();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let mut sinks = (
+            CallLog::default().history(),
+            Cursor::new(AwayFor {
+                away: 1..3,
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        for text in ["one", "two"] {
+            let heard = heard(directory.path(), text);
+            published.segment(heard, text, None, &mut sinks).unwrap();
+        }
+
+        // The first retry is still refused. A second one within the interval
+        // would type, so a queue still waiting proves it never asked.
+        published.retry(&mut sinks);
+        published.retry(&mut sinks);
+        assert!(sinks.is_queueing());
+        published.retried = None;
+        published.retry(&mut sinks);
+        assert!(!sinks.is_queueing());
+        drop(published);
+        drop(events);
+
+        let typed: Vec<_> = stages
+            .iter()
+            .filter(|stage| {
+                matches!(
+                    stage,
+                    DictationStage::SegmentDelivered | DictationStage::SegmentQueued
+                )
+            })
+            .collect();
+        assert_eq!(
+            typed,
+            [
+                DictationStage::SegmentDelivered,
+                DictationStage::SegmentQueued,
+                DictationStage::SegmentDelivered
+            ]
+        );
+    }
+
+    #[test]
+    fn a_press_ending_away_from_its_field_reports_its_words_kept() {
         for typed in [0, 1] {
             let directory = tempfile::tempdir().unwrap();
             let control = ExecutionControl::for_test(StopMode::Manual);
@@ -4273,8 +4482,9 @@ mod tests {
             let log = CallLog::default();
             let mut sinks = (
                 log.history(),
-                Cursor::new(FocusMovesAfter {
+                Cursor::new(FailsAfter {
                     typed,
+                    refusal: || DeliveryError::TargetChanged,
                     delivered: std::sync::atomic::AtomicUsize::new(0),
                 }),
             );
@@ -4286,12 +4496,115 @@ mod tests {
 
             let result = published.finish(Transcript::new("one two").unwrap(), false, &mut sinks);
 
-            if typed == 0 {
-                assert!(matches!(result, Err(DictationError::DeliveryTargetChanged)));
-            } else {
-                assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
+            assert!(result.is_ok());
+            assert_eq!(
+                sinks.delivered().map(|delivered| delivered.outcome),
+                Some(super::super::DeliveryOutcome::InHistory)
+            );
+        }
+    }
+
+    /// Answers each call in turn from `answers`, `None` typing the text,
+    /// and types everything after the last.
+    struct AnswersInTurn {
+        answers: Vec<Option<fn() -> DeliveryError>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl TextDelivery for AnswersInTurn {
+        type Prepared = ();
+        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+        const OUTLIVES_PROCESS: bool = true;
+
+        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
+            None
+        }
+
+        fn prepare(
+            &self,
+            _mode: OutputMode,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+
+        fn finish(
+            &self,
+            _prepared: &(),
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+
+        fn deliver(
+            &self,
+            _prepared: &(),
+            _text: &str,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<DeliveryOutcome, DeliveryError> {
+            let call = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            match self.answers.get(call).copied().flatten() {
+                Some(refusal) => Err(refusal()),
+                None => Ok(DeliveryOutcome::Inserted),
             }
         }
+    }
+
+    #[test]
+    fn queued_words_lost_with_the_closing_mark_fail_the_press() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let mut sinks = (
+            CallLog::default().history(),
+            Cursor::new(AnswersInTurn {
+                answers: vec![
+                    None,
+                    Some(|| DeliveryError::TargetChanged),
+                    Some(|| DeliveryError::CaretMoved),
+                ],
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        for text in ["one", "two."] {
+            let heard = heard(directory.path(), text);
+            published.segment(heard, text, None, &mut sinks).unwrap();
+        }
+
+        let result = published.finish(Transcript::new("one two.").unwrap(), false, &mut sinks);
+
+        assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
+    }
+
+    #[test]
+    fn a_moved_caret_after_typed_text_reads_as_stopped_partway() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let mut published = Published::new(&settings, &control, &events, Instant::now());
+        let mut sinks = (
+            CallLog::default().history(),
+            Cursor::new(FailsAfter {
+                typed: 1,
+                refusal: || DeliveryError::CaretMoved,
+                delivered: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        for text in ["one", "two"] {
+            let heard = heard(directory.path(), text);
+            published.segment(heard, text, None, &mut sinks).unwrap();
+        }
+
+        let result = published.finish(Transcript::new("one two").unwrap(), false, &mut sinks);
+
+        assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
     }
 
     #[test]
@@ -4667,7 +4980,7 @@ mod tests {
         assert!(
             stages.iter().any(|stage| stage
                 == DictationStage::Delivered {
-                    outcome: Some(DeliveryOutcome::Inserted),
+                    outcome: Some(super::super::DeliveryOutcome::Inserted),
                     words: 1,
                 }),
             "the delivered stage should carry its outcome"
