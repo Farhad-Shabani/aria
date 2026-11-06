@@ -202,7 +202,9 @@ impl From<aria_platform::delivery::DeliveryError> for DictationError {
         match error {
             DeliveryError::Timeout(timeout) => Self::DeliveryTimeout(timeout),
             DeliveryError::Cancelled => Self::Cancelled,
-            DeliveryError::TargetChanged => Self::DeliveryTargetChanged,
+            DeliveryError::TargetChanged
+            | DeliveryError::CaretMoved
+            | DeliveryError::TargetUnverified => Self::DeliveryTargetChanged,
             DeliveryError::ApplicationExcluded => Self::ApplicationExcluded,
             error => Self::Delivery(error),
         }

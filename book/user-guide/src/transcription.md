@@ -56,10 +56,14 @@ Insertion requires Accessibility access, and the intended app and field must
 stay focused.
 
 `--mode insert` types the completed transcript. `--stream` types finalized
-segments while you speak. Switching apps stops it. So does clicking or typing,
-in apps that report their text cursor. What you said so far stays in
-[history](./history.md#saving) when saving is on. Use `--mode insert-or-copy`
-if you want copying when insertion cannot begin.
+segments while you speak. If you switch to another app or field, Aria keeps
+recording. It types what you said once you're back in that field. Clicking or
+typing in that field stops the dictation, in apps that report their text
+cursor.
+
+`--mode insert-or-copy` copies the transcript when insertion can't begin. If
+you stop while away, it copies the words Aria hasn't typed yet. `--mode insert`
+keeps those words only in [history](./history.md#saving), when saving is on.
 
 On Linux, [hotkey dictation](./linux.md#try-it) pastes into the focused app.
 `--mode insert` pastes the completed transcript, and `--stream` is refused:

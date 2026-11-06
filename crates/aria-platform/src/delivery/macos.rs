@@ -171,9 +171,7 @@ impl TextDelivery for MacOsTextDelivery {
                 anchoring.before_typing()?;
                 let outcome = insert(*process, text, &should_cancel, observe()).map_err(
                     |error| match error {
-                        DeliveryError::TargetChanged => {
-                            anchor::target_changed("another app is frontmost")
-                        }
+                        DeliveryError::TargetChanged => focus_lost(&anchoring),
                         error => error,
                     },
                 )?;
@@ -214,7 +212,12 @@ impl TextDelivery for MacOsTextDelivery {
         match prepared {
             MacOsDeliveryTarget::Application { process, anchoring } => autoreleasepool(|_| {
                 let (caret, focus) = caret::read(*process);
-                anchoring.borrow_mut().start(focus);
+                // Only a read with the target in front binds the field: from
+                // behind, it may see another app's secure input, or a field
+                // the user hasn't come back to.
+                if insertable(observe()).ok() == Some(*process) {
+                    anchoring.borrow_mut().start(focus);
+                }
                 caret
             }),
             MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
@@ -238,6 +241,15 @@ impl TextDelivery for MacOsTextDelivery {
             placement::read(&field, caret, deadline)
         })
     }
+}
+
+/// Another app took focus before this text typed. Text may wait for its
+/// field only when the press knows which field that is.
+fn focus_lost(anchoring: &Anchoring) -> DeliveryError {
+    if anchoring.is_unavailable() {
+        return DeliveryError::TargetUnverified;
+    }
+    anchor::target_changed("another app is frontmost")
 }
 
 /// What the insertion guards look at, read all at once so `prepare` and the
@@ -289,9 +301,19 @@ fn guard(
 ) -> Result<(), DeliveryError> {
     // Judged again rather than trusted from `prepare`: a whole recording and
     // transcription sit in between, and the user is free to switch windows,
-    // click into a password field, or withdraw the grant during it.
-    if insertable(facts)? != process {
+    // click into a password field, or withdraw the grant during it. Focus is
+    // judged before secure input, which is system-wide: a password field in
+    // another app means the user left, not that this field refuses.
+    if !facts.trust.is_trusted() {
+        return Err(DeliveryError::InsertionNotPermitted);
+    }
+    // A front process that can't be read, as during Mission Control, isn't
+    // this one either.
+    if facts.frontmost.ok() != Some(process) {
         return Err(DeliveryError::TargetChanged);
+    }
+    if facts.secure_input {
+        return Err(DeliveryError::SecureInput);
     }
 
     // Check before typing: cancelling midway would leave a partial transcript
@@ -623,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn secure_input_is_refused_before_focus_is_judged() {
+    fn secure_input_in_the_target_app_is_refused() {
         let result = insertion(Facts {
             trust: Trust::Trusted,
             secure_input: true,
@@ -641,10 +663,33 @@ mod tests {
     }
 
     #[test]
-    fn insertion_stops_when_focus_cannot_be_read() {
+    fn focus_lost_from_an_unknown_field_cannot_wait_for_it() {
+        assert!(matches!(
+            focus_lost(&Anchoring::Unavailable),
+            DeliveryError::TargetUnverified
+        ));
+        assert!(matches!(
+            focus_lost(&Anchoring::Pending),
+            DeliveryError::TargetChanged
+        ));
+    }
+
+    #[test]
+    fn a_password_field_in_another_app_reads_as_focus_lost() {
+        let result = insertion(Facts {
+            trust: Trust::Trusted,
+            secure_input: true,
+            frontmost: Ok(PREPARED_TARGET + 1),
+        });
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+    }
+
+    #[test]
+    fn an_unreadable_front_process_reads_as_focus_lost() {
         let result = insertion(permitted(Err(DeliveryError::TargetUnavailable)));
 
-        assert!(matches!(result, Err(DeliveryError::TargetUnavailable)));
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
     }
 
     #[test]

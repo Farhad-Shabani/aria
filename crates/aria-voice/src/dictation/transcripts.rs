@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
 use crate::speaker::Label;
-use aria_platform::delivery::{DeliveryOutcome, Placement};
+use aria_platform::delivery::Placement;
 
 /// What the pipeline heard in one stretch of speech.
 ///
@@ -42,6 +42,35 @@ impl<'a> Utterance<'a> {
     }
 }
 
+/// Where a press's words went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryOutcome {
+    Inserted,
+    Copied,
+    /// Never typed: the press ended away from its field, and history keeps
+    /// the words.
+    InHistory,
+    /// Never typed, and with history saving off nothing keeps them.
+    NotTyped,
+}
+
+impl From<aria_platform::delivery::DeliveryOutcome> for DeliveryOutcome {
+    fn from(outcome: aria_platform::delivery::DeliveryOutcome) -> Self {
+        match outcome {
+            aria_platform::delivery::DeliveryOutcome::Inserted => Self::Inserted,
+            aria_platform::delivery::DeliveryOutcome::Copied => Self::Copied,
+        }
+    }
+}
+
+/// Where a sink's text went, once any did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Delivered {
+    pub outcome: DeliveryOutcome,
+    /// How many words went there. `None` when the whole transcript did.
+    pub words: Option<u32>,
+}
+
 /// Where the pipeline publishes what it heard. Segments arrive as they
 /// finalize. The completion reaches every sink once the decoder has it, even
 /// after a later sink failed, so a rejected last insertion still leaves the
@@ -72,8 +101,18 @@ pub trait TranscriptSink {
     fn served_by(&mut self, _engine: &'static str) {}
 
     /// Where the text went, once any did. A sink that types nothing says so.
-    fn delivered(&self) -> Option<DeliveryOutcome> {
+    fn delivered(&self) -> Option<Delivered> {
         None
+    }
+
+    /// Whether streamed text is waiting for its field to regain focus.
+    fn is_queueing(&self) -> bool {
+        false
+    }
+
+    /// Tries queued text again, with no new segment to carry it.
+    fn retry(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 
     /// Where the next streamed text would land on screen.

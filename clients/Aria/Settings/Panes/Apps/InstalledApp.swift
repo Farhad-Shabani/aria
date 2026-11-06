@@ -1,9 +1,9 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// How an app looks in Settings. An app that is no longer installed shows
+/// How Aria shows an app. An app that is no longer installed shows
 /// its bundle ID and a generic icon.
-struct InstalledApp {
+struct InstalledApp: Equatable {
     let name: String
     let icon: NSImage
 

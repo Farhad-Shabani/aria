@@ -75,7 +75,11 @@ impl From<&ChatError> for RpcErrorCode {
                 | AssistantError::Malformed(_),
             ) => Self::AssistantFailed,
             ChatError::Delivery(DeliveryError::Timeout(_)) => Self::DeliveryTimeout,
-            ChatError::Delivery(DeliveryError::TargetChanged) => Self::DeliveryTargetChanged,
+            ChatError::Delivery(
+                DeliveryError::TargetChanged
+                | DeliveryError::CaretMoved
+                | DeliveryError::TargetUnverified,
+            ) => Self::DeliveryTargetChanged,
             ChatError::Delivery(DeliveryError::ApplicationExcluded) => Self::ApplicationExcluded,
             ChatError::Delivery(
                 DeliveryError::EmptyText

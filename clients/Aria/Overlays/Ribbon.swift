@@ -16,7 +16,7 @@ final class RibbonModel {
     private var press: Date?
 
     func outline(at date: Date, state: PillState, level: Float) -> Path {
-        if case .recording(let since) = state, since != press {
+        if case .recording(let since, _) = state, since != press {
             // A new press starts from silence, not from the last one's motion.
             motion = RibbonMotion()
             press = since

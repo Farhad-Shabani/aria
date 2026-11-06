@@ -10,7 +10,7 @@ use aria_kit::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationE
 use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
 };
-use aria_platform::delivery::{DeliveryOutcome, OutputMode, Placement, Rect};
+use aria_platform::delivery::{OutputMode, Placement, Rect};
 use aria_platform::hotkey::{AriaKey, Combo};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
@@ -21,8 +21,8 @@ use aria_settings::{
     Shortcut, UpdateResult,
 };
 use aria_voice::dictation::{
-    CaptionSnapshot, DictationEvent, DictationOutcome, DictationRequest, DictationResult,
-    DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
+    CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
+    DictationResult, DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -2243,6 +2243,8 @@ fn delivery_outcome_code(delivered: Option<DeliveryOutcome>) -> wire::DeliveryOu
         None => wire::DeliveryOutcome::Unspecified,
         Some(DeliveryOutcome::Inserted) => wire::DeliveryOutcome::Inserted,
         Some(DeliveryOutcome::Copied) => wire::DeliveryOutcome::Copied,
+        Some(DeliveryOutcome::InHistory) => wire::DeliveryOutcome::InHistory,
+        Some(DeliveryOutcome::NotTyped) => wire::DeliveryOutcome::NotTyped,
     }
 }
 
@@ -2252,6 +2254,8 @@ fn delivery_outcome(code: i32) -> Option<DeliveryOutcome> {
     match wire::DeliveryOutcome::try_from(code) {
         Ok(wire::DeliveryOutcome::Inserted) => Some(DeliveryOutcome::Inserted),
         Ok(wire::DeliveryOutcome::Copied) => Some(DeliveryOutcome::Copied),
+        Ok(wire::DeliveryOutcome::InHistory) => Some(DeliveryOutcome::InHistory),
+        Ok(wire::DeliveryOutcome::NotTyped) => Some(DeliveryOutcome::NotTyped),
         Ok(wire::DeliveryOutcome::Unspecified) | Err(..) => None,
     }
 }
@@ -2292,6 +2296,7 @@ impl From<DictationStage> for wire::DictationEvent {
                 (wire::DictationStage::SegmentTranscribed, 0)
             }
             DictationStage::SegmentDelivered => (wire::DictationStage::SegmentDelivered, 0),
+            DictationStage::SegmentQueued => (wire::DictationStage::SegmentQueued, 0),
             DictationStage::SpeakerChanged(voice) => {
                 heard = match voice {
                     HeardSpeaker::Undecided => wire::HeardSpeaker::Undecided,
@@ -2332,6 +2337,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                 speaker: optional_speaker_name(&event.speaker_name)?,
             }),
             Ok(wire::DictationStage::SegmentDelivered) => Ok(Self::SegmentDelivered),
+            Ok(wire::DictationStage::SegmentQueued) => Ok(Self::SegmentQueued),
             Ok(wire::DictationStage::SpeakerChanged) => {
                 match wire::HeardSpeaker::try_from(event.heard) {
                     Ok(wire::HeardSpeaker::Undecided) => {
@@ -2959,6 +2965,14 @@ mod tests {
                 outcome: Some(DeliveryOutcome::Copied),
                 words: 1,
             },
+            DictationStage::Delivered {
+                outcome: Some(DeliveryOutcome::InHistory),
+                words: 3,
+            },
+            DictationStage::Delivered {
+                outcome: Some(DeliveryOutcome::NotTyped),
+                words: 3,
+            },
             DictationStage::Cancelled,
             DictationStage::Failed(RpcErrorCode::NoSpeech),
             DictationStage::Failed(RpcErrorCode::Unknown(9_999)),
@@ -2971,6 +2985,7 @@ mod tests {
                 speaker: Some(SpeakerName::new("ada").expect("a valid name")),
             },
             DictationStage::SegmentDelivered,
+            DictationStage::SegmentQueued,
             DictationStage::SpeakerChanged(HeardSpeaker::Undecided),
             DictationStage::SpeakerChanged(HeardSpeaker::Typed(None)),
             DictationStage::SpeakerChanged(HeardSpeaker::Typed(Some(

@@ -267,7 +267,7 @@ impl Session<'_> {
             heard = match hearing.finish() {
                 Ok(ended) => ended.events.into_iter().try_for_each(|event| match event {
                     Event::Released(released) => self.write(released, sink),
-                    Event::Timeline(_) | Event::Preview(_) => Ok(()),
+                    Event::Timeline(_) | Event::Preview(_) | Event::Idle => Ok(()),
                 }),
                 Err(error) => listen_ended(error),
             };
@@ -288,7 +288,7 @@ impl Session<'_> {
         loop {
             match hearing.next() {
                 Ok(Some(Event::Released(released))) => self.write(released, sink)?,
-                Ok(Some(Event::Timeline(_) | Event::Preview(_))) => {}
+                Ok(Some(Event::Timeline(_) | Event::Preview(_) | Event::Idle)) => {}
                 Ok(None) => return Ok(()),
                 Err(error) => return Err(listen_error(error)),
             }

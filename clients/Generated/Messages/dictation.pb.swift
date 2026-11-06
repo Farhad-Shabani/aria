@@ -88,6 +88,11 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
   /// Another speaker started, announced before any of their words are
   /// typed.
   case speakerChanged // = 9
+
+  /// A streamed segment decoded while its field lacks focus. It types when the
+  /// field has focus again, and SEGMENT_DELIVERED follows, unless the press
+  /// ends first.
+  case segmentQueued // = 10
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -106,6 +111,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case 7: self = .segmentTranscribed
     case 8: self = .segmentDelivered
     case 9: self = .speakerChanged
+    case 10: self = .segmentQueued
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -122,6 +128,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case .segmentTranscribed: return 7
     case .segmentDelivered: return 8
     case .speakerChanged: return 9
+    case .segmentQueued: return 10
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -138,6 +145,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     .segmentTranscribed,
     .segmentDelivered,
     .speakerChanged,
+    .segmentQueued,
   ]
 
 }
@@ -148,6 +156,12 @@ public nonisolated enum Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf.Enum, Swif
   case unspecified // = 0
   case inserted // = 1
   case copied // = 2
+
+  /// Not typed: the press ended away from its field. History keeps the words.
+  case inHistory // = 3
+
+  /// Not typed, and history saving is off, so nothing keeps the words.
+  case notTyped // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -159,6 +173,8 @@ public nonisolated enum Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf.Enum, Swif
     case 0: self = .unspecified
     case 1: self = .inserted
     case 2: self = .copied
+    case 3: self = .inHistory
+    case 4: self = .notTyped
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -168,6 +184,8 @@ public nonisolated enum Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf.Enum, Swif
     case .unspecified: return 0
     case .inserted: return 1
     case .copied: return 2
+    case .inHistory: return 3
+    case .notTyped: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -177,6 +195,8 @@ public nonisolated enum Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf.Enum, Swif
     .unspecified,
     .inserted,
     .copied,
+    .inHistory,
+    .notTyped,
   ]
 
 }
@@ -644,11 +664,11 @@ nonisolated extension Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf._ProtoNameProvi
 }
 
 nonisolated extension Aria_Daemon_V1_DictationStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0\u{1}DICTATION_STAGE_SEGMENT_QUEUED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DELIVERY_OUTCOME_UNSPECIFIED\0\u{1}DELIVERY_OUTCOME_INSERTED\0\u{1}DELIVERY_OUTCOME_COPIED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DELIVERY_OUTCOME_UNSPECIFIED\0\u{1}DELIVERY_OUTCOME_INSERTED\0\u{1}DELIVERY_OUTCOME_COPIED\0\u{1}DELIVERY_OUTCOME_IN_HISTORY\0\u{1}DELIVERY_OUTCOME_NOT_TYPED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_OutputMode: SwiftProtobuf._ProtoNameProviding {

@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 
 enum PillState: Equatable {
-    case recording(since: Date)
+    /// Recording, and once a segment queues, the app its queued words wait
+    /// for, until one types.
+    case recording(since: Date, waitingFor: StartApp? = nil)
     case transcribing
     case delivering
     /// The press delivered: where, and how many words.
@@ -37,7 +39,7 @@ enum PillState: Equatable {
         case .failed: self = .failed(event.errorCode.dictationMessage)
         // A segment or a voice arrives while the speaker is still talking,
         // so it says nothing about the press.
-        case .segmentTranscribed, .segmentDelivered, .speakerChanged: return nil
+        case .segmentTranscribed, .segmentDelivered, .segmentQueued, .speakerChanged: return nil
         case .unspecified, .UNRECOGNIZED: return nil
         }
     }
@@ -70,11 +72,28 @@ enum PillState: Equatable {
         self = .asking(step, since: oldest.since)
     }
 
+    /// The live press after a streamed segment: queued words wait for
+    /// `startApp`, typed words end the wait. Nil when the pill shows no
+    /// recording.
+    func segment(_ stage: Aria_Daemon_V1_DictationStage, startApp: StartApp) -> PillState? {
+        guard case .recording(let since, _) = self else { return nil }
+        switch stage {
+        case .segmentQueued: return .recording(since: since, waitingFor: startApp)
+        case .segmentDelivered: return .recording(since: since)
+        default: return nil
+        }
+    }
+
     /// How long the pill stays once the press is over. A live press has no
     /// life of its own: the next event ends it.
     var life: Duration? {
         switch self {
         case .recording, .transcribing, .delivering, .asking: return nil
+        // Words that missed the field leave the user something to do, so
+        // their notice stays to be read.
+        case .delivered(.copied, _), .delivered(.inHistory, _), .delivered(.notTyped, _),
+            .replied(copied: true):
+            return .seconds(4)
         case .delivered, .replied: return .milliseconds(1200)
         case .cancelled: return .milliseconds(800)
         case .interrupted, .excluded: return .seconds(2)
@@ -89,10 +108,11 @@ enum PillState: Equatable {
             return OverlayStyle.alertTint
         case .transcribing, .delivering, .asking:
             return OverlayStyle.workingTint
+        // Words that never reached the field get no success color.
+        case .delivered(.inHistory, _), .delivered(.notTyped, _), .interrupted, .excluded:
+            return OverlayStyle.quietTint
         case .delivered, .replied:
             return OverlayStyle.doneTint
-        case .interrupted, .excluded:
-            return OverlayStyle.quietTint
         }
     }
 
@@ -123,12 +143,19 @@ enum PillState: Equatable {
 
     private var detail: String? {
         switch self {
+        // The start app's icon says it all; without one, a word does.
+        case .recording(_, let startApp?): return startApp.app == nil ? "waiting" : nil
         case .recording: return nil
         case .transcribing: return "transcribing"
         case .delivering: return "typing"
         case .delivered(let outcome, let words):
             let count = words == 1 ? "1 word" : "\(words) words"
-            return outcome == .copied ? "copied · \(count)" : count
+            switch outcome {
+            case .copied: return "copied · \(count)"
+            case .inHistory: return "saved to history · \(count)"
+            case .notTyped: return "not typed · \(count)"
+            case .inserted, .unknown: return count
+            }
         case .cancelled: return "canceled"
         case .interrupted: return "stopped · focus moved"
         case .excluded(let app): return "off in \(app ?? "this app")"
@@ -142,9 +169,24 @@ enum PillState: Equatable {
     /// The clock the pill runs, for the states worth timing.
     var since: Date? {
         switch self {
-        case .recording(let since), .asking(_, let since): return since
+        case .recording(let since, _), .asking(_, let since): return since
         default: return nil
         }
+    }
+}
+
+/// The app a press started in, which its queued words wait for. An app
+/// without a bundle ID has no icon to show, so the pill says "waiting".
+struct StartApp: Equatable {
+    let app: InstalledApp?
+}
+
+extension StartApp {
+    /// Looks the app up as the press starts, so drawing the pill reads no
+    /// files.
+    @MainActor
+    init(bundleID: String?) {
+        self.init(app: bundleID.map(InstalledApp.lookUp))
     }
 }
 
@@ -153,6 +195,10 @@ enum PillState: Equatable {
 enum DeliveryOutcome: Equatable {
     case inserted
     case copied
+    /// Never typed: the press ended away from its field. History keeps it.
+    case inHistory
+    /// Never typed, and history saving is off.
+    case notTyped
     /// A press that asked only for its transcript, or a daemon too old to say.
     case unknown
 
@@ -160,6 +206,8 @@ enum DeliveryOutcome: Equatable {
         switch code {
         case .inserted: self = .inserted
         case .copied: self = .copied
+        case .inHistory: self = .inHistory
+        case .notTyped: self = .notTyped
         case .unspecified, .UNRECOGNIZED: self = .unknown
         }
     }

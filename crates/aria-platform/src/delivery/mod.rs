@@ -101,6 +101,8 @@ pub trait TextDelivery: Send + Sync + 'static {
         should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError>;
 
+    /// Under plain insertion, `TargetChanged` means nothing of `text` was
+    /// typed, so the caller may offer the same text again.
     fn deliver(
         &self,
         prepared: &Self::Prepared,
@@ -251,8 +253,18 @@ pub enum DeliveryError {
     #[error("text delivery could not identify an available destination")]
     TargetUnavailable,
 
-    #[error("the application, field, or caret position selected for insertion changed")]
+    /// Under plain insertion, raised before any of the text being delivered
+    /// is typed.
+    #[error("the application or field selected for insertion lost focus")]
     TargetChanged,
+
+    #[error("the caret moved away from the text typed so far")]
+    CaretMoved,
+
+    /// Raised like `TargetChanged`, before any of the text is typed, but the
+    /// field the press started in is unknown, so nothing can wait for it.
+    #[error("focus left a field Aria could not identify")]
+    TargetUnverified,
 
     #[error("Aria is switched off in the app in front")]
     ApplicationExcluded,

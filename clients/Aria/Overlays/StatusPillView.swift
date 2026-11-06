@@ -41,6 +41,11 @@ enum VoiceEmphasis: Equatable {
 /// mic gives way to the machine. A glyph is its own size, as on the board.
 private let markWidth = RibbonTuning.width
 private let markHeight = RibbonTuning.height
+/// The pill's usual padding, and the narrower inset that lets the start
+/// app's icon fill the pill's rounded end without making it taller.
+private let pillPadding: CGFloat = 9
+private let startAppInset: CGFloat = 5
+private let startAppSize = markHeight + 2 * (pillPadding - startAppInset)
 
 /// A mark and, where there is something to read, a word for it.
 struct StatusPillView: View {
@@ -70,7 +75,9 @@ struct StatusPillView: View {
                 .padding(.trailing, 4)
             }
         }
-        .padding(9)
+        .padding(.vertical, state.showsStartApp ? startAppInset : pillPadding)
+        .padding(.leading, state.showsStartApp ? startAppInset : pillPadding)
+        .padding(.trailing, pillPadding)
         .background { Frost.capsule(floor: FloorGlow(isLit: pill.glows)) }
     }
 }
@@ -155,11 +162,21 @@ private struct Mark: View {
         switch state {
         case .recording, .transcribing:
             // One branch, so the ribbon's motion carries across the hand-off.
-            Ribbon(state: state, level: level, voice: voice)
+            // The app leads, as in the system's own activity pills.
+            HStack(spacing: 6) {
+                if case .recording(_, let startApp?) = state, let app = startApp.app {
+                    StartAppIcon(app: app)
+                }
+                Ribbon(state: state, level: level, voice: voice)
+            }
         case .delivering:
             Bar(tint: state.tint)
         case .delivered(.copied, _), .replied(copied: true):
             Glyph(name: "doc.on.clipboard", tint: state.tint)
+        case .delivered(.inHistory, _):
+            Glyph(name: "clock.arrow.circlepath", tint: state.tint)
+        case .delivered(.notTyped, _):
+            Glyph(name: "text.badge.xmark", tint: state.tint)
         case .delivered, .replied:
             Glyph(name: "checkmark", tint: state.tint)
         case .cancelled:
@@ -204,6 +221,25 @@ private struct Bar: View {
             .clipShape(Capsule())
             .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: isRunning)
             .onAppear { isRunning = !reduceMotion }
+    }
+}
+
+extension PillState {
+    fileprivate var showsStartApp: Bool {
+        if case .recording(_, let startApp?) = self { return startApp.app != nil }
+        return false
+    }
+}
+
+/// The app queued words wait for, by its own icon.
+private struct StartAppIcon: View {
+    let app: InstalledApp
+
+    var body: some View {
+        Image(nsImage: app.icon)
+            .resizable()
+            .frame(width: startAppSize, height: startAppSize)
+            .accessibilityLabel(app.name)
     }
 }
 
