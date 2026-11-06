@@ -20,7 +20,7 @@ final class StatusController: ObservableObject {
     /// The recording the daemon opened last. Only its opening event names it.
     private var lastRecording: UInt64?
     /// The app in front when that recording opened: where its words go.
-    private var target = Waiting(bundle: nil)
+    private var startApp = StartApp(bundleID: nil)
     private var asks = AsksInFlight()
     /// The last recording an ask press started. Its events carry no sign of
     /// the ask, so the press reports it.
@@ -55,10 +55,10 @@ final class StatusController: ObservableObject {
             }
             if event.stage == .recording {
                 self.lastRecording = event.recordingID
-                self.target = Waiting(bundle: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+                self.startApp = StartApp(bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
             }
             self.hear(event)
-            if let state = self.foregroundState?.segment(event.stage, start: self.target) {
+            if let state = self.foregroundState?.segment(event.stage, startApp: self.startApp) {
                 self.show(state, run: self.foregroundRun)
                 return
             }

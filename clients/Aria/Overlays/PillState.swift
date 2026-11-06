@@ -4,7 +4,7 @@ import SwiftUI
 enum PillState: Equatable {
     /// Recording, and once a segment queues, the app its queued words wait
     /// for, until one types.
-    case recording(since: Date, waiting: Waiting? = nil)
+    case recording(since: Date, waitingFor: StartApp? = nil)
     case transcribing
     case delivering
     /// The press delivered: where, and how many words.
@@ -73,11 +73,12 @@ enum PillState: Equatable {
     }
 
     /// The live press after a streamed segment: queued words wait for
-    /// `start`, typed words end the wait. Nil when the pill shows no recording.
-    func segment(_ stage: Aria_Daemon_V1_DictationStage, start: Waiting) -> PillState? {
+    /// `startApp`, typed words end the wait. Nil when the pill shows no
+    /// recording.
+    func segment(_ stage: Aria_Daemon_V1_DictationStage, startApp: StartApp) -> PillState? {
         guard case .recording(let since, _) = self else { return nil }
         switch stage {
-        case .segmentQueued: return .recording(since: since, waiting: start)
+        case .segmentQueued: return .recording(since: since, waitingFor: startApp)
         case .segmentDelivered: return .recording(since: since)
         default: return nil
         }
@@ -143,7 +144,7 @@ enum PillState: Equatable {
     private var detail: String? {
         switch self {
         // The start app's icon says it all; without one, a word does.
-        case .recording(_, let waiting?): return waiting.bundle == nil ? "waiting" : nil
+        case .recording(_, let startApp?): return startApp.bundleID == nil ? "waiting" : nil
         case .recording: return nil
         case .transcribing: return "transcribing"
         case .delivering: return "typing"
@@ -174,10 +175,10 @@ enum PillState: Equatable {
     }
 }
 
-/// The app a press's queued words wait for. Without its bundle ID the pill
-/// has no icon to show, so it says "waiting".
-struct Waiting: Equatable {
-    let bundle: String?
+/// The app a press started in, which its queued words wait for. Without
+/// its bundle ID the pill has no icon to show, so it says "waiting".
+struct StartApp: Equatable {
+    let bundleID: String?
 }
 
 /// Where a delivered transcript went. Mirrors the daemon's own
