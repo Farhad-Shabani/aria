@@ -164,8 +164,8 @@ private struct Mark: View {
             // One branch, so the ribbon's motion carries across the hand-off.
             // The app leads, as in the system's own activity pills.
             HStack(spacing: 6) {
-                if case .recording(_, let startApp?) = state, let bundleID = startApp.bundleID {
-                    StartAppIcon(bundleID: bundleID)
+                if case .recording(_, let startApp?) = state, let app = startApp.app {
+                    StartAppIcon(app: app)
                 }
                 Ribbon(state: state, level: level, voice: voice)
             }
@@ -226,19 +226,20 @@ private struct Bar: View {
 
 extension PillState {
     fileprivate var showsStartApp: Bool {
-        if case .recording(_, let startApp?) = self { return startApp.bundleID != nil }
+        if case .recording(_, let startApp?) = self { return startApp.app != nil }
         return false
     }
 }
 
 /// The app queued words wait for, by its own icon.
 private struct StartAppIcon: View {
-    let bundleID: String
+    let app: InstalledApp
 
     var body: some View {
-        Image(nsImage: InstalledApp.lookUp(bundleID).icon)
+        Image(nsImage: app.icon)
             .resizable()
             .frame(width: startAppSize, height: startAppSize)
+            .accessibilityLabel(app.name)
     }
 }
 

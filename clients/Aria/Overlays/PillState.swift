@@ -144,7 +144,7 @@ enum PillState: Equatable {
     private var detail: String? {
         switch self {
         // The start app's icon says it all; without one, a word does.
-        case .recording(_, let startApp?): return startApp.bundleID == nil ? "waiting" : nil
+        case .recording(_, let startApp?): return startApp.app == nil ? "waiting" : nil
         case .recording: return nil
         case .transcribing: return "transcribing"
         case .delivering: return "typing"
@@ -175,10 +175,19 @@ enum PillState: Equatable {
     }
 }
 
-/// The app a press started in, which its queued words wait for. Without
-/// its bundle ID the pill has no icon to show, so it says "waiting".
+/// The app a press started in, which its queued words wait for. An app
+/// without a bundle ID has no icon to show, so the pill says "waiting".
 struct StartApp: Equatable {
-    let bundleID: String?
+    let app: InstalledApp?
+}
+
+extension StartApp {
+    /// Looks the app up as the press starts, so drawing the pill reads no
+    /// files.
+    @MainActor
+    init(bundleID: String?) {
+        self.init(app: bundleID.map(InstalledApp.lookUp))
+    }
 }
 
 /// Where a delivered transcript went. Mirrors the daemon's own

@@ -136,11 +136,11 @@ final class PillStateTests: XCTestCase {
     func testQueuedWordsWaitForTheStartAppUntilTyped() {
         let recording = PillState.recording(since: epoch)
 
-        let notes = StartApp(bundleID: "com.apple.Notes")
+        let notes = StartApp(app: InstalledApp(bundleID: "com.apple.Notes"))
         let waiting = recording.segment(.segmentQueued, startApp: notes)
         XCTAssertEqual(waiting, .recording(since: epoch, waitingFor: notes))
         XCTAssertNil(waiting?.label(), "the start app's icon shows instead")
-        let unnamed = StartApp(bundleID: nil)
+        let unnamed = StartApp(app: nil)
         XCTAssertEqual(recording.segment(.segmentQueued, startApp: unnamed)?.label(), "waiting")
         XCTAssertEqual(waiting?.segment(.segmentDelivered, startApp: notes), recording)
         XCTAssertNil(PillState.transcribing.segment(.segmentQueued, startApp: notes))
