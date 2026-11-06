@@ -25,6 +25,8 @@ const STREAM_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A playing microphone stream and the state that decodes it.
 pub(super) struct LiveStream {
+    /// A macOS input stream stays on this device when the default moves.
+    device: cpal::DeviceId,
     /// Held only to keep the input stream playing.
     _stream: cpal::Stream,
     consumer: Consumer<i16>,
@@ -55,6 +57,9 @@ impl LiveStream {
         let device = host
             .default_input_device()
             .ok_or(MicrophoneError::NoInputDevice)?;
+        let id = device
+            .id()
+            .map_err(|source| MicrophoneError::DeviceDescription(Box::new(source)))?;
         let config = select_input_config(&device)?;
         let sample_rate = config.sample_rate();
         let (producer, consumer, status) = sample_ring(sample_rate, config.channels())?;
@@ -66,12 +71,20 @@ impl LiveStream {
             .play()
             .map_err(|source| MicrophoneError::StartStream(Box::new(source)))?;
         Ok(Self {
+            device: id,
             _stream: stream,
             consumer,
             status,
             converter,
             errors,
         })
+    }
+
+    pub(super) fn is_default_input(&self) -> bool {
+        cpal::default_host()
+            .default_input_device()
+            .and_then(|device| device.id().ok())
+            .is_some_and(|default| default == self.device)
     }
 
     pub(super) fn pop<'samples>(

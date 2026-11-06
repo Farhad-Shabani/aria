@@ -182,6 +182,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         stop: &StopSignal,
     ) -> Result<RecordedAudio> {
         let spool = WavSpool::create(&self.spool_dir, self.maximum_duration, writer)?;
+        self.follow_default_microphone();
         let recording = CaptureRecording::new(spool, mode, &mut self.vad);
         let live = ensure_live(&mut self.live)?;
         writer.begin();
@@ -195,6 +196,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
     }
 
     fn drain_idle(&mut self) {
+        self.follow_default_microphone();
         self.reopen_held();
         let Self {
             live,
@@ -231,20 +233,42 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         {
             return;
         }
+        self.open_held();
+    }
+
+    fn open_held(&mut self) {
         if let Err(error) = ensure_live(&mut self.live) {
             tracing::warn!(%error, "held microphone stream is unavailable; retrying");
             self.reopen_after = Instant::now() + STREAM_REOPEN_INTERVAL;
         }
     }
 
+    // A move is not a failure: the new default opens now, with no backoff,
+    // and stays held whatever the wake word's state, as the old stream was.
+    fn follow_default_microphone(&mut self) {
+        if self
+            .live
+            .as_ref()
+            .is_some_and(|live| !live.is_default_input())
+        {
+            tracing::info!("the default microphone changed; reopening the held stream");
+            self.forget_stream();
+            self.open_held();
+        }
+    }
+
     /// Drops the held stream and the pre-press audio gathered from it, so
     /// pre-press audio cannot span a stream failure.
     fn reset_stream(&mut self) {
+        self.forget_stream();
+        self.reopen_after = Instant::now() + STREAM_REOPEN_INTERVAL;
+    }
+
+    fn forget_stream(&mut self) {
         self.live = None;
         self.pre_press.clear();
         self.vad.reset();
         self.monitor.reset();
-        self.reopen_after = Instant::now() + STREAM_REOPEN_INTERVAL;
     }
 }
 
