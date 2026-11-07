@@ -3,6 +3,7 @@
 use anyhow::Context;
 use aria_daemon::{AssistantId, OutputMode};
 use aria_platform::runtime::PreparedRuntimePaths;
+use aria_settings::RunsOn;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod ask;
@@ -93,6 +94,13 @@ enum Command {
         /// downloading only that engine's models
         #[arg(long, value_name = "ENGINE", conflicts_with_all = ["yes", "skip_models"])]
         stt: Option<String>,
+        /// Transcribe on the paired server, keeping the local engine and its
+        /// settings for later
+        #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt", "local"])]
+        server: bool,
+        /// Transcribe on this machine again
+        #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt"])]
+        local: bool,
     },
     /// See and remove the models setup downloaded
     Models {
@@ -221,9 +229,21 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         } => setup::set_transcription_engine(&engine),
         Command::Setup {
             command: None,
+            server: true,
+            ..
+        } => setup::set_transcription_runs_on(RunsOn::Server),
+        Command::Setup {
+            command: None,
+            local: true,
+            ..
+        } => setup::set_transcription_runs_on(RunsOn::Local),
+        Command::Setup {
+            command: None,
             yes,
             skip_models,
             stt: None,
+            server: false,
+            local: false,
         } => setup::run(yes, skip_models),
         Command::Setup {
             command: Some(command),

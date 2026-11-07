@@ -80,13 +80,18 @@ fn desktop_dictates_through_a_server_without_local_stt() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../aria-wake/tests/fixtures/negative.wav");
     let audio = aria_harness::toml_string(&audio.display().to_string()).unwrap();
     let device = Sandbox::create(&format!(
-        "[stt]\nbackend = \"server\"\nserver = \"{endpoint}\"\n[capture]\nbackend = \"wav_file\"\npath = {audio}\n[wake]\nenabled = false\n"
+        "[capture]\nbackend = \"wav_file\"\npath = {audio}\n[wake]\nenabled = false\n"
     ))
     .unwrap();
     run(
         &device,
         Command::new(env!("CARGO_BIN_EXE_aria")).args(["remote", "pair"]),
         &invitation,
+    );
+    run(
+        &device,
+        Command::new(env!("CARGO_BIN_EXE_aria")).args(["setup", "--server"]),
+        &[],
     );
     run(
         &device,

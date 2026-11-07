@@ -1,9 +1,11 @@
-//! Swaps dictation's speech model when the settings name another, without a
-//! restart. The swap waits for any recording to finish. The old model drops
-//! before the new one loads, so memory never holds both.
+//! Swaps dictation's speech model when the settings name another, or the
+//! server's pin changes, without a restart. The swap waits for any
+//! recording to finish. The old model drops before the new one loads, so
+//! memory never holds both.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_primitives::error_chain;
@@ -13,8 +15,13 @@ use aria_voice::microphone::Gate;
 use aria_voice::transcription::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
+use super::super::inference::server_pin;
 use super::super::tasks::Supervised;
 use super::assembly::{BuildEngine, DictationEngine, EngineParts, EngineSlot};
+
+/// Pairing writes the pin without touching the settings, so nothing else
+/// says it changed.
+const PIN_POLL: Duration = Duration::from_secs(1);
 
 pub(in crate::daemon) struct EngineFollower {
     slot: EngineSlot,
@@ -27,6 +34,8 @@ pub(in crate::daemon) struct EngineFollower {
 impl Supervised for EngineFollower {
     async fn run(self, shutdown: CancellationToken) {
         let mut status = self.cache.status();
+        let mut pin_poll = tokio::time::interval(PIN_POLL);
+        pin_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let follower = Arc::new(self);
         // The first pass runs before any wait, since a change made before
         // this task started has no event of its own.
@@ -44,9 +53,19 @@ impl Supervised for EngineFollower {
             {
                 tracing::error!("the speech model swap panicked; the current model stays");
             }
-            tokio::select! {
-                () = shutdown.cancelled() => return,
-                changed = status.changed() => if changed.is_err() { return },
+            loop {
+                tokio::select! {
+                    () = shutdown.cancelled() => return,
+                    changed = status.changed() => {
+                        if changed.is_err() { return }
+                        break;
+                    }
+                    _ = pin_poll.tick() => {
+                        let following = Arc::clone(&follower);
+                        let moved = tokio::task::spawn_blocking(move || following.moved());
+                        if moved.await.unwrap_or(false) { break }
+                    }
+                }
             }
         }
     }
@@ -71,8 +90,17 @@ impl EngineFollower {
     }
 
     fn follow(&self, stop: &CancelToken) {
-        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home);
+        let pin = server_pin(&self.home);
+        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home, pin);
         settle(&self.slot, &self.microphone, target, &self.build, stop);
+    }
+
+    /// Whether the server engine runs on a pin that no longer stands.
+    fn moved(&self) -> bool {
+        match &self.slot.current().backend {
+            TranscriptionBackend::Server(pin) => *pin != server_pin(&self.home),
+            TranscriptionBackend::Local(_) => false,
+        }
     }
 }
 
@@ -144,8 +172,7 @@ mod tests {
 
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
-    use aria_settings::config::ServerEndpoint;
-    use aria_voice::config::TranscriptionConfig;
+    use aria_voice::config::{ServerPin, TranscriptionConfig};
     use aria_voice::dictation::{
         DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
         DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
@@ -219,10 +246,8 @@ mod tests {
         })
     }
 
-    fn server() -> TranscriptionBackend {
-        TranscriptionBackend::Server {
-            endpoint: ServerEndpoint::parse("https://box.test:9851").unwrap(),
-        }
+    fn server(pin: u8) -> TranscriptionBackend {
+        TranscriptionBackend::Server(Some(ServerPin::new([pin; 32])))
     }
 
     fn settings() -> DictationSettings {
@@ -312,6 +337,41 @@ mod tests {
         task.await.unwrap();
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_pairing_rebuilds_the_server_engine_without_a_settings_change() {
+        let home = tempfile::tempdir().unwrap();
+        let path = aria_settings::default_path(home.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[stt]\nruns_on = \"server\"\n").unwrap();
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://a.test:9851");
+        let cache = Arc::new(SettingsCache::open(path, home.path().to_path_buf()).unwrap());
+        let (old, _) = named("local");
+        let slot = EngineSlot::of("local", old);
+        let builds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&builds);
+        let build: BuildEngine = Arc::new(move |backend: &TranscriptionBackend| {
+            let name = ["first pin", "second pin"][counted.fetch_add(1, Ordering::SeqCst).min(1)];
+            let (executor, _) = named(name);
+            Ok(DictationEngine::built(name, backend.clone(), executor))
+        });
+        let follower = EngineFollower {
+            slot: slot.clone(),
+            build,
+            microphone: Gate::new(),
+            cache,
+            home: home.path().to_path_buf(),
+        };
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(follower.run(shutdown.clone()));
+
+        until_pressed(&slot, "first pin").await;
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
+        until_pressed(&slot, "second pin").await;
+
+        shutdown.cancel();
+        task.await.unwrap();
+    }
+
     #[test]
     fn a_swap_waits_for_the_recording_and_drops_the_old_model_before_loading() {
         let (old, old_dropped) = named("old");
@@ -361,7 +421,7 @@ mod tests {
     #[test]
     fn a_server_turned_off_stops_receiving_audio_even_when_the_new_model_fails() {
         let (remote, remote_dropped) = named("server");
-        let slot = EngineSlot::new(DictationEngine::built("server", server(), remote));
+        let slot = EngineSlot::new(DictationEngine::built("server", server(1), remote));
         let failing: BuildEngine = Arc::new(|_: &TranscriptionBackend| {
             Err(DictationError::Transcription(
                 TranscriptionError::NoNativeStream,
@@ -383,6 +443,34 @@ mod tests {
             Err(DictationError::Transcription(_))
         ));
         assert_eq!(slot.current().backend, local("/missing"));
+    }
+
+    #[test]
+    fn a_server_engine_is_rebuilt_when_its_pin_moves() {
+        let (remote, remote_dropped) = named("old pin");
+        let slot = EngineSlot::new(DictationEngine::built("old pin", server(1), remote));
+        let (build, _) = building("new pin", Arc::clone(&remote_dropped));
+
+        let kept = settle(
+            &slot,
+            &Gate::new(),
+            server(1),
+            &build,
+            &CancelToken::never(),
+        );
+        assert_eq!(kept, Settled::Unchanged);
+
+        let moved = settle(
+            &slot,
+            &Gate::new(),
+            server(2),
+            &build,
+            &CancelToken::never(),
+        );
+
+        assert_eq!(moved, Settled::Swapped);
+        assert!(remote_dropped.load(Ordering::SeqCst));
+        assert_eq!(press(&slot).unwrap(), "new pin");
     }
 
     #[test]

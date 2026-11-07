@@ -419,6 +419,13 @@ final class SetupStateTests: XCTestCase {
         )
     }
 
+    func testPlanLeavesTheLocalEngineAloneWhileTheServerTranscribes() {
+        var inspection = Self.freshMac()
+        inspection.transcriptionRunsOn = .server
+
+        XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.id).contains("parakeet"))
+    }
+
     func testPlanSkipsAModelConfiguredElsewhere() {
         var inspection = Self.freshMac()
         inspection.models[0].files = .external
@@ -469,7 +476,6 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(download("nemotron"), .status("Custom model"))
         XCTAssertEqual(download("kokoro").brief, "up to 10 bytes")
         XCTAssertEqual(source(.fetchedOnFirstUse), .status("Fetched on first use"))
-        XCTAssertEqual(source(.remote), .status("On the server"))
         XCTAssertEqual(source(.unspecified), .status("Size unknown"), "never shown as nothing to download")
     }
 

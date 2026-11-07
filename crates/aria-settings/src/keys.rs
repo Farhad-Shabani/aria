@@ -77,7 +77,6 @@ pub(super) const STT_BACKENDS: &[&str] = &[
     backend::MOONSHINE,
     backend::NEMOTRON,
     backend::PARAKEET_MLX,
-    backend::SERVER,
 ];
 pub(super) const WAKE_BACKENDS: &[&str] = &[wake_backend::OPEN_WAKE_WORD, wake_backend::LIVEKIT];
 
@@ -230,7 +229,7 @@ keys! {
     DeliveryTimeoutSecs: "delivery.timeout_secs", Restart, Mac, [], Kind::Number, Some("5.0"),
         "The longest typing or pasting a result may take, for dictation, asks and the phone.";
     SttBackend: "stt.backend", Live, Mac, [], Kind::Choice(STT_BACKENDS), Some(backend::DEFAULT),
-        "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx or server.";
+        "whisper, whisper-candle, parakeet, moonshine, nemotron or parakeet-mlx.";
     SttLanguage: "stt.language", Live, Phone, [], Kind::Text, Some("\"en\""),
         "A language code such as \"en\" or \"en-us\", or \"auto\" to detect.";
     SttModel: "stt.model", Live, Mac, [], Kind::Text, None,
@@ -239,8 +238,8 @@ keys! {
         "cpu or gpu. parakeet only.";
     SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
-    SttServer: "stt.server", Live, Mac, [], Kind::Text, None,
-        "Your paired server's HTTPS origin. server only, and required there.";
+    SttRunsOn: "stt.runs_on", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),
+        "Where dictation transcribes: local, or server for your paired server.";
     TtsBackend: "tts.backend", Restart, Mac, [], Kind::Choice(&[tts_backend::SYSTEM, tts_backend::KOKORO, tts_backend::QWEN]), Some(tts_backend::DEFAULT),
         "The engine that speaks `aria say` and replies: system, kokoro or qwen.";
     TtsRate: "tts.rate", Live, Mac, [], Kind::Number, Some("1.0"),
@@ -364,6 +363,18 @@ mod tests {
             .collect();
         let Kind::Choice(words) = Key::AssistantId.kind() else {
             panic!("assistant.id is a choice");
+        };
+        assert_eq!(words, names);
+    }
+
+    #[test]
+    fn the_runs_on_choices_are_every_place_transcription_runs() {
+        let names: Vec<&str> = crate::RunsOn::ALL
+            .iter()
+            .map(|runs_on| runs_on.name())
+            .collect();
+        let Kind::Choice(words) = Key::SttRunsOn.kind() else {
+            panic!("stt.runs_on is a choice");
         };
         assert_eq!(words, names);
     }

@@ -1,6 +1,7 @@
 //! The setup contract as Aria.app speaks it: `aria.setup.v1` messages,
 //! one per length-delimited frame, over the stdio of `aria setup inspect`,
-//! `aria setup apply` and `aria setup set-transcription-engine`.
+//! `aria setup apply`, `aria setup set-transcription-engine` and
+//! `aria setup set-transcription-runs-on`.
 
 use aria_voice::config::Section;
 use std::io::{Read, Write};
@@ -9,10 +10,12 @@ use prost::Message;
 
 use crate::supervisor::{DaemonState, Job, Status};
 use aria_daemon::PairedServer;
+use aria_settings::RunsOn;
 
 use super::backends::ModelSource;
 use super::models::ModelFiles;
 use super::transcription_engine::SetTranscriptionEngineSummary;
+use super::transcription_runs_on::SetTranscriptionRunsOnSummary;
 use super::{
     ApplyOptions, Availability, Choice, Grant, Inspection, Missing, ModelState, Outcome, Pairing,
     Selections, SettingsWrite, SetupError, SetupEvent, Step, Summary, voice_model_present,
@@ -83,6 +86,52 @@ pub fn set_transcription_engine(
     write(output, &response)
 }
 
+/// Reads one `SetTranscriptionRunsOnRequest`, then answers a response per
+/// event and one more carrying the summary.
+pub fn set_transcription_runs_on(
+    input: &mut impl Read,
+    output: &mut impl Write,
+) -> Result<(), SetupError> {
+    use generated::set_transcription_runs_on_response::Body;
+    let mut frame = Vec::new();
+    input.read_to_end(&mut frame).map_err(SetupError::Request)?;
+    let request =
+        generated::SetTranscriptionRunsOnRequest::decode_length_delimited(frame.as_slice())
+            .map_err(SetupError::Decode)?;
+    let runs_on = runs_on(request.runs_on)?;
+
+    let summary =
+        super::transcription_runs_on::set_transcription_runs_on(runs_on, false, &mut |event| {
+            let response = generated::SetTranscriptionRunsOnResponse {
+                body: Some(Body::Event(event.into())),
+            };
+            write(output, &response)
+        })?;
+    let response = generated::SetTranscriptionRunsOnResponse {
+        body: Some(Body::Summary((&summary).into())),
+    };
+    write(output, &response)
+}
+
+fn runs_on(value: i32) -> Result<RunsOn, SetupError> {
+    match generated::RunsOn::try_from(value) {
+        Ok(generated::RunsOn::Local) => Ok(RunsOn::Local),
+        Ok(generated::RunsOn::Server) => Ok(RunsOn::Server),
+        Ok(generated::RunsOn::Unspecified) | Err(_) => {
+            Err(SetupError::Invalid("no known place to run transcription"))
+        }
+    }
+}
+
+impl From<RunsOn> for generated::RunsOn {
+    fn from(runs_on: RunsOn) -> Self {
+        match runs_on {
+            RunsOn::Local => Self::Local,
+            RunsOn::Server => Self::Server,
+        }
+    }
+}
+
 fn write(output: &mut impl Write, message: &impl Message) -> Result<(), SetupError> {
     output
         .write_all(&message.encode_length_delimited_to_vec())
@@ -146,6 +195,7 @@ impl From<&Inspection> for generated::Inspection {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
+            transcription_runs_on: generated::RunsOn::from(inspection.transcription_runs_on) as i32,
         }
     }
 }
@@ -265,7 +315,6 @@ impl From<ModelSource> for generated::ModelSource {
             ModelSource::Downloads(_) => Self::Downloads,
             ModelSource::FetchedOnFirstUse => Self::FetchedOnFirstUse,
             ModelSource::BuiltIn => Self::BuiltIn,
-            ModelSource::Remote => Self::Remote,
         }
     }
 }
@@ -363,6 +412,15 @@ fn model_outcomes(models: &[(&'static str, Outcome)]) -> Vec<generated::ModelOut
 
 impl From<&SetTranscriptionEngineSummary> for generated::SetTranscriptionEngineSummary {
     fn from(summary: &SetTranscriptionEngineSummary) -> Self {
+        Self {
+            settings: generated::SettingsWrite::from(summary.settings) as i32,
+            models: model_outcomes(&summary.models),
+        }
+    }
+}
+
+impl From<&SetTranscriptionRunsOnSummary> for generated::SetTranscriptionRunsOnSummary {
+    fn from(summary: &SetTranscriptionRunsOnSummary) -> Self {
         Self {
             settings: generated::SettingsWrite::from(summary.settings) as i32,
             models: model_outcomes(&summary.models),

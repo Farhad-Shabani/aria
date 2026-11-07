@@ -16,10 +16,10 @@ use super::DictationSetup;
 use aria_kit::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
 use aria_platform::delivery::{DeliveryError, DeliveryFactory, PlatformTextDelivery};
 use aria_settings::Directory;
-use aria_settings::config::{ConfigError, ServerEndpoint};
+use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::{
-    DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
+    DictationConfig, ServerPin, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
 };
 use aria_voice::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
@@ -258,7 +258,7 @@ fn select_engine(
 ) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
         TranscriptionBackend::Local(config) => select_local(config, loading),
-        TranscriptionBackend::Server { endpoint } => select_remote(home, &endpoint),
+        TranscriptionBackend::Server(pin) => select_remote(home, pin.as_ref()),
     }
 }
 
@@ -266,9 +266,9 @@ fn select_engine(
 /// name only labels a dictation whose engine was never reported.
 fn select_remote(
     home: &Path,
-    endpoint: &ServerEndpoint,
+    pin: Option<&ServerPin>,
 ) -> Result<SelectedEngine, TranscriptionError> {
-    let remote = RemoteTranscriber::open(home, endpoint)?;
+    let remote = RemoteTranscriber::open_matching(home, pin)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
         Transcription::<_, Streaming>::delegated(remote),
@@ -668,10 +668,7 @@ pub(super) fn build_dictation(
 /// server runs.
 pub(super) enum RetryTarget<'a> {
     Local(TranscriptionConfig),
-    Server {
-        endpoint: ServerEndpoint,
-        engine: Option<&'a str>,
-    },
+    Server { engine: Option<&'a str> },
 }
 
 pub(super) fn transcribe_retry(
@@ -715,8 +712,8 @@ fn retry_transcription(
     cancel: &CancelToken,
 ) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
     match target {
-        RetryTarget::Server { endpoint, engine } => {
-            let mut remote = RemoteTranscriber::open(home, &endpoint)?;
+        RetryTarget::Server { engine } => {
+            let mut remote = RemoteTranscriber::open(home)?;
             if let Some(engine) = engine {
                 remote = remote.require_engine(engine)?;
             }
@@ -741,19 +738,32 @@ fn retry_transcription(
 mod tests {
     use super::*;
 
-    /// The server key applies live, so this check keeps an edited endpoint
-    /// from receiving audio. Only the server pinned at pairing receives it.
+    /// Only the server pinned at pairing receives audio, and only under the
+    /// pin the engine was chosen for.
     #[test]
-    fn only_the_paired_server_becomes_the_engine() {
+    fn the_server_engine_opens_only_the_pin_it_was_chosen_for() {
         let home = tempfile::tempdir().unwrap();
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://paired.test:9851");
-        let server = |origin: &str| TranscriptionBackend::Server {
-            endpoint: ServerEndpoint::parse(origin).unwrap(),
+        let select = |pin| {
+            select_engine(
+                TranscriptionBackend::Server(pin),
+                ModelLoading::OnFirstUse,
+                home.path(),
+            )
         };
-        let select = |origin| select_engine(server(origin), ModelLoading::OnFirstUse, home.path());
+        let current = || crate::daemon::inference::server_pin(home.path());
 
-        assert!(select("https://paired.test:9851").is_ok());
-        assert!(select("https://elsewhere.test:9851").is_err());
+        assert!(select(None).is_err());
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://a.test:9851");
+        let chosen = current();
+        assert!(select(chosen.clone()).is_ok());
+        assert!(select(None).is_err(), "a pairing appeared after the choice");
+
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
+        assert!(
+            select(chosen).is_err(),
+            "the pairing changed after the choice"
+        );
+        assert!(select(current()).is_ok());
     }
 
     /// A settings store over `home`, with no file yet.
@@ -773,7 +783,6 @@ mod tests {
         let server = crate::daemon::inference::host::tests::Fixture::start().await;
         let home = tempfile::tempdir().unwrap();
         server.pair_home(home.path().to_owned()).await;
-        let endpoint = server.endpoint().to_owned();
         let root = home.path().to_owned();
         let (built, _vocabulary) = tokio::task::spawn_blocking(move || {
             let home_dir = root.clone();
@@ -793,8 +802,10 @@ mod tests {
                     aria_voice::vocabulary::extract::LocalExtractor,
                 ),
             );
-            let mut dictation = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
-            dictation.transcription = TranscriptionBackend::Server { endpoint };
+            let mut dictation =
+                DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+            dictation.transcription =
+                TranscriptionBackend::Server(crate::daemon::inference::server_pin(&home_dir));
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,
@@ -869,7 +880,7 @@ mod tests {
     fn capture_is_validated_before_the_model_loads() {
         let home = tempfile::tempdir().unwrap();
         let home_dir = home.path().to_owned();
-        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
+        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
         config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
@@ -920,7 +931,7 @@ mod tests {
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("cleanup.md"), [0xff]).unwrap();
         let home_dir = home.path().to_owned();
-        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
+        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
         config.cleanup_llm = Some(
             aria_settings::CleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "test")
                 .unwrap(),

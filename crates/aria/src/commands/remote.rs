@@ -27,12 +27,12 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
             println!("{}", aria_daemon::remote_invite(&endpoint)?);
         }
         RemoteCommand::Pair { json: false } => {
-            let fingerprint = aria_daemon::remote_pair(std::io::stdin().lock())?;
+            let fingerprint = crate::setup::pair_server(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
-            println!("To use it, choose the paired inference server in `aria setup`.");
+            println!("To use it, run `aria setup --server`.");
         }
         RemoteCommand::Pair { json: true } => {
-            let paired = aria_daemon::remote_pair(std::io::stdin().lock());
+            let paired = crate::setup::pair_server(std::io::stdin().lock());
             println!("{}", pair_report(&paired));
             if paired.is_err() {
                 std::process::exit(1);
@@ -69,16 +69,56 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn pair_report(paired: &Result<String, aria_daemon::RemoteClientError>) -> serde_json::Value {
+fn pair_report(paired: &Result<String, crate::setup::SetupError>) -> serde_json::Value {
     match paired {
         Ok(fingerprint) => serde_json::json!({ "paired": true, "fingerprint": fingerprint }),
         Err(error) => serde_json::json!({
             "paired": false,
             "error": {
-                "code": aria_daemon::PairingFailure::from(error).label(),
+                "code": pairing_failure(error).label(),
                 "message": crate::primitives::error_chain(error),
             },
         }),
+    }
+}
+
+fn pairing_failure(error: &crate::setup::SetupError) -> aria_daemon::PairingFailure {
+    use crate::setup::SetupError;
+    use aria_daemon::PairingFailure;
+
+    match error {
+        SetupError::Pair(error) => PairingFailure::from(error),
+        SetupError::Busy => PairingFailure::Busy,
+        SetupError::Home(_)
+        | SetupError::CurrentExe(_)
+        | SetupError::Signal(_)
+        | SetupError::Io { .. }
+        | SetupError::Prompt(_)
+        | SetupError::UnknownModel { .. }
+        | SetupError::UnknownEngine { .. }
+        | SetupError::NotSettable { .. }
+        | SetupError::ServerNotPaired
+        | SetupError::PairingUnusable { .. }
+        | SetupError::ServerInUse
+        | SetupError::Forget(_)
+        | SetupError::ModelInUse { .. }
+        | SetupError::Config(_)
+        | SetupError::ModelNotInstalled { .. }
+        | SetupError::Request(_)
+        | SetupError::Decode(_)
+        | SetupError::Invalid(_)
+        | SetupError::Respond(_)
+        | SetupError::NotATerminal
+        | SetupError::Spawn { .. }
+        | SetupError::Wait { .. }
+        | SetupError::Command { .. }
+        | SetupError::Interrupted { .. }
+        | SetupError::WrongHash { .. }
+        | SetupError::Untrusted { .. }
+        | SetupError::Service(_)
+        | SetupError::Settings(_)
+        | SetupError::SettingsRefused(_)
+        | SetupError::SettingsChanging => PairingFailure::Failed,
     }
 }
 
@@ -98,7 +138,9 @@ mod tests {
 
     #[test]
     fn a_failed_pairing_reports_its_code_and_cause() {
-        let report = pair_report(&Err(aria_daemon::RemoteClientError::Timeout));
+        let report = pair_report(&Err(crate::setup::SetupError::Pair(
+            aria_daemon::RemoteClientError::Timeout,
+        )));
 
         assert_eq!(
             report,
@@ -107,5 +149,12 @@ mod tests {
                 "error": { "code": "timeout", "message": "remote operation timed out" },
             })
         );
+    }
+
+    #[test]
+    fn a_pairing_that_waits_on_another_setup_reports_busy() {
+        let report = pair_report(&Err(crate::setup::SetupError::Busy));
+
+        assert_eq!(report["error"]["code"], "busy");
     }
 }

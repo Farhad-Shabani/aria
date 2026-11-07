@@ -3,19 +3,25 @@ import SwiftUI
 struct EnginesPage: View {
     @ObservedObject var state: SetupState
 
+    private var serverTranscribes: Bool { state.inspection.transcriptionRunsOn == .server }
+
     var body: some View {
         Form {
             Section {
-                picker("Speech to text", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID)
+                picker(
+                    "Speech to text", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID,
+                    note: serverTranscribes ? "Your server transcribes. Change this in Settings > Recognition." : nil
+                )
+                .disabled(serverTranscribes)
                 picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)
             }
             DownloadsSection(state: state)
         }
     }
 
-    private func picker(_ title: String, _ engines: [Aria_Setup_V1_Choice], _ key: Binding<String>)
-        -> some View
-    {
+    private func picker(
+        _ title: String, _ engines: [Aria_Setup_V1_Choice], _ key: Binding<String>, note: String? = nil
+    ) -> some View {
         let chosen = engines.first { $0.id == key.wrappedValue }
         return Picker(selection: key) {
             ForEach(engines, id: \.id) { engine in
@@ -31,7 +37,9 @@ struct EnginesPage: View {
             }
         } label: {
             Text(title)
-            if let chosen, !chosen.availabilityDetail.isEmpty {
+            if let note {
+                Text(note)
+            } else if let chosen, !chosen.availabilityDetail.isEmpty {
                 Text(chosen.availabilityDetail)
                     .foregroundStyle(chosen.availability == .unsupported ? Color.failure : Color.secondary)
             }

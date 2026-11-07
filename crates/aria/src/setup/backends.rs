@@ -73,20 +73,6 @@ pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Cho
     choices
 }
 
-/// Applying the server choice writes the paired server's address, so a
-/// pairing alone makes it ready.
-pub(super) fn stt_choices(file: &aria_settings::Stt, paired: bool, host: &Host) -> Vec<Choice> {
-    let mut choices = choices::<Stt>(file.backend.as_deref(), host);
-    if paired
-        && let Some(server) = choices
-            .iter_mut()
-            .find(|choice| choice.key == backend::SERVER)
-    {
-        server.availability = Availability::Ready;
-    }
-    choices
-}
-
 /// What is known about this machine before any question is asked.
 pub(super) struct Host {
     pub(super) macos: bool,
@@ -114,15 +100,13 @@ pub enum ModelSource {
     /// The engine fetches its model itself, so setup cannot tell its size.
     FetchedOnFirstUse,
     BuiltIn,
-    /// A paired inference server holds the model.
-    Remote,
 }
 
 impl ModelSource {
     pub(super) fn assets(self) -> &'static [Asset] {
         match self {
             Self::Downloads(assets) => assets,
-            Self::FetchedOnFirstUse | Self::BuiltIn | Self::Remote => &[],
+            Self::FetchedOnFirstUse | Self::BuiltIn => &[],
         }
     }
 }
@@ -147,7 +131,6 @@ pub(super) enum Stt {
     Moonshine,
     Nemotron,
     ParakeetMlx,
-    Server,
 }
 
 impl Backend for Stt {
@@ -159,7 +142,6 @@ impl Backend for Stt {
         Self::Moonshine,
         Self::Nemotron,
         Self::ParakeetMlx,
-        Self::Server,
     ];
     const DEFAULT: &'static str = backend::DEFAULT;
 
@@ -171,7 +153,6 @@ impl Backend for Stt {
             Self::Moonshine => backend::MOONSHINE,
             Self::Nemotron => backend::NEMOTRON,
             Self::ParakeetMlx => backend::PARAKEET_MLX,
-            Self::Server => backend::SERVER,
         }
     }
 
@@ -183,7 +164,6 @@ impl Backend for Stt {
             Self::Moonshine => "Moonshine",
             Self::Nemotron => "Nemotron",
             Self::ParakeetMlx => "Parakeet (MLX)",
-            Self::Server => "Paired inference server",
         }
     }
 
@@ -200,9 +180,6 @@ impl Backend for Stt {
             Self::ParakeetMlx => Availability::Missing {
                 fix: "set stt.interpreter to a Python with parakeet-mlx".to_owned(),
             },
-            Self::Server => Availability::Missing {
-                fix: "pair an inference server first".to_owned(),
-            },
         }
     }
 
@@ -215,7 +192,6 @@ impl Backend for Stt {
             Self::Nemotron => ModelSource::Downloads(&[assets::NEMOTRON]),
             // The sidecar downloads the model into its own Hugging Face cache.
             Self::ParakeetMlx => ModelSource::FetchedOnFirstUse,
-            Self::Server => ModelSource::Remote,
         }
     }
 }
@@ -277,24 +253,6 @@ mod tests {
     use aria_voice::config::{self, DictationConfig, TtsBackend, TtsConfig, TtsModel};
 
     #[test]
-    fn server_is_ready_once_a_server_is_paired() {
-        let host = Host {
-            macos: true,
-            system_voice: Availability::Ready,
-        };
-        let file = SettingsFile::default();
-        let available = |paired: bool| {
-            stt_choices(&file.stt, paired, &host)
-                .into_iter()
-                .find(|choice| choice.key == backend::SERVER)
-                .unwrap()
-                .availability
-        };
-        assert!(matches!(available(false), Availability::Missing { .. }));
-        assert_eq!(available(true), Availability::Ready);
-    }
-
-    #[test]
     fn every_model_lands_where_the_daemon_loads_it() {
         let home = Path::new("/home/someone");
         let models_dir = aria_settings::config::models_dir(home);
@@ -308,7 +266,6 @@ mod tests {
             );
         for (section, key, assets) in engines {
             let required = match key {
-                backend::SERVER => "server = \"https://example.test\"\n",
                 backend::PARAKEET_MLX => "interpreter = \"/usr/bin/python3\"\n",
                 _ => "",
             };
@@ -367,7 +324,7 @@ mod tests {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
             let aria_voice::config::TranscriptionBackend::Local(transcription) =
-                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir)
+                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir, None)
                     .transcription
             else {
                 panic!("{} is a local engine", stt.key());

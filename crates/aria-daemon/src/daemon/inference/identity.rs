@@ -304,7 +304,7 @@ struct StoredClient {
 pub(crate) struct ClientIdentity {
     path: PathBuf,
     stored: StoredClient,
-    fingerprint: String,
+    fingerprint: [u8; 32],
 }
 
 impl ClientIdentity {
@@ -336,7 +336,7 @@ impl ClientIdentity {
                 .map_err(|_| Error::InvalidIdentity)?;
         Ok(Self {
             path: path.to_owned(),
-            fingerprint: to_hex(&fingerprint(&certificate)),
+            fingerprint: fingerprint(&certificate),
             stored,
         })
     }
@@ -345,24 +345,19 @@ impl ClientIdentity {
         &self.stored.credentials
     }
 
-    /// Hex, the form `aria remote revoke` takes on the server.
-    pub(super) fn fingerprint(&self) -> &str {
-        &self.fingerprint
+    pub(super) fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
     }
 
     pub(crate) fn paired_server(&self) -> Option<PairedServer> {
         self.stored.server.as_ref().map(|server| PairedServer {
             endpoint: server.endpoint.clone(),
-            client_fingerprint: self.fingerprint.clone(),
+            client_fingerprint: to_hex(&self.fingerprint),
         })
     }
 
-    pub(super) fn pinned_server(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
-        self.stored
-            .server
-            .as_ref()
-            .filter(|server| &server.endpoint == endpoint)
-            .ok_or(Error::Unpaired)
+    pub(super) fn pinned_server(&self) -> Result<&PinnedServer, Error> {
+        self.stored.server.as_ref().ok_or(Error::Unpaired)
     }
 
     pub(super) fn remember(&mut self, invitation: &Invitation) -> Result<(), Error> {
@@ -446,6 +441,8 @@ pub enum Error {
     InvalidEndpoint,
     #[error("this endpoint has not been paired")]
     Unpaired,
+    #[error("the pairing changed after this engine was chosen")]
+    PinMoved,
     #[error("the client is not authorized")]
     Unauthenticated,
     #[error("the remote server already pairs 16 clients")]
@@ -479,7 +476,7 @@ impl From<Error> for RpcFailure {
                 RpcErrorCode::InvalidRequest,
                 "invalid remote invitation or endpoint",
             ),
-            Error::Unauthenticated | Error::Unpaired => (
+            Error::Unauthenticated | Error::Unpaired | Error::PinMoved => (
                 RpcErrorCode::Unauthenticated,
                 "remote access is not authorized",
             ),
@@ -805,25 +802,18 @@ mod tests {
                 .certificate_pem,
             certificate
         );
-        assert!(matches!(
-            client.pinned_server(&localhost(5000)),
-            Err(Error::Unpaired)
-        ));
+        assert!(matches!(client.pinned_server(), Err(Error::Unpaired)));
         client
             .remember(&server.issue(&localhost(5000)).unwrap())
             .unwrap();
-        assert!(
+        assert_eq!(
             ClientIdentity::load_or_create(&path)
                 .unwrap()
-                .pinned_server(&localhost(5000))
-                .is_ok()
+                .pinned_server()
+                .unwrap()
+                .endpoint,
+            localhost(5000)
         );
-        let respelled = ServerEndpoint::parse("https://LOCALHOST:5000/").unwrap();
-        assert!(client.pinned_server(&respelled).is_ok());
-        assert!(matches!(
-            client.pinned_server(&localhost(5001)),
-            Err(Error::Unpaired)
-        ));
     }
 
     #[test]

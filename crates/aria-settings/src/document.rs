@@ -29,7 +29,7 @@ use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
 use super::{InvalidValue, Key, MAX_SETTINGS_BYTES, ParseError, SettingsError};
 use crate::config::{
     DEFAULT_ASSISTANT_TIMEOUT, DEFAULT_DELIVERY_TIMEOUT, DEFAULT_OVERALL_TIMEOUT,
-    DEFAULT_RECORDING_TIMEOUT, ServerEndpoint, backend, tts_backend, wake_backend,
+    DEFAULT_RECORDING_TIMEOUT, backend, tts_backend, wake_backend,
 };
 use aria_platform::delivery::OutputMode;
 use aria_platform::hotkey::{AriaKey, Combo};
@@ -587,7 +587,7 @@ pub struct Stt {
     pub model: Option<String>,
     pub device: Option<DeviceName>,
     pub interpreter: Option<PathBuf>,
-    pub server: Option<String>,
+    pub runs_on: Option<RunsOn>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -909,6 +909,29 @@ pub enum TtsFallbackName {
     System,
 }
 
+/// Where a model runs. The paired server's address lives with its pin, not
+/// here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunsOn {
+    #[default]
+    Local,
+    Server,
+}
+
+impl RunsOn {
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 2] = [Self::Local, Self::Server];
+
+    /// The value a `runs_on` key takes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Server => "server",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceName {
@@ -1013,6 +1036,7 @@ impl SettingsFile {
         let capture = self.validate_capture()?;
         Ok(Choices {
             stt,
+            stt_runs_on: self.stt.runs_on.unwrap_or_default(),
             listen,
             tts,
             voices,
@@ -1189,28 +1213,7 @@ impl SettingsFile {
             )
         };
         let choice = match backend_name {
-            backend::SERVER => {
-                for (key, set) in [
-                    (Key::SttModel, stt.model.is_some()),
-                    (Key::SttDevice, stt.device.is_some()),
-                    (Key::SttInterpreter, stt.interpreter.is_some()),
-                ] {
-                    if set {
-                        return Err(not_applicable(key, backend::SERVER));
-                    }
-                }
-                let server = stt
-                    .server
-                    .as_deref()
-                    .ok_or_else(|| required(Key::SttServer, backend::SERVER))?;
-                let endpoint = ServerEndpoint::parse(server)
-                    .ok_or_else(|| invalid(Key::SttServer, InvalidValue::ServerEndpoint))?;
-                return Ok(SttChoice::Server(endpoint));
-            }
             backend::PARAKEET_MLX => {
-                if stt.server.is_some() {
-                    return Err(not_applicable(Key::SttServer, backend_name));
-                }
                 // parakeet-mlx takes a Hugging Face repo ID, not a path.
                 if let Some(model) = &stt.model {
                     non_empty(model, Key::SttModel)?;
@@ -1224,9 +1227,6 @@ impl SettingsFile {
             name => {
                 let engine = LocalStt::named(name)
                     .ok_or_else(|| unsupported(name, STT_BACKENDS, Key::SttBackend))?;
-                if stt.server.is_some() {
-                    return Err(not_applicable(Key::SttServer, name));
-                }
                 if let Some(model) = &stt.model {
                     non_empty(model, Key::SttModel)?;
                     absolute_path(Path::new(model), Key::SttModel)?;
@@ -1994,9 +1994,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_value_its_rule_forbids_is_refused() {
-        refused("[stt]\nbackend = \"server\"\n", Key::SttServer);
         refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
-        refused("[stt]\nserver = \"https://a.test:9851\"\n", Key::SttServer);
         refused(
             "[stt]\ndevice = \"gpu\"\nbackend = \"whisper\"\n",
             Key::SttDevice,
@@ -2018,20 +2016,6 @@ pub(super) mod tests {
         );
         refused("[capture]\nbackend = \"wav_file\"\n", Key::CapturePath);
         refused("[capture]\npace = \"realtime\"\n", Key::CapturePace);
-        for endpoint in [
-            "http://localhost",
-            "https://user:secret@example.test",
-            "https://example.test?key=secret",
-            "https://example.test#secret",
-            "https://example.test/path",
-            "",
-            "unix:///tmp/server.sock",
-        ] {
-            refused(
-                &format!("[stt]\nbackend = \"server\"\nserver = '{endpoint}'\n"),
-                Key::SttServer,
-            );
-        }
         for (endpoint, model) in [
             ("https://example.com/v1/chat/completions", "local-model"),
             ("http://127.0.0.1:8080/v1/chat/completions", ""),
@@ -2128,23 +2112,34 @@ pub(super) mod tests {
 
     #[test]
     fn a_setting_its_backend_does_not_have_is_refused() {
-        let server = "[stt]\nbackend = \"server\"\nserver = \"https://a.test\"\n";
-        refused(&format!("{server}model = \"unused\"\n"), Key::SttModel);
-        refused(&format!("{server}device = \"gpu\"\n"), Key::SttDevice);
-        refused(
-            &format!("{server}interpreter = \"/unused\"\n"),
-            Key::SttInterpreter,
-        );
-        refused(
-            "[stt]\nbackend = \"parakeet\"\nserver = \"https://a.test\"\n",
-            Key::SttServer,
-        );
         refused(
             "[stt]\nbackend = \"whisper\"\ninterpreter = \"/usr/bin/python3\"\n",
             Key::SttInterpreter,
         );
         refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
         refused("[listen]\nbackend = \"server\"\n", Key::ListenBackend);
+    }
+
+    #[test]
+    fn the_server_keeps_the_local_engine_and_its_settings() {
+        let loaded = load(
+            "[stt]\nbackend = \"parakeet\"\nmodel = \"/models/parakeet\"\ndevice = \"gpu\"\nruns_on = \"server\"\n",
+        );
+
+        let choices = loaded.settings.choices();
+        assert_eq!(choices.stt_runs_on, RunsOn::Server);
+        assert_eq!(choices.stt, SttChoice::Local(LocalStt::Parakeet));
+        assert_eq!(loaded.settings.stt.device, Some(DeviceName::Gpu));
+    }
+
+    #[test]
+    fn the_server_is_where_it_runs_not_an_engine() {
+        refused("[stt]\nbackend = \"server\"\n", Key::SttBackend);
+        let unknown = Loaded::parse("[stt]\nserver = \"https://a.test\"\n", Path::new(HOME));
+        assert!(
+            matches!(unknown, Err(SettingsError::Parse(_))),
+            "{unknown:?}"
+        );
     }
 
     #[test]

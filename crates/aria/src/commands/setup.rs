@@ -2,6 +2,7 @@ use std::io::IsTerminal;
 
 use crate::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
 use anyhow::Context;
+use aria_settings::RunsOn;
 use clap::Subcommand;
 
 use super::service::service_status_message;
@@ -19,6 +20,9 @@ pub(super) enum SetupCommand {
     /// Read one SetTranscriptionEngineRequest, write responses until the summary
     #[command(hide = true)]
     SetTranscriptionEngine,
+    /// Read one SetTranscriptionRunsOnRequest, write responses until the summary
+    #[command(hide = true)]
+    SetTranscriptionRunsOn,
 }
 
 pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
@@ -47,6 +51,22 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
     .context("setting the speech engine did not finish")?;
     println!();
     println!("speech       {}", summary.engine);
+    for (name, outcome) in &summary.models {
+        println!("{name:<12} {}", outcome.as_str());
+    }
+    println!("settings     {}", settings_write_message(&summary.settings));
+    Ok(())
+}
+
+pub(super) fn set_transcription_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
+    let summary = crate::setup::transcription_runs_on::set_transcription_runs_on(
+        runs_on,
+        std::io::stdout().is_terminal(),
+        &mut |_| Ok(()),
+    )
+    .context("setting where transcription runs did not finish")?;
+    println!();
+    println!("transcribes  {}", summary.runs_on.name());
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -99,6 +119,9 @@ pub(super) fn run_for_app(command: SetupCommand) -> anyhow::Result<()> {
         SetupCommand::Apply => crate::setup::wire::apply(&mut std::io::stdin().lock(), &mut stdout),
         SetupCommand::SetTranscriptionEngine => {
             crate::setup::wire::set_transcription_engine(&mut std::io::stdin().lock(), &mut stdout)
+        }
+        SetupCommand::SetTranscriptionRunsOn => {
+            crate::setup::wire::set_transcription_runs_on(&mut std::io::stdin().lock(), &mut stdout)
         }
     }
     .context("setup did not finish")
@@ -155,24 +178,39 @@ mod tests {
                 yes,
                 skip_models,
                 stt,
+                server,
+                local,
             } = cli.command
             else {
                 panic!("a setup invocation should parse as Setup");
             };
-            (yes, skip_models, stt)
+            (yes, skip_models, stt, server, local)
         };
 
-        assert_eq!(parse(&["aria", "setup"]), (false, false, None));
         assert_eq!(
-            parse(&["aria", "setup", "--yes", "--skip-models"]),
-            (true, true, None)
+            parse(&["aria", "setup"]),
+            (false, false, None, false, false)
         );
         assert_eq!(
+            parse(&["aria", "setup", "--yes", "--skip-models"]),
+            (true, true, None, false, false)
+        );
+        assert_eq!(
+            parse(&["aria", "setup", "--server"]),
+            (false, false, None, true, false)
+        );
+        assert_eq!(
+            parse(&["aria", "setup", "--local"]),
+            (false, false, None, false, true)
+        );
+        assert!(Cli::try_parse_from(["aria", "setup", "--server", "--local"]).is_err());
+        assert_eq!(
             parse(&["aria", "setup", "--stt", "moonshine"]),
-            (false, false, Some("moonshine".to_owned()))
+            (false, false, Some("moonshine".to_owned()), false, false)
         );
         assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "--yes"]).is_err());
         assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "inspect"]).is_err());
+        assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "--local"]).is_err());
     }
 
     #[test]

@@ -99,7 +99,12 @@ impl LiveHarness {
         let settings = self.cache.effective();
         format!(
             "{:?}",
-            aria_voice::config::DictationConfig::load(&settings, &self.home).transcription
+            aria_voice::config::DictationConfig::load(
+                &settings,
+                &self.home,
+                super::inference::server_pin(&self.home),
+            )
+            .transcription
         )
     }
 
@@ -159,7 +164,7 @@ impl LiveHarness {
             | Key::SttModel
             | Key::SttDevice
             | Key::SttInterpreter
-            | Key::SttServer => self.next_engine(),
+            | Key::SttRunsOn => self.next_engine(),
             Key::DictationCleanupLlmEndpoint
             | Key::DictationCleanupLlmModel
             | Key::MemoryDir
@@ -252,11 +257,7 @@ fn change(key: Key) -> Patch {
             patch.set(key, "/usr/bin/python3");
             patch
         }
-        Key::SttServer => {
-            let mut patch = set(Key::SttBackend, "server");
-            patch.set(key, "https://box.test:9851");
-            patch
-        }
+        Key::SttRunsOn => set(key, "server"),
         Key::DictationCleanup
         | Key::DictationBacktrack
         | Key::DictationOwnVoiceOnly

@@ -35,7 +35,6 @@ final class SpeechModelsTests: XCTestCase {
             engine("whisper-candle"),
             engine("nemotron"),
             engine("parakeet-mlx", settable: false, source: .fetchedOnFirstUse),
-            engine("server", settable: false, source: .remote),
         ]
         inspection.models = [
             model("parakeet", files: .complete),
@@ -57,7 +56,6 @@ final class SpeechModelsTests: XCTestCase {
 
     func testAModelSetupCantFetchShowsOnlyWhileItsCurrent() {
         XCTAssertNil(SpeechModels(Self.mac(running: "parakeet")).model("parakeet-mlx"))
-        XCTAssertNil(SpeechModels(Self.mac(running: "parakeet")).model("server"))
 
         let mlx = SpeechModels(Self.mac(running: "parakeet-mlx"))
         XCTAssertNil(mlx.model("parakeet-mlx")?.size)

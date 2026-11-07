@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use aria_kit::audio::ReplayPace;
 
 use super::{
-    CaptureConfig, DictationConfig, ListenConfig, ListenTranscription, SpeakerConfig,
+    CaptureConfig, DictationConfig, ListenConfig, ListenTranscription, ServerPin, SpeakerConfig,
     SpeechDefaults, TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend,
     TtsConfig, TtsFallback, TtsModel,
 };
 use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
 use aria_settings::{
-    CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, Speaker,
-    SttChoice, TtsEngine, TtsFallbackName,
+    CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, RunsOn,
+    Speaker, SttChoice, TtsEngine, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -30,11 +30,10 @@ fn chosen_listen_engine(settings: &CheckedSettings, home: &Path) -> Option<Trans
             settings.listen.device,
             home,
         )),
-        None => match TranscriptionBackend::load(settings, home) {
-            TranscriptionBackend::Local(engine) if crate::transcription::streams(&engine) => {
-                Some(engine)
-            }
-            TranscriptionBackend::Local(_) | TranscriptionBackend::Server { .. } => None,
+        None => match settings.choices().stt_runs_on {
+            RunsOn::Local => Some(TranscriptionConfig::load(settings, home))
+                .filter(crate::transcription::streams),
+            RunsOn::Server => None,
         },
     }
 }
@@ -155,7 +154,8 @@ pub struct LoadedModel {
     pub path: PathBuf,
 }
 
-/// The models `settings` make Aria load.
+/// The models `settings` make Aria load. The local engine counts while the
+/// server transcribes, since going back loads it.
 pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel> {
     let mut models = Vec::new();
     let mut add = |section, engine, path| {
@@ -165,11 +165,10 @@ pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel
             path,
         });
     };
-    if let TranscriptionBackend::Local(engine) = TranscriptionBackend::load(settings, home) {
-        let name = engine.backend_name();
-        if let Some(path) = engine.model_path() {
-            add(Section::Stt, Some(name), path);
-        }
+    let engine = TranscriptionConfig::load(settings, home);
+    let name = engine.backend_name();
+    if let Some(path) = engine.model_path() {
+        add(Section::Stt, Some(name), path);
     }
     // Fallback Parakeet isn't any setting's choice, so it stays deletable.
     // Listen then reports it missing when a session starts.
@@ -209,7 +208,7 @@ fn tts_fallback(file_value: Option<TtsFallbackName>) -> TtsFallback {
 }
 
 impl DictationConfig {
-    pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
+    pub fn load(settings: &CheckedSettings, home: &Path, pin: Option<ServerPin>) -> Self {
         let choices = settings.choices();
         Self {
             capture: match &choices.capture {
@@ -219,7 +218,7 @@ impl DictationConfig {
                     pace: replay_pace(settings.capture.pace),
                 },
             },
-            transcription: TranscriptionBackend::load(settings, home),
+            transcription: TranscriptionBackend::load(settings, home, pin),
             dictation_timeouts: choices.timeouts,
             cleanup_llm: choices.cleanup.clone(),
         }
@@ -234,27 +233,32 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 }
 
 impl TranscriptionBackend {
+    pub fn load(settings: &CheckedSettings, home: &Path, pin: Option<ServerPin>) -> Self {
+        match settings.choices().stt_runs_on {
+            RunsOn::Server => Self::Server(pin),
+            RunsOn::Local => Self::Local(TranscriptionConfig::load(settings, home)),
+        }
+    }
+}
+
+impl TranscriptionConfig {
+    /// The local engine, which the settings keep while the server transcribes.
     pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
         let stt = &settings.stt;
         match &settings.choices().stt {
-            SttChoice::Server(endpoint) => Self::Server {
-                endpoint: endpoint.clone(),
+            SttChoice::ParakeetMlx { interpreter } => Self::ParakeetMlx {
+                model: stt
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_PARAKEET_MLX_MODEL.to_owned()),
+                interpreter: interpreter.clone(),
             },
-            SttChoice::ParakeetMlx { interpreter } => {
-                Self::Local(TranscriptionConfig::ParakeetMlx {
-                    model: stt
-                        .model
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_PARAKEET_MLX_MODEL.to_owned()),
-                    interpreter: interpreter.clone(),
-                })
-            }
-            SttChoice::Local(engine) => Self::Local(local(
+            SttChoice::Local(engine) => local(
                 *engine,
                 stt.model.as_deref().map(Path::new),
                 stt.device,
                 home,
-            )),
+            ),
         }
     }
 }
@@ -328,29 +332,25 @@ mod tests {
     use aria_settings::{CleanupTarget, Loaded};
 
     #[test]
-    fn a_server_is_used_by_its_canonical_origin() {
-        for (endpoint, canonical) in [
-            ("https://localhost:9851", "https://localhost:9851"),
-            ("https://Example.Test/", "https://example.test"),
-            ("https://[::1]:443", "https://[::1]:443"),
-        ] {
-            let file = file(&format!(
-                "[stt]\nbackend = \"server\"\nserver = '{endpoint}'\n"
-            ));
-            let TranscriptionBackend::Server { endpoint } =
-                TranscriptionBackend::load(&file, &test_home())
-            else {
-                panic!("expected a server backend");
-            };
-            assert_eq!(endpoint.to_string(), canonical);
-            let models = loaded_models(&file, Path::new("/missing-home"));
-            assert!(models.iter().all(|model| model.section != Section::Stt));
-        }
+    fn the_server_transcribes_and_the_local_model_stays_in_use() {
+        let file = file(
+            "[stt]\nbackend = \"whisper\"\nmodel = \"/models/whisper\"\nruns_on = \"server\"\n",
+        );
+
+        let pin = ServerPin::new([7; 32]);
+        assert_eq!(
+            TranscriptionBackend::load(&file, &test_home(), Some(pin.clone())),
+            TranscriptionBackend::Server(Some(pin))
+        );
+        let models = loaded_models(&file, Path::new("/missing-home"));
+        assert!(models.iter().any(|model| model.section == Section::Stt
+            && model.engine == Some(backend::WHISPER)
+            && model.path == Path::new("/models/whisper")));
     }
 
     #[test]
     fn listen_runs_locally_while_dictation_uses_a_server() {
-        let server = "[stt]\nbackend = \"server\"\nserver = \"https://example.test\"\n";
+        let server = "[stt]\nbackend = \"moonshine\"\nruns_on = \"server\"\n";
         let engine = |text: &str| {
             ListenConfig::load(&file(text), &test_home())
                 .unwrap()
@@ -366,7 +366,7 @@ mod tests {
     fn llm_cleanup_requires_cleanup_and_preserves_settings() {
         let home_dir = test_home();
         assert!(
-            DictationConfig::load(&file(""), &home_dir)
+            DictationConfig::load(&file(""), &home_dir, None)
                 .cleanup_llm
                 .is_none()
         );
@@ -374,6 +374,7 @@ mod tests {
         let config = DictationConfig::load(
             &file(&format!("[dictation]\ncleanup = true\n{llm}")),
             &home_dir,
+            None,
         );
         assert_eq!(
             config.cleanup_llm,
@@ -386,7 +387,7 @@ mod tests {
 
     #[test]
     fn capture_defaults_to_the_microphone() {
-        let capture = DictationConfig::load(&file(""), &test_home()).capture;
+        let capture = DictationConfig::load(&file(""), &test_home(), None).capture;
         assert_eq!(capture, CaptureConfig::Microphone);
     }
 
@@ -394,7 +395,7 @@ mod tests {
     fn capture_resolves_a_wav_file_backend() {
         let file = file("[capture]\nbackend = \"wav_file\"\npath = \"~/fixture.wav\"\n");
         assert_eq!(
-            DictationConfig::load(&file, &test_home()).capture,
+            DictationConfig::load(&file, &test_home(), None).capture,
             CaptureConfig::WavFile {
                 path: PathBuf::from("/home/user/fixture.wav"),
                 pace: ReplayPace::Immediate,
@@ -408,7 +409,7 @@ mod tests {
             "[capture]\nbackend = \"wav_file\"\npath = \"/fixture.wav\"\npace = \"realtime\"\n",
         );
         assert!(matches!(
-            DictationConfig::load(&file, &test_home()).capture,
+            DictationConfig::load(&file, &test_home(), None).capture,
             CaptureConfig::WavFile {
                 pace: ReplayPace::Realtime,
                 ..
@@ -481,7 +482,7 @@ mod tests {
     fn transcription_resolves_a_parakeet_model_directory() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n");
         assert_eq!(
-            TranscriptionBackend::load(&file, &test_home()),
+            TranscriptionBackend::load(&file, &test_home(), None),
             TranscriptionBackend::Local(TranscriptionConfig::Parakeet {
                 model_directory: PathBuf::from("/home/user/models/tdt"),
                 device: TranscriptionDevice::Cpu,
@@ -496,7 +497,7 @@ mod tests {
              model = \"mlx-community/whisper\"\n",
         );
         assert_eq!(
-            TranscriptionBackend::load(&file, &test_home()),
+            TranscriptionBackend::load(&file, &test_home(), None),
             TranscriptionBackend::Local(TranscriptionConfig::ParakeetMlx {
                 model: "mlx-community/whisper".to_owned(),
                 interpreter: PathBuf::from("/home/user/py"),
@@ -732,8 +733,8 @@ mod tests {
         let home_dir = home.to_path_buf();
 
         assert_eq!(
-            DictationConfig::load(&defaults, &home_dir),
-            DictationConfig::load(&empty, &home_dir)
+            DictationConfig::load(&defaults, &home_dir, None),
+            DictationConfig::load(&empty, &home_dir, None)
         );
         assert_eq!(
             TtsConfig::load(&defaults, &home_dir),

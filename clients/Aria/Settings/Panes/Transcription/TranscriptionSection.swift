@@ -3,7 +3,6 @@ import SwiftUI
 struct TranscriptionSection: View {
     private static let rowTitle = "Transcribe on your server"
 
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject var server: ServerTranscription
     @ObservedObject var setup: SetupStatus
     @EnvironmentObject private var runner: SetupRunner
@@ -13,14 +12,6 @@ struct TranscriptionSection: View {
     var body: some View {
         Section {
             serverRow
-            if server.notice == .needsSetup {
-                LabeledContent {
-                    Button("Aria Setup…") { openWindow(id: WindowID.setup) }
-                } label: {
-                    Text("Speech model")
-                    Text("No speech model is on your Mac yet.")
-                }
-            }
         } footer: {
             footer
         }
@@ -43,8 +34,8 @@ struct TranscriptionSection: View {
 
     private var usesServer: Binding<Bool> {
         Binding(
-            get: { setup.transcription == .server },
-            set: { isOn in Task { await server.use(isOn ? .server : .thisMac) } }
+            get: { setup.transcriptionRunsOn == .server },
+            set: { isOn in Task { await server.use(isOn ? .server : .local) } }
         )
     }
 
@@ -56,7 +47,7 @@ struct TranscriptionSection: View {
                     server.beginPairing()
                     isPairing = true
                 }
-                .disabled(server.isBusy)
+                .disabled(server.isBusy || runner.isRunning)
             }
         } else {
             LabeledContent {
@@ -64,12 +55,12 @@ struct TranscriptionSection: View {
                     if setup.server != nil {
                         Button("Forget…", role: .destructive) { isConfirmingForget = true }
                             .disabled(!server.canForget || runner.isRunning)
-                            .help(setup.transcription == .server ? "Turn off \(Self.rowTitle) first." : "")
+                            .help(setup.transcriptionRunsOn == .server ? "Turn off \(Self.rowTitle) first." : "")
                     }
                     Toggle(Self.rowTitle, isOn: usesServer)
                         .labelsHidden()
                         .toggleStyle(.switch)
-                        .disabled(!server.canChooseLocation || runner.isRunning)
+                        .disabled(!server.canChooseRunsOn || runner.isRunning)
                 }
             } label: {
                 Text(Self.rowTitle)
@@ -82,18 +73,34 @@ struct TranscriptionSection: View {
 
     @ViewBuilder
     private var footer: some View {
-        if server.isBusy {
+        if case .downloading(let transfer) = server.progress {
+            VStack(alignment: .leading) {
+                HStack {
+                    if let transfer {
+                        Text(
+                            "Downloading the speech model… \(SetupState.size(transfer.received)) of \(SetupState.size(transfer.total))"
+                        )
+                        .monospacedDigit()
+                    } else {
+                        Text("Downloading the speech model…")
+                    }
+                    Spacer()
+                    Button("Cancel") { server.cancel() }
+                }
+                if let transfer {
+                    ProgressView(value: transfer.fraction)
+                        .accessibilityLabel("Downloading the speech model")
+                }
+            }
+        } else if server.isBusy {
             HStack {
                 ProgressView().controlSize(.small)
                 Text("Updating Aria…")
             }
+        } else if let failure = server.failure {
+            Text(failure).foregroundStyle(.failure)
         } else {
-            switch server.notice {
-            case .failed(let message):
-                Text(message).foregroundStyle(.failure)
-            case .needsSetup, nil:
-                Text("Recordings stay on your Mac unless you pair a server and turn this on.")
-            }
+            Text("Recordings stay on your Mac unless you pair a server and turn this on.")
         }
     }
 }
@@ -104,6 +111,7 @@ private struct PairServerSheet: View {
 
     @ObservedObject var server: ServerTranscription
     @Binding var isPresented: Bool
+    @EnvironmentObject private var runner: SetupRunner
 
     var body: some View {
         VStack(spacing: SettingsMetrics.sheetSpacing) {
@@ -135,7 +143,7 @@ private struct PairServerSheet: View {
                 if case .confirming(let invitation, _) = server.pairingStep {
                     Button("Pair") { Task { await pair(invitation) } }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(server.isBusy)
+                        .disabled(server.isBusy || runner.isRunning)
                 } else {
                     Button("Paste Invitation") { server.paste(NSPasteboard.general.string(forType: .string) ?? "") }
                         .keyboardShortcut(.defaultAction)

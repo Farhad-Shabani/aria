@@ -2,10 +2,11 @@
 
 // Setup as `aria::setup` exposes it: look at what the machine has, then
 // put the chosen pieces in place. Aria.app speaks it over the stdio of
-// the hidden `aria setup inspect`, `aria setup apply` and
-// `aria setup set-transcription-engine`, one message per length-delimited
-// frame. Apply runs the whole of setup; setting the transcription engine
-// changes that engine alone.
+// the hidden `aria setup inspect`, `aria setup apply`,
+// `aria setup set-transcription-engine` and
+// `aria setup set-transcription-runs-on`, one message per length-delimited
+// frame. Apply runs the whole of setup; the two setters each change one
+// choice alone.
 //
 // Recording a voice and the test press are not here: they are ordinary
 // daemon RPCs (SpeakerService, DictationService, SpeechService), and the
@@ -32,9 +33,19 @@ message Inspection {
   repeated Missing missing = 11;
   // Unset when nothing is paired.
   PairedServer server = 12;
+  // On the server, the local engine stays configured for the way back.
+  RunsOn transcription_runs_on = 13;
 }
 
-// Choosing the server engine writes this endpoint to the settings file.
+// Where a model runs: on this machine, or on the paired server.
+enum RunsOn {
+  RUNS_ON_UNSPECIFIED = 0;
+  RUNS_ON_LOCAL = 1;
+  // The server `Inspection.server` names.
+  RUNS_ON_SERVER = 2;
+}
+
+// The server the pairing pins. Transcription on the server reaches only it.
 message PairedServer {
   string endpoint = 1;
   // Hex, the form `aria remote revoke` takes on the server.
@@ -66,8 +77,6 @@ enum ModelSource {
   // The engine fetches it itself, so setup cannot tell its size.
   MODEL_SOURCE_FETCHED_ON_FIRST_USE = 2;
   MODEL_SOURCE_BUILT_IN = 3;
-  // A paired inference server holds the model; nothing lands on this machine.
-  MODEL_SOURCE_REMOTE = 4;
 }
 
 enum Availability {
@@ -210,6 +219,27 @@ message SetTranscriptionEngineResponse {
 }
 
 message SetTranscriptionEngineSummary {
+  SettingsWrite settings = 1;
+  repeated ModelOutcome models = 2;
+}
+
+// Sets where dictation transcribes. Going to the server needs a pairing.
+// Coming back first fetches the local engine's missing models. Only
+// `stt.runs_on` changes, and nothing restarts.
+message SetTranscriptionRunsOnRequest {
+  RunsOn runs_on = 1;
+}
+
+// Events until the change ends, then exactly one summary. STEP_MODELS starts
+// only when it fetches something; STEP_SETTINGS starts the write.
+message SetTranscriptionRunsOnResponse {
+  oneof body {
+    SetupEvent event = 1;
+    SetTranscriptionRunsOnSummary summary = 2;
+  }
+}
+
+message SetTranscriptionRunsOnSummary {
   SettingsWrite settings = 1;
   repeated ModelOutcome models = 2;
 }

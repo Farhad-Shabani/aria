@@ -168,7 +168,7 @@ fn snapshot_of(loaded: &Loaded) -> Result<SettingsSnapshot, StoreError> {
     Ok(SettingsSnapshot {
         revision: loaded.revision.get(),
         settings: Settings::from_file(&loaded.settings)?,
-        streaming_unavailable: StreamingSupport::of(&loaded.settings.choices().stt),
+        streaming_unavailable: StreamingSupport::of(loaded.settings.choices()),
     })
 }
 

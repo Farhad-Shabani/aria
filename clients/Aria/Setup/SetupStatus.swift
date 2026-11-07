@@ -3,9 +3,21 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupStatus")
 
-enum TranscriptionLocation: Equatable {
-    case thisMac
+enum RunsOn: Equatable {
+    case local
     case server
+
+    /// An unknown value reads as local, where the settings start.
+    init(_ wire: Aria_Setup_V1_RunsOn) {
+        self = wire == .server ? .server : .local
+    }
+
+    var wire: Aria_Setup_V1_RunsOn {
+        switch self {
+        case .local: .local
+        case .server: .server
+        }
+    }
 }
 
 /// The last setup inspection, as Settings shows it.
@@ -16,7 +28,7 @@ final class SetupStatus: ObservableObject {
     /// voice setup, and enrolling reports a missing model itself.
     @Published private(set) var hasSpeakerModelOnDisk = true
     @Published private(set) var server: Aria_Setup_V1_PairedServer?
-    @Published private(set) var transcription = TranscriptionLocation.thisMac
+    @Published private(set) var transcriptionRunsOn = RunsOn.local
     @Published private(set) var speechModels = SpeechModels()
     @Published private(set) var downloadedModels = DownloadedModels()
 
@@ -34,7 +46,7 @@ final class SetupStatus: ObservableObject {
         items = SetupItem.items(in: inspection)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
-        transcription = inspection.defaults.transcriptionEngineID == Self.serverEngine ? .server : .thisMac
+        transcriptionRunsOn = RunsOn(inspection.transcriptionRunsOn)
         speechModels = SpeechModels(inspection)
         downloadedModels = DownloadedModels(inspection)
     }
@@ -57,8 +69,6 @@ final class SetupStatus: ObservableObject {
             return false
         }
     }
-
-    nonisolated static let serverEngine = "server"
 
     /// Setup's name for the embedding model an enrollment needs.
     static let speakerModel = "speaker"

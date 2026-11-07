@@ -27,7 +27,7 @@ final class SetupStatusTests: XCTestCase {
 
     func testASettingsGapIsAnItemOnlyForAServerNobodyPaired() {
         var inspection = SetupStateTests.freshMac()
-        inspection.defaults.transcriptionEngineID = SetupStatus.serverEngine
+        inspection.transcriptionRunsOn = .server
         inspection.missing = [Self.missing(.settings)]
 
         XCTAssertEqual(SetupItem.items(in: inspection), [.server])
@@ -37,7 +37,7 @@ final class SetupStatusTests: XCTestCase {
 
     func testAnInspectionStartedBeforeAChangeDoesNotLandOverIt() async {
         var onServer = SetupStateTests.freshMac()
-        onServer.defaults.transcriptionEngineID = SetupStatus.serverEngine
+        onServer.transcriptionRunsOn = .server
         let gate = Gate()
         let status = SetupStatus { [onThisMac = SetupStateTests.freshMac()] in
             await gate.wait()
@@ -50,7 +50,7 @@ final class SetupStatusTests: XCTestCase {
         gate.open()
         await stale.value
 
-        XCTAssertEqual(status.transcription, .server)
+        XCTAssertEqual(status.transcriptionRunsOn, .server)
     }
 
     func testTheSpeakerModelCountsWhenCompleteOrExternal() {

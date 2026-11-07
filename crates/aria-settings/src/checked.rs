@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use aria_kit::synthesis::{SpeakingRate, Voice};
 
-use crate::config::{ServerEndpoint, backend, tts_backend, wake_backend};
-use crate::{CleanupTarget, SettingsError, SettingsFile};
+use crate::config::{backend, tts_backend, wake_backend};
+use crate::{CleanupTarget, RunsOn, SettingsError, SettingsFile};
 
 /// A settings file that passed every check, with the engine choices the
 /// check built.
@@ -39,7 +39,9 @@ impl Deref for CheckedSettings {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Choices {
+    /// The local engine, kept while the server transcribes.
     pub stt: SttChoice,
+    pub stt_runs_on: RunsOn,
     /// `None` while listen runs the stt engine.
     pub listen: Option<LocalStt>,
     pub tts: TtsEngine,
@@ -56,17 +58,16 @@ pub struct Choices {
 pub enum SttChoice {
     Local(LocalStt),
     ParakeetMlx { interpreter: PathBuf },
-    Server(ServerEndpoint),
 }
 
-impl SttChoice {
+impl Choices {
     /// Whether a dictation can type during recording. The server's own engine
     /// decides for itself, so it isn't held back here.
-    pub fn streams(&self) -> bool {
-        match self {
-            Self::Local(engine) => engine.streams(),
-            Self::ParakeetMlx { .. } => false,
-            Self::Server(_) => true,
+    pub fn stt_streams(&self) -> bool {
+        match (self.stt_runs_on, &self.stt) {
+            (RunsOn::Server, _) => true,
+            (RunsOn::Local, SttChoice::Local(engine)) => engine.streams(),
+            (RunsOn::Local, SttChoice::ParakeetMlx { .. }) => false,
         }
     }
 }

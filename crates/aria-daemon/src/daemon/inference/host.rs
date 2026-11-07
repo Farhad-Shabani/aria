@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tonic::service::interceptor::InterceptedService;
 
+use super::server_pin;
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -54,10 +55,10 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
         SettingsCache::open(aria_settings::default_path(&home), home.clone())
             .map_err(ConfigError::from)?,
     );
-    let serving = TranscriptionBackend::load(&cache.effective(), &home);
+    let serving = TranscriptionBackend::load(&cache.effective(), &home, server_pin(&home));
     let config = match serving.clone() {
         TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
-        TranscriptionBackend::Server { .. } => {
+        TranscriptionBackend::Server(_) => {
             return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
                 backend: aria_settings::config::backend::SERVER,
             }));
@@ -87,7 +88,7 @@ async fn warn_on_drift(cache: Arc<SettingsCache>, serving: TranscriptionBackend,
     let mut status = cache.status();
     let mut drifted = false;
     while status.changed().await.is_ok() {
-        let named = TranscriptionBackend::load(&cache.effective(), &home);
+        let named = TranscriptionBackend::load(&cache.effective(), &home, server_pin(&home));
         let now = named != serving;
         if now && !drifted {
             tracing::warn!(
@@ -538,14 +539,11 @@ pub(in crate::daemon) mod tests {
             .await
             .unwrap();
             self.client.remember(&self.invite).unwrap();
-            self.channel = tls::endpoint(
-                &self.client,
-                self.client.pinned_server(&self.invite.endpoint).unwrap(),
-            )
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
+            self.channel = tls::endpoint(&self.client, self.client.pinned_server().unwrap())
+                .unwrap()
+                .connect()
+                .await
+                .unwrap();
         }
 
         fn pin(&self) -> [u8; 32] {
@@ -565,10 +563,7 @@ pub(in crate::daemon) mod tests {
         pub(in crate::daemon) async fn paired_client(&self) -> PairedClient {
             let home = tempfile::tempdir().unwrap();
             self.pair_home(home.path().to_owned()).await;
-            PairedClient {
-                home,
-                endpoint: self.endpoint().to_owned(),
-            }
+            PairedClient { home }
         }
 
         /// Blocks the fake model until the guard drops.
@@ -586,7 +581,7 @@ pub(in crate::daemon) mod tests {
         pub(in crate::daemon) async fn pair_home(&self, home: PathBuf) {
             let invitation = serde_json::to_string(&self.invite).unwrap();
             tokio::task::spawn_blocking(move || {
-                super::super::pairing::pair_at(&home, &invitation).unwrap()
+                super::super::pairing::pin_server(&home, &invitation).unwrap()
             })
             .await
             .unwrap();
@@ -622,12 +617,11 @@ pub(in crate::daemon) mod tests {
 
     pub(in crate::daemon) struct PairedClient {
         pub(in crate::daemon) home: tempfile::TempDir,
-        endpoint: ServerEndpoint,
     }
 
     impl PairedClient {
         pub(in crate::daemon) fn transcriber(&self) -> super::super::client::RemoteTranscriber {
-            super::super::client::RemoteTranscriber::open(self.home.path(), &self.endpoint).unwrap()
+            super::super::client::RemoteTranscriber::open(self.home.path()).unwrap()
         }
     }
 
@@ -703,11 +697,8 @@ pub(in crate::daemon) mod tests {
             .unwrap();
         legitimate.remember(&invitation).unwrap();
 
-        let endpoint = tls::endpoint(
-            &fixture.client,
-            fixture.client.pinned_server(fixture.endpoint()).unwrap(),
-        )
-        .unwrap();
+        let endpoint =
+            tls::endpoint(&fixture.client, fixture.client.pinned_server().unwrap()).unwrap();
         let mut held = vec![fixture.channel.clone()];
         for _ in 1..connections::MAX_CONNECTIONS_PER_PEER {
             let channel = endpoint.connect().await.unwrap();
@@ -716,11 +707,7 @@ pub(in crate::daemon) mod tests {
         }
         fixture.access.revoke(fixture.pin()).unwrap();
 
-        let endpoint = tls::endpoint(
-            &legitimate,
-            legitimate.pinned_server(fixture.endpoint()).unwrap(),
-        )
-        .unwrap();
+        let endpoint = tls::endpoint(&legitimate, legitimate.pinned_server().unwrap()).unwrap();
         let admitted = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if let Ok(channel) = endpoint.connect().await
@@ -1020,7 +1007,6 @@ pub(in crate::daemon) mod tests {
         .await;
         let home = fixture._directory.path().to_owned();
         fixture.pair_home(home.clone()).await;
-        let endpoint = fixture.endpoint().to_owned();
         tokio::task::spawn_blocking(move || {
             let fixture_audio = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../aria-wake/tests/fixtures/negative.wav");
@@ -1032,7 +1018,7 @@ pub(in crate::daemon) mod tests {
                 .transcribe_with(&mut recording, &Language::Automatic, &CancelToken::never())
                 .unwrap();
             let local_time = began.elapsed();
-            let client = RemoteTranscriber::open(&home, &endpoint)
+            let client = RemoteTranscriber::open(&home)
                 .unwrap()
                 .require_engine(name)
                 .unwrap();
