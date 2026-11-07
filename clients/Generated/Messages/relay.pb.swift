@@ -156,7 +156,15 @@ public nonisolated struct Aria_Daemon_V1_IssueInviteResponse: Sendable {
   /// SHA-256 of the relay certificate's DER bytes; the phone pins it.
   public var fingerprint: Data = Data()
 
-  public var expiresInMs: UInt32 = 0
+  /// How long the code has left when the Mac sends it.
+  public var expiresIn: SwiftProtobuf.Google_Protobuf_Duration {
+    get {_expiresIn ?? SwiftProtobuf.Google_Protobuf_Duration()}
+    set {_expiresIn = newValue}
+  }
+  /// Returns true if `expiresIn` has been explicitly set.
+  public var hasExpiresIn: Bool {self._expiresIn != nil}
+  /// Clears the value of `expiresIn`. Subsequent reads from it will return its default value.
+  public mutating func clearExpiresIn() {self._expiresIn = nil}
 
   /// Phones paired since the daemon started. If it rises between polls, a
   /// phone paired. If it falls, the daemon restarted.
@@ -165,6 +173,8 @@ public nonisolated struct Aria_Daemon_V1_IssueInviteResponse: Sendable {
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _expiresIn: SwiftProtobuf.Google_Protobuf_Duration? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_RelayRequest: Sendable {
@@ -343,7 +353,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteRequest: SwiftProtobuf.Message, 
 
 nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".IssueInviteResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}instance_name\0\u{1}code\0\u{1}fingerprint\0\u{3}expires_in_ms\0\u{3}pairing_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}instance_name\0\u{1}code\0\u{1}fingerprint\0\u{3}expires_in\0\u{3}pairing_count\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -354,7 +364,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
       case 1: try { try decoder.decodeSingularStringField(value: &self.instanceName) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.code) }()
       case 3: try { try decoder.decodeSingularBytesField(value: &self.fingerprint) }()
-      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.expiresInMs) }()
+      case 4: try { try decoder.decodeSingularMessageField(value: &self._expiresIn) }()
       case 5: try { try decoder.decodeSingularUInt64Field(value: &self.pairingCount) }()
       default: break
       }
@@ -362,6 +372,10 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.instanceName.isEmpty {
       try visitor.visitSingularStringField(value: self.instanceName, fieldNumber: 1)
     }
@@ -371,9 +385,9 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
     if !self.fingerprint.isEmpty {
       try visitor.visitSingularBytesField(value: self.fingerprint, fieldNumber: 3)
     }
-    if self.expiresInMs != 0 {
-      try visitor.visitSingularUInt32Field(value: self.expiresInMs, fieldNumber: 4)
-    }
+    try { if let v = self._expiresIn {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    } }()
     if self.pairingCount != 0 {
       try visitor.visitSingularUInt64Field(value: self.pairingCount, fieldNumber: 5)
     }
@@ -384,7 +398,7 @@ nonisolated extension Aria_Daemon_V1_IssueInviteResponse: SwiftProtobuf.Message,
     if lhs.instanceName != rhs.instanceName {return false}
     if lhs.code != rhs.code {return false}
     if lhs.fingerprint != rhs.fingerprint {return false}
-    if lhs.expiresInMs != rhs.expiresInMs {return false}
+    if lhs._expiresIn != rhs._expiresIn {return false}
     if lhs.pairingCount != rhs.pairingCount {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

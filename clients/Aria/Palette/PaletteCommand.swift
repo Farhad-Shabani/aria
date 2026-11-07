@@ -1,0 +1,59 @@
+/// One row on the palette's commands page.
+struct PaletteCommand: Equatable, Identifiable {
+    enum Action: Equatable {
+        case showLiveTranscript
+        case startTranscription
+        case startDictation
+        case startAsk
+        case runPrompt(id: String)
+        case openSettings
+        case showHistory(HistorySection)
+        case clearHistory
+        case newPrompt
+        /// Instructions typed or spoken for one run on the prompt input.
+        case runOneOff(String)
+    }
+
+    let id: String
+    let title: String
+    let symbol: String
+    /// The digit key that runs it while nothing is typed. Only the first nine
+    /// prompts have one.
+    let number: Int?
+    let chord: Chord?
+    /// A key that runs it from the commands page, whatever is typed.
+    var key: PaletteKey?
+    let action: Action
+
+    static let liveTranscript = PaletteCommand(
+        id: "live-transcript", title: "Mac Audio", symbol: "waveform", number: nil, chord: nil,
+        action: .showLiveTranscript)
+    static let newTranscription = PaletteCommand(
+        id: "new-transcription", title: "New Transcription", symbol: "waveform", number: nil, chord: nil,
+        action: .startTranscription)
+    static let newDictation = PaletteCommand(
+        id: "new-dictation", title: "New Dictation", symbol: "mic", number: nil, chord: nil,
+        action: .startDictation)
+    static let newAsk = PaletteCommand(
+        id: "new-ask", title: "New Ask", symbol: "bubble.left", number: nil, chord: nil, action: .startAsk)
+    static func history(_ section: HistorySection) -> PaletteCommand {
+        PaletteCommand(
+            id: "history-\(section)", title: section.historyTitle, symbol: section.symbol, number: nil, chord: nil,
+            action: .showHistory(section))
+    }
+    /// No key: clearing everything takes typing its name and confirming.
+    static let clearHistory = PaletteCommand(
+        id: "clear-history", title: "Clear All History…", symbol: "trash", number: nil, chord: nil,
+        action: .clearHistory)
+    static let newPrompt = PaletteCommand(
+        id: "new-prompt", title: "New Prompt…", symbol: "square.and.pencil", number: nil, chord: nil,
+        action: .newPrompt)
+    static func oneOff(_ instructions: String) -> PaletteCommand {
+        PaletteCommand(
+            id: "one-off", title: "Run “\(instructions)”", symbol: "sparkles", number: nil, chord: nil,
+            action: .runOneOff(instructions))
+    }
+    static let settings = PaletteCommand(
+        id: "settings", title: "Settings…", symbol: "gearshape", number: nil, chord: nil,
+        key: .settings, action: .openSettings)
+}

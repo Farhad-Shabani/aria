@@ -7,8 +7,10 @@ struct PrivacySettings: View {
         SettingsForm(settings: settings) { editor in
             Section("History") {
                 Toggle(isOn: editor.binding(\.historyEnabled, \.historyEnabled)) {
-                    Text("Save dictation history")
-                    Text("Text is kept on your Mac for up to 30 days.")
+                    Text("Save history")
+                    Text(
+                        "Dictations, Mac Audio sessions, and asks with their replies stay on your Mac for up to 30 days."
+                    )
                 }
                 Toggle(isOn: editor.binding(\.historyKeepAudio, \.historyKeepAudio)) {
                     Text("Keep audio for 24 hours")

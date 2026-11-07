@@ -1,10 +1,11 @@
 enum HistoryFailure: Error, Equatable {
     case offline, storage, missing, audioUnavailable, projectUnavailable, tooLarge, busy, cancelled,
-        timeout, queryTooLong, unsupported, clearUncertain, failed
+        timeout, queryTooLong, nameTooLong, tooLongToType, copyFailed, unsupported, clearUncertain, failed
 
     init(_ failure: DaemonFailure) {
         self =
             switch failure {
+            case _ where failure.isOffline: .offline
             case .refused(.historyUnavailable): .storage
             case .refused(.historyMissing): .missing
             case .refused(.historyAudioUnavailable): .audioUnavailable
@@ -12,20 +13,18 @@ enum HistoryFailure: Error, Equatable {
             case .refused(.historyProjectUnavailable): .projectUnavailable
             case .refused(.busy): .busy
             case .refused(.cancelled): .cancelled
-            case .refused(.shuttingDown): .offline
-            case .unavailable: .offline
             case .timeout: .timeout
             case .cancelled: .cancelled
             case .unimplemented: .unsupported
-            case .refused, .other, .invalidResponse: .failed
+            case .refused, .unavailable, .other, .invalidResponse: .failed
             }
     }
 
     var message: String {
         switch self {
-        case .offline: "Aria isn’t running. Turn it on in the menu bar, then try again."
-        case .storage: "Aria can’t open your dictation history. Try again later."
-        case .missing: "This dictation is no longer available. Refresh history."
+        case .offline: DaemonFailure.offlineMessage
+        case .storage: "Aria can’t open your history. Try again later."
+        case .missing: "This entry is no longer in history."
         case .audioUnavailable: "The recording is gone, so Aria can’t transcribe it again."
         case .projectUnavailable: "This dictation’s project folder is missing. Restore it, then transcribe again."
         case .tooLarge: "The transcript is too large for history to store."
@@ -33,7 +32,10 @@ enum HistoryFailure: Error, Equatable {
         case .cancelled: "Transcribing again was canceled."
         case .timeout: "Aria took too long to respond. Try again."
         case .queryTooLong: "Use a shorter search."
-        case .unsupported: "Update and restart Aria to clear dictation history."
+        case .nameTooLong: "Use a shorter name."
+        case .tooLongToType: "This is too long to type. Copy it instead."
+        case .copyFailed: "Aria couldn’t copy the text. Try again."
+        case .unsupported: "Update and restart Aria to clear history."
         case .clearUncertain: "Aria couldn’t confirm that history was cleared. Refresh history, then try again."
         case .failed: "Something went wrong. Try again."
         }

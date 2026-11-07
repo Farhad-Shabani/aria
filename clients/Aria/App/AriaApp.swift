@@ -4,7 +4,6 @@ import SwiftUI
 struct AriaApp: App {
     private static let userGuide = "https://ariacue.pages.dev/user-guide/"
 
-    @Environment(\.openWindow) private var openWindow
     @StateObject private var poller = StatusPoller(
         client: DaemonProcess()
     )
@@ -47,12 +46,6 @@ struct AriaApp: App {
                 Divider()
                 VStack(spacing: 2) {
                     Button {
-                        openWindow(id: WindowID.dictationHistory)
-                        NSApplication.shared.activate()
-                    } label: {
-                        Text("Dictation History")
-                    }
-                    Button {
                         appDelegate.settings.request()
                     } label: {
                         HStack {
@@ -94,38 +87,6 @@ struct AriaApp: App {
             )
         }
         .menuBarExtraStyle(.window)
-
-        // A Window, not a Settings scene: only a Window takes the unified
-        // toolbar that puts Back and Forward beside the sidebar.
-        Window("Aria Settings", id: WindowID.settings) {
-            SettingsView(
-                settings: settings,
-                poller: poller,
-                updates: appDelegate.updates,
-                promptHotkeys: appDelegate.promptHotkeys,
-                askChord: appDelegate.askShortcut.chord,
-                promptListChord: appDelegate.promptList.chord,
-                setupStatus: appDelegate.setupStatus,
-                modelDownload: appDelegate.modelDownload,
-                transcriptionEngineChange: appDelegate.transcriptionEngineChange,
-                setupState: appDelegate.setupState,
-                voices: appDelegate.voices,
-                serverTranscription: appDelegate.serverTranscription,
-                settingsHealth: appDelegate.settingsHealth,
-                paneRequest: appDelegate.settingsPaneRequest
-            )
-            .environmentObject(appDelegate.setupRunner)
-        }
-        .sidebarWindowScene()
-        .commandsRemoved()
-
-        Window("Dictation History", id: WindowID.dictationHistory) {
-            DictationHistoryView(state: appDelegate.history)
-        }
-        .defaultLaunchBehavior(.suppressed)
-        .restorationBehavior(.disabled)
-        .defaultSize(width: 800, height: 520)
-        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Aria") {
@@ -159,6 +120,30 @@ struct AriaApp: App {
                 }
             }
         }
+
+        // A Window, not a Settings scene: only a Window takes the unified
+        // toolbar that puts Back and Forward beside the sidebar.
+        Window("Aria Settings", id: WindowID.settings) {
+            SettingsView(
+                settings: settings,
+                poller: poller,
+                updates: appDelegate.updates,
+                promptHotkeys: appDelegate.promptHotkeys,
+                askChord: appDelegate.askShortcut.chord,
+                paletteChord: appDelegate.palette.chord,
+                setupStatus: appDelegate.setupStatus,
+                modelDownload: appDelegate.modelDownload,
+                transcriptionEngineChange: appDelegate.transcriptionEngineChange,
+                setupState: appDelegate.setupState,
+                voices: appDelegate.voices,
+                serverTranscription: appDelegate.serverTranscription,
+                settingsHealth: appDelegate.settingsHealth,
+                paneRequest: appDelegate.settingsPaneRequest
+            )
+            .environmentObject(appDelegate.setupRunner)
+        }
+        .sidebarWindowScene()
+        .commandsRemoved()
 
         Window("Aria Setup", id: WindowID.setup) {
             SetupView(state: appDelegate.setupState, settings: settings)
@@ -232,82 +217,6 @@ private struct FinishSetupMenuItem: View {
                 }
             }
         }
-    }
-}
-
-private struct ListenStatusRow: View {
-    private static let iconSide: CGFloat = 26
-    private static let stopSide: CGFloat = 24
-    private static let stopFailure = "Aria couldn’t stop transcribing. Try again."
-
-    @ObservedObject var status: ListenStatus
-
-    var body: some View {
-        if status.isRunning {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Image(systemName: "waveform")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: Self.iconSide, height: Self.iconSide)
-                        .background(.tint, in: Circle())
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Transcribing your Mac’s audio")
-                        Text("Saving to transcript file")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    stopControl.frame(width: Self.stopSide, height: Self.stopSide)
-                }
-                if status.didFailToStop {
-                    Text(Self.stopFailure)
-                        .font(.caption)
-                        .foregroundStyle(.failure)
-                }
-            }
-            .padding(.horizontal, 8)
-            .onChange(of: status.didFailToStop) { _, didFail in
-                guard didFail else { return }
-                NSAccessibility.post(
-                    element: NSApp as Any,
-                    notification: .announcementRequested,
-                    userInfo: [.announcement: Self.stopFailure]
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var stopControl: some View {
-        if status.isStopping {
-            ProgressView().controlSize(.small)
-        } else {
-            Button {
-                Task { await status.stop() }
-            } label: {
-                Image(systemName: "stop.fill").font(.caption)
-            }
-            .buttonStyle(MenuIconButtonStyle())
-            .help("Stop Transcribing")
-            .accessibilityLabel("Stop Transcribing")
-        }
-    }
-}
-
-private struct MenuIconButtonStyle: ButtonStyle {
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Circle())
-            .background {
-                Circle().fill(.primary.opacity(configuration.isPressed ? 0.12 : isHovered ? 0.06 : 0))
-            }
-            .onHover { isHovered = $0 }
     }
 }
 

@@ -8,7 +8,7 @@ struct SettingsView: View {
     let updates: UpdateController
     let promptHotkeys: PromptHotkeys
     let askChord: ChordBinding
-    let promptListChord: ChordBinding
+    let paletteChord: ChordBinding
     @ObservedObject var setupStatus: SetupStatus
     let modelDownload: ModelDownload
     let transcriptionEngineChange: TranscriptionEngineChange
@@ -132,7 +132,7 @@ struct SettingsView: View {
             ShortcutsSettings(
                 settings: settings,
                 askChord: askChord,
-                promptListChord: promptListChord,
+                paletteChord: paletteChord,
                 openPrompt: openPrompt
             )
         case .prompts:

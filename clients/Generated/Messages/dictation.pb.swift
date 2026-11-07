@@ -328,30 +328,38 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// Absent mode overrides use stored settings; explicit UNSPECIFIED is invalid.
-  public var outputMode: Aria_Daemon_V1_OutputMode {
-    get {_outputMode ?? .unspecified}
-    set {_outputMode = newValue}
-  }
-  /// Returns true if `outputMode` has been explicitly set.
-  public var hasOutputMode: Bool {self._outputMode != nil}
-  /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
-  public mutating func clearOutputMode() {self._outputMode = nil}
-
   /// Required: no stored setting applies, so UNSPECIFIED is invalid.
   public var stopMode: Aria_Daemon_V1_StopMode = .unspecified
 
-  public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
-    get {_deliveryMode ?? .unspecified}
-    set {_deliveryMode = newValue}
-  }
-  /// Returns true if `deliveryMode` has been explicitly set.
-  public var hasDeliveryMode: Bool {self._deliveryMode != nil}
-  /// Clears the value of `deliveryMode`. Subsequent reads from it will return its default value.
-  public mutating func clearDeliveryMode() {self._deliveryMode = nil}
+  /// Where the transcript goes besides back to the caller. Required.
+  public var route: Aria_Daemon_V1_StartDictationRequest.OneOf_Route? = nil
 
-  /// Hand the transcript back without delivering it anywhere.
-  public var transcriptOnly: Bool = false
+  /// Typed or copied, and saved to history when history is on.
+  public var deliver: Aria_Daemon_V1_DeliverRoute {
+    get {
+      if case .deliver(let v)? = route {return v}
+      return Aria_Daemon_V1_DeliverRoute()
+    }
+    set {route = .deliver(newValue)}
+  }
+
+  /// Handed back only: neither typed nor saved.
+  public var transcriptOnly: Aria_Daemon_V1_TranscriptOnlyRoute {
+    get {
+      if case .transcriptOnly(let v)? = route {return v}
+      return Aria_Daemon_V1_TranscriptOnlyRoute()
+    }
+    set {route = .transcriptOnly(newValue)}
+  }
+
+  /// Not typed, but saved to history when history is on.
+  public var historyOnly: Aria_Daemon_V1_HistoryOnlyRoute {
+    get {
+      if case .historyOnly(let v)? = route {return v}
+      return Aria_Daemon_V1_HistoryOnlyRoute()
+    }
+    set {route = .historyOnly(newValue)}
+  }
 
   /// Absent uses the daemon-selected project vocabulary.
   public var project: Aria_Daemon_V1_StartDictationRequest.OneOf_Project? = nil
@@ -374,6 +382,17 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
+  /// Where the transcript goes besides back to the caller. Required.
+  public nonisolated enum OneOf_Route: Equatable, Sendable {
+    /// Typed or copied, and saved to history when history is on.
+    case deliver(Aria_Daemon_V1_DeliverRoute)
+    /// Handed back only: neither typed nor saved.
+    case transcriptOnly(Aria_Daemon_V1_TranscriptOnlyRoute)
+    /// Not typed, but saved to history when history is on.
+    case historyOnly(Aria_Daemon_V1_HistoryOnlyRoute)
+
+  }
+
   /// Absent uses the daemon-selected project vocabulary.
   public nonisolated enum OneOf_Project: Equatable, Sendable {
     case projectDirectory(String)
@@ -382,12 +401,63 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   }
 
   public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_ProjectVocabularyDisabled: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// How the transcript is typed. Each absent mode comes from the app in front's
+/// overrides, else the settings. Explicit UNSPECIFIED is invalid.
+public nonisolated struct Aria_Daemon_V1_DeliverRoute: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var outputMode: Aria_Daemon_V1_OutputMode {
+    get {_outputMode ?? .unspecified}
+    set {_outputMode = newValue}
+  }
+  /// Returns true if `outputMode` has been explicitly set.
+  public var hasOutputMode: Bool {self._outputMode != nil}
+  /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
+  public mutating func clearOutputMode() {self._outputMode = nil}
+
+  public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
+    get {_deliveryMode ?? .unspecified}
+    set {_deliveryMode = newValue}
+  }
+  /// Returns true if `deliveryMode` has been explicitly set.
+  public var hasDeliveryMode: Bool {self._deliveryMode != nil}
+  /// Clears the value of `deliveryMode`. Subsequent reads from it will return its default value.
+  public mutating func clearDeliveryMode() {self._deliveryMode = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 
   fileprivate var _outputMode: Aria_Daemon_V1_OutputMode? = nil
   fileprivate var _deliveryMode: Aria_Daemon_V1_DeliveryMode? = nil
 }
 
-public nonisolated struct Aria_Daemon_V1_ProjectVocabularyDisabled: Sendable {
+/// A transcript that isn't typed is never streamed.
+public nonisolated struct Aria_Daemon_V1_TranscriptOnlyRoute: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_HistoryOnlyRoute: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -690,7 +760,7 @@ nonisolated extension Aria_Daemon_V1_DeliveryMode: SwiftProtobuf._ProtoNameProvi
 
 nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartDictationRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{3}stop_mode\0\u{3}delivery_mode\0\u{3}transcript_only\0\u{3}project_directory\0\u{3}project_vocabulary_disabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{2}stop_mode\0\u{4}\u{3}project_directory\0\u{3}project_vocabulary_disabled\0\u{2}\u{3}deliver\0\u{3}transcript_only\0\u{3}history_only\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -698,10 +768,7 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularEnumField(value: &self._outputMode) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.stopMode) }()
-      case 3: try { try decoder.decodeSingularEnumField(value: &self._deliveryMode) }()
-      case 4: try { try decoder.decodeSingularBoolField(value: &self.transcriptOnly) }()
       case 5: try {
         var v: String?
         try decoder.decodeSingularStringField(value: &v)
@@ -723,6 +790,45 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
           self.project = .projectVocabularyDisabled(v)
         }
       }()
+      case 9: try {
+        var v: Aria_Daemon_V1_DeliverRoute?
+        var hadOneofValue = false
+        if let current = self.route {
+          hadOneofValue = true
+          if case .deliver(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.route = .deliver(v)
+        }
+      }()
+      case 10: try {
+        var v: Aria_Daemon_V1_TranscriptOnlyRoute?
+        var hadOneofValue = false
+        if let current = self.route {
+          hadOneofValue = true
+          if case .transcriptOnly(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.route = .transcriptOnly(v)
+        }
+      }()
+      case 11: try {
+        var v: Aria_Daemon_V1_HistoryOnlyRoute?
+        var hadOneofValue = false
+        if let current = self.route {
+          hadOneofValue = true
+          if case .historyOnly(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.route = .historyOnly(v)
+        }
+      }()
       default: break
       }
     }
@@ -733,17 +839,8 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
     // allocates stack space for every if/case branch local when no optimizations
     // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
     // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._outputMode {
-      try visitor.visitSingularEnumField(value: v, fieldNumber: 1)
-    } }()
     if self.stopMode != .unspecified {
       try visitor.visitSingularEnumField(value: self.stopMode, fieldNumber: 2)
-    }
-    try { if let v = self._deliveryMode {
-      try visitor.visitSingularEnumField(value: v, fieldNumber: 3)
-    } }()
-    if self.transcriptOnly != false {
-      try visitor.visitSingularBoolField(value: self.transcriptOnly, fieldNumber: 4)
     }
     switch self.project {
     case .projectDirectory?: try {
@@ -756,14 +853,27 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
     }()
     case nil: break
     }
+    switch self.route {
+    case .deliver?: try {
+      guard case .deliver(let v)? = self.route else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    }()
+    case .transcriptOnly?: try {
+      guard case .transcriptOnly(let v)? = self.route else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+    }()
+    case .historyOnly?: try {
+      guard case .historyOnly(let v)? = self.route else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case nil: break
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_StartDictationRequest, rhs: Aria_Daemon_V1_StartDictationRequest) -> Bool {
-    if lhs._outputMode != rhs._outputMode {return false}
     if lhs.stopMode != rhs.stopMode {return false}
-    if lhs._deliveryMode != rhs._deliveryMode {return false}
-    if lhs.transcriptOnly != rhs.transcriptOnly {return false}
+    if lhs.route != rhs.route {return false}
     if lhs.project != rhs.project {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -784,6 +894,83 @@ nonisolated extension Aria_Daemon_V1_ProjectVocabularyDisabled: SwiftProtobuf.Me
   }
 
   public static func ==(lhs: Aria_Daemon_V1_ProjectVocabularyDisabled, rhs: Aria_Daemon_V1_ProjectVocabularyDisabled) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_DeliverRoute: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeliverRoute"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{3}delivery_mode\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self._outputMode) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self._deliveryMode) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._outputMode {
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._deliveryMode {
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_DeliverRoute, rhs: Aria_Daemon_V1_DeliverRoute) -> Bool {
+    if lhs._outputMode != rhs._outputMode {return false}
+    if lhs._deliveryMode != rhs._deliveryMode {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_TranscriptOnlyRoute: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TranscriptOnlyRoute"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_TranscriptOnlyRoute, rhs: Aria_Daemon_V1_TranscriptOnlyRoute) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_HistoryOnlyRoute: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".HistoryOnlyRoute"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_HistoryOnlyRoute, rhs: Aria_Daemon_V1_HistoryOnlyRoute) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

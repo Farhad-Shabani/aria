@@ -100,6 +100,58 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "SavePrompt" metadata.
+        public enum SavePrompt: Sendable {
+            /// Request type for "SavePrompt".
+            public typealias Input = Aria_Daemon_V1_SavePromptRequest
+            /// Response type for "SavePrompt".
+            public typealias Output = Aria_Daemon_V1_SavePromptResponse
+            /// Descriptor for "SavePrompt".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "SavePrompt",
+                type: .unary
+            )
+        }
+        /// Namespace for "GetPrompt" metadata.
+        public enum GetPrompt: Sendable {
+            /// Request type for "GetPrompt".
+            public typealias Input = Aria_Daemon_V1_GetPromptRequest
+            /// Response type for "GetPrompt".
+            public typealias Output = Aria_Daemon_V1_GetPromptResponse
+            /// Descriptor for "GetPrompt".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "GetPrompt",
+                type: .unary
+            )
+        }
+        /// Namespace for "RemovePrompt" metadata.
+        public enum RemovePrompt: Sendable {
+            /// Request type for "RemovePrompt".
+            public typealias Input = Aria_Daemon_V1_RemovePromptRequest
+            /// Response type for "RemovePrompt".
+            public typealias Output = Aria_Daemon_V1_RemovePromptResponse
+            /// Descriptor for "RemovePrompt".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "RemovePrompt",
+                type: .unary
+            )
+        }
+        /// Namespace for "Deliver" metadata.
+        public enum Deliver: Sendable {
+            /// Request type for "Deliver".
+            public typealias Input = Aria_Daemon_V1_DeliverRequest
+            /// Response type for "Deliver".
+            public typealias Output = Aria_Daemon_V1_DeliverResponse
+            /// Descriptor for "Deliver".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "Deliver",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.ChatService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             ListAssistants.descriptor,
@@ -107,7 +159,11 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
             Ask.descriptor,
             Cancel.descriptor,
             Resolve.descriptor,
-            RunPrompt.descriptor
+            RunPrompt.descriptor,
+            SavePrompt.descriptor,
+            GetPrompt.descriptor,
+            RemovePrompt.descriptor,
+            Deliver.descriptor
         ]
     }
 }
@@ -245,10 +301,11 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Run a stored prompt on a transcript and type the result into the app the
-        /// > request names, else the one in front. One fresh assistant run with no
-        /// > conversation, memory, or tools. Progress and the outcome arrive as
-        /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+        /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
+        /// > into the app the request names, else the one in front. One fresh
+        /// > assistant run with no conversation, memory, or tools. Progress and the
+        /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
+        /// > `Cancel` stops it.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
@@ -265,6 +322,110 @@ extension Aria_Daemon_V1_ChatService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_AskResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_AskResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SavePrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Save a prompt: its file first, then its entry in the prompt list, so a
+        /// > failed write leaves the list as it was. The daemon rereads settings.toml and
+        /// > changes only this entry, so another client's edits to other prompts
+        /// > survive. A full list is PROMPTS_FULL, and a file that can't be
+        /// > written PROMPT_WRITE_FAILED. Served on the unix socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_SavePromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_SavePromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_SavePromptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func savePrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_SavePromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_SavePromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_SavePromptResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_SavePromptResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "GetPrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Read a prompt's instructions as a run reads them, for an editor to show.
+        /// > A file over 16 KiB, not UTF-8, or not a regular file is
+        /// > PROMPT_UNREADABLE. Served on the unix socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetPromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetPromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetPromptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getPrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetPromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetPromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetPromptResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetPromptResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RemovePrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Take a prompt off the list, rereading settings.toml first. Its file
+        /// > stays where it is. A missing ID is PROMPT_MISSING. Served on the unix
+        /// > socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RemovePromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RemovePromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RemovePromptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func removePrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RemovePromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RemovePromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RemovePromptResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RemovePromptResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Deliver" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Type text the caller already has, such as a prompt result it showed
+        /// > first, into the app the request names, else the one in front. Waits for
+        /// > an ask, prompt run, or other Deliver still typing, but never for an
+        /// > assistant's run. It answers once its own typing ends. A caller that
+        /// > goes away first cancels it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_DeliverRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_DeliverRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_DeliverResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func deliver<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_DeliverRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_DeliverRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_DeliverResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeliverResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -457,10 +618,11 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Run a stored prompt on a transcript and type the result into the app the
-        /// > request names, else the one in front. One fresh assistant run with no
-        /// > conversation, memory, or tools. Progress and the outcome arrive as
-        /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+        /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
+        /// > into the app the request names, else the one in front. One fresh
+        /// > assistant run with no conversation, memory, or tools. Progress and the
+        /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
+        /// > `Cancel` stops it.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
@@ -483,6 +645,154 @@ extension Aria_Daemon_V1_ChatService {
             try await self.client.unary(
                 request: request,
                 descriptor: Aria_Daemon_V1_ChatService.Method.RunPrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "SavePrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Save a prompt: its file first, then its entry in the prompt list, so a
+        /// > failed write leaves the list as it was. The daemon rereads settings.toml and
+        /// > changes only this entry, so another client's edits to other prompts
+        /// > survive. A full list is PROMPTS_FULL, and a file that can't be
+        /// > written PROMPT_WRITE_FAILED. Served on the unix socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_SavePromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_SavePromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_SavePromptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func savePrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_SavePromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_SavePromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_SavePromptResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_SavePromptResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.SavePrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "GetPrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Read a prompt's instructions as a run reads them, for an editor to show.
+        /// > A file over 16 KiB, not UTF-8, or not a regular file is
+        /// > PROMPT_UNREADABLE. Served on the unix socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetPromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetPromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetPromptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getPrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetPromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetPromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetPromptResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetPromptResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.GetPrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "RemovePrompt" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Take a prompt off the list, rereading settings.toml first. Its file
+        /// > stays where it is. A missing ID is PROMPT_MISSING. Served on the unix
+        /// > socket only.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RemovePromptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RemovePromptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RemovePromptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func removePrompt<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RemovePromptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RemovePromptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RemovePromptResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RemovePromptResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.RemovePrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Deliver" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Type text the caller already has, such as a prompt result it showed
+        /// > first, into the app the request names, else the one in front. Waits for
+        /// > an ask, prompt run, or other Deliver still typing, but never for an
+        /// > assistant's run. It answers once its own typing ends. A caller that
+        /// > goes away first cancels it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_DeliverRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_DeliverRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_DeliverResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func deliver<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_DeliverRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_DeliverRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_DeliverResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeliverResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.Deliver.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -643,10 +953,11 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Run a stored prompt on a transcript and type the result into the app the
-    /// > request names, else the one in front. One fresh assistant run with no
-    /// > conversation, memory, or tools. Progress and the outcome arrive as
-    /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+    /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
+    /// > into the app the request names, else the one in front. One fresh
+    /// > assistant run with no conversation, memory, or tools. Progress and the
+    /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
+    /// > `Cancel` stops it.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
@@ -666,6 +977,134 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RunPromptRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_AskResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SavePrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Save a prompt: its file first, then its entry in the prompt list, so a
+    /// > failed write leaves the list as it was. The daemon rereads settings.toml and
+    /// > changes only this entry, so another client's edits to other prompts
+    /// > survive. A full list is PROMPTS_FULL, and a file that can't be
+    /// > written PROMPT_WRITE_FAILED. Served on the unix socket only.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_SavePromptRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func savePrompt<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_SavePromptRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_SavePromptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.savePrompt(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_SavePromptRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_SavePromptResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetPrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Read a prompt's instructions as a run reads them, for an editor to show.
+    /// > A file over 16 KiB, not UTF-8, or not a regular file is
+    /// > PROMPT_UNREADABLE. Served on the unix socket only.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_GetPromptRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getPrompt<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetPromptRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetPromptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getPrompt(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetPromptRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_GetPromptResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RemovePrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Take a prompt off the list, rereading settings.toml first. Its file
+    /// > stays where it is. A missing ID is PROMPT_MISSING. Served on the unix
+    /// > socket only.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_RemovePromptRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func removePrompt<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RemovePromptRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RemovePromptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.removePrompt(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RemovePromptRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_RemovePromptResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Deliver" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Type text the caller already has, such as a prompt result it showed
+    /// > first, into the app the request names, else the one in front. Waits for
+    /// > an ask, prompt run, or other Deliver still typing, but never for an
+    /// > assistant's run. It answers once its own typing ends. A caller that
+    /// > goes away first cancels it.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_DeliverRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func deliver<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_DeliverRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeliverResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.deliver(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_DeliverRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_DeliverResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -843,10 +1282,11 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Run a stored prompt on a transcript and type the result into the app the
-    /// > request names, else the one in front. One fresh assistant run with no
-    /// > conversation, memory, or tools. Progress and the outcome arrive as
-    /// > `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+    /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
+    /// > into the app the request names, else the one in front. One fresh
+    /// > assistant run with no conversation, memory, or tools. Progress and the
+    /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
+    /// > `Cancel` stops it.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -869,6 +1309,150 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
             metadata: metadata
         )
         return try await self.runPrompt(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SavePrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Save a prompt: its file first, then its entry in the prompt list, so a
+    /// > failed write leaves the list as it was. The daemon rereads settings.toml and
+    /// > changes only this entry, so another client's edits to other prompts
+    /// > survive. A full list is PROMPTS_FULL, and a file that can't be
+    /// > written PROMPT_WRITE_FAILED. Served on the unix socket only.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func savePrompt<Result>(
+        _ message: Aria_Daemon_V1_SavePromptRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_SavePromptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_SavePromptRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.savePrompt(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetPrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Read a prompt's instructions as a run reads them, for an editor to show.
+    /// > A file over 16 KiB, not UTF-8, or not a regular file is
+    /// > PROMPT_UNREADABLE. Served on the unix socket only.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getPrompt<Result>(
+        _ message: Aria_Daemon_V1_GetPromptRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetPromptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_GetPromptRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getPrompt(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RemovePrompt" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Take a prompt off the list, rereading settings.toml first. Its file
+    /// > stays where it is. A missing ID is PROMPT_MISSING. Served on the unix
+    /// > socket only.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func removePrompt<Result>(
+        _ message: Aria_Daemon_V1_RemovePromptRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RemovePromptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RemovePromptRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.removePrompt(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Deliver" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Type text the caller already has, such as a prompt result it showed
+    /// > first, into the app the request names, else the one in front. Waits for
+    /// > an ask, prompt run, or other Deliver still typing, but never for an
+    /// > assistant's run. It answers once its own typing ends. A caller that
+    /// > goes away first cancels it.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func deliver<Result>(
+        _ message: Aria_Daemon_V1_DeliverRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeliverResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_DeliverRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.deliver(
             request: request,
             options: options,
             onResponse: handleResponse

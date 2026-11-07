@@ -19,6 +19,11 @@ struct AsksInFlight: Equatable {
     var count: Int { asks.count }
     var oldest: Ask? { asks.min(by: { $0.key < $1.key })?.value }
 
+    /// Drops an ask that something else shows from here on.
+    mutating func forget(_ ticket: UInt64) {
+        asks[ticket] = nil
+    }
+
     /// `nil` is the stream going away, and every ask with it.
     mutating func apply(_ event: Aria_Daemon_V1_ChatEvent?, now: Date = Date()) {
         guard let event else {

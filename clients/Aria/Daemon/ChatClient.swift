@@ -124,10 +124,113 @@ enum ChatClient {
         request.promptID = promptID
         request.applicationID = application ?? ""
         request.tapCancels = true
+        request.outputMode = .insertOrCopy
         let sent = request
         return try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .runPrompt(request: ClientRequest(message: sent), options: options) { try $0.message.ticket }
+        }
+    }
+
+    /// Runs a prompt on a history entry and types nothing. The result comes back only as its
+    /// ticket's REPLIED event. The daemon saves it under the entry when history is on.
+    static func runPromptForReply(entry: UInt64, source: PromptSource) async throws -> UInt64 {
+        let sent = replyRequest(entry: entry, source: source)
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .runPrompt(request: ClientRequest(message: sent), options: options) { try $0.message.ticket }
+        }
+    }
+
+    /// With no output mode, the daemon types nothing.
+    static func replyRequest(entry: UInt64, source: PromptSource) -> Aria_Daemon_V1_RunPromptRequest {
+        var request = Aria_Daemon_V1_RunPromptRequest()
+        request.historyEntryID = entry
+        switch source {
+        case .stored(let id): request.promptID = id
+        case .oneOff(let instructions): request.instructions = instructions
+        }
+        return request
+    }
+
+    static func cancel(ticket: UInt64) async throws {
+        let sent = Aria_Daemon_V1_CancelAskRequest.with { $0.ticket = ticket }
+        _ = try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .cancel(request: ClientRequest(message: sent), options: options) { try $0.message.wasPending }
+        }
+    }
+
+    /// Writes a prompt's file when the request carries instructions, then its entry in the prompt list.
+    static func savePrompt(
+        _ request: Aria_Daemon_V1_SavePromptRequest
+    ) async throws -> Aria_Daemon_V1_SavePromptResponse {
+        let sent = request
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .savePrompt(request: ClientRequest(message: sent), options: options) { try $0.message }
+        }
+    }
+
+    /// Takes the prompt off the list. Its file stays where it is.
+    static func removePrompt(id: String) async throws {
+        let sent = Aria_Daemon_V1_RemovePromptRequest.with { $0.id = id }
+        _ = try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .removePrompt(request: ClientRequest(message: sent), options: options) { try $0.message }
+        }
+    }
+
+    /// The prompt's file as a run reads it.
+    static func getPrompt(id: String) async throws -> PromptDraft.Contents {
+        try await getPrompt(.with { $0.promptID = id })
+    }
+
+    /// `file` as a run would read it.
+    static func getPrompt(file: URL) async throws -> PromptDraft.Contents {
+        try await getPrompt(.with { $0.file = file.standardizedFileURL.path })
+    }
+
+    private static func getPrompt(_ request: Aria_Daemon_V1_GetPromptRequest) async throws -> PromptDraft.Contents {
+        do {
+            let response = try await DaemonTransport.call { client, options in
+                try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                    .getPrompt(request: ClientRequest(message: request), options: options) { try $0.message }
+            }
+            return try PromptDraft.Contents(response)
+        } catch DaemonFailure.refused(.promptUnreadable) {
+            return .unreadable
+        }
+    }
+
+    /// The daemon types no more at once (`DeliverRequest.text`).
+    static let maximumDeliveryBytes = 64 * 1024
+
+    static func fitsDelivery(_ text: String) -> Bool {
+        text.utf8.count <= maximumDeliveryBytes
+    }
+
+    /// Types `text` into `application`, the app that was in front, or copies
+    /// it where that app refuses insertion.
+    static func deliver(text: String, application: String?) async throws -> Aria_Daemon_V1_DeliveryOutcome {
+        var request = Aria_Daemon_V1_DeliverRequest()
+        request.text = text
+        request.applicationID = application ?? ""
+        request.outputMode = .insertOrCopy
+        let sent = request
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .deliver(request: ClientRequest(message: sent), options: options) { try $0.message.outcome }
+        }
+    }
+}
+
+extension PromptDraft.Contents {
+    init(_ response: Aria_Daemon_V1_GetPromptResponse) throws {
+        switch response.contents {
+        case .instructions(let text): self = .text(text)
+        case .missing: self = .missing
+        case nil: throw DaemonFailure.invalidResponse
         }
     }
 }

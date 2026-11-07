@@ -19,7 +19,7 @@ enum InviteClient {
                     return IssuedInvite(
                         invite: PairingInvite(
                             instanceName: issued.instanceName, code: issued.code, fingerprint: issued.fingerprint),
-                        expiresAt: Date.now.addingTimeInterval(TimeInterval(issued.expiresInMs) / 1000),
+                        expiresAt: Date.now.addingTimeInterval(issued.expiresIn.timeInterval),
                         pairingCount: issued.pairingCount)
                 }
         }

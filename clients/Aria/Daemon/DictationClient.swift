@@ -21,6 +21,15 @@ enum DictationClient {
         case stopAccepted
     }
 
+    /// The daemon ends a press sooner itself, so this only catches a daemon that stopped answering.
+    static let pressTimeout = Duration.seconds(670)
+
+    /// A dictation kept in history and typed nowhere. The Aria key stops it. The transport logs a
+    /// failure, and the pill shows how it ended.
+    static func dictateToHistory() async {
+        _ = try? await start(stop: .manual, projectDirectory: nil, timeout: pressTimeout, savesToHistory: true)
+    }
+
     /// Reads one recording to its outcome. The daemon names the recording as
     /// it opens, and `onRecording` gets that name on the main actor, so the
     /// pill can mark it. A stream that ends without an outcome is an
@@ -29,6 +38,7 @@ enum DictationClient {
         stop: Stop,
         projectDirectory: String?,
         timeout: Duration,
+        savesToHistory: Bool = false,
         onRecording: @escaping @MainActor (UInt64) -> Void = { _ in }
     ) async throws -> Outcome {
         var request = Aria_Daemon_V1_StartDictationRequest()
@@ -37,14 +47,10 @@ enum DictationClient {
             case .manual: .manual
             case .onSilence: .onSilence
             }
-        request.transcriptOnly = true
+        request.route = savesToHistory ? .historyOnly(.init()) : .transcriptOnly(.init())
         if let projectDirectory {
             request.projectDirectory = projectDirectory
         }
-        // A transcript handed back has nowhere to stream to, so the daemon
-        // refuses transcript-only with streaming delivery. Left absent, the
-        // mode comes from settings, where streaming is the default.
-        request.deliveryMode = .complete
         let sent = request
         return try await DaemonTransport.call(timeout: timeout) { client, options in
             try await Aria_Daemon_V1_DictationService.Client(wrapping: client)

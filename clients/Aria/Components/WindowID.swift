@@ -2,5 +2,4 @@
 enum WindowID {
     static let settings = "settings"
     static let setup = "setup"
-    static let dictationHistory = "dictation-history"
 }

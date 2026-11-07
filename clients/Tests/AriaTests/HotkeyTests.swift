@@ -1,4 +1,3 @@
-import Carbon.HIToolbox
 import XCTest
 
 @testable import Aria
@@ -30,7 +29,7 @@ final class HotkeyTests: XCTestCase {
         settings.askShortcut = Aria_Daemon_V1_Shortcut(.combo(.shift))
         settings.promptListShortcut = Aria_Daemon_V1_Shortcut(.combo(.command))
         XCTAssertEqual(ComboAction(combo: .shift, in: settings), .ask)
-        XCTAssertEqual(ComboAction(combo: .command, in: settings), .promptList)
+        XCTAssertEqual(ComboAction(combo: .command, in: settings), .palette)
 
         settings.askShortcut = Aria_Daemon_V1_Shortcut(nil)
         XCTAssertNil(ComboAction(combo: .shift, in: settings))
@@ -45,11 +44,11 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(AriaKey.fn.gesture(for: .command), "Fn + ⌘")
     }
 
-    func testAPromptWithNoChordRunsOnlyFromThePromptList() {
-        var on = PromptEdits.makeEntry(for: URL(fileURLWithPath: "/on.md"))
+    func testAPromptWithNoChordRunsOnlyFromThePalette() {
+        var on = Aria_Daemon_V1_Prompt.stub(file: "/on.md")
         on.chord = chord.wire
-        let bare = PromptEdits.makeEntry(for: URL(fileURLWithPath: "/bare.md"))
-        var off = PromptEdits.makeEntry(for: URL(fileURLWithPath: "/off.md"))
+        let bare = Aria_Daemon_V1_Prompt.stub(file: "/bare.md")
+        var off = Aria_Daemon_V1_Prompt.stub(file: "/off.md")
         off.enabled = false
         off.chord = other.wire
 
@@ -57,22 +56,5 @@ final class HotkeyTests: XCTestCase {
 
         XCTAssertEqual(plan.enabled, [on.id, bare.id])
         XCTAssertEqual(plan.chords, [on.id: chord])
-    }
-
-    func testTheListChordIsIgnoredWhileItsRunGoesAndOtherwiseTogglesTheList() {
-        var gesture = PromptListGesture()
-        XCTAssertEqual(gesture.press(isOpen: false) { _ in true }, .open)
-        XCTAssertEqual(gesture.press(isOpen: true) { _ in true }, .close)
-
-        gesture.chose("started")
-        XCTAssertEqual(gesture.press(isOpen: false) { $0 == "started" }, .ignore)
-        XCTAssertEqual(gesture.press(isOpen: false) { _ in false }, .open)
-        XCTAssertEqual(gesture.press(isOpen: true) { _ in true }, .close)
-
-        let entries = (1...10).map { PromptEdits.makeEntry(for: URL(fileURLWithPath: "/\($0).md")) }
-        let keys = PromptListGesture.keys(for: entries)
-        XCTAssertEqual(keys.map(\.entry.id), entries.prefix(9).map(\.id))
-        XCTAssertEqual(keys.first?.keyCode, kVK_ANSI_1)
-        XCTAssertEqual(keys.last?.keyCode, kVK_ANSI_9)
     }
 }

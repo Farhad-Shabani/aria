@@ -113,6 +113,31 @@ final class ListenStatusTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(2))
         }
     }
+
+    func testAnAcceptedStartRunsAndARefusedOneSaysSo() async {
+        let started = ListenStatus(readStatus: { false }, startSession: {})
+        await started.start()
+        XCTAssertTrue(started.isRunning)
+        XCTAssertFalse(started.didFailToStart)
+
+        let refused = ListenStatus(readStatus: { false }, startSession: { throw Unreachable() })
+        await refused.start()
+        XCTAssertFalse(refused.isRunning)
+        XCTAssertTrue(refused.didFailToStart)
+        XCTAssertFalse(refused.isStarting)
+    }
+
+    func testASessionJoinedLateDatesItsStartFromTheFirstOffset() {
+        let status = ListenStatus(readStatus: { true })
+        let now = Date(timeIntervalSince1970: 1000)
+        var segment = event(.segmentTranscribed)
+        segment.offset = .init(seconds: 90)
+
+        status.handle(segment, now: now)
+        status.handle(segment, now: now.addingTimeInterval(5))
+
+        XCTAssertEqual(status.startedAt, Date(timeIntervalSince1970: 910))
+    }
 }
 
 /// Answers each read from a script, repeating the last answer once it runs out.

@@ -13,6 +13,8 @@ final class StatusController: ObservableObject {
 
     private let events: DaemonEvents
     private let prompts: PromptHotkeys
+    /// Tickets something else shows.
+    var skips: @MainActor (UInt64) -> Bool = { _ in false }
     private var heard = HeardSpeaker()
     private let panel = FloatingPanel(width: OverlayStyle.pillWidth, bottomMargin: OverlayStyle.pillBottomMargin)
     private var foregroundState: PillState?
@@ -67,6 +69,13 @@ final class StatusController: ObservableObject {
         }
         events.onChat { [weak self] chat in
             guard let self else { return }
+            // Events can come before the owner learns its ticket, so the ask may already be in
+            // flight here. It ends now, since its reply is skipped.
+            if let chat, skips(chat.ticket) {
+                self.asks.forget(chat.ticket)
+                self.render()
+                return
+            }
             if let chat, let ended = PillState(ended: chat) {
                 self.show(ended, run: .ticket(chat.ticket))
             }
@@ -135,6 +144,14 @@ final class StatusController: ObservableObject {
         // A new press starts from silence rather than the last one's level.
         if case .recording = wanted?.state { level.value = 0 }
         draw(wanted)
+    }
+
+    func noteDelivery(_ outcome: Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) {
+        switch outcome {
+        case .success(.copied): show(.replied(copied: true))
+        case .success: break
+        case .failure: show(.failed("couldn’t type"))
+        }
     }
 
     func noteAsk(_ run: RunID) {
