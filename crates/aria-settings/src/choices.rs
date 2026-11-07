@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use aria_kit::synthesis::SpeakingRate;
 use aria_kit::transcription::{Language, LanguageCode};
 
-use super::{ApplicationOverrides, Chord, Prompts, SttChoice};
+use super::{ApplicationOverrides, Choices, Chord, Prompts};
 use super::{SettingsError, is_valid_model_id};
 use crate::config::AssistantId;
 use crate::rpc::RpcErrorCode;
@@ -169,10 +169,9 @@ pub struct StreamingUnavailableOutput {
 }
 
 impl StreamingSupport {
-    /// Under the engine the settings name and this platform's delivery. A
-    /// server decides for itself, so its model never counts here.
-    pub fn of(stt: &SttChoice) -> Self {
-        Self::new(stt.streams(), PlatformTextDelivery::STREAMS)
+    /// Under the engine the settings name and this platform's delivery.
+    pub fn of(choices: &Choices) -> Self {
+        Self::new(choices.stt_streams(), PlatformTextDelivery::STREAMS)
     }
 
     /// Under an engine and a delivery that each can or can't stream.
@@ -307,10 +306,13 @@ mod rpc_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LocalStt;
+
+    fn under(settings: &str) -> StreamingSupport {
+        StreamingSupport::of(crate::testing::file(settings).choices())
+    }
 
     fn whole() -> StreamingSupport {
-        StreamingSupport::of(&SttChoice::Local(LocalStt::WhisperCandle))
+        under("[stt]\nbackend = \"whisper-candle\"\n")
     }
 
     #[test]
@@ -325,20 +327,21 @@ mod tests {
     fn only_an_engine_that_decodes_the_finished_recording_stops_streaming() {
         let insert = OutputMode::Insert;
         let platform = (!PlatformTextDelivery::STREAMS).then_some(StreamingUnavailable::Platform);
-        let reason = |stt| StreamingSupport::of(&stt).unavailable(insert);
+        let reason = |settings| under(settings).unavailable(insert);
 
         assert_eq!(
             whole().unavailable(insert),
             platform.or(Some(StreamingUnavailable::Model))
         );
-        assert_eq!(reason(SttChoice::Local(LocalStt::Parakeet)), platform);
+        assert_eq!(reason("[stt]\nbackend = \"parakeet\"\n"), platform);
         assert_eq!(
-            reason(SttChoice::ParakeetMlx {
-                interpreter: "/usr/bin/python3".into()
-            }),
+            reason("[stt]\nbackend = \"parakeet-mlx\"\ninterpreter = \"/usr/bin/python3\"\n"),
             platform.or(Some(StreamingUnavailable::Model))
         );
-        let server = crate::config::ServerEndpoint::parse("https://box.test:9851").unwrap();
-        assert_eq!(reason(SttChoice::Server(server)), platform);
+        assert_eq!(
+            reason("[stt]\nbackend = \"whisper-candle\"\nlocation = \"server\"\n"),
+            platform,
+            "the server's engine decides, not the local one kept for later"
+        );
     }
 }

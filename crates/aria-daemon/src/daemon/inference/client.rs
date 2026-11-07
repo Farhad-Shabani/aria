@@ -24,7 +24,6 @@ use crate::ipc::protocol;
 use crate::ipc::wire;
 use aria_primitives::local_socket::LocalSocketError;
 use aria_primitives::private_document::DocumentError;
-use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::transcription::{
     Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
@@ -170,16 +169,17 @@ impl Drop for RemoteRuntime {
 }
 
 impl RemoteTranscriber {
-    /// Opens without the network. Each operation asks the server what it
-    /// runs, so a server that is down or changed fails only that operation.
-    pub(crate) fn open(home: &Path, endpoint: &ServerEndpoint) -> Result<Self, TranscriptionError> {
-        Self::open_pinned(home, endpoint).map_err(transcription_error)
+    /// Opens the pinned server without the network. Each operation asks the
+    /// server what it runs, so a server that is down or changed fails only
+    /// that operation.
+    pub(crate) fn open(home: &Path) -> Result<Self, TranscriptionError> {
+        Self::open_pinned(home).map_err(transcription_error)
     }
 
-    fn open_pinned(home: &Path, endpoint: &ServerEndpoint) -> Result<Self, RemoteClientError> {
+    fn open_pinned(home: &Path) -> Result<Self, RemoteClientError> {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
             .map_err(identity_error)?;
-        let server = identity.pinned_server(endpoint).map_err(identity_error)?;
+        let server = identity.pin().map_err(identity_error)?;
         let endpoint = tls::endpoint(&identity, server)
             .map_err(|error| RemoteClientError::Identity(error.into()))?;
         let runtime = RemoteRuntime::new()?;
@@ -1662,10 +1662,7 @@ mod tests {
     fn an_unpaired_home_builds_nothing_and_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
         assert!(matches!(
-            RemoteTranscriber::open_pinned(
-                home.path(),
-                &ServerEndpoint::parse("https://server.example").unwrap(),
-            ),
+            RemoteTranscriber::open_pinned(home.path()),
             Err(RemoteClientError::Identity(_))
         ));
         assert!(!home.path().join(".aria/inference/client.json").exists());

@@ -15,15 +15,9 @@ use aria_primitives::local_socket::ExclusiveListener;
 use aria_primitives::private_document::PrivateDocument;
 use aria_primitives::private_fs::prepare_directory;
 
-/// Pairs with the server named in an invitation read from `input`, so the
-/// secret never appears on a command line.
-pub fn remote_pair(input: impl std::io::Read) -> Result<String, RemoteClientError> {
-    let invitation = read_invitation(input)?;
-    let home = aria_settings::config::home_directory().map_err(RemoteClientError::Config)?;
-    pair_at(&home, &invitation)
-}
-
-fn read_invitation(input: impl std::io::Read) -> Result<String, RemoteClientError> {
+/// Reads an invitation from `input`, so the secret never appears on a
+/// command line.
+pub fn read_invitation(input: impl std::io::Read) -> Result<String, RemoteClientError> {
     use std::io::Read;
     let mut invitation = String::new();
     input
@@ -45,7 +39,9 @@ fn bounded_invitation(invitation: &str) -> Result<(), RemoteClientError> {
     Ok(())
 }
 
-pub(super) fn pair_at(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
+/// Pairs with the server `invitation` names, and pins it in place of any
+/// earlier one.
+pub fn pair_server(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
     bounded_invitation(invitation)?;
     let invitation: Invitation =
         serde_json::from_str(invitation).map_err(RemoteClientError::invitation)?;

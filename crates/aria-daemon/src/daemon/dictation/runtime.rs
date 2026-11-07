@@ -545,10 +545,7 @@ fn retry_target<'a>(
 ) -> Result<RetryTarget<'a>, HistoryError> {
     let named = names_an_engine(requested).then_some(requested);
     match (backend, named) {
-        (TranscriptionBackend::Server { endpoint }, engine) => Ok(RetryTarget::Server {
-            endpoint: endpoint.clone(),
-            engine,
-        }),
+        (TranscriptionBackend::Server, engine) => Ok(RetryTarget::Server { engine }),
         (TranscriptionBackend::Local(local), None) => Ok(RetryTarget::Local(local.clone())),
         (TranscriptionBackend::Local(local), Some(engine)) => local
             .for_backend(engine, home)
@@ -1211,7 +1208,6 @@ mod history_tests {
         let mut fixture = Fixture::new(None);
         let home = fixture._directory.path().to_owned();
         server.pair_home(home.clone()).await;
-        let endpoint = server.endpoint().to_owned();
         let observed = Arc::clone(&server.observed);
         tokio::task::spawn_blocking(move || {
             let audio = home.join("speech.wav");
@@ -1245,7 +1241,7 @@ mod history_tests {
                 .unwrap();
             let home_dir = home.clone();
             let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
-            config.transcription = TranscriptionBackend::Server { endpoint };
+            config.transcription = TranscriptionBackend::Server;
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: aria_kit::audio::ReplayPace::Immediate,

@@ -93,6 +93,15 @@ enum Command {
         /// downloading only that engine's models
         #[arg(long, value_name = "ENGINE", conflicts_with_all = ["yes", "skip_models"])]
         stt: Option<String>,
+        /// Transcribe on this machine (local) or on the paired server
+        /// (server), keeping the local engine and its settings
+        #[arg(
+            long,
+            value_name = "LOCATION",
+            value_parser = setup::parse_location,
+            conflicts_with_all = ["yes", "skip_models", "stt"],
+        )]
+        stt_location: Option<aria_settings::TranscriptionLocation>,
     },
     /// See and remove the models setup downloaded
     Models {
@@ -221,9 +230,15 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         } => setup::set_transcription_engine(&engine),
         Command::Setup {
             command: None,
+            stt_location: Some(location),
+            ..
+        } => setup::set_transcription_location(location),
+        Command::Setup {
+            command: None,
             yes,
             skip_models,
             stt: None,
+            stt_location: None,
         } => setup::run(yes, skip_models),
         Command::Setup {
             command: Some(command),

@@ -27,12 +27,12 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
             println!("{}", aria_daemon::remote_invite(&endpoint)?);
         }
         RemoteCommand::Pair { json: false } => {
-            let fingerprint = aria_daemon::remote_pair(std::io::stdin().lock())?;
+            let fingerprint = crate::setup::pair_server(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
-            println!("To use it, choose the paired inference server in `aria setup`.");
+            println!("To use it, run `aria setup --stt-location server`.");
         }
         RemoteCommand::Pair { json: true } => {
-            let paired = aria_daemon::remote_pair(std::io::stdin().lock());
+            let paired = crate::setup::pair_server(std::io::stdin().lock());
             println!("{}", pair_report(&paired));
             if paired.is_err() {
                 std::process::exit(1);
@@ -69,13 +69,18 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn pair_report(paired: &Result<String, aria_daemon::RemoteClientError>) -> serde_json::Value {
+fn pair_report(paired: &Result<String, crate::setup::SetupError>) -> serde_json::Value {
     match paired {
         Ok(fingerprint) => serde_json::json!({ "paired": true, "fingerprint": fingerprint }),
         Err(error) => serde_json::json!({
             "paired": false,
             "error": {
-                "code": aria_daemon::PairingFailure::from(error).label(),
+                "code": match error {
+                    crate::setup::SetupError::Pair(error) => {
+                        aria_daemon::PairingFailure::from(error).label()
+                    }
+                    _ => aria_daemon::PairingFailure::Failed.label(),
+                },
                 "message": crate::primitives::error_chain(error),
             },
         }),
@@ -98,7 +103,9 @@ mod tests {
 
     #[test]
     fn a_failed_pairing_reports_its_code_and_cause() {
-        let report = pair_report(&Err(aria_daemon::RemoteClientError::Timeout));
+        let report = pair_report(&Err(crate::setup::SetupError::Pair(
+            aria_daemon::RemoteClientError::Timeout,
+        )));
 
         assert_eq!(
             report,

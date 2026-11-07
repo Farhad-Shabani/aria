@@ -2605,7 +2605,6 @@ pub enum ProtocolError {
 
 #[cfg(test)]
 mod tests {
-    use aria_settings::{LocalStt, SttChoice};
     use aria_voice::dictation::DictationError;
 
     use super::*;
@@ -3336,7 +3335,9 @@ mod tests {
     #[test]
     fn streaming_availability_crosses_the_wire_unchanged() {
         let snapshot = SettingsSnapshot {
-            streaming_unavailable: StreamingSupport::of(&SttChoice::Local(LocalStt::WhisperCandle)),
+            streaming_unavailable: StreamingSupport::of(
+                aria_settings::testing::file("[stt]\nbackend = \"whisper-candle\"\n").choices(),
+            ),
             revision: 3,
             settings: Settings::default(),
         };

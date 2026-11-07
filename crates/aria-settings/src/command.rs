@@ -82,7 +82,7 @@ fn show_with(home: &Path, pending: &[String], key: Option<&str>) -> Result<Vec<R
     };
     let streaming_unavailable = if keys.contains(&Key::DictationDeliveryMode) {
         let output = crate::Settings::from_file(&settings)?.output_mode;
-        crate::StreamingSupport::of(&settings.choices().stt).unavailable(output)
+        crate::StreamingSupport::of(settings.choices()).unavailable(output)
     } else {
         None
     };
@@ -540,16 +540,16 @@ mod tests {
         let home = home_with("");
         let pairs = [
             "stt.backend",
-            "server",
-            "stt.server",
-            "https://example.test",
+            "parakeet-mlx",
+            "stt.interpreter",
+            "/usr/bin/python3",
         ]
         .map(str::to_owned);
 
         let outcome = set_with(home.path(), &pairs).expect("runs");
 
         assert!(!matches!(outcome, Outcome::Refused { .. }), "{outcome:?}");
-        assert!(file(home.path()).contains("backend = \"server\""));
+        assert!(file(home.path()).contains("backend = \"parakeet-mlx\""));
     }
 
     #[test]

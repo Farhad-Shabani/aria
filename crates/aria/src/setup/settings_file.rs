@@ -3,8 +3,11 @@
 
 use std::path::Path;
 
-use aria_settings::config::{ServerEndpoint, backend, tts_backend};
-use aria_settings::{CheckedSettings, Key, Patch, Refusal, SettingsError, SettingsFile, Written};
+use aria_settings::config::tts_backend;
+use aria_settings::{
+    CheckedSettings, Key, Patch, Refusal, SettingsError, SettingsFile, TranscriptionLocation,
+    Written,
+};
 
 use super::SetupError;
 
@@ -44,50 +47,20 @@ impl Existing {
 impl Selections {
     /// Checks the answers against the file without writing, so a refused
     /// write fails before any download.
-    pub(super) fn check(
-        &self,
-        home: &Path,
-        paired_server: Option<&ServerEndpoint>,
-    ) -> Result<(), SetupError> {
+    pub(super) fn check(&self, home: &Path) -> Result<(), SetupError> {
         let current = read(home)?;
-        let patch = self.patch(&current, paired_server)?;
-        accepted(aria_settings::check_patch(
-            &aria_settings::default_path(home),
-            home,
-            &patch,
-        )?)?;
-        Ok(())
+        check(home, &self.patch(&current))
     }
 
-    pub(super) fn write(
-        &self,
-        home: &Path,
-        paired_server: Option<&ServerEndpoint>,
-    ) -> Result<SettingsWrite, SetupError> {
-        let mut changed = false;
-        let written =
-            aria_settings::modify(&aria_settings::default_path(home), home, None, |current| {
-                let patch = self.patch(current, paired_server)?;
-                changed = !patch.is_empty();
-                Ok::<_, SettingsError>(patch)
-            })?;
-        accepted(written)?;
-        Ok(if changed {
-            SettingsWrite::Written
-        } else {
-            SettingsWrite::Unchanged
-        })
+    pub(super) fn write(&self, home: &Path) -> Result<SettingsWrite, SetupError> {
+        write(home, |current| self.patch(current))
     }
 
     /// The keys whose values change. Speech engines keep their files in their
     /// own tables.
-    pub(super) fn patch(
-        &self,
-        current: &SettingsFile,
-        paired_server: Option<&ServerEndpoint>,
-    ) -> Result<Patch, SettingsError> {
+    pub(super) fn patch(&self, current: &SettingsFile) -> Patch {
         let mut patch = Patch::new();
-        transcription_patch(&mut patch, current, &self.stt, paired_server);
+        transcription_patch(&mut patch, current, &self.stt);
         if current.tts.backend.as_deref() != Some(self.tts.as_str()) {
             patch.set(Key::TtsBackend, self.tts.as_str());
         }
@@ -98,37 +71,29 @@ impl Selections {
         if current.wake.enabled != Some(self.wake) {
             patch.set(Key::WakeEnabled, self.wake);
         }
-        Ok(patch)
+        patch
     }
 }
 
 /// Changing transcription engines resets that engine's own keys, so the new
 /// engine never gets the old model path.
-fn transcription_patch(
-    patch: &mut Patch,
-    current: &SettingsFile,
-    engine: &str,
-    paired_server: Option<&ServerEndpoint>,
-) {
+fn transcription_patch(patch: &mut Patch, current: &SettingsFile, engine: &str) {
     if aria_settings::config::transcription_engine(&current.stt) != engine {
-        for key in [
-            Key::SttModel,
-            Key::SttDevice,
-            Key::SttInterpreter,
-            Key::SttServer,
-        ] {
+        for key in [Key::SttModel, Key::SttDevice, Key::SttInterpreter] {
             patch.reset(key);
         }
     }
     if current.stt.backend.as_deref() != Some(engine) {
         patch.set(Key::SttBackend, engine);
     }
-    if engine == backend::SERVER
-        && let Some(endpoint) = paired_server
-        && current.stt.server.as_deref() != Some(endpoint.to_string().as_str())
-    {
-        patch.set(Key::SttServer, endpoint.to_string());
+}
+
+fn location_patch(current: &SettingsFile, location: TranscriptionLocation) -> Patch {
+    let mut patch = Patch::new();
+    if current.stt.location.unwrap_or_default() != location {
+        patch.set(Key::SttLocation, location.name());
     }
+    patch
 }
 
 /// Checks setting `engine` without writing, so a refused write fails
@@ -139,23 +104,53 @@ pub(super) fn check_transcription(
     engine: &str,
 ) -> Result<(), SetupError> {
     let mut patch = Patch::new();
-    transcription_patch(&mut patch, current, engine, None);
-    accepted(aria_settings::check_patch(
-        &aria_settings::default_path(home),
-        home,
-        &patch,
-    )?)?;
-    Ok(())
+    transcription_patch(&mut patch, current, engine);
+    check(home, &patch)
 }
 
 /// Writes only the `stt` keys that name `engine`, so every other choice
 /// stays as the file has it now.
 pub(super) fn write_transcription(home: &Path, engine: &str) -> Result<SettingsWrite, SetupError> {
+    write(home, |current| {
+        let mut patch = Patch::new();
+        transcription_patch(&mut patch, current, engine);
+        patch
+    })
+}
+
+pub(super) fn check_location(
+    home: &Path,
+    current: &SettingsFile,
+    location: TranscriptionLocation,
+) -> Result<(), SetupError> {
+    check(home, &location_patch(current, location))
+}
+
+/// Writes only `stt.location`, so the local engine and its keys stay for
+/// the way back.
+pub(super) fn write_location(
+    home: &Path,
+    location: TranscriptionLocation,
+) -> Result<SettingsWrite, SetupError> {
+    write(home, |current| location_patch(current, location))
+}
+
+fn check(home: &Path, patch: &Patch) -> Result<(), SetupError> {
+    accepted(aria_settings::check_patch(
+        &aria_settings::default_path(home),
+        home,
+        patch,
+    )?)
+}
+
+fn write(
+    home: &Path,
+    patch: impl FnOnce(&SettingsFile) -> Patch,
+) -> Result<SettingsWrite, SetupError> {
     let mut changed = false;
     let written =
         aria_settings::modify(&aria_settings::default_path(home), home, None, |current| {
-            let mut patch = Patch::new();
-            transcription_patch(&mut patch, current, engine, None);
+            let patch = patch(current);
             changed = !patch.is_empty();
             Ok::<_, SettingsError>(patch)
         })?;
@@ -213,7 +208,7 @@ mod tests {
     fn what_is_written_reads_back() {
         let home = home();
 
-        let first = selections().write(home.path(), None).unwrap();
+        let first = selections().write(home.path()).unwrap();
         let read = Existing::of(&read(home.path()).unwrap());
 
         assert_eq!(first, SettingsWrite::Written);
@@ -231,7 +226,7 @@ mod tests {
     fn setup_writes_no_assistant() {
         let home = home();
 
-        selections().write(home.path(), None).unwrap();
+        selections().write(home.path()).unwrap();
 
         let text = fs::read_to_string(settings_path(home.path())).unwrap();
         assert!(!text.contains("assistant"), "{text}");
@@ -243,7 +238,7 @@ mod tests {
         let hand_written = "# mine\n[assistant]\nid = \"codex\" # my pick\n";
         fs::write(settings_path(home.path()), hand_written).unwrap();
 
-        selections().write(home.path(), None).unwrap();
+        selections().write(home.path()).unwrap();
 
         let text = fs::read_to_string(settings_path(home.path())).unwrap();
         assert!(text.starts_with(hand_written), "{text}");
@@ -251,29 +246,6 @@ mod tests {
             read(home.path()).unwrap().assistant.id.as_deref(),
             Some("codex")
         );
-    }
-
-    #[test]
-    fn server_selection_takes_the_paired_endpoint_and_local_selection_clears_it() {
-        let current = SettingsFile::default();
-        let mut chosen = selections();
-        chosen.stt = "server".to_owned();
-        let paired = ServerEndpoint::parse("https://paired.test:9851").unwrap();
-        let keys: Vec<Key> = chosen
-            .patch(&current, Some(&paired))
-            .unwrap()
-            .keys()
-            .collect();
-        assert!(keys.contains(&Key::SttServer), "{keys:?}");
-
-        let home = home();
-        fs::write(
-            settings_path(home.path()),
-            "[stt]\nbackend = \"server\"\nserver = \"https://paired.test:9851\"\n",
-        )
-        .unwrap();
-        selections().write(home.path(), None).unwrap();
-        assert_eq!(read(home.path()).unwrap().stt.server, None);
     }
 
     #[test]
@@ -286,7 +258,7 @@ mod tests {
         )
         .unwrap();
 
-        selections().write(home.path(), None).unwrap();
+        selections().write(home.path()).unwrap();
         let settings = read(home.path()).unwrap();
 
         assert_eq!(settings.stt.model, None, "parakeet replaced whisper");
@@ -306,8 +278,8 @@ mod tests {
             ..selections()
         };
 
-        system.check(home.path(), None).unwrap();
-        system.write(home.path(), None).unwrap();
+        system.check(home.path()).unwrap();
+        system.write(home.path()).unwrap();
 
         assert_eq!(read(home.path()).unwrap().tts.fallback, None);
     }
@@ -322,7 +294,7 @@ mod tests {
             stt: aria_settings::config::backend::DEFAULT.to_owned(),
             ..selections()
         };
-        default_engine.write(home.path(), None).unwrap();
+        default_engine.write(home.path()).unwrap();
 
         assert!(read(home.path()).unwrap().stt.model.is_some());
     }
@@ -330,13 +302,13 @@ mod tests {
     #[test]
     fn an_unchanged_rerun_touches_nothing() {
         let home = home();
-        selections().write(home.path(), None).unwrap();
+        selections().write(home.path()).unwrap();
         let written = fs::metadata(settings_path(home.path()))
             .unwrap()
             .modified()
             .unwrap();
 
-        let again = selections().write(home.path(), None).unwrap();
+        let again = selections().write(home.path()).unwrap();
 
         assert_eq!(again, SettingsWrite::Unchanged);
         assert_eq!(
@@ -355,7 +327,7 @@ mod tests {
         fs::write(settings_path(home.path()), broken).unwrap();
 
         assert!(matches!(
-            selections().check(home.path(), None),
+            selections().check(home.path()),
             Err(SetupError::Settings(_))
         ));
         assert_eq!(

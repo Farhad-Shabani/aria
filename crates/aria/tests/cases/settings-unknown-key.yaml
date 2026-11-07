@@ -8,5 +8,5 @@ expect:
   daemon:
     startup: failure
     stderr_contains:
-      - "unknown field `bogus`, expected one of `backend`, `language`, `model`, `device`, `interpreter`, `server`; a newer Aria may have written it"
+      - "unknown field `bogus`, expected one of `backend`, `language`, `model`, `device`, `interpreter`, `location`; a newer Aria may have written it"
       - "at line 4, column 1"

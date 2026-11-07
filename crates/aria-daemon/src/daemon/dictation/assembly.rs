@@ -16,7 +16,7 @@ use super::DictationSetup;
 use aria_kit::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
 use aria_platform::delivery::{DeliveryError, DeliveryFactory, PlatformTextDelivery};
 use aria_settings::Directory;
-use aria_settings::config::{ConfigError, ServerEndpoint};
+use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::{
     DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
@@ -258,17 +258,14 @@ fn select_engine(
 ) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
         TranscriptionBackend::Local(config) => select_local(config, loading),
-        TranscriptionBackend::Server { endpoint } => select_remote(home, &endpoint),
+        TranscriptionBackend::Server => select_remote(home),
     }
 }
 
 /// Each operation names the engine the server ran, so the executor's own
 /// name only labels a dictation whose engine was never reported.
-fn select_remote(
-    home: &Path,
-    endpoint: &ServerEndpoint,
-) -> Result<SelectedEngine, TranscriptionError> {
-    let remote = RemoteTranscriber::open(home, endpoint)?;
+fn select_remote(home: &Path) -> Result<SelectedEngine, TranscriptionError> {
+    let remote = RemoteTranscriber::open(home)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
         Transcription::<_, Streaming>::delegated(remote),
@@ -668,10 +665,7 @@ pub(super) fn build_dictation(
 /// server runs.
 pub(super) enum RetryTarget<'a> {
     Local(TranscriptionConfig),
-    Server {
-        endpoint: ServerEndpoint,
-        engine: Option<&'a str>,
-    },
+    Server { engine: Option<&'a str> },
 }
 
 pub(super) fn transcribe_retry(
@@ -715,8 +709,8 @@ fn retry_transcription(
     cancel: &CancelToken,
 ) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
     match target {
-        RetryTarget::Server { endpoint, engine } => {
-            let mut remote = RemoteTranscriber::open(home, &endpoint)?;
+        RetryTarget::Server { engine } => {
+            let mut remote = RemoteTranscriber::open(home)?;
             if let Some(engine) = engine {
                 remote = remote.require_engine(engine)?;
             }
@@ -741,19 +735,21 @@ fn retry_transcription(
 mod tests {
     use super::*;
 
-    /// The server key applies live, so this check keeps an edited endpoint
-    /// from receiving audio. Only the server pinned at pairing receives it.
+    /// Only the server pinned at pairing receives audio.
     #[test]
-    fn only_the_paired_server_becomes_the_engine() {
+    fn the_server_engine_needs_a_pairing() {
         let home = tempfile::tempdir().unwrap();
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://paired.test:9851");
-        let server = |origin: &str| TranscriptionBackend::Server {
-            endpoint: ServerEndpoint::parse(origin).unwrap(),
+        let select = || {
+            select_engine(
+                TranscriptionBackend::Server,
+                ModelLoading::OnFirstUse,
+                home.path(),
+            )
         };
-        let select = |origin| select_engine(server(origin), ModelLoading::OnFirstUse, home.path());
 
-        assert!(select("https://paired.test:9851").is_ok());
-        assert!(select("https://elsewhere.test:9851").is_err());
+        assert!(select().is_err());
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://paired.test:9851");
+        assert!(select().is_ok());
     }
 
     /// A settings store over `home`, with no file yet.
@@ -773,7 +769,6 @@ mod tests {
         let server = crate::daemon::inference::host::tests::Fixture::start().await;
         let home = tempfile::tempdir().unwrap();
         server.pair_home(home.path().to_owned()).await;
-        let endpoint = server.endpoint().to_owned();
         let root = home.path().to_owned();
         let (built, _vocabulary) = tokio::task::spawn_blocking(move || {
             let home_dir = root.clone();
@@ -794,7 +789,7 @@ mod tests {
                 ),
             );
             let mut dictation = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
-            dictation.transcription = TranscriptionBackend::Server { endpoint };
+            dictation.transcription = TranscriptionBackend::Server;
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,

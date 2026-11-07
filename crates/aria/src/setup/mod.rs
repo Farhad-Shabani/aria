@@ -6,7 +6,8 @@
 //! `aria setup apply`. Every answer defaults to what is configured, and
 //! `--yes` keeps every configured engine, so the unattended rerun the
 //! installer makes never rewrites a working choice. `transcription_engine`
-//! sets the speech-to-text engine alone, outside the rest of setup.
+//! sets the speech-to-text engine alone, and `transcription_location` where
+//! it runs, each outside the rest of setup.
 //!
 //! The terminal run then ends on something that works rather than on a
 //! list of what was written: a voice to recognize, and one press proving
@@ -33,8 +34,8 @@ use aria_daemon::{
 use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
-use aria_settings::config::{ServerEndpoint, backend, tts_backend};
-use aria_settings::{CheckedSettings, SettingsError};
+use aria_settings::config::{backend, tts_backend};
+use aria_settings::{CheckedSettings, SettingsError, TranscriptionLocation};
 use aria_voice::config;
 use aria_voice::speech::SpeechRequest;
 
@@ -45,11 +46,12 @@ pub mod models;
 mod prompt;
 mod settings_file;
 pub mod transcription_engine;
+pub mod transcription_location;
 pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
 pub use backends::{Availability, Choice};
-use backends::{Backend, Host, Stt, Tts, choices, stt_choices};
+use backends::{Backend, Host, Stt, Tts, choices};
 use models::ModelFiles;
 use prompt::Prompts;
 pub use settings_file::{Existing, Selections, SettingsWrite};
@@ -94,10 +96,10 @@ pub struct Inspection {
     pub service: Status,
     pub grant: Grant,
     pub key_remapped: bool,
+    pub location: TranscriptionLocation,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
-    configured_server: Option<String>,
     home: PathBuf,
     exe: PathBuf,
 }
@@ -121,17 +123,9 @@ impl Pairing {
         }
     }
 
-    /// `None` for a local engine.
-    fn endpoint_for(
-        &self,
-        selections: &Selections,
-        home: &Path,
-    ) -> Result<Option<&ServerEndpoint>, SetupError> {
-        if selections.stt != aria_settings::config::backend::SERVER {
-            return Ok(None);
-        }
+    fn check_paired(&self, home: &Path) -> Result<(), SetupError> {
         match self {
-            Self::Paired(paired) => Ok(Some(&paired.endpoint)),
+            Self::Paired(_) => Ok(()),
             Self::Unpaired => Err(SetupError::ServerNotPaired),
             Self::Unusable => Err(SetupError::PairingUnusable {
                 path: InferencePaths::in_home(home).client_identity(),
@@ -273,12 +267,31 @@ pub fn forget_server() -> Result<Forgotten, SetupError> {
 
 fn forget_server_at(home: &Path) -> Result<Forgotten, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
-    if aria_settings::config::transcription_engine(&settings_file::read(home)?.stt)
-        == aria_settings::config::backend::SERVER
-    {
-        return Err(SetupError::ServerInUse);
-    }
+    check_server_unused(home)?;
     aria_daemon::forget_paired_server(home).map_err(SetupError::Forget)
+}
+
+/// Pairs with the server an invitation from `input` names. The pin holds
+/// the server's address, so it never changes under a daemon that uses it.
+/// The invitation is read before the lock, which a person pasting it would
+/// otherwise hold.
+pub fn pair_server(input: impl io::Read) -> Result<String, SetupError> {
+    let home = user_home::resolve().map_err(SetupError::Home)?;
+    let invitation = aria_daemon::read_invitation(input).map_err(SetupError::Pair)?;
+    pair_server_at(&home, &invitation)
+}
+
+fn pair_server_at(home: &Path, invitation: &str) -> Result<String, SetupError> {
+    let _lock = lock_setup(&aria_settings::default_path(home))?;
+    check_server_unused(home)?;
+    aria_daemon::pair_server(home, invitation).map_err(SetupError::Pair)
+}
+
+fn check_server_unused(home: &Path) -> Result<(), SetupError> {
+    match settings_file::read(home)?.choices().stt_location {
+        TranscriptionLocation::Server => Err(SetupError::ServerInUse),
+        TranscriptionLocation::Local => Ok(()),
+    }
 }
 
 pub fn inspect() -> Result<Inspection, SetupError> {
@@ -301,7 +314,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
     Ok(Inspection {
         settings_path,
         macos: host.macos,
-        stt: stt_choices(&file.stt, matches!(pairing, Pairing::Paired(_)), &host),
+        stt: choices::<Stt>(existing.stt.as_deref(), &host),
         tts: choices::<Tts>(existing.tts.as_deref(), &host),
         models: model_states(&home, &file)?,
         wakeword_installed: WAKEWORD_FILES
@@ -309,7 +322,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
             .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
-        configured_server: file.stt.server.clone(),
+        location: file.choices().stt_location,
         key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
         existing,
         service,
@@ -340,25 +353,10 @@ impl Inspection {
         })
     }
 
-    /// The daemon won't start on a server engine unless the pin names the
-    /// configured address. `aria remote pair` replaces the pin but leaves the
-    /// address in the settings file.
+    /// The server transcribes, but no usable pin says where it is.
     fn server_is_unusable(&self) -> bool {
-        if self.existing.stt.as_deref() != Some(aria_settings::config::backend::SERVER) {
-            return false;
-        }
-        match &self.pairing {
-            Pairing::Paired(paired) => self.configured_server != Some(paired.endpoint.to_string()),
-            Pairing::Unpaired | Pairing::Unusable => true,
-        }
-    }
-
-    /// `None` for a local engine.
-    fn server_endpoint(
-        &self,
-        selections: &Selections,
-    ) -> Result<Option<&ServerEndpoint>, SetupError> {
-        self.pairing.endpoint_for(selections, &self.home)
+        self.location == TranscriptionLocation::Server
+            && !matches!(self.pairing, Pairing::Paired(_))
     }
 
     /// What a run still has to put in place; empty once setup is done.
@@ -376,9 +374,12 @@ impl Inspection {
             missing.push(Missing::Wakeword);
         }
         // An unset engine still runs as its default, so its model counts.
-        let stt = existing.stt.as_deref().unwrap_or(backend::DEFAULT);
+        // The local one waits while the server transcribes; going back
+        // fetches its model.
+        let stt = (self.location == TranscriptionLocation::Local)
+            .then(|| existing.stt.as_deref().unwrap_or(backend::DEFAULT));
         let tts = existing.tts.as_deref().unwrap_or(tts_backend::DEFAULT);
-        let runs = |engine: &str| engine == stt || engine == tts;
+        let runs = |engine: &str| Some(engine) == stt || engine == tts;
         missing.extend(
             self.models
                 .iter()
@@ -501,15 +502,12 @@ pub fn apply(
         });
     }
     let _lock = lock_setup(&inspection.settings_path)?;
-    // Read again under the lock: a forget may have run since inspection.
-    let pairing = Pairing::read(&inspection.home);
-    let endpoint = pairing.endpoint_for(selections, &inspection.home)?;
 
     observe(SetupEvent::Started(Step::Settings))?;
     // Checked here so a refused write fails before any download. Written
     // after the models, so a failed download leaves the file untouched and
     // the write keeps edits made meanwhile.
-    selections.check(&inspection.home, endpoint)?;
+    selections.check(&inspection.home)?;
 
     let models_dir = aria_settings::config::models_dir(&inspection.home);
     observe(SetupEvent::Started(Step::Wakeword))?;
@@ -523,7 +521,7 @@ pub fn apply(
         options.transfer_meter,
         observe,
     )?;
-    let settings = selections.write(&inspection.home, endpoint)?;
+    let settings = selections.write(&inspection.home)?;
 
     observe(SetupEvent::Started(Step::Service))?;
     let legacy_agent =
@@ -600,9 +598,6 @@ pub fn run(
     } else {
         ask_selections(&mut prompts, &inspection)?
     };
-    // Checked before the download questions, so none are asked for nothing.
-    inspection.server_endpoint(&selections)?;
-
     let mut downloads = Vec::new();
     if !options.skip_models {
         for model in inspection.downloads_for(&selections) {
@@ -941,11 +936,14 @@ pub enum SetupError {
     #[error("another setup is already running")]
     Busy,
 
-    #[error("transcription runs on the paired server; set it to this machine first")]
+    #[error("transcription runs on the paired server; run `aria setup --stt-location local` first")]
     ServerInUse,
 
     #[error(transparent)]
     Forget(aria_daemon::RemoteClientError),
+
+    #[error(transparent)]
+    Pair(aria_daemon::RemoteClientError),
 
     #[error("{name} is in use by the {} tables in settings.toml; change them first", tables(.sections))]
     ModelInUse {
@@ -1194,7 +1192,7 @@ mod tests {
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
-            configured_server: None,
+            location: TranscriptionLocation::Local,
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
@@ -1238,7 +1236,6 @@ mod tests {
         };
 
         assert!(settable(backend::MOONSHINE));
-        assert!(!settable(backend::SERVER));
         assert!(!settable(backend::PARAKEET_MLX), "it fetches its own model");
     }
 
@@ -1303,39 +1300,18 @@ mod tests {
     }
 
     #[test]
-    fn server_selection_needs_no_local_transcription_download() {
+    fn the_local_model_is_not_missing_while_the_server_transcribes() {
         let mut inspection = inspection(Existing {
-            stt: Some("server".to_owned()),
-            tts: Some("system".to_owned()),
+            stt: Some(backend::MOONSHINE.to_owned()),
             ..configured()
         });
-        let file = aria_settings::testing::file(
-            "[stt]\nbackend = \"server\"\nserver = \"https://example.test:9851\"\n",
-        );
-        inspection.models = model_states(&inspection.home, &file).unwrap();
-        let selections = Selections::defaults(&inspection);
-        assert_eq!(selections.stt, "server");
-        assert_eq!(
-            inspection
-                .stt
-                .iter()
-                .find(|choice| choice.default)
-                .unwrap()
-                .key,
-            "server"
-        );
-        assert!(
-            inspection
-                .downloads_for(&selections)
-                .iter()
-                .all(|model| model.engine.is_none())
-        );
-        assert!(
-            !inspection
-                .missing()
-                .iter()
-                .any(|missing| matches!(missing, Missing::Model(_)))
-        );
+        let moonshine = Missing::Model("moonshine");
+        assert!(inspection.missing().contains(&moonshine));
+
+        inspection.location = TranscriptionLocation::Server;
+        inspection.pairing = paired("https://box.test:9851");
+
+        assert!(!inspection.missing().contains(&moonshine));
     }
 
     #[test]
@@ -1532,37 +1508,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_refuses_the_server_until_one_is_usably_paired() {
-        let home = tempfile::tempdir().unwrap();
-        let mut inspection = writable_inspection(home.path());
-        inspection.pairing = paired("https://box.test:9851");
-        let mut selections = Selections::defaults(&inspection);
-        selections.stt = "server".to_owned();
-
-        let result = apply(&selections, &no_downloads(), &inspection, &mut |_| Ok(()));
-        assert!(
-            matches!(result, Err(SetupError::ServerNotPaired)),
-            "the pin on disk decides, not the inspection"
-        );
-
-        let identity = aria_daemon::InferencePaths::in_home(home.path()).client_identity();
-        crate::primitives::private_fs::prepare_directory(&home.path().join(".aria")).unwrap();
-        crate::primitives::private_fs::prepare_directory(identity.parent().unwrap()).unwrap();
-        fs::write(&identity, "{").unwrap();
-        let result = apply(&selections, &no_downloads(), &inspection, &mut |_| Ok(()));
-        assert!(matches!(result, Err(SetupError::PairingUnusable { .. })));
-
-        fs::remove_file(&identity).unwrap();
-        aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
-        let mut steps = Vec::new();
-        let _ = apply(&selections, &no_downloads(), &inspection, &mut |event| {
-            steps.push(event);
-            Err(SetupError::Invalid("stop after the settings check"))
-        });
-        assert_eq!(steps, [SetupEvent::Started(Step::Settings)]);
-    }
-
-    #[test]
     fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
         let home = tempfile::tempdir().unwrap();
         let config = aria_settings::default_path(home.path());
@@ -1575,11 +1520,7 @@ mod tests {
         ));
         drop(running);
 
-        fs::write(
-            &config,
-            "[stt]\nbackend = \"server\"\nserver = \"https://box.test:9851\"\n",
-        )
-        .unwrap();
+        fs::write(&config, "[stt]\nlocation = \"server\"\n").unwrap();
         assert!(matches!(
             forget_server_at(home.path()),
             Err(SetupError::ServerInUse)
@@ -1590,6 +1531,25 @@ mod tests {
             forget_server_at(home.path()),
             Ok(Forgotten::Server { .. })
         ));
+    }
+
+    #[test]
+    fn pairing_refuses_while_the_server_transcribes() {
+        let home = tempfile::tempdir().unwrap();
+        let config = aria_settings::default_path(home.path());
+        fs::create_dir_all(home.path().join(".aria")).unwrap();
+
+        fs::write(&config, "[stt]\nlocation = \"server\"\n").unwrap();
+        assert!(matches!(
+            pair_server_at(home.path(), "{}"),
+            Err(SetupError::ServerInUse)
+        ));
+
+        fs::write(&config, "").unwrap();
+        assert!(
+            matches!(pair_server_at(home.path(), "{}"), Err(SetupError::Pair(_))),
+            "on this Mac it reaches the invitation"
+        );
     }
 
     #[test]
@@ -1622,36 +1582,20 @@ mod tests {
     }
 
     #[test]
-    fn a_config_naming_another_server_than_the_pin_needs_writing() {
-        let mut inspection = inspection(Existing {
-            stt: Some("server".to_owned()),
-            ..configured()
-        });
-        inspection.pairing = paired("https://new.test:9851");
-
-        inspection.configured_server = Some("https://old.test:9851".to_owned());
-        assert!(inspection.missing().contains(&Missing::Settings));
-
-        inspection.configured_server = Some("https://new.test:9851".to_owned());
-        assert!(!inspection.missing().contains(&Missing::Settings));
-    }
-
-    #[test]
-    fn a_server_config_without_a_pin_needs_setup() {
-        let mut inspection = inspection(Existing {
-            stt: Some("server".to_owned()),
-            ..configured()
-        });
-        inspection.configured_server = Some("https://new.test:9851".to_owned());
+    fn the_server_without_a_usable_pin_needs_setup() {
+        let mut inspection = inspection(configured());
+        inspection.location = TranscriptionLocation::Server;
 
         assert!(inspection.missing().contains(&Missing::Settings));
         inspection.pairing = Pairing::Unusable;
         assert!(inspection.missing().contains(&Missing::Settings));
+        inspection.pairing = paired("https://box.test:9851");
+        assert!(!inspection.missing().contains(&Missing::Settings));
     }
 
     fn paired(endpoint: &str) -> Pairing {
         Pairing::Paired(PairedServer {
-            endpoint: ServerEndpoint::parse(endpoint).unwrap(),
+            endpoint: aria_settings::config::ServerEndpoint::parse(endpoint).unwrap(),
             client_fingerprint: "ab".to_owned(),
         })
     }

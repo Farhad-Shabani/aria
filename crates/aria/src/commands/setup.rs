@@ -2,6 +2,7 @@ use std::io::IsTerminal;
 
 use crate::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
 use anyhow::Context;
+use aria_settings::TranscriptionLocation;
 use clap::Subcommand;
 
 use super::service::service_status_message;
@@ -19,6 +20,9 @@ pub(super) enum SetupCommand {
     /// Read one SetTranscriptionEngineRequest, write responses until the summary
     #[command(hide = true)]
     SetTranscriptionEngine,
+    /// Read one SetTranscriptionLocationRequest, write responses until the summary
+    #[command(hide = true)]
+    SetTranscriptionLocation,
 }
 
 pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
@@ -47,6 +51,29 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
     .context("setting the speech engine did not finish")?;
     println!();
     println!("speech       {}", summary.engine);
+    for (name, outcome) in &summary.models {
+        println!("{name:<12} {}", outcome.as_str());
+    }
+    println!("settings     {}", settings_write_message(&summary.settings));
+    Ok(())
+}
+
+pub(super) fn parse_location(value: &str) -> Result<TranscriptionLocation, String> {
+    [TranscriptionLocation::Local, TranscriptionLocation::Server]
+        .into_iter()
+        .find(|location| location.name() == value)
+        .ok_or_else(|| "expected local or server".to_owned())
+}
+
+pub(super) fn set_transcription_location(location: TranscriptionLocation) -> anyhow::Result<()> {
+    let summary = crate::setup::transcription_location::set_transcription_location(
+        location,
+        std::io::stdout().is_terminal(),
+        &mut |_| Ok(()),
+    )
+    .context("setting where transcription runs did not finish")?;
+    println!();
+    println!("transcribes  {}", summary.location.name());
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -100,6 +127,10 @@ pub(super) fn run_for_app(command: SetupCommand) -> anyhow::Result<()> {
         SetupCommand::SetTranscriptionEngine => {
             crate::setup::wire::set_transcription_engine(&mut std::io::stdin().lock(), &mut stdout)
         }
+        SetupCommand::SetTranscriptionLocation => crate::setup::wire::set_transcription_location(
+            &mut std::io::stdin().lock(),
+            &mut stdout,
+        ),
     }
     .context("setup did not finish")
 }
@@ -155,24 +186,41 @@ mod tests {
                 yes,
                 skip_models,
                 stt,
+                stt_location,
             } = cli.command
             else {
                 panic!("a setup invocation should parse as Setup");
             };
-            (yes, skip_models, stt)
+            (yes, skip_models, stt, stt_location)
         };
 
-        assert_eq!(parse(&["aria", "setup"]), (false, false, None));
+        assert_eq!(parse(&["aria", "setup"]), (false, false, None, None));
         assert_eq!(
             parse(&["aria", "setup", "--yes", "--skip-models"]),
-            (true, true, None)
+            (true, true, None, None)
         );
         assert_eq!(
+            parse(&["aria", "setup", "--stt-location", "server"]),
+            (false, false, None, Some(TranscriptionLocation::Server))
+        );
+        assert!(Cli::try_parse_from(["aria", "setup", "--stt-location", "mac"]).is_err());
+        assert_eq!(
             parse(&["aria", "setup", "--stt", "moonshine"]),
-            (false, false, Some("moonshine".to_owned()))
+            (false, false, Some("moonshine".to_owned()), None)
         );
         assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "--yes"]).is_err());
         assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "inspect"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "aria",
+                "setup",
+                "--stt",
+                "moonshine",
+                "--stt-location",
+                "local"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

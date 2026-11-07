@@ -5,7 +5,7 @@ mod load;
 use std::path::PathBuf;
 
 use aria_kit::synthesis::{SpeakingRate, Voice};
-use aria_settings::config::{ConfigError, ServerEndpoint, backend, tts_backend};
+use aria_settings::config::{ConfigError, backend, tts_backend};
 use aria_settings::{CleanupTarget, DictationTimeouts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,14 +83,15 @@ pub enum TtsFallback {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptionBackend {
     Local(TranscriptionConfig),
-    Server { endpoint: ServerEndpoint },
+    /// The paired server. Its address comes from the pairing pin.
+    Server,
 }
 
 impl TranscriptionBackend {
     pub fn backend_name(&self) -> &'static str {
         match self {
             Self::Local(engine) => engine.backend_name(),
-            Self::Server { .. } => backend::SERVER,
+            Self::Server => backend::SERVER,
         }
     }
 }

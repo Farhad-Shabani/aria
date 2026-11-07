@@ -144,7 +144,6 @@ mod tests {
 
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
-    use aria_settings::config::ServerEndpoint;
     use aria_voice::config::TranscriptionConfig;
     use aria_voice::dictation::{
         DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
@@ -220,9 +219,7 @@ mod tests {
     }
 
     fn server() -> TranscriptionBackend {
-        TranscriptionBackend::Server {
-            endpoint: ServerEndpoint::parse("https://box.test:9851").unwrap(),
-        }
+        TranscriptionBackend::Server
     }
 
     fn settings() -> DictationSettings {

@@ -18,7 +18,7 @@ use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
 use aria_settings::CheckedSettings;
 use aria_settings::WakeEngine;
-use aria_settings::config::{ConfigError, ServerEndpoint};
+use aria_settings::config::ConfigError;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
     CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
@@ -179,7 +179,7 @@ fn transcription_model(config: Option<&DictationConfig>) -> Check {
 fn model(transcription: &TranscriptionBackend, home: &Path) -> Check {
     let engine = match transcription {
         TranscriptionBackend::Local(engine) => engine,
-        TranscriptionBackend::Server { endpoint } => return server(endpoint, home),
+        TranscriptionBackend::Server => return server(home),
     };
     match check_model(engine) {
         Ok(detail) => Check::ok(TRANSCRIPTION_MODEL, detail),
@@ -187,24 +187,16 @@ fn model(transcription: &TranscriptionBackend, home: &Path) -> Check {
     }
 }
 
-/// The daemon reaches only the server its pin names, so a pin for another
-/// address stops it too.
-fn server(endpoint: &ServerEndpoint, home: &Path) -> Check {
+/// The daemon reaches only the server its pin names.
+fn server(home: &Path) -> Check {
     match aria_daemon::paired_server(home) {
-        Ok(Some(paired)) if paired.endpoint == *endpoint => Check::ok(
+        Ok(Some(paired)) => Check::ok(
             TRANSCRIPTION_MODEL,
-            format!("server {endpoint}; no local transcription model"),
-        ),
-        Ok(Some(paired)) => Check::failed(
-            TRANSCRIPTION_MODEL,
-            format!(
-                "this Mac is paired with {}, not {endpoint}; run `aria setup` to use it",
-                paired.endpoint
-            ),
+            format!("server {}; no local transcription model", paired.endpoint),
         ),
         Ok(None) => Check::failed(
             TRANSCRIPTION_MODEL,
-            format!("this Mac is not paired with {endpoint}; run `aria remote pair` first"),
+            "no server is paired; run `aria remote pair` first",
         ),
         Err(error) => Check::failed(TRANSCRIPTION_MODEL, error_chain(&error)),
     }
@@ -509,35 +501,25 @@ mod tests {
         )
     }
 
-    fn server_backend(endpoint: &str) -> TranscriptionBackend {
-        TranscriptionBackend::Server {
-            endpoint: ServerEndpoint::parse(endpoint).unwrap(),
-        }
-    }
-
     #[test]
     fn a_paired_server_needs_no_local_model() {
         let home = tempfile::TempDir::new().unwrap();
         aria_daemon::pin_server_for_tests(home.path(), "https://example.test:9851");
 
-        let check = model(&server_backend("https://example.test:9851"), home.path());
+        let check = model(&TranscriptionBackend::Server, home.path());
 
         assert_eq!(check.status, Status::Ok);
-        assert!(check.detail.contains("no local transcription model"));
+        assert!(check.detail.contains("https://example.test:9851"));
     }
 
     #[test]
-    fn a_server_this_mac_is_not_paired_with_fails() {
+    fn the_server_without_a_pairing_fails() {
         let home = tempfile::TempDir::new().unwrap();
 
-        let unpaired = model(&server_backend("https://example.test:9851"), home.path());
-        aria_daemon::pin_server_for_tests(home.path(), "https://other.test:9851");
-        let paired_elsewhere = model(&server_backend("https://example.test:9851"), home.path());
+        let unpaired = model(&TranscriptionBackend::Server, home.path());
 
         assert_eq!(unpaired.status, Status::Failed);
         assert!(unpaired.detail.contains("aria remote pair"));
-        assert_eq!(paired_elsewhere.status, Status::Failed);
-        assert!(paired_elsewhere.detail.contains("https://other.test:9851"));
     }
 
     #[test]

@@ -685,18 +685,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = store(
             dir.path(),
-            "[stt]\nbackend = \"server\"\nserver = \"https://a.test\"\n",
+            "[stt]\nbackend = \"parakeet-mlx\"\ninterpreter = \"/usr/bin/python3\"\n",
         );
         // No rule joins a restart key to a live key, so only a startup
         // snapshot broken by hand can make the merge fail.
         store
             .startup
             .0
-            .insert(Key::SttServer, serde_json::Value::Null);
+            .insert(Key::SttInterpreter, serde_json::Value::Null);
 
         hand_edit(
             &store,
-            "[stt]\nbackend = \"server\"\nserver = \"https://a.test\"\n[history]\nenabled = false\n",
+            "[stt]\nbackend = \"parakeet-mlx\"\ninterpreter = \"/usr/bin/python3\"\n[history]\nenabled = false\n",
         );
         let reload = store.poll().expect("polls");
 
@@ -704,7 +704,7 @@ mod tests {
             matches!(
                 reload,
                 Reload::Invalid(SettingsError::Invalid {
-                    key: Key::SttServer,
+                    key: Key::SttInterpreter,
                     ..
                 })
             ),

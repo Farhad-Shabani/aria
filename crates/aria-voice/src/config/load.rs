@@ -12,7 +12,7 @@ use super::{
 use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
 use aria_settings::{
     CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, Speaker,
-    SttChoice, TtsEngine, TtsFallbackName,
+    SttChoice, TranscriptionLocation, TtsEngine, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -34,7 +34,7 @@ fn chosen_listen_engine(settings: &CheckedSettings, home: &Path) -> Option<Trans
             TranscriptionBackend::Local(engine) if crate::transcription::streams(&engine) => {
                 Some(engine)
             }
-            TranscriptionBackend::Local(_) | TranscriptionBackend::Server { .. } => None,
+            TranscriptionBackend::Local(_) | TranscriptionBackend::Server => None,
         },
     }
 }
@@ -155,7 +155,8 @@ pub struct LoadedModel {
     pub path: PathBuf,
 }
 
-/// The models `settings` make Aria load.
+/// The models `settings` make Aria load. The local engine counts while the
+/// server transcribes, since going back loads it.
 pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel> {
     let mut models = Vec::new();
     let mut add = |section, engine, path| {
@@ -165,11 +166,10 @@ pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel
             path,
         });
     };
-    if let TranscriptionBackend::Local(engine) = TranscriptionBackend::load(settings, home) {
-        let name = engine.backend_name();
-        if let Some(path) = engine.model_path() {
-            add(Section::Stt, Some(name), path);
-        }
+    let engine = TranscriptionConfig::load(settings, home);
+    let name = engine.backend_name();
+    if let Some(path) = engine.model_path() {
+        add(Section::Stt, Some(name), path);
     }
     // Fallback Parakeet isn't any setting's choice, so it stays deletable.
     // Listen then reports it missing when a session starts.
@@ -235,26 +235,31 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 
 impl TranscriptionBackend {
     pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
+        match settings.choices().stt_location {
+            TranscriptionLocation::Server => Self::Server,
+            TranscriptionLocation::Local => Self::Local(TranscriptionConfig::load(settings, home)),
+        }
+    }
+}
+
+impl TranscriptionConfig {
+    /// The local engine, which the settings keep while the server transcribes.
+    pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
         let stt = &settings.stt;
         match &settings.choices().stt {
-            SttChoice::Server(endpoint) => Self::Server {
-                endpoint: endpoint.clone(),
+            SttChoice::ParakeetMlx { interpreter } => Self::ParakeetMlx {
+                model: stt
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_PARAKEET_MLX_MODEL.to_owned()),
+                interpreter: interpreter.clone(),
             },
-            SttChoice::ParakeetMlx { interpreter } => {
-                Self::Local(TranscriptionConfig::ParakeetMlx {
-                    model: stt
-                        .model
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_PARAKEET_MLX_MODEL.to_owned()),
-                    interpreter: interpreter.clone(),
-                })
-            }
-            SttChoice::Local(engine) => Self::Local(local(
+            SttChoice::Local(engine) => local(
                 *engine,
                 stt.model.as_deref().map(Path::new),
                 stt.device,
                 home,
-            )),
+            ),
         }
     }
 }
@@ -328,29 +333,24 @@ mod tests {
     use aria_settings::{CleanupTarget, Loaded};
 
     #[test]
-    fn a_server_is_used_by_its_canonical_origin() {
-        for (endpoint, canonical) in [
-            ("https://localhost:9851", "https://localhost:9851"),
-            ("https://Example.Test/", "https://example.test"),
-            ("https://[::1]:443", "https://[::1]:443"),
-        ] {
-            let file = file(&format!(
-                "[stt]\nbackend = \"server\"\nserver = '{endpoint}'\n"
-            ));
-            let TranscriptionBackend::Server { endpoint } =
-                TranscriptionBackend::load(&file, &test_home())
-            else {
-                panic!("expected a server backend");
-            };
-            assert_eq!(endpoint.to_string(), canonical);
-            let models = loaded_models(&file, Path::new("/missing-home"));
-            assert!(models.iter().all(|model| model.section != Section::Stt));
-        }
+    fn the_server_transcribes_and_the_local_model_stays_in_use() {
+        let file = file(
+            "[stt]\nbackend = \"whisper\"\nmodel = \"/models/whisper\"\nlocation = \"server\"\n",
+        );
+
+        assert_eq!(
+            TranscriptionBackend::load(&file, &test_home()),
+            TranscriptionBackend::Server
+        );
+        let models = loaded_models(&file, Path::new("/missing-home"));
+        assert!(models.iter().any(|model| model.section == Section::Stt
+            && model.engine == Some(backend::WHISPER)
+            && model.path == Path::new("/models/whisper")));
     }
 
     #[test]
     fn listen_runs_locally_while_dictation_uses_a_server() {
-        let server = "[stt]\nbackend = \"server\"\nserver = \"https://example.test\"\n";
+        let server = "[stt]\nbackend = \"moonshine\"\nlocation = \"server\"\n";
         let engine = |text: &str| {
             ListenConfig::load(&file(text), &test_home())
                 .unwrap()

@@ -4,13 +4,13 @@
 
 use std::path::Path;
 
+use aria_settings::CheckedSettings;
+
 use crate::primitives::user_home;
 
-use super::backends::{Host, stt_choices};
+use super::backends::{Host, Stt, choices};
 use super::settings_file::{self, SettingsWrite};
-use super::{
-    ModelState, Outcome, Pairing, SetupError, SetupEvent, Step, fetch, lock_setup, model_states,
-};
+use super::{ModelState, Outcome, SetupError, SetupEvent, Step, fetch, lock_setup, model_states};
 
 #[derive(Debug)]
 pub struct SetTranscriptionEngineSummary {
@@ -39,6 +39,29 @@ pub(super) fn downloads<'a>(
         .filter(move |model| model.engine == Some(engine) && model.files.needs_download())
 }
 
+/// Fetches `engine`'s own models not on disk yet. `STEP_MODELS` starts only
+/// when there is something to fetch.
+pub(super) fn fetch_engine_models(
+    home: &Path,
+    file: &CheckedSettings,
+    engine: &str,
+    transfer_meter: bool,
+    observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
+) -> Result<Vec<(&'static str, Outcome)>, SetupError> {
+    let models = model_states(home, file)?;
+    let wanted: Vec<&ModelState> = downloads(&models, engine).collect();
+    if !wanted.is_empty() {
+        observe(SetupEvent::Started(Step::Models))?;
+    }
+    fetch(
+        &aria_settings::config::models_dir(home),
+        wanted.into_iter(),
+        |_| true,
+        transfer_meter,
+        observe,
+    )
+}
+
 fn set_in(
     home: &Path,
     host: &Host,
@@ -48,8 +71,7 @@ fn set_in(
 ) -> Result<SetTranscriptionEngineSummary, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
     let file = settings_file::read(home)?;
-    let paired = matches!(Pairing::read(home), Pairing::Paired(_));
-    let choice = stt_choices(&file.stt, paired, host)
+    let choice = choices::<Stt>(file.stt.backend.as_deref(), host)
         .into_iter()
         .find(|choice| choice.key == engine)
         .ok_or_else(|| SetupError::UnknownEngine {
@@ -59,19 +81,7 @@ fn set_in(
         return Err(SetupError::NotSettable { name: choice.key });
     }
     settings_file::check_transcription(home, &file, choice.key)?;
-
-    let models = model_states(home, &file)?;
-    let wanted: Vec<&ModelState> = downloads(&models, choice.key).collect();
-    if !wanted.is_empty() {
-        observe(SetupEvent::Started(Step::Models))?;
-    }
-    let models = fetch(
-        &aria_settings::config::models_dir(home),
-        wanted.into_iter(),
-        |_| true,
-        transfer_meter,
-        observe,
-    )?;
+    let models = fetch_engine_models(home, &file, choice.key, transfer_meter, observe)?;
 
     observe(SetupEvent::Started(Step::Settings))?;
     let settings = settings_file::write_transcription(home, choice.key)?;
@@ -152,7 +162,6 @@ mod tests {
             Key::SttModel,
             Key::SttDevice,
             Key::SttInterpreter,
-            Key::SttServer,
         ] {
             assert_eq!(key.apply(), Apply::Live, "{}", key.path());
         }
@@ -177,11 +186,14 @@ mod tests {
         let settings = "[stt]\nbackend = \"whisper\"\n";
         let home = home(settings);
 
-        let (server, events) = set_engine(home.path(), backend::SERVER);
-        let (unknown, _) = set_engine(home.path(), "vosk");
+        let (fetches_its_own, events) = set_engine(home.path(), backend::PARAKEET_MLX);
+        let (server, _) = set_engine(home.path(), backend::SERVER);
 
-        assert!(matches!(server, Err(SetupError::NotSettable { .. })));
-        assert!(matches!(unknown, Err(SetupError::UnknownEngine { .. })));
+        assert!(matches!(
+            fetches_its_own,
+            Err(SetupError::NotSettable { .. })
+        ));
+        assert!(matches!(server, Err(SetupError::UnknownEngine { .. })));
         assert!(events.is_empty());
         assert_eq!(
             fs::read_to_string(aria_settings::default_path(home.path())).unwrap(),
@@ -204,7 +216,6 @@ mod tests {
 
         assert!(names(backend::MOONSHINE).is_empty());
         assert_eq!(names(backend::NEMOTRON), ["nemotron"]);
-        assert!(names(backend::SERVER).is_empty());
 
         let elsewhere = home("[stt]\nbackend = \"nemotron\"\nmodel = \"/elsewhere/nemotron\"\n");
         let file = settings_file::read(elsewhere.path()).unwrap();

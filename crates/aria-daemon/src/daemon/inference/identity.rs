@@ -357,12 +357,8 @@ impl ClientIdentity {
         })
     }
 
-    pub(super) fn pinned_server(&self, endpoint: &ServerEndpoint) -> Result<&PinnedServer, Error> {
-        self.stored
-            .server
-            .as_ref()
-            .filter(|server| &server.endpoint == endpoint)
-            .ok_or(Error::Unpaired)
+    pub(super) fn pin(&self) -> Result<&PinnedServer, Error> {
+        self.stored.server.as_ref().ok_or(Error::Unpaired)
     }
 
     pub(super) fn remember(&mut self, invitation: &Invitation) -> Result<(), Error> {
@@ -805,25 +801,18 @@ mod tests {
                 .certificate_pem,
             certificate
         );
-        assert!(matches!(
-            client.pinned_server(&localhost(5000)),
-            Err(Error::Unpaired)
-        ));
+        assert!(matches!(client.pin(), Err(Error::Unpaired)));
         client
             .remember(&server.issue(&localhost(5000)).unwrap())
             .unwrap();
-        assert!(
+        assert_eq!(
             ClientIdentity::load_or_create(&path)
                 .unwrap()
-                .pinned_server(&localhost(5000))
-                .is_ok()
+                .pin()
+                .unwrap()
+                .endpoint,
+            localhost(5000)
         );
-        let respelled = ServerEndpoint::parse("https://LOCALHOST:5000/").unwrap();
-        assert!(client.pinned_server(&respelled).is_ok());
-        assert!(matches!(
-            client.pinned_server(&localhost(5001)),
-            Err(Error::Unpaired)
-        ));
     }
 
     #[test]
