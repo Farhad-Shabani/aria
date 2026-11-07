@@ -1,8 +1,8 @@
-use super::{DictationRequest, DictationSettings, Rewriting};
+use super::{DictationRequest, DictationRoute, DictationSettings, Rewriting, TranscriptRoute};
 use crate::history::HistorySource;
 use crate::vocabulary::Context;
 use aria_platform::delivery::{Application, TargetPolicy};
-use aria_settings::{ApplicationOverride, DictationOverrides, Settings};
+use aria_settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
 
 impl DictationSettings {
     /// `application` is the app in front as dictation is admitted. Each
@@ -32,15 +32,27 @@ impl DictationSettings {
             output_mode: application_output,
             delivery_mode: application_delivery,
         } = overrides;
-        let output_mode = request
+        let route = TranscriptRoute::from(request.route);
+        let requested = match request.route {
+            DictationRoute::Deliver(requested) => requested,
+            DictationRoute::TranscriptOnly | DictationRoute::HistoryOnly => {
+                DictationOverrides::default()
+            }
+        };
+        let output_mode = requested
             .output_mode
             .or(application_output)
             .unwrap_or(settings.output_mode);
-        // The pipeline decides whether this can stream, since only it knows the engine.
-        let delivery_mode = request
-            .delivery_mode
-            .or(application_delivery)
-            .unwrap_or(settings.delivery_mode);
+        // A transcript that isn't typed has nowhere to stream to. Otherwise the
+        // pipeline decides whether this can stream, since only it knows the engine.
+        let delivery_mode = if route.delivers() {
+            requested
+                .delivery_mode
+                .or(application_delivery)
+                .unwrap_or(settings.delivery_mode)
+        } else {
+            DeliveryMode::Complete
+        };
         Self {
             history_enabled: settings.history_enabled,
             history_keep_audio: settings.history_keep_audio,
@@ -56,7 +68,7 @@ impl DictationSettings {
                 cleanup: settings.cleanup,
                 backtrack: settings.backtrack,
             },
-            transcript_only: request.transcript_only,
+            route,
             project: if settings.vocabulary_enabled {
                 match request.project {
                     Context::Default => settings.vocabulary_dir,
@@ -148,7 +160,10 @@ mod tests {
             delivery_mode: None,
         });
         let request = DictationRequest {
-            output_mode: Some(OutputMode::InsertOrCopy),
+            route: DictationRoute::Deliver(DictationOverrides {
+                output_mode: Some(OutputMode::InsertOrCopy),
+                delivery_mode: None,
+            }),
             ..DictationRequest::new(StopMode::OnSilence)
         };
 
@@ -156,6 +171,25 @@ mod tests {
             modes(DictationSettings::resolve(settings, request, front(SLACK))),
             (OutputMode::InsertOrCopy, DeliveryMode::Streaming)
         );
+    }
+
+    #[test]
+    fn a_route_that_does_not_type_never_streams() {
+        for route in [DictationRoute::TranscriptOnly, DictationRoute::HistoryOnly] {
+            let request = DictationRequest {
+                route,
+                ..DictationRequest::new(StopMode::OnSilence)
+            };
+
+            let resolved = DictationSettings::resolve(
+                with_slack(DictationOverrides::default()),
+                request,
+                None,
+            );
+
+            assert_eq!(resolved.delivery_mode, DeliveryMode::Complete);
+            assert_eq!(resolved.route, TranscriptRoute::from(route));
+        }
     }
 
     #[test]

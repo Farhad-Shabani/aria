@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use aria_daemon::{DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, StopMode};
+use aria_daemon::{
+    DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, DictationRoute, StopMode,
+};
+
+use aria_settings::DictationOverrides;
 
 use super::CliOutputMode;
 use super::logging::init_daemon_logging;
@@ -12,6 +16,7 @@ pub(super) fn run(
     toggle: bool,
     stream: bool,
     no_project: bool,
+    history_only: bool,
 ) -> anyhow::Result<()> {
     let paths = runtime_paths()?;
     init_daemon_logging(paths.log_path())?;
@@ -33,14 +38,19 @@ pub(super) fn run(
     let mut recording = interrupt.recording();
     let outcome = session.request_dictation(
         DictationRequest {
-            output_mode: mode.map(Into::into),
-            delivery_mode: Some(delivery),
             stop_mode: if toggle {
                 StopMode::Manual
             } else {
                 StopMode::OnSilence
             },
-            transcript_only: false,
+            route: if history_only {
+                DictationRoute::HistoryOnly
+            } else {
+                DictationRoute::Deliver(DictationOverrides {
+                    output_mode: mode.map(Into::into),
+                    delivery_mode: Some(delivery),
+                })
+            },
             project,
         },
         |stage| recording.follow(stage),
@@ -75,5 +85,22 @@ mod tests {
             panic!("expected a dictation mode");
         };
         assert_eq!(OutputMode::from(mode), OutputMode::InsertAndSubmit);
+    }
+
+    #[test]
+    fn dictate_saves_to_history_only_without_a_mode_or_streaming() {
+        let cli = Cli::try_parse_from(["aria", "dictate", "--history-only", "--toggle"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Dictate {
+                history_only: true,
+                mode: None,
+                ..
+            }
+        ));
+        for conflicting in ["--stream", "--mode=copy"] {
+            let arguments = ["aria", "dictate", "--history-only", conflicting];
+            assert!(Cli::try_parse_from(arguments).is_err(), "{arguments:?}");
+        }
     }
 }

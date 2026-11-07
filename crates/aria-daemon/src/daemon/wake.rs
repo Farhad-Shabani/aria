@@ -17,8 +17,8 @@ use aria_kit::audio::{
     CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor,
 };
 use aria_primitives::error_chain;
-use aria_settings::DeliveryMode;
 use aria_settings::WakeEngine;
+use aria_settings::{DeliveryMode, DictationOverrides};
 use aria_voice::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
 
 use super::DictationInitializationError;
@@ -151,11 +151,12 @@ impl WakeTrigger {
     fn activate(&self) {
         tracing::info!(trigger = "wake_word", "wake word detected");
         let request = DictationRequest {
-            output_mode: None,
-            // Hands-free: always one insert at silence, never live keystrokes.
-            delivery_mode: Some(DeliveryMode::Complete),
             stop_mode: StopMode::OnSilence,
-            transcript_only: false,
+            route: aria_voice::dictation::DictationRoute::Deliver(DictationOverrides {
+                output_mode: None,
+                // Hands-free: always one insert at silence, never live keystrokes.
+                delivery_mode: Some(DeliveryMode::Complete),
+            }),
             project: aria_voice::vocabulary::Context::Default,
         };
         // Daemon shutdown reaches the operation through the actor, which also

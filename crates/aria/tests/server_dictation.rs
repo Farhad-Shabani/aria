@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 
 use aria::primitives::cancel::CancelToken;
 use aria::primitives::process::{self, Bounds, Capture, ChildProcess, WaitOutcome};
-use aria_daemon::{
-    Daemon, DaemonSession, DeliveryMode, DictationOutcome, DictationRequest, StopMode,
-};
+use aria_daemon::{Daemon, DaemonSession, DictationOutcome, DictationRequest, StopMode};
 use aria_harness::Sandbox;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -119,8 +117,7 @@ fn desktop_probe() {
     let outcome = session
         .request_dictation(
             DictationRequest {
-                delivery_mode: Some(DeliveryMode::Complete),
-                transcript_only: true,
+                route: aria_daemon::DictationRoute::TranscriptOnly,
                 ..DictationRequest::new(StopMode::Manual)
             },
             |_| {},

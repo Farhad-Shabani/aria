@@ -31,4 +31,4 @@ wasm-bindgen = "0.2"
 # candle seeds its sampling from the platform generator, and the wasm build of
 # getrandom only compiles once a backend names its entropy source.
 [target.'cfg(target_family = "wasm")'.dependencies]
-getrandom = { version = "0.3", features = [ "wasm_js" ] }
+getrandom = { workspace = true, features = [ "wasm_js" ] }

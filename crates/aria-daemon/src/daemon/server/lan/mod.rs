@@ -749,6 +749,7 @@ mod tests {
 
         let history = wire::history_service_client::HistoryServiceClient::new(channel.clone())
             .list(wire::ListHistoryRequest {
+                section: None,
                 query: String::new(),
                 before_id: None,
                 limit: 10,

@@ -50,9 +50,38 @@ impl PromptRun<'_> {
     }
 }
 
+/// What a prompt asks of the assistant: a prompt file's Markdown, or words
+/// written for one run. Never blank, and at most `MAX_INSTRUCTIONS_BYTES`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instructions(String);
+
+impl Instructions {
+    pub fn new(text: String) -> Result<Self, InstructionsTextError> {
+        if text.len() as u64 > MAX_INSTRUCTIONS_BYTES {
+            return Err(InstructionsTextError::TooLarge);
+        }
+        if text.trim().is_empty() {
+            return Err(InstructionsTextError::Empty);
+        }
+        Ok(Self(text))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InstructionsTextError {
+    #[error("the instructions are empty")]
+    Empty,
+    #[error("the instructions are over {MAX_INSTRUCTIONS_BYTES} bytes")]
+    TooLarge,
+}
+
 /// A prompt's Markdown, read fresh so an edit applies to the next run.
 /// A symlink is followed: the user picked the file, wherever it lives.
-pub fn read_instructions(path: &Path) -> Result<String, InstructionsError> {
+pub fn read_instructions(path: &Path) -> Result<Instructions, InstructionsError> {
     let unreadable = |source| InstructionsError::Unreadable {
         path: path.to_path_buf(),
         source,
@@ -80,10 +109,10 @@ pub fn read_instructions(path: &Path) -> Result<String, InstructionsError> {
             "not UTF-8 text",
         ))
     })?;
-    if text.trim().is_empty() {
-        return Err(InstructionsError::Empty(path.to_path_buf()));
-    }
-    Ok(text)
+    Instructions::new(text).map_err(|error| match error {
+        InstructionsTextError::Empty => InstructionsError::Empty(path.to_path_buf()),
+        InstructionsTextError::TooLarge => InstructionsError::TooLarge(path.to_path_buf()),
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -179,7 +208,9 @@ mod tests {
 
         std::fs::write(path("polish.md"), "Fix grammar.\n").expect("write");
         assert_eq!(
-            read_instructions(&path("polish.md")).expect("text"),
+            read_instructions(&path("polish.md"))
+                .expect("text")
+                .as_str(),
             "Fix grammar.\n"
         );
 

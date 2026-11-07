@@ -67,18 +67,27 @@ where
         job: &'static str,
         work: impl FnOnce() -> Result<T, E> + Send + 'static,
     ) {
-        jobs.spawn_blocking(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
-                .map(|result| result.map_err(CallError::Runtime))
-                .unwrap_or_else(|panic| {
-                    // Answered, not dropped: the caller must not read a panic
-                    // as daemon shutdown.
-                    tracing::error!(job, panic = panic_message(panic.as_ref()), "a job panicked");
-                    Err(CallError::JobFailed)
-                });
-            // A caller that stopped waiting no longer wants the answer.
-            let _ = self.0.send(outcome);
-        });
+        jobs.spawn_blocking(move || self.run(job, work));
+    }
+
+    /// Runs the work on this thread and answers with its result, for an
+    /// actor that runs its jobs on the blocking pool itself.
+    pub(super) fn run(self, job: &'static str, work: impl FnOnce() -> Result<T, E>) {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+            .map(|result| result.map_err(CallError::Runtime))
+            .unwrap_or_else(|panic| {
+                // Answered, not dropped: the caller must not read a panic
+                // as daemon shutdown.
+                tracing::error!(job, panic = panic_message(panic.as_ref()), "a job panicked");
+                Err(CallError::JobFailed)
+            });
+        // A caller that stopped waiting no longer wants the answer.
+        let _ = self.0.send(outcome);
+    }
+
+    /// Answers with the work's own failure, for work that never ran.
+    pub(super) fn fail(self, error: E) {
+        let _ = self.0.send(Err(CallError::Runtime(error)));
     }
 
     /// Answers without running anything, for a call whose work goes on

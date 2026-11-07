@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use aria_kit::cancel::CancelToken;
 
@@ -18,14 +19,17 @@ use aria_voice::listen::{
     SystemAudioCapture, TranscriptFile, spawn_session,
 };
 
+use super::history::HistoryStore;
 use super::host::DaemonLifetime;
 
 pub(super) struct ListenState {
     lifetime: DaemonLifetime,
     home: PathBuf,
     cache: Arc<aria_settings::SettingsCache>,
+    settings: Arc<aria_settings::SettingsStore>,
     events: ListenEventEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
+    history: Arc<HistoryStore>,
     active: Mutex<Slot>,
 }
 
@@ -54,15 +58,19 @@ impl ListenState {
         lifetime: DaemonLifetime,
         home: PathBuf,
         cache: Arc<aria_settings::SettingsCache>,
+        settings: Arc<aria_settings::SettingsStore>,
         events: ListenEventEmitter,
         vocabulary: Arc<super::vocabulary::Runtime>,
+        history: Arc<HistoryStore>,
     ) -> Self {
         Self {
             lifetime,
             home,
             cache,
+            settings,
             events,
             vocabulary,
+            history,
             active: Mutex::new(Slot::Idle),
         }
     }
@@ -92,6 +100,15 @@ impl ListenState {
         let settings = self.cache.effective();
         let config = ListenConfig::load(&settings, &self.home).map_err(internal)?;
         let speaker = SpeakerConfig::load(&settings.speaker, &self.home);
+        // An unreadable settings file refuses the session rather than guess whether to save
+        // history.
+        let history_enabled = self
+            .settings
+            .snapshot()
+            .map_err(|error| RpcFailure::from(&error))?
+            .settings
+            .history_enabled;
+        let saves_history = saves_history(output.is_some(), history_enabled);
         let (sink, transcript) = match output {
             Some(path) => TranscriptFile::create_at(path),
             None => TranscriptFile::create(&config.transcripts_dir),
@@ -105,6 +122,25 @@ impl ListenState {
         // snapshot is let go at once, so background vocabulary work does
         // not wait on a session that runs for hours.
         let vocabulary = Arc::clone(&self.vocabulary.snapshot(None).matcher);
+        let ended = {
+            let history = saves_history.then(|| Arc::clone(&self.history));
+            let transcript = transcript.clone();
+            let created_at_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let started = Instant::now();
+            move |result: Result<(), &ListenError>| {
+                if let Some(history) = history {
+                    history.save_transcript(
+                        &transcript,
+                        created_at_ms,
+                        started.elapsed().as_millis() as u64,
+                        result.err().map(RpcFailure::from),
+                    );
+                }
+            }
+        };
         let thread = spawn_session(
             config,
             speaker,
@@ -114,6 +150,7 @@ impl ListenState {
             recording,
             sink,
             cancel.clone(),
+            ended,
         )
         .map_err(|error| {
             stopper.stop();
@@ -206,6 +243,12 @@ impl Drop for ListenState {
     }
 }
 
+/// History links only a file the daemon named. A file the caller named may hold other text, which
+/// deleting the entry would take with it.
+fn saves_history(caller_named_file: bool, history_enabled: bool) -> bool {
+    !caller_named_file && history_enabled
+}
+
 /// Moves a session that ended on its own into the reportable `Ended` state.
 fn harvest(slot: &mut Slot) {
     let Slot::Running(active) = &*slot else {
@@ -242,5 +285,17 @@ fn join(active: ActiveListen) -> Result<(), RpcFailure> {
             RpcErrorCode::Internal,
             "the listen session thread panicked",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_file_the_daemon_named_with_history_on_is_saved() {
+        assert!(saves_history(false, true));
+        assert!(!saves_history(true, true));
+        assert!(!saves_history(false, false));
     }
 }

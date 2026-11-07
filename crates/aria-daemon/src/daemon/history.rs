@@ -10,16 +10,17 @@ use aria_voice::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
 };
 use aria_voice::history::{
-    AudioAvailability, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
-    HistoryStatus, MAX_ENTRY_BYTES, Store as HistoryStore,
+    AudioAvailability, ClearHistoryResult, DictationContent, HistoryContent, HistoryEntry,
+    HistoryError, HistoryPage, HistoryQuery, HistorySection, HistoryStatus, MAX_ENTRY_BYTES,
+    PromptResult, Store, Title,
 };
 
-pub(super) struct TranscriptStore {
-    storage: Option<Arc<HistoryStore>>,
+pub(super) struct HistoryStore {
+    storage: Option<Arc<Store>>,
     warning: Mutex<Option<String>>,
 }
 
-impl TranscriptStore {
+impl HistoryStore {
     pub(super) fn open(directory: &Path) -> Self {
         let opened = directory
             .parent()
@@ -27,7 +28,7 @@ impl TranscriptStore {
             .and_then(|parent| {
                 aria_primitives::private_fs::prepare_directory(parent)
                     .map_err(HistoryError::storage)?;
-                HistoryStore::open(directory)
+                Store::open(directory)
             });
         match opened {
             Ok(storage) => Self {
@@ -52,7 +53,7 @@ impl TranscriptStore {
         }
     }
 
-    pub(super) fn storage(&self) -> Result<Arc<HistoryStore>, HistoryError> {
+    pub(super) fn storage(&self) -> Result<Arc<Store>, HistoryError> {
         self.storage.clone().ok_or(HistoryError::Unavailable)
     }
 
@@ -81,16 +82,100 @@ impl TranscriptStore {
         self.storage()?.get(id)
     }
 
+    pub(super) fn rename(
+        &self,
+        id: u64,
+        title: Option<&Title>,
+    ) -> Result<HistoryEntry, HistoryError> {
+        self.storage()?.rename(id, title)
+    }
+
     pub(super) fn delete(&self, id: u64) -> Result<(), HistoryError> {
         self.storage()?.delete(id).map(|_| ())
     }
 
-    pub(super) fn clear(&self) -> Result<ClearHistoryResult, HistoryError> {
-        self.storage()?.clear()
+    pub(super) fn clear(
+        &self,
+        section: Option<HistorySection>,
+    ) -> Result<ClearHistoryResult, HistoryError> {
+        self.storage()?.clear(section)
+    }
+
+    pub(super) fn results(&self, entry: u64) -> Result<Vec<PromptResult>, HistoryError> {
+        self.storage()?.results(entry)
+    }
+
+    /// Saves a prompt's reply under `entry`. Like `save`, a failure is logged
+    /// and kept as a warning, never returned to the run.
+    pub(super) fn save_result(
+        &self,
+        entry: u64,
+        prompt_name: &str,
+        text: &str,
+        created_at_ms: u64,
+    ) {
+        let saved = self
+            .storage()
+            .and_then(|store| store.save_result(entry, prompt_name, text, created_at_ms));
+        if let Err(error) = saved {
+            tracing::warn!(error = %error_chain(&error), "prompt result could not be saved");
+            self.warn(format!(
+                "A prompt result could not be saved to history: {error}"
+            ));
+        }
     }
 
     pub(super) fn maintenance(&self) -> Result<(), HistoryError> {
         self.storage()?.maintenance()
+    }
+
+    /// Like `save`, a failure is logged and kept as a warning, never returned
+    /// to the session.
+    pub(super) fn save_transcript(
+        &self,
+        transcript: &Path,
+        created_at_ms: u64,
+        duration_ms: u64,
+        failure: Option<RpcFailure>,
+    ) {
+        let saved = self.storage().and_then(|store| {
+            store.save_transcript(transcript, created_at_ms, duration_ms, failure)
+        });
+        if let Err(error) = saved {
+            tracing::warn!(error = %error_chain(&error), "listen history could not be saved");
+            self.warn(error.to_string());
+        }
+    }
+
+    /// Saves an ask that replied. `failure` is why its reply couldn't be typed.
+    pub(super) fn save_ask(
+        &self,
+        question: &str,
+        reply: &str,
+        workdir: &Path,
+        (created_at_ms, duration_ms): (u64, u64),
+        failure: Option<RpcFailure>,
+    ) {
+        let saved = self.storage().and_then(|store| {
+            store.save_ask(
+                question,
+                reply,
+                workdir,
+                created_at_ms,
+                duration_ms,
+                failure,
+            )
+        });
+        let warning = match saved {
+            Ok(entry) => entry.warning,
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "ask history could not be saved");
+                Some(format!("An ask could not be saved to history: {error}"))
+            }
+        };
+        if let Some(message) = warning {
+            self.warn(message);
+        }
     }
 
     pub(super) fn save(&self, entry: HistoryEntry, audio: Option<&Path>) {
@@ -110,7 +195,7 @@ impl TranscriptStore {
 }
 
 pub(super) struct History {
-    store: Arc<TranscriptStore>,
+    store: Arc<HistoryStore>,
     engine: &'static str,
     live: Option<HistoryEntry>,
     oversized: bool,
@@ -118,7 +203,7 @@ pub(super) struct History {
 }
 
 impl History {
-    pub(super) fn new(store: Arc<TranscriptStore>, engine: &'static str) -> Self {
+    pub(super) fn new(store: Arc<HistoryStore>, engine: &'static str) -> Self {
         Self {
             store,
             engine,
@@ -131,30 +216,39 @@ impl History {
     fn start(&mut self, settings: &DictationSettings) {
         self.oversized = false;
         self.retain_audio = settings.history_keep_audio;
-        self.live = (settings.history_enabled && !settings.transcript_only).then(|| HistoryEntry {
+        self.live = (settings.history_enabled && settings.route.saves()).then(|| HistoryEntry {
             id: 0,
+            title: None,
+            content: HistoryContent::Dictation(DictationContent {
+                language: settings.stt_language.as_str().to_owned(),
+                engine: self.engine.to_owned(),
+                own_voice_only: settings.own_voice_only,
+                audio: AudioAvailability::Unavailable,
+                retrying: false,
+            }),
             created_at_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
-            source: settings.source,
-            application: settings.application.clone(),
             duration_ms: None,
-            text: String::new(),
-            complete: false,
-            status: HistoryStatus::TranscriptionFailed,
-            error: None,
-            warning: None,
-            audio: AudioAvailability::Unavailable,
-            retrying: false,
-            deletion_pending: false,
-            language: settings.stt_language.as_str().to_owned(),
-            engine: self.engine.to_owned(),
-            own_voice_only: settings.own_voice_only,
+            source: settings.source,
+            // A transcript that types nowhere went to no app.
+            application: settings
+                .route
+                .delivers()
+                .then(|| settings.application.clone())
+                .flatten(),
             project: settings
                 .project
                 .as_ref()
                 .map(|path| Path::new(path.as_str()).to_path_buf()),
+            text: String::new(),
+            complete: false,
+            result_count: 0,
+            status: HistoryStatus::TranscriptionFailed,
+            error: None,
+            warning: None,
+            deletion_pending: false,
         });
     }
     fn save_recording(&self, recording: &mut RecordingReader, mut entry: HistoryEntry) {
@@ -187,8 +281,8 @@ impl TranscriptSink for History {
     }
 
     fn served_by(&mut self, engine: &'static str) {
-        if let Some(entry) = &mut self.live {
-            entry.engine = engine.to_owned();
+        if let Some(dictation) = self.live.as_mut().and_then(HistoryEntry::dictation_mut) {
+            dictation.engine = engine.to_owned();
         }
     }
 
@@ -263,12 +357,23 @@ mod tests {
     use super::*;
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
-    use aria_voice::dictation::{DictationRequest, StopMode};
+    use aria_voice::dictation::{DictationRequest, StopMode, TranscriptRoute};
     use aria_voice::history::HistorySource;
     use aria_voice::transcription::TranscriptionError;
 
-    fn store(directory: &Path) -> Arc<TranscriptStore> {
-        Arc::new(TranscriptStore::open(&directory.join(".aria/history")))
+    fn store(directory: &Path) -> Arc<HistoryStore> {
+        Arc::new(HistoryStore::open(&directory.join(".aria/history")))
+    }
+
+    fn sink(
+        directory: &Path,
+        served_by: &'static str,
+        samples: usize,
+    ) -> (Arc<HistoryStore>, History, RecordingReader) {
+        let saved = store(directory);
+        let sink = History::new(Arc::clone(&saved), served_by);
+        let recording = RecordingReader::from_samples_in(directory, &vec![0.25; samples]).unwrap();
+        (saved, sink, recording)
     }
 
     fn settings() -> DictationSettings {
@@ -279,9 +384,10 @@ mod tests {
         )
     }
 
-    fn entries(store: &TranscriptStore) -> Vec<HistoryEntry> {
+    fn entries(store: &HistoryStore) -> Vec<HistoryEntry> {
         store
             .list(HistoryQuery {
+                section: None,
                 query: String::new(),
                 before_id: None,
                 limit: 100,
@@ -299,10 +405,7 @@ mod tests {
             (HistoryStatus::DeliveryFailed, true),
         ] {
             let directory = tempfile::tempdir().unwrap();
-            let saved = store(directory.path());
-            let mut sink = History::new(Arc::clone(&saved), "test");
-            let mut recording =
-                RecordingReader::from_samples_in(directory.path(), &[0.25; 16_000]).unwrap();
+            let (saved, mut sink, mut recording) = sink(directory.path(), "test", 16_000);
             let original = recording
                 .finished_audio()
                 .unwrap()
@@ -335,7 +438,7 @@ mod tests {
             );
             assert!(found[0].complete);
             assert_eq!(
-                matches!(found[0].audio, AudioAvailability::Available { .. }),
+                matches!(found[0].audio(), AudioAvailability::Available { .. }),
                 retain_audio
             );
             assert_eq!(found[0].duration_ms, Some(1_000));
@@ -357,10 +460,7 @@ mod tests {
     #[test]
     fn transcription_failure_keeps_partial_text_and_owns_a_copy_of_finalized_audio() {
         let directory = tempfile::tempdir().unwrap();
-        let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "test");
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.25; 16_000]).unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "test", 16_000);
         let original = recording
             .finished_audio()
             .unwrap()
@@ -387,9 +487,9 @@ mod tests {
         assert_eq!(found[0].text, "accepted partial");
         assert!(!found[0].complete);
         assert_eq!(found[0].status, HistoryStatus::TranscriptionFailed);
-        assert!(found[0].own_voice_only);
+        assert!(found[0].dictation().unwrap().own_voice_only);
         assert!(matches!(
-            found[0].audio,
+            found[0].audio(),
             AudioAvailability::Available { .. }
         ));
         let mut lease = saved.storage().unwrap().begin_retry(found[0].id).unwrap();
@@ -400,10 +500,7 @@ mod tests {
     #[test]
     fn partial_text_is_spaced_as_it_was_typed() {
         let directory = tempfile::tempdir().unwrap();
-        let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "test");
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "test", 1_600);
         sink.dictation_started(&settings(), &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
         for text in ["we should", ". Ship it", "."] {
@@ -417,10 +514,7 @@ mod tests {
     #[test]
     fn interrupted_stream_keeps_audio_when_delivery_fails_before_completion() {
         let directory = tempfile::tempdir().unwrap();
-        let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "test");
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "test", 1_600);
         sink.dictation_started(&settings(), &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
         sink.segment(Utterance::anonymous("partial")).unwrap();
@@ -430,7 +524,7 @@ mod tests {
         assert!(!found[0].complete);
         assert_eq!(found[0].text, "partial");
         assert!(matches!(
-            found[0].audio,
+            found[0].audio(),
             AudioAvailability::Available { .. }
         ));
     }
@@ -448,7 +542,11 @@ mod tests {
         ] {
             let mut settings = settings();
             settings.history_enabled = !disabled;
-            settings.transcript_only = transcript_only;
+            settings.route = if transcript_only {
+                TranscriptRoute::TranscriptOnly
+            } else {
+                TranscriptRoute::Deliver
+            };
             let mut recording =
                 RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
             sink.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
@@ -467,12 +565,33 @@ mod tests {
     }
 
     #[test]
+    fn a_dictation_saved_but_not_typed_keeps_its_text_and_names_no_app() {
+        let directory = tempfile::tempdir().unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "test", 1_600);
+        sink.dictation_started(
+            &DictationSettings {
+                route: TranscriptRoute::HistoryOnly,
+                application: Some(aria_platform::delivery::Application {
+                    name: "Behind the palette".into(),
+                    bundle_id: None,
+                }),
+                ..settings()
+            },
+            &ExecutionControl::for_test(StopMode::Manual),
+        )
+        .unwrap();
+        sink.completed(Utterance::anonymous("kept words")).unwrap();
+        sink.recording_finished(&mut recording, Ok(()));
+
+        let entry = &entries(&saved)[0];
+        assert_eq!(entry.text, "kept words");
+        assert_eq!(entry.application, None);
+    }
+
+    #[test]
     fn relay_entries_share_the_store_and_name_the_served_by() {
         let directory = tempfile::tempdir().unwrap();
-        let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "server");
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "server", 1_600);
         sink.dictation_started(
             &DictationSettings {
                 source: HistorySource::Relay,
@@ -486,17 +605,14 @@ mod tests {
         sink.recording_finished(&mut recording, Ok(()));
         let entry = &entries(&saved)[0];
         assert_eq!(entry.source, HistorySource::Relay);
-        assert_eq!(entry.engine, "parakeet");
+        assert_eq!(entry.dictation().unwrap().engine, "parakeet");
     }
 
     #[test]
     fn unavailable_storage_warns_without_failing_successful_dictation() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join(".aria"), "blocked").unwrap();
-        let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "test");
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "test", 1_600);
         sink.dictation_started(&settings(), &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
         sink.completed(Utterance::anonymous("delivered words"))
@@ -506,6 +622,7 @@ mod tests {
         assert!(saved.warning.lock().unwrap().is_some());
         assert!(matches!(
             saved.list(HistoryQuery {
+                section: None,
                 query: String::new(),
                 before_id: None,
                 limit: 100
@@ -517,10 +634,7 @@ mod tests {
     #[test]
     fn oversized_transcript_warns_instead_of_saving_truncated_text() {
         let directory = tempfile::tempdir().unwrap();
-        let saved = store(directory.path());
-        let mut sink = History::new(Arc::clone(&saved), "test");
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+        let (saved, mut sink, mut recording) = sink(directory.path(), "test", 1_600);
         sink.dictation_started(&settings(), &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
         sink.segment(Utterance::anonymous("partial")).unwrap();
@@ -529,6 +643,7 @@ mod tests {
         sink.recording_finished(&mut recording, Ok(()));
         let page = saved
             .list(HistoryQuery {
+                section: None,
                 query: String::new(),
                 before_id: None,
                 limit: 100,

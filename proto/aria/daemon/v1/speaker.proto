@@ -5,6 +5,7 @@ syntax = "proto3";
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";
+import "google/protobuf/timestamp.proto";
 
 service SpeakerService {
   // Record several utterances and store the voice they agree on. Holds the
@@ -49,8 +50,8 @@ message ListSpeakersResponse {
 message EnrolledSpeaker {
   string name = 1;
   SpeakerRole role = 2;
-  // Seconds since the Unix epoch.
-  uint64 enrolled_at_seconds = 3;
+  // Whole seconds.
+  google.protobuf.Timestamp enroll_time = 3;
 }
 
 message RemoveSpeakerRequest {

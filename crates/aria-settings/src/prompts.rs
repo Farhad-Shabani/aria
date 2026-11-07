@@ -6,8 +6,21 @@ use super::Chord;
 // list of app overrides, with every name and path escaped at worst.
 const MAX_PROMPTS: usize = 16;
 const MAX_ID_BYTES: usize = 64;
-const MAX_NAME_BYTES: usize = 128;
+pub const MAX_NAME_BYTES: usize = 128;
 const MAX_FILE_BYTES: usize = 512;
+
+/// The folder under the home that holds prompt files written in Aria, and the cleanup and
+/// extraction guidance files.
+pub const PROMPTS_DIR: &str = ".aria/prompts";
+/// Dictation cleanup reads this file in [`PROMPTS_DIR`] in place of its own
+/// guidance.
+pub const CLEANUP_PROMPT_FILE: &str = "cleanup.md";
+/// Memory extraction reads this file in [`PROMPTS_DIR`] in place of its own
+/// guidance.
+pub const EXTRACT_PROMPT_FILE: &str = "extract.md";
+/// A prompt saved under one of these names would change what Aria itself
+/// does, so no prompt file takes one.
+pub const RESERVED_PROMPT_FILES: [&str; 2] = [CLEANUP_PROMPT_FILE, EXTRACT_PROMPT_FILE];
 
 /// What a prompt makes of what was said, which sets how the assistant is told to
 /// treat the transcript.
@@ -17,6 +30,16 @@ pub enum PromptKind {
     Rewrite,
     /// New text made from what was said, such as a reply or a summary.
     Compose,
+}
+
+impl PromptKind {
+    /// The kind as the settings file spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rewrite => "rewrite",
+            Self::Compose => "compose",
+        }
+    }
 }
 
 /// What `RunPrompt` names a prompt by; a rename keeps it.

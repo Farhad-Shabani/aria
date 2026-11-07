@@ -9,14 +9,15 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::{protocol, wire};
 use aria_voice::history::{
-    ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, RetryOptions,
+    ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, HistorySection,
+    PromptResult, RetryOptions, Title,
 };
 
 use super::super::dictation::DictationRuntime;
+use super::super::history::HistoryStore;
 use super::super::operation::{Pending, Reply, call, cancellable_call, operation_cancellation};
 use super::super::server::ActivityGuard;
 use super::super::tasks::Supervised;
-use super::super::transcripts::TranscriptStore;
 
 const MAX_JOBS: usize = 8;
 
@@ -26,7 +27,7 @@ pub(in crate::daemon) struct HistoryRpc {
 
 pub(in crate::daemon) struct HistoryWorker {
     commands: mpsc::Receiver<Command>,
-    store: Arc<TranscriptStore>,
+    store: Arc<HistoryStore>,
     runtime: Arc<DictationRuntime>,
 }
 
@@ -41,8 +42,20 @@ enum Command {
         Reply<HistoryEntry, HistoryError>,
         Option<Arc<ActivityGuard>>,
     ),
+    Rename(
+        u64,
+        Option<Title>,
+        Reply<HistoryEntry, HistoryError>,
+        Option<Arc<ActivityGuard>>,
+    ),
     Delete(u64, Reply<(), HistoryError>, Option<Arc<ActivityGuard>>),
+    Results(
+        u64,
+        Reply<Vec<PromptResult>, HistoryError>,
+        Option<Arc<ActivityGuard>>,
+    ),
     Clear(
+        Option<HistorySection>,
         Reply<ClearHistoryResult, HistoryError>,
         Option<Arc<ActivityGuard>>,
     ),
@@ -57,7 +70,7 @@ enum Command {
 
 impl HistoryRpc {
     pub(in crate::daemon) fn new(
-        store: Arc<TranscriptStore>,
+        store: Arc<HistoryStore>,
         runtime: Arc<DictationRuntime>,
     ) -> (Self, HistoryWorker) {
         let (commands, receiver) = mpsc::channel(MAX_JOBS);
@@ -120,13 +133,21 @@ impl Supervised for HistoryWorker {
                             let _activity = activity;
                             store.get(id)
                         }),
+                        Command::Rename(id, title, reply, activity) => reply.answer_with(&mut jobs, "history rename", move || {
+                            let _activity = activity;
+                            store.rename(id, title.as_ref())
+                        }),
                         Command::Delete(id, reply, activity) => reply.answer_with(&mut jobs, "history delete", move || {
                             let _activity = activity;
                             store.delete(id)
                         }),
-                        Command::Clear(reply, activity) => reply.answer_with(&mut jobs, "history clear", move || {
+                        Command::Results(id, reply, activity) => reply.answer_with(&mut jobs, "history results", move || {
                             let _activity = activity;
-                            store.clear()
+                            store.results(id)
+                        }),
+                        Command::Clear(section, reply, activity) => reply.answer_with(&mut jobs, "history clear", move || {
+                            let _activity = activity;
+                            store.clear(section)
                         }),
                         Command::Retry(id, options, cancel, reply, activity) => {
                             let runtime = Arc::clone(&self.runtime);
@@ -155,8 +176,10 @@ impl Supervised for HistoryWorker {
                 Command::Get(_, reply, _) | Command::Retry(_, _, _, reply, _) => {
                     reply.unavailable();
                 }
+                Command::Rename(_, _, reply, _) => reply.unavailable(),
                 Command::Delete(_, reply, _) => reply.unavailable(),
-                Command::Clear(reply, _) => reply.unavailable(),
+                Command::Results(_, reply, _) => reply.unavailable(),
+                Command::Clear(_, reply, _) => reply.unavailable(),
             }
         }
         while let Some(result) = jobs.join_next().await {
@@ -210,15 +233,48 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         Ok(Response::new(wire::DeleteHistoryResponse {}))
     }
 
+    async fn get_thread(
+        &self,
+        mut request: Request<wire::GetThreadRequest>,
+    ) -> Result<Response<wire::HistoryThread>, Status> {
+        const METHOD: &str = "HistoryService/GetThread";
+        let activity = ActivityGuard::take(&mut request);
+        let id = protocol::history_id(request.into_inner().entry_id)
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
+        let (command, pending) = call(|reply| Command::Results(id, reply, activity));
+        let results = self.submit(METHOD, command, pending).await?;
+        Ok(Response::new(results.into()))
+    }
+
     async fn clear(
         &self,
         mut request: Request<wire::ClearHistoryRequest>,
     ) -> Result<Response<wire::ClearHistoryResponse>, Status> {
         const METHOD: &str = "HistoryService/Clear";
         let activity = ActivityGuard::take(&mut request);
-        let (command, pending) = call(|reply| Command::Clear(reply, activity));
+        let section = request
+            .into_inner()
+            .section
+            .map(protocol::history_section)
+            .transpose()
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
+        let (command, pending) = call(|reply| Command::Clear(section, reply, activity));
         let result = self.submit(METHOD, command, pending).await?;
         Ok(Response::new(result.into()))
+    }
+
+    async fn rename(
+        &self,
+        mut request: Request<wire::RenameHistoryRequest>,
+    ) -> Result<Response<wire::RenameHistoryResponse>, Status> {
+        const METHOD: &str = "HistoryService/Rename";
+        let activity = ActivityGuard::take(&mut request);
+        let (id, title) = <(u64, Option<Title>)>::try_from(request.into_inner())
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
+        let (command, pending) = call(|reply| Command::Rename(id, title, reply, activity));
+        self.submit(METHOD, command, pending)
+            .await
+            .map(|entry| Response::new(entry.into()))
     }
 
     async fn regenerate(

@@ -10,14 +10,14 @@ use crate::ipc::{
 };
 use aria_assistant::chat::{
     Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
-    ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, Ticket,
+    ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, PromptCall, Ticket,
 };
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_settings::config::{AssistantId, ConfigError};
 use aria_settings::rpc::RpcFailure;
-use aria_settings::{DeliveryMode, SettingsPatch, SettingsSnapshot, UpdateResult};
+use aria_settings::{SettingsPatch, SettingsSnapshot, UpdateResult};
 use aria_voice::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -127,6 +127,14 @@ impl DaemonSession {
         Ok(PendingAsk { ticket, events })
     }
 
+    /// Hands a prompt run to the daemon. Its result arrives as an ask's
+    /// reply does, on the event stream subscribed before the run goes out.
+    pub fn run_prompt(&self, call: PromptCall) -> Result<PendingAsk, ClientError> {
+        let events = self.client.subscribe()?;
+        let ticket = self.client.run_prompt(call)?;
+        Ok(PendingAsk { ticket, events })
+    }
+
     /// Ends the named recording so its transcript comes back. False when it
     /// is not the one running.
     pub fn stop_dictation(&self, recording: RecordingId) -> Result<bool, ClientError> {
@@ -172,10 +180,8 @@ impl DaemonSession {
     ) -> Result<Option<DictationResult>, ClientError> {
         let outcome = self.request_dictation(
             DictationRequest {
-                output_mode: None,
-                delivery_mode: Some(DeliveryMode::Complete),
                 stop_mode,
-                transcript_only: true,
+                route: aria_voice::dictation::DictationRoute::TranscriptOnly,
                 project,
             },
             observe,
@@ -272,8 +278,37 @@ impl DaemonSession {
         self.client.retry_history(id, options)
     }
 
-    pub fn clear_history(&self) -> Result<aria_voice::history::ClearHistoryResult, ClientError> {
-        self.client.clear_history()
+    /// Reads a Mac Audio session's transcript into the entry, up to Get's read limit.
+    pub fn get_history(&self, id: u64) -> Result<aria_voice::history::HistoryEntry, ClientError> {
+        self.client.get_history(id)
+    }
+
+    /// An entry already gone counts as deleted.
+    pub fn delete_history(&self, id: u64) -> Result<(), ClientError> {
+        self.client.delete_history(id)
+    }
+
+    /// An entry's prompt results, newest first.
+    pub fn history_thread(
+        &self,
+        entry_id: u64,
+    ) -> Result<Vec<aria_voice::history::PromptResult>, ClientError> {
+        self.client.history_thread(entry_id)
+    }
+
+    pub fn rename_history(
+        &self,
+        id: u64,
+        title: Option<&aria_voice::history::Title>,
+    ) -> Result<aria_voice::history::HistoryEntry, ClientError> {
+        self.client.rename_history(id, title)
+    }
+
+    pub fn clear_history(
+        &self,
+        section: Option<aria_voice::history::HistorySection>,
+    ) -> Result<aria_voice::history::ClearHistoryResult, ClientError> {
+        self.client.clear_history(section)
     }
 
     pub fn vocabulary_status(
@@ -725,6 +760,64 @@ mod tests {
     use aria_voice::speech::SpeechStage;
 
     use super::*;
+
+    #[test]
+    fn a_prompt_run_on_an_on_demand_daemon_is_refused_with_how_to_start_one() {
+        use aria_assistant::chat::{Instructions, PromptChoice, PromptInput};
+        use aria_settings::rpc::RpcErrorCode;
+
+        let daemon = crate::daemon::testing::HostedDaemon::configured(|_| String::new());
+        let session = daemon.session();
+
+        let refused = session
+            .run_prompt(PromptCall {
+                input: PromptInput::Text("we met on Friday".to_owned()),
+                prompt: PromptChoice::OneOff(
+                    Instructions::new("List the action items.".to_owned()).expect("instructions"),
+                ),
+                application: None,
+                tap_cancels: false,
+                output_mode: None,
+            })
+            .err()
+            .expect("an on-demand daemon runs no prompt");
+
+        let ClientError::Rpc(failure) = refused else {
+            panic!("{refused}");
+        };
+        assert_eq!(failure.code, RpcErrorCode::Unsupported);
+        assert!(
+            failure.message.contains("aria daemon"),
+            "{}",
+            failure.message
+        );
+        drop(session);
+        daemon.stop();
+    }
+
+    #[test]
+    fn a_missing_history_entry_reads_as_missing_and_deletes_as_done() {
+        use aria_settings::rpc::RpcErrorCode;
+
+        let daemon = crate::daemon::testing::HostedDaemon::configured(|_| String::new());
+        let session = daemon.session();
+        let code = |error: ClientError| match error {
+            ClientError::Rpc(failure) => failure.code,
+            other => panic!("{other}"),
+        };
+
+        assert_eq!(
+            code(session.get_history(7).err().expect("no entry 7")),
+            RpcErrorCode::HistoryMissing
+        );
+        assert_eq!(
+            code(session.history_thread(7).expect_err("no entry 7")),
+            RpcErrorCode::HistoryMissing
+        );
+        session.delete_history(7).expect("a missing entry deletes");
+        drop(session);
+        daemon.stop();
+    }
 
     #[test]
     fn a_daemon_without_a_wake_word_reports_it_disabled() {

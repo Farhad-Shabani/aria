@@ -13,10 +13,10 @@ expect:
   client:
     - run: [history, list]
       stdout_contains:
-        - "no dictation history"
+        - "no history"
     - run: [history, clear, --yes]
       stdout_contains:
-        - "Dictation history cleared (0 entries)."
+        - "History cleared (0 entries)."
     - run: [settings, set, history.keep_audio, "on"]
       stdout_contains:
         - "applied"

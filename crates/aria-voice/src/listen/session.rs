@@ -29,9 +29,9 @@ use aria_speaker::wespeaker::WeSpeaker;
 
 use super::track::VoiceThread;
 
-/// Loads the engine and transcribes until capture ends, on its own thread —
-/// Start answers before the model finishes loading. `vocabulary` corrects
-/// each segment before it is written.
+/// Loads the engine and transcribes until capture ends, on its own thread. Returns before the
+/// model finishes loading. `vocabulary` corrects each segment before it is written. `ended` hears
+/// how the session ended once the transcript file is final.
 #[allow(
     clippy::too_many_arguments,
     reason = "the daemon hands over each part a session owns"
@@ -45,6 +45,7 @@ pub fn spawn_session(
     recording: RecordingReader,
     sink: TranscriptFile,
     cancel: CancelToken,
+    ended: impl FnOnce(Result<(), &ListenError>) + Send + 'static,
 ) -> std::io::Result<JoinHandle<Result<(), ListenError>>> {
     thread::Builder::new()
         .name("aria-listen".into())
@@ -62,12 +63,23 @@ pub fn spawn_session(
                 recording,
                 sink,
             );
-            match &result {
-                Ok(()) => events.emit(ListenStage::Stopped),
-                Err(error) => events.emit(ListenStage::Failed(error.into())),
-            }
+            end(&result, ended, &events);
             result
         })
+}
+
+/// `ended` runs before the last stage goes out, so whoever reacts to that
+/// stage finds the session already saved.
+fn end(
+    result: &Result<(), ListenError>,
+    ended: impl FnOnce(Result<(), &ListenError>),
+    events: &ListenEventEmitter,
+) {
+    ended(result.as_ref().map(|_| ()));
+    match result {
+        Ok(()) => events.emit(ListenStage::Stopped),
+        Err(error) => events.emit(ListenStage::Failed(error.into())),
+    }
 }
 
 struct Session<'a> {
@@ -386,6 +398,30 @@ mod tests {
     use crate::vocabulary::{PersonalRules, Term};
 
     use super::*;
+
+    #[test]
+    fn a_session_is_reported_ended_before_its_last_stage_goes_out() {
+        use std::sync::Mutex;
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let heard = Arc::clone(&order);
+        let events = ListenEventEmitter::forwarded_by(move |stage| {
+            heard.lock().unwrap().push(format!("{stage:?}"));
+        });
+
+        let ended = Arc::clone(&order);
+        end(
+            &Err(ListenError::PermissionDenied),
+            move |result| {
+                assert!(result.is_err());
+                ended.lock().unwrap().push("ended".to_owned());
+            },
+            &events,
+        );
+
+        let order = order.lock().unwrap();
+        assert_eq!(order[0], "ended");
+        assert!(order[1].starts_with("Failed"));
+    }
 
     #[test]
     fn stopping_during_model_loading_finishes_capture() {

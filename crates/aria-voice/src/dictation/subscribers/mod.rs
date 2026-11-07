@@ -85,6 +85,9 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::AssistantTimeout
         | RpcErrorCode::AssistantSignedOut
         | RpcErrorCode::PromptUnreadable
+        | RpcErrorCode::PromptMissing
+        | RpcErrorCode::PromptsFull
+        | RpcErrorCode::PromptWriteFailed
         | RpcErrorCode::Unauthenticated
         | RpcErrorCode::PermissionDenied
         | RpcErrorCode::Unsupported
@@ -96,6 +99,8 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable
         | RpcErrorCode::HistoryProjectUnavailable
+        | RpcErrorCode::HistoryEntryEmpty
+        | RpcErrorCode::HistoryTranscriptUnreadable
         | RpcErrorCode::Unknown(_) => "Something went wrong. See the daemon log.",
     }
 }

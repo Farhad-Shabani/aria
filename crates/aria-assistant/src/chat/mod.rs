@@ -35,7 +35,9 @@ pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssi
 pub(crate) use assistants::{claude_command, parse_claude};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
-pub use prompt_run::{InstructionsError, PromptRun, read_instructions};
+pub use prompt_run::{
+    Instructions, InstructionsError, InstructionsTextError, PromptRun, read_instructions,
+};
 pub use sessions::{SessionStore, SessionStoreError};
 pub use subscribers::ChatSubscribers;
 
@@ -137,14 +139,51 @@ impl std::fmt::Display for SessionKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptInput {
+    Text(String),
+    /// A history entry by id. The run's reply is saved under that entry.
+    Entry(u64),
+}
+
+/// Which instructions a prompt call runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptChoice {
+    Stored(aria_settings::PromptId),
+    /// Instructions written for this run alone, run as compose.
+    OneOff(Instructions),
+}
+
+/// Where a resolved prompt's instructions come from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptInstructions {
+    /// A stored prompt's Markdown, read when the run starts.
+    File(PathBuf),
+    OneOff(Instructions),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptCall {
-    pub text: String,
-    pub prompt: aria_settings::PromptId,
+    pub input: PromptInput,
+    pub prompt: PromptChoice,
     /// The app in front when the chord was pressed, the only one the result
     /// may be typed into. None when the caller could not tell.
     pub application: Option<aria_settings::ApplicationId>,
     /// A tap of the Aria key cancels this run while it is in flight.
     pub tap_cancels: bool,
+    /// How to type the result. `None` types nothing: the result arrives only
+    /// in the reply.
+    pub output_mode: Option<OutputMode>,
+}
+
+/// Text to type that the caller already has, such as a result it showed
+/// before choosing to type it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliverCall {
+    pub text: String,
+    /// The only app the text may be typed into. None types into the app in
+    /// front.
+    pub application: Option<aria_settings::ApplicationId>,
+    pub output_mode: OutputMode,
 }
 
 /// A prompt call resolved against the stored prompt and the configured
@@ -152,13 +191,17 @@ pub struct PromptCall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptRequest {
     pub text: String,
+    /// The prompt's name, stored with the saved result.
+    pub name: String,
+    /// The history entry the text came from, which keeps the reply.
+    pub entry: Option<u64>,
     pub kind: PromptKind,
-    /// The Markdown instructions, read when the run starts.
-    pub file: PathBuf,
+    pub instructions: PromptInstructions,
     pub assistant_id: AssistantId,
     pub model_id: Option<String>,
     pub application: Option<aria_settings::ApplicationId>,
     pub tap_cancels: bool,
+    pub output_mode: Option<OutputMode>,
 }
 
 #[derive(Debug, thiserror::Error)]

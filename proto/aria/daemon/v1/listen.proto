@@ -5,6 +5,7 @@ syntax = "proto3";
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";
+import "google/protobuf/duration.proto";
 
 service ListenService {
   // Capture the machine's own audio output and transcribe it to a file
@@ -52,9 +53,10 @@ message ListenEvent {
   string speaker_label = 3;
   // Meaningful only when stage is LISTEN_STAGE_FAILED.
   ErrorCode error_code = 4;
-  // Seconds into the recording, so a follower's clock matches the
-  // transcript file's however late it attached.
-  uint64 offset_seconds = 5;
+  // How far into the recording, in whole seconds, so a follower's clock
+  // matches the transcript file's however late it attached. Only for
+  // SEGMENT_TRANSCRIBED.
+  google.protobuf.Duration offset = 5;
   // For SPEAKER_MERGED: `merged_from_label` becomes `speaker_label` in the
   // transcript file and subsequent events.
   string merged_from_label = 6;

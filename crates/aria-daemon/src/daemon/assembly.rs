@@ -22,6 +22,7 @@ use super::chat::ChatRuntime;
 use super::context::Context;
 use super::dictation;
 use super::dictation::{DictationInitializationError, DictationRuntime, DictationSetup};
+use super::history::HistoryStore;
 use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
 use super::listen::ListenState;
@@ -39,7 +40,6 @@ use super::speech;
 use super::speech::SpeechRuntime;
 use super::subscriptions::Subscriptions;
 use super::tasks::RuntimeTasks;
-use super::transcripts::TranscriptStore;
 use super::wake::WakeTrigger;
 
 #[derive(Debug, thiserror::Error)]
@@ -140,7 +140,7 @@ fn compose(
     let startup = cache.effective();
     let settings = Arc::new(SettingsStore::new(Arc::clone(&cache)));
     let subscriptions = Arc::new(Subscriptions::new());
-    let transcripts = Arc::new(TranscriptStore::open(&context.home.join(".aria/history")));
+    let history_store = Arc::new(HistoryStore::open(&context.home.join(".aria/history")));
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
     let tasks = RuntimeTasks::new();
@@ -173,7 +173,7 @@ fn compose(
             settings: &settings,
             cache: &cache,
             startup: &startup,
-            transcripts: &transcripts,
+            history_store: &history_store,
         },
         wake_word,
         microphone,
@@ -225,7 +225,8 @@ fn compose(
         )),
         HotkeyConfig::Disabled => None,
     };
-    let (history, history_actor) = HistoryRpc::new(transcripts, Arc::clone(&dictation_runtime));
+    let (history, history_actor) =
+        HistoryRpc::new(Arc::clone(&history_store), Arc::clone(&dictation_runtime));
     let settings_rpc = SettingsRpc::new(settings_handle, cache.status());
     // Without usable pairing the relay stays off, but the Mac still dictates.
     let relay = relay_port.and_then(|port| {
@@ -263,8 +264,10 @@ fn compose(
             context.lifetime,
             context.home.clone(),
             Arc::clone(&cache),
+            Arc::clone(&settings),
             listen_event_emitter(Arc::clone(&subscriptions)),
             Arc::clone(&vocabulary),
+            Arc::clone(&history_store),
         ))),
         settings: settings_rpc,
         vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary)),
@@ -314,7 +317,7 @@ struct Dependencies<'a> {
     cache: &'a Arc<SettingsCache>,
     /// The settings as the daemon started with them.
     startup: &'a CheckedSettings,
-    transcripts: &'a Arc<TranscriptStore>,
+    history_store: &'a Arc<HistoryStore>,
 }
 
 /// Everything the daemon runs for as long as it lives: a runtime behind each
@@ -405,7 +408,7 @@ fn eager_workers(
         settings,
         cache,
         startup,
-        transcripts,
+        history_store,
     } = *dependencies;
     let DaemonConfig {
         dictation: dictation_config,
@@ -435,7 +438,7 @@ fn eager_workers(
         Arc::clone(subscriptions),
         Arc::clone(settings),
         Arc::clone(cache),
-        Arc::clone(transcripts),
+        Arc::clone(history_store),
         DictationSetup {
             dictation: dictation_config,
             wake,
@@ -463,6 +466,7 @@ fn eager_workers(
             Arc::clone(settings),
             Arc::clone(cache),
             Some(memory_wake),
+            Arc::clone(history_store),
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -489,7 +493,7 @@ fn deferred_workers(
         settings,
         cache,
         startup,
-        transcripts,
+        history_store,
     } = *dependencies;
     // Reading and forgetting profiles is filesystem work, so a daemon with no
     // microphone of its own still answers those.
@@ -503,7 +507,7 @@ fn deferred_workers(
             Arc::clone(subscriptions),
             Arc::clone(settings),
             Arc::clone(cache),
-            Arc::clone(transcripts),
+            Arc::clone(history_store),
             microphone,
             vocabulary,
         )),
@@ -520,6 +524,7 @@ fn deferred_workers(
             Arc::clone(settings),
             Arc::clone(cache),
             None,
+            Arc::clone(history_store),
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.

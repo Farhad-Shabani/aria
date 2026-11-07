@@ -17,6 +17,7 @@ mod listen;
 mod logging;
 mod memory;
 mod models;
+mod prompt;
 mod remote;
 mod say;
 mod service;
@@ -59,10 +60,15 @@ enum Command {
     },
     /// Watch the running daemon, one line per dictation stage
     Events,
-    /// Manage saved dictations and retained recordings
+    /// Manage saved history and retained recordings
     History {
         #[command(subcommand)]
         command: history::HistoryCommand,
+    },
+    /// List, write, and remove the prompts Aria runs on what you say
+    Prompt {
+        #[command(subcommand)]
+        command: prompt::PromptCommand,
     },
     /// Inspect what the assistant remembers and the words it corrects
     Memory {
@@ -125,6 +131,9 @@ enum Command {
         /// Disable project spellings for this recording
         #[arg(long)]
         no_project: bool,
+        /// Save the transcript to history without typing it
+        #[arg(long, conflicts_with_all = ["mode", "stream"])]
+        history_only: bool,
     },
     /// List what an assistant offers
     Assistant {
@@ -210,6 +219,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Settings { command } => settings::run(command),
         Command::Events => events::run(),
         Command::History { command } => history::run(command),
+        Command::Prompt { command } => prompt::run(command),
         Command::Memory { command } => memory::run(command),
         Command::Vocabulary { command } => vocabulary::run(command),
         Command::Wake {
@@ -255,7 +265,8 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             toggle,
             stream,
             no_project,
-        } => dictate::run(mode, toggle, stream, no_project),
+            history_only,
+        } => dictate::run(mode, toggle, stream, no_project, history_only),
         Command::Assistant {
             command: assistant::AssistantCommand::Models { assistant_id, json },
         } => assistant::models(assistant_id, json),

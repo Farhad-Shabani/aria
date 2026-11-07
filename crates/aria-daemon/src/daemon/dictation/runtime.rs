@@ -1,8 +1,8 @@
 //! Dictation initialization state and request execution owned by the daemon.
 
 use super::super::context::Context;
+use super::super::history::HistoryStore;
 use super::super::subscriptions::Subscriptions;
-use super::super::transcripts::TranscriptStore;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::assembly::{
     BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryTarget,
@@ -65,7 +65,7 @@ pub(in crate::daemon) struct DictationRuntime {
     emitter: EventEmitter<DictationEvent>,
     settings: Arc<SettingsStore>,
     coordinator: CoordinatorState,
-    transcripts: Arc<TranscriptStore>,
+    history: Arc<HistoryStore>,
     microphone: Arc<Gate>,
     retry: Lazy<RetrySetup, ConfigError>,
 }
@@ -106,7 +106,7 @@ impl DictationRuntime {
         subscriptions: Arc<Subscriptions>,
         settings: Arc<SettingsStore>,
         cache: Arc<SettingsCache>,
-        transcripts: Arc<TranscriptStore>,
+        history: Arc<HistoryStore>,
         microphone: Arc<Gate>,
         vocabulary: Arc<VocabularyRuntime>,
     ) -> Self {
@@ -132,7 +132,7 @@ impl DictationRuntime {
                 })
             }),
             emitter: event_emitter(context, subscriptions),
-            transcripts: Arc::clone(&transcripts),
+            history: Arc::clone(&history),
             microphone: Arc::clone(&microphone),
             settings,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
@@ -154,7 +154,7 @@ impl DictationRuntime {
                         },
                         &spool_dir,
                         &home,
-                        Arc::clone(&transcripts),
+                        Arc::clone(&history),
                         ModelLoading::OnFirstUse,
                         Arc::clone(&microphone),
                         sound_muting,
@@ -174,7 +174,7 @@ impl DictationRuntime {
     pub(in crate::daemon) fn detached(settings: Arc<SettingsStore>) -> Self {
         Self {
             emitter: EventEmitter::unsubscribed(),
-            transcripts: Arc::new(TranscriptStore::new()),
+            history: Arc::new(HistoryStore::new()),
             microphone: Gate::new(),
             retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
             settings,
@@ -207,7 +207,7 @@ impl DictationRuntime {
         subscriptions: Arc<Subscriptions>,
         settings: Arc<SettingsStore>,
         cache: Arc<SettingsCache>,
-        transcripts: Arc<TranscriptStore>,
+        history: Arc<HistoryStore>,
         setup: DictationSetup,
         microphone: Arc<Gate>,
     ) -> Result<
@@ -229,7 +229,7 @@ impl DictationRuntime {
             setup,
             context.paths.spool_dir(),
             &context.home,
-            Arc::clone(&transcripts),
+            Arc::clone(&history),
             ModelLoading::Eager,
             Arc::clone(&microphone),
             context.sound_muting(),
@@ -249,7 +249,7 @@ impl DictationRuntime {
                     home: retry_home.clone(),
                 })
             }),
-            transcripts,
+            history,
             microphone: Arc::clone(&microphone),
         };
         let follower = EngineFollower::new(slot, parts, microphone, cache, context.home.clone());
@@ -399,13 +399,19 @@ impl DictationRuntime {
     ) -> Result<HistoryEntry, HistoryError> {
         let deadline = Deadline::after(MAX_DICTATION_TIMEOUT);
         check_retry(&cancel, deadline)?;
-        let store = self.transcripts.storage()?;
+        let store = self.history.storage()?;
         let _admission = self
             .microphone
             .admit_history_retry()
             .ok_or(HistoryError::Busy)?;
         let mut lease = store.begin_retry(id)?;
-        let requested = options.engine.unwrap_or_else(|| lease.entry.engine.clone());
+        let requested = options.engine.unwrap_or_else(|| {
+            lease
+                .entry
+                .dictation()
+                .map(|dictation| dictation.engine.clone())
+                .unwrap_or_default()
+        });
         let attempt = (|| {
             let settings = self.history_settings().map_err(transcription)?;
             let settings = retry_settings(&lease.entry, settings, options.language)?;
@@ -427,7 +433,9 @@ impl DictationRuntime {
                     settings.history_keep_audio,
                 )?;
                 drop(lease);
-                recovered.retrying = false;
+                if let Some(dictation) = recovered.dictation_mut() {
+                    dictation.retrying = false;
+                }
                 Ok(recovered)
             }
             Err(error) => {
@@ -592,11 +600,14 @@ fn retry_settings(
         language
     } else {
         entry
-            .language
+            .dictation()
+            .map_or("", |dictation| dictation.language.as_str())
             .parse()
             .map_err(|_| HistoryError::InvalidRequest)?
     };
-    settings.own_voice_only |= entry.own_voice_only;
+    settings.own_voice_only |= entry
+        .dictation()
+        .is_some_and(|dictation| dictation.own_voice_only);
     settings.project = entry
         .project
         .as_ref()
@@ -932,7 +943,7 @@ mod history_tests {
     use aria_voice::dictation::{
         DictationExecutor, DictationPolicy, DictationResult, ExecutionControl,
     };
-    use aria_voice::history::{AudioAvailability, HistorySource, HistoryStatus};
+    use aria_voice::history::{AudioAvailability, DictationContent, HistorySource, HistoryStatus};
 
     use super::*;
 
@@ -994,25 +1005,29 @@ mod history_tests {
     fn entry() -> HistoryEntry {
         HistoryEntry {
             id: 0,
+            title: None,
+            content: aria_voice::history::HistoryContent::Dictation(DictationContent {
+                language: "fr".into(),
+                engine: "test".into(),
+                own_voice_only: true,
+                audio: AudioAvailability::Unavailable,
+                retrying: false,
+            }),
             created_at_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64,
+            duration_ms: Some(1_000),
             source: HistorySource::Local,
             application: None,
-            duration_ms: Some(1_000),
+            project: None,
             text: "partial".into(),
             complete: false,
+            result_count: 0,
             status: HistoryStatus::TranscriptionFailed,
             error: None,
-            audio: AudioAvailability::Unavailable,
-            retrying: false,
-            deletion_pending: false,
-            language: "fr".into(),
-            engine: "test".into(),
-            own_voice_only: true,
-            project: None,
             warning: None,
+            deletion_pending: false,
         }
     }
 
@@ -1034,10 +1049,10 @@ mod history_tests {
 
         fn build(cancel: Option<CancelToken>, silent: bool) -> Self {
             let directory = tempfile::tempdir().unwrap();
-            let transcripts = Arc::new(TranscriptStore::open(&directory.path().join("history")));
+            let history = Arc::new(HistoryStore::open(&directory.path().join("history")));
             let audio = aria_kit::audio::canonical_fixture(directory.path());
             std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
-            let original = transcripts
+            let original = history
                 .storage()
                 .unwrap()
                 .insert(entry(), Some(&audio))
@@ -1066,7 +1081,7 @@ mod history_tests {
                     emitter: EventEmitter::unsubscribed(),
                     settings,
                     coordinator: CoordinatorState::Ready(ReadyDictation { coordinator, slot }),
-                    transcripts,
+                    history,
                     microphone,
                     retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
                 },
@@ -1098,8 +1113,11 @@ mod history_tests {
         assert_eq!(entry.text, "recovered words");
         assert_eq!(entry.status, HistoryStatus::Recovered);
         assert!(entry.complete);
-        assert!(!entry.retrying);
-        assert!(!matches!(entry.audio, AudioAvailability::Available { .. }));
+        assert!(!entry.dictation().unwrap().retrying);
+        assert!(!matches!(
+            entry.audio(),
+            AudioAvailability::Available { .. }
+        ));
         assert_eq!(*fixture.seen.lock().unwrap(), [("fr".to_owned(), true)]);
         assert!(fixture.runtime.microphone.admit_relay().is_some());
     }
@@ -1117,10 +1135,10 @@ mod history_tests {
             .unwrap();
         let original_audio = fixture
             .runtime
-            .transcripts
+            .history
             .get(fixture.original.id)
             .unwrap()
-            .audio;
+            .audio();
         let options = RetryOptions {
             engine: Some("test".to_owned()),
             language: Some(Language::Automatic),
@@ -1129,9 +1147,9 @@ mod history_tests {
             .runtime
             .retry_history(fixture.original.id, options, CancelToken::never())
             .unwrap();
-        assert_eq!(updated.language, "auto");
-        assert_eq!(updated.engine, "test");
-        assert_eq!(updated.audio, original_audio);
+        assert_eq!(updated.dictation().unwrap().language, "auto");
+        assert_eq!(updated.dictation().unwrap().engine, "test");
+        assert_eq!(updated.audio(), original_audio);
         let again = fixture
             .runtime
             .retry_history(
@@ -1140,7 +1158,7 @@ mod history_tests {
                 CancelToken::never(),
             )
             .unwrap();
-        assert_eq!(again.audio, original_audio);
+        assert_eq!(again.audio(), original_audio);
         assert_eq!(
             *fixture.seen.lock().unwrap(),
             [("auto".to_owned(), true), ("auto".to_owned(), true)]
@@ -1158,11 +1176,7 @@ mod history_tests {
             panic!("a silent retry must fail");
         };
         assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::NoSpeech);
-        let entry = fixture
-            .runtime
-            .transcripts
-            .get(fixture.original.id)
-            .unwrap();
+        let entry = fixture.runtime.history.get(fixture.original.id).unwrap();
         assert_eq!(
             entry.error.map(|failure| failure.code),
             Some(RpcErrorCode::NoSpeech)
@@ -1182,26 +1196,28 @@ mod history_tests {
                 .retry_history(fixture.original.id, options, CancelToken::never()),
             Err(HistoryError::Transcription { .. })
         ));
-        let unchanged = fixture
-            .runtime
-            .transcripts
-            .get(fixture.original.id)
-            .unwrap();
+        let unchanged = fixture.runtime.history.get(fixture.original.id).unwrap();
         assert_eq!(unchanged.text, fixture.original.text);
-        assert_eq!(unchanged.engine, fixture.original.engine);
-        assert_eq!(unchanged.language, fixture.original.language);
+        assert_eq!(
+            unchanged.dictation().unwrap().engine,
+            fixture.original.dictation().unwrap().engine
+        );
+        assert_eq!(
+            unchanged.dictation().unwrap().language,
+            fixture.original.dictation().unwrap().language
+        );
         assert_eq!(
             unchanged.error,
             Some(aria_settings::rpc::RpcFailure::new(
                 RpcErrorCode::TranscriptionFailed,
-                "dictation history transcription failed"
+                "history transcription failed"
             ))
         );
         assert!(matches!(
-            unchanged.audio,
+            unchanged.audio(),
             AudioAvailability::Available { .. }
         ));
-        assert!(!unchanged.retrying);
+        assert!(!unchanged.dictation().unwrap().retrying);
         assert!(fixture.seen.lock().unwrap().is_empty());
         assert!(fixture.runtime.microphone.admit_relay().is_some());
     }
@@ -1226,12 +1242,12 @@ mod history_tests {
             let project = home.join("original-project");
             std::fs::create_dir(&project).unwrap();
             let mut original = entry();
-            original.engine = backend::SERVER.into();
-            original.own_voice_only = false;
+            original.dictation_mut().unwrap().engine = backend::SERVER.into();
+            original.dictation_mut().unwrap().own_voice_only = false;
             original.project = Some(project.clone());
             let original = fixture
                 .runtime
-                .transcripts
+                .history
                 .storage()
                 .unwrap()
                 .insert(original, Some(&audio))
@@ -1274,7 +1290,7 @@ mod history_tests {
                 },
                 &home,
                 &home,
-                Arc::clone(&fixture.runtime.transcripts),
+                Arc::clone(&fixture.runtime.history),
                 ModelLoading::Eager,
                 Arc::clone(&fixture.runtime.microphone),
                 aria_voice::dictation::SoundMuting::Never,
@@ -1307,12 +1323,12 @@ mod history_tests {
                     .unwrap();
                 assert_eq!(result.id, original.id);
                 assert_eq!(result.created_at_ms, original.created_at_ms);
-                assert_eq!(result.engine, "whisper");
-                assert_eq!(result.language, "fr");
+                assert_eq!(result.dictation().unwrap().engine, "whisper");
+                assert_eq!(result.dictation().unwrap().language, "fr");
                 assert_eq!(result.project.as_deref(), Some(project.as_path()));
-                assert_eq!(result.audio, original.audio);
+                assert_eq!(result.audio(), original.audio());
                 assert_eq!(result.status, HistoryStatus::Recovered);
-                assert!(!result.retrying);
+                assert!(!result.dictation().unwrap().retrying);
                 assert!(result.text.starts_with("native words"));
             }
             assert_eq!(observed.native.load(Ordering::SeqCst), 2);
@@ -1344,21 +1360,17 @@ mod history_tests {
                 .retry_history(fixture.original.id, RetryOptions::default(), cancel),
             Err(HistoryError::Cancelled)
         ));
-        let entry = fixture
-            .runtime
-            .transcripts
-            .get(fixture.original.id)
-            .unwrap();
+        let entry = fixture.runtime.history.get(fixture.original.id).unwrap();
         assert_eq!(entry.text, "partial");
         assert_eq!(entry.error, Some((&HistoryError::Cancelled).into()));
         assert_eq!(entry.status, HistoryStatus::TranscriptionFailed);
-        assert!(!entry.retrying);
-        assert!(matches!(entry.audio, AudioAvailability::Available { .. }));
+        assert!(!entry.dictation().unwrap().retrying);
+        assert!(matches!(entry.audio(), AudioAvailability::Available { .. }));
         assert!(fixture.runtime.microphone.admit_relay().is_some());
         assert!(
             fixture
                 .runtime
-                .transcripts
+                .history
                 .storage()
                 .unwrap()
                 .begin_retry(entry.id)
@@ -1381,8 +1393,10 @@ mod history_tests {
         assert!(
             !fixture
                 .runtime
-                .transcripts
+                .history
                 .get(fixture.original.id)
+                .unwrap()
+                .dictation()
                 .unwrap()
                 .retrying
         );
@@ -1401,7 +1415,7 @@ mod history_tests {
             ..Default::default()
         };
         let mut original = entry();
-        original.own_voice_only = false;
+        original.dictation_mut().unwrap().own_voice_only = false;
         let resolved = retry_settings(
             &original,
             DictationSettings::resolve(

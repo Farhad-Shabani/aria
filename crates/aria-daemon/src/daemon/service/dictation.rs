@@ -126,8 +126,8 @@ mod tests {
 
     use crate::daemon::testing::HostedDaemon;
     use crate::daemon::{
-        ClientError, DaemonEvent, DeliveryMode, DictationOutcome, DictationRequest,
-        DictationResult, DictationStage, StopMode,
+        ClientError, DaemonEvent, DictationOutcome, DictationRequest, DictationResult,
+        DictationStage, StopMode,
     };
     use crate::ipc::wire;
     use aria_kit::audio::canonical_fixture;
@@ -136,12 +136,9 @@ mod tests {
         EDGE_WAIT, Edge, HEARD, RecordsUntilStopped, recording_started,
     };
 
-    /// A press that hands its transcript back instead of delivering it.
-    /// It asks for complete delivery, since streaming, the default, hands none back.
     fn transcript_only(stop_mode: StopMode) -> DictationRequest {
         DictationRequest {
-            delivery_mode: Some(DeliveryMode::Complete),
-            transcript_only: true,
+            route: aria_voice::dictation::DictationRoute::TranscriptOnly,
             ..DictationRequest::new(stop_mode)
         }
     }

@@ -7,7 +7,7 @@ use tokio::sync::watch;
 
 use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view};
 use super::{DeliveryMode, StreamingSupport};
-use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
+use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsError, Written};
 use crate::config::AssistantId;
 use aria_kit::audio::{AutoStop, SilenceDuration};
 use aria_platform::delivery::OutputMode;
@@ -96,12 +96,25 @@ impl SettingsStore {
         expected_revision: u64,
         patch: SettingsPatch,
     ) -> Result<UpdateResult, StoreError> {
-        self.write(Some(Revision::from(expected_revision)), patch)
+        self.write(Some(Revision::from(expected_revision)), |_current| {
+            Ok(patch)
+        })
     }
 
     /// The daemon's own write, made against the file as it stands.
     pub fn modify(&self, patch: SettingsPatch) -> Result<SettingsSnapshot, StoreError> {
-        match self.write(None, patch)? {
+        self.modify_with(|_current| Ok(patch))
+    }
+
+    /// A write with no revision, whose patch `edit` makes from the settings
+    /// as the file holds them under the lock. An edit to one entry of a list
+    /// then keeps every entry another writer changed since this store read
+    /// it. An error from `edit` writes nothing.
+    pub fn modify_with<E: From<StoreError>>(
+        &self,
+        edit: impl FnOnce(&Settings) -> Result<SettingsPatch, E>,
+    ) -> Result<SettingsSnapshot, E> {
+        match self.write(None, edit)? {
             UpdateResult::Updated { snapshot, .. } | UpdateResult::Conflict(snapshot) => {
                 Ok(snapshot)
             }
@@ -112,7 +125,7 @@ impl SettingsStore {
     /// revision, so the update can still conflict or find the file busy.
     pub fn check(&self, patch: SettingsPatch) -> Result<(), StoreError> {
         let current = self.cache.snapshot();
-        let patch = Self::file_patch(patch, &current.settings)?;
+        let patch = Self::file_patch(patch, &Settings::from_file(&current.settings)?)?;
         match self.cache.check_patch(&patch)? {
             // `check_patch` takes no revision, so it never answers a conflict.
             // The match still has to name that arm.
@@ -125,27 +138,61 @@ impl SettingsStore {
         }
     }
 
-    fn write(
+    fn write<E: From<StoreError>>(
         &self,
         expected: Option<Revision>,
-        patch: SettingsPatch,
-    ) -> Result<UpdateResult, StoreError> {
+        edit: impl FnOnce(&Settings) -> Result<SettingsPatch, E>,
+    ) -> Result<UpdateResult, E> {
         let written = self
             .cache
-            .modify(expected, |settings| Self::file_patch(patch, settings))?;
-        match written {
+            .modify(expected, |settings| -> Result<Patch, EditError<E>> {
+                let current = Settings::from_file(settings)?;
+                let patch = edit(&current).map_err(EditError::Edit)?;
+                Self::file_patch(patch, &current).map_err(EditError::Store)
+            })
+            .map_err(EditError::into_inner)?;
+        let updated = match written {
             Written::Applied(loaded) | Written::AppliedRestartKey(loaded) => {
-                Ok(UpdateResult::Updated {
+                UpdateResult::Updated {
                     snapshot: snapshot_of(&loaded)?,
                     restart_required: self.cache.restart_required(),
-                })
+                }
             }
             Written::Refused(Refusal::Conflict { current }) => {
-                Ok(UpdateResult::Conflict(snapshot_of(&current)?))
+                UpdateResult::Conflict(snapshot_of(&current)?)
             }
-            Written::Refused(Refusal::FileInvalid(error)) => Err(StoreError::FileInvalid(error)),
-            Written::Refused(Refusal::Invalid(error)) => Err(StoreError::Settings(error)),
-            Written::Refused(Refusal::ChangedRecently) => Err(StoreError::ChangedRecently),
+            Written::Refused(Refusal::FileInvalid(error)) => {
+                return Err(StoreError::FileInvalid(error).into());
+            }
+            Written::Refused(Refusal::Invalid(error)) => {
+                return Err(StoreError::Settings(error).into());
+            }
+            Written::Refused(Refusal::ChangedRecently) => {
+                return Err(StoreError::ChangedRecently.into());
+            }
+        };
+        Ok(updated)
+    }
+}
+
+/// What the edit under the lock fails with: the caller's own refusal, or
+/// the store's.
+enum EditError<E> {
+    Edit(E),
+    Store(StoreError),
+}
+
+impl<E> From<SettingsError> for EditError<E> {
+    fn from(error: SettingsError) -> Self {
+        Self::Store(error.into())
+    }
+}
+
+impl<E: From<StoreError>> EditError<E> {
+    fn into_inner(self) -> E {
+        match self {
+            Self::Edit(error) => error,
+            Self::Store(error) => error.into(),
         }
     }
 }
@@ -153,14 +200,13 @@ impl SettingsStore {
 impl SettingsStore {
     /// The keys of the settings file that `patch` changes. Fails if the result
     /// reuses a shortcut or names an invalid model.
-    fn file_patch(patch: SettingsPatch, settings: &SettingsFile) -> Result<Patch, StoreError> {
-        let current = Settings::from_file(settings)?;
-        let next = patch.apply_to(&current);
+    fn file_patch(patch: SettingsPatch, current: &Settings) -> Result<Patch, StoreError> {
+        let next = patch.apply_to(current);
         next.validate_assistant_models()?;
         if next.shares_a_binding() {
             return Err(StoreError::BindingInUse);
         }
-        Ok(view::patch(&current, &next)?)
+        Ok(view::patch(current, &next)?)
     }
 }
 

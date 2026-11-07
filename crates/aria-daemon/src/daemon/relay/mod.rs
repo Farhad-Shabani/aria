@@ -264,6 +264,9 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::AssistantTimeout
         | RpcErrorCode::AssistantSignedOut
         | RpcErrorCode::PromptUnreadable
+        | RpcErrorCode::PromptMissing
+        | RpcErrorCode::PromptsFull
+        | RpcErrorCode::PromptWriteFailed
         | RpcErrorCode::SpeakerModelMissing
         | RpcErrorCode::SpeakerAlreadyEnrolled
         | RpcErrorCode::SpeakerNotEnrolled
@@ -277,6 +280,8 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable
         | RpcErrorCode::HistoryProjectUnavailable
+        | RpcErrorCode::HistoryEntryEmpty
+        | RpcErrorCode::HistoryTranscriptUnreadable
         | RpcErrorCode::Unknown(_) => SOMETHING_WENT_WRONG.to_owned(),
     };
     failure_status(RpcFailure::new(failure.code, message))

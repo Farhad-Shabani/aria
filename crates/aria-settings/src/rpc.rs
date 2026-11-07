@@ -50,6 +50,9 @@ pub enum RpcErrorCode {
     AssistantTimeout,
     AssistantSignedOut,
     PromptUnreadable,
+    PromptMissing,
+    PromptsFull,
+    PromptWriteFailed,
     SpeakerModelMissing,
     SpeakerAlreadyEnrolled,
     SpeakerNotEnrolled,
@@ -63,6 +66,8 @@ pub enum RpcErrorCode {
     HistoryAudioUnavailable,
     HistoryUnavailable,
     HistoryProjectUnavailable,
+    HistoryEntryEmpty,
+    HistoryTranscriptUnreadable,
     /// A code this build does not name, kept as it arrived so a newer daemon's
     /// failure is still reportable.
     Unknown(i32),
@@ -115,6 +120,9 @@ impl RpcErrorCode {
             Self::AssistantTimeout => "assistant_timeout",
             Self::AssistantSignedOut => "assistant_signed_out",
             Self::PromptUnreadable => "prompt_unreadable",
+            Self::PromptMissing => "prompt_missing",
+            Self::PromptsFull => "prompts_full",
+            Self::PromptWriteFailed => "prompt_write_failed",
             Self::SpeakerModelMissing => "speaker_model_missing",
             Self::SpeakerAlreadyEnrolled => "speaker_already_enrolled",
             Self::SpeakerNotEnrolled => "speaker_not_enrolled",
@@ -128,6 +136,8 @@ impl RpcErrorCode {
             Self::HistoryAudioUnavailable => "history_audio_unavailable",
             Self::HistoryUnavailable => "history_unavailable",
             Self::HistoryProjectUnavailable => "history_project_unavailable",
+            Self::HistoryEntryEmpty => "history_entry_empty",
+            Self::HistoryTranscriptUnreadable => "history_transcript_unreadable",
             Self::Unknown(_) => "unknown",
         }
     }
