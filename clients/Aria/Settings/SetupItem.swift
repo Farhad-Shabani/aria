@@ -12,12 +12,11 @@ enum SetupItem: Hashable {
     case ariaKeyRemapped
 
     /// Unset choices still run as their defaults, so a settings gap matters
-    /// only for a server engine with no pairing.
+    /// only for transcription on a server with no pairing.
     nonisolated static func items(in inspection: Aria_Setup_V1_Inspection) -> [SetupItem] {
         let recognition = Set(
             inspection.models.filter { $0.engineID == inspection.defaults.transcriptionEngineID }.map(\.id))
-        let isUnpairedServer =
-            inspection.defaults.transcriptionEngineID == SetupStatus.serverEngine && !inspection.hasServer
+        let isUnpairedServer = inspection.transcriptionLocation == .server && !inspection.hasServer
         return inspection.missing.compactMap { missing in
             switch missing.kind {
             case .model: recognition.contains(missing.modelID) ? .speechModel(id: missing.modelID) : nil

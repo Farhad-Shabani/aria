@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SpeechModelPicker: View {
     private static let title = "Speech model"
+    /// Tags the server's row, which names no local engine.
+    private static let serverTag = "server"
 
     @ObservedObject var setup: SetupStatus
     @ObservedObject var engineChange: TranscriptionEngineChange
@@ -17,6 +19,7 @@ struct SpeechModelPicker: View {
 
     /// The menu shows a new choice at once, so a change reads as done.
     private var shown: String {
+        if usesServer { return Self.serverTag }
         if engineChange.isRunning, let target { return target.id }
         return models.current ?? ""
     }
@@ -81,7 +84,7 @@ struct SpeechModelPicker: View {
     private var picker: some View {
         Picker(Self.title, selection: Binding(get: { shown }, set: { choose($0) })) {
             if usesServer {
-                Text("Your server").tag(SetupStatus.serverEngine)
+                Text("Your server").tag(Self.serverTag)
             }
             ForEach(models.onMac) { model in
                 Text(model.label).tag(model.id)

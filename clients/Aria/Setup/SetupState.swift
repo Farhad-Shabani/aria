@@ -143,7 +143,6 @@ final class SetupState: ObservableObject {
         case .downloads: break
         case .fetchedOnFirstUse: return .status("Fetched on first use")
         case .builtIn: return .status("Built in")
-        case .remote: return .status("On the server")
         case .unspecified, .UNRECOGNIZED: return .status("Size unknown")
         }
         let models = inspection.models.filter { $0.engineID == engine.id }

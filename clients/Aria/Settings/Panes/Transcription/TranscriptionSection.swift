@@ -3,7 +3,6 @@ import SwiftUI
 struct TranscriptionSection: View {
     private static let rowTitle = "Transcribe on your server"
 
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject var server: ServerTranscription
     @ObservedObject var setup: SetupStatus
     @EnvironmentObject private var runner: SetupRunner
@@ -13,14 +12,6 @@ struct TranscriptionSection: View {
     var body: some View {
         Section {
             serverRow
-            if server.notice == .needsSetup {
-                LabeledContent {
-                    Button("Aria Setup…") { openWindow(id: WindowID.setup) }
-                } label: {
-                    Text("Speech model")
-                    Text("No speech model is on your Mac yet.")
-                }
-            }
         } footer: {
             footer
         }
@@ -44,7 +35,7 @@ struct TranscriptionSection: View {
     private var usesServer: Binding<Bool> {
         Binding(
             get: { setup.transcription == .server },
-            set: { isOn in Task { await server.use(isOn ? .server : .thisMac) } }
+            set: { isOn in Task { await server.use(isOn ? .server : .local) } }
         )
     }
 
@@ -56,7 +47,7 @@ struct TranscriptionSection: View {
                     server.beginPairing()
                     isPairing = true
                 }
-                .disabled(server.isBusy)
+                .disabled(server.isBusy || runner.isRunning)
             }
         } else {
             LabeledContent {
@@ -87,13 +78,10 @@ struct TranscriptionSection: View {
                 ProgressView().controlSize(.small)
                 Text("Updating Aria…")
             }
+        } else if let failure = server.failure {
+            Text(failure).foregroundStyle(.failure)
         } else {
-            switch server.notice {
-            case .failed(let message):
-                Text(message).foregroundStyle(.failure)
-            case .needsSetup, nil:
-                Text("Recordings stay on your Mac unless you pair a server and turn this on.")
-            }
+            Text("Recordings stay on your Mac unless you pair a server and turn this on.")
         }
     }
 }

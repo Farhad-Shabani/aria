@@ -3,19 +3,15 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "ServerTranscription")
 
-/// Each switch runs setup apply, which writes the settings file and restarts the service.
+/// Each switch sets where transcription runs, and the service swaps engines
+/// without a restart. The local engine stays configured on the server.
 @MainActor
 final class ServerTranscription: ObservableObject {
     struct Effects {
         var inspect: () async throws -> Aria_Setup_V1_Inspection
         var pair: (_ invitation: String) async throws -> Void
         var forget: () async throws -> Void
-        var apply: (Aria_Setup_V1_ApplyRequest) async throws -> Void
-        var stopDaemon: () async -> Void
-        var startDaemon: () async -> Void
-        /// The settings forget the local engine while the server is in use.
-        var lastLocalEngine: () -> String?
-        var rememberLocalEngine: (String) -> Void
+        var setLocation: (TranscriptionLocation) async throws -> Void
     }
 
     /// The pairing sheet shows the address an invitation names before it is
@@ -26,14 +22,8 @@ final class ServerTranscription: ObservableObject {
         case confirming(invitation: String, address: String)
     }
 
-    enum Notice: Equatable {
-        case failed(String)
-        /// No local engine has its model on this Mac.
-        case needsSetup
-    }
-
     @Published private(set) var isBusy = false
-    @Published private(set) var notice: Notice?
+    @Published private(set) var failure: String?
     @Published private(set) var pairingFailure: String?
     @Published private(set) var pairingStep = PairingStep.instructions
 
@@ -60,28 +50,15 @@ final class ServerTranscription: ObservableObject {
         guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
-        notice = nil
+        failure = nil
         do {
-            let inspection = try await effects.inspect()
-            let engine: String
-            switch location {
-            case .server:
-                engine = SetupStatus.serverEngine
-                if inspection.defaults.transcriptionEngineID != SetupStatus.serverEngine {
-                    effects.rememberLocalEngine(inspection.defaults.transcriptionEngineID)
-                }
-            case .thisMac:
-                guard let local = Self.localEngine(in: inspection, preferring: effects.lastLocalEngine()) else {
-                    notice = .needsSetup
-                    return
-                }
-                engine = local
-            }
-            try await apply(engine, from: inspection)
+            try await runner.run { try await effects.setLocation(location) }
         } catch {
             log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
-            notice = .failed(SetupClientError.message(for: error, otherwise: Self.switchFailure))
+            failure = SetupClientError.message(for: error, otherwise: Self.switchFailure)
+            return
         }
+        await showChanges()
     }
 
     static let switchFailure = "Aria couldn’t change where transcription runs. Try again."
@@ -115,19 +92,19 @@ final class ServerTranscription: ObservableObject {
 
     /// Only while transcription runs on your Mac: forgetting the server in use would fail every dictation.
     var canForget: Bool {
-        !isBusy && setup.server != nil && setup.transcription == .thisMac
+        !isBusy && setup.server != nil && setup.transcription == .local
     }
 
     func forget() async {
         guard canForget else { return }
         isBusy = true
         defer { isBusy = false }
-        notice = nil
+        failure = nil
         do {
             try await runner.run { try await effects.forget() }
         } catch {
             log.error("Forgetting the server failed: \(String(describing: error), privacy: .private)")
-            notice = .failed(SetupClientError.message(for: error, otherwise: Self.forgetFailure))
+            failure = SetupClientError.message(for: error, otherwise: Self.forgetFailure)
             return
         }
         await showChanges()
@@ -154,9 +131,9 @@ final class ServerTranscription: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         pairingFailure = nil
-        notice = nil
+        failure = nil
         do {
-            try await effects.pair(invitation)
+            try await runner.run { try await effects.pair(invitation) }
         } catch {
             log.error("Pairing failed: \(String(describing: error), privacy: .private)")
             pairingFailure = Self.pairingMessage(for: error)
@@ -167,59 +144,28 @@ final class ServerTranscription: ObservableObject {
         return true
     }
 
-    static func localEngine(in inspection: Aria_Setup_V1_Inspection, preferring previous: String?) -> String? {
-        let ready = inspection.transcriptionChoices.filter { hasModelOnDisk($0, in: inspection) }
-        return ready.first { $0.id == previous }?.id ?? ready.first?.id
-    }
-
-    private static func hasModelOnDisk(_ engine: Aria_Setup_V1_Choice, in inspection: Aria_Setup_V1_Inspection) -> Bool
-    {
-        guard engine.availability == .ready else { return false }
-        switch engine.modelSource {
-        case .builtIn: return true
-        case .downloads:
-            let models = inspection.models.filter { $0.engineID == engine.id }
-            return !models.isEmpty && models.allSatisfy { $0.files == .complete || $0.files == .external }
-        case .fetchedOnFirstUse, .remote, .unspecified, .UNRECOGNIZED: return false
-        }
-    }
-
-    private func apply(_ engine: String, from inspection: Aria_Setup_V1_Inspection) async throws {
-        var request = Aria_Setup_V1_ApplyRequest()
-        request.selections = inspection.defaults
-        request.selections.transcriptionEngineID = engine
-        try await runner.run {
-            try await SetupClient.handingOffDaemon(inspection, stop: effects.stopDaemon, start: effects.startDaemon) {
-                try await effects.apply(request)
-            }
-        }
-        await showChanges()
-    }
-
     /// The change has landed, so a failed read-back is not a failed change.
     private func showChanges() async {
         do {
             setup.show(try await effects.inspect())
         } catch {
             log.error("Reading back the change failed: \(String(describing: error), privacy: .private)")
-            notice = .failed(Self.readBackFailure)
+            failure = Self.readBackFailure
         }
     }
 }
 
 extension ServerTranscription.Effects {
-    private static let lastLocalEngineKey = "lastLocalEngine"
-
     @MainActor static var live: Self {
         Self(
             inspect: { try await SetupClient.inspect() },
             pair: { invitation in try await DaemonProcess.pairServer(invitation: invitation) },
             forget: { try await DaemonProcess.forgetServer() },
-            apply: { request in _ = try await SetupClient.apply(request) { _ in } },
-            stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
-            startDaemon: { await SetupClient.startDaemonAfterFailedApply() },
-            lastLocalEngine: { UserDefaults.standard.string(forKey: lastLocalEngineKey) },
-            rememberLocalEngine: { UserDefaults.standard.set($0, forKey: lastLocalEngineKey) }
+            setLocation: { location in
+                var request = Aria_Setup_V1_SetTranscriptionLocationRequest()
+                request.location = location.wire
+                _ = try await SetupClient.setTranscriptionLocation(request) { _ in }
+            }
         )
     }
 }
