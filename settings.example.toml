@@ -135,7 +135,7 @@ timeout_secs = 5.0
 # ---- Shared engines
 
 [stt]
-# whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx or server.
+# whisper, whisper-candle, parakeet, moonshine, nemotron or parakeet-mlx.
 # A change applies between dictations, with no restart.
 backend = "parakeet"
 # A language code such as "en" or "en-us", or "auto" to detect.
@@ -147,8 +147,9 @@ language = "en"
 device = "cpu"
 # A Python with parakeet-mlx installed. parakeet-mlx only, and required there.
 # interpreter = "~/.local/share/aria/parakeet-mlx/bin/python3"
-# Your paired server's HTTPS origin. server only, and required there. See the Privacy page in the User Guide.
-# server = "https://your-server:9851"
+# Where dictation transcribes: local, or server for your paired server.
+# The engine above stays set for the way back. See the Privacy page in the User Guide.
+runs_on = "local"
 
 [tts]
 # The engine that speaks `aria say` and replies: system, kokoro or qwen. (restart)

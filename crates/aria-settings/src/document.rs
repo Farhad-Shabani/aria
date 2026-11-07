@@ -1652,6 +1652,53 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn the_example_file_shows_every_key_and_only_known_ones() {
+        let shown = example_paths();
+        for key in Key::ALL {
+            let path = key.path();
+            assert!(
+                shown
+                    .iter()
+                    .any(|found| found == path || found.starts_with(&format!("{path}."))),
+                "{path} is missing from the example"
+            );
+        }
+        for found in &shown {
+            assert!(
+                Key::ALL.iter().any(|key| {
+                    found == key.path() || found.starts_with(&format!("{}.", key.path()))
+                }),
+                "the example shows {found}, which no key names"
+            );
+        }
+    }
+
+    /// Every key the example sets or shows commented out, as dotted paths.
+    fn example_paths() -> Vec<String> {
+        let mut table = String::new();
+        let mut paths = Vec::new();
+        for line in EXAMPLE.lines() {
+            let line = line.strip_prefix("# ").unwrap_or(line);
+            if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
+                table = name.0.replace('"', "");
+                continue;
+            }
+            let Some((name, _)) = line.split_once(" = ") else {
+                continue;
+            };
+            if name.is_empty() || name.contains(' ') || name.starts_with('#') {
+                continue;
+            }
+            paths.push(if table.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{table}.{name}")
+            });
+        }
+        paths
+    }
+
+    #[test]
     fn an_unknown_key_is_refused_with_its_position() {
         let error = Loaded::parse(
             "[dictation]\noutput_mode = \"copy\"\nloudness = 3\n",
