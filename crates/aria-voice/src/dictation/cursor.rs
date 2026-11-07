@@ -204,6 +204,7 @@ fn spaced(queue: &[Queued], caret: &mut Caret) -> String {
 
 impl<D: TextDelivery> TranscriptSink for Cursor<D> {
     type Error = DeliveryError;
+    const STREAMS: bool = D::STREAMS;
 
     fn dictation_started(
         &mut self,

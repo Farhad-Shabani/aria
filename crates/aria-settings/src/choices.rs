@@ -159,28 +159,40 @@ pub enum StreamingUnavailable {
 /// Each output mode that can't stream under one speech engine, with why. A
 /// client looks up the output it shows, so a change to it shows at once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct StreamingSupport(Vec<(OutputMode, StreamingUnavailable)>);
+pub struct StreamingSupport(Vec<StreamingUnavailableOutput>);
+
+/// An output mode that can't stream, and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamingUnavailableOutput {
+    pub output_mode: OutputMode,
+    pub reason: StreamingUnavailable,
+}
 
 impl StreamingSupport {
-    /// A server decides for itself, so its model never counts here.
+    /// Under the engine the settings name and this platform's delivery. A
+    /// server decides for itself, so its model never counts here.
     pub fn of(stt: &SttChoice) -> Self {
-        Self::of_engine(stt.streams())
+        Self::new(stt.streams(), PlatformTextDelivery::STREAMS)
     }
 
-    pub fn of_engine(streams: bool) -> Self {
+    /// Under an engine and a delivery that each can or can't stream.
+    pub fn new(engine_streams: bool, delivery_streams: bool) -> Self {
         OutputMode::ALL
             .iter()
             .filter_map(|&output| {
                 let reason = if output == OutputMode::Copy {
                     StreamingUnavailable::Copy
-                } else if !PlatformTextDelivery::STREAMS {
+                } else if !delivery_streams {
                     StreamingUnavailable::Platform
-                } else if !streams {
+                } else if !engine_streams {
                     StreamingUnavailable::Model
                 } else {
                     return None;
                 };
-                Some((output, reason))
+                Some(StreamingUnavailableOutput {
+                    output_mode: output,
+                    reason,
+                })
             })
             .collect()
     }
@@ -188,17 +200,17 @@ impl StreamingSupport {
     pub fn unavailable(&self, output: OutputMode) -> Option<StreamingUnavailable> {
         self.0
             .iter()
-            .find(|(listed, _)| *listed == output)
-            .map(|(_, reason)| *reason)
+            .find(|entry| entry.output_mode == output)
+            .map(|entry| entry.reason)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (OutputMode, StreamingUnavailable)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = StreamingUnavailableOutput> + '_ {
         self.0.iter().copied()
     }
 }
 
-impl FromIterator<(OutputMode, StreamingUnavailable)> for StreamingSupport {
-    fn from_iter<I: IntoIterator<Item = (OutputMode, StreamingUnavailable)>>(entries: I) -> Self {
+impl FromIterator<StreamingUnavailableOutput> for StreamingSupport {
+    fn from_iter<I: IntoIterator<Item = StreamingUnavailableOutput>>(entries: I) -> Self {
         Self(entries.into_iter().collect())
     }
 }

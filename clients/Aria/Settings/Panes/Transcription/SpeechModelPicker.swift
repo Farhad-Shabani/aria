@@ -79,7 +79,7 @@ struct SpeechModelPicker: View {
     }
 
     private var picker: some View {
-        Picker(Self.title, selection: Binding(get: { shown }, set: choose)) {
+        Picker(Self.title, selection: Binding(get: { shown }, set: { choose($0) })) {
             if usesServer {
                 Text("Your server").tag(SetupStatus.serverEngine)
             }

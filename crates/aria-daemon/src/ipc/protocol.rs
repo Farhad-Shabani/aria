@@ -18,7 +18,7 @@ use aria_settings::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
     DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
     PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
-    Shortcut, StreamingSupport, StreamingUnavailable, UpdateResult,
+    Shortcut, StreamingSupport, StreamingUnavailable, StreamingUnavailableOutput, UpdateResult,
 };
 use aria_voice::dictation::{
     CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
@@ -1702,13 +1702,13 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
             .streaming_unavailable
             .iter()
             .map(|entry| {
-                Ok((
-                    decode_enum::<wire::OutputMode>(entry.output_mode, "output mode")?,
-                    decode_enum::<wire::StreamingUnavailable>(
+                Ok(StreamingUnavailableOutput {
+                    output_mode: decode_enum::<wire::OutputMode>(entry.output_mode, "output mode")?,
+                    reason: decode_enum::<wire::StreamingUnavailable>(
                         entry.reason,
                         "streaming unavailable reason",
                     )?,
-                ))
+                })
             })
             .collect::<Result<StreamingSupport, ProtocolError>>()?;
         Ok(Self {
@@ -1940,9 +1940,9 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
             streaming_unavailable: snapshot
                 .streaming_unavailable
                 .iter()
-                .map(|(output, reason)| wire::StreamingUnavailableOutput {
-                    output_mode: wire::OutputMode::from(output) as i32,
-                    reason: wire::StreamingUnavailable::from(reason) as i32,
+                .map(|entry| wire::StreamingUnavailableOutput {
+                    output_mode: wire::OutputMode::from(entry.output_mode) as i32,
+                    reason: wire::StreamingUnavailable::from(entry.reason) as i32,
                 })
                 .collect(),
         }

@@ -554,9 +554,9 @@ where
     ) -> Result<DictationResult, DictationError> {
         check_execution(control)?;
 
-        // Only here is the engine known, so only here can streaming fall back
-        // to Complete, even for a request that asked to stream.
-        if StreamingSupport::of_engine(M::INCREMENTAL)
+        // Only here are the engine and the delivery known, so only here can
+        // streaming fall back to Complete, even for a request to stream.
+        if StreamingSupport::new(M::INCREMENTAL, S::STREAMS)
             .unavailable(settings.output_mode)
             .is_some()
         {
@@ -1353,6 +1353,7 @@ where
     B::Error: Into<DictationError>,
 {
     type Error = DictationError;
+    const STREAMS: bool = A::STREAMS && B::STREAMS;
 
     fn dictation_started(
         &mut self,
@@ -2232,6 +2233,49 @@ mod tests {
                 &events,
             )
             .expect("a model that can't stream delivers complete");
+        drop(events);
+
+        assert_eq!(result.text, "hello");
+        assert!(matches!(
+            stages.iter().next(),
+            Some(DictationStage::Recording {
+                delivery: DeliveryMode::Complete,
+                ..
+            })
+        ));
+    }
+
+    /// Takes text only once recording stops, as a delivery that pastes does.
+    struct PastingSink;
+
+    impl TranscriptSink for PastingSink {
+        type Error = DictationError;
+        const STREAMS: bool = false;
+
+        fn segment(&mut self, _: Utterance<'_>) -> Result<(), DictationError> {
+            Ok(())
+        }
+
+        fn completed(&mut self, _: Utterance<'_>) -> Result<(), DictationError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_delivery_that_cant_stream_delivers_complete_under_a_streaming_engine() {
+        let (events, stages) = stage_events();
+        let pipeline = DictationPipeline::new(
+            Arc::new(ModeSpy::default()),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            PastingSink,
+        );
+
+        let result = pipeline
+            .run_observed(
+                settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &events,
+            )
+            .expect("the press delivers complete");
         drop(events);
 
         assert_eq!(result.text, "hello");

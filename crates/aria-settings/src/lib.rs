@@ -40,6 +40,7 @@ pub use checked::{
 };
 pub use choices::{
     DeliveryMode, Settings, Shortcut, StoreError, StreamingSupport, StreamingUnavailable,
+    StreamingUnavailableOutput,
 };
 pub use chord::{Chord, ChordError, Modifiers};
 pub use directory::{Directory, DirectoryError};
