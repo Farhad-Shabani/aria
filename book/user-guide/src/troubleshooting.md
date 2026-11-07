@@ -52,7 +52,7 @@ such as over SSH, restart it from the desktop so it can reach the display.
 
 ## Restart
 
-After changing engine settings,
+After changing a speech output engine or another key marked `restart`,
 [restart the service](./settings.md#apply-changes). Reopening the Mac app
 also starts it.
 
@@ -89,7 +89,7 @@ In **System Settings → Privacy & Security → Screen & System Audio Recording*
 check permission for the requesting app or executable. Microphone permission
 does not grant system-audio access.
 
-Listen runs only on Parakeet, Moonshine, or Nemotron. With another engine,
+If Listen can't run your dictation model, it uses Parakeet. Without Parakeet,
 set up the [Moonshine model](./listen.md#model). For a failure after Listen
 starts, run `aria listen status`. Confirm that audio is playing through your
 Mac.

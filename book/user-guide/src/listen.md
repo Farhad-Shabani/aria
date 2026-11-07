@@ -13,9 +13,9 @@ on how you installed Aria.
 
 ## Model
 
-Listen runs on Parakeet, the default, and on Moonshine and Nemotron. With any
-other engine, add the Moonshine Base model below for English audio. Setup
-does not download it for you.
+Listen uses your dictation model. If Listen can't run that model, it uses
+Parakeet. If Parakeet isn't on your Mac, add the Moonshine Base model below for
+English audio. Setup doesn't download it for you.
 
 1. Download the model's three files:
 

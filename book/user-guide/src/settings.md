@@ -72,7 +72,8 @@ and delivers the text. The desktop needs no local transcription model.
 See [Privacy](./privacy.md#server-inference) for what gets sent.
 
 On the server, set a local transcription engine and its model in
-`~/.aria/settings.toml`, then run:
+`~/.aria/settings.toml`, then run the command below. The server reads them once,
+so restart `aria serve` after changing them.
 
 ```sh
 aria serve \
@@ -115,7 +116,8 @@ storage error, fix it and revoke again before restarting the server.
 
 ## Apply changes
 
-Most settings apply to the next dictation or question. Engines, model paths,
+Most settings apply to the next dictation or question, including the
+speech-to-text engine and its model. Speech output engines, their model paths,
 the phone port, and other keys marked `restart` apply after a restart. Check
 the file and see each value:
 
@@ -124,6 +126,10 @@ aria settings check
 aria settings show
 aria settings show tts.rate
 ```
+
+For `dictation.delivery_mode`, `show` also says when dictation delivers after
+recording stops anyway, such as with copy output or a model that can't type
+while you speak.
 
 If the file isn't valid, Aria keeps your last good settings. On a Mac,
 **Finish Setting Up Aria** in Settings names the line when there is one. A

@@ -108,10 +108,24 @@ aria doctor
 Doctor reports settings, model-path, and service problems. It doesn't
 record audio to test microphone permission.
 
+### Switch the speech model
+
+To change only the speech-to-text engine, name it. Setup keeps your other
+choices, downloads that engine's model if it isn't on disk, and switches
+without restarting the service:
+
+```sh
+aria setup --stt moonshine
+```
+
+The names are the ones `stt.backend` takes. For Parakeet (MLX) or your server,
+run `aria setup` instead.
+
 ### Free model space
 
-A model stays on disk after you switch engines. To see each model and remove one
-you no longer use:
+A model stays on disk after you switch engines. On a Mac, delete one in
+**Settings → General → Storage**. In Terminal, see each model and
+remove one you no longer use:
 
 ```sh
 aria models list
