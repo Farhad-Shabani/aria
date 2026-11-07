@@ -65,17 +65,18 @@ struct ApplicationSettings: View {
             )
         case .delivery:
             let output = overrides.hasOutputMode ? overrides.outputMode : global.outputMode
-            let locked = DictationEdits.locksDelivery(output)
+            let canStream =
+                DictationEdits.streamingUnavailable(for: output, in: editor.settings.streamingUnavailable) == nil
             picker(
                 setting.title,
                 modes: DictationEdits.deliveryModes,
-                chosen: locked ? .complete : (overrides.hasDeliveryMode ? overrides.deliveryMode : nil),
+                chosen: canStream ? (overrides.hasDeliveryMode ? overrides.deliveryMode : nil) : .complete,
                 dictation: global.deliveryMode,
                 title: \.title,
                 editor,
                 ApplicationOverrideEdits.setDelivery
             )
-            .disabled(locked)
+            .disabled(!canStream)
         }
     }
 

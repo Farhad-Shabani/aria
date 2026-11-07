@@ -90,10 +90,14 @@ final class SetupState: ObservableObject {
     @Published private(set) var isBusy = false
 
     private let effects: Effects
+    private let runner: SetupRunner
     private var applyTask: Task<Void, Never>?
     private var grantTask: Task<Void, Never>?
 
-    init(effects: Effects) { self.effects = effects }
+    init(effects: Effects, runner: SetupRunner) {
+        self.effects = effects
+        self.runner = runner
+    }
 
     /// The models the chosen engines want, plus the ones every install
     /// wants, whether on disk or not.
@@ -110,7 +114,7 @@ final class SetupState: ObservableObject {
     static func plan(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
         -> [Aria_Setup_V1_Model]
     {
-        wanted(inspection, selections).filter { $0.onDisk != .complete && !$0.external }
+        wanted(inspection, selections).filter { $0.files == .partial || $0.files == .absent }
     }
 
     static func expressPlan(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
@@ -125,14 +129,16 @@ final class SetupState: ObservableObject {
 
     /// Says "up to" when a download resumes: only the transfer knows how
     /// much is left.
-    static func downloadSize(of models: [Aria_Setup_V1_Model]) -> String {
+    nonisolated static func downloadSize(of models: [Aria_Setup_V1_Model]) -> String {
         let size = size(models.reduce(0) { $0 + $1.sizeBytes })
-        return models.contains { $0.onDisk == .partial } ? "up to \(size)" : size
+        return models.contains { $0.files == .partial } ? "up to \(size)" : size
     }
 
     /// What picking `engine` downloads, for comparing engines before one
     /// is chosen.
-    static func download(of engine: Aria_Setup_V1_Choice, in inspection: Aria_Setup_V1_Inspection) -> EngineDownload {
+    nonisolated static func download(
+        of engine: Aria_Setup_V1_Choice, in inspection: Aria_Setup_V1_Inspection
+    ) -> EngineDownload {
         switch engine.modelSource {
         case .downloads: break
         case .fetchedOnFirstUse: return .status("Fetched on first use")
@@ -141,8 +147,8 @@ final class SetupState: ObservableObject {
         case .unspecified, .UNRECOGNIZED: return .status("Size unknown")
         }
         let models = inspection.models.filter { $0.engineID == engine.id }
-        if models.contains(where: \.external) { return .status("Custom model") }
-        let missing = models.filter { $0.onDisk != .complete }
+        if models.contains(where: { $0.files == .external }) { return .status("Custom model") }
+        let missing = models.filter { $0.files == .partial || $0.files == .absent }
         if missing.isEmpty { return .status("Downloaded") }
         return .size(downloadSize(of: missing))
     }
@@ -244,7 +250,7 @@ final class SetupState: ObservableObject {
         inspection.models.first { $0.id == id }?.title ?? id
     }
 
-    static func size(_ bytes: UInt64) -> String {
+    nonisolated static func size(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
@@ -394,11 +400,13 @@ final class SetupState: ObservableObject {
         request.downloads = Self.plan(inspection, selections).map(\.id).filter(downloads.contains)
         applyTask = Task {
             do {
-                let summary = try await SetupClient.handingOffDaemon(
-                    inspection, stop: effects.stopDaemon, start: effects.startDaemon
-                ) {
-                    try await effects.apply(request) { event in
-                        Task { @MainActor [weak self] in self?.absorb(event) }
+                let summary = try await runner.run {
+                    try await SetupClient.handingOffDaemon(
+                        inspection, stop: effects.stopDaemon, start: effects.startDaemon
+                    ) {
+                        try await effects.apply(request) { event in
+                            Task { @MainActor [weak self] in self?.absorb(event) }
+                        }
                     }
                 }
                 await finishApply(summary)
@@ -474,7 +482,7 @@ final class SetupState: ObservableObject {
         if error is SpeakerFailure || error is TryOutFailure { return error.localizedDescription }
         log.error("Setup \(step, privacy: .public) failed: \(String(describing: error), privacy: .private)")
         if case .ariaBinaryMissing? = error as? DaemonProcessError { return missingBinary }
-        return fallback
+        return SetupClientError.message(for: error, otherwise: fallback)
     }
 
     /// Nil for a cancellation, which needs no notice.

@@ -1,6 +1,7 @@
 enum SettingsPage: Hashable {
     case pane(SettingsPane)
     case assistant
+    case storage
     /// One item's page inside a pane's list, by the item's id.
     case item(SettingsPane, id: String)
 
@@ -8,7 +9,7 @@ enum SettingsPage: Hashable {
     var pane: SettingsPane {
         switch self {
         case .pane(let pane), .item(let pane, _): pane
-        case .assistant: .general
+        case .assistant, .storage: .general
         }
     }
 }

@@ -212,6 +212,7 @@ struct DaemonProcess: DaemonControlling {
         } catch {
             throw launchFailed("aria remote", error)
         }
+        if output.status == SetupClientError.busyStatus { throw SetupClientError.busy }
         guard output.status == 0 else {
             throw DaemonProcessError.commandFailed(cliFailure(stderr: output.stderr, fallback: fallback))
         }

@@ -58,12 +58,12 @@ private struct DownloadsSection: View {
     /// A downloaded or custom model keeps a disabled switch. Its status sits
     /// in the label so VoiceOver reads it with the switch.
     private func row(_ model: Aria_Setup_V1_Model) -> some View {
-        let downloaded = model.onDisk == .complete
-        let fixed = downloaded || model.external
+        let downloaded = model.files == .complete
+        let fixed = downloaded || model.files == .external
         return Toggle(isOn: fixed ? .constant(downloaded) : toggle(model.id)) {
             Text(model.title)
             Text(Self.status(model)).monospacedDigit()
-            if model.onDisk == .partial && !model.external {
+            if model.files == .partial {
                 Text("Partly downloaded. Resumes where it stopped.")
             }
         }
@@ -71,8 +71,8 @@ private struct DownloadsSection: View {
     }
 
     private static func status(_ model: Aria_Setup_V1_Model) -> String {
-        if model.onDisk == .complete { return "Downloaded" }
-        if model.external { return "Custom model" }
+        if model.files == .complete { return "Downloaded" }
+        if model.files == .external { return "Custom model" }
         return SetupState.downloadSize(of: [model])
     }
 

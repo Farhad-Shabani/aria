@@ -21,41 +21,62 @@ final class ModelDownload: ObservableObject {
 
     enum State: Equatable {
         case idle
-        /// Nil until the first progress report gives the size.
-        case downloading(fraction: Double?)
+        case downloading(ModelTransfer?)
         /// The model is in place. Setup installs the service and checks the Aria key.
         case finishing
-        case failed
+        case failed(String)
     }
 
     static let failure = "Aria couldn’t download the speech model. Try again."
 
-    @Published private(set) var state = State.idle
+    private struct Run {
+        let model: String
+        var state: State
+    }
+
+    /// The model the run fetches, so only its own row shows the run.
+    @Published private var run: Run?
+
+    var model: String? { run?.model }
+    var state: State { run?.state ?? .idle }
+
+    func state(of model: String) -> State {
+        run?.model == model ? state : .idle
+    }
+
+    var isRunning: Bool {
+        switch state {
+        case .downloading, .finishing: true
+        case .idle, .failed: false
+        }
+    }
 
     private let effects: Effects
+    private let runner: SetupRunner
     private var task: Task<Void, Never>?
 
-    init(effects: Effects) {
+    init(effects: Effects, runner: SetupRunner) {
         self.effects = effects
+        self.runner = runner
     }
 
     /// `downloaded` runs only once setup finishes, never after a failure.
     func start(_ modelID: String, then downloaded: @escaping @MainActor () async -> Void) {
         guard task == nil else { return }
-        state = .downloading(fraction: nil)
+        run = Run(model: modelID, state: .downloading(nil))
         task = Task {
             defer { task = nil }
             do {
-                try await fetch(modelID)
-                state = .idle
+                try await runner.run { try await fetch(modelID) }
                 await downloaded()
+                reset()
             } catch  where Task.isCancelled {
-                state = .idle
+                reset()
             } catch SetupClientError.cancelled {
-                state = .idle
+                reset()
             } catch {
                 log.error("Model download failed: \(String(describing: error), privacy: .private)")
-                state = .failed
+                run?.state = .failed(SetupClientError.message(for: error, otherwise: Self.failure))
             }
         }
     }
@@ -80,13 +101,17 @@ final class ModelDownload: ObservableObject {
         task?.cancel()
     }
 
+    private func reset() {
+        run = nil
+    }
+
     private func absorb(_ event: Aria_Setup_V1_SetupEvent) {
         guard case .downloading = state else { return }
         switch event.event {
-        case .download(let progress) where progress.totalBytes > 0:
-            state = .downloading(fraction: Double(progress.receivedBytes) / Double(progress.totalBytes))
-        case .started(.service): state = .finishing
-        case .download, .started, nil: break
+        case .download(let progress):
+            if let transfer = ModelTransfer(progress) { run?.state = .downloading(transfer) }
+        case .started(.service): run?.state = .finishing
+        case .started, nil: break
         }
     }
 }

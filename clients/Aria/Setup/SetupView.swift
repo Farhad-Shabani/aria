@@ -10,6 +10,7 @@ struct SetupView: View {
 
     @ObservedObject var state: SetupState
     @ObservedObject var settings: DaemonSettings
+    @EnvironmentObject private var runner: SetupRunner
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -105,12 +106,12 @@ struct SetupView: View {
                 .disabled(state.step == .inspecting)
             Button("Continue") { state.express() }
                 .primaryAction()
-                .disabled(state.step == .inspecting || state.blockedBy != nil)
+                .disabled(state.step == .inspecting || state.blockedBy != nil || runner.isRunning)
         case .choices:
             Button("Back") { state.back() }
             Button("Set Up") { state.next() }
                 .primaryAction()
-                .disabled(state.blockedBy != nil)
+                .disabled(state.blockedBy != nil || runner.isRunning)
         case .applying:
             // Only a download can be cut short cleanly; the other steps
             // are too quick to catch, and a half-installed service is not

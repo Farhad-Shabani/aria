@@ -4,7 +4,9 @@ struct GeneralSettings: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var settings: DaemonSettings
     @ObservedObject var catalog: AssistantCatalog
+    @ObservedObject var setup: SetupStatus
     let openAssistant: () -> Void
+    let openStorage: () -> Void
     @StateObject private var loginItem = LoginItem()
     @AppStorage(StatusController.enabledKey)
     private var statusPillEnabled = StatusController.isEnabledByDefault
@@ -46,6 +48,13 @@ struct GeneralSettings: View {
                     Text("Spoken Content")
                 } footer: {
                     Text("Sets how fast Aria reads text aloud, as in Aria Setup and with `aria say`.")
+                }
+            }
+            Section {
+                ItemLink(open: openStorage) {
+                    Text("Storage")
+                    Spacer()
+                    Text(SetupState.size(setup.downloadedModels.total)).foregroundStyle(.secondary)
                 }
             }
             Section {

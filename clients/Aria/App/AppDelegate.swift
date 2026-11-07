@@ -10,11 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = WindowPresentation()
     let settingsPaneRequest = SettingsPaneRequest()
     let setup = WindowPresentation()
-    let setupState = SetupState(effects: .live)
+    let setupRunner = SetupRunner()
+    lazy var setupState = SetupState(effects: .live, runner: setupRunner)
     let setupStatus = SetupStatus()
-    let modelDownload = ModelDownload(effects: .live)
+    lazy var modelDownload = ModelDownload(effects: .live, runner: setupRunner)
+    lazy var transcriptionEngineChange = TranscriptionEngineChange(effects: .live, runner: setupRunner)
     let voices: VoiceProfiles
-    lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus)
+    lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus, runner: setupRunner)
     let updates = UpdateController()
     let history = DictationHistoryState(effects: HistoryClient.effects)
 

@@ -6,6 +6,7 @@ struct TranscriptionSection: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var server: ServerTranscription
     @ObservedObject var setup: SetupStatus
+    @EnvironmentObject private var runner: SetupRunner
     @State private var isPairing = false
     @State private var isConfirmingForget = false
 
@@ -62,13 +63,13 @@ struct TranscriptionSection: View {
                 HStack {
                     if setup.server != nil {
                         Button("Forget…", role: .destructive) { isConfirmingForget = true }
-                            .disabled(!server.canForget)
+                            .disabled(!server.canForget || runner.isRunning)
                             .help(setup.transcription == .server ? "Turn off \(Self.rowTitle) first." : "")
                     }
                     Toggle(Self.rowTitle, isOn: usesServer)
                         .labelsHidden()
                         .toggleStyle(.switch)
-                        .disabled(!server.canChooseLocation)
+                        .disabled(!server.canChooseLocation || runner.isRunning)
                 }
             } label: {
                 Text(Self.rowTitle)

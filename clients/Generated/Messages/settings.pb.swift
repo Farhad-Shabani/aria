@@ -67,6 +67,55 @@ public nonisolated enum Aria_Daemon_V1_PromptKind: SwiftProtobuf.Enum, Swift.Cas
 
 }
 
+/// Why an output mode can't stream.
+public nonisolated enum Aria_Daemon_V1_StreamingUnavailable: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// The clipboard takes the whole text at once.
+  case copy // = 1
+
+  /// This platform pastes, so it delivers once.
+  case platform // = 2
+
+  /// The speech model decodes only the finished recording.
+  case model // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .copy
+    case 2: self = .platform
+    case 3: self = .model
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .copy: return 1
+    case .platform: return 2
+    case .model: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_StreamingUnavailable] = [
+    .unspecified,
+    .copy,
+    .platform,
+    .model,
+  ]
+
+}
+
 /// The Aria key: a bare modifier read as a tap, a hold, or a combo. A hold
 /// dictates. A tap ends a recording or a run a press started, or else
 /// dictates. A combo is a HotkeyEvent for a client to run.
@@ -204,7 +253,7 @@ public nonisolated struct Aria_Daemon_V1_SettingsStatus: Sendable {
   /// Clears the value of `fault`. Subsequent reads from it will return its default value.
   public mutating func clearFault() {self._fault = nil}
 
-  /// Dotted keys, such as "stt.backend", whose file value differs
+  /// Dotted keys, such as "tts.backend", whose file value differs
   /// from the one the daemon started with. They apply after a restart.
   public var restartRequired: [String] = []
 
@@ -360,6 +409,11 @@ public nonisolated struct Aria_Daemon_V1_SettingsSnapshot: Sendable {
   /// Clears the value of `settings`. Subsequent reads from it will return its default value.
   public mutating func clearSettings() {self._settings = nil}
 
+  /// Each output mode that can't stream here, with why. A mode not listed
+  /// streams when `delivery_mode` asks it to. An app's dictation follows the
+  /// entry for its own output.
+  public var streamingUnavailable: [Aria_Daemon_V1_StreamingUnavailableOutput] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -413,9 +467,8 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._outputMode = newValue}
   }
 
-  /// Copy output cannot stream, so it always delivers the complete text.
-  /// `delivery_mode` stays stored and applies again once `output_mode` is no
-  /// longer Copy.
+  /// What you chose. Nothing rewrites it when streaming is unavailable, so
+  /// it applies again once streaming is possible.
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode}
     set {_uniqueStorage()._deliveryMode = newValue}
@@ -589,7 +642,7 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {_uniqueStorage()._outputMode = nil}
 
-  /// Stored even while output_mode is Copy; see `Settings.delivery_mode`.
+  /// Stored even where streaming is unavailable; see `Settings.delivery_mode`.
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode {
     get {_storage._deliveryMode ?? .unspecified}
     set {_uniqueStorage()._deliveryMode = newValue}
@@ -844,8 +897,7 @@ public nonisolated struct Aria_Daemon_V1_Prompts: Sendable {
 }
 
 /// Dictation settings that replace the settings above. Each absent field
-/// inherits them. The daemon drops a value equal to the setting, and the
-/// delivery choice of an app set to Copy output, which cannot stream.
+/// inherits them. The daemon drops a value equal to the setting.
 public nonisolated struct Aria_Daemon_V1_DictationOverrides: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -905,6 +957,20 @@ public nonisolated struct Aria_Daemon_V1_ApplicationOverride: Sendable {
   public init() {}
 
   fileprivate var _overrides: Aria_Daemon_V1_DictationOverrides? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_StreamingUnavailableOutput: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var outputMode: Aria_Daemon_V1_OutputMode = .unspecified
+
+  public var reason: Aria_Daemon_V1_StreamingUnavailable = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// At most 64 entries, each application ID once.
@@ -985,6 +1051,10 @@ fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROMPT_KIND_UNSPECIFIED\0\u{1}PROMPT_KIND_REWRITE\0\u{1}PROMPT_KIND_COMPOSE\0")
+}
+
+nonisolated extension Aria_Daemon_V1_StreamingUnavailable: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAMING_UNAVAILABLE_UNSPECIFIED\0\u{1}STREAMING_UNAVAILABLE_COPY\0\u{1}STREAMING_UNAVAILABLE_PLATFORM\0\u{1}STREAMING_UNAVAILABLE_MODEL\0")
 }
 
 nonisolated extension Aria_Daemon_V1_AriaKey: SwiftProtobuf._ProtoNameProviding {
@@ -1321,7 +1391,7 @@ nonisolated extension Aria_Daemon_V1_CheckSettingsResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SettingsSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}settings\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}settings\0\u{3}streaming_unavailable\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1331,6 +1401,7 @@ nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, Sw
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.streamingUnavailable) }()
       default: break
       }
     }
@@ -1347,12 +1418,16 @@ nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, Sw
     try { if let v = self._settings {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
+    if !self.streamingUnavailable.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.streamingUnavailable, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_SettingsSnapshot, rhs: Aria_Daemon_V1_SettingsSnapshot) -> Bool {
     if lhs.revision != rhs.revision {return false}
     if lhs._settings != rhs._settings {return false}
+    if lhs.streamingUnavailable != rhs.streamingUnavailable {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2028,6 +2103,41 @@ nonisolated extension Aria_Daemon_V1_ApplicationOverride: SwiftProtobuf.Message,
     if lhs.applicationID != rhs.applicationID {return false}
     if lhs.excluded != rhs.excluded {return false}
     if lhs._overrides != rhs._overrides {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_StreamingUnavailableOutput: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".StreamingUnavailableOutput"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_mode\0\u{1}reason\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.outputMode) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.reason) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.outputMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.outputMode, fieldNumber: 1)
+    }
+    if self.reason != .unspecified {
+      try visitor.visitSingularEnumField(value: self.reason, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_StreamingUnavailableOutput, rhs: Aria_Daemon_V1_StreamingUnavailableOutput) -> Bool {
+    if lhs.outputMode != rhs.outputMode {return false}
+    if lhs.reason != rhs.reason {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

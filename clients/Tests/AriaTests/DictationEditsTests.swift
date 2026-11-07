@@ -3,15 +3,6 @@ import XCTest
 @testable import Aria
 
 final class DictationEditsTests: XCTestCase {
-    func testCopyDeliversCompleteWhateverIsStored() {
-        var settings = Aria_Daemon_V1_Settings()
-        settings.deliveryMode = .streaming
-        settings.outputMode = .copy
-        XCTAssertEqual(DictationEdits.effectiveDelivery(in: settings), .complete)
-        settings.outputMode = .insert
-        XCTAssertEqual(DictationEdits.effectiveDelivery(in: settings), .streaming)
-    }
-
     func testLanguageChoicesAppendOnlyAnUnknownStoredCode() {
         XCTAssertEqual(DictationEdits.languageChoices(including: "en"), ["auto", "en"])
         XCTAssertEqual(DictationEdits.languageChoices(including: ""), ["auto", "en"])
