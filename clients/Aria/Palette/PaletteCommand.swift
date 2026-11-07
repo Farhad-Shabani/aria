@@ -29,13 +29,13 @@ struct PaletteCommand: Equatable, Identifiable {
         id: "live-transcript", title: "Mac Audio", symbol: "waveform", number: nil, chord: nil,
         action: .showLiveTranscript)
     static let newTranscription = PaletteCommand(
-        id: "new-transcription", title: "New Transcription", symbol: "waveform", number: nil, chord: nil,
+        id: "new-transcription", title: "Transcribe Mac Audio", symbol: "waveform", number: nil, chord: nil,
         action: .startTranscription)
     static let newDictation = PaletteCommand(
         id: "new-dictation", title: "New Dictation", symbol: "mic", number: nil, chord: nil,
         action: .startDictation)
     static let newAsk = PaletteCommand(
-        id: "new-ask", title: "New Ask", symbol: "bubble.left", number: nil, chord: nil, action: .startAsk)
+        id: "new-ask", title: "Ask a Question", symbol: "bubble.left", number: nil, chord: nil, action: .startAsk)
     static func history(_ section: HistorySection) -> PaletteCommand {
         PaletteCommand(
             id: "history-\(section)", title: section.historyTitle, symbol: section.symbol, number: nil, chord: nil,

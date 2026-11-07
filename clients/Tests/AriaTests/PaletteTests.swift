@@ -372,6 +372,16 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.selected?.command?.action, .openSettings)
     }
 
+    func testSearchingAFeaturesNameFindsTheCommandThatStartsIt() {
+        var model = openModel()
+
+        model.query = "mac audio"
+        XCTAssertEqual(model.commands.map(\.action), [.startTranscription])
+
+        model.query = "question"
+        XCTAssertEqual(model.commands.map(\.action), [.startAsk])
+    }
+
     func testWritingBackTheSameSearchKeepsTheSelection() {
         var model = openModel()
         model.query = "s"
