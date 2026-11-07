@@ -11,7 +11,7 @@ final class ServerTranscription: ObservableObject {
         var inspect: () async throws -> Aria_Setup_V1_Inspection
         var pair: (_ invitation: String) async throws -> Void
         var forget: () async throws -> Void
-        var setLocation: (TranscriptionLocation) async throws -> Void
+        var setRunsOn: (TranscriptionRunsOn) async throws -> Void
     }
 
     /// The pairing sheet shows the address an invitation names before it is
@@ -42,17 +42,17 @@ final class ServerTranscription: ObservableObject {
         setup.server == nil && setup.transcription != .server
     }
 
-    var canChooseLocation: Bool {
+    var canChooseRunsOn: Bool {
         !isBusy && !needsPairing
     }
 
-    func use(_ location: TranscriptionLocation) async {
+    func use(_ runsOn: TranscriptionRunsOn) async {
         guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
         failure = nil
         do {
-            try await runner.run { try await effects.setLocation(location) }
+            try await runner.run { try await effects.setRunsOn(runsOn) }
         } catch {
             log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
             failure = SetupClientError.message(for: error, otherwise: Self.switchFailure)
@@ -161,10 +161,10 @@ extension ServerTranscription.Effects {
             inspect: { try await SetupClient.inspect() },
             pair: { invitation in try await DaemonProcess.pairServer(invitation: invitation) },
             forget: { try await DaemonProcess.forgetServer() },
-            setLocation: { location in
-                var request = Aria_Setup_V1_SetTranscriptionLocationRequest()
-                request.location = location.wire
-                _ = try await SetupClient.setTranscriptionLocation(request) { _ in }
+            setRunsOn: { runsOn in
+                var request = Aria_Setup_V1_SetTranscriptionRunsOnRequest()
+                request.runsOn = runsOn.wire
+                _ = try await SetupClient.setTranscriptionRunsOn(request) { _ in }
             }
         )
     }

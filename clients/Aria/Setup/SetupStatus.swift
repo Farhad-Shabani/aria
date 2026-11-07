@@ -3,16 +3,16 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SetupStatus")
 
-enum TranscriptionLocation: Equatable {
+enum TranscriptionRunsOn: Equatable {
     case local
     case server
 
     /// An unknown value reads as local, where the settings start.
-    init(_ wire: Aria_Setup_V1_TranscriptionLocation) {
+    init(_ wire: Aria_Setup_V1_TranscriptionRunsOn) {
         self = wire == .server ? .server : .local
     }
 
-    var wire: Aria_Setup_V1_TranscriptionLocation {
+    var wire: Aria_Setup_V1_TranscriptionRunsOn {
         switch self {
         case .local: .local
         case .server: .server
@@ -28,7 +28,7 @@ final class SetupStatus: ObservableObject {
     /// voice setup, and enrolling reports a missing model itself.
     @Published private(set) var hasSpeakerModelOnDisk = true
     @Published private(set) var server: Aria_Setup_V1_PairedServer?
-    @Published private(set) var transcription = TranscriptionLocation.local
+    @Published private(set) var transcription = TranscriptionRunsOn.local
     @Published private(set) var speechModels = SpeechModels()
     @Published private(set) var downloadedModels = DownloadedModels()
 
@@ -46,7 +46,7 @@ final class SetupStatus: ObservableObject {
         items = SetupItem.items(in: inspection)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
-        transcription = TranscriptionLocation(inspection.transcriptionLocation)
+        transcription = TranscriptionRunsOn(inspection.transcriptionRunsOn)
         speechModels = SpeechModels(inspection)
         downloadedModels = DownloadedModels(inspection)
     }

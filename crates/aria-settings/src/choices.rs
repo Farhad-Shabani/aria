@@ -339,7 +339,7 @@ mod tests {
             platform.or(Some(StreamingUnavailable::Model))
         );
         assert_eq!(
-            reason("[stt]\nbackend = \"whisper-candle\"\nlocation = \"server\"\n"),
+            reason("[stt]\nbackend = \"whisper-candle\"\nruns_on = \"server\"\n"),
             platform,
             "the server's engine decides, not the local one kept for later"
         );

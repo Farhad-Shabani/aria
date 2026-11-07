@@ -90,7 +90,7 @@ fn desktop_dictates_through_a_server_without_local_stt() {
     );
     run(
         &device,
-        Command::new(env!("CARGO_BIN_EXE_aria")).args(["setup", "--stt-location", "server"]),
+        Command::new(env!("CARGO_BIN_EXE_aria")).args(["setup", "--stt-runs-on", "server"]),
         &[],
     );
     run(

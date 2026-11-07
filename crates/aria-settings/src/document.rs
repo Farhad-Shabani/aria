@@ -587,7 +587,7 @@ pub struct Stt {
     pub model: Option<String>,
     pub device: Option<DeviceName>,
     pub interpreter: Option<PathBuf>,
-    pub location: Option<TranscriptionLocation>,
+    pub runs_on: Option<TranscriptionRunsOn>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -913,14 +913,14 @@ pub enum TtsFallbackName {
 /// pin, not here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TranscriptionLocation {
+pub enum TranscriptionRunsOn {
     #[default]
     Local,
     Server,
 }
 
-impl TranscriptionLocation {
-    /// The value `stt.location` takes.
+impl TranscriptionRunsOn {
+    /// The value `stt.runs_on` takes.
     pub fn name(self) -> &'static str {
         match self {
             Self::Local => "local",
@@ -1033,7 +1033,7 @@ impl SettingsFile {
         let capture = self.validate_capture()?;
         Ok(Choices {
             stt,
-            stt_location: self.stt.location.unwrap_or_default(),
+            stt_runs_on: self.stt.runs_on.unwrap_or_default(),
             listen,
             tts,
             voices,
@@ -2120,17 +2120,17 @@ pub(super) mod tests {
     #[test]
     fn the_server_keeps_the_local_engine_and_its_settings() {
         let loaded = load(
-            "[stt]\nbackend = \"parakeet\"\nmodel = \"/models/parakeet\"\ndevice = \"gpu\"\nlocation = \"server\"\n",
+            "[stt]\nbackend = \"parakeet\"\nmodel = \"/models/parakeet\"\ndevice = \"gpu\"\nruns_on = \"server\"\n",
         );
 
         let choices = loaded.settings.choices();
-        assert_eq!(choices.stt_location, TranscriptionLocation::Server);
+        assert_eq!(choices.stt_runs_on, TranscriptionRunsOn::Server);
         assert_eq!(choices.stt, SttChoice::Local(LocalStt::Parakeet));
         assert_eq!(loaded.settings.stt.device, Some(DeviceName::Gpu));
     }
 
     #[test]
-    fn the_server_is_a_location_not_an_engine() {
+    fn the_server_is_where_it_runs_not_an_engine() {
         refused("[stt]\nbackend = \"server\"\n", Key::SttBackend);
         let unknown = Loaded::parse("[stt]\nserver = \"https://a.test\"\n", Path::new(HOME));
         assert!(

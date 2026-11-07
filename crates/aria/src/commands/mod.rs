@@ -97,11 +97,11 @@ enum Command {
         /// (server), keeping the local engine and its settings
         #[arg(
             long,
-            value_name = "LOCATION",
-            value_parser = setup::parse_location,
+            value_name = "RUNS_ON",
+            value_parser = setup::parse_runs_on,
             conflicts_with_all = ["yes", "skip_models", "stt"],
         )]
-        stt_location: Option<aria_settings::TranscriptionLocation>,
+        stt_runs_on: Option<aria_settings::TranscriptionRunsOn>,
     },
     /// See and remove the models setup downloaded
     Models {
@@ -230,15 +230,15 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         } => setup::set_transcription_engine(&engine),
         Command::Setup {
             command: None,
-            stt_location: Some(location),
+            stt_runs_on: Some(runs_on),
             ..
-        } => setup::set_transcription_location(location),
+        } => setup::set_transcription_runs_on(runs_on),
         Command::Setup {
             command: None,
             yes,
             skip_models,
             stt: None,
-            stt_location: None,
+            stt_runs_on: None,
         } => setup::run(yes, skip_models),
         Command::Setup {
             command: Some(command),

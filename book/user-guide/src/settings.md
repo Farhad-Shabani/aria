@@ -95,7 +95,7 @@ pair:
   **Paste Invitation**. Check the address, click **Pair**, and turn on
   **Transcribe on your server**.
 - **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
-  Then run `aria setup --stt-location server`.
+  Then run `aria setup --stt-runs-on server`.
 
 Either way, the next dictation uses the server, with no restart. Dictation, recorded
 questions, phone relay and history retries then use the server. Streaming and
@@ -104,7 +104,7 @@ instead of switching to a local engine.
 
 Speech output, wake words and voice profiles stay on the device. System-audio
 listening needs its own local `listen.backend`. To go back, turn off
-**Transcribe on your server**, or run `aria setup --stt-location local`. Your
+**Transcribe on your server**, or run `aria setup --stt-runs-on local`. Your
 local engine keeps its settings while the server transcribes. If its model
 isn't on disk, Aria downloads it before switching back.
 

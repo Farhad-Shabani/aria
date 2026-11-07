@@ -84,12 +84,12 @@ enum SetupClient {
 
     /// Fetches the local engine's missing models when coming back, then
     /// writes where transcription runs.
-    static func setTranscriptionLocation(
-        _ request: Aria_Setup_V1_SetTranscriptionLocationRequest,
+    static func setTranscriptionRunsOn(
+        _ request: Aria_Setup_V1_SetTranscriptionRunsOnRequest,
         onEvent: @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
-    ) async throws -> Aria_Setup_V1_SetTranscriptionLocationSummary {
-        try await run("set-transcription-location", request, onEvent: onEvent) { bytes in
-            switch try Aria_Setup_V1_SetTranscriptionLocationResponse(serializedBytes: bytes).body {
+    ) async throws -> Aria_Setup_V1_SetTranscriptionRunsOnSummary {
+        try await run("set-transcription-runs-on", request, onEvent: onEvent) { bytes in
+            switch try Aria_Setup_V1_SetTranscriptionRunsOnResponse(serializedBytes: bytes).body {
             case .event(let event): .event(event)
             case .summary(let summary): .summary(summary)
             case nil: nil

@@ -1,11 +1,11 @@
 //! Sets where dictation transcribes: on this machine, or on the paired
-//! server. Only `stt.location` changes, so the local engine and its keys
+//! server. Only `stt.runs_on` changes, so the local engine and its keys
 //! stay for the way back. The running daemon swaps once it sees the write,
 //! so nothing restarts.
 
 use std::path::Path;
 
-use aria_settings::TranscriptionLocation;
+use aria_settings::TranscriptionRunsOn;
 
 use crate::primitives::user_home;
 
@@ -14,47 +14,47 @@ use super::transcription_engine::fetch_engine_models;
 use super::{Outcome, Pairing, SetupError, SetupEvent, Step, lock_setup};
 
 #[derive(Debug)]
-pub struct SetTranscriptionLocationSummary {
-    pub location: TranscriptionLocation,
+pub struct SetTranscriptionRunsOnSummary {
+    pub runs_on: TranscriptionRunsOn,
     pub models: Vec<(&'static str, Outcome)>,
     pub settings: SettingsWrite,
 }
 
-pub fn set_transcription_location(
-    location: TranscriptionLocation,
+pub fn set_transcription_runs_on(
+    runs_on: TranscriptionRunsOn,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
-) -> Result<SetTranscriptionLocationSummary, SetupError> {
+) -> Result<SetTranscriptionRunsOnSummary, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
-    set_in(&home, location, transfer_meter, observe)
+    set_in(&home, runs_on, transfer_meter, observe)
 }
 
 /// Coming back fetches the local engine's missing models before the write,
 /// so the daemon never swaps to an engine that can't load.
 fn set_in(
     home: &Path,
-    location: TranscriptionLocation,
+    runs_on: TranscriptionRunsOn,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
-) -> Result<SetTranscriptionLocationSummary, SetupError> {
+) -> Result<SetTranscriptionRunsOnSummary, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
     let file = settings_file::read(home)?;
-    settings_file::check_location(home, &file, location)?;
-    let models = match location {
-        TranscriptionLocation::Server => {
+    settings_file::check_runs_on(home, &file, runs_on)?;
+    let models = match runs_on {
+        TranscriptionRunsOn::Server => {
             Pairing::read(home).check_paired(home)?;
             Vec::new()
         }
-        TranscriptionLocation::Local => {
+        TranscriptionRunsOn::Local => {
             let engine = aria_settings::config::transcription_engine(&file.stt);
             fetch_engine_models(home, &file, engine, transfer_meter, observe)?
         }
     };
 
     observe(SetupEvent::Started(Step::Settings))?;
-    let settings = settings_file::write_location(home, location)?;
-    Ok(SetTranscriptionLocationSummary {
-        location,
+    let settings = settings_file::write_runs_on(home, runs_on)?;
+    Ok(SetTranscriptionRunsOnSummary {
+        runs_on,
         models,
         settings,
     })
@@ -75,13 +75,13 @@ mod tests {
 
     fn set(
         home: &Path,
-        location: TranscriptionLocation,
+        runs_on: TranscriptionRunsOn,
     ) -> (
-        Result<SetTranscriptionLocationSummary, SetupError>,
+        Result<SetTranscriptionRunsOnSummary, SetupError>,
         Vec<SetupEvent>,
     ) {
         let mut events = Vec::new();
-        let result = set_in(home, location, false, &mut |event| {
+        let result = set_in(home, runs_on, false, &mut |event| {
             events.push(event);
             Ok(())
         });
@@ -95,7 +95,7 @@ mod tests {
         let home = home(local);
         aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
 
-        let (server, events) = set(home.path(), TranscriptionLocation::Server);
+        let (server, events) = set(home.path(), TranscriptionRunsOn::Server);
 
         assert_eq!(server.unwrap().settings, SettingsWrite::Written);
         assert!(matches!(
@@ -103,9 +103,9 @@ mod tests {
             [SetupEvent::Started(Step::Settings)]
         ));
         let file = settings_file::read(home.path()).unwrap();
-        assert_eq!(file.choices().stt_location, TranscriptionLocation::Server);
+        assert_eq!(file.choices().stt_runs_on, TranscriptionRunsOn::Server);
 
-        let (back, events) = set(home.path(), TranscriptionLocation::Local);
+        let (back, events) = set(home.path(), TranscriptionRunsOn::Local);
 
         assert!(back.unwrap().models.is_empty(), "the model lives elsewhere");
         assert!(matches!(
@@ -113,7 +113,7 @@ mod tests {
             [SetupEvent::Started(Step::Settings)]
         ));
         let file = settings_file::read(home.path()).unwrap();
-        assert_eq!(file.choices().stt_location, TranscriptionLocation::Local);
+        assert_eq!(file.choices().stt_runs_on, TranscriptionRunsOn::Local);
         assert_eq!(file.stt.backend.as_deref(), Some("parakeet"));
         assert_eq!(file.stt.model.as_deref(), Some("/models/parakeet"));
         assert!(file.stt.device.is_some());
@@ -124,7 +124,7 @@ mod tests {
         let settings = "[stt]\nbackend = \"moonshine\"\n";
         let home = home(settings);
 
-        let (result, events) = set(home.path(), TranscriptionLocation::Server);
+        let (result, events) = set(home.path(), TranscriptionRunsOn::Server);
 
         assert!(matches!(result, Err(SetupError::ServerNotPaired)));
         assert!(events.is_empty());
@@ -138,13 +138,13 @@ mod tests {
     /// where it starts.
     #[test]
     fn coming_back_fetches_the_local_model_before_the_write() {
-        let settings = "[stt]\nbackend = \"moonshine\"\nlocation = \"server\"\n";
+        let settings = "[stt]\nbackend = \"moonshine\"\nruns_on = \"server\"\n";
         let home = home(settings);
         let mut events = Vec::new();
 
         let result = set_in(
             home.path(),
-            TranscriptionLocation::Local,
+            TranscriptionRunsOn::Local,
             false,
             &mut |event| {
                 events.push(event);

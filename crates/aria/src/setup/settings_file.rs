@@ -5,8 +5,7 @@ use std::path::Path;
 
 use aria_settings::config::tts_backend;
 use aria_settings::{
-    CheckedSettings, Key, Patch, Refusal, SettingsError, SettingsFile, TranscriptionLocation,
-    Written,
+    CheckedSettings, Key, Patch, Refusal, SettingsError, SettingsFile, TranscriptionRunsOn, Written,
 };
 
 use super::SetupError;
@@ -88,10 +87,10 @@ fn transcription_patch(patch: &mut Patch, current: &SettingsFile, engine: &str) 
     }
 }
 
-fn location_patch(current: &SettingsFile, location: TranscriptionLocation) -> Patch {
+fn runs_on_patch(current: &SettingsFile, runs_on: TranscriptionRunsOn) -> Patch {
     let mut patch = Patch::new();
-    if current.stt.location.unwrap_or_default() != location {
-        patch.set(Key::SttLocation, location.name());
+    if current.stt.runs_on.unwrap_or_default() != runs_on {
+        patch.set(Key::SttRunsOn, runs_on.name());
     }
     patch
 }
@@ -118,21 +117,21 @@ pub(super) fn write_transcription(home: &Path, engine: &str) -> Result<SettingsW
     })
 }
 
-pub(super) fn check_location(
+pub(super) fn check_runs_on(
     home: &Path,
     current: &SettingsFile,
-    location: TranscriptionLocation,
+    runs_on: TranscriptionRunsOn,
 ) -> Result<(), SetupError> {
-    check(home, &location_patch(current, location))
+    check(home, &runs_on_patch(current, runs_on))
 }
 
-/// Writes only `stt.location`, so the local engine and its keys stay for
+/// Writes only `stt.runs_on`, so the local engine and its keys stay for
 /// the way back.
-pub(super) fn write_location(
+pub(super) fn write_runs_on(
     home: &Path,
-    location: TranscriptionLocation,
+    runs_on: TranscriptionRunsOn,
 ) -> Result<SettingsWrite, SetupError> {
-    write(home, |current| location_patch(current, location))
+    write(home, |current| runs_on_patch(current, runs_on))
 }
 
 fn check(home: &Path, patch: &Patch) -> Result<(), SetupError> {

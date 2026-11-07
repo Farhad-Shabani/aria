@@ -10,7 +10,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
     private final class Spy {
         var inspection: Aria_Setup_V1_Inspection
-        var locations: [TranscriptionLocation] = []
+        var sentRunsOn: [TranscriptionRunsOn] = []
         var paired: [String] = []
         var pairFails = false
         var forgotten = 0
@@ -26,7 +26,7 @@ final class ServerTranscriptionTests: XCTestCase {
         var effects: ServerTranscription.Effects {
             .init(
                 inspect: {
-                    if self.inspectFailsAfterSet && !self.locations.isEmpty { throw Refused() }
+                    if self.inspectFailsAfterSet && !self.sentRunsOn.isEmpty { throw Refused() }
                     if self.inspectFailsAfterPair && !self.paired.isEmpty { throw Refused() }
                     return self.inspection
                 },
@@ -39,24 +39,24 @@ final class ServerTranscriptionTests: XCTestCase {
                     self.forgotten += 1
                     self.inspection.clearServer()
                 },
-                setLocation: { location in
-                    self.locations.append(location)
+                setRunsOn: { runsOn in
+                    self.sentRunsOn.append(runsOn)
                     if self.setFails { throw Refused() }
-                    self.inspection.transcriptionLocation = location.wire
+                    self.inspection.transcriptionRunsOn = runsOn.wire
                 }
             )
         }
     }
 
-    private static func mac(on location: TranscriptionLocation) -> Aria_Setup_V1_Inspection {
+    private static func mac(on runsOn: TranscriptionRunsOn) -> Aria_Setup_V1_Inspection {
         var inspection = Aria_Setup_V1_Inspection()
         inspection.defaults.transcriptionEngineID = "whisper"
-        inspection.transcriptionLocation = location.wire
+        inspection.transcriptionRunsOn = runsOn.wire
         inspection.server.endpoint = "https://box:9851"
         return inspection
     }
 
-    func testALocationIsChosenOnlyWithAPairingOrToLeaveTheServer() {
+    func testRunsOnIsChosenOnlyWithAPairingOrToLeaveTheServer() {
         let setup = SetupStatus()
         let server = ServerTranscription(
             effects: Spy(Self.mac(on: .local)).effects, setup: setup, runner: SetupRunner())
@@ -65,17 +65,17 @@ final class ServerTranscriptionTests: XCTestCase {
 
         setup.show(unpaired)
         XCTAssertTrue(server.needsPairing)
-        XCTAssertFalse(server.canChooseLocation)
-        unpaired.transcriptionLocation = .server
+        XCTAssertFalse(server.canChooseRunsOn)
+        unpaired.transcriptionRunsOn = .server
         setup.show(unpaired)
         XCTAssertFalse(server.needsPairing)
-        XCTAssertTrue(server.canChooseLocation)
+        XCTAssertTrue(server.canChooseRunsOn)
         setup.show(Self.mac(on: .local))
         XCTAssertFalse(server.needsPairing)
-        XCTAssertTrue(server.canChooseLocation)
+        XCTAssertTrue(server.canChooseRunsOn)
     }
 
-    func testSwitchingSendsOnlyTheLocationEachWay() async {
+    func testSwitchingSendsOnlyRunsOnEachWay() async {
         let spy = Spy(Self.mac(on: .local))
         let setup = SetupStatus()
         let server = ServerTranscription(effects: spy.effects, setup: setup, runner: SetupRunner())
@@ -85,12 +85,12 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(setup.server?.endpoint, "https://box:9851")
 
         await server.use(.local)
-        XCTAssertEqual(spy.locations, [.server, .local])
+        XCTAssertEqual(spy.sentRunsOn, [.server, .local])
         XCTAssertEqual(setup.transcription, .local)
         XCTAssertNil(server.failure)
     }
 
-    func testAFailedSwitchSaysWhyAndKeepsTheShownLocation() async {
+    func testAFailedSwitchSaysWhyAndKeepsTheShownRunsOn() async {
         let spy = Spy(Self.mac(on: .local))
         spy.setFails = true
         let setup = SetupStatus()
@@ -111,7 +111,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
         await server.use(.server)
 
-        XCTAssertEqual(spy.locations, [.server])
+        XCTAssertEqual(spy.sentRunsOn, [.server])
         XCTAssertEqual(server.failure, ServerTranscription.readBackFailure)
     }
 
@@ -124,7 +124,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
         XCTAssertTrue(paired)
         XCTAssertEqual(spy.paired, ["{}"])
-        XCTAssertEqual(spy.locations, [])
+        XCTAssertEqual(spy.sentRunsOn, [])
         XCTAssertEqual(setup.transcription, .local)
     }
 
@@ -152,7 +152,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertFalse(paired)
         XCTAssertEqual(server.pairingFailure, ServerTranscription.pairFailure)
         XCTAssertNil(server.failure)
-        XCTAssertEqual(spy.locations, [])
+        XCTAssertEqual(spy.sentRunsOn, [])
         XCTAssertFalse(server.isBusy)
     }
 

@@ -12,7 +12,7 @@ use super::{
 use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
 use aria_settings::{
     CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, Speaker,
-    SttChoice, TranscriptionLocation, TtsEngine, TtsFallbackName,
+    SttChoice, TranscriptionRunsOn, TtsEngine, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -235,9 +235,9 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 
 impl TranscriptionBackend {
     pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
-        match settings.choices().stt_location {
-            TranscriptionLocation::Server => Self::Server,
-            TranscriptionLocation::Local => Self::Local(TranscriptionConfig::load(settings, home)),
+        match settings.choices().stt_runs_on {
+            TranscriptionRunsOn::Server => Self::Server,
+            TranscriptionRunsOn::Local => Self::Local(TranscriptionConfig::load(settings, home)),
         }
     }
 }
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn the_server_transcribes_and_the_local_model_stays_in_use() {
         let file = file(
-            "[stt]\nbackend = \"whisper\"\nmodel = \"/models/whisper\"\nlocation = \"server\"\n",
+            "[stt]\nbackend = \"whisper\"\nmodel = \"/models/whisper\"\nruns_on = \"server\"\n",
         );
 
         assert_eq!(
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn listen_runs_locally_while_dictation_uses_a_server() {
-        let server = "[stt]\nbackend = \"moonshine\"\nlocation = \"server\"\n";
+        let server = "[stt]\nbackend = \"moonshine\"\nruns_on = \"server\"\n";
         let engine = |text: &str| {
             ListenConfig::load(&file(text), &test_home())
                 .unwrap()

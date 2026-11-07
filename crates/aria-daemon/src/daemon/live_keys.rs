@@ -159,7 +159,7 @@ impl LiveHarness {
             | Key::SttModel
             | Key::SttDevice
             | Key::SttInterpreter
-            | Key::SttLocation => self.next_engine(),
+            | Key::SttRunsOn => self.next_engine(),
             Key::DictationCleanupLlmEndpoint
             | Key::DictationCleanupLlmModel
             | Key::MemoryDir
@@ -252,7 +252,7 @@ fn change(key: Key) -> Patch {
             patch.set(key, "/usr/bin/python3");
             patch
         }
-        Key::SttLocation => set(key, "server"),
+        Key::SttRunsOn => set(key, "server"),
         Key::DictationCleanup
         | Key::DictationBacktrack
         | Key::DictationOwnVoiceOnly

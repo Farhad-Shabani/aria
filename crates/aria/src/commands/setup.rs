@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use crate::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
 use anyhow::Context;
-use aria_settings::TranscriptionLocation;
+use aria_settings::TranscriptionRunsOn;
 use clap::Subcommand;
 
 use super::service::service_status_message;
@@ -20,9 +20,9 @@ pub(super) enum SetupCommand {
     /// Read one SetTranscriptionEngineRequest, write responses until the summary
     #[command(hide = true)]
     SetTranscriptionEngine,
-    /// Read one SetTranscriptionLocationRequest, write responses until the summary
+    /// Read one SetTranscriptionRunsOnRequest, write responses until the summary
     #[command(hide = true)]
-    SetTranscriptionLocation,
+    SetTranscriptionRunsOn,
 }
 
 pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
@@ -58,22 +58,22 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn parse_location(value: &str) -> Result<TranscriptionLocation, String> {
-    [TranscriptionLocation::Local, TranscriptionLocation::Server]
+pub(super) fn parse_runs_on(value: &str) -> Result<TranscriptionRunsOn, String> {
+    [TranscriptionRunsOn::Local, TranscriptionRunsOn::Server]
         .into_iter()
-        .find(|location| location.name() == value)
+        .find(|runs_on| runs_on.name() == value)
         .ok_or_else(|| "expected local or server".to_owned())
 }
 
-pub(super) fn set_transcription_location(location: TranscriptionLocation) -> anyhow::Result<()> {
-    let summary = crate::setup::transcription_location::set_transcription_location(
-        location,
+pub(super) fn set_transcription_runs_on(runs_on: TranscriptionRunsOn) -> anyhow::Result<()> {
+    let summary = crate::setup::transcription_runs_on::set_transcription_runs_on(
+        runs_on,
         std::io::stdout().is_terminal(),
         &mut |_| Ok(()),
     )
     .context("setting where transcription runs did not finish")?;
     println!();
-    println!("transcribes  {}", summary.location.name());
+    println!("transcribes  {}", summary.runs_on.name());
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -127,10 +127,9 @@ pub(super) fn run_for_app(command: SetupCommand) -> anyhow::Result<()> {
         SetupCommand::SetTranscriptionEngine => {
             crate::setup::wire::set_transcription_engine(&mut std::io::stdin().lock(), &mut stdout)
         }
-        SetupCommand::SetTranscriptionLocation => crate::setup::wire::set_transcription_location(
-            &mut std::io::stdin().lock(),
-            &mut stdout,
-        ),
+        SetupCommand::SetTranscriptionRunsOn => {
+            crate::setup::wire::set_transcription_runs_on(&mut std::io::stdin().lock(), &mut stdout)
+        }
     }
     .context("setup did not finish")
 }
@@ -186,12 +185,12 @@ mod tests {
                 yes,
                 skip_models,
                 stt,
-                stt_location,
+                stt_runs_on,
             } = cli.command
             else {
                 panic!("a setup invocation should parse as Setup");
             };
-            (yes, skip_models, stt, stt_location)
+            (yes, skip_models, stt, stt_runs_on)
         };
 
         assert_eq!(parse(&["aria", "setup"]), (false, false, None, None));
@@ -200,10 +199,10 @@ mod tests {
             (true, true, None, None)
         );
         assert_eq!(
-            parse(&["aria", "setup", "--stt-location", "server"]),
-            (false, false, None, Some(TranscriptionLocation::Server))
+            parse(&["aria", "setup", "--stt-runs-on", "server"]),
+            (false, false, None, Some(TranscriptionRunsOn::Server))
         );
-        assert!(Cli::try_parse_from(["aria", "setup", "--stt-location", "mac"]).is_err());
+        assert!(Cli::try_parse_from(["aria", "setup", "--stt-runs-on", "mac"]).is_err());
         assert_eq!(
             parse(&["aria", "setup", "--stt", "moonshine"]),
             (false, false, Some("moonshine".to_owned()), None)
@@ -216,7 +215,7 @@ mod tests {
                 "setup",
                 "--stt",
                 "moonshine",
-                "--stt-location",
+                "--stt-runs-on",
                 "local"
             ])
             .is_err()

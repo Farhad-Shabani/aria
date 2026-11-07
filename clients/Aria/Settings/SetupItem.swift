@@ -16,7 +16,7 @@ enum SetupItem: Hashable {
     nonisolated static func items(in inspection: Aria_Setup_V1_Inspection) -> [SetupItem] {
         let recognition = Set(
             inspection.models.filter { $0.engineID == inspection.defaults.transcriptionEngineID }.map(\.id))
-        let isUnpairedServer = inspection.transcriptionLocation == .server && !inspection.hasServer
+        let isUnpairedServer = inspection.transcriptionRunsOn == .server && !inspection.hasServer
         return inspection.missing.compactMap { missing in
             switch missing.kind {
             case .model: recognition.contains(missing.modelID) ? .speechModel(id: missing.modelID) : nil

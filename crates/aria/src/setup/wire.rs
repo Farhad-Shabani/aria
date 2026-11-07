@@ -1,7 +1,7 @@
 //! The setup contract as Aria.app speaks it: `aria.setup.v1` messages,
 //! one per length-delimited frame, over the stdio of `aria setup inspect`,
 //! `aria setup apply`, `aria setup set-transcription-engine` and
-//! `aria setup set-transcription-location`.
+//! `aria setup set-transcription-runs-on`.
 
 use aria_voice::config::Section;
 use std::io::{Read, Write};
@@ -10,12 +10,12 @@ use prost::Message;
 
 use crate::supervisor::{DaemonState, Job, Status};
 use aria_daemon::PairedServer;
-use aria_settings::TranscriptionLocation;
+use aria_settings::TranscriptionRunsOn;
 
 use super::backends::ModelSource;
 use super::models::ModelFiles;
 use super::transcription_engine::SetTranscriptionEngineSummary;
-use super::transcription_location::SetTranscriptionLocationSummary;
+use super::transcription_runs_on::SetTranscriptionRunsOnSummary;
 use super::{
     ApplyOptions, Availability, Choice, Grant, Inspection, Missing, ModelState, Outcome, Pairing,
     Selections, SettingsWrite, SetupError, SetupEvent, Step, Summary, voice_model_present,
@@ -86,48 +86,48 @@ pub fn set_transcription_engine(
     write(output, &response)
 }
 
-/// Reads one `SetTranscriptionLocationRequest`, then answers a response per
+/// Reads one `SetTranscriptionRunsOnRequest`, then answers a response per
 /// event and one more carrying the summary.
-pub fn set_transcription_location(
+pub fn set_transcription_runs_on(
     input: &mut impl Read,
     output: &mut impl Write,
 ) -> Result<(), SetupError> {
-    use generated::set_transcription_location_response::Body;
+    use generated::set_transcription_runs_on_response::Body;
     let mut frame = Vec::new();
     input.read_to_end(&mut frame).map_err(SetupError::Request)?;
     let request =
-        generated::SetTranscriptionLocationRequest::decode_length_delimited(frame.as_slice())
+        generated::SetTranscriptionRunsOnRequest::decode_length_delimited(frame.as_slice())
             .map_err(SetupError::Decode)?;
-    let location = location(request.location)?;
+    let runs_on = runs_on(request.runs_on)?;
 
     let summary =
-        super::transcription_location::set_transcription_location(location, false, &mut |event| {
-            let response = generated::SetTranscriptionLocationResponse {
+        super::transcription_runs_on::set_transcription_runs_on(runs_on, false, &mut |event| {
+            let response = generated::SetTranscriptionRunsOnResponse {
                 body: Some(Body::Event(event.into())),
             };
             write(output, &response)
         })?;
-    let response = generated::SetTranscriptionLocationResponse {
+    let response = generated::SetTranscriptionRunsOnResponse {
         body: Some(Body::Summary((&summary).into())),
     };
     write(output, &response)
 }
 
-fn location(value: i32) -> Result<TranscriptionLocation, SetupError> {
-    match generated::TranscriptionLocation::try_from(value) {
-        Ok(generated::TranscriptionLocation::Local) => Ok(TranscriptionLocation::Local),
-        Ok(generated::TranscriptionLocation::Server) => Ok(TranscriptionLocation::Server),
-        Ok(generated::TranscriptionLocation::Unspecified) | Err(_) => {
-            Err(SetupError::Invalid("no known transcription location"))
+fn runs_on(value: i32) -> Result<TranscriptionRunsOn, SetupError> {
+    match generated::TranscriptionRunsOn::try_from(value) {
+        Ok(generated::TranscriptionRunsOn::Local) => Ok(TranscriptionRunsOn::Local),
+        Ok(generated::TranscriptionRunsOn::Server) => Ok(TranscriptionRunsOn::Server),
+        Ok(generated::TranscriptionRunsOn::Unspecified) | Err(_) => {
+            Err(SetupError::Invalid("no known place to run transcription"))
         }
     }
 }
 
-impl From<TranscriptionLocation> for generated::TranscriptionLocation {
-    fn from(location: TranscriptionLocation) -> Self {
-        match location {
-            TranscriptionLocation::Local => Self::Local,
-            TranscriptionLocation::Server => Self::Server,
+impl From<TranscriptionRunsOn> for generated::TranscriptionRunsOn {
+    fn from(runs_on: TranscriptionRunsOn) -> Self {
+        match runs_on {
+            TranscriptionRunsOn::Local => Self::Local,
+            TranscriptionRunsOn::Server => Self::Server,
         }
     }
 }
@@ -195,8 +195,7 @@ impl From<&Inspection> for generated::Inspection {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
-            transcription_location: generated::TranscriptionLocation::from(inspection.location)
-                as i32,
+            transcription_runs_on: generated::TranscriptionRunsOn::from(inspection.runs_on) as i32,
         }
     }
 }
@@ -420,8 +419,8 @@ impl From<&SetTranscriptionEngineSummary> for generated::SetTranscriptionEngineS
     }
 }
 
-impl From<&SetTranscriptionLocationSummary> for generated::SetTranscriptionLocationSummary {
-    fn from(summary: &SetTranscriptionLocationSummary) -> Self {
+impl From<&SetTranscriptionRunsOnSummary> for generated::SetTranscriptionRunsOnSummary {
+    fn from(summary: &SetTranscriptionRunsOnSummary) -> Self {
         Self {
             settings: generated::SettingsWrite::from(summary.settings) as i32,
             models: model_outcomes(&summary.models),

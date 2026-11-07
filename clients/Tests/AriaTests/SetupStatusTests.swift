@@ -27,7 +27,7 @@ final class SetupStatusTests: XCTestCase {
 
     func testASettingsGapIsAnItemOnlyForAServerNobodyPaired() {
         var inspection = SetupStateTests.freshMac()
-        inspection.transcriptionLocation = .server
+        inspection.transcriptionRunsOn = .server
         inspection.missing = [Self.missing(.settings)]
 
         XCTAssertEqual(SetupItem.items(in: inspection), [.server])
@@ -37,7 +37,7 @@ final class SetupStatusTests: XCTestCase {
 
     func testAnInspectionStartedBeforeAChangeDoesNotLandOverIt() async {
         var onServer = SetupStateTests.freshMac()
-        onServer.transcriptionLocation = .server
+        onServer.transcriptionRunsOn = .server
         let gate = Gate()
         let status = SetupStatus { [onThisMac = SetupStateTests.freshMac()] in
             await gate.wait()

@@ -238,7 +238,7 @@ keys! {
         "cpu or gpu. parakeet only.";
     SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
-    SttLocation: "stt.location", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),
+    SttRunsOn: "stt.runs_on", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),
         "Where dictation transcribes: local, or server for your paired server.";
     TtsBackend: "tts.backend", Restart, Mac, [], Kind::Choice(&[tts_backend::SYSTEM, tts_backend::KOKORO, tts_backend::QWEN]), Some(tts_backend::DEFAULT),
         "The engine that speaks `aria say` and replies: system, kokoro or qwen.";

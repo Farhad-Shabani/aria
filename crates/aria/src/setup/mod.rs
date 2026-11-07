@@ -6,7 +6,7 @@
 //! `aria setup apply`. Every answer defaults to what is configured, and
 //! `--yes` keeps every configured engine, so the unattended rerun the
 //! installer makes never rewrites a working choice. `transcription_engine`
-//! sets the speech-to-text engine alone, and `transcription_location` where
+//! sets the speech-to-text engine alone, and `transcription_runs_on` where
 //! it runs, each outside the rest of setup.
 //!
 //! The terminal run then ends on something that works rather than on a
@@ -35,7 +35,7 @@ use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::{backend, tts_backend};
-use aria_settings::{CheckedSettings, SettingsError, TranscriptionLocation};
+use aria_settings::{CheckedSettings, SettingsError, TranscriptionRunsOn};
 use aria_voice::config;
 use aria_voice::speech::SpeechRequest;
 
@@ -46,7 +46,7 @@ pub mod models;
 mod prompt;
 mod settings_file;
 pub mod transcription_engine;
-pub mod transcription_location;
+pub mod transcription_runs_on;
 pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
@@ -96,7 +96,7 @@ pub struct Inspection {
     pub service: Status,
     pub grant: Grant,
     pub key_remapped: bool,
-    pub location: TranscriptionLocation,
+    pub runs_on: TranscriptionRunsOn,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
@@ -288,9 +288,9 @@ fn pair_server_at(home: &Path, invitation: &str) -> Result<String, SetupError> {
 }
 
 fn check_server_unused(home: &Path) -> Result<(), SetupError> {
-    match settings_file::read(home)?.choices().stt_location {
-        TranscriptionLocation::Server => Err(SetupError::ServerInUse),
-        TranscriptionLocation::Local => Ok(()),
+    match settings_file::read(home)?.choices().stt_runs_on {
+        TranscriptionRunsOn::Server => Err(SetupError::ServerInUse),
+        TranscriptionRunsOn::Local => Ok(()),
     }
 }
 
@@ -322,7 +322,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
             .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
-        location: file.choices().stt_location,
+        runs_on: file.choices().stt_runs_on,
         key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
         existing,
         service,
@@ -355,8 +355,7 @@ impl Inspection {
 
     /// The server transcribes, but no usable pin says where it is.
     fn server_is_unusable(&self) -> bool {
-        self.location == TranscriptionLocation::Server
-            && !matches!(self.pairing, Pairing::Paired(_))
+        self.runs_on == TranscriptionRunsOn::Server && !matches!(self.pairing, Pairing::Paired(_))
     }
 
     /// What a run still has to put in place; empty once setup is done.
@@ -376,7 +375,7 @@ impl Inspection {
         // An unset engine still runs as its default, so its model counts.
         // The local one waits while the server transcribes; going back
         // fetches its model.
-        let stt = (self.location == TranscriptionLocation::Local)
+        let stt = (self.runs_on == TranscriptionRunsOn::Local)
             .then(|| existing.stt.as_deref().unwrap_or(backend::DEFAULT));
         let tts = existing.tts.as_deref().unwrap_or(tts_backend::DEFAULT);
         let runs = |engine: &str| Some(engine) == stt || engine == tts;
@@ -936,7 +935,7 @@ pub enum SetupError {
     #[error("another setup is already running")]
     Busy,
 
-    #[error("transcription runs on the paired server; run `aria setup --stt-location local` first")]
+    #[error("transcription runs on the paired server; run `aria setup --stt-runs-on local` first")]
     ServerInUse,
 
     #[error(transparent)]
@@ -1192,7 +1191,7 @@ mod tests {
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
-            location: TranscriptionLocation::Local,
+            runs_on: TranscriptionRunsOn::Local,
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
@@ -1308,7 +1307,7 @@ mod tests {
         let moonshine = Missing::Model("moonshine");
         assert!(inspection.missing().contains(&moonshine));
 
-        inspection.location = TranscriptionLocation::Server;
+        inspection.runs_on = TranscriptionRunsOn::Server;
         inspection.pairing = paired("https://box.test:9851");
 
         assert!(!inspection.missing().contains(&moonshine));
@@ -1520,7 +1519,7 @@ mod tests {
         ));
         drop(running);
 
-        fs::write(&config, "[stt]\nlocation = \"server\"\n").unwrap();
+        fs::write(&config, "[stt]\nruns_on = \"server\"\n").unwrap();
         assert!(matches!(
             forget_server_at(home.path()),
             Err(SetupError::ServerInUse)
@@ -1539,7 +1538,7 @@ mod tests {
         let config = aria_settings::default_path(home.path());
         fs::create_dir_all(home.path().join(".aria")).unwrap();
 
-        fs::write(&config, "[stt]\nlocation = \"server\"\n").unwrap();
+        fs::write(&config, "[stt]\nruns_on = \"server\"\n").unwrap();
         assert!(matches!(
             pair_server_at(home.path(), "{}"),
             Err(SetupError::ServerInUse)
@@ -1584,7 +1583,7 @@ mod tests {
     #[test]
     fn the_server_without_a_usable_pin_needs_setup() {
         let mut inspection = inspection(configured());
-        inspection.location = TranscriptionLocation::Server;
+        inspection.runs_on = TranscriptionRunsOn::Server;
 
         assert!(inspection.missing().contains(&Missing::Settings));
         inspection.pairing = Pairing::Unusable;

@@ -60,7 +60,7 @@ struct TranscriptionSection: View {
                     Toggle(Self.rowTitle, isOn: usesServer)
                         .labelsHidden()
                         .toggleStyle(.switch)
-                        .disabled(!server.canChooseLocation || runner.isRunning)
+                        .disabled(!server.canChooseRunsOn || runner.isRunning)
                 }
             } label: {
                 Text(Self.rowTitle)

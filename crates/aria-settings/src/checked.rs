@@ -8,7 +8,7 @@ use std::time::Duration;
 use aria_kit::synthesis::{SpeakingRate, Voice};
 
 use crate::config::{backend, tts_backend, wake_backend};
-use crate::{CleanupTarget, SettingsError, SettingsFile, TranscriptionLocation};
+use crate::{CleanupTarget, SettingsError, SettingsFile, TranscriptionRunsOn};
 
 /// A settings file that passed every check, with the engine choices the
 /// check built.
@@ -41,7 +41,7 @@ impl Deref for CheckedSettings {
 pub struct Choices {
     /// The local engine, kept while the server transcribes.
     pub stt: SttChoice,
-    pub stt_location: TranscriptionLocation,
+    pub stt_runs_on: TranscriptionRunsOn,
     /// `None` while listen runs the stt engine.
     pub listen: Option<LocalStt>,
     pub tts: TtsEngine,
@@ -64,10 +64,10 @@ impl Choices {
     /// Whether a dictation can type during recording. The server's own engine
     /// decides for itself, so it isn't held back here.
     pub fn stt_streams(&self) -> bool {
-        match (self.stt_location, &self.stt) {
-            (TranscriptionLocation::Server, _) => true,
-            (TranscriptionLocation::Local, SttChoice::Local(engine)) => engine.streams(),
-            (TranscriptionLocation::Local, SttChoice::ParakeetMlx { .. }) => false,
+        match (self.stt_runs_on, &self.stt) {
+            (TranscriptionRunsOn::Server, _) => true,
+            (TranscriptionRunsOn::Local, SttChoice::Local(engine)) => engine.streams(),
+            (TranscriptionRunsOn::Local, SttChoice::ParakeetMlx { .. }) => false,
         }
     }
 }
