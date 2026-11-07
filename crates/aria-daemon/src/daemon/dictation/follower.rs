@@ -1,9 +1,11 @@
-//! Swaps dictation's speech model when the settings name another, without a
-//! restart. The swap waits for any recording to finish. The old model drops
-//! before the new one loads, so memory never holds both.
+//! Swaps dictation's speech model when the settings name another, or the
+//! server's pin changes, without a restart. The swap waits for any
+//! recording to finish. The old model drops before the new one loads, so
+//! memory never holds both.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_primitives::error_chain;
@@ -13,8 +15,14 @@ use aria_voice::microphone::Gate;
 use aria_voice::transcription::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
+use super::super::inference::identity::PinnedServer;
+use super::super::inference::pinned_server;
 use super::super::tasks::Supervised;
 use super::assembly::{BuildEngine, DictationEngine, EngineParts, EngineSlot};
+
+/// Pairing writes the pin without touching the settings, so nothing else
+/// says it changed.
+const PIN_POLL: Duration = Duration::from_secs(1);
 
 pub(in crate::daemon) struct EngineFollower {
     slot: EngineSlot,
@@ -22,11 +30,16 @@ pub(in crate::daemon) struct EngineFollower {
     microphone: Arc<Gate>,
     cache: Arc<SettingsCache>,
     home: PathBuf,
+    /// The pin the server engine was built for. The engine itself can't
+    /// say: an unusable one builds later, from whatever pin stands then.
+    settled_pin: Mutex<Option<PinnedServer>>,
 }
 
 impl Supervised for EngineFollower {
     async fn run(self, shutdown: CancellationToken) {
         let mut status = self.cache.status();
+        let mut pin_poll = tokio::time::interval(PIN_POLL);
+        pin_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let follower = Arc::new(self);
         // The first pass runs before any wait, since a change made before
         // this task started has no event of its own.
@@ -44,9 +57,19 @@ impl Supervised for EngineFollower {
             {
                 tracing::error!("the speech model swap panicked; the current model stays");
             }
-            tokio::select! {
-                () = shutdown.cancelled() => return,
-                changed = status.changed() => if changed.is_err() { return },
+            loop {
+                tokio::select! {
+                    () = shutdown.cancelled() => return,
+                    changed = status.changed() => {
+                        if changed.is_err() { return }
+                        break;
+                    }
+                    _ = pin_poll.tick() => {
+                        let following = Arc::clone(&follower);
+                        let moved = tokio::task::spawn_blocking(move || following.pin_moved());
+                        if moved.await.unwrap_or(false) { break }
+                    }
+                }
             }
         }
     }
@@ -61,18 +84,45 @@ impl EngineFollower {
         home: PathBuf,
     ) -> Self {
         let build: BuildEngine = Arc::new(move |backend| parts.engine(backend));
+        let settled_pin = Mutex::new(pinned_server(&home));
         Self {
             slot,
             build,
             microphone,
             cache,
             home,
+            settled_pin,
         }
     }
 
     fn follow(&self, stop: &CancelToken) {
         let target = TranscriptionBackend::load(&self.cache.effective(), &self.home);
-        settle(&self.slot, &self.microphone, target, &self.build, stop);
+        let serves = target == TranscriptionBackend::Server;
+        let pin = serves.then(|| pinned_server(&self.home)).flatten();
+        let server_moved = serves && pin != *self.settled_pin();
+        if settle(
+            &self.slot,
+            &self.microphone,
+            target,
+            server_moved,
+            &self.build,
+            stop,
+        ) == Settled::Swapped
+        {
+            *self.settled_pin() = pin;
+        }
+    }
+
+    /// Whether the server engine now runs on a pin that no longer stands.
+    fn pin_moved(&self) -> bool {
+        self.slot.current().backend == TranscriptionBackend::Server
+            && pinned_server(&self.home) != *self.settled_pin()
+    }
+
+    fn settled_pin(&self) -> std::sync::MutexGuard<'_, Option<PinnedServer>> {
+        self.settled_pin
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -84,16 +134,18 @@ enum Settled {
 }
 
 /// The preload runs after the swap, so a load that fails shows up on the
-/// next press.
+/// next press. `server_moved` rebuilds a server engine whose pin was
+/// replaced or forgotten, which the backend alone can't show.
 fn settle(
     slot: &EngineSlot,
     microphone: &Arc<Gate>,
     target: TranscriptionBackend,
+    server_moved: bool,
     build: &BuildEngine,
     stop: &CancelToken,
 ) -> Settled {
     let current = slot.current();
-    if current.backend == target {
+    if current.backend == target && !server_moved {
         preload(&current, stop);
         return Settled::Unchanged;
     }
@@ -291,6 +343,7 @@ mod tests {
             microphone: Gate::new(),
             cache: Arc::clone(&cache),
             home: home.path().to_path_buf(),
+            settled_pin: Mutex::new(None),
         };
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(follower.run(shutdown.clone()));
@@ -304,6 +357,42 @@ mod tests {
             })
             .unwrap();
         until_pressed(&slot, "parakeet").await;
+
+        shutdown.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_pairing_rebuilds_the_server_engine_without_a_settings_change() {
+        let home = tempfile::tempdir().unwrap();
+        let path = aria_settings::default_path(home.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[stt]\nruns_on = \"server\"\n").unwrap();
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://a.test:9851");
+        let cache = Arc::new(SettingsCache::open(path, home.path().to_path_buf()).unwrap());
+        let (old, _) = named("local");
+        let slot = EngineSlot::of("local", old);
+        let builds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&builds);
+        let build: BuildEngine = Arc::new(move |backend: &TranscriptionBackend| {
+            let name = ["first pin", "second pin"][counted.fetch_add(1, Ordering::SeqCst).min(1)];
+            let (executor, _) = named(name);
+            Ok(DictationEngine::built(name, backend.clone(), executor))
+        });
+        let follower = EngineFollower {
+            slot: slot.clone(),
+            build,
+            microphone: Gate::new(),
+            cache,
+            home: home.path().to_path_buf(),
+            settled_pin: Mutex::new(None),
+        };
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(follower.run(shutdown.clone()));
+
+        until_pressed(&slot, "first pin").await;
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
+        until_pressed(&slot, "second pin").await;
 
         shutdown.cancel();
         task.await.unwrap();
@@ -323,6 +412,7 @@ mod tests {
                     &slot,
                     &microphone,
                     local("/new"),
+                    false,
                     &build,
                     &CancelToken::never(),
                 )
@@ -348,7 +438,7 @@ mod tests {
         let stop = CancelToken::new();
         stop.cancel();
 
-        let settled = settle(&slot, &microphone, local("/new"), &build, &stop);
+        let settled = settle(&slot, &microphone, local("/new"), false, &build, &stop);
 
         assert_eq!(settled, Settled::Stopped);
         assert!(!old_dropped.load(Ordering::SeqCst));
@@ -369,6 +459,7 @@ mod tests {
             &slot,
             &Gate::new(),
             local("/missing"),
+            false,
             &failing,
             &CancelToken::never(),
         );
@@ -380,6 +471,36 @@ mod tests {
             Err(DictationError::Transcription(_))
         ));
         assert_eq!(slot.current().backend, local("/missing"));
+    }
+
+    #[test]
+    fn a_server_engine_is_rebuilt_when_its_pin_moves() {
+        let (remote, remote_dropped) = named("old pin");
+        let slot = EngineSlot::new(DictationEngine::built("old pin", server(), remote));
+        let (build, _) = building("new pin", Arc::clone(&remote_dropped));
+
+        let kept = settle(
+            &slot,
+            &Gate::new(),
+            server(),
+            false,
+            &build,
+            &CancelToken::never(),
+        );
+        assert_eq!(kept, Settled::Unchanged);
+
+        let moved = settle(
+            &slot,
+            &Gate::new(),
+            server(),
+            true,
+            &build,
+            &CancelToken::never(),
+        );
+
+        assert_eq!(moved, Settled::Swapped);
+        assert!(remote_dropped.load(Ordering::SeqCst));
+        assert_eq!(press(&slot).unwrap(), "new pin");
     }
 
     #[test]
@@ -400,6 +521,7 @@ mod tests {
             &slot,
             &Gate::new(),
             local("/current"),
+            false,
             &build,
             &CancelToken::never(),
         );

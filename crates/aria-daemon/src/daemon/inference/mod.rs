@@ -76,6 +76,17 @@ pub fn paired_server(home: &Path) -> Result<Option<PairedServer>, identity::Erro
     }
 }
 
+/// The pin as it stands now. Anything that keeps a transcriber from opening
+/// it reads as no pin.
+pub(crate) fn pinned_server(home: &Path) -> Option<identity::PinnedServer> {
+    let path = Paths::in_home(home).client_identity();
+    if !path.is_file() {
+        return None;
+    }
+    let identity = identity::ClientIdentity::open(&path).ok()?;
+    identity.pinned_server().ok().cloned()
+}
+
 /// Stores a client identity pinned to `endpoint`, as pairing would, and
 /// returns its fingerprint.
 #[cfg(any(test, feature = "test-support"))]
@@ -117,6 +128,21 @@ pub fn pin_server_for_tests(home: &Path, endpoint: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pin_reads_as_it_stands_and_changes_with_each_pairing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(pinned_server(home.path()).is_none());
+
+        pin_server_for_tests(home.path(), "https://example.test:9851");
+        let first = pinned_server(home.path()).unwrap();
+        pin_server_for_tests(home.path(), "https://example.test:9851");
+        let second = pinned_server(home.path()).unwrap();
+
+        assert!(first != second, "another server at the same address");
+        std::fs::remove_file(Paths::in_home(home.path()).client_identity()).unwrap();
+        assert!(pinned_server(home.path()).is_none());
+    }
 
     #[test]
     fn a_home_reports_the_server_it_holds_a_pin_for() {

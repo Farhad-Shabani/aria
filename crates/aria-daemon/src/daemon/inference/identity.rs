@@ -61,7 +61,7 @@ impl TryFrom<UncheckedInvitation> for Invitation {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PinnedServer {
     pub endpoint: ServerEndpoint,
