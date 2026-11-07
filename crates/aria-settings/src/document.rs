@@ -1653,7 +1653,28 @@ pub(super) mod tests {
 
     #[test]
     fn the_example_file_shows_every_key_and_only_known_ones() {
-        let shown = example_paths();
+        // Every key the example sets or shows commented out, as dotted paths.
+        let mut table = String::new();
+        let mut shown = Vec::new();
+        for line in EXAMPLE.lines() {
+            let line = line.strip_prefix("# ").unwrap_or(line);
+            if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
+                table = name.0.replace('"', "");
+                continue;
+            }
+            let Some((name, _)) = line.split_once(" = ") else {
+                continue;
+            };
+            if name.is_empty() || name.contains(' ') || name.starts_with('#') {
+                continue;
+            }
+            shown.push(if table.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{table}.{name}")
+            });
+        }
+
         for key in Key::ALL {
             let path = key.path();
             assert!(
@@ -1671,31 +1692,6 @@ pub(super) mod tests {
                 "the example shows {found}, which no key names"
             );
         }
-    }
-
-    /// Every key the example sets or shows commented out, as dotted paths.
-    fn example_paths() -> Vec<String> {
-        let mut table = String::new();
-        let mut paths = Vec::new();
-        for line in EXAMPLE.lines() {
-            let line = line.strip_prefix("# ").unwrap_or(line);
-            if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
-                table = name.0.replace('"', "");
-                continue;
-            }
-            let Some((name, _)) = line.split_once(" = ") else {
-                continue;
-            };
-            if name.is_empty() || name.contains(' ') || name.starts_with('#') {
-                continue;
-            }
-            paths.push(if table.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{table}.{name}")
-            });
-        }
-        paths
     }
 
     #[test]
