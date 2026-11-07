@@ -5,6 +5,7 @@ use std::sync::Arc;
 use super::level::MicLevel;
 use crate::speaker::SpeakerName;
 use aria_platform::delivery::Placement;
+use aria_settings::DeliveryMode;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 
@@ -15,8 +16,12 @@ use super::transcripts::{Delivered, DeliveryOutcome};
 /// vocabulary the transport and the logs use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DictationStage {
-    /// The recording scope is open. The id is what a stop names.
-    Recording(RecordingId),
+    /// The recording scope is open. The id is what a stop names, and
+    /// `delivery` is how the press delivers: Complete where it can't stream.
+    Recording {
+        id: RecordingId,
+        delivery: DeliveryMode,
+    },
     Transcribing,
     Delivering,
     /// Where the text went, none for a transcript-only press, and how much
@@ -76,7 +81,7 @@ impl DictationStage {
     /// The one spelling of a stage, so its readers cannot drift apart.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Recording(..) => "recording",
+            Self::Recording { .. } => "recording",
             Self::Transcribing => "transcribing",
             Self::Delivering => "delivering",
             Self::Delivered { .. } => "delivered",

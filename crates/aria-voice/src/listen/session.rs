@@ -10,14 +10,12 @@ use aria_kit::audio::canonical_duration;
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Admission, Released, TurnFeed};
 use aria_kit::voice_activity::{SpeechDetector, VoiceActivityDetector};
-use aria_stt::moonshine::{Moonshine, MoonshineConfig};
-use aria_stt::nemotron::{Nemotron, NemotronConfig};
-use aria_stt::parakeet::{Parakeet, ParakeetConfig};
+use aria_stt::EngineConfig;
 
 use crate::config::{ListenConfig, ListenTranscription, SpeakerConfig};
 use crate::hearing::{Board, Decoding, Event, Hearing, HearingError};
 use crate::transcription::{
-    Language, Streaming, StreamingEngine, Transcriber, Transcription, TranscriptionError,
+    Language, Stream, Streaming, Transcriber, Transcription, TranscriptionError,
 };
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::RecordingReader;
@@ -56,36 +54,14 @@ pub fn spawn_session(
                 vocabulary: &vocabulary,
                 events: &events,
             };
-            let result = match config.transcription.clone() {
-                ListenTranscription::Parakeet {
-                    model_directory,
-                    device,
-                } => session.run_with::<Parakeet>(
-                    ParakeetConfig::new(model_directory, device),
-                    &cancel,
-                    &speaker_config,
-                    capture,
-                    recording,
-                    sink,
-                ),
-                ListenTranscription::Moonshine { model_directory } => session
-                    .run_with::<Moonshine>(
-                        MoonshineConfig::new(model_directory),
-                        &cancel,
-                        &speaker_config,
-                        capture,
-                        recording,
-                        sink,
-                    ),
-                ListenTranscription::Nemotron { model_directory } => session.run_with::<Nemotron>(
-                    NemotronConfig::new(model_directory),
-                    &cancel,
-                    &speaker_config,
-                    capture,
-                    recording,
-                    sink,
-                ),
-            };
+            let result = session.run(
+                &config.transcription,
+                &cancel,
+                &speaker_config,
+                capture,
+                recording,
+                sink,
+            );
             match &result {
                 Ok(()) => events.emit(ListenStage::Stopped),
                 Err(error) => events.emit(ListenStage::Failed(error.into())),
@@ -135,10 +111,20 @@ impl Listening<aria_kit::voice_activity::SileroVad> {
     }
 }
 
+/// `ListenTranscription` admits only an engine that streams.
+fn load(
+    transcription: &ListenTranscription,
+    cancel: &CancelToken,
+) -> Result<(Stream, Box<dyn Transcriber>), TranscriptionError> {
+    let engine = EngineConfig::try_from(transcription.config().clone())?;
+    let stream = engine.stream().ok_or(TranscriptionError::NoNativeStream)?;
+    Ok((stream, engine.load(cancel)?))
+}
+
 impl Session<'_> {
-    fn run_with<E: StreamingEngine>(
+    fn run(
         &self,
-        config: E::Config,
+        transcription: &ListenTranscription,
         cancel: &CancelToken,
         speaker: &SpeakerConfig,
         capture: SystemAudioCapture,
@@ -148,10 +134,10 @@ impl Session<'_> {
         // Forked before the model loads, because loading is seconds of audio the
         // track would otherwise never hear.
         let track_audio = recording.fork();
-        let result = match E::load_from(config, cancel) {
-            Ok(engine) => self.transcribe_all(
+        let result = match load(transcription, cancel) {
+            Ok((stream, engine)) => self.transcribe_all(
                 recording,
-                &Transcription::streaming(engine),
+                &Transcription::stream(stream, engine),
                 Listening::load(speaker),
                 track_audio,
                 &mut sink,
@@ -394,6 +380,7 @@ fn emit_merges(events: &ListenEventEmitter, merged: &[crate::speaker::Merged]) {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{TranscriptionConfig, TranscriptionDevice};
     use crate::dictation::testing::Loud;
     use crate::transcription::{Cadence, Hypothesis, TranscriptionAudio};
     use crate::vocabulary::{PersonalRules, Term};
@@ -428,14 +415,12 @@ mod tests {
                 events: &events,
             };
 
-            let result = session.run_with::<Parakeet>(
-                ParakeetConfig::new(directory.path(), aria_stt::parakeet::Device::Cpu),
-                &cancel,
-                &speaker,
-                capture,
-                recording,
-                sink,
-            );
+            let parakeet = ListenTranscription::new(TranscriptionConfig::Parakeet {
+                model_directory: directory.path().to_path_buf(),
+                device: TranscriptionDevice::Cpu,
+            })
+            .unwrap();
+            let result = session.run(&parakeet, &cancel, &speaker, capture, recording, sink);
 
             assert!(stopped.is_stopped());
             if !cancelled {

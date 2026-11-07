@@ -1,11 +1,12 @@
 //! Composition of a dictation capability: engine selection, model-loading
 //! policy, and the coordinator the runtime executes.
 
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use aria_kit::cancel::CancelToken;
+use aria_kit::primitives::slot::Slot;
 use aria_kit::voice_activity::SileroVad;
 
 use super::super::capture::{CaptureBackend, PreparedCapture};
@@ -13,7 +14,7 @@ use super::super::inference::client::RemoteTranscriber;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use aria_kit::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
-use aria_platform::delivery::{DeliveryError, PlatformTextDelivery};
+use aria_platform::delivery::{DeliveryError, DeliveryFactory, PlatformTextDelivery};
 use aria_settings::Directory;
 use aria_settings::config::{ConfigError, ServerEndpoint};
 use aria_settings::rpc::RpcErrorCode;
@@ -27,26 +28,18 @@ use aria_voice::dictation::{
     Rewriting, SoundMuting, Transcribed,
 };
 use aria_voice::transcription::{
-    Engine, Language, Mode, Streaming, StreamingEngine, Transcriber, Transcription,
-    TranscriptionError, Whole,
+    Language, Mode, Streaming, Transcriber, Transcription, TranscriptionError, Whole,
 };
 use aria_voice::vocabulary::Vocabulary;
 
 use super::super::transcripts::{History, TranscriptStore};
-use super::model_load::ModelLoad;
+use super::model_load::{ModelLoad, Preload};
 
 use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_stt::EngineConfig;
-use aria_stt::moonshine::{Moonshine, MoonshineConfig};
-use aria_stt::nemotron::{Nemotron, NemotronConfig};
-use aria_stt::parakeet::{Parakeet, ParakeetConfig};
-#[cfg(target_os = "macos")]
-use aria_stt::parakeet_mlx::{ParakeetMlx, ParakeetMlxConfig};
 
-use aria_stt::whisper::{Whisper, WhisperConfig};
-use aria_stt::whisper_candle::{WhisperCandle, WhisperCandleConfig};
-use aria_voice::microphone::Gate;
+use aria_voice::microphone::{Claim, Gate};
 use aria_voice::speaker;
 
 pub(super) type RuntimeExecutor = Box<dyn DictationExecutor>;
@@ -205,42 +198,42 @@ pub(super) enum ModelLoading {
 }
 
 impl ModelLoading {
-    fn load<E>(self, config: E::Config) -> Result<ModelLoad<E>, DictationInitializationError>
-    where
-        E: Engine,
-        E::Config: Clone + Send + Sync + 'static,
-    {
+    fn load(
+        self,
+        engine: EngineConfig,
+    ) -> Result<ModelLoad<Box<dyn Transcriber>>, TranscriptionError> {
         match self {
-            Self::Eager => {
-                let engine = load_engine::<E>(config, &CancelToken::never())
-                    .map_err(DictationInitializationError::Transcription)?;
-                Ok(ModelLoad::loaded(engine))
-            }
+            Self::Eager => Ok(ModelLoad::loaded(load_engine(
+                engine,
+                &CancelToken::never(),
+            )?)),
             Self::OnFirstUse => Ok(ModelLoad::deferred(move |cancel| {
-                load_engine::<E>(config.clone(), cancel)
+                load_engine(engine.clone(), cancel)
             })),
         }
     }
 }
 
-fn load_engine<E: Engine>(
-    config: E::Config,
+fn load_engine(
+    engine: EngineConfig,
     cancel: &CancelToken,
-) -> Result<E, TranscriptionError> {
+) -> Result<Box<dyn Transcriber>, TranscriptionError> {
+    let name = engine.name();
     let started = Instant::now();
-    let engine = E::load_from(config, cancel)?;
+    let transcriber = engine.load(cancel)?;
     tracing::info!(
-        engine = E::NAME,
+        engine = name,
         load_ms = started.elapsed().as_millis(),
         "transcription model loaded"
     );
-    Ok(engine)
+    Ok(transcriber)
 }
 
 /// Type-erased so capture can open between selecting the engine and building
 /// its pipeline.
 struct SelectedEngine {
     name: &'static str,
+    preload: Option<Preload>,
     build: Box<dyn FnOnce(ExecutionParts) -> RuntimeExecutor>,
 }
 
@@ -248,9 +241,11 @@ impl SelectedEngine {
     fn new<T: Transcriber, M: Mode>(
         name: &'static str,
         transcription: Transcription<T, M>,
+        preload: Option<Preload>,
     ) -> Self {
         Self {
             name,
+            preload,
             build: Box::new(move |parts: ExecutionParts| parts.finish(name, transcription)),
         }
     }
@@ -260,7 +255,7 @@ fn select_engine(
     backend: TranscriptionBackend,
     loading: ModelLoading,
     home: &Path,
-) -> Result<SelectedEngine, DictationInitializationError> {
+) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
         TranscriptionBackend::Local(config) => select_local(config, loading),
         TranscriptionBackend::Server { endpoint } => select_remote(home, &endpoint),
@@ -272,79 +267,31 @@ fn select_engine(
 fn select_remote(
     home: &Path,
     endpoint: &ServerEndpoint,
-) -> Result<SelectedEngine, DictationInitializationError> {
-    let remote = RemoteTranscriber::open(home, endpoint)
-        .map_err(DictationInitializationError::Transcription)?;
+) -> Result<SelectedEngine, TranscriptionError> {
+    let remote = RemoteTranscriber::open(home, endpoint)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
         Transcription::<_, Streaming>::delegated(remote),
+        None,
     ))
 }
 
 fn select_local(
     config: TranscriptionConfig,
     loading: ModelLoading,
-) -> Result<SelectedEngine, DictationInitializationError> {
-    match config {
-        TranscriptionConfig::Whisper { model } => {
-            streaming::<Whisper>(WhisperConfig::new(model), loading)
-        }
-        TranscriptionConfig::WhisperCandle { model_directory } => {
-            whole::<WhisperCandle>(WhisperCandleConfig::new(model_directory), loading)
-        }
-        TranscriptionConfig::Parakeet {
-            model_directory,
-            device,
-        } => streaming::<Parakeet>(ParakeetConfig::new(model_directory, device), loading),
-        TranscriptionConfig::Moonshine { model_directory } => {
-            streaming::<Moonshine>(MoonshineConfig::new(model_directory), loading)
-        }
-        TranscriptionConfig::Nemotron { model_directory } => {
-            streaming::<Nemotron>(NemotronConfig::new(model_directory), loading)
-        }
-        #[cfg(target_os = "macos")]
-        TranscriptionConfig::ParakeetMlx { model, interpreter } => {
-            whole::<ParakeetMlx>(ParakeetMlxConfig { interpreter, model }, loading)
-        }
-        #[cfg(not(target_os = "macos"))]
-        TranscriptionConfig::ParakeetMlx { .. } => Err(
-            DictationInitializationError::Transcription(TranscriptionError::UnsupportedBackend {
-                backend: aria_settings::config::backend::PARAKEET_MLX,
-            }),
-        ),
-    }
-}
-
-/// A whole-mode engine reads the finished recording, so its input kind
-/// decides whether the pipeline hands it samples or a WAV file.
-fn whole<E>(
-    config: E::Config,
-    loading: ModelLoading,
-) -> Result<SelectedEngine, DictationInitializationError>
-where
-    E: Engine,
-    E::Config: Clone + Send + Sync + 'static,
-{
-    let model = loading.load::<E>(config)?;
-    Ok(SelectedEngine::new(
-        E::NAME,
-        Transcription::complete(E::INPUT, model),
-    ))
-}
-
-fn streaming<E>(
-    config: E::Config,
-    loading: ModelLoading,
-) -> Result<SelectedEngine, DictationInitializationError>
-where
-    E: StreamingEngine,
-    E::Config: Clone + Send + Sync + 'static,
-{
-    let model = loading.load::<E>(config)?;
-    Ok(SelectedEngine::new(
-        E::NAME,
-        Transcription::stream(E::STREAM, model),
-    ))
+) -> Result<SelectedEngine, TranscriptionError> {
+    let engine = EngineConfig::try_from(config)?;
+    let name = engine.name();
+    let input = engine.input();
+    let stream = engine.stream();
+    let model = loading.load(engine)?;
+    let preload = model.preload();
+    Ok(match stream {
+        Some(stream) => SelectedEngine::new(name, Transcription::stream(stream, model), preload),
+        // A whole-mode engine reads the finished recording, so its input
+        // kind decides whether the pipeline hands it samples or a WAV file.
+        None => SelectedEngine::new(name, Transcription::complete(input, model), preload),
+    })
 }
 
 /// Everything a dictation pipeline needs except the engine.
@@ -391,8 +338,247 @@ impl ExecutionParts {
     }
 }
 
+pub(super) struct DictationEngine {
+    pub(super) name: &'static str,
+    pub(super) backend: TranscriptionBackend,
+    executor: RuntimeExecutor,
+    preload: Option<Preload>,
+}
+
+/// Each call reads the current engine once and keeps it for its whole run.
+#[derive(Clone)]
+pub(super) struct EngineSlot {
+    current: Arc<RwLock<Arc<DictationEngine>>>,
+}
+
+impl EngineSlot {
+    pub(super) fn new(engine: DictationEngine) -> Self {
+        Self {
+            current: Arc::new(RwLock::new(Arc::new(engine))),
+        }
+    }
+
+    pub(super) fn current(&self) -> Arc<DictationEngine> {
+        Arc::clone(&self.current.read().unwrap_or_else(|poisoned| {
+            tracing::error!("the engine lock was poisoned; recovering");
+            poisoned.into_inner()
+        }))
+    }
+
+    /// The claim proves the microphone is held, so no call still runs on the
+    /// old engine. The old engine drops here.
+    pub(super) fn replace(&self, engine: DictationEngine, _held: &Claim) {
+        let mut current = self.current.write().unwrap_or_else(|poisoned| {
+            tracing::error!("the engine lock was poisoned; recovering");
+            poisoned.into_inner()
+        });
+        let previous = std::mem::replace(&mut *current, Arc::new(engine));
+        drop(current);
+        drop(previous);
+    }
+
+    #[cfg(test)]
+    pub(super) fn of(name: &'static str, executor: RuntimeExecutor) -> Self {
+        let backend = TranscriptionBackend::Local(TranscriptionConfig::Moonshine {
+            model_directory: PathBuf::from("/models"),
+        });
+        Self::new(DictationEngine::built(name, backend, executor))
+    }
+}
+
+#[cfg(test)]
+impl DictationEngine {
+    pub(super) fn built(
+        name: &'static str,
+        backend: TranscriptionBackend,
+        executor: RuntimeExecutor,
+    ) -> Self {
+        Self {
+            name,
+            backend,
+            executor,
+            preload: None,
+        }
+    }
+
+    pub(super) fn with_preload(self, preload: Preload) -> Self {
+        Self {
+            preload: Some(preload),
+            ..self
+        }
+    }
+}
+
+impl DictationExecutor for EngineSlot {
+    fn execute(
+        &self,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<DictationResult, DictationError> {
+        self.current().executor.execute(settings, control, events)
+    }
+
+    fn transcribe(
+        &self,
+        recording: &mut RecordingReader,
+        language: &Language,
+        own_voice_only: bool,
+        project: Option<&Directory>,
+        rewriting: Rewriting,
+        cancel: &CancelToken,
+    ) -> Result<Transcribed, DictationError> {
+        self.current().executor.transcribe(
+            recording,
+            language,
+            own_voice_only,
+            project,
+            rewriting,
+            cancel,
+        )
+    }
+
+    fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        self.current()
+            .executor
+            .deliver_recording(recording, settings, control, events)
+    }
+}
+
+/// Shared, so an engine that can't be built tries again on each press.
+pub(super) type BuildEngine =
+    Arc<dyn Fn(&TranscriptionBackend) -> Result<DictationEngine, DictationError> + Send + Sync>;
+
+impl DictationEngine {
+    /// Stands in for an engine that can't be built, so the slot never keeps
+    /// an engine the settings no longer name, such as a server turned off.
+    pub(super) fn unusable(backend: TranscriptionBackend, build: BuildEngine) -> Self {
+        Self {
+            name: backend.backend_name(),
+            backend: backend.clone(),
+            executor: Box::new(Unusable {
+                backend,
+                build,
+                built: Slot::empty(),
+            }),
+            preload: None,
+        }
+    }
+
+    /// Loads the model ahead of use. A stop leaves nothing half loaded.
+    pub(super) fn preload(&self, stop: &CancelToken) -> Result<(), TranscriptionError> {
+        self.preload
+            .as_ref()
+            .map_or(Ok(()), |preload| preload(stop))
+    }
+}
+
+/// Builds on each press until a build succeeds, then keeps that engine, so a
+/// transient failure costs one failed press, and a working engine isn't
+/// rebuilt each press.
+struct Unusable {
+    backend: TranscriptionBackend,
+    build: BuildEngine,
+    built: Slot<DictationEngine>,
+}
+
+impl Unusable {
+    fn engine(&self) -> Result<&DictationEngine, DictationError> {
+        self.built.get_or_try_init(|| (self.build)(&self.backend))
+    }
+}
+
+impl DictationExecutor for Unusable {
+    fn execute(
+        &self,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<DictationResult, DictationError> {
+        self.engine()?.executor.execute(settings, control, events)
+    }
+
+    fn transcribe(
+        &self,
+        recording: &mut RecordingReader,
+        language: &Language,
+        own_voice_only: bool,
+        project: Option<&Directory>,
+        rewriting: Rewriting,
+        cancel: &CancelToken,
+    ) -> Result<Transcribed, DictationError> {
+        self.engine()?.executor.transcribe(
+            recording,
+            language,
+            own_voice_only,
+            project,
+            rewriting,
+            cancel,
+        )
+    }
+
+    fn deliver_recording(
+        &self,
+        recording: &mut RecordingReader,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        self.engine()?
+            .executor
+            .deliver_recording(recording, settings, control, events)
+    }
+}
+
+/// Each new engine reuses these, including the open capture.
+pub(super) struct EngineParts {
+    capture: Arc<CaptureBackend>,
+    delivery: DeliveryFactory,
+    delivery_timeout: Duration,
+    transcripts: Arc<TranscriptStore>,
+    wake: Option<WakeWordControl>,
+    speaker: SpeakerConfig,
+    vocabulary: Arc<VocabularyRuntime>,
+    /// For cleanup, whose keys wait for a restart.
+    dictation: DictationConfig,
+    home: PathBuf,
+}
+
+impl EngineParts {
+    pub(super) fn engine(
+        &self,
+        backend: &TranscriptionBackend,
+    ) -> Result<DictationEngine, DictationError> {
+        let selected = select_engine(backend.clone(), ModelLoading::OnFirstUse, &self.home)
+            .map_err(DictationError::Transcription)?;
+        let parts = ExecutionParts {
+            capture: Arc::clone(&self.capture),
+            delivery: self.delivery.create(self.delivery_timeout)?,
+            transcripts: Arc::clone(&self.transcripts),
+            wake: self.wake.clone(),
+            speaker: self.speaker.clone(),
+            vocabulary: Arc::clone(&self.vocabulary),
+            rewrites: Rewrites::load(&self.dictation, &self.home)
+                .map_err(|error| DictationError::Transcription(error.into()))?,
+        };
+        Ok(DictationEngine {
+            name: selected.name,
+            backend: backend.clone(),
+            executor: (selected.build)(parts),
+            preload: selected.preload,
+        })
+    }
+}
+
 pub(super) struct BuiltDictation {
-    pub(super) engine: &'static str,
+    pub(super) slot: EngineSlot,
+    pub(super) parts: EngineParts,
     pub(super) coordinator: DictationCoordinator<RuntimeExecutor>,
     pub(super) wake: Option<WakeWordMonitor>,
     /// The one capture backend, for the other operations that record.
@@ -413,6 +599,7 @@ pub(super) fn build_dictation(
 ) -> Result<BuiltDictation, DictationInitializationError> {
     let rewrites =
         Rewrites::load(&setup.dictation, home).map_err(DictationInitializationError::Cleanup)?;
+    let dictation = setup.dictation.clone();
     let DictationSetup {
         dictation:
             DictationConfig {
@@ -424,33 +611,53 @@ pub(super) fn build_dictation(
         wake,
         speaker,
         vocabulary,
-        delivery,
+        delivery: factory,
     } = setup;
-    let delivery = delivery
+    let delivery = factory
         .create(timeouts.delivery())
         .map_err(DictationInitializationError::Delivery)?;
     let policy =
         DictationPolicy::new(timeouts.overall()).map_err(DictationInitializationError::Policy)?;
     let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording())?;
-    let engine = select_engine(transcription, loading, home)?;
+    let backend = transcription.clone();
+    let engine = select_engine(transcription, loading, home)
+        .map_err(DictationInitializationError::Transcription)?;
     let (capture, wake) = capture
         .open()
         .map_err(DictationInitializationError::Capture)?;
     let capture = Arc::new(capture);
     let wake_control = wake.as_ref().map(WakeWordMonitor::control);
-    let execution = (engine.build)(ExecutionParts {
+    let parts = EngineParts {
         capture: Arc::clone(&capture),
-        delivery,
-        transcripts,
+        delivery: factory,
+        delivery_timeout: timeouts.delivery(),
+        transcripts: Arc::clone(&transcripts),
         wake: wake_control.clone(),
-        speaker,
-        vocabulary,
-        rewrites,
+        speaker: speaker.clone(),
+        vocabulary: Arc::clone(&vocabulary),
+        dictation,
+        home: home.to_path_buf(),
+    };
+    let slot = EngineSlot::new(DictationEngine {
+        name: engine.name,
+        backend,
+        executor: (engine.build)(ExecutionParts {
+            capture: Arc::clone(&capture),
+            delivery,
+            transcripts,
+            wake: wake_control.clone(),
+            speaker,
+            vocabulary,
+            rewrites,
+        }),
+        preload: engine.preload,
     });
+    let execution: RuntimeExecutor = Box::new(slot.clone());
     Ok(BuiltDictation {
-        engine: engine.name,
         coordinator: DictationCoordinator::new(policy, execution, microphone)
             .with_sound_muting(sound_muting),
+        slot,
+        parts,
         wake,
         capture,
         wake_control,
@@ -534,6 +741,21 @@ fn retry_transcription(
 mod tests {
     use super::*;
 
+    /// The server key applies live, so this check keeps an edited endpoint
+    /// from receiving audio. Only the server pinned at pairing receives it.
+    #[test]
+    fn only_the_paired_server_becomes_the_engine() {
+        let home = tempfile::tempdir().unwrap();
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://paired.test:9851");
+        let server = |origin: &str| TranscriptionBackend::Server {
+            endpoint: ServerEndpoint::parse(origin).unwrap(),
+        };
+        let select = |origin| select_engine(server(origin), ModelLoading::OnFirstUse, home.path());
+
+        assert!(select("https://paired.test:9851").is_ok());
+        assert!(select("https://elsewhere.test:9851").is_err());
+    }
+
     /// A settings store over `home`, with no file yet.
     fn settings_store(home: &Path) -> Arc<aria_settings::SettingsStore> {
         let cache =
@@ -600,7 +822,8 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(built.engine, aria_settings::config::backend::SERVER);
+        let engine = built.slot.current();
+        assert_eq!(engine.name, aria_settings::config::backend::SERVER);
         let coordinator = Arc::new(built.coordinator);
         let dictate = move || {
             let mut settings = DictationSettings::resolve(

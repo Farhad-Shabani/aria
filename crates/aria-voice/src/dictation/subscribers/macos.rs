@@ -69,7 +69,7 @@ enum Cue {
 impl Cue {
     fn for_stage(stage: &DictationStage) -> Option<Self> {
         match stage {
-            DictationStage::Recording(..) => Some(Self::Start),
+            DictationStage::Recording { .. } => Some(Self::Start),
             // A focus change or a switched-off app is an ending, not a failure.
             DictationStage::Delivered { .. }
             | DictationStage::Failed(
@@ -109,7 +109,10 @@ mod tests {
     fn each_ending_and_the_start_have_their_cue() {
         let stages = [
             (
-                DictationStage::Recording(crate::dictation::RecordingId(1)),
+                DictationStage::Recording {
+                    id: crate::dictation::RecordingId(1),
+                    delivery: aria_settings::DeliveryMode::Complete,
+                },
                 Cue::Start,
             ),
             (

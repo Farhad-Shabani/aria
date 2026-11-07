@@ -88,8 +88,7 @@ impl From<&ChatError> for RpcErrorCode {
                 | DeliveryError::InvalidTimeout { .. }
                 | DeliveryError::ClipboardRejected
                 | DeliveryError::TargetUnavailable
-                | DeliveryError::InsertionUnsupported
-                | DeliveryError::StreamingUnsupported,
+                | DeliveryError::InsertionUnsupported,
             ) => Self::DeliveryFailed,
             #[cfg(target_os = "linux")]
             ChatError::Delivery(

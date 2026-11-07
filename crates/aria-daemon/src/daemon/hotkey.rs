@@ -257,7 +257,7 @@ impl HotkeyTrigger {
             // The id arrives with the Recording stage.
             let (recording, recorded) = watch::channel(None);
             let events = runtime.emitter_for_call(move |stage| {
-                if let DictationStage::Recording(id) = stage {
+                if let DictationStage::Recording { id, .. } = stage {
                     recording.send_replace(Some(id));
                 }
             });

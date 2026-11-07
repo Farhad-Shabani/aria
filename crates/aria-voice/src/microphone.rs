@@ -9,6 +9,8 @@
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
+use aria_kit::cancel::CancelToken;
+
 #[cfg(test)]
 use crate::dictation::DictationEventEmitter;
 use crate::dictation::{ExecutionControl, RecordingId, StopMode};
@@ -35,6 +37,9 @@ enum Holder {
     /// started it.
     Relay,
     HistoryRetry,
+    /// Held only while the old speech model drops. A press meanwhile is
+    /// refused, as for any other holder.
+    EngineSwap,
 }
 
 /// What asking for the microphone on behalf of a dictation did.
@@ -126,7 +131,10 @@ impl Gate {
                     && !running.is_cancelled()
                     && running.request_recording_stop()
             }
-            Some(Holder::Enrollment | Holder::Relay | Holder::HistoryRetry) | None => false,
+            Some(
+                Holder::Enrollment | Holder::Relay | Holder::HistoryRetry | Holder::EngineSwap,
+            )
+            | None => false,
         }
     }
 
@@ -152,6 +160,32 @@ impl Gate {
         Some(self.claim())
     }
 
+    /// Waits for whatever records to finish, then holds the gate, so a
+    /// speech model never changes under a recording. `None` once `cancel`
+    /// fires.
+    pub fn admit_engine_swap(self: &Arc<Self>, cancel: &CancelToken) -> Option<Claim> {
+        let mut holder = self.hold();
+        while holder.is_some() {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            // Cancellation has no notification, so waiting must poll it.
+            let (released, _) = self
+                .released
+                .wait_timeout(holder, CANCELLATION_POLL)
+                .unwrap_or_else(|poisoned| {
+                    tracing::error!("the microphone lock was poisoned; recovering");
+                    poisoned.into_inner()
+                });
+            holder = released;
+        }
+        if cancel.is_cancelled() {
+            return None;
+        }
+        *holder = Some(Holder::EngineSwap);
+        Some(self.claim())
+    }
+
     pub fn admit_history_retry(self: &Arc<Self>) -> Option<Claim> {
         let mut holder = self.hold();
         if holder.is_some() {
@@ -170,7 +204,11 @@ impl Gate {
                 running.request_recording_stop()
             }
             Some(
-                Holder::Dictation(_) | Holder::Enrollment | Holder::Relay | Holder::HistoryRetry,
+                Holder::Dictation(_)
+                | Holder::Enrollment
+                | Holder::Relay
+                | Holder::HistoryRetry
+                | Holder::EngineSwap,
             )
             | None => false,
         }
@@ -210,14 +248,49 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use aria_kit::cancel::CancelToken;
-
     use crate::dictation::testing::EDGE_WAIT;
 
     use super::*;
 
     fn control(stop_mode: StopMode) -> Arc<ExecutionControl> {
         ExecutionControl::for_test(stop_mode)
+    }
+
+    #[test]
+    fn an_engine_swap_waits_for_the_recording_then_holds_the_gate() {
+        let gate = Gate::new();
+        let Admitted::Claimed(recording) =
+            gate.admit_dictation(StopMode::OnSilence, control(StopMode::OnSilence))
+        else {
+            panic!("an idle microphone admits a dictation");
+        };
+
+        thread::scope(|scope| {
+            let swap = scope.spawn(|| gate.admit_engine_swap(&CancelToken::never()));
+            thread::sleep(Duration::from_millis(50));
+            assert!(!swap.is_finished(), "the swap waits for the recording");
+            drop(recording);
+            let claim = swap.join().unwrap();
+            assert!(claim.is_some());
+            assert!(matches!(
+                gate.admit_dictation(StopMode::OnSilence, control(StopMode::OnSilence)),
+                Admitted::Busy
+            ));
+        });
+    }
+
+    #[test]
+    fn a_cancelled_engine_swap_leaves_the_recording_alone() {
+        let gate = Gate::new();
+        let _recording = gate.admit_enrollment().unwrap();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+
+        assert!(gate.admit_engine_swap(&cancel).is_none());
+        assert!(
+            gate.admit_relay().is_none(),
+            "the enrollment still holds the gate"
+        );
     }
 
     #[test]
@@ -260,7 +333,10 @@ mod tests {
             .iter()
             .map(|control| {
                 control
-                    .start_recording(&DictationEventEmitter::unsubscribed())
+                    .start_recording(
+                        aria_settings::DeliveryMode::Complete,
+                        &DictationEventEmitter::unsubscribed(),
+                    )
                     .unwrap()
             })
             .collect();
@@ -375,7 +451,10 @@ mod tests {
         let gate = Gate::new();
         let running = control(StopMode::Manual);
         let _recording = running
-            .start_recording(&DictationEventEmitter::unsubscribed())
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
             .expect("recording starts");
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&running));
 
@@ -392,7 +471,10 @@ mod tests {
 
         let on_silence = control(StopMode::OnSilence);
         let _listening = on_silence
-            .start_recording(&DictationEventEmitter::unsubscribed())
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
             .expect("recording starts");
         let dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&on_silence));
         assert!(
@@ -404,7 +486,10 @@ mod tests {
 
         let manual = control(StopMode::Manual);
         let _recording = manual
-            .start_recording(&DictationEventEmitter::unsubscribed())
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
             .expect("recording starts");
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&manual));
         assert!(gate.stop_manual_recording());
@@ -452,7 +537,10 @@ mod tests {
         let gate = Gate::new();
         let running = control(StopMode::OnSilence);
         let _recording = running
-            .start_recording(&DictationEventEmitter::unsubscribed())
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
             .expect("recording starts");
         let _dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&running));
 

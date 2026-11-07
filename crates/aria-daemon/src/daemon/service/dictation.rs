@@ -176,7 +176,7 @@ mod tests {
 
         assert_eq!(rpc_code(&error), RpcErrorCode::TranscriptionFailed);
         assert!(
-            matches!(stages.first(), Some(DictationStage::Recording(_))),
+            matches!(stages.first(), Some(DictationStage::Recording { .. })),
             "{stages:?}"
         );
         let broadcast = watcher

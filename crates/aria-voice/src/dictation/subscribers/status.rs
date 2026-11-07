@@ -38,7 +38,7 @@ impl StatusFile {
 
     pub(super) fn observe(&self, stage: &DictationStage) {
         match stage {
-            DictationStage::Recording(..)
+            DictationStage::Recording { .. }
             | DictationStage::Transcribing
             | DictationStage::Delivering => self.publish(stage.label()),
             // A segment lands while the speaker is still talking.

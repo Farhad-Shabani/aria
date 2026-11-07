@@ -18,7 +18,7 @@ use aria_settings::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
     DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
     PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
-    Shortcut, UpdateResult,
+    Shortcut, StreamingSupport, StreamingUnavailable, UpdateResult,
 };
 use aria_voice::dictation::{
     CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
@@ -1580,6 +1580,29 @@ impl From<DeliveryMode> for wire::DeliveryMode {
     }
 }
 
+impl From<StreamingUnavailable> for wire::StreamingUnavailable {
+    fn from(reason: StreamingUnavailable) -> Self {
+        match reason {
+            StreamingUnavailable::Copy => Self::Copy,
+            StreamingUnavailable::Platform => Self::Platform,
+            StreamingUnavailable::Model => Self::Model,
+        }
+    }
+}
+
+impl WireEnum for wire::StreamingUnavailable {
+    type Domain = StreamingUnavailable;
+
+    fn into_domain(self) -> Option<Self::Domain> {
+        match self {
+            Self::Unspecified => None,
+            Self::Copy => Some(StreamingUnavailable::Copy),
+            Self::Platform => Some(StreamingUnavailable::Platform),
+            Self::Model => Some(StreamingUnavailable::Model),
+        }
+    }
+}
+
 impl WireEnum for wire::DeliveryMode {
     type Domain = DeliveryMode;
 
@@ -1675,8 +1698,22 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
 
     fn try_from(snapshot: wire::SettingsSnapshot) -> Result<Self, Self::Error> {
         let settings = snapshot.settings.ok_or(ProtocolError::MissingSettings)?;
+        let streaming_unavailable = snapshot
+            .streaming_unavailable
+            .iter()
+            .map(|entry| {
+                Ok((
+                    decode_enum::<wire::OutputMode>(entry.output_mode, "output mode")?,
+                    decode_enum::<wire::StreamingUnavailable>(
+                        entry.reason,
+                        "streaming unavailable reason",
+                    )?,
+                ))
+            })
+            .collect::<Result<StreamingSupport, ProtocolError>>()?;
         Ok(Self {
             revision: snapshot.revision,
+            streaming_unavailable,
             settings: Settings {
                 output_mode: decode_enum::<wire::OutputMode>(settings.output_mode, "output mode")?,
                 delivery_mode: decode_enum::<wire::DeliveryMode>(
@@ -1900,6 +1937,14 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                 stt_language: snapshot.settings.stt_language.as_str().to_owned(),
                 tts_rate: f64::from(snapshot.settings.tts_rate.get()),
             }),
+            streaming_unavailable: snapshot
+                .streaming_unavailable
+                .iter()
+                .map(|(output, reason)| wire::StreamingUnavailableOutput {
+                    output_mode: wire::OutputMode::from(output) as i32,
+                    reason: wire::StreamingUnavailable::from(reason) as i32,
+                })
+                .collect(),
         }
     }
 }
@@ -2268,9 +2313,11 @@ impl From<DictationStage> for wire::DictationEvent {
         let mut words = 0;
         let mut speaker = String::new();
         let mut heard = wire::HeardSpeaker::Unspecified;
+        let mut delivery_mode = wire::DeliveryMode::Unspecified;
         let (code, error) = match stage {
-            DictationStage::Recording(id) => {
+            DictationStage::Recording { id, delivery } => {
                 recording = id.0;
+                delivery_mode = wire::DeliveryMode::from(delivery);
                 (wire::DictationStage::Recording, 0)
             }
             DictationStage::Transcribing => (wire::DictationStage::Transcribing, 0),
@@ -2318,6 +2365,7 @@ impl From<DictationStage> for wire::DictationEvent {
             word_count: words,
             speaker_name: speaker,
             heard: heard as i32,
+            delivery_mode: delivery_mode as i32,
         }
     }
 }
@@ -2327,9 +2375,10 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
 
     fn try_from(event: &wire::DictationEvent) -> Result<Self, Self::Error> {
         match wire::DictationStage::try_from(event.stage) {
-            Ok(wire::DictationStage::Recording) => {
-                Ok(Self::Recording(RecordingId(event.recording_id)))
-            }
+            Ok(wire::DictationStage::Recording) => Ok(Self::Recording {
+                id: RecordingId(event.recording_id),
+                delivery: decode_enum::<wire::DeliveryMode>(event.delivery_mode, "delivery mode")?,
+            }),
             Ok(wire::DictationStage::Transcribing) => Ok(Self::Transcribing),
             Ok(wire::DictationStage::Delivering) => Ok(Self::Delivering),
             Ok(wire::DictationStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
@@ -2556,6 +2605,7 @@ pub enum ProtocolError {
 
 #[cfg(test)]
 mod tests {
+    use aria_settings::{LocalStt, SttChoice};
     use aria_voice::dictation::DictationError;
 
     use super::*;
@@ -2575,6 +2625,7 @@ mod tests {
     fn an_aria_key_round_trips_and_unspecified_is_refused() {
         for key in [AriaKey::RightOption, AriaKey::Fn] {
             let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
                 revision: 1,
                 settings: Settings {
                     aria_key: key,
@@ -2669,6 +2720,7 @@ mod tests {
             );
         }
         let snapshot = SettingsSnapshot {
+            streaming_unavailable: StreamingSupport::default(),
             settings: Settings {
                 assistant_models: [
                     (AssistantId::ClaudeCode, "claude-example".to_owned()),
@@ -2731,6 +2783,7 @@ mod tests {
                 patch
             );
             let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
                 settings: Settings {
                     assistant_id,
                     ..Default::default()
@@ -2950,7 +3003,10 @@ mod tests {
     #[test]
     fn every_dictation_stage_survives_the_round_trip() {
         let stages = [
-            DictationStage::Recording(RecordingId(7)),
+            DictationStage::Recording {
+                id: RecordingId(7),
+                delivery: DeliveryMode::Complete,
+            },
             DictationStage::Transcribing,
             DictationStage::Delivering,
             DictationStage::Delivered {
@@ -3228,6 +3284,7 @@ mod tests {
     fn mute_sound_preserves_snapshot_value_and_patch_presence_on_the_wire() {
         for mute_sound in [false, true] {
             let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     mute_sound,
@@ -3254,6 +3311,7 @@ mod tests {
         let ten_seconds = Some(AutoStop::new(Duration::from_secs(10)).unwrap());
         for auto_stop in [None, ten_seconds] {
             let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     auto_stop,
@@ -3276,6 +3334,28 @@ mod tests {
     }
 
     #[test]
+    fn streaming_availability_crosses_the_wire_unchanged() {
+        let snapshot = SettingsSnapshot {
+            streaming_unavailable: StreamingSupport::of(&SttChoice::Local(LocalStt::WhisperCandle)),
+            revision: 3,
+            settings: Settings::default(),
+        };
+
+        let wire = wire::SettingsSnapshot::from(&snapshot);
+
+        let listed = &wire.streaming_unavailable;
+        assert_eq!(listed.len(), OutputMode::ALL.len());
+        assert!(listed.contains(&wire::StreamingUnavailableOutput {
+            output_mode: wire::OutputMode::Copy as i32,
+            reason: wire::StreamingUnavailable::Copy as i32,
+        }));
+        let decoded = SettingsSnapshot::try_from(wire)
+            .unwrap()
+            .streaming_unavailable;
+        assert_eq!(decoded, snapshot.streaming_unavailable);
+    }
+
+    #[test]
     fn application_overrides_cross_the_wire_validated() {
         let overrides = ApplicationOverrides::new([(
             ApplicationId::new("com.apple.Terminal").unwrap(),
@@ -3289,6 +3369,7 @@ mod tests {
         )])
         .unwrap();
         let snapshot = SettingsSnapshot {
+            streaming_unavailable: StreamingSupport::default(),
             revision: 2,
             settings: Settings {
                 application_overrides: overrides.clone(),
