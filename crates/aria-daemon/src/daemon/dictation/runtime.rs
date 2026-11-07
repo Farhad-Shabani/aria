@@ -10,6 +10,7 @@ use super::assembly::{
 };
 use super::follower::EngineFollower;
 use crate::daemon::config::WakeConfig;
+use crate::daemon::inference::server_pin;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
@@ -120,7 +121,11 @@ impl DictationRuntime {
             retry: Lazy::new(move || {
                 let settings = retry_cache.effective();
                 Ok(RetrySetup {
-                    dictation: DictationConfig::load(&settings, &retry_home),
+                    dictation: DictationConfig::load(
+                        &settings,
+                        &retry_home,
+                        server_pin(&retry_home),
+                    ),
                     speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
                     home: retry_home.clone(),
@@ -133,7 +138,7 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
                     let settings = cache.effective();
-                    let config = DictationConfig::load(&settings, &home);
+                    let config = DictationConfig::load(&settings, &home, server_pin(&home));
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
@@ -545,7 +550,7 @@ fn retry_target<'a>(
 ) -> Result<RetryTarget<'a>, HistoryError> {
     let named = names_an_engine(requested).then_some(requested);
     match (backend, named) {
-        (TranscriptionBackend::Server, engine) => Ok(RetryTarget::Server { engine }),
+        (TranscriptionBackend::Server(_), engine) => Ok(RetryTarget::Server { engine }),
         (TranscriptionBackend::Local(local), None) => Ok(RetryTarget::Local(local.clone())),
         (TranscriptionBackend::Local(local), Some(engine)) => local
             .for_backend(engine, home)
@@ -1240,8 +1245,9 @@ mod history_tests {
                 })
                 .unwrap();
             let home_dir = home.clone();
-            let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
-            config.transcription = TranscriptionBackend::Server;
+            let mut config =
+                DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+            config.transcription = TranscriptionBackend::Server(None);
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: aria_kit::audio::ReplayPace::Immediate,

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use aria_platform::runtime::RuntimePaths;
 use aria_settings::config::ServerEndpoint;
+use aria_voice::config::ServerPin;
 
 /// Leaves room past the audio bound for the final decode.
 pub(crate) const OVERALL_TIMEOUT: Duration = Duration::from_secs(720);
@@ -78,13 +79,22 @@ pub fn paired_server(home: &Path) -> Result<Option<PairedServer>, identity::Erro
 
 /// The pin as it stands now. Anything that keeps a transcriber from opening
 /// it reads as no pin.
-pub(crate) fn pinned_server(home: &Path) -> Option<identity::PinnedServer> {
+pub(crate) fn server_pin(home: &Path) -> Option<ServerPin> {
+    use sha2::Digest;
+
     let path = Paths::in_home(home).client_identity();
     if !path.is_file() {
         return None;
     }
     let identity = identity::ClientIdentity::open(&path).ok()?;
-    identity.pinned_server().ok().cloned()
+    let server = identity.pinned_server().ok()?;
+    // The endpoint is the one part of variable length, so it goes last.
+    let id = sha2::Sha256::new()
+        .chain_update(server.fingerprint)
+        .chain_update(identity.fingerprint())
+        .chain_update(server.endpoint.to_string())
+        .finalize();
+    Some(ServerPin::new(id.into()))
 }
 
 /// Stores a client identity pinned to `endpoint`, as pairing would, and
@@ -132,16 +142,45 @@ mod tests {
     #[test]
     fn the_pin_reads_as_it_stands_and_changes_with_each_pairing() {
         let home = tempfile::tempdir().unwrap();
-        assert!(pinned_server(home.path()).is_none());
+        assert!(server_pin(home.path()).is_none());
 
         pin_server_for_tests(home.path(), "https://example.test:9851");
-        let first = pinned_server(home.path()).unwrap();
+        let first = server_pin(home.path()).unwrap();
         pin_server_for_tests(home.path(), "https://example.test:9851");
-        let second = pinned_server(home.path()).unwrap();
-
+        let second = server_pin(home.path()).unwrap();
         assert!(first != second, "another server at the same address");
+
+        replace_client_key(home.path());
+        assert!(
+            server_pin(home.path()).unwrap() != second,
+            "the same server, paired again with a new key"
+        );
         std::fs::remove_file(Paths::in_home(home.path()).client_identity()).unwrap();
-        assert!(pinned_server(home.path()).is_none());
+        assert!(server_pin(home.path()).is_none());
+    }
+
+    /// Keeps the pinned server and gives this machine a new key, as
+    /// forgetting and pairing the same server again would.
+    fn replace_client_key(home: &Path) {
+        let path = Paths::in_home(home).client_identity();
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        stored["credentials"] = serde_json::json!({
+            "certificate_pem": params.self_signed(&key).unwrap().pem(),
+            "key_pem": key.serialize_pem(),
+        });
+        aria_primitives::private_document::PrivateDocument::new(
+            &path,
+            identity::MAX_DOCUMENT_BYTES,
+        )
+        .prepare(&stored)
+        .unwrap()
+        .commit()
+        .unwrap()
+        .confirm_durability()
+        .unwrap();
     }
 
     #[test]

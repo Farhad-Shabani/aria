@@ -10,6 +10,7 @@ use aria_settings::rpc::RpcErrorCode;
 use super::client::{ADMIN_TIMEOUT, RemoteClientError, bounded, identity_error, rpc_error, run};
 use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
 use super::{Paths, tls};
+use crate::daemon::relay::to_hex;
 use crate::ipc::wire;
 use aria_primitives::local_socket::ExclusiveListener;
 use aria_primitives::private_document::PrivateDocument;
@@ -71,7 +72,7 @@ pub fn pin_server(home: &Path, invitation: &str) -> Result<String, RemoteClientE
         Ok(())
     }))?;
     identity.remember(&invitation).map_err(identity_error)?;
-    Ok(identity.fingerprint().to_owned())
+    Ok(to_hex(&identity.fingerprint()))
 }
 
 /// What forgetting removed. A server may trust any key it removed until it
@@ -106,7 +107,7 @@ pub fn forget(home: &Path) -> Result<Forgotten, RemoteClientError> {
         .map_err(RemoteClientError::PairingLock)?;
     let forgotten = match ClientIdentity::open(&path) {
         Ok(identity) => {
-            let client_fingerprint = identity.fingerprint().to_owned();
+            let client_fingerprint = to_hex(&identity.fingerprint());
             if identity.paired_server().is_some() {
                 Forgotten::Server { client_fingerprint }
             } else {
@@ -266,7 +267,7 @@ mod tests {
     fn an_unfinished_or_unreadable_pairing_is_removed_and_named() {
         let (home, paths) = prepared_home();
         let identity = ClientIdentity::load_or_create(&paths.client_identity()).unwrap();
-        let fingerprint = identity.fingerprint().to_owned();
+        let fingerprint = to_hex(&identity.fingerprint());
         assert_eq!(
             forget(home.path()).unwrap(),
             Forgotten::UnfinishedPairing {

@@ -4,7 +4,7 @@
 //! memory never holds both.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
@@ -15,8 +15,7 @@ use aria_voice::microphone::Gate;
 use aria_voice::transcription::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
-use super::super::inference::identity::PinnedServer;
-use super::super::inference::pinned_server;
+use super::super::inference::server_pin;
 use super::super::tasks::Supervised;
 use super::assembly::{BuildEngine, DictationEngine, EngineParts, EngineSlot};
 
@@ -30,9 +29,6 @@ pub(in crate::daemon) struct EngineFollower {
     microphone: Arc<Gate>,
     cache: Arc<SettingsCache>,
     home: PathBuf,
-    /// The pin the server engine was built for. The engine itself can't
-    /// say: an unusable one builds later, from whatever pin stands then.
-    settled_pin: Mutex<Option<PinnedServer>>,
 }
 
 impl Supervised for EngineFollower {
@@ -66,7 +62,7 @@ impl Supervised for EngineFollower {
                     }
                     _ = pin_poll.tick() => {
                         let following = Arc::clone(&follower);
-                        let moved = tokio::task::spawn_blocking(move || following.pin_moved());
+                        let moved = tokio::task::spawn_blocking(move || following.moved());
                         if moved.await.unwrap_or(false) { break }
                     }
                 }
@@ -84,45 +80,27 @@ impl EngineFollower {
         home: PathBuf,
     ) -> Self {
         let build: BuildEngine = Arc::new(move |backend| parts.engine(backend));
-        let settled_pin = Mutex::new(pinned_server(&home));
         Self {
             slot,
             build,
             microphone,
             cache,
             home,
-            settled_pin,
         }
     }
 
     fn follow(&self, stop: &CancelToken) {
-        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home);
-        let serves = target == TranscriptionBackend::Server;
-        let pin = serves.then(|| pinned_server(&self.home)).flatten();
-        let server_moved = serves && pin != *self.settled_pin();
-        if settle(
-            &self.slot,
-            &self.microphone,
-            target,
-            server_moved,
-            &self.build,
-            stop,
-        ) == Settled::Swapped
-        {
-            *self.settled_pin() = pin;
+        let pin = server_pin(&self.home);
+        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home, pin);
+        settle(&self.slot, &self.microphone, target, &self.build, stop);
+    }
+
+    /// Whether the server engine runs on a pin that no longer stands.
+    fn moved(&self) -> bool {
+        match &self.slot.current().backend {
+            TranscriptionBackend::Server(pin) => *pin != server_pin(&self.home),
+            TranscriptionBackend::Local(_) => false,
         }
-    }
-
-    /// Whether the server engine now runs on a pin that no longer stands.
-    fn pin_moved(&self) -> bool {
-        self.slot.current().backend == TranscriptionBackend::Server
-            && pinned_server(&self.home) != *self.settled_pin()
-    }
-
-    fn settled_pin(&self) -> std::sync::MutexGuard<'_, Option<PinnedServer>> {
-        self.settled_pin
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -134,18 +112,16 @@ enum Settled {
 }
 
 /// The preload runs after the swap, so a load that fails shows up on the
-/// next press. `server_moved` rebuilds a server engine whose pin was
-/// replaced or forgotten, which the backend alone can't show.
+/// next press.
 fn settle(
     slot: &EngineSlot,
     microphone: &Arc<Gate>,
     target: TranscriptionBackend,
-    server_moved: bool,
     build: &BuildEngine,
     stop: &CancelToken,
 ) -> Settled {
     let current = slot.current();
-    if current.backend == target && !server_moved {
+    if current.backend == target {
         preload(&current, stop);
         return Settled::Unchanged;
     }
@@ -196,7 +172,7 @@ mod tests {
 
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
-    use aria_voice::config::TranscriptionConfig;
+    use aria_voice::config::{ServerPin, TranscriptionConfig};
     use aria_voice::dictation::{
         DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
         DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
@@ -270,8 +246,8 @@ mod tests {
         })
     }
 
-    fn server() -> TranscriptionBackend {
-        TranscriptionBackend::Server
+    fn server(pin: u8) -> TranscriptionBackend {
+        TranscriptionBackend::Server(Some(ServerPin::new([pin; 32])))
     }
 
     fn settings() -> DictationSettings {
@@ -343,7 +319,6 @@ mod tests {
             microphone: Gate::new(),
             cache: Arc::clone(&cache),
             home: home.path().to_path_buf(),
-            settled_pin: Mutex::new(None),
         };
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(follower.run(shutdown.clone()));
@@ -385,7 +360,6 @@ mod tests {
             microphone: Gate::new(),
             cache,
             home: home.path().to_path_buf(),
-            settled_pin: Mutex::new(None),
         };
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(follower.run(shutdown.clone()));
@@ -412,7 +386,6 @@ mod tests {
                     &slot,
                     &microphone,
                     local("/new"),
-                    false,
                     &build,
                     &CancelToken::never(),
                 )
@@ -438,7 +411,7 @@ mod tests {
         let stop = CancelToken::new();
         stop.cancel();
 
-        let settled = settle(&slot, &microphone, local("/new"), false, &build, &stop);
+        let settled = settle(&slot, &microphone, local("/new"), &build, &stop);
 
         assert_eq!(settled, Settled::Stopped);
         assert!(!old_dropped.load(Ordering::SeqCst));
@@ -448,7 +421,7 @@ mod tests {
     #[test]
     fn a_server_turned_off_stops_receiving_audio_even_when_the_new_model_fails() {
         let (remote, remote_dropped) = named("server");
-        let slot = EngineSlot::new(DictationEngine::built("server", server(), remote));
+        let slot = EngineSlot::new(DictationEngine::built("server", server(1), remote));
         let failing: BuildEngine = Arc::new(|_: &TranscriptionBackend| {
             Err(DictationError::Transcription(
                 TranscriptionError::NoNativeStream,
@@ -459,7 +432,6 @@ mod tests {
             &slot,
             &Gate::new(),
             local("/missing"),
-            false,
             &failing,
             &CancelToken::never(),
         );
@@ -476,14 +448,13 @@ mod tests {
     #[test]
     fn a_server_engine_is_rebuilt_when_its_pin_moves() {
         let (remote, remote_dropped) = named("old pin");
-        let slot = EngineSlot::new(DictationEngine::built("old pin", server(), remote));
+        let slot = EngineSlot::new(DictationEngine::built("old pin", server(1), remote));
         let (build, _) = building("new pin", Arc::clone(&remote_dropped));
 
         let kept = settle(
             &slot,
             &Gate::new(),
-            server(),
-            false,
+            server(1),
             &build,
             &CancelToken::never(),
         );
@@ -492,8 +463,7 @@ mod tests {
         let moved = settle(
             &slot,
             &Gate::new(),
-            server(),
-            true,
+            server(2),
             &build,
             &CancelToken::never(),
         );
@@ -521,7 +491,6 @@ mod tests {
             &slot,
             &Gate::new(),
             local("/current"),
-            false,
             &build,
             &CancelToken::never(),
         );

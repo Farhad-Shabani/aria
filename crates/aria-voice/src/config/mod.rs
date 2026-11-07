@@ -83,15 +83,27 @@ pub enum TtsFallback {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptionBackend {
     Local(TranscriptionConfig),
-    /// The paired server. Its address comes from the pairing pin.
-    Server,
+    /// The paired server, or `None` before any pairing.
+    Server(Option<ServerPin>),
+}
+
+/// Which pairing a server engine is built for, opaque to everything but the
+/// pairing that makes it. Re-pairing changes it even at the same address, so
+/// an engine built on an older pin is replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerPin([u8; 32]);
+
+impl ServerPin {
+    pub fn new(id: [u8; 32]) -> Self {
+        Self(id)
+    }
 }
 
 impl TranscriptionBackend {
     pub fn backend_name(&self) -> &'static str {
         match self {
             Self::Local(engine) => engine.backend_name(),
-            Self::Server => backend::SERVER,
+            Self::Server(_) => backend::SERVER,
         }
     }
 }

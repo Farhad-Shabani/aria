@@ -99,7 +99,12 @@ impl LiveHarness {
         let settings = self.cache.effective();
         format!(
             "{:?}",
-            aria_voice::config::DictationConfig::load(&settings, &self.home).transcription
+            aria_voice::config::DictationConfig::load(
+                &settings,
+                &self.home,
+                super::inference::server_pin(&self.home),
+            )
+            .transcription
         )
     }
 

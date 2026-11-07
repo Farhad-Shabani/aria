@@ -179,7 +179,7 @@ fn transcription_model(config: Option<&DictationConfig>) -> Check {
 fn model(transcription: &TranscriptionBackend, home: &Path) -> Check {
     let engine = match transcription {
         TranscriptionBackend::Local(engine) => engine,
-        TranscriptionBackend::Server => return server(home),
+        TranscriptionBackend::Server(_) => return server(home),
     };
     match check_model(engine) {
         Ok(detail) => Check::ok(TRANSCRIPTION_MODEL, detail),
@@ -506,7 +506,7 @@ mod tests {
         let home = tempfile::TempDir::new().unwrap();
         aria_daemon::pin_server_for_tests(home.path(), "https://example.test:9851");
 
-        let check = model(&TranscriptionBackend::Server, home.path());
+        let check = model(&TranscriptionBackend::Server(None), home.path());
 
         assert_eq!(check.status, Status::Ok);
         assert!(check.detail.contains("https://example.test:9851"));
@@ -516,7 +516,7 @@ mod tests {
     fn the_server_without_a_pairing_fails() {
         let home = tempfile::TempDir::new().unwrap();
 
-        let unpaired = model(&TranscriptionBackend::Server, home.path());
+        let unpaired = model(&TranscriptionBackend::Server(None), home.path());
 
         assert_eq!(unpaired.status, Status::Failed);
         assert!(unpaired.detail.contains("aria remote pair"));

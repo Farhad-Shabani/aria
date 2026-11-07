@@ -324,7 +324,7 @@ mod tests {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
             let aria_voice::config::TranscriptionBackend::Local(transcription) =
-                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir)
+                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir, None)
                     .transcription
             else {
                 panic!("{} is a local engine", stt.key());

@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tonic::service::interceptor::InterceptedService;
 
+use super::server_pin;
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -54,10 +55,10 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
         SettingsCache::open(aria_settings::default_path(&home), home.clone())
             .map_err(ConfigError::from)?,
     );
-    let serving = TranscriptionBackend::load(&cache.effective(), &home);
+    let serving = TranscriptionBackend::load(&cache.effective(), &home, server_pin(&home));
     let config = match serving.clone() {
         TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
-        TranscriptionBackend::Server => {
+        TranscriptionBackend::Server(_) => {
             return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
                 backend: aria_settings::config::backend::SERVER,
             }));
@@ -87,7 +88,7 @@ async fn warn_on_drift(cache: Arc<SettingsCache>, serving: TranscriptionBackend,
     let mut status = cache.status();
     let mut drifted = false;
     while status.changed().await.is_ok() {
-        let named = TranscriptionBackend::load(&cache.effective(), &home);
+        let named = TranscriptionBackend::load(&cache.effective(), &home, server_pin(&home));
         let now = named != serving;
         if now && !drifted {
             tracing::warn!(

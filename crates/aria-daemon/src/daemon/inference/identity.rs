@@ -61,7 +61,7 @@ impl TryFrom<UncheckedInvitation> for Invitation {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PinnedServer {
     pub endpoint: ServerEndpoint,
@@ -304,7 +304,7 @@ struct StoredClient {
 pub(crate) struct ClientIdentity {
     path: PathBuf,
     stored: StoredClient,
-    fingerprint: String,
+    fingerprint: [u8; 32],
 }
 
 impl ClientIdentity {
@@ -336,7 +336,7 @@ impl ClientIdentity {
                 .map_err(|_| Error::InvalidIdentity)?;
         Ok(Self {
             path: path.to_owned(),
-            fingerprint: to_hex(&fingerprint(&certificate)),
+            fingerprint: fingerprint(&certificate),
             stored,
         })
     }
@@ -345,15 +345,14 @@ impl ClientIdentity {
         &self.stored.credentials
     }
 
-    /// Hex, the form `aria remote revoke` takes on the server.
-    pub(super) fn fingerprint(&self) -> &str {
-        &self.fingerprint
+    pub(super) fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
     }
 
     pub(crate) fn paired_server(&self) -> Option<PairedServer> {
         self.stored.server.as_ref().map(|server| PairedServer {
             endpoint: server.endpoint.clone(),
-            client_fingerprint: self.fingerprint.clone(),
+            client_fingerprint: to_hex(&self.fingerprint),
         })
     }
 

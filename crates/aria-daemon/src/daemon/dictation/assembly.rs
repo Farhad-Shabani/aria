@@ -258,7 +258,7 @@ fn select_engine(
 ) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
         TranscriptionBackend::Local(config) => select_local(config, loading),
-        TranscriptionBackend::Server => select_remote(home),
+        TranscriptionBackend::Server(_) => select_remote(home),
     }
 }
 
@@ -741,7 +741,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let select = || {
             select_engine(
-                TranscriptionBackend::Server,
+                TranscriptionBackend::Server(None),
                 ModelLoading::OnFirstUse,
                 home.path(),
             )
@@ -788,8 +788,9 @@ mod tests {
                     aria_voice::vocabulary::extract::LocalExtractor,
                 ),
             );
-            let mut dictation = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
-            dictation.transcription = TranscriptionBackend::Server;
+            let mut dictation =
+                DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+            dictation.transcription = TranscriptionBackend::Server(None);
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,
@@ -864,7 +865,7 @@ mod tests {
     fn capture_is_validated_before_the_model_loads() {
         let home = tempfile::tempdir().unwrap();
         let home_dir = home.path().to_owned();
-        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
+        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
         config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
@@ -915,7 +916,7 @@ mod tests {
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("cleanup.md"), [0xff]).unwrap();
         let home_dir = home.path().to_owned();
-        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir);
+        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
         config.cleanup_llm = Some(
             aria_settings::CleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "test")
                 .unwrap(),

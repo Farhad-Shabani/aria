@@ -68,7 +68,7 @@ impl DaemonConfig {
         home: &Path,
         wake_word: WakeWordOverride,
     ) -> Result<Self, ConfigError> {
-        let dictation = DictationConfig::load(settings, home);
+        let dictation = DictationConfig::load(settings, home, super::inference::server_pin(home));
         let wake = wake(settings, home, &dictation.capture, wake_word)?;
         Ok(Self {
             dictation,
