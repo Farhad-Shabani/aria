@@ -180,6 +180,12 @@ impl Loaded {
     fn parse_with(text: &str, home: &Path, aliases: &[(Key, &str)]) -> Result<Self, SettingsError> {
         let mut document = DocumentMut::from_str(text)
             .map_err(|error| parse_error(error.message(), error.span(), text))?;
+        if names_the_server_engine(document.as_table()) {
+            return Err(locate(
+                invalid(Key::SttBackend, InvalidValue::ServerEngineMoved),
+                text,
+            ));
+        }
         let mut settings = if move_aliases(&mut document, aliases)? {
             let moved = document.to_string();
             toml_edit::de::from_str::<SettingsFile>(&moved).map_err(|error| {
@@ -226,6 +232,14 @@ fn line_in(
         offset += candidate.len();
     }
     found
+}
+
+/// Aria 0.8 chose the server as an stt engine, with its address in
+/// `stt.server`. Pairing now holds the address, so the file needs a person to
+/// move it, and the unknown-key error would wrongly blame a newer Aria.
+fn names_the_server_engine(root: &Table) -> bool {
+    lookup(root, "stt.server").is_some()
+        || lookup(root, Key::SttBackend.path()).and_then(Item::as_str) == Some(backend::SERVER)
 }
 
 /// A key this build doesn't know may come from a newer Aria, which a downgrade
@@ -2133,13 +2147,26 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn the_server_is_where_it_runs_not_an_engine() {
-        refused("[stt]\nbackend = \"server\"\n", Key::SttBackend);
-        let unknown = Loaded::parse("[stt]\nserver = \"https://a.test\"\n", Path::new(HOME));
-        assert!(
-            matches!(unknown, Err(SettingsError::Parse(_))),
-            "{unknown:?}"
-        );
+    fn a_server_engine_file_is_told_to_use_runs_on() {
+        for text in [
+            "[stt]\nbackend = \"server\"\nserver = \"https://a.test:9851\"\n",
+            "[stt]\nbackend = \"server\"\n",
+            "[stt]\nserver = \"https://a.test:9851\"\n",
+        ] {
+            let error = Loaded::parse(text, Path::new(HOME)).expect_err("refused");
+            assert!(
+                matches!(
+                    &error,
+                    SettingsError::Invalid {
+                        key: Key::SttBackend,
+                        source: InvalidValue::ServerEngineMoved,
+                        ..
+                    }
+                ),
+                "{text}: {error}"
+            );
+            assert!(error.to_string().contains("stt.runs_on"), "{error}");
+        }
     }
 
     #[test]
