@@ -84,16 +84,16 @@ pub enum TtsFallback {
 pub enum TranscriptionBackend {
     Local(TranscriptionConfig),
     /// The paired server, or `None` before any pairing.
-    Server(Option<ServerPin>),
+    Server(Option<PairingId>),
 }
 
 /// Which pairing a server engine is built for, opaque to everything but the
 /// pairing that makes it. Re-pairing changes it even at the same address, so
-/// an engine built on an older pin is replaced.
+/// an engine built on an older pairing is replaced.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServerPin([u8; 32]);
+pub struct PairingId([u8; 32]);
 
-impl ServerPin {
+impl PairingId {
     pub fn new(id: [u8; 32]) -> Self {
         Self(id)
     }

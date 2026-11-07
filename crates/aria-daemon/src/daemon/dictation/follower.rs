@@ -1,5 +1,5 @@
 //! Swaps dictation's speech model when the settings name another, or the
-//! server's pin changes, without a restart. The swap waits for any
+//! server pairing changes, without a restart. The swap waits for any
 //! recording to finish. The old model drops before the new one loads, so
 //! memory never holds both.
 
@@ -15,13 +15,13 @@ use aria_voice::microphone::Gate;
 use aria_voice::transcription::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
-use super::super::inference::server_pin;
+use super::super::inference::pairing_id;
 use super::super::tasks::Supervised;
 use super::assembly::{BuildEngine, DictationEngine, EngineParts, EngineSlot};
 
-/// Pairing writes the pin without touching the settings, so nothing else
+/// Pairing writes client.json without touching the settings, so nothing else
 /// says it changed.
-const PIN_POLL: Duration = Duration::from_secs(1);
+const PAIRING_POLL: Duration = Duration::from_secs(1);
 
 pub(in crate::daemon) struct EngineFollower {
     slot: EngineSlot,
@@ -34,8 +34,8 @@ pub(in crate::daemon) struct EngineFollower {
 impl Supervised for EngineFollower {
     async fn run(self, shutdown: CancellationToken) {
         let mut status = self.cache.status();
-        let mut pin_poll = tokio::time::interval(PIN_POLL);
-        pin_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut pairing_poll = tokio::time::interval(PAIRING_POLL);
+        pairing_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let follower = Arc::new(self);
         // The first pass runs before any wait, since a change made before
         // this task started has no event of its own.
@@ -60,7 +60,7 @@ impl Supervised for EngineFollower {
                         if changed.is_err() { return }
                         break;
                     }
-                    _ = pin_poll.tick() => {
+                    _ = pairing_poll.tick() => {
                         let following = Arc::clone(&follower);
                         let moved = tokio::task::spawn_blocking(move || following.moved());
                         if moved.await.unwrap_or(false) { break }
@@ -90,15 +90,15 @@ impl EngineFollower {
     }
 
     fn follow(&self, stop: &CancelToken) {
-        let pin = server_pin(&self.home);
-        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home, pin);
+        let pairing = pairing_id(&self.home);
+        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home, pairing);
         settle(&self.slot, &self.microphone, target, &self.build, stop);
     }
 
-    /// Whether the server engine runs on a pin that no longer stands.
+    /// Whether the server engine runs on a pairing that no longer stands.
     fn moved(&self) -> bool {
         match &self.slot.current().backend {
-            TranscriptionBackend::Server(pin) => *pin != server_pin(&self.home),
+            TranscriptionBackend::Server(pairing) => *pairing != pairing_id(&self.home),
             TranscriptionBackend::Local(_) => false,
         }
     }
@@ -172,7 +172,7 @@ mod tests {
 
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
-    use aria_voice::config::{ServerPin, TranscriptionConfig};
+    use aria_voice::config::{PairingId, TranscriptionConfig};
     use aria_voice::dictation::{
         DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
         DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
@@ -246,8 +246,8 @@ mod tests {
         })
     }
 
-    fn server(pin: u8) -> TranscriptionBackend {
-        TranscriptionBackend::Server(Some(ServerPin::new([pin; 32])))
+    fn server(id: u8) -> TranscriptionBackend {
+        TranscriptionBackend::Server(Some(PairingId::new([id; 32])))
     }
 
     fn settings() -> DictationSettings {
@@ -350,7 +350,8 @@ mod tests {
         let builds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&builds);
         let build: BuildEngine = Arc::new(move |backend: &TranscriptionBackend| {
-            let name = ["first pin", "second pin"][counted.fetch_add(1, Ordering::SeqCst).min(1)];
+            let name =
+                ["first pairing", "second pairing"][counted.fetch_add(1, Ordering::SeqCst).min(1)];
             let (executor, _) = named(name);
             Ok(DictationEngine::built(name, backend.clone(), executor))
         });
@@ -364,9 +365,9 @@ mod tests {
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(follower.run(shutdown.clone()));
 
-        until_pressed(&slot, "first pin").await;
+        until_pressed(&slot, "first pairing").await;
         crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
-        until_pressed(&slot, "second pin").await;
+        until_pressed(&slot, "second pairing").await;
 
         shutdown.cancel();
         task.await.unwrap();
@@ -447,9 +448,9 @@ mod tests {
 
     #[test]
     fn a_server_engine_is_rebuilt_when_its_pin_moves() {
-        let (remote, remote_dropped) = named("old pin");
-        let slot = EngineSlot::new(DictationEngine::built("old pin", server(1), remote));
-        let (build, _) = building("new pin", Arc::clone(&remote_dropped));
+        let (remote, remote_dropped) = named("old pairing");
+        let slot = EngineSlot::new(DictationEngine::built("old pairing", server(1), remote));
+        let (build, _) = building("new pairing", Arc::clone(&remote_dropped));
 
         let kept = settle(
             &slot,
@@ -470,7 +471,7 @@ mod tests {
 
         assert_eq!(moved, Settled::Swapped);
         assert!(remote_dropped.load(Ordering::SeqCst));
-        assert_eq!(press(&slot).unwrap(), "new pin");
+        assert_eq!(press(&slot).unwrap(), "new pairing");
     }
 
     #[test]

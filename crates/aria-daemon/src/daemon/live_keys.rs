@@ -102,7 +102,7 @@ impl LiveHarness {
             aria_voice::config::DictationConfig::load(
                 &settings,
                 &self.home,
-                super::inference::server_pin(&self.home),
+                super::inference::pairing_id(&self.home),
             )
             .transcription
         )

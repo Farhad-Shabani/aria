@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use aria_kit::audio::ReplayPace;
 
 use super::{
-    CaptureConfig, DictationConfig, ListenConfig, ListenTranscription, ServerPin, SpeakerConfig,
+    CaptureConfig, DictationConfig, ListenConfig, ListenTranscription, PairingId, SpeakerConfig,
     SpeechDefaults, TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend,
     TtsConfig, TtsFallback, TtsModel,
 };
@@ -208,7 +208,7 @@ fn tts_fallback(file_value: Option<TtsFallbackName>) -> TtsFallback {
 }
 
 impl DictationConfig {
-    pub fn load(settings: &CheckedSettings, home: &Path, pin: Option<ServerPin>) -> Self {
+    pub fn load(settings: &CheckedSettings, home: &Path, pairing: Option<PairingId>) -> Self {
         let choices = settings.choices();
         Self {
             capture: match &choices.capture {
@@ -218,7 +218,7 @@ impl DictationConfig {
                     pace: replay_pace(settings.capture.pace),
                 },
             },
-            transcription: TranscriptionBackend::load(settings, home, pin),
+            transcription: TranscriptionBackend::load(settings, home, pairing),
             dictation_timeouts: choices.timeouts,
             cleanup_llm: choices.cleanup.clone(),
         }
@@ -233,9 +233,9 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 }
 
 impl TranscriptionBackend {
-    pub fn load(settings: &CheckedSettings, home: &Path, pin: Option<ServerPin>) -> Self {
+    pub fn load(settings: &CheckedSettings, home: &Path, pairing: Option<PairingId>) -> Self {
         match settings.choices().stt_runs_on {
-            RunsOn::Server => Self::Server(pin),
+            RunsOn::Server => Self::Server(pairing),
             RunsOn::Local => Self::Local(TranscriptionConfig::load(settings, home)),
         }
     }
@@ -337,10 +337,10 @@ mod tests {
             "[stt]\nbackend = \"whisper\"\nmodel = \"/models/whisper\"\nruns_on = \"server\"\n",
         );
 
-        let pin = ServerPin::new([7; 32]);
+        let pairing = PairingId::new([7; 32]);
         assert_eq!(
-            TranscriptionBackend::load(&file, &test_home(), Some(pin.clone())),
-            TranscriptionBackend::Server(Some(pin))
+            TranscriptionBackend::load(&file, &test_home(), Some(pairing.clone())),
+            TranscriptionBackend::Server(Some(pairing))
         );
         let models = loaded_models(&file, Path::new("/missing-home"));
         assert!(models.iter().any(|model| model.section == Section::Stt
