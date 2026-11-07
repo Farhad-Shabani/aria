@@ -73,7 +73,26 @@ struct TranscriptionSection: View {
 
     @ViewBuilder
     private var footer: some View {
-        if server.isBusy {
+        if case .downloading(let transfer) = server.progress {
+            VStack(alignment: .leading) {
+                HStack {
+                    if let transfer {
+                        Text(
+                            "Downloading the speech model… \(SetupState.size(transfer.received)) of \(SetupState.size(transfer.total))"
+                        )
+                        .monospacedDigit()
+                    } else {
+                        Text("Downloading the speech model…")
+                    }
+                    Spacer()
+                    Button("Cancel") { server.cancel() }
+                }
+                if let transfer {
+                    ProgressView(value: transfer.fraction)
+                        .accessibilityLabel("Downloading the speech model")
+                }
+            }
+        } else if server.isBusy {
             HStack {
                 ProgressView().controlSize(.small)
                 Text("Updating Aria…")

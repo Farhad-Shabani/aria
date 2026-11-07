@@ -18,6 +18,8 @@ final class ServerTranscriptionTests: XCTestCase {
         var inspectFailsAfterSet = false
         var inspectFailsAfterPair = false
         var setFails = false
+        /// Sent before a switch that then waits until cancelled.
+        var downloadEvents: [Aria_Setup_V1_SetupEvent]?
 
         init(_ inspection: Aria_Setup_V1_Inspection) {
             self.inspection = inspection
@@ -39,9 +41,13 @@ final class ServerTranscriptionTests: XCTestCase {
                     self.forgotten += 1
                     self.inspection.clearServer()
                 },
-                setRunsOn: { runsOn in
+                setRunsOn: { runsOn, onEvent in
                     self.sentRunsOn.append(runsOn)
                     if self.setFails { throw Refused() }
+                    if let events = self.downloadEvents {
+                        events.forEach(onEvent)
+                        try await Task.sleep(for: .seconds(60))
+                    }
                     self.inspection.transcriptionRunsOn = runsOn.wire
                 }
             )
@@ -88,6 +94,39 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertEqual(spy.sentRunsOn, [.server, .local])
         XCTAssertEqual(setup.transcriptionRunsOn, .local)
         XCTAssertNil(server.failure)
+    }
+
+    private static func downloadEvents() -> [Aria_Setup_V1_SetupEvent] {
+        var started = Aria_Setup_V1_SetupEvent()
+        started.started = .models
+        var download = Aria_Setup_V1_SetupEvent()
+        download.download.receivedBytes = 5
+        download.download.totalBytes = 10
+        return [started, download]
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<1000 where !condition() {
+            await Task.yield()
+        }
+        XCTAssertTrue(condition())
+    }
+
+    func testComingBackShowsTheDownloadAndCancelEndsItQuietly() async {
+        let spy = Spy(Self.mac(on: .server))
+        spy.downloadEvents = Self.downloadEvents()
+        let setup = SetupStatus()
+        setup.show(spy.inspection)
+        let server = ServerTranscription(effects: spy.effects, setup: setup, runner: SetupRunner())
+
+        let switching = Task { await server.use(.local) }
+        await waitUntil { server.progress == .downloading(ModelTransfer(received: 5, total: 10)) }
+        server.cancel()
+        await switching.value
+
+        XCTAssertNil(server.progress)
+        XCTAssertNil(server.failure)
+        XCTAssertEqual(setup.transcriptionRunsOn, .server, "the cancelled switch wrote nothing")
     }
 
     func testAFailedSwitchSaysWhyAndKeepsTheShownRunsOn() async {

@@ -11,7 +11,14 @@ final class ServerTranscription: ObservableObject {
         var inspect: () async throws -> Aria_Setup_V1_Inspection
         var pair: (_ invitation: String) async throws -> Void
         var forget: () async throws -> Void
-        var setRunsOn: (TranscriptionRunsOn) async throws -> Void
+        var setRunsOn:
+            (TranscriptionRunsOn, @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void) async throws -> Void
+    }
+
+    /// Coming back from the server may first download the local engine's model.
+    enum Progress: Equatable {
+        case finishing
+        case downloading(ModelTransfer?)
     }
 
     /// The pairing sheet shows the address an invitation names before it is
@@ -22,7 +29,7 @@ final class ServerTranscription: ObservableObject {
         case confirming(invitation: String, address: String)
     }
 
-    @Published private(set) var isBusy = false
+    @Published private(set) var progress: Progress?
     @Published private(set) var failure: String?
     @Published private(set) var pairingFailure: String?
     @Published private(set) var pairingStep = PairingStep.instructions
@@ -30,6 +37,7 @@ final class ServerTranscription: ObservableObject {
     private let effects: Effects
     private let setup: SetupStatus
     private let runner: SetupRunner
+    private var task: Task<Bool, Never>?
 
     init(effects: Effects, setup: SetupStatus, runner: SetupRunner) {
         self.effects = effects
@@ -42,23 +50,53 @@ final class ServerTranscription: ObservableObject {
         setup.server == nil && setup.transcriptionRunsOn != .server
     }
 
+    var isBusy: Bool { progress != nil }
+
     var canChooseRunsOn: Bool {
         !isBusy && !needsPairing
     }
 
+    /// A cancel can land after the write, so the change is read back even then.
     func use(_ runsOn: TranscriptionRunsOn) async {
         guard !isBusy else { return }
-        isBusy = true
-        defer { isBusy = false }
+        progress = .finishing
+        defer { progress = nil }
         failure = nil
-        do {
-            try await runner.run { try await effects.setRunsOn(runsOn) }
-        } catch {
-            log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
-            failure = SetupClientError.message(for: error, otherwise: Self.switchFailure)
-            return
+        let run = Task { () -> Bool in
+            do {
+                try await runner.run {
+                    try await effects.setRunsOn(runsOn) { event in
+                        Task { @MainActor in self.absorb(event) }
+                    }
+                }
+            } catch  where Task.isCancelled {
+            } catch SetupClientError.cancelled {
+            } catch {
+                log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
+                failure = SetupClientError.message(for: error, otherwise: Self.switchFailure)
+                return false
+            }
+            return true
         }
-        await showChanges()
+        task = run
+        let readBack = await run.value
+        task = nil
+        if readBack { await showChanges() }
+    }
+
+    func cancel() {
+        task?.cancel()
+    }
+
+    private func absorb(_ event: Aria_Setup_V1_SetupEvent) {
+        guard task != nil else { return }
+        switch event.event {
+        case .started(.models): progress = .downloading(nil)
+        case .download(let report):
+            if let transfer = ModelTransfer(report) { progress = .downloading(transfer) }
+        case .started(.settings): progress = .finishing
+        case .started, nil: break
+        }
     }
 
     static let switchFailure = "Aria couldn’t change where transcription runs. Try again."
@@ -97,8 +135,8 @@ final class ServerTranscription: ObservableObject {
 
     func forget() async {
         guard canForget else { return }
-        isBusy = true
-        defer { isBusy = false }
+        progress = .finishing
+        defer { progress = nil }
         failure = nil
         do {
             try await runner.run { try await effects.forget() }
@@ -128,8 +166,8 @@ final class ServerTranscription: ObservableObject {
     /// False when busy or pairing failed.
     func pair(invitation: String) async -> Bool {
         guard !isBusy else { return false }
-        isBusy = true
-        defer { isBusy = false }
+        progress = .finishing
+        defer { progress = nil }
         pairingFailure = nil
         failure = nil
         do {
@@ -161,10 +199,10 @@ extension ServerTranscription.Effects {
             inspect: { try await SetupClient.inspect() },
             pair: { invitation in try await DaemonProcess.pairServer(invitation: invitation) },
             forget: { try await DaemonProcess.forgetServer() },
-            setRunsOn: { runsOn in
+            setRunsOn: { runsOn, onEvent in
                 var request = Aria_Setup_V1_SetTranscriptionRunsOnRequest()
                 request.runsOn = runsOn.wire
-                _ = try await SetupClient.setTranscriptionRunsOn(request) { _ in }
+                _ = try await SetupClient.setTranscriptionRunsOn(request, onEvent: onEvent)
             }
         )
     }
