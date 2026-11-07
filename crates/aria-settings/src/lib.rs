@@ -328,6 +328,9 @@ pub enum InvalidValue {
     #[error("must be an HTTPS origin without credentials, query or fragment")]
     ServerEndpoint,
 
+    #[error("no longer takes \"server\": set stt.runs_on = \"server\" and remove stt.server")]
+    ServerEngineMoved,
+
     #[error("needs capture.backend = \"microphone\"")]
     NeedsMicrophone,
 

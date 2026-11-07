@@ -22,7 +22,7 @@ use super::checked::{
     CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
     Voices, WakeEngine,
 };
-use super::keys::{Kind, STT_BACKENDS, WAKE_BACKENDS};
+use super::keys::{Kind, WAKE_BACKENDS};
 use super::limits::MAX_CHAT_TIMEOUT;
 use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
 use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
@@ -180,6 +180,12 @@ impl Loaded {
     fn parse_with(text: &str, home: &Path, aliases: &[(Key, &str)]) -> Result<Self, SettingsError> {
         let mut document = DocumentMut::from_str(text)
             .map_err(|error| parse_error(error.message(), error.span(), text))?;
+        if names_the_server_engine(document.as_table()) {
+            return Err(locate(
+                invalid(Key::SttBackend, InvalidValue::ServerEngineMoved),
+                text,
+            ));
+        }
         let mut settings = if move_aliases(&mut document, aliases)? {
             let moved = document.to_string();
             toml_edit::de::from_str::<SettingsFile>(&moved).map_err(|error| {
@@ -226,6 +232,14 @@ fn line_in(
         offset += candidate.len();
     }
     found
+}
+
+/// Aria 0.8 chose the server as an stt engine, with its address in
+/// `stt.server`. Pairing now holds the address, so the file needs a person to
+/// move it, and the unknown-key error would wrongly blame a newer Aria.
+fn names_the_server_engine(root: &Table) -> bool {
+    lookup(root, "stt.server").is_some()
+        || lookup(root, Key::SttBackend.path()).and_then(Item::as_str) == Some(backend::SERVER)
 }
 
 /// A key this build doesn't know may come from a newer Aria, which a downgrade
@@ -1226,7 +1240,7 @@ impl SettingsFile {
             }
             name => {
                 let engine = LocalStt::named(name)
-                    .ok_or_else(|| unsupported(name, STT_BACKENDS, Key::SttBackend))?;
+                    .ok_or_else(|| unsupported(name, backend::LOCAL, Key::SttBackend))?;
                 if let Some(model) = &stt.model {
                     non_empty(model, Key::SttModel)?;
                     absolute_path(Path::new(model), Key::SttModel)?;
@@ -1635,6 +1649,49 @@ pub(super) mod tests {
             settings.memory.dir.as_deref(),
             Some(Path::new("/Users/you/.aria/memory"))
         );
+    }
+
+    #[test]
+    fn the_example_file_shows_every_key_and_only_known_ones() {
+        // Every key the example sets or shows commented out, as dotted paths.
+        let mut table = String::new();
+        let mut shown = Vec::new();
+        for line in EXAMPLE.lines() {
+            let line = line.strip_prefix("# ").unwrap_or(line);
+            if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
+                table = name.0.replace('"', "");
+                continue;
+            }
+            let Some((name, _)) = line.split_once(" = ") else {
+                continue;
+            };
+            if name.is_empty() || name.contains(' ') || name.starts_with('#') {
+                continue;
+            }
+            shown.push(if table.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{table}.{name}")
+            });
+        }
+
+        for key in Key::ALL {
+            let path = key.path();
+            assert!(
+                shown
+                    .iter()
+                    .any(|found| found == path || found.starts_with(&format!("{path}."))),
+                "{path} is missing from the example"
+            );
+        }
+        for found in &shown {
+            assert!(
+                Key::ALL.iter().any(|key| {
+                    found == key.path() || found.starts_with(&format!("{}.", key.path()))
+                }),
+                "the example shows {found}, which no key names"
+            );
+        }
     }
 
     #[test]
@@ -2133,13 +2190,26 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn the_server_is_where_it_runs_not_an_engine() {
-        refused("[stt]\nbackend = \"server\"\n", Key::SttBackend);
-        let unknown = Loaded::parse("[stt]\nserver = \"https://a.test\"\n", Path::new(HOME));
-        assert!(
-            matches!(unknown, Err(SettingsError::Parse(_))),
-            "{unknown:?}"
-        );
+    fn a_server_engine_file_is_told_to_use_runs_on() {
+        for text in [
+            "[stt]\nbackend = \"server\"\nserver = \"https://a.test:9851\"\n",
+            "[stt]\nbackend = \"server\"\n",
+            "[stt]\nserver = \"https://a.test:9851\"\n",
+        ] {
+            let error = Loaded::parse(text, Path::new(HOME)).expect_err("refused");
+            assert!(
+                matches!(
+                    &error,
+                    SettingsError::Invalid {
+                        key: Key::SttBackend,
+                        source: InvalidValue::ServerEngineMoved,
+                        ..
+                    }
+                ),
+                "{text}: {error}"
+            );
+            assert!(error.to_string().contains("stt.runs_on"), "{error}");
+        }
     }
 
     #[test]

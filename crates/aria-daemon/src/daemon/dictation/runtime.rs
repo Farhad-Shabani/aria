@@ -10,7 +10,7 @@ use super::assembly::{
 };
 use super::follower::EngineFollower;
 use crate::daemon::config::WakeConfig;
-use crate::daemon::inference::server_pin;
+use crate::daemon::inference::pairing_id;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
@@ -124,7 +124,7 @@ impl DictationRuntime {
                     dictation: DictationConfig::load(
                         &settings,
                         &retry_home,
-                        server_pin(&retry_home),
+                        pairing_id(&retry_home),
                     ),
                     speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
@@ -138,7 +138,7 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
                     let settings = cache.effective();
-                    let config = DictationConfig::load(&settings, &home, server_pin(&home));
+                    let config = DictationConfig::load(&settings, &home, pairing_id(&home));
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
@@ -1248,7 +1248,7 @@ mod history_tests {
             let mut config =
                 DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
             config.transcription =
-                TranscriptionBackend::Server(crate::daemon::inference::server_pin(&home_dir));
+                TranscriptionBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: aria_kit::audio::ReplayPace::Immediate,

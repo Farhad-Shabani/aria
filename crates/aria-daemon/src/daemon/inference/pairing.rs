@@ -42,7 +42,7 @@ fn bounded_invitation(invitation: &str) -> Result<(), RemoteClientError> {
 
 /// Pairs with the server `invitation` names, and pins it in place of any
 /// earlier one.
-pub fn pin_server(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
+pub fn pair_server(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
     bounded_invitation(invitation)?;
     let invitation: Invitation =
         serde_json::from_str(invitation).map_err(RemoteClientError::invitation)?;
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn forgetting_a_pinned_server_returns_its_revoke_fingerprint() {
         let (home, paths) = prepared_home();
-        let fingerprint = super::super::pin_server_for_tests(home.path(), "https://box.test:9851");
+        let fingerprint = super::super::pair_server_for_tests(home.path(), "https://box.test:9851");
 
         assert_eq!(
             forget(home.path()).unwrap(),

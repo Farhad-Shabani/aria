@@ -284,7 +284,7 @@ pub fn pair_server(input: impl io::Read) -> Result<String, SetupError> {
 fn pair_server_at(home: &Path, invitation: &str) -> Result<String, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
     check_server_unused(home)?;
-    aria_daemon::pin_server(home, invitation).map_err(SetupError::Pair)
+    aria_daemon::pair_server(home, invitation).map_err(SetupError::Pair)
 }
 
 fn check_server_unused(home: &Path) -> Result<(), SetupError> {
@@ -1533,7 +1533,7 @@ mod tests {
     fn forgetting_waits_for_setup_and_refuses_a_server_in_use() {
         let home = tempfile::tempdir().unwrap();
         let config = aria_settings::default_path(home.path());
-        aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+        aria_daemon::pair_server_for_tests(home.path(), "https://box.test:9851");
 
         let running = lock_setup(&config).unwrap();
         assert!(matches!(

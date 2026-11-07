@@ -442,7 +442,7 @@ pub enum Error {
     #[error("this endpoint has not been paired")]
     Unpaired,
     #[error("the pairing changed after this engine was chosen")]
-    PinMoved,
+    PairingMoved,
     #[error("the client is not authorized")]
     Unauthenticated,
     #[error("the remote server already pairs 16 clients")]
@@ -476,7 +476,7 @@ impl From<Error> for RpcFailure {
                 RpcErrorCode::InvalidRequest,
                 "invalid remote invitation or endpoint",
             ),
-            Error::Unauthenticated | Error::Unpaired | Error::PinMoved => (
+            Error::Unauthenticated | Error::Unpaired | Error::PairingMoved => (
                 RpcErrorCode::Unauthenticated,
                 "remote access is not authorized",
             ),

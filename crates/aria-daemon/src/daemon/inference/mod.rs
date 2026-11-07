@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use aria_platform::runtime::RuntimePaths;
 use aria_settings::config::ServerEndpoint;
-use aria_voice::config::ServerPin;
+use aria_voice::config::PairingId;
 
 /// Leaves room past the audio bound for the final decode.
 pub(crate) const OVERALL_TIMEOUT: Duration = Duration::from_secs(720);
@@ -77,18 +77,20 @@ pub fn paired_server(home: &Path) -> Result<Option<PairedServer>, identity::Erro
     }
 }
 
-/// The pin as it stands now. Anything that keeps a transcriber from opening
-/// it reads as no pin.
-pub(crate) fn server_pin(home: &Path) -> Option<ServerPin> {
+/// The pairing as it stands now. Anything that keeps a transcriber from opening
+/// it reads as no pairing.
+pub(crate) fn pairing_id(home: &Path) -> Option<PairingId> {
     let path = Paths::in_home(home).client_identity();
     if !path.is_file() {
         return None;
     }
     let identity = identity::ClientIdentity::open(&path).ok()?;
-    pin_of(&identity).ok()
+    pairing_id_of(&identity).ok()
 }
 
-pub(crate) fn pin_of(identity: &identity::ClientIdentity) -> Result<ServerPin, identity::Error> {
+pub(crate) fn pairing_id_of(
+    identity: &identity::ClientIdentity,
+) -> Result<PairingId, identity::Error> {
     use sha2::Digest;
 
     let server = identity.pinned_server()?;
@@ -98,13 +100,13 @@ pub(crate) fn pin_of(identity: &identity::ClientIdentity) -> Result<ServerPin, i
         .chain_update(identity.fingerprint())
         .chain_update(server.endpoint.to_string())
         .finalize();
-    Ok(ServerPin::new(id.into()))
+    Ok(PairingId::new(id.into()))
 }
 
 /// Stores a client identity pinned to `endpoint`, as pairing would, and
 /// returns its fingerprint.
 #[cfg(any(test, feature = "test-support"))]
-pub fn pin_server_for_tests(home: &Path, endpoint: &str) -> String {
+pub fn pair_server_for_tests(home: &Path, endpoint: &str) -> String {
     use sha2::Digest;
 
     let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
@@ -144,23 +146,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pin_reads_as_it_stands_and_changes_with_each_pairing() {
+    fn the_pairing_id_reads_as_it_stands_and_changes_with_each_pairing() {
         let home = tempfile::tempdir().unwrap();
-        assert!(server_pin(home.path()).is_none());
+        assert!(pairing_id(home.path()).is_none());
 
-        pin_server_for_tests(home.path(), "https://example.test:9851");
-        let first = server_pin(home.path()).unwrap();
-        pin_server_for_tests(home.path(), "https://example.test:9851");
-        let second = server_pin(home.path()).unwrap();
+        pair_server_for_tests(home.path(), "https://example.test:9851");
+        let first = pairing_id(home.path()).unwrap();
+        pair_server_for_tests(home.path(), "https://example.test:9851");
+        let second = pairing_id(home.path()).unwrap();
         assert!(first != second, "another server at the same address");
 
         replace_client_key(home.path());
         assert!(
-            server_pin(home.path()).unwrap() != second,
+            pairing_id(home.path()).unwrap() != second,
             "the same server, paired again with a new key"
         );
         std::fs::remove_file(Paths::in_home(home.path()).client_identity()).unwrap();
-        assert!(server_pin(home.path()).is_none());
+        assert!(pairing_id(home.path()).is_none());
     }
 
     /// Keeps the pinned server and gives this machine a new key, as
@@ -198,7 +200,7 @@ mod tests {
             "looking leaves an unpaired home alone"
         );
 
-        let hex = pin_server_for_tests(home.path(), "https://example.test:9851");
+        let hex = pair_server_for_tests(home.path(), "https://example.test:9851");
         assert_eq!(
             paired_server(home.path()).unwrap(),
             Some(PairedServer {

@@ -25,7 +25,7 @@ use crate::ipc::wire;
 use aria_primitives::local_socket::LocalSocketError;
 use aria_primitives::private_document::DocumentError;
 use aria_settings::rpc::RpcErrorCode;
-use aria_voice::config::ServerPin;
+use aria_voice::config::PairingId;
 use aria_voice::transcription::{
     Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
 };
@@ -177,16 +177,16 @@ impl RemoteTranscriber {
         Self::open_pinned(home).map_err(transcription_error)
     }
 
-    /// Opens only the pairing `pin` names, so an engine never sends audio
-    /// under a pin other than the one it is known by.
+    /// Opens only `pairing`, so an engine never sends audio under a pairing
+    /// other than the one it is known by.
     pub(crate) fn open_matching(
         home: &Path,
-        pin: Option<&ServerPin>,
+        pairing: Option<&PairingId>,
     ) -> Result<Self, TranscriptionError> {
         let identity = Self::identity(home).map_err(transcription_error)?;
-        if super::pin_of(&identity).ok().as_ref() != pin {
+        if super::pairing_id_of(&identity).ok().as_ref() != pairing {
             return Err(transcription_error(RemoteClientError::Identity(
-                identity::Error::PinMoved,
+                identity::Error::PairingMoved,
             )));
         }
         Self::connect(&identity).map_err(transcription_error)
