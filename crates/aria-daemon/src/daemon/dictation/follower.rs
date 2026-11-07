@@ -343,7 +343,7 @@ mod tests {
         let path = aria_settings::default_path(home.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "[stt]\nruns_on = \"server\"\n").unwrap();
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://a.test:9851");
+        crate::daemon::inference::pair_server_for_tests(home.path(), "https://a.test:9851");
         let cache = Arc::new(SettingsCache::open(path, home.path().to_path_buf()).unwrap());
         let (old, _) = named("local");
         let slot = EngineSlot::of("local", old);
@@ -366,7 +366,7 @@ mod tests {
         let task = tokio::spawn(follower.run(shutdown.clone()));
 
         until_pressed(&slot, "first pairing").await;
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
+        crate::daemon::inference::pair_server_for_tests(home.path(), "https://b.test:9851");
         until_pressed(&slot, "second pairing").await;
 
         shutdown.cancel();
@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn a_server_engine_is_rebuilt_when_its_pin_moves() {
+    fn a_server_engine_is_rebuilt_when_its_pairing_moves() {
         let (remote, remote_dropped) = named("old pairing");
         let slot = EngineSlot::new(DictationEngine::built("old pairing", server(1), remote));
         let (build, _) = building("new pairing", Arc::clone(&remote_dropped));

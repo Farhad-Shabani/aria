@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn a_paired_server_needs_no_local_model() {
         let home = tempfile::TempDir::new().unwrap();
-        aria_daemon::pin_server_for_tests(home.path(), "https://example.test:9851");
+        aria_daemon::pair_server_for_tests(home.path(), "https://example.test:9851");
 
         let check = model(&TranscriptionBackend::Server(None), home.path());
 

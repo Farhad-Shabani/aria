@@ -741,7 +741,7 @@ mod tests {
     /// Only the server pinned at pairing receives audio, and only under the
     /// pairing the engine was chosen for.
     #[test]
-    fn the_server_engine_opens_only_the_pin_it_was_chosen_for() {
+    fn the_server_engine_opens_only_the_pairing_it_was_chosen_for() {
         let home = tempfile::tempdir().unwrap();
         let select = |pairing| {
             select_engine(
@@ -753,12 +753,12 @@ mod tests {
         let current = || crate::daemon::inference::pairing_id(home.path());
 
         assert!(select(None).is_err());
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://a.test:9851");
+        crate::daemon::inference::pair_server_for_tests(home.path(), "https://a.test:9851");
         let chosen = current();
         assert!(select(chosen.clone()).is_ok());
         assert!(select(None).is_err(), "a pairing appeared after the choice");
 
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
+        crate::daemon::inference::pair_server_for_tests(home.path(), "https://b.test:9851");
         assert!(
             select(chosen).is_err(),
             "the pairing changed after the choice"

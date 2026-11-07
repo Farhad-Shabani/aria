@@ -46,7 +46,7 @@ pub use host::{
 pub use inference::admin::{remote_invite, remote_revoke};
 pub use inference::client::RemoteClientError;
 pub use inference::host::{InferenceHostError, serve_inference};
-pub use inference::pairing::{Forgotten, PairingFailure, pin_server, read_invitation};
+pub use inference::pairing::{Forgotten, PairingFailure, pair_server, read_invitation};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
     AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,
@@ -58,9 +58,9 @@ pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
 
 pub use inference::Paths as InferencePaths;
-pub use inference::pairing::forget as forget_paired_server;
 #[cfg(any(test, feature = "test-support"))]
-pub use inference::pin_server_for_tests;
+pub use inference::pair_server_for_tests;
+pub use inference::pairing::forget as forget_paired_server;
 pub use inference::{PairedServer, paired_server};
 /// What `aria doctor` needs to report about the relay without owning one.
 pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;

@@ -106,7 +106,7 @@ pub(crate) fn pairing_id_of(
 /// Stores a client identity pinned to `endpoint`, as pairing would, and
 /// returns its fingerprint.
 #[cfg(any(test, feature = "test-support"))]
-pub fn pin_server_for_tests(home: &Path, endpoint: &str) -> String {
+pub fn pair_server_for_tests(home: &Path, endpoint: &str) -> String {
     use sha2::Digest;
 
     let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
@@ -146,13 +146,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pin_reads_as_it_stands_and_changes_with_each_pairing() {
+    fn the_pairing_id_reads_as_it_stands_and_changes_with_each_pairing() {
         let home = tempfile::tempdir().unwrap();
         assert!(pairing_id(home.path()).is_none());
 
-        pin_server_for_tests(home.path(), "https://example.test:9851");
+        pair_server_for_tests(home.path(), "https://example.test:9851");
         let first = pairing_id(home.path()).unwrap();
-        pin_server_for_tests(home.path(), "https://example.test:9851");
+        pair_server_for_tests(home.path(), "https://example.test:9851");
         let second = pairing_id(home.path()).unwrap();
         assert!(first != second, "another server at the same address");
 
@@ -200,7 +200,7 @@ mod tests {
             "looking leaves an unpaired home alone"
         );
 
-        let hex = pin_server_for_tests(home.path(), "https://example.test:9851");
+        let hex = pair_server_for_tests(home.path(), "https://example.test:9851");
         assert_eq!(
             paired_server(home.path()).unwrap(),
             Some(PairedServer {

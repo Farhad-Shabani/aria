@@ -581,7 +581,7 @@ pub(in crate::daemon) mod tests {
         pub(in crate::daemon) async fn pair_home(&self, home: PathBuf) {
             let invitation = serde_json::to_string(&self.invite).unwrap();
             tokio::task::spawn_blocking(move || {
-                super::super::pairing::pin_server(&home, &invitation).unwrap()
+                super::super::pairing::pair_server(&home, &invitation).unwrap()
             })
             .await
             .unwrap();

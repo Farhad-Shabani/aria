@@ -93,7 +93,7 @@ mod tests {
         let local =
             "[stt]\nbackend = \"parakeet\"\nmodel = \"/models/parakeet\"\ndevice = \"gpu\"\n";
         let home = home(local);
-        aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
+        aria_daemon::pair_server_for_tests(home.path(), "https://box.test:9851");
 
         let (server, events) = set(home.path(), RunsOn::Server);
 
