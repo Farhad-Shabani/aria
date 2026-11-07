@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use aria_kit::synthesis::SpeakingRate;
 use aria_kit::transcription::{Language, LanguageCode};
 
-use super::{ApplicationOverrides, Chord, Prompts};
+use super::{ApplicationOverrides, Chord, Prompts, SttChoice};
 use super::{SettingsError, is_valid_model_id};
 use crate::config::AssistantId;
 use crate::rpc::RpcErrorCode;
@@ -144,6 +144,65 @@ pub enum DeliveryMode {
     Streaming,
 }
 
+/// Why dictation with some output can't stream here, so it delivers after
+/// recording stops. The stored delivery choice stays as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingUnavailable {
+    /// The clipboard takes the whole text at once.
+    Copy,
+    /// This platform pastes, so it delivers once.
+    Platform,
+    /// The speech model decodes only the finished recording.
+    Model,
+}
+
+/// Each output mode that can't stream under one speech engine, with why. A
+/// client looks up the output it shows, so a change to it shows at once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamingSupport(Vec<(OutputMode, StreamingUnavailable)>);
+
+impl StreamingSupport {
+    /// A server decides for itself, so its model never counts here.
+    pub fn of(stt: &SttChoice) -> Self {
+        Self::of_engine(stt.streams())
+    }
+
+    pub fn of_engine(streams: bool) -> Self {
+        OutputMode::ALL
+            .iter()
+            .filter_map(|&output| {
+                let reason = if output == OutputMode::Copy {
+                    StreamingUnavailable::Copy
+                } else if !PlatformTextDelivery::STREAMS {
+                    StreamingUnavailable::Platform
+                } else if !streams {
+                    StreamingUnavailable::Model
+                } else {
+                    return None;
+                };
+                Some((output, reason))
+            })
+            .collect()
+    }
+
+    pub fn unavailable(&self, output: OutputMode) -> Option<StreamingUnavailable> {
+        self.0
+            .iter()
+            .find(|(listed, _)| *listed == output)
+            .map(|(_, reason)| *reason)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (OutputMode, StreamingUnavailable)> + '_ {
+        self.0.iter().copied()
+    }
+}
+
+impl FromIterator<(OutputMode, StreamingUnavailable)> for StreamingSupport {
+    fn from_iter<I: IntoIterator<Item = (OutputMode, StreamingUnavailable)>>(entries: I) -> Self {
+        Self(entries.into_iter().collect())
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error(
@@ -230,5 +289,44 @@ mod rpc_tests {
         assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
         assert_eq!(failure.message, format!("{key} does not accept that value"));
         assert!(!failure.message.contains("private"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::LocalStt;
+
+    fn whole() -> StreamingSupport {
+        StreamingSupport::of(&SttChoice::Local(LocalStt::WhisperCandle))
+    }
+
+    #[test]
+    fn copy_never_streams_whatever_the_engine() {
+        assert_eq!(
+            whole().unavailable(OutputMode::Copy),
+            Some(StreamingUnavailable::Copy)
+        );
+    }
+
+    #[test]
+    fn only_an_engine_that_decodes_the_finished_recording_stops_streaming() {
+        let insert = OutputMode::Insert;
+        let platform = (!PlatformTextDelivery::STREAMS).then_some(StreamingUnavailable::Platform);
+        let reason = |stt| StreamingSupport::of(&stt).unavailable(insert);
+
+        assert_eq!(
+            whole().unavailable(insert),
+            platform.or(Some(StreamingUnavailable::Model))
+        );
+        assert_eq!(reason(SttChoice::Local(LocalStt::Parakeet)), platform);
+        assert_eq!(
+            reason(SttChoice::ParakeetMlx {
+                interpreter: "/usr/bin/python3".into()
+            }),
+            platform.or(Some(StreamingUnavailable::Model))
+        );
+        let server = crate::config::ServerEndpoint::parse("https://box.test:9851").unwrap();
+        assert_eq!(reason(SttChoice::Server(server)), platform);
     }
 }

@@ -482,7 +482,7 @@ fn edit_text(
     patch.apply_to(&mut document).map_err(Refusal::Invalid)?;
     let edited = format!("{prefix}{document}");
     let next = Loaded::parse(&edited, home).map_err(Refusal::Invalid)?;
-    let restart_needed = document::changed_keys(&current.settings, &next.settings)
+    let restart_needed = document::changed_keys(&current.settings, &next.settings, home)
         .into_iter()
         .any(|key| key.apply() == Apply::Restart);
     let written = if restart_needed {

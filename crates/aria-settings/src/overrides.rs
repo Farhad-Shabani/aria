@@ -92,9 +92,8 @@ impl ApplicationOverrides {
     }
 
     /// Drops choices that change nothing. A value equal to the shared
-    /// setting goes, so the app follows that setting when it changes.
-    /// An app's own Copy drops its delivery choice, because Copy cannot
-    /// stream. A shared Copy keeps it for when that setting changes.
+    /// setting goes, so the app follows that setting when it changes. A
+    /// delivery choice Copy can't stream stays, for when the output changes.
     pub(crate) fn without_inert(self, output: OutputMode, delivery: DeliveryMode) -> Self {
         let map = self
             .0
@@ -104,11 +103,9 @@ impl ApplicationOverrides {
                     output_mode,
                     delivery_mode,
                 } = entry.overrides;
-                let output_mode = output_mode.filter(|mode| *mode != output);
-                let copies = output_mode == Some(OutputMode::Copy);
                 let overrides = DictationOverrides {
-                    output_mode,
-                    delivery_mode: delivery_mode.filter(|mode| !copies && *mode != delivery),
+                    output_mode: output_mode.filter(|mode| *mode != output),
+                    delivery_mode: delivery_mode.filter(|mode| *mode != delivery),
                 };
                 (id, ApplicationOverride { overrides, ..entry })
             })
@@ -208,14 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_apps_own_copy_drops_its_delivery_choice() {
-        let streaming = ApplicationOverride {
-            excluded: false,
-            overrides: DictationOverrides {
-                output_mode: None,
-                delivery_mode: Some(DeliveryMode::Streaming),
-            },
-        };
+    fn an_apps_copy_keeps_its_delivery_choice() {
         let copy_streaming = ApplicationOverride {
             overrides: DictationOverrides {
                 delivery_mode: Some(DeliveryMode::Streaming),
@@ -223,19 +213,11 @@ mod tests {
             },
             ..copy()
         };
-        let overrides = ApplicationOverrides::new([
-            (id("com.copy"), copy_streaming),
-            (id("com.follows"), streaming),
-        ])
-        .expect("valid");
+        let overrides =
+            ApplicationOverrides::new([(id("com.copy"), copy_streaming)]).expect("valid");
 
         let normalized = overrides.without_inert(OutputMode::Insert, DeliveryMode::Complete);
-        assert_eq!(normalized.get("com.copy"), Some(copy()));
-        assert_eq!(normalized.get("com.follows"), Some(streaming));
 
-        let under_shared_copy = ApplicationOverrides::new([(id("com.follows"), streaming)])
-            .expect("valid")
-            .without_inert(OutputMode::Copy, DeliveryMode::Complete);
-        assert_eq!(under_shared_copy.get("com.follows"), Some(streaming));
+        assert_eq!(normalized.get("com.copy"), Some(copy_streaming));
     }
 }

@@ -23,6 +23,9 @@ pub struct Row {
     pub value: serde_json::Value,
     /// The running daemon still uses its startup value.
     pub restart_required: bool,
+    /// Why dictation can't stream with the current output and engine,
+    /// whatever this value says. Only `dictation.delivery_mode` carries one.
+    pub streaming_unavailable: Option<crate::StreamingUnavailable>,
 }
 
 impl Row {
@@ -77,31 +80,31 @@ fn show_with(home: &Path, pending: &[String], key: Option<&str>) -> Result<Vec<R
         }
         None => Key::ALL.to_vec(),
     };
+    let streaming_unavailable = if keys.contains(&Key::DictationDeliveryMode) {
+        let output = crate::Settings::from_file(&settings)?.output_mode;
+        crate::StreamingSupport::of(&settings.choices().stt).unavailable(output)
+    } else {
+        None
+    };
     Ok(keys
         .into_iter()
         .map(|key| {
             let written = document::value_at(&values, key);
             let set = !written.is_null();
-            let value = if set { written } else { default_value(key) };
+            let value = if set { written } else { key.default_value() };
             Row {
                 key,
                 set,
                 value,
                 restart_required: pending.iter().any(|path| path == key.path()),
+                streaming_unavailable: if key == Key::DictationDeliveryMode {
+                    streaming_unavailable
+                } else {
+                    None
+                },
             }
         })
         .collect())
-}
-
-/// The key's default as JSON, read from its TOML literal.
-fn default_value(key: Key) -> serde_json::Value {
-    let Some(literal) = key.default() else {
-        return serde_json::Value::Null;
-    };
-    toml_edit::de::from_str::<serde_json::Value>(&format!("value = {literal}"))
-        .ok()
-        .and_then(|mut table| table.get_mut("value").map(serde_json::Value::take))
-        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Writes key and value pairs in one change, so keys that only make sense
@@ -303,7 +306,7 @@ pub fn schema() -> serde_json::Value {
         let mut property = kind_schema(key.kind());
         if let Some(object) = property.as_object_mut() {
             object.insert("description".to_owned(), key.description().into());
-            let default = default_value(*key);
+            let default = key.default_value();
             if !default.is_null() {
                 object.insert("default".to_owned(), default);
             }
@@ -675,6 +678,23 @@ mod tests {
 
         assert!(matches!(outcome, Outcome::Applied { .. }), "{outcome:?}");
         assert!(file(home.path()).contains(table));
+    }
+
+    #[test]
+    fn show_says_why_a_whole_only_model_delivers_complete() {
+        let home = home_with("[stt]\nbackend = \"whisper-candle\"\n");
+
+        let rows = show_with(home.path(), &[], Some("dictation.delivery_mode")).expect("runs");
+
+        use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
+        let platform =
+            (!PlatformTextDelivery::STREAMS).then_some(crate::StreamingUnavailable::Platform);
+        assert_eq!(
+            rows[0].streaming_unavailable,
+            platform.or(Some(crate::StreamingUnavailable::Model))
+        );
+        let other = show_with(home.path(), &[], Some("memory.enabled")).expect("runs");
+        assert_eq!(other[0].streaming_unavailable, None);
     }
 
     #[test]

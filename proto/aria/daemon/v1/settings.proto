@@ -36,7 +36,7 @@ message SettingsStatus {
   // Absent while settings.toml is valid. While it is set, the daemon keeps
   // the last valid values.
   SettingsFault fault = 1;
-  // Dotted keys, such as "stt.backend", whose file value differs
+  // Dotted keys, such as "tts.backend", whose file value differs
   // from the one the daemon started with. They apply after a restart.
   repeated string restart_required = 2;
   // Dotted keys the daemon wrote in the 10 s before the last reload that the
@@ -82,6 +82,10 @@ message SettingsSnapshot {
   // A hash of the file's values. A comment edit leaves it unchanged.
   uint64 revision = 1;
   Settings settings = 2;
+  // Each output mode that can't stream here, with why. A mode not listed
+  // streams when `delivery_mode` asks it to. An app's dictation follows the
+  // entry for its own output.
+  repeated StreamingUnavailableOutput streaming_unavailable = 3;
 }
 
 message SettingsConflict {
@@ -97,9 +101,8 @@ message Settings {
   // Dictation
 
   OutputMode output_mode = 9;
-  // Copy output cannot stream, so it always delivers the complete text.
-  // `delivery_mode` stays stored and applies again once `output_mode` is no
-  // longer Copy.
+  // What you chose. Nothing rewrites it when streaming is unavailable, so
+  // it applies again once streaming is possible.
   DeliveryMode delivery_mode = 10;
   // Whole milliseconds, 100 to 10000 inclusive.
   uint64 silence_duration_ms = 1;
@@ -170,7 +173,7 @@ message SettingsPatch {
   // Dictation
 
   optional OutputMode output_mode = 9;
-  // Stored even while output_mode is Copy; see `Settings.delivery_mode`.
+  // Stored even where streaming is unavailable; see `Settings.delivery_mode`.
   optional DeliveryMode delivery_mode = 10;
   // Whole milliseconds, 100 to 10000 inclusive.
   optional uint64 silence_duration_ms = 1;
@@ -261,8 +264,7 @@ message Prompts {
 }
 
 // Dictation settings that replace the settings above. Each absent field
-// inherits them. The daemon drops a value equal to the setting, and the
-// delivery choice of an app set to Copy output, which cannot stream.
+// inherits them. The daemon drops a value equal to the setting.
 message DictationOverrides {
   optional OutputMode output_mode = 1;
   optional DeliveryMode delivery_mode = 2;
@@ -277,6 +279,22 @@ message ApplicationOverride {
   // The overrides stay stored for when it is switched back on.
   bool excluded = 2;
   DictationOverrides overrides = 3;
+}
+
+message StreamingUnavailableOutput {
+  OutputMode output_mode = 1;
+  StreamingUnavailable reason = 2;
+}
+
+// Why an output mode can't stream.
+enum StreamingUnavailable {
+  STREAMING_UNAVAILABLE_UNSPECIFIED = 0;
+  // The clipboard takes the whole text at once.
+  STREAMING_UNAVAILABLE_COPY = 1;
+  // This platform pastes, so it delivers once.
+  STREAMING_UNAVAILABLE_PLATFORM = 2;
+  // The speech model decodes only the finished recording.
+  STREAMING_UNAVAILABLE_MODEL = 3;
 }
 
 // At most 64 entries, each application ID once.

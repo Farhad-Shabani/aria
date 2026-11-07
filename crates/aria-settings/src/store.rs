@@ -5,8 +5,8 @@ use aria_kit::synthesis::SpeakingRate;
 use aria_kit::transcription::Language;
 use tokio::sync::watch;
 
-use super::DeliveryMode;
 use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view};
+use super::{DeliveryMode, StreamingSupport};
 use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsFile, Written};
 use crate::config::AssistantId;
 use aria_kit::audio::{AutoStop, SilenceDuration};
@@ -18,6 +18,8 @@ use aria_platform::hotkey::AriaKey;
 pub struct SettingsSnapshot {
     pub revision: u64,
     pub settings: Settings,
+    /// Derived from the engine the settings name; never written.
+    pub streaming_unavailable: StreamingSupport,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -166,6 +168,7 @@ fn snapshot_of(loaded: &Loaded) -> Result<SettingsSnapshot, StoreError> {
     Ok(SettingsSnapshot {
         revision: loaded.revision.get(),
         settings: Settings::from_file(&loaded.settings)?,
+        streaming_unavailable: StreamingSupport::of(&loaded.settings.choices().stt),
     })
 }
 
