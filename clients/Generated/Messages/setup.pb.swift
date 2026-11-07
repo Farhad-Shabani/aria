@@ -34,9 +34,8 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
-/// Where dictation transcribes. On the server, the local engine stays
-/// configured for the way back.
-public nonisolated enum Aria_Setup_V1_TranscriptionRunsOn: SwiftProtobuf.Enum, Swift.CaseIterable {
+/// Where a model runs: on this machine, or on the paired server.
+public nonisolated enum Aria_Setup_V1_RunsOn: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case local // = 1
@@ -68,7 +67,7 @@ public nonisolated enum Aria_Setup_V1_TranscriptionRunsOn: SwiftProtobuf.Enum, S
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Aria_Setup_V1_TranscriptionRunsOn] = [
+  public static let allCases: [Aria_Setup_V1_RunsOn] = [
     .unspecified,
     .local,
     .server,
@@ -598,7 +597,8 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   /// Clears the value of `server`. Subsequent reads from it will return its default value.
   public mutating func clearServer() {_uniqueStorage()._server = nil}
 
-  public var transcriptionRunsOn: Aria_Setup_V1_TranscriptionRunsOn {
+  /// On the server, the local engine stays configured for the way back.
+  public var transcriptionRunsOn: Aria_Setup_V1_RunsOn {
     get {_storage._transcriptionRunsOn}
     set {_uniqueStorage()._transcriptionRunsOn = newValue}
   }
@@ -1001,7 +1001,7 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnRequest: Sendable 
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var runsOn: Aria_Setup_V1_TranscriptionRunsOn = .unspecified
+  public var runsOn: Aria_Setup_V1_RunsOn = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1100,8 +1100,8 @@ public nonisolated struct Aria_Setup_V1_ServiceStatus: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "aria.setup.v1"
 
-nonisolated extension Aria_Setup_V1_TranscriptionRunsOn: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TRANSCRIPTION_RUNS_ON_UNSPECIFIED\0\u{1}TRANSCRIPTION_RUNS_ON_LOCAL\0\u{1}TRANSCRIPTION_RUNS_ON_SERVER\0")
+nonisolated extension Aria_Setup_V1_RunsOn: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RUNS_ON_UNSPECIFIED\0\u{1}RUNS_ON_LOCAL\0\u{1}RUNS_ON_SERVER\0")
 }
 
 nonisolated extension Aria_Setup_V1_ModelSource: SwiftProtobuf._ProtoNameProviding {
@@ -1160,7 +1160,7 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
     var _grant: Aria_Setup_V1_Grant = .unspecified
     var _missing: [Aria_Setup_V1_Missing] = []
     var _server: Aria_Setup_V1_PairedServer? = nil
-    var _transcriptionRunsOn: Aria_Setup_V1_TranscriptionRunsOn = .unspecified
+    var _transcriptionRunsOn: Aria_Setup_V1_RunsOn = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.

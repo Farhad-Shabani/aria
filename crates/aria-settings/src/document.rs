@@ -587,7 +587,7 @@ pub struct Stt {
     pub model: Option<String>,
     pub device: Option<DeviceName>,
     pub interpreter: Option<PathBuf>,
-    pub runs_on: Option<TranscriptionRunsOn>,
+    pub runs_on: Option<RunsOn>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -909,20 +909,21 @@ pub enum TtsFallbackName {
     System,
 }
 
-/// Where dictation transcribes. The paired server's address lives with its
-/// pin, not here.
+/// Where a model runs. The paired server's address lives with its pin, not
+/// here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TranscriptionRunsOn {
+pub enum RunsOn {
     #[default]
     Local,
     Server,
 }
 
-impl TranscriptionRunsOn {
-    pub const ALL: [Self; 2] = [Self::Local, Self::Server];
+impl RunsOn {
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 2] = [Self::Local, Self::Server];
 
-    /// The value `stt.runs_on` takes.
+    /// The value a `runs_on` key takes.
     pub fn name(self) -> &'static str {
         match self {
             Self::Local => "local",
@@ -2126,7 +2127,7 @@ pub(super) mod tests {
         );
 
         let choices = loaded.settings.choices();
-        assert_eq!(choices.stt_runs_on, TranscriptionRunsOn::Server);
+        assert_eq!(choices.stt_runs_on, RunsOn::Server);
         assert_eq!(choices.stt, SttChoice::Local(LocalStt::Parakeet));
         assert_eq!(loaded.settings.stt.device, Some(DeviceName::Gpu));
     }

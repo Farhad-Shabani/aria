@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn the_runs_on_choices_are_every_place_transcription_runs() {
-        let names: Vec<&str> = crate::TranscriptionRunsOn::ALL
+        let names: Vec<&str> = crate::RunsOn::ALL
             .iter()
             .map(|runs_on| runs_on.name())
             .collect();

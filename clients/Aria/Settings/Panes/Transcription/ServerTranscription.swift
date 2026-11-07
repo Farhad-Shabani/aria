@@ -11,8 +11,7 @@ final class ServerTranscription: ObservableObject {
         var inspect: () async throws -> Aria_Setup_V1_Inspection
         var pair: (_ invitation: String) async throws -> Void
         var forget: () async throws -> Void
-        var setRunsOn:
-            (TranscriptionRunsOn, @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void) async throws -> Void
+        var setRunsOn: (RunsOn, @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void) async throws -> Void
     }
 
     /// Coming back from the server may first download the local engine's model.
@@ -57,7 +56,7 @@ final class ServerTranscription: ObservableObject {
     }
 
     /// A cancel can land after the write, so the change is read back even then.
-    func use(_ runsOn: TranscriptionRunsOn) async {
+    func use(_ runsOn: RunsOn) async {
         guard !isBusy else { return }
         progress = .finishing
         defer { progress = nil }

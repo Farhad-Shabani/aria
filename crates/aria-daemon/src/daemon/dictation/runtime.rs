@@ -1247,7 +1247,8 @@ mod history_tests {
             let home_dir = home.clone();
             let mut config =
                 DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
-            config.transcription = TranscriptionBackend::Server(None);
+            config.transcription =
+                TranscriptionBackend::Server(crate::daemon::inference::server_pin(&home_dir));
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: aria_kit::audio::ReplayPace::Immediate,

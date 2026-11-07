@@ -25,6 +25,7 @@ use crate::ipc::wire;
 use aria_primitives::local_socket::LocalSocketError;
 use aria_primitives::private_document::DocumentError;
 use aria_settings::rpc::RpcErrorCode;
+use aria_voice::config::ServerPin;
 use aria_voice::transcription::{
     Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
 };
@@ -176,11 +177,32 @@ impl RemoteTranscriber {
         Self::open_pinned(home).map_err(transcription_error)
     }
 
+    /// Opens only the pairing `pin` names, so an engine never sends audio
+    /// under a pin other than the one it is known by.
+    pub(crate) fn open_matching(
+        home: &Path,
+        pin: Option<&ServerPin>,
+    ) -> Result<Self, TranscriptionError> {
+        let identity = Self::identity(home).map_err(transcription_error)?;
+        if super::pin_of(&identity).ok().as_ref() != pin {
+            return Err(transcription_error(RemoteClientError::Identity(
+                identity::Error::PinMoved,
+            )));
+        }
+        Self::connect(&identity).map_err(transcription_error)
+    }
+
     fn open_pinned(home: &Path) -> Result<Self, RemoteClientError> {
-        let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
-            .map_err(identity_error)?;
+        Self::connect(&Self::identity(home)?)
+    }
+
+    fn identity(home: &Path) -> Result<ClientIdentity, RemoteClientError> {
+        ClientIdentity::open(&Paths::in_home(home).client_identity()).map_err(identity_error)
+    }
+
+    fn connect(identity: &ClientIdentity) -> Result<Self, RemoteClientError> {
         let server = identity.pinned_server().map_err(identity_error)?;
-        let endpoint = tls::endpoint(&identity, server)
+        let endpoint = tls::endpoint(identity, server)
             .map_err(|error| RemoteClientError::Identity(error.into()))?;
         let runtime = RemoteRuntime::new()?;
         let channel = {

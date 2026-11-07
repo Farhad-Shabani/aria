@@ -19,7 +19,7 @@ use aria_settings::Directory;
 use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::{
-    DictationConfig, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
+    DictationConfig, ServerPin, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
 };
 use aria_voice::dictation::{
     CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
@@ -258,14 +258,17 @@ fn select_engine(
 ) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
         TranscriptionBackend::Local(config) => select_local(config, loading),
-        TranscriptionBackend::Server(_) => select_remote(home),
+        TranscriptionBackend::Server(pin) => select_remote(home, pin.as_ref()),
     }
 }
 
 /// Each operation names the engine the server ran, so the executor's own
 /// name only labels a dictation whose engine was never reported.
-fn select_remote(home: &Path) -> Result<SelectedEngine, TranscriptionError> {
-    let remote = RemoteTranscriber::open(home)?;
+fn select_remote(
+    home: &Path,
+    pin: Option<&ServerPin>,
+) -> Result<SelectedEngine, TranscriptionError> {
+    let remote = RemoteTranscriber::open_matching(home, pin)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
         Transcription::<_, Streaming>::delegated(remote),
@@ -735,21 +738,32 @@ fn retry_transcription(
 mod tests {
     use super::*;
 
-    /// Only the server pinned at pairing receives audio.
+    /// Only the server pinned at pairing receives audio, and only under the
+    /// pin the engine was chosen for.
     #[test]
-    fn the_server_engine_needs_a_pairing() {
+    fn the_server_engine_opens_only_the_pin_it_was_chosen_for() {
         let home = tempfile::tempdir().unwrap();
-        let select = || {
+        let select = |pin| {
             select_engine(
-                TranscriptionBackend::Server(None),
+                TranscriptionBackend::Server(pin),
                 ModelLoading::OnFirstUse,
                 home.path(),
             )
         };
+        let current = || crate::daemon::inference::server_pin(home.path());
 
-        assert!(select().is_err());
-        crate::daemon::inference::pin_server_for_tests(home.path(), "https://paired.test:9851");
-        assert!(select().is_ok());
+        assert!(select(None).is_err());
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://a.test:9851");
+        let chosen = current();
+        assert!(select(chosen.clone()).is_ok());
+        assert!(select(None).is_err(), "a pairing appeared after the choice");
+
+        crate::daemon::inference::pin_server_for_tests(home.path(), "https://b.test:9851");
+        assert!(
+            select(chosen).is_err(),
+            "the pairing changed after the choice"
+        );
+        assert!(select(current()).is_ok());
     }
 
     /// A settings store over `home`, with no file yet.
@@ -790,7 +804,8 @@ mod tests {
             );
             let mut dictation =
                 DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
-            dictation.transcription = TranscriptionBackend::Server(None);
+            dictation.transcription =
+                TranscriptionBackend::Server(crate::daemon::inference::server_pin(&home_dir));
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,

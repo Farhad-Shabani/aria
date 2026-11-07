@@ -10,7 +10,7 @@ final class ServerTranscriptionTests: XCTestCase {
 
     private final class Spy {
         var inspection: Aria_Setup_V1_Inspection
-        var sentRunsOn: [TranscriptionRunsOn] = []
+        var sentRunsOn: [RunsOn] = []
         var paired: [String] = []
         var pairFails = false
         var forgotten = 0
@@ -54,7 +54,7 @@ final class ServerTranscriptionTests: XCTestCase {
         }
     }
 
-    private static func mac(on runsOn: TranscriptionRunsOn) -> Aria_Setup_V1_Inspection {
+    private static func mac(on runsOn: RunsOn) -> Aria_Setup_V1_Inspection {
         var inspection = Aria_Setup_V1_Inspection()
         inspection.defaults.transcriptionEngineID = "whisper"
         inspection.transcriptionRunsOn = runsOn.wire

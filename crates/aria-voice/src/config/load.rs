@@ -11,8 +11,8 @@ use super::{
 };
 use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
 use aria_settings::{
-    CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, Speaker,
-    SttChoice, TranscriptionRunsOn, TtsEngine, TtsFallbackName,
+    CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, RunsOn,
+    Speaker, SttChoice, TtsEngine, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -31,9 +31,9 @@ fn chosen_listen_engine(settings: &CheckedSettings, home: &Path) -> Option<Trans
             home,
         )),
         None => match settings.choices().stt_runs_on {
-            TranscriptionRunsOn::Local => Some(TranscriptionConfig::load(settings, home))
+            RunsOn::Local => Some(TranscriptionConfig::load(settings, home))
                 .filter(crate::transcription::streams),
-            TranscriptionRunsOn::Server => None,
+            RunsOn::Server => None,
         },
     }
 }
@@ -235,8 +235,8 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 impl TranscriptionBackend {
     pub fn load(settings: &CheckedSettings, home: &Path, pin: Option<ServerPin>) -> Self {
         match settings.choices().stt_runs_on {
-            TranscriptionRunsOn::Server => Self::Server(pin),
-            TranscriptionRunsOn::Local => Self::Local(TranscriptionConfig::load(settings, home)),
+            RunsOn::Server => Self::Server(pin),
+            RunsOn::Local => Self::Local(TranscriptionConfig::load(settings, home)),
         }
     }
 }

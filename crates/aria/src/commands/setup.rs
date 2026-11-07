@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use crate::setup::{Enrolled, Grant, Options as SetupOptions, SettingsWrite, TryOut};
 use anyhow::Context;
-use aria_settings::TranscriptionRunsOn;
+use aria_settings::RunsOn;
 use clap::Subcommand;
 
 use super::service::service_status_message;
@@ -58,7 +58,7 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn set_transcription_runs_on(runs_on: TranscriptionRunsOn) -> anyhow::Result<()> {
+pub(super) fn set_transcription_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
     let summary = crate::setup::transcription_runs_on::set_transcription_runs_on(
         runs_on,
         std::io::stdout().is_terminal(),
@@ -178,41 +178,39 @@ mod tests {
                 yes,
                 skip_models,
                 stt,
-                stt_runs_on,
+                server,
+                local,
             } = cli.command
             else {
                 panic!("a setup invocation should parse as Setup");
             };
-            (yes, skip_models, stt, stt_runs_on)
+            (yes, skip_models, stt, server, local)
         };
 
-        assert_eq!(parse(&["aria", "setup"]), (false, false, None, None));
+        assert_eq!(
+            parse(&["aria", "setup"]),
+            (false, false, None, false, false)
+        );
         assert_eq!(
             parse(&["aria", "setup", "--yes", "--skip-models"]),
-            (true, true, None, None)
+            (true, true, None, false, false)
         );
         assert_eq!(
-            parse(&["aria", "setup", "--stt-runs-on", "server"]),
-            (false, false, None, Some(TranscriptionRunsOn::Server))
+            parse(&["aria", "setup", "--server"]),
+            (false, false, None, true, false)
         );
-        assert!(Cli::try_parse_from(["aria", "setup", "--stt-runs-on", "mac"]).is_err());
+        assert_eq!(
+            parse(&["aria", "setup", "--local"]),
+            (false, false, None, false, true)
+        );
+        assert!(Cli::try_parse_from(["aria", "setup", "--server", "--local"]).is_err());
         assert_eq!(
             parse(&["aria", "setup", "--stt", "moonshine"]),
-            (false, false, Some("moonshine".to_owned()), None)
+            (false, false, Some("moonshine".to_owned()), false, false)
         );
         assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "--yes"]).is_err());
         assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "inspect"]).is_err());
-        assert!(
-            Cli::try_parse_from([
-                "aria",
-                "setup",
-                "--stt",
-                "moonshine",
-                "--stt-runs-on",
-                "local"
-            ])
-            .is_err()
-        );
+        assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "--local"]).is_err());
     }
 
     #[test]

@@ -10,7 +10,7 @@ use prost::Message;
 
 use crate::supervisor::{DaemonState, Job, Status};
 use aria_daemon::PairedServer;
-use aria_settings::TranscriptionRunsOn;
+use aria_settings::RunsOn;
 
 use super::backends::ModelSource;
 use super::models::ModelFiles;
@@ -113,21 +113,21 @@ pub fn set_transcription_runs_on(
     write(output, &response)
 }
 
-fn runs_on(value: i32) -> Result<TranscriptionRunsOn, SetupError> {
-    match generated::TranscriptionRunsOn::try_from(value) {
-        Ok(generated::TranscriptionRunsOn::Local) => Ok(TranscriptionRunsOn::Local),
-        Ok(generated::TranscriptionRunsOn::Server) => Ok(TranscriptionRunsOn::Server),
-        Ok(generated::TranscriptionRunsOn::Unspecified) | Err(_) => {
+fn runs_on(value: i32) -> Result<RunsOn, SetupError> {
+    match generated::RunsOn::try_from(value) {
+        Ok(generated::RunsOn::Local) => Ok(RunsOn::Local),
+        Ok(generated::RunsOn::Server) => Ok(RunsOn::Server),
+        Ok(generated::RunsOn::Unspecified) | Err(_) => {
             Err(SetupError::Invalid("no known place to run transcription"))
         }
     }
 }
 
-impl From<TranscriptionRunsOn> for generated::TranscriptionRunsOn {
-    fn from(runs_on: TranscriptionRunsOn) -> Self {
+impl From<RunsOn> for generated::RunsOn {
+    fn from(runs_on: RunsOn) -> Self {
         match runs_on {
-            TranscriptionRunsOn::Local => Self::Local,
-            TranscriptionRunsOn::Server => Self::Server,
+            RunsOn::Local => Self::Local,
+            RunsOn::Server => Self::Server,
         }
     }
 }
@@ -195,9 +195,7 @@ impl From<&Inspection> for generated::Inspection {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
-            transcription_runs_on: generated::TranscriptionRunsOn::from(
-                inspection.transcription_runs_on,
-            ) as i32,
+            transcription_runs_on: generated::RunsOn::from(inspection.transcription_runs_on) as i32,
         }
     }
 }

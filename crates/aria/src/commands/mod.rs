@@ -3,7 +3,7 @@
 use anyhow::Context;
 use aria_daemon::{AssistantId, OutputMode};
 use aria_platform::runtime::PreparedRuntimePaths;
-use aria_settings::TranscriptionRunsOn;
+use aria_settings::RunsOn;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod ask;
@@ -94,15 +94,13 @@ enum Command {
         /// downloading only that engine's models
         #[arg(long, value_name = "ENGINE", conflicts_with_all = ["yes", "skip_models"])]
         stt: Option<String>,
-        /// Transcribe on this machine (local) or on the paired server
-        /// (server), keeping the local engine and its settings
-        #[arg(
-            long,
-            value_name = "RUNS_ON",
-            value_parser = runs_on_parser(),
-            conflicts_with_all = ["yes", "skip_models", "stt"],
-        )]
-        stt_runs_on: Option<TranscriptionRunsOn>,
+        /// Transcribe on the paired server, keeping the local engine and its
+        /// settings for later
+        #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt", "local"])]
+        server: bool,
+        /// Transcribe on this machine again
+        #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt"])]
+        local: bool,
     },
     /// See and remove the models setup downloaded
     Models {
@@ -178,19 +176,6 @@ fn assistant_parser() -> impl clap::builder::TypedValueParser<Value = AssistantI
         .try_map(|name| name.parse::<AssistantId>())
 }
 
-fn runs_on_parser() -> impl clap::builder::TypedValueParser<Value = TranscriptionRunsOn> {
-    use clap::builder::{PossibleValuesParser, TypedValueParser};
-
-    PossibleValuesParser::new(TranscriptionRunsOn::ALL.map(TranscriptionRunsOn::name)).try_map(
-        |name| {
-            TranscriptionRunsOn::ALL
-                .into_iter()
-                .find(|runs_on| runs_on.name() == name)
-                .ok_or("no such place to transcribe")
-        },
-    )
-}
-
 impl From<CliOutputMode> for OutputMode {
     fn from(mode: CliOutputMode) -> Self {
         match mode {
@@ -244,15 +229,21 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         } => setup::set_transcription_engine(&engine),
         Command::Setup {
             command: None,
-            stt_runs_on: Some(runs_on),
+            server: true,
             ..
-        } => setup::set_transcription_runs_on(runs_on),
+        } => setup::set_transcription_runs_on(RunsOn::Server),
+        Command::Setup {
+            command: None,
+            local: true,
+            ..
+        } => setup::set_transcription_runs_on(RunsOn::Local),
         Command::Setup {
             command: None,
             yes,
             skip_models,
             stt: None,
-            stt_runs_on: None,
+            server: false,
+            local: false,
         } => setup::run(yes, skip_models),
         Command::Setup {
             command: Some(command),

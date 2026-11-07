@@ -33,16 +33,16 @@ message Inspection {
   repeated Missing missing = 11;
   // Unset when nothing is paired.
   PairedServer server = 12;
-  TranscriptionRunsOn transcription_runs_on = 13;
+  // On the server, the local engine stays configured for the way back.
+  RunsOn transcription_runs_on = 13;
 }
 
-// Where dictation transcribes. On the server, the local engine stays
-// configured for the way back.
-enum TranscriptionRunsOn {
-  TRANSCRIPTION_RUNS_ON_UNSPECIFIED = 0;
-  TRANSCRIPTION_RUNS_ON_LOCAL = 1;
+// Where a model runs: on this machine, or on the paired server.
+enum RunsOn {
+  RUNS_ON_UNSPECIFIED = 0;
+  RUNS_ON_LOCAL = 1;
   // The server `Inspection.server` names.
-  TRANSCRIPTION_RUNS_ON_SERVER = 2;
+  RUNS_ON_SERVER = 2;
 }
 
 // The server the pairing pins. Transcription on the server reaches only it.
@@ -227,7 +227,7 @@ message SetTranscriptionEngineSummary {
 // Coming back first fetches the local engine's missing models. Only
 // `stt.runs_on` changes, and nothing restarts.
 message SetTranscriptionRunsOnRequest {
-  TranscriptionRunsOn runs_on = 1;
+  RunsOn runs_on = 1;
 }
 
 // Events until the change ends, then exactly one summary. STEP_MODELS starts

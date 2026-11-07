@@ -80,21 +80,25 @@ pub fn paired_server(home: &Path) -> Result<Option<PairedServer>, identity::Erro
 /// The pin as it stands now. Anything that keeps a transcriber from opening
 /// it reads as no pin.
 pub(crate) fn server_pin(home: &Path) -> Option<ServerPin> {
-    use sha2::Digest;
-
     let path = Paths::in_home(home).client_identity();
     if !path.is_file() {
         return None;
     }
     let identity = identity::ClientIdentity::open(&path).ok()?;
-    let server = identity.pinned_server().ok()?;
+    pin_of(&identity).ok()
+}
+
+pub(crate) fn pin_of(identity: &identity::ClientIdentity) -> Result<ServerPin, identity::Error> {
+    use sha2::Digest;
+
+    let server = identity.pinned_server()?;
     // The endpoint is the one part of variable length, so it goes last.
     let id = sha2::Sha256::new()
         .chain_update(server.fingerprint)
         .chain_update(identity.fingerprint())
         .chain_update(server.endpoint.to_string())
         .finalize();
-    Some(ServerPin::new(id.into()))
+    Ok(ServerPin::new(id.into()))
 }
 
 /// Stores a client identity pinned to `endpoint`, as pairing would, and

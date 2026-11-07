@@ -35,7 +35,7 @@ use aria_kit::backend::ModelError;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_settings::config::{backend, tts_backend};
-use aria_settings::{CheckedSettings, SettingsError, TranscriptionRunsOn};
+use aria_settings::{CheckedSettings, RunsOn, SettingsError};
 use aria_voice::config;
 use aria_voice::speech::SpeechRequest;
 
@@ -96,7 +96,7 @@ pub struct Inspection {
     pub service: Status,
     pub grant: Grant,
     pub key_remapped: bool,
-    pub transcription_runs_on: TranscriptionRunsOn,
+    pub transcription_runs_on: RunsOn,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
@@ -289,8 +289,8 @@ fn pair_server_at(home: &Path, invitation: &str) -> Result<String, SetupError> {
 
 fn check_server_unused(home: &Path) -> Result<(), SetupError> {
     match settings_file::read(home)?.choices().stt_runs_on {
-        TranscriptionRunsOn::Server => Err(SetupError::ServerInUse),
-        TranscriptionRunsOn::Local => Ok(()),
+        RunsOn::Server => Err(SetupError::ServerInUse),
+        RunsOn::Local => Ok(()),
     }
 }
 
@@ -357,13 +357,12 @@ impl Inspection {
     /// The local engine, while it transcribes. On the server its models
     /// wait: going back fetches them.
     fn local_stt<'a>(&self, engine: &'a str) -> Option<&'a str> {
-        (self.transcription_runs_on == TranscriptionRunsOn::Local).then_some(engine)
+        (self.transcription_runs_on == RunsOn::Local).then_some(engine)
     }
 
     /// The server transcribes, but no usable pin says where it is.
     fn server_is_unusable(&self) -> bool {
-        self.transcription_runs_on == TranscriptionRunsOn::Server
-            && !matches!(self.pairing, Pairing::Paired(_))
+        self.transcription_runs_on == RunsOn::Server && !matches!(self.pairing, Pairing::Paired(_))
     }
 
     /// What a run still has to put in place; empty once setup is done.
@@ -940,7 +939,7 @@ pub enum SetupError {
     #[error("another setup is already running")]
     Busy,
 
-    #[error("transcription runs on the paired server; run `aria setup --stt-runs-on local` first")]
+    #[error("transcription runs on the paired server; run `aria setup --local` first")]
     ServerInUse,
 
     #[error(transparent)]
@@ -1196,7 +1195,7 @@ mod tests {
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
-            transcription_runs_on: TranscriptionRunsOn::Local,
+            transcription_runs_on: RunsOn::Local,
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
@@ -1312,7 +1311,7 @@ mod tests {
         let moonshine = Missing::Model("moonshine");
         assert!(inspection.missing().contains(&moonshine));
 
-        inspection.transcription_runs_on = TranscriptionRunsOn::Server;
+        inspection.transcription_runs_on = RunsOn::Server;
         inspection.pairing = paired("https://box.test:9851");
 
         assert!(!inspection.missing().contains(&moonshine));
@@ -1324,7 +1323,7 @@ mod tests {
             stt: Some(backend::MOONSHINE.to_owned()),
             ..configured()
         });
-        inspection.transcription_runs_on = TranscriptionRunsOn::Server;
+        inspection.transcription_runs_on = RunsOn::Server;
         inspection.pairing = paired("https://box.test:9851");
         let selections = Selections::defaults(&inspection);
 
@@ -1607,7 +1606,7 @@ mod tests {
     #[test]
     fn the_server_without_a_usable_pin_needs_setup() {
         let mut inspection = inspection(configured());
-        inspection.transcription_runs_on = TranscriptionRunsOn::Server;
+        inspection.transcription_runs_on = RunsOn::Server;
 
         assert!(inspection.missing().contains(&Missing::Settings));
         inspection.pairing = Pairing::Unusable;

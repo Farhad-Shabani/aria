@@ -29,7 +29,7 @@ pub(super) fn run(command: RemoteCommand) -> anyhow::Result<()> {
         RemoteCommand::Pair { json: false } => {
             let fingerprint = crate::setup::pair_server(std::io::stdin().lock())?;
             println!("Paired client: {fingerprint}");
-            println!("To use it, run `aria setup --stt-runs-on server`.");
+            println!("To use it, run `aria setup --server`.");
         }
         RemoteCommand::Pair { json: true } => {
             let paired = crate::setup::pair_server(std::io::stdin().lock());

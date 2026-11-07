@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use aria_settings::TranscriptionRunsOn;
+use aria_settings::RunsOn;
 
 use crate::primitives::user_home;
 
@@ -15,13 +15,13 @@ use super::{Outcome, Pairing, SetupError, SetupEvent, Step, lock_setup};
 
 #[derive(Debug)]
 pub struct SetTranscriptionRunsOnSummary {
-    pub runs_on: TranscriptionRunsOn,
+    pub runs_on: RunsOn,
     pub models: Vec<(&'static str, Outcome)>,
     pub settings: SettingsWrite,
 }
 
 pub fn set_transcription_runs_on(
-    runs_on: TranscriptionRunsOn,
+    runs_on: RunsOn,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
 ) -> Result<SetTranscriptionRunsOnSummary, SetupError> {
@@ -33,7 +33,7 @@ pub fn set_transcription_runs_on(
 /// so the daemon never swaps to an engine that can't load.
 fn set_in(
     home: &Path,
-    runs_on: TranscriptionRunsOn,
+    runs_on: RunsOn,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
 ) -> Result<SetTranscriptionRunsOnSummary, SetupError> {
@@ -41,11 +41,11 @@ fn set_in(
     let file = settings_file::read(home)?;
     settings_file::check_runs_on(home, &file, runs_on)?;
     let models = match runs_on {
-        TranscriptionRunsOn::Server => {
+        RunsOn::Server => {
             Pairing::read(home).check_paired(home)?;
             Vec::new()
         }
-        TranscriptionRunsOn::Local => {
+        RunsOn::Local => {
             let engine = aria_settings::config::transcription_engine(&file.stt);
             fetch_engine_models(home, &file, engine, transfer_meter, observe)?
         }
@@ -75,7 +75,7 @@ mod tests {
 
     fn set(
         home: &Path,
-        runs_on: TranscriptionRunsOn,
+        runs_on: RunsOn,
     ) -> (
         Result<SetTranscriptionRunsOnSummary, SetupError>,
         Vec<SetupEvent>,
@@ -95,7 +95,7 @@ mod tests {
         let home = home(local);
         aria_daemon::pin_server_for_tests(home.path(), "https://box.test:9851");
 
-        let (server, events) = set(home.path(), TranscriptionRunsOn::Server);
+        let (server, events) = set(home.path(), RunsOn::Server);
 
         assert_eq!(server.unwrap().settings, SettingsWrite::Written);
         assert!(matches!(
@@ -103,9 +103,9 @@ mod tests {
             [SetupEvent::Started(Step::Settings)]
         ));
         let file = settings_file::read(home.path()).unwrap();
-        assert_eq!(file.choices().stt_runs_on, TranscriptionRunsOn::Server);
+        assert_eq!(file.choices().stt_runs_on, RunsOn::Server);
 
-        let (back, events) = set(home.path(), TranscriptionRunsOn::Local);
+        let (back, events) = set(home.path(), RunsOn::Local);
 
         assert!(back.unwrap().models.is_empty(), "the model lives elsewhere");
         assert!(matches!(
@@ -113,7 +113,7 @@ mod tests {
             [SetupEvent::Started(Step::Settings)]
         ));
         let file = settings_file::read(home.path()).unwrap();
-        assert_eq!(file.choices().stt_runs_on, TranscriptionRunsOn::Local);
+        assert_eq!(file.choices().stt_runs_on, RunsOn::Local);
         assert_eq!(file.stt.backend.as_deref(), Some("parakeet"));
         assert_eq!(file.stt.model.as_deref(), Some("/models/parakeet"));
         assert!(file.stt.device.is_some());
@@ -124,7 +124,7 @@ mod tests {
         let settings = "[stt]\nbackend = \"moonshine\"\n";
         let home = home(settings);
 
-        let (result, events) = set(home.path(), TranscriptionRunsOn::Server);
+        let (result, events) = set(home.path(), RunsOn::Server);
 
         assert!(matches!(result, Err(SetupError::ServerNotPaired)));
         assert!(events.is_empty());
@@ -142,15 +142,10 @@ mod tests {
         let home = home(settings);
         let mut events = Vec::new();
 
-        let result = set_in(
-            home.path(),
-            TranscriptionRunsOn::Local,
-            false,
-            &mut |event| {
-                events.push(event);
-                Err(SetupError::Invalid("stop before the download"))
-            },
-        );
+        let result = set_in(home.path(), RunsOn::Local, false, &mut |event| {
+            events.push(event);
+            Err(SetupError::Invalid("stop before the download"))
+        });
 
         assert!(result.is_err());
         assert!(matches!(

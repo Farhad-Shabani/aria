@@ -5,7 +5,7 @@ use std::path::Path;
 
 use aria_settings::config::tts_backend;
 use aria_settings::{
-    CheckedSettings, Key, Patch, Refusal, SettingsError, SettingsFile, TranscriptionRunsOn, Written,
+    CheckedSettings, Key, Patch, Refusal, RunsOn, SettingsError, SettingsFile, Written,
 };
 
 use super::SetupError;
@@ -87,7 +87,7 @@ fn transcription_patch(patch: &mut Patch, current: &SettingsFile, engine: &str) 
     }
 }
 
-fn runs_on_patch(current: &SettingsFile, runs_on: TranscriptionRunsOn) -> Patch {
+fn runs_on_patch(current: &SettingsFile, runs_on: RunsOn) -> Patch {
     let mut patch = Patch::new();
     if current.stt.runs_on.unwrap_or_default() != runs_on {
         patch.set(Key::SttRunsOn, runs_on.name());
@@ -120,17 +120,14 @@ pub(super) fn write_transcription(home: &Path, engine: &str) -> Result<SettingsW
 pub(super) fn check_runs_on(
     home: &Path,
     current: &SettingsFile,
-    runs_on: TranscriptionRunsOn,
+    runs_on: RunsOn,
 ) -> Result<(), SetupError> {
     check(home, &runs_on_patch(current, runs_on))
 }
 
 /// Writes only `stt.runs_on`, so the local engine and its keys stay for
 /// the way back.
-pub(super) fn write_runs_on(
-    home: &Path,
-    runs_on: TranscriptionRunsOn,
-) -> Result<SettingsWrite, SetupError> {
+pub(super) fn write_runs_on(home: &Path, runs_on: RunsOn) -> Result<SettingsWrite, SetupError> {
     write(home, |current| runs_on_patch(current, runs_on))
 }
 
