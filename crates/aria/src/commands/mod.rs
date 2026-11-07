@@ -3,6 +3,7 @@
 use anyhow::Context;
 use aria_daemon::{AssistantId, OutputMode};
 use aria_platform::runtime::PreparedRuntimePaths;
+use aria_settings::TranscriptionRunsOn;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod ask;
@@ -98,10 +99,10 @@ enum Command {
         #[arg(
             long,
             value_name = "RUNS_ON",
-            value_parser = setup::parse_runs_on,
+            value_parser = runs_on_parser(),
             conflicts_with_all = ["yes", "skip_models", "stt"],
         )]
-        stt_runs_on: Option<aria_settings::TranscriptionRunsOn>,
+        stt_runs_on: Option<TranscriptionRunsOn>,
     },
     /// See and remove the models setup downloaded
     Models {
@@ -175,6 +176,19 @@ fn assistant_parser() -> impl clap::builder::TypedValueParser<Value = AssistantI
 
     PossibleValuesParser::new(AssistantId::ALL.iter().map(|id| id.name()))
         .try_map(|name| name.parse::<AssistantId>())
+}
+
+fn runs_on_parser() -> impl clap::builder::TypedValueParser<Value = TranscriptionRunsOn> {
+    use clap::builder::{PossibleValuesParser, TypedValueParser};
+
+    PossibleValuesParser::new(TranscriptionRunsOn::ALL.map(TranscriptionRunsOn::name)).try_map(
+        |name| {
+            TranscriptionRunsOn::ALL
+                .into_iter()
+                .find(|runs_on| runs_on.name() == name)
+                .ok_or("no such place to transcribe")
+        },
+    )
 }
 
 impl From<CliOutputMode> for OutputMode {

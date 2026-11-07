@@ -179,7 +179,7 @@ impl RemoteTranscriber {
     fn open_pinned(home: &Path) -> Result<Self, RemoteClientError> {
         let identity = ClientIdentity::open(&Paths::in_home(home).client_identity())
             .map_err(identity_error)?;
-        let server = identity.pin().map_err(identity_error)?;
+        let server = identity.pinned_server().map_err(identity_error)?;
         let endpoint = tls::endpoint(&identity, server)
             .map_err(|error| RemoteClientError::Identity(error.into()))?;
         let runtime = RemoteRuntime::new()?;

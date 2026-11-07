@@ -28,7 +28,7 @@ final class SetupStatus: ObservableObject {
     /// voice setup, and enrolling reports a missing model itself.
     @Published private(set) var hasSpeakerModelOnDisk = true
     @Published private(set) var server: Aria_Setup_V1_PairedServer?
-    @Published private(set) var transcription = TranscriptionRunsOn.local
+    @Published private(set) var transcriptionRunsOn = TranscriptionRunsOn.local
     @Published private(set) var speechModels = SpeechModels()
     @Published private(set) var downloadedModels = DownloadedModels()
 
@@ -46,7 +46,7 @@ final class SetupStatus: ObservableObject {
         items = SetupItem.items(in: inspection)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
-        transcription = TranscriptionRunsOn(inspection.transcriptionRunsOn)
+        transcriptionRunsOn = TranscriptionRunsOn(inspection.transcriptionRunsOn)
         speechModels = SpeechModels(inspection)
         downloadedModels = DownloadedModels(inspection)
     }

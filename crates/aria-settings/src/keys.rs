@@ -368,6 +368,18 @@ mod tests {
     }
 
     #[test]
+    fn the_runs_on_choices_are_every_place_transcription_runs() {
+        let names: Vec<&str> = crate::TranscriptionRunsOn::ALL
+            .iter()
+            .map(|runs_on| runs_on.name())
+            .collect();
+        let Kind::Choice(words) = Key::SttRunsOn.kind() else {
+            panic!("stt.runs_on is a choice");
+        };
+        assert_eq!(words, names);
+    }
+
+    #[test]
     fn the_phone_writes_no_egress_or_code_key() {
         let phone: Vec<Key> = Key::ALL
             .iter()

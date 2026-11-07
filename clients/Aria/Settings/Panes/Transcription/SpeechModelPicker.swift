@@ -15,7 +15,7 @@ struct SpeechModelPicker: View {
         engineChange.engine.flatMap(models.model)
     }
 
-    private var usesServer: Bool { setup.transcription == .server }
+    private var usesServer: Bool { setup.transcriptionRunsOn == .server }
 
     /// The menu shows a new choice at once, so a change reads as done.
     private var shown: String {

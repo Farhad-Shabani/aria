@@ -195,7 +195,9 @@ impl From<&Inspection> for generated::Inspection {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
-            transcription_runs_on: generated::TranscriptionRunsOn::from(inspection.runs_on) as i32,
+            transcription_runs_on: generated::TranscriptionRunsOn::from(
+                inspection.transcription_runs_on,
+            ) as i32,
         }
     }
 }

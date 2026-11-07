@@ -58,13 +58,6 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn parse_runs_on(value: &str) -> Result<TranscriptionRunsOn, String> {
-    [TranscriptionRunsOn::Local, TranscriptionRunsOn::Server]
-        .into_iter()
-        .find(|runs_on| runs_on.name() == value)
-        .ok_or_else(|| "expected local or server".to_owned())
-}
-
 pub(super) fn set_transcription_runs_on(runs_on: TranscriptionRunsOn) -> anyhow::Result<()> {
     let summary = crate::setup::transcription_runs_on::set_transcription_runs_on(
         runs_on,

@@ -41,7 +41,7 @@ fn bounded_invitation(invitation: &str) -> Result<(), RemoteClientError> {
 
 /// Pairs with the server `invitation` names, and pins it in place of any
 /// earlier one.
-pub fn pair_server(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
+pub fn pin_server(home: &Path, invitation: &str) -> Result<String, RemoteClientError> {
     bounded_invitation(invitation)?;
     let invitation: Invitation =
         serde_json::from_str(invitation).map_err(RemoteClientError::invitation)?;

@@ -357,7 +357,7 @@ impl ClientIdentity {
         })
     }
 
-    pub(super) fn pin(&self) -> Result<&PinnedServer, Error> {
+    pub(super) fn pinned_server(&self) -> Result<&PinnedServer, Error> {
         self.stored.server.as_ref().ok_or(Error::Unpaired)
     }
 
@@ -801,14 +801,14 @@ mod tests {
                 .certificate_pem,
             certificate
         );
-        assert!(matches!(client.pin(), Err(Error::Unpaired)));
+        assert!(matches!(client.pinned_server(), Err(Error::Unpaired)));
         client
             .remember(&server.issue(&localhost(5000)).unwrap())
             .unwrap();
         assert_eq!(
             ClientIdentity::load_or_create(&path)
                 .unwrap()
-                .pin()
+                .pinned_server()
                 .unwrap()
                 .endpoint,
             localhost(5000)

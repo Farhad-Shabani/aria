@@ -34,7 +34,7 @@ struct TranscriptionSection: View {
 
     private var usesServer: Binding<Bool> {
         Binding(
-            get: { setup.transcription == .server },
+            get: { setup.transcriptionRunsOn == .server },
             set: { isOn in Task { await server.use(isOn ? .server : .local) } }
         )
     }
@@ -55,7 +55,7 @@ struct TranscriptionSection: View {
                     if setup.server != nil {
                         Button("Forget…", role: .destructive) { isConfirmingForget = true }
                             .disabled(!server.canForget || runner.isRunning)
-                            .help(setup.transcription == .server ? "Turn off \(Self.rowTitle) first." : "")
+                            .help(setup.transcriptionRunsOn == .server ? "Turn off \(Self.rowTitle) first." : "")
                     }
                     Toggle(Self.rowTitle, isOn: usesServer)
                         .labelsHidden()

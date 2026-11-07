@@ -50,7 +50,7 @@ final class SetupStatusTests: XCTestCase {
         gate.open()
         await stale.value
 
-        XCTAssertEqual(status.transcription, .server)
+        XCTAssertEqual(status.transcriptionRunsOn, .server)
     }
 
     func testTheSpeakerModelCountsWhenCompleteOrExternal() {

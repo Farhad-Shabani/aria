@@ -81,12 +81,12 @@ final class ServerTranscriptionTests: XCTestCase {
         let server = ServerTranscription(effects: spy.effects, setup: setup, runner: SetupRunner())
 
         await server.use(.server)
-        XCTAssertEqual(setup.transcription, .server)
+        XCTAssertEqual(setup.transcriptionRunsOn, .server)
         XCTAssertEqual(setup.server?.endpoint, "https://box:9851")
 
         await server.use(.local)
         XCTAssertEqual(spy.sentRunsOn, [.server, .local])
-        XCTAssertEqual(setup.transcription, .local)
+        XCTAssertEqual(setup.transcriptionRunsOn, .local)
         XCTAssertNil(server.failure)
     }
 
@@ -100,7 +100,7 @@ final class ServerTranscriptionTests: XCTestCase {
         await server.use(.server)
 
         XCTAssertEqual(server.failure, ServerTranscription.switchFailure)
-        XCTAssertEqual(setup.transcription, .local)
+        XCTAssertEqual(setup.transcriptionRunsOn, .local)
         XCTAssertFalse(server.isBusy)
     }
 
@@ -125,7 +125,7 @@ final class ServerTranscriptionTests: XCTestCase {
         XCTAssertTrue(paired)
         XCTAssertEqual(spy.paired, ["{}"])
         XCTAssertEqual(spy.sentRunsOn, [])
-        XCTAssertEqual(setup.transcription, .local)
+        XCTAssertEqual(setup.transcriptionRunsOn, .local)
     }
 
     /// The invitation works once, so a pairing that landed must not ask

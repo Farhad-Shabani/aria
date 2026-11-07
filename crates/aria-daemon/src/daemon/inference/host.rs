@@ -538,7 +538,7 @@ pub(in crate::daemon) mod tests {
             .await
             .unwrap();
             self.client.remember(&self.invite).unwrap();
-            self.channel = tls::endpoint(&self.client, self.client.pin().unwrap())
+            self.channel = tls::endpoint(&self.client, self.client.pinned_server().unwrap())
                 .unwrap()
                 .connect()
                 .await
@@ -580,7 +580,7 @@ pub(in crate::daemon) mod tests {
         pub(in crate::daemon) async fn pair_home(&self, home: PathBuf) {
             let invitation = serde_json::to_string(&self.invite).unwrap();
             tokio::task::spawn_blocking(move || {
-                super::super::pairing::pair_server(&home, &invitation).unwrap()
+                super::super::pairing::pin_server(&home, &invitation).unwrap()
             })
             .await
             .unwrap();
@@ -696,7 +696,8 @@ pub(in crate::daemon) mod tests {
             .unwrap();
         legitimate.remember(&invitation).unwrap();
 
-        let endpoint = tls::endpoint(&fixture.client, fixture.client.pin().unwrap()).unwrap();
+        let endpoint =
+            tls::endpoint(&fixture.client, fixture.client.pinned_server().unwrap()).unwrap();
         let mut held = vec![fixture.channel.clone()];
         for _ in 1..connections::MAX_CONNECTIONS_PER_PEER {
             let channel = endpoint.connect().await.unwrap();
@@ -705,7 +706,7 @@ pub(in crate::daemon) mod tests {
         }
         fixture.access.revoke(fixture.pin()).unwrap();
 
-        let endpoint = tls::endpoint(&legitimate, legitimate.pin().unwrap()).unwrap();
+        let endpoint = tls::endpoint(&legitimate, legitimate.pinned_server().unwrap()).unwrap();
         let admitted = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if let Ok(channel) = endpoint.connect().await

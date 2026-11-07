@@ -46,7 +46,7 @@ pub use host::{
 pub use inference::admin::{remote_invite, remote_revoke};
 pub use inference::client::RemoteClientError;
 pub use inference::host::{InferenceHostError, serve_inference};
-pub use inference::pairing::{Forgotten, PairingFailure, pair_server, read_invitation};
+pub use inference::pairing::{Forgotten, PairingFailure, pin_server, read_invitation};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
     AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,

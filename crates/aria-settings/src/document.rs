@@ -920,6 +920,8 @@ pub enum TranscriptionRunsOn {
 }
 
 impl TranscriptionRunsOn {
+    pub const ALL: [Self; 2] = [Self::Local, Self::Server];
+
     /// The value `stt.runs_on` takes.
     pub fn name(self) -> &'static str {
         match self {
