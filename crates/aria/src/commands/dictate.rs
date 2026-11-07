@@ -30,7 +30,7 @@ pub(super) fn run(
     } else {
         DeliveryMode::Complete
     };
-    let mut recording = interrupt.recording(delivery);
+    let mut recording = interrupt.recording();
     let outcome = session.request_dictation(
         DictationRequest {
             output_mode: mode.map(Into::into),

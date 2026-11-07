@@ -90,6 +90,15 @@ impl Activity {
         lock(&self.line).seconds()
     }
 
+    pub(super) fn set_key(&self, key: String) {
+        let mut line = lock(&self.line);
+        if !self.on_terminal() {
+            return;
+        }
+        line.key = Some(key);
+        line.redraw();
+    }
+
     /// The key no longer ends anything; the line stays without it.
     pub(super) fn drop_key(&self) {
         let mut line = lock(&self.line);

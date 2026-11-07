@@ -1,7 +1,8 @@
 //! The setup contract as Aria.app speaks it: `aria.setup.v1` messages,
-//! one per length-delimited frame, over the stdio of `aria setup inspect`
-//! and `aria setup apply`.
+//! one per length-delimited frame, over the stdio of `aria setup inspect`,
+//! `aria setup apply` and `aria setup set-transcription-engine`.
 
+use aria_voice::config::Section;
 use std::io::{Read, Write};
 
 use prost::Message;
@@ -10,7 +11,8 @@ use crate::supervisor::{DaemonState, Job, Status};
 use aria_daemon::PairedServer;
 
 use super::backends::ModelSource;
-use super::models::OnDisk;
+use super::models::ModelFiles;
+use super::transcription_engine::SetTranscriptionEngineSummary;
 use super::{
     ApplyOptions, Availability, Choice, Grant, Inspection, Missing, ModelState, Outcome, Pairing,
     Selections, SettingsWrite, SetupError, SetupEvent, Step, Summary, voice_model_present,
@@ -47,6 +49,35 @@ pub fn apply(input: &mut impl Read, output: &mut impl Write) -> Result<(), Setup
         write(output, &response)
     })?;
     let response = generated::ApplyResponse {
+        body: Some(Body::Summary((&summary).into())),
+    };
+    write(output, &response)
+}
+
+/// Reads one `SetTranscriptionEngineRequest`, then answers a response per
+/// event and one more carrying the summary.
+pub fn set_transcription_engine(
+    input: &mut impl Read,
+    output: &mut impl Write,
+) -> Result<(), SetupError> {
+    use generated::set_transcription_engine_response::Body;
+    let mut frame = Vec::new();
+    input.read_to_end(&mut frame).map_err(SetupError::Request)?;
+    let request =
+        generated::SetTranscriptionEngineRequest::decode_length_delimited(frame.as_slice())
+            .map_err(SetupError::Decode)?;
+
+    let summary = super::transcription_engine::set_transcription_engine(
+        &request.engine_id,
+        false,
+        &mut |event| {
+            let response = generated::SetTranscriptionEngineResponse {
+                body: Some(Body::Event(event.into())),
+            };
+            write(output, &response)
+        },
+    )?;
+    let response = generated::SetTranscriptionEngineResponse {
         body: Some(Body::Summary((&summary).into())),
     };
     write(output, &response)
@@ -97,8 +128,15 @@ impl From<&Inspection> for generated::Inspection {
             defaults: Some(generated::Selections::from(&Selections::defaults(
                 inspection,
             ))),
-            transcription_choices: inspection.stt.iter().map(Into::into).collect(),
-            synthesis_choices: inspection.tts.iter().map(Into::into).collect(),
+            transcription_choices: inspection
+                .stt
+                .iter()
+                .map(|c| generated::Choice {
+                    settable: c.settable(),
+                    ..choice(c)
+                })
+                .collect(),
+            synthesis_choices: inspection.tts.iter().map(choice).collect(),
             models: inspection.models.iter().map(Into::into).collect(),
             wakeword_installed: inspection.wakeword_installed,
             service: Some((&inspection.service).into()),
@@ -131,23 +169,22 @@ impl From<&Selections> for generated::Selections {
     }
 }
 
-impl From<&Choice> for generated::Choice {
-    fn from(choice: &Choice) -> Self {
-        let (availability, note) = match &choice.availability {
-            Availability::Ready => (generated::Availability::Ready, String::new()),
-            Availability::Missing { fix } => (generated::Availability::Missing, fix.clone()),
-            Availability::Unsupported { why } => {
-                (generated::Availability::Unsupported, (*why).to_owned())
-            }
-        };
-        Self {
-            id: choice.key.to_owned(),
-            label: choice.label.to_owned(),
-            availability: availability as i32,
-            availability_detail: note,
-            default: choice.default,
-            model_source: generated::ModelSource::from(choice.model) as i32,
+fn choice(choice: &Choice) -> generated::Choice {
+    let (availability, note) = match &choice.availability {
+        Availability::Ready => (generated::Availability::Ready, String::new()),
+        Availability::Missing { fix } => (generated::Availability::Missing, fix.clone()),
+        Availability::Unsupported { why } => {
+            (generated::Availability::Unsupported, (*why).to_owned())
         }
+    };
+    generated::Choice {
+        id: choice.key.to_owned(),
+        label: choice.label.to_owned(),
+        availability: availability as i32,
+        availability_detail: note,
+        default: choice.default,
+        model_source: generated::ModelSource::from(choice.model) as i32,
+        settable: false,
     }
 }
 
@@ -159,8 +196,24 @@ impl From<&ModelState> for generated::Model {
             engine_id: model.engine.unwrap_or_default().to_owned(),
             size_bytes: model.bytes,
             download_by_default: model.default,
-            on_disk: generated::OnDisk::from(model.on_disk) as i32,
-            external: model.external,
+            files: generated::ModelFiles::from(model.files) as i32,
+            used_by: model
+                .used_by
+                .iter()
+                .map(|&section| generated::ModelUse::from(section) as i32)
+                .collect(),
+            label: model.label.to_owned(),
+        }
+    }
+}
+
+impl From<Section> for generated::ModelUse {
+    fn from(section: Section) -> Self {
+        match section {
+            Section::Stt => Self::Stt,
+            Section::Listen => Self::Listen,
+            Section::Tts => Self::Tts,
+            Section::Speaker => Self::Speaker,
         }
     }
 }
@@ -217,12 +270,13 @@ impl From<ModelSource> for generated::ModelSource {
     }
 }
 
-impl From<OnDisk> for generated::OnDisk {
-    fn from(on_disk: OnDisk) -> Self {
-        match on_disk {
-            OnDisk::Complete => Self::Complete,
-            OnDisk::Partial => Self::Partial,
-            OnDisk::Absent => Self::Absent,
+impl From<ModelFiles> for generated::ModelFiles {
+    fn from(files: ModelFiles) -> Self {
+        match files {
+            ModelFiles::Complete => Self::Complete,
+            ModelFiles::Partial => Self::Partial,
+            ModelFiles::Absent => Self::Absent,
+            ModelFiles::External => Self::External,
         }
     }
 }
@@ -268,25 +322,14 @@ impl From<SetupEvent> for generated::SetupEvent {
 
 impl From<&Summary> for generated::Summary {
     fn from(summary: &Summary) -> Self {
-        let settings = match summary.settings {
-            SettingsWrite::Unchanged => generated::SettingsWrite::Unchanged,
-            SettingsWrite::Written => generated::SettingsWrite::Written,
-        };
         Self {
-            settings: settings as i32,
+            settings: generated::SettingsWrite::from(summary.settings) as i32,
             wakeword_dir: summary
                 .wakeword
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
-            models: summary
-                .models
-                .iter()
-                .map(|(model, outcome)| generated::ModelOutcome {
-                    model_id: (*model).to_owned(),
-                    outcome: generated::Outcome::from(*outcome) as i32,
-                })
-                .collect(),
+            models: model_outcomes(&summary.models),
             legacy_agent_path: summary
                 .legacy_agent
                 .as_ref()
@@ -295,6 +338,34 @@ impl From<&Summary> for generated::Summary {
             service: Some((&summary.service).into()),
             grant: generated::Grant::from(summary.grant) as i32,
             voice_model_present: voice_model_present(&summary.models),
+        }
+    }
+}
+
+impl From<SettingsWrite> for generated::SettingsWrite {
+    fn from(write: SettingsWrite) -> Self {
+        match write {
+            SettingsWrite::Unchanged => Self::Unchanged,
+            SettingsWrite::Written => Self::Written,
+        }
+    }
+}
+
+fn model_outcomes(models: &[(&'static str, Outcome)]) -> Vec<generated::ModelOutcome> {
+    models
+        .iter()
+        .map(|(model, outcome)| generated::ModelOutcome {
+            model_id: (*model).to_owned(),
+            outcome: generated::Outcome::from(*outcome) as i32,
+        })
+        .collect()
+}
+
+impl From<&SetTranscriptionEngineSummary> for generated::SetTranscriptionEngineSummary {
+    fn from(summary: &SetTranscriptionEngineSummary) -> Self {
+        Self {
+            settings: generated::SettingsWrite::from(summary.settings) as i32,
+            models: model_outcomes(&summary.models),
         }
     }
 }
@@ -322,9 +393,74 @@ mod tests {
         }
     }
 
+    fn requested(
+        request: generated::ApplyRequest,
+    ) -> Result<(Selections, ApplyOptions), SetupError> {
+        request.try_into()
+    }
+
+    #[test]
+    fn only_transcription_choices_say_whether_they_can_be_set_in_place() {
+        let inspection = super::super::tests::inspection(super::super::tests::configured());
+        assert!(
+            inspection
+                .tts
+                .iter()
+                .any(|choice| choice.key == "kokoro" && choice.settable())
+        );
+
+        let wire = generated::Inspection::from(&inspection);
+
+        let moonshine = wire
+            .transcription_choices
+            .iter()
+            .find(|choice| choice.id == "moonshine")
+            .unwrap();
+        assert!(moonshine.settable);
+        let kokoro = wire
+            .synthesis_choices
+            .iter()
+            .find(|choice| choice.id == "kokoro")
+            .unwrap();
+        assert!(!kokoro.settable);
+    }
+
+    #[test]
+    fn the_inspection_marks_what_each_model_is_loaded_for() {
+        let used_by = |text: &str, name: &str| {
+            let file = aria_settings::testing::file(text);
+            super::super::model_states(std::path::Path::new("/home/someone"), &file)
+                .unwrap()
+                .iter()
+                .find(|model| model.name == name)
+                .map(|model| generated::Model::from(model).used_by)
+                .unwrap()
+        };
+        let tiny = "[stt]\nbackend = \"whisper-candle\"\n";
+        let chosen = format!("{tiny}[listen]\nbackend = \"parakeet\"\n");
+
+        assert_eq!(
+            used_by(tiny, "whisper-candle"),
+            [generated::ModelUse::Stt as i32]
+        );
+        assert_eq!(
+            used_by(tiny, "speaker"),
+            [generated::ModelUse::Speaker as i32]
+        );
+        assert!(used_by(tiny, "moonshine").is_empty());
+        assert!(
+            used_by(tiny, "parakeet").is_empty(),
+            "Mac Audio's fallback is no setting, so it can be deleted"
+        );
+        assert_eq!(
+            used_by(&chosen, "parakeet"),
+            [generated::ModelUse::Listen as i32]
+        );
+    }
+
     #[test]
     fn a_request_needs_its_selections() {
-        let error = <(Selections, ApplyOptions)>::try_from(request(None)).unwrap_err();
+        let error = requested(request(None)).unwrap_err();
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
 
         let empty = generated::Selections {
@@ -332,7 +468,7 @@ mod tests {
             synthesis_engine_id: "system".to_owned(),
             wake: false,
         };
-        let error = <(Selections, ApplyOptions)>::try_from(request(Some(empty))).unwrap_err();
+        let error = requested(request(Some(empty))).unwrap_err();
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
     }
 
@@ -344,8 +480,7 @@ mod tests {
             wake: false,
         };
 
-        let (selections, options) =
-            <(Selections, ApplyOptions)>::try_from(request(Some(selections))).unwrap();
+        let (selections, options) = requested(request(Some(selections))).unwrap();
 
         assert_eq!(selections.stt, "whisper");
         assert_eq!(options.downloads, ["whisper"]);

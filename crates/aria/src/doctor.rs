@@ -293,24 +293,35 @@ fn segmentation_model() -> Check {
     }
 }
 
-/// Listen accepts Parakeet, Moonshine, and Nemotron. A config Listen can't use
+/// Listen accepts any engine that streams. A config or model Listen can't use
 /// warns because dictation can still work without Listen.
 fn listen() -> Check {
     let resolved = loaded(ListenConfig::load);
     match resolved {
-        Ok(config) => Check::ok(
-            LISTEN,
-            format!(
-                "{} writing to {}",
-                config.transcription.backend_name(),
-                config.transcripts_dir.display()
+        Ok(config) => match config.transcription.check_model() {
+            Ok(_) => Check::ok(
+                LISTEN,
+                format!(
+                    "{} writing to {}",
+                    config.transcription.backend_name(),
+                    config.transcripts_dir.display()
+                ),
             ),
-        ),
+            Err(error) => Check::warning(
+                LISTEN,
+                format!(
+                    "{}; Mac Audio can't start until {} is downloaded",
+                    error_chain(&error),
+                    config.transcription.backend_name()
+                ),
+            ),
+        },
         Err(error) => Check::warning(
             LISTEN,
             format!(
-                "{}; set listen.backend to parakeet, moonshine, or nemotron to capture meetings",
-                error_chain(&error)
+                "{}; set listen.backend to one of {} to capture meetings",
+                error_chain(&error),
+                aria_settings::config::backend::STREAMING.join(", ")
             ),
         ),
     }

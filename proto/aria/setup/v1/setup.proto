@@ -2,8 +2,10 @@
 
 // Setup as `aria::setup` exposes it: look at what the machine has, then
 // put the chosen pieces in place. Aria.app speaks it over the stdio of
-// the hidden `aria setup inspect` and `aria setup apply`, one message per
-// length-delimited frame.
+// the hidden `aria setup inspect`, `aria setup apply` and
+// `aria setup set-transcription-engine`, one message per length-delimited
+// frame. Apply runs the whole of setup; setting the transcription engine
+// changes that engine alone.
 //
 // Recording a voice and the test press are not here: they are ordinary
 // daemon RPCs (SpeakerService, DictationService, SpeechService), and the
@@ -49,6 +51,11 @@ message Choice {
   // Exactly one per family: the configured one, else the first that runs.
   bool default = 5;
   ModelSource model_source = 6;
+  // Set only on transcription choices. True when a
+  // `SetTranscriptionEngineRequest` can set this engine without the rest of
+  // setup: it runs on this Mac, and setup can download its model or it
+  // needs none.
+  bool settable = 8;
 }
 
 // Where an engine's model comes from.
@@ -81,19 +88,34 @@ message Model {
   uint64 size_bytes = 4;
   // Whether it is fetched when nobody answers.
   bool download_by_default = 5;
-  OnDisk on_disk = 6;
-  // Settings point its engine at files elsewhere, so setup has nothing to
-  // fetch.
-  bool external = 7;
+  // The model's whole state, from its files and the settings.
+  ModelFiles files = 6;
+  // Every feature whose settings load it. Empty when nothing loads it, so it
+  // can be removed.
+  repeated ModelUse used_by = 8;
+  // Display name: its engine's label, else its title.
+  string label = 9;
 }
 
-enum OnDisk {
-  ON_DISK_UNSPECIFIED = 0;
-  ON_DISK_COMPLETE = 1;
+// The settings table that loads a model.
+enum ModelUse {
+  MODEL_USE_UNSPECIFIED = 0;
+  MODEL_USE_STT = 1;
+  MODEL_USE_LISTEN = 2;
+  MODEL_USE_TTS = 3;
+  MODEL_USE_SPEAKER = 4;
+}
+
+enum ModelFiles {
+  MODEL_FILES_UNSPECIFIED = 0;
+  MODEL_FILES_COMPLETE = 1;
   // Some of its files, or their unfinished parts; a download resumes
   // from them.
-  ON_DISK_PARTIAL = 2;
-  ON_DISK_ABSENT = 3;
+  MODEL_FILES_PARTIAL = 2;
+  MODEL_FILES_ABSENT = 3;
+  // Settings load this engine's files from elsewhere, so setup fetches
+  // nothing, whatever ~/.aria/models holds.
+  MODEL_FILES_EXTERNAL = 4;
 }
 
 // One thing a run still has to put in place.
@@ -169,6 +191,27 @@ message Summary {
   Grant grant = 7;
   // Whether the model a voice is recorded against is on disk.
   bool voice_model_present = 8;
+}
+
+// Sets the speech-to-text engine in place: that engine's own missing models
+// first, then the settings that name it. Every other choice stays, and
+// nothing restarts.
+message SetTranscriptionEngineRequest {
+  string engine_id = 1;
+}
+
+// Events until the change ends, then exactly one summary. STEP_MODELS starts
+// only when it fetches something; STEP_SETTINGS starts the write.
+message SetTranscriptionEngineResponse {
+  oneof body {
+    SetupEvent event = 1;
+    SetTranscriptionEngineSummary summary = 2;
+  }
+}
+
+message SetTranscriptionEngineSummary {
+  SettingsWrite settings = 1;
+  repeated ModelOutcome models = 2;
 }
 
 message ModelOutcome {

@@ -123,8 +123,11 @@ fn print_rows(rows: &[aria_settings::command::Row]) {
         } else {
             ""
         };
+        let unavailable = row.streaming_unavailable.map_or(String::new(), |reason| {
+            format!(", delivers complete: {}", reason_text(reason))
+        });
         println!(
-            "{key:key_width$}  {value:value_width$}  {state}, {apply}{pending}",
+            "{key:key_width$}  {value:value_width$}  {state}, {apply}{pending}{unavailable}",
             key = row.path(),
             apply = apply_label(row.apply()),
         );
@@ -135,14 +138,36 @@ fn print_rows(rows: &[aria_settings::command::Row]) {
 }
 
 fn row_json(row: &aria_settings::command::Row) -> serde_json::Value {
-    serde_json::json!({
+    let mut json = serde_json::json!({
         "key": row.path(),
         "value": row.value,
         "state": if row.set { "set" } else { "default" },
         "apply": apply_label(row.apply()),
         "restart_required": row.restart_required,
         "description": row.description(),
-    })
+    });
+    if let Some(reason) = row.streaming_unavailable {
+        json["streaming_unavailable"] = reason_id(reason).into();
+    }
+    json
+}
+
+fn reason_id(reason: aria_settings::StreamingUnavailable) -> &'static str {
+    match reason {
+        aria_settings::StreamingUnavailable::Copy => "copy",
+        aria_settings::StreamingUnavailable::Platform => "platform",
+        aria_settings::StreamingUnavailable::Model => "model",
+    }
+}
+
+fn reason_text(reason: aria_settings::StreamingUnavailable) -> &'static str {
+    match reason {
+        aria_settings::StreamingUnavailable::Copy => "copy output can't stream",
+        aria_settings::StreamingUnavailable::Platform => "delivery here pastes",
+        aria_settings::StreamingUnavailable::Model => {
+            "the speech model decodes only the finished recording"
+        }
+    }
 }
 
 fn fault_json(fault: &aria_settings::SettingsFault) -> serde_json::Value {
@@ -241,6 +266,23 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
+    }
+
+    #[test]
+    fn json_names_why_streaming_is_unavailable_only_where_it_is() {
+        let row = |streaming_unavailable| aria_settings::command::Row {
+            key: aria_settings::Key::DictationDeliveryMode,
+            set: false,
+            value: serde_json::Value::Null,
+            restart_required: false,
+            streaming_unavailable,
+        };
+
+        assert_eq!(
+            row_json(&row(Some(aria_settings::StreamingUnavailable::Model)))["streaming_unavailable"],
+            "model"
+        );
+        assert!(row_json(&row(None)).get("streaming_unavailable").is_none());
     }
 
     #[test]

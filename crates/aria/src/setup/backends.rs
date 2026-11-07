@@ -32,6 +32,15 @@ pub struct Choice {
     pub model: ModelSource,
 }
 
+impl Choice {
+    /// Whether it can be set in place: it runs here, and setup downloads its
+    /// model or needs none.
+    pub fn settable(&self) -> bool {
+        self.availability == Availability::Ready
+            && matches!(self.model, ModelSource::Downloads(_) | ModelSource::BuiltIn)
+    }
+}
+
 pub(super) fn choices<B: Backend>(current: Option<&str>, host: &Host) -> Vec<Choice> {
     let mut choices: Vec<Choice> = B::ALL
         .iter()
@@ -168,12 +177,12 @@ impl Backend for Stt {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Whisper => "Whisper large-v3-turbo (whisper.cpp)",
-            Self::WhisperCandle => "Whisper (candle)",
-            Self::Parakeet => "Parakeet TDT 0.6B",
-            Self::Moonshine => "Moonshine base",
-            Self::Nemotron => "Nemotron streaming 0.6B",
-            Self::ParakeetMlx => "Parakeet TDT 0.6B (MLX)",
+            Self::Whisper => "Whisper Turbo",
+            Self::WhisperCandle => "Whisper Tiny",
+            Self::Parakeet => "Parakeet",
+            Self::Moonshine => "Moonshine",
+            Self::Nemotron => "Nemotron",
+            Self::ParakeetMlx => "Parakeet (MLX)",
             Self::Server => "Paired inference server",
         }
     }
@@ -285,18 +294,17 @@ mod tests {
         assert_eq!(available(true), Availability::Ready);
     }
 
-    /// Setup must download each model to the path the daemon loads it from.
     #[test]
     fn every_model_lands_where_the_daemon_loads_it() {
         let home = Path::new("/home/someone");
         let models_dir = aria_settings::config::models_dir(home);
         let engines = Stt::ALL
             .iter()
-            .map(|stt| ("stt", stt.key(), stt.model().assets()))
+            .map(|stt| (config::Section::Stt, stt.key(), stt.model().assets()))
             .chain(
                 Tts::ALL
                     .iter()
-                    .map(|tts| ("tts", tts.key(), tts.model().assets())),
+                    .map(|tts| (config::Section::Tts, tts.key(), tts.model().assets())),
             );
         for (section, key, assets) in engines {
             let required = match key {

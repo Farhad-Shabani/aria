@@ -23,15 +23,16 @@ pub(super) fn run(command: ModelsCommand) -> anyhow::Result<()> {
                 return Ok(());
             }
             for model in models {
-                let used_by = model
-                    .used_by
-                    .map(|section| format!("in use: {section}"))
-                    .unwrap_or_default();
+                let used_by = if model.used_by.is_empty() {
+                    String::new()
+                } else {
+                    format!("in use: {}", crate::setup::tables(&model.used_by))
+                };
                 let row = format!(
                     "{:<16}{:>8}   {:<11} {used_by}",
                     model.name,
                     crate::setup::size(model.bytes),
-                    model.on_disk.as_str()
+                    model.files.as_str()
                 );
                 println!("{}", row.trim_end());
             }
@@ -45,17 +46,18 @@ pub(super) fn run(command: ModelsCommand) -> anyhow::Result<()> {
 }
 
 fn model_json(model: &crate::setup::models::Model) -> serde_json::Value {
-    use crate::setup::models::OnDisk;
-    let on_disk = match model.on_disk {
-        OnDisk::Complete => "complete",
-        OnDisk::Partial => "partial",
-        OnDisk::Absent => "absent",
+    use crate::setup::models::ModelFiles;
+    let files = match model.files {
+        ModelFiles::Complete => "complete",
+        ModelFiles::Partial => "partial",
+        ModelFiles::Absent => "absent",
+        ModelFiles::External => "external",
     };
     serde_json::json!({
         "name": model.name,
         "bytes": model.bytes,
-        "on_disk": on_disk,
-        "used_by": model.used_by,
+        "files": files,
+        "used_by": model.used_by.iter().map(ToString::to_string).collect::<Vec<_>>(),
     })
 }
 
