@@ -168,7 +168,10 @@ mod tests {
             .expect("the subscription should be admitted");
 
         for _event in 0..=EVENT_BUFFER {
-            subscriptions.broadcast(DictationStage::Recording(RecordingId(1)));
+            subscriptions.broadcast(DictationStage::Recording {
+                id: RecordingId(1),
+                delivery: aria_settings::DeliveryMode::Complete,
+            });
         }
 
         // Its slot is free again even though the stream was never dropped.

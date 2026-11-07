@@ -330,7 +330,7 @@ impl DictationExecutor for RecordsUntilStopped {
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
     ) -> Result<DictationResult, DictationError> {
-        let recording = control.start_recording(events)?;
+        let recording = control.start_recording(aria_settings::DeliveryMode::Complete, events)?;
         self.report(Edge::Recording(control.recording_id()));
         while !recording.should_stop() {
             std::thread::sleep(Duration::from_millis(5));

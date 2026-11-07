@@ -64,8 +64,8 @@ final class SetupStatusTests: XCTestCase {
             return inspection
         }
 
-        XCTAssertFalse(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.onDisk = .partial }))
-        XCTAssertTrue(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.onDisk = .complete }))
-        XCTAssertTrue(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.external = true }))
+        XCTAssertFalse(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.files = .partial }))
+        XCTAssertTrue(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.files = .complete }))
+        XCTAssertTrue(SetupStatus.hasSpeakerModelOnDisk(in: inspection { $0.files = .external }))
     }
 }

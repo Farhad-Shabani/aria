@@ -153,20 +153,16 @@ impl Interrupt {
         Ok(Self { router, pipe })
     }
 
-    /// Esc ends the utterance being recorded, once the daemon has named
-    /// it through [`Phase::follow`]. Until then Esc does nothing, and Ctrl-C
-    /// hangs up, which cancels the dictation anyway. The line shows at
-    /// once.
+    /// Ctrl-C hangs up, which cancels the dictation. Esc ends the utterance
+    /// once [`Phase::follow`] sees the daemon name it and say it won't
+    /// stream. The line shows at once.
     ///
     /// A streamed dictation types each segment into whatever is in front while
     /// it is still recording, and that may be this terminal. Holding the
-    /// keyboard would swallow that text, so Ctrl-C is the only key there.
-    pub(crate) fn recording(&mut self, delivery: DeliveryMode) -> Phase<'_> {
-        let keyboard = match delivery {
-            DeliveryMode::Complete => Keyboard::Ours,
-            DeliveryMode::Streaming => Keyboard::TypedInto,
-        };
-        let mut phase = self.arm(None, "stop", keyboard);
+    /// keyboard would swallow that text, so until the daemon says otherwise
+    /// Ctrl-C is the only key.
+    pub(crate) fn recording(&mut self) -> Phase<'_> {
+        let mut phase = self.arm(None, "stop", Keyboard::TypedInto);
         phase.show("listening…");
         phase
     }
@@ -224,10 +220,20 @@ impl Interrupt {
 }
 
 /// Who may hold the keyboard while a phase runs.
+#[derive(Debug, PartialEq, Eq)]
 enum Keyboard {
     Ours,
     /// The daemon types into whatever is in front while the phase runs.
     TypedInto,
+}
+
+impl From<DeliveryMode> for Keyboard {
+    fn from(delivery: DeliveryMode) -> Self {
+        match delivery {
+            DeliveryMode::Complete => Self::Ours,
+            DeliveryMode::Streaming => Self::TypedInto,
+        }
+    }
 }
 
 impl Drop for Interrupt {
@@ -290,9 +296,14 @@ impl Phase<'_> {
     /// nothing left to stop. The line stays, minus its key.
     pub(crate) fn follow(&mut self, stage: &DictationStage) {
         match stage {
-            DictationStage::Recording(recording) => {
-                *lock(&self.interrupt.router.pending) =
-                    Some(Interruption::StopRecording(*recording));
+            DictationStage::Recording { id, delivery } => {
+                *lock(&self.interrupt.router.pending) = Some(Interruption::StopRecording(*id));
+                if Keyboard::from(*delivery) == Keyboard::Ours && self.keys.is_none() {
+                    self.keys = self.interrupt.watch_keys();
+                    if self.keys.is_some() {
+                        self.activity.set_key("esc to stop".to_owned());
+                    }
+                }
             }
             DictationStage::Transcribing => {
                 self.disarm();
@@ -380,6 +391,12 @@ mod tests {
 
     fn ticket() -> Ticket {
         Ticket(1)
+    }
+
+    #[test]
+    fn only_a_recording_that_delivers_complete_takes_the_keyboard() {
+        assert_eq!(Keyboard::from(DeliveryMode::Complete), Keyboard::Ours);
+        assert_eq!(Keyboard::from(DeliveryMode::Streaming), Keyboard::TypedInto);
     }
 
     fn stopping_recording_one() -> Option<Interruption> {

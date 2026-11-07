@@ -54,6 +54,11 @@ impl TryFrom<TranscriptionConfig> for EngineConfig {
     }
 }
 
+/// Whether the engine decodes while audio arrives, as the engine declares.
+pub(crate) fn streams(config: &TranscriptionConfig) -> bool {
+    EngineConfig::try_from(config.clone()).is_ok_and(|engine| engine.stream().is_some())
+}
+
 /// Resolves the model a backend would load, without reading it or starting a
 /// child.
 pub fn check_model(config: &TranscriptionConfig) -> Result<String, TranscriptionError> {
@@ -83,6 +88,47 @@ mod tests {
     use aria_primitives::file_inspection::InspectionError;
 
     use super::*;
+
+    #[test]
+    fn the_settings_streaming_list_is_the_engines_that_declare_a_stream() {
+        use aria_settings::config::backend;
+        let models = Path::new("/models");
+        let configs = [
+            TranscriptionConfig::Whisper {
+                model: models.join("whisper.bin"),
+            },
+            TranscriptionConfig::WhisperCandle {
+                model_directory: models.to_path_buf(),
+            },
+            TranscriptionConfig::Parakeet {
+                model_directory: models.to_path_buf(),
+                device: TranscriptionDevice::Cpu,
+            },
+            TranscriptionConfig::Moonshine {
+                model_directory: models.to_path_buf(),
+            },
+            TranscriptionConfig::Nemotron {
+                model_directory: models.to_path_buf(),
+            },
+            #[cfg(target_os = "macos")]
+            TranscriptionConfig::ParakeetMlx {
+                model: "mlx-community/parakeet-tdt-0.6b-v3".to_owned(),
+                interpreter: models.join("python3"),
+            },
+        ];
+        let mut named = Vec::new();
+        for config in configs {
+            let engine = config.backend_name();
+            assert_eq!(
+                streams(&config),
+                backend::STREAMING.contains(&engine),
+                "{engine}"
+            );
+            named.push(engine);
+        }
+        #[cfg(target_os = "macos")]
+        assert_eq!(named, backend::LOCAL, "every local engine is checked");
+    }
 
     const SECURE_MODE: u32 = 0o644;
 

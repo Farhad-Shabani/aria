@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use aria_daemon::{
-    AskError, AssistantId, ChatRequest, ChatStageKind, Clarify, DaemonSession, DeliveryMode,
-    Routing, StopMode, Ticket,
+    AskError, AssistantId, ChatRequest, ChatStageKind, Clarify, DaemonSession, Routing, StopMode,
+    Ticket,
 };
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use clap::Args;
@@ -95,7 +95,7 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
             // The phase ends with the recording: routing may speak and
             // record again, and a stale stop would cut that short.
             let heard = {
-                let mut recording = interrupt.recording(DeliveryMode::Complete);
+                let mut recording = interrupt.recording();
                 let context = if let Some(project) = &project {
                     aria_voice::vocabulary::Context::Directory(project.clone())
                 } else if session.get_settings()?.settings.vocabulary_enabled {

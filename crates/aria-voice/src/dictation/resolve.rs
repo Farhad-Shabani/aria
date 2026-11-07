@@ -1,10 +1,8 @@
 use super::{DictationRequest, DictationSettings, Rewriting};
 use crate::history::HistorySource;
 use crate::vocabulary::Context;
-use aria_platform::delivery::{
-    Application, OutputMode, PlatformTextDelivery, TargetPolicy, TextDelivery,
-};
-use aria_settings::{ApplicationOverride, DeliveryMode, DictationOverrides, Settings};
+use aria_platform::delivery::{Application, TargetPolicy};
+use aria_settings::{ApplicationOverride, DictationOverrides, Settings};
 
 impl DictationSettings {
     /// `application` is the app in front as dictation is admitted. Each
@@ -38,16 +36,11 @@ impl DictationSettings {
             .output_mode
             .or(application_output)
             .unwrap_or(settings.output_mode);
-        // Copy cannot stream, nor can a platform that pastes, so they deliver
-        // after recording stops. A request that asks to stream keeps its
-        // choice, and delivery refuses it.
-        let delivery_mode = match (output_mode, request.delivery_mode) {
-            (OutputMode::Copy, None) => DeliveryMode::Complete,
-            (_, None) if !PlatformTextDelivery::STREAMS => DeliveryMode::Complete,
-            (_, requested) => requested
-                .or(application_delivery)
-                .unwrap_or(settings.delivery_mode),
-        };
+        // The pipeline decides whether this can stream, since only it knows the engine.
+        let delivery_mode = request
+            .delivery_mode
+            .or(application_delivery)
+            .unwrap_or(settings.delivery_mode);
         Self {
             history_enabled: settings.history_enabled,
             history_keep_audio: settings.history_keep_audio,
@@ -84,6 +77,8 @@ impl DictationSettings {
 mod tests {
     use super::*;
     use crate::dictation::StopMode;
+    use aria_platform::delivery::OutputMode;
+    use aria_settings::DeliveryMode;
     use aria_settings::Directory;
     use aria_settings::{ApplicationId, ApplicationOverrides};
 
@@ -112,12 +107,6 @@ mod tests {
         }
     }
 
-    const STREAMING: DeliveryMode = if PlatformTextDelivery::STREAMS {
-        DeliveryMode::Streaming
-    } else {
-        DeliveryMode::Complete
-    };
-
     fn modes(settings: DictationSettings) -> (OutputMode, DeliveryMode) {
         (settings.output_mode, settings.delivery_mode)
     }
@@ -144,11 +133,11 @@ mod tests {
                 request.clone(),
                 front("com.apple.Notes")
             )),
-            (OutputMode::Insert, STREAMING)
+            (OutputMode::Insert, DeliveryMode::Streaming)
         );
         assert_eq!(
             modes(DictationSettings::resolve(settings, request, None)),
-            (OutputMode::Insert, STREAMING)
+            (OutputMode::Insert, DeliveryMode::Streaming)
         );
     }
 
@@ -165,62 +154,6 @@ mod tests {
 
         assert_eq!(
             modes(DictationSettings::resolve(settings, request, front(SLACK))),
-            (OutputMode::InsertOrCopy, STREAMING)
-        );
-    }
-
-    #[test]
-    fn copy_delivers_after_recording_unless_the_request_asks_to_stream() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::Copy),
-            delivery_mode: Some(DeliveryMode::Streaming),
-        });
-
-        assert_eq!(
-            modes(DictationSettings::resolve(
-                settings.clone(),
-                DictationRequest::new(StopMode::OnSilence),
-                front(SLACK)
-            )),
-            (OutputMode::Copy, DeliveryMode::Complete)
-        );
-        let streaming = DictationRequest {
-            delivery_mode: Some(DeliveryMode::Streaming),
-            ..DictationRequest::new(StopMode::OnSilence)
-        };
-        assert_eq!(
-            modes(DictationSettings::resolve(
-                settings,
-                streaming,
-                front(SLACK)
-            )),
-            (OutputMode::Copy, DeliveryMode::Streaming)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_platform_that_pastes_streams_only_when_asked() {
-        let settings = Settings {
-            output_mode: OutputMode::InsertOrCopy,
-            delivery_mode: DeliveryMode::Streaming,
-            ..Settings::default()
-        };
-        let streaming = DictationRequest {
-            delivery_mode: Some(DeliveryMode::Streaming),
-            ..DictationRequest::new(StopMode::OnSilence)
-        };
-
-        assert_eq!(
-            modes(DictationSettings::resolve(
-                settings.clone(),
-                DictationRequest::new(StopMode::OnSilence),
-                None
-            )),
-            (OutputMode::InsertOrCopy, DeliveryMode::Complete)
-        );
-        assert_eq!(
-            modes(DictationSettings::resolve(settings, streaming, None)),
             (OutputMode::InsertOrCopy, DeliveryMode::Streaming)
         );
     }

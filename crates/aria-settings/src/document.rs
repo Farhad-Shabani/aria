@@ -22,7 +22,7 @@ use super::checked::{
     CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
     Voices, WakeEngine,
 };
-use super::keys::{LISTEN_BACKENDS, STT_BACKENDS, WAKE_BACKENDS};
+use super::keys::{Kind, STT_BACKENDS, WAKE_BACKENDS};
 use super::limits::MAX_CHAT_TIMEOUT;
 use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
 use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
@@ -1095,7 +1095,7 @@ impl SettingsFile {
         };
         let engine = LocalStt::named(backend_name)
             .filter(|engine| engine.streams())
-            .ok_or_else(|| unsupported(backend_name, LISTEN_BACKENDS, Key::ListenBackend))?;
+            .ok_or_else(|| unsupported(backend_name, backend::STREAMING, Key::ListenBackend))?;
         if listen.device.is_some() && engine != LocalStt::Parakeet {
             return Err(invalid(
                 Key::ListenDevice,
@@ -1364,13 +1364,32 @@ impl SettingsFile {
 }
 
 /// The keys whose values differ between two files.
-pub(crate) fn changed_keys(before: &SettingsFile, after: &SettingsFile) -> Vec<Key> {
+pub(crate) fn changed_keys(before: &SettingsFile, after: &SettingsFile, home: &Path) -> Vec<Key> {
     let (before, after) = (before.values(), after.values());
     Key::ALL
         .iter()
         .copied()
-        .filter(|key| value_at(&before, *key) != value_at(&after, *key))
+        .filter(|key| effective_at(&before, *key, home) != effective_at(&after, *key, home))
         .collect()
+}
+
+pub(crate) fn effective_at(values: &serde_json::Value, key: Key, home: &Path) -> serde_json::Value {
+    or_default(value_at(values, key), key, home)
+}
+
+/// Reads an absent value as the key's default, so writing a default out
+/// changes nothing. A default path expands as the file's paths do.
+pub(crate) fn or_default(value: serde_json::Value, key: Key, home: &Path) -> serde_json::Value {
+    if !value.is_null() {
+        return value;
+    }
+    let default = key.default_value();
+    match (key.kind(), &default) {
+        (Kind::Path, serde_json::Value::String(text)) => expand_home(Path::new(text), home)
+            .map(|path| serde_json::Value::String(path.to_string_lossy().into_owned()))
+            .unwrap_or(default),
+        _ => default,
+    }
 }
 
 /// Sets one key in a JSON tree from [`SettingsFile::values`]. `Null` removes it,
@@ -2126,6 +2145,18 @@ pub(super) mod tests {
         );
         refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
         refused("[listen]\nbackend = \"server\"\n", Key::ListenBackend);
+    }
+
+    #[test]
+    fn mac_audio_takes_any_engine_that_streams() {
+        for engine in backend::STREAMING {
+            let text = format!("[listen]\nbackend = \"{engine}\"\n");
+            assert!(Loaded::parse(&text, Path::new(HOME)).is_ok(), "{engine}");
+        }
+        refused(
+            "[listen]\nbackend = \"whisper-candle\"\n",
+            Key::ListenBackend,
+        );
     }
 
     #[test]

@@ -187,6 +187,7 @@ fn compose(
         chat,
         speaker: speaker_runtime,
         monitor,
+        engine,
         hotkey,
         relay_port,
     } = workers;
@@ -285,6 +286,7 @@ fn compose(
         memory: memory_backlog,
         vocabulary: vocabulary_worker,
         settings_poll,
+        engine,
     };
     Ok(Server::new(
         socket,
@@ -323,6 +325,9 @@ struct Workers {
     chat: Arc<ChatRuntime>,
     speaker: Arc<SpeakerRuntime>,
     monitor: Option<WakeWordMonitor>,
+    /// `None` for an on-demand daemon, which serves one press and follows
+    /// nothing.
+    engine: Option<super::dictation::EngineFollower>,
     hotkey: HotkeyConfig,
     /// The relay's delivery adapter and its port, read from the
     /// settings a persistent daemon loads. An on-demand one — which
@@ -425,10 +430,11 @@ fn eager_workers(
         );
     }
     let speaker_config = SpeakerConfig::load(&startup.speaker, &context.home);
-    let (dictation, monitor, recorder) = DictationRuntime::eager(
+    let (dictation, monitor, recorder, engine) = DictationRuntime::eager(
         context,
         Arc::clone(subscriptions),
         Arc::clone(settings),
+        Arc::clone(cache),
         Arc::clone(transcripts),
         DictationSetup {
             dictation: dictation_config,
@@ -465,6 +471,7 @@ fn eager_workers(
             Arc::clone(settings),
         )),
         monitor,
+        engine: Some(engine),
         hotkey: context.hotkey(),
         relay_port,
     })
@@ -526,6 +533,7 @@ fn deferred_workers(
         // An on-demand daemon serves one request and exits. A hotkey, like
         // the wake word and the relay, needs a persistent daemon.
         hotkey: HotkeyConfig::Disabled,
+        engine: None,
         relay_port: None,
     }
 }

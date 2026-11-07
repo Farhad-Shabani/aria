@@ -107,12 +107,14 @@ struct AriaApp: App {
                 promptListChord: appDelegate.promptList.chord,
                 setupStatus: appDelegate.setupStatus,
                 modelDownload: appDelegate.modelDownload,
+                transcriptionEngineChange: appDelegate.transcriptionEngineChange,
                 setupState: appDelegate.setupState,
                 voices: appDelegate.voices,
                 serverTranscription: appDelegate.serverTranscription,
                 settingsHealth: appDelegate.settingsHealth,
                 paneRequest: appDelegate.settingsPaneRequest
             )
+            .environmentObject(appDelegate.setupRunner)
         }
         .sidebarWindowScene()
         .commandsRemoved()
@@ -160,6 +162,7 @@ struct AriaApp: App {
 
         Window("Aria Setup", id: WindowID.setup) {
             SetupView(state: appDelegate.setupState, settings: settings)
+                .environmentObject(appDelegate.setupRunner)
         }
         .sidebarWindowScene()
         .commandsRemoved()

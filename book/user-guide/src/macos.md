@@ -63,6 +63,36 @@ key alone sends and cancels it.
 Any other key pressed with the Aria key cancels the press. Option shortcuts
 in other apps keep working. These presses need Accessibility access.
 
+## Choose a speech model
+
+**Settings → Dictation → Speech model** lists the speech models your Mac can
+run. Models already on your Mac come first. The rest sit under **Download**,
+with their size.
+
+Choosing a model that isn't on your Mac downloads it. Your current model keeps
+working until the download finishes. Click **Cancel** to stop the download.
+Aria keeps the partial files, and choosing the model again resumes it.
+
+Aria switches models between dictations, without a restart. If you're
+dictating, the switch waits until you finish. The first dictation after a
+switch may wait a moment while the new model loads.
+
+Whisper Tiny and Parakeet (MLX) type only after recording stops. While you use
+one of them, **Deliver** stays at **After recording stops**. Your choice
+returns when you switch back to a model that types while you speak.
+
+While **Transcribe on your server** is on in **Settings → Recognition**, your
+server chooses the model.
+
+A model stays on your Mac after you switch away from it. To free its space,
+open **Settings → General → Storage** and click the trash button beside it.
+Models that a setting loads have no trash button. Choose a deleted model again
+to download it.
+
+When your speech model can't type while you speak, Mac Audio uses Parakeet.
+Parakeet still has a trash button then. If you delete it, Mac Audio reports it
+missing when a transcription starts.
+
 ## Captions
 
 Turn on **Show captions** in **Settings → General** to see what Aria hears in

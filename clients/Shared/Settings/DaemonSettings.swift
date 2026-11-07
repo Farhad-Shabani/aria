@@ -58,6 +58,11 @@ final class DaemonSettings: ObservableObject {
         !pending.isEmpty && !isPushing
     }
 
+    /// Each output mode that can't stream here, as the daemon last said.
+    var streamingUnavailable: [Aria_Daemon_V1_StreamingUnavailableOutput] {
+        answer?.streamingUnavailable ?? []
+    }
+
     var isHistoryEnabled: Bool {
         snapshot?.historyEnabled ?? true
     }

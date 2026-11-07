@@ -17,6 +17,8 @@ final class SetupStatus: ObservableObject {
     @Published private(set) var hasSpeakerModelOnDisk = true
     @Published private(set) var server: Aria_Setup_V1_PairedServer?
     @Published private(set) var transcription = TranscriptionLocation.thisMac
+    @Published private(set) var speechModels = SpeechModels()
+    @Published private(set) var downloadedModels = DownloadedModels()
 
     private let inspect: @MainActor () async throws -> Aria_Setup_V1_Inspection
     /// Only the newest inspection may update the status. An older one could
@@ -33,6 +35,8 @@ final class SetupStatus: ObservableObject {
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
         transcription = inspection.defaults.transcriptionEngineID == Self.serverEngine ? .server : .thisMac
+        speechModels = SpeechModels(inspection)
+        downloadedModels = DownloadedModels(inspection)
     }
 
     func refresh() async {
@@ -60,6 +64,6 @@ final class SetupStatus: ObservableObject {
     static let speakerModel = "speaker"
 
     static func hasSpeakerModelOnDisk(in inspection: Aria_Setup_V1_Inspection) -> Bool {
-        inspection.models.contains { $0.id == speakerModel && ($0.onDisk == .complete || $0.external) }
+        inspection.models.contains { $0.id == speakerModel && ($0.files == .complete || $0.files == .external) }
     }
 }

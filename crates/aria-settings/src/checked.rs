@@ -59,6 +59,18 @@ pub enum SttChoice {
     Server(ServerEndpoint),
 }
 
+impl SttChoice {
+    /// Whether a dictation can type during recording. The server's own engine
+    /// decides for itself, so it isn't held back here.
+    pub fn streams(&self) -> bool {
+        match self {
+            Self::Local(engine) => engine.streams(),
+            Self::ParakeetMlx { .. } => false,
+            Self::Server(_) => true,
+        }
+    }
+}
+
 /// An engine that runs in process. Its model and device come from the
 /// section that named it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,10 +95,9 @@ impl LocalStt {
     }
 
     pub(crate) fn streams(self) -> bool {
-        match self {
-            Self::Parakeet | Self::Moonshine | Self::Nemotron => true,
-            Self::Whisper | Self::WhisperCandle => false,
-        }
+        backend::STREAMING
+            .iter()
+            .any(|name| Self::named(name) == Some(self))
     }
 }
 

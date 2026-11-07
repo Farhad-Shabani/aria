@@ -91,7 +91,7 @@ final class SetupStateTests: XCTestCase {
         model.title = name.capitalized
         model.sizeBytes = 10
         model.engineID = engine
-        model.onDisk = present ? .complete : .absent
+        model.files = present ? .complete : .absent
         model.downloadByDefault = isDefault
         return model
     }
@@ -135,7 +135,7 @@ final class SetupStateTests: XCTestCase {
     }
 
     private func welcome(_ harness: Harness) async -> SetupState {
-        let state = SetupState(effects: harness.effects)
+        let state = SetupState(effects: harness.effects, runner: SetupRunner())
         state.start()
         await waitUntil { state.step == .welcome }
         return state
@@ -384,13 +384,13 @@ final class SetupStateTests: XCTestCase {
         inspection.defaults.synthesisEngineID = "futuristic"
         inspection.models = inspection.models.map { model in
             var model = model
-            model.onDisk = .complete
+            model.files = .complete
             return model
         }
         inspection.missing = []
         let harness = Harness()
         harness.inspection = inspection
-        let state = SetupState(effects: harness.effects)
+        let state = SetupState(effects: harness.effects, runner: SetupRunner())
         XCTAssertNil(state.missingSummary, "nothing to say before the Mac is looked at")
         state.start()
         await waitUntil { state.step == .welcome }
@@ -421,14 +421,14 @@ final class SetupStateTests: XCTestCase {
 
     func testPlanSkipsAModelConfiguredElsewhere() {
         var inspection = Self.freshMac()
-        inspection.models[0].external = true
+        inspection.models[0].files = .external
 
         XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.id).contains("parakeet"))
     }
 
     func testExpressPreviewMatchesTheDownloadRequest() async {
         var inspection = Self.freshMac()
-        inspection.models[3].onDisk = .complete
+        inspection.models[3].files = .complete
         let harness = Harness()
         harness.inspection = inspection
         let state = await welcome(harness)
@@ -443,7 +443,7 @@ final class SetupStateTests: XCTestCase {
 
     func testTotalNeverClaimsAnExactSizeForAResumedDownload() {
         var resumed = Self.model("parakeet", engine: "parakeet")
-        resumed.onDisk = .partial
+        resumed.files = .partial
 
         XCTAssertEqual(SetupState.total([]), "No downloads needed.")
         XCTAssertEqual(SetupState.total([Self.model("speaker")]), "Total download: 10 bytes")
@@ -452,9 +452,9 @@ final class SetupStateTests: XCTestCase {
 
     func testEngineDownloadTellsWhatPickingItFetches() {
         var inspection = Self.freshMac()
-        inspection.models[1].onDisk = .partial
+        inspection.models[1].files = .partial
         var nemotron = Self.model("nemotron", engine: "nemotron")
-        nemotron.external = true
+        nemotron.files = .external
         inspection.models += [Self.model("moonshine", engine: "moonshine", present: true), nemotron]
         let download = { (key: String) in SetupState.download(of: Self.engine(key), in: inspection) }
         let source = { (model: Aria_Setup_V1_ModelSource) in

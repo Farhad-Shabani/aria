@@ -48,7 +48,7 @@ final class ModelDownloadTests: XCTestCase {
                 apply: apply,
                 stopDaemon: { spy.stops += 1 },
                 startDaemon: { spy.starts += 1 }
-            ))
+            ), runner: SetupRunner())
     }
 
     private func eventually(_ condition: () -> Bool) async {
@@ -70,8 +70,9 @@ final class ModelDownloadTests: XCTestCase {
 
         download.start("parakeet") { spy.downloaded += 1 }
         await gate.reached()
-        await eventually { download.state == .downloading(fraction: 0.5) }
-        XCTAssertEqual(download.state, .downloading(fraction: 0.5))
+        let halfway = ModelDownload.State.downloading(.init(received: 50, total: 100))
+        await eventually { download.state == halfway }
+        XCTAssertEqual(download.state, halfway)
         XCTAssertEqual(spy.request?.downloads, ["parakeet"])
         XCTAssertEqual(spy.request?.selections, inspection.defaults)
 
@@ -105,14 +106,38 @@ final class ModelDownloadTests: XCTestCase {
         XCTAssertEqual([spy.stops, spy.starts, spy.downloaded], [1, 1, 0])
     }
 
+    func testOnlyTheDownloadingModelsRowShowsTheRun() {
+        let download = download(spy: Spy()) { _, _ in Aria_Setup_V1_Summary() }
+
+        download.start("parakeet") {}
+
+        XCTAssertEqual(download.state(of: "parakeet"), .downloading(nil))
+        XCTAssertEqual(download.state(of: "segmentation"), .idle)
+    }
+
+    func testTheRunStaysBusyUntilItsFollowUpFinishes() async {
+        let spy = Spy()
+        var busyDuringFollowUp: Bool?
+        let download = download(spy: spy) { _, _ in Aria_Setup_V1_Summary() }
+
+        download.start("parakeet") {
+            busyDuringFollowUp = download.isRunning
+            spy.downloaded += 1
+        }
+        await eventually { spy.downloaded == 1 }
+
+        XCTAssertEqual(busyDuringFollowUp, true)
+        XCTAssertEqual(download.state, .idle)
+    }
+
     func testAFailedDownloadSaysSoAndRestartsAria() async {
         let spy = Spy()
         let download = download(spy: spy) { _, _ in throw SetupClientError.failed("disk full") }
 
         download.start("parakeet") { spy.downloaded += 1 }
-        await eventually { download.state == .failed }
+        await eventually { download.state == .failed(ModelDownload.failure) }
 
-        XCTAssertEqual(download.state, .failed)
+        XCTAssertEqual(download.state, .failed(ModelDownload.failure))
         XCTAssertEqual([spy.stops, spy.starts, spy.downloaded], [1, 1, 0])
     }
 }

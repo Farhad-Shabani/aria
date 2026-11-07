@@ -9,8 +9,8 @@ use crate::microphone::{Admitted, Claim, Gate};
 use crate::transcription::{Language, Transcript, TranscriptionError};
 use aria_kit::audio::{CaptureError, RecordingReader};
 use aria_primitives::error_chain;
-use aria_settings::MAX_DICTATION_TIMEOUT;
 use aria_settings::rpc::RpcErrorCode;
+use aria_settings::{DeliveryMode, MAX_DICTATION_TIMEOUT};
 
 #[cfg(target_os = "macos")]
 use super::output::OutputMute;
@@ -156,7 +156,7 @@ pub enum DictationError {
     #[error("recording has already started for this dictation execution")]
     RecordingAlreadyStarted,
 
-    #[error("streaming delivery requires a chunked transcription strategy")]
+    #[error("a transcript handed back can't stream")]
     StreamingDeliveryUnavailable,
 
     #[error("dictation execution was cancelled")]
@@ -413,6 +413,7 @@ impl ExecutionControl {
     /// backend does.
     pub(crate) fn start_recording(
         self: &Arc<Self>,
+        delivery: DeliveryMode,
         events: &DictationEventEmitter,
     ) -> Result<RecordingGuard, DictationError> {
         self.recording_state
@@ -431,7 +432,10 @@ impl ExecutionControl {
         // Before `Recording`, whose start cue must play into silence.
         #[cfg(target_os = "macos")]
         self.mute_other_apps();
-        events.emit(DictationStage::Recording(self.id));
+        events.emit(DictationStage::Recording {
+            id: self.id,
+            delivery,
+        });
         Ok(guard)
     }
 
@@ -1032,10 +1036,15 @@ mod tests {
         let (events, stages) = announcing();
         let control = ExecutionControl::for_test(StopMode::Manual);
 
-        let guard = control.start_recording(&events).expect("recording starts");
+        let guard = control
+            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .expect("recording starts");
         assert_eq!(
             stages.recv().expect("recording is announced"),
-            DictationStage::Recording(RecordingId(0))
+            DictationStage::Recording {
+                id: RecordingId(0),
+                delivery: DeliveryMode::Complete
+            }
         );
         assert!(!guard.should_stop(), "capture polls, as a live one does");
         drop(guard);
@@ -1059,7 +1068,9 @@ mod tests {
             SoundMuting::Never,
         ));
 
-        let guard = control.start_recording(&events).expect("recording starts");
+        let guard = control
+            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .expect("recording starts");
         stages.recv().expect("recording is announced");
         cancel.cancel();
         assert!(guard.should_stop());
@@ -1079,7 +1090,9 @@ mod tests {
         let (events, stages) = announcing();
         let control = ExecutionControl::for_test(StopMode::Manual);
 
-        let guard = control.start_recording(&events).expect("recording starts");
+        let guard = control
+            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .expect("recording starts");
         stages.recv().expect("recording is announced");
         drop(guard);
         drop(events);
@@ -1105,7 +1118,10 @@ mod tests {
         let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
         control.output().mute = Some(fake_output(&writes));
         let stuck = control
-            .start_recording(&DictationEventEmitter::unsubscribed())
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
             .unwrap();
 
         control.await_capture_release();
@@ -1141,12 +1157,15 @@ mod tests {
         let control = muting_control(mute);
         let (sender, quiet_at_start) = std::sync::mpsc::channel();
         let events = DictationEventEmitter::forwarded_by(move |event| {
-            if let crate::dictation::DictationEvent::Stage(DictationStage::Recording(_)) = event {
+            if let crate::dictation::DictationEvent::Stage(DictationStage::Recording { .. }) = event
+            {
                 let _ = sender.send(MUTED.load(Ordering::SeqCst));
             }
         });
 
-        let _guard = control.start_recording(&events).unwrap();
+        let _guard = control
+            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .unwrap();
 
         assert!(quiet_at_start.recv().unwrap());
         control.restore_output();
@@ -1174,7 +1193,10 @@ mod tests {
         let starting = Arc::clone(&control);
         let (sender, start) = std::sync::mpsc::channel();
         thread::spawn(move || {
-            let _ = sender.send(starting.start_recording(&DictationEventEmitter::unsubscribed()));
+            let _ = sender.send(starting.start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            ));
         });
         let _guard = start
             .recv_timeout(Duration::from_secs(5))
@@ -1243,7 +1265,9 @@ mod tests {
             ));
             let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
             control.output().mute = Some(fake_output(&writes));
-            let guard = control.start_recording(&events).unwrap();
+            let guard = control
+                .start_recording(aria_settings::DeliveryMode::Complete, &events)
+                .unwrap();
             match ending {
                 "stop" => assert!(control.request_recording_stop()),
                 "cancel" => control.cancellation.cancel(),
@@ -1283,7 +1307,8 @@ mod tests {
                 events: &DictationEventEmitter,
             ) -> Result<DictationResult, DictationError> {
                 control.output().mute = Some(fake_output(&self.writes));
-                let guard = control.start_recording(events)?;
+                let guard =
+                    control.start_recording(aria_settings::DeliveryMode::Complete, events)?;
                 assert!(!guard.should_stop());
                 *self.retained.lock().unwrap() = Some(guard);
                 panic!("executor failed while capture still owns its guard");
@@ -1338,7 +1363,10 @@ mod tests {
         };
         next.output().mute = Some(fake_output(&writes));
         let next_recording = next
-            .start_recording(&DictationEventEmitter::unsubscribed())
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
             .unwrap();
         drop(retained.lock().unwrap().take());
         assert_eq!(*writes.lock().unwrap(), [1, 0, 1]);
@@ -1347,7 +1375,10 @@ mod tests {
         drop(events);
         assert_eq!(
             stages.iter().collect::<Vec<_>>(),
-            [DictationStage::Recording(RecordingId(1))]
+            [DictationStage::Recording {
+                id: RecordingId(1),
+                delivery: DeliveryMode::Complete
+            }]
         );
     }
 }

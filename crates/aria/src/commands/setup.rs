@@ -16,6 +16,9 @@ pub(super) enum SetupCommand {
     /// Read one ApplyRequest, write ApplyResponses until the summary
     #[command(hide = true)]
     Apply,
+    /// Read one SetTranscriptionEngineRequest, write responses until the summary
+    #[command(hide = true)]
+    SetTranscriptionEngine,
 }
 
 pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
@@ -31,6 +34,27 @@ pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
         &mut std::io::stdout(),
     )
     .context("setup did not finish")?;
+    print_summary(&summary);
+    Ok(())
+}
+
+pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
+    let summary = crate::setup::transcription_engine::set_transcription_engine(
+        engine,
+        std::io::stdout().is_terminal(),
+        &mut |_| Ok(()),
+    )
+    .context("setting the speech engine did not finish")?;
+    println!();
+    println!("speech       {}", summary.engine);
+    for (name, outcome) in &summary.models {
+        println!("{name:<12} {}", outcome.as_str());
+    }
+    println!("settings     {}", settings_write_message(&summary.settings));
+    Ok(())
+}
+
+fn print_summary(summary: &crate::setup::Summary) {
     let selections = &summary.selections;
     println!();
     println!("speech       {}", selections.stt);
@@ -62,7 +86,6 @@ pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
     } else {
         println!("next         run `aria doctor`");
     }
-    Ok(())
 }
 
 pub(super) fn run_for_app(command: SetupCommand) -> anyhow::Result<()> {
@@ -74,6 +97,9 @@ pub(super) fn run_for_app(command: SetupCommand) -> anyhow::Result<()> {
     match command {
         SetupCommand::Inspect => crate::setup::wire::inspect(&mut stdout),
         SetupCommand::Apply => crate::setup::wire::apply(&mut std::io::stdin().lock(), &mut stdout),
+        SetupCommand::SetTranscriptionEngine => {
+            crate::setup::wire::set_transcription_engine(&mut std::io::stdin().lock(), &mut stdout)
+        }
     }
     .context("setup did not finish")
 }
@@ -121,25 +147,32 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn setup_takes_its_two_flags() {
+    fn setup_takes_its_flags() {
         let parse = |arguments: &[&str]| {
             let cli = Cli::try_parse_from(arguments).expect("the setup command should parse");
             let Command::Setup {
                 command: None,
                 yes,
                 skip_models,
+                stt,
             } = cli.command
             else {
                 panic!("a setup invocation should parse as Setup");
             };
-            (yes, skip_models)
+            (yes, skip_models, stt)
         };
 
-        assert_eq!(parse(&["aria", "setup"]), (false, false));
+        assert_eq!(parse(&["aria", "setup"]), (false, false, None));
         assert_eq!(
             parse(&["aria", "setup", "--yes", "--skip-models"]),
-            (true, true)
+            (true, true, None)
         );
+        assert_eq!(
+            parse(&["aria", "setup", "--stt", "moonshine"]),
+            (false, false, Some("moonshine".to_owned()))
+        );
+        assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "--yes"]).is_err());
+        assert!(Cli::try_parse_from(["aria", "setup", "--stt", "moonshine", "inspect"]).is_err());
     }
 
     #[test]
@@ -157,6 +190,14 @@ mod tests {
             cli.command,
             Command::Setup {
                 command: Some(SetupCommand::Apply),
+                ..
+            }
+        ));
+        let cli = Cli::try_parse_from(["aria", "setup", "set-transcription-engine"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Setup {
+                command: Some(SetupCommand::SetTranscriptionEngine),
                 ..
             }
         ));

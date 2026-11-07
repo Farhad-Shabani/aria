@@ -85,6 +85,10 @@ pub struct Delivered {
 pub trait TranscriptSink {
     type Error;
 
+    /// Whether it can take text while recording runs. A sink that types
+    /// nothing can.
+    const STREAMS: bool = true;
+
     fn dictation_started(
         &mut self,
         _settings: &DictationSettings,

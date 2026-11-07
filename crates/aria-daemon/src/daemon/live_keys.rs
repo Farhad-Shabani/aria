@@ -95,6 +95,14 @@ impl LiveHarness {
         )
     }
 
+    fn next_engine(&self) -> String {
+        let settings = self.cache.effective();
+        format!(
+            "{:?}",
+            aria_voice::config::DictationConfig::load(&settings, &self.home).transcription
+        )
+    }
+
     fn next_listen(&self) -> String {
         let settings = self.cache.effective();
         format!("{:?}", ListenConfig::load(&settings, &self.home))
@@ -147,6 +155,11 @@ impl LiveHarness {
             | Key::ListenModel
             | Key::ListenDevice
             | Key::ListenTranscriptsDir => self.next_listen(),
+            Key::SttBackend
+            | Key::SttModel
+            | Key::SttDevice
+            | Key::SttInterpreter
+            | Key::SttServer => self.next_engine(),
             Key::DictationCleanupLlmEndpoint
             | Key::DictationCleanupLlmModel
             | Key::MemoryDir
@@ -162,11 +175,6 @@ impl LiveHarness {
             | Key::TtsKokoroVoices
             | Key::TtsQwenModel
             | Key::TtsQwenTokenizer
-            | Key::SttBackend
-            | Key::SttModel
-            | Key::SttDevice
-            | Key::SttInterpreter
-            | Key::SttServer
             | Key::SpeakerModel
             | Key::SpeakerSegmentationModel
             | Key::SpeakerProfilesDir
@@ -234,10 +242,21 @@ fn change(key: Key) -> Patch {
         Key::ApplicationOverrides => entry(key, "com.app", "{ output_mode = \"copy\" }"),
         Key::TtsRate => set(key, 1.5),
         Key::TtsSystemVoice | Key::TtsKokoroVoice | Key::TtsQwenVoice => set(key, "a-voice"),
-        Key::ListenBackend => set(key, "moonshine"),
-        Key::ListenModel => set(key, "/model"),
-        Key::ListenDevice => set(key, "gpu"),
+        Key::ListenBackend | Key::SttBackend => set(key, "moonshine"),
+        Key::ListenModel | Key::SttModel => set(key, "/model"),
+        Key::ListenDevice | Key::SttDevice => set(key, "gpu"),
         Key::ListenTranscriptsDir => set(key, "/transcripts"),
+        // Each key needs the one engine that takes it, so the patch sets it too.
+        Key::SttInterpreter => {
+            let mut patch = set(Key::SttBackend, "parakeet-mlx");
+            patch.set(key, "/usr/bin/python3");
+            patch
+        }
+        Key::SttServer => {
+            let mut patch = set(Key::SttBackend, "server");
+            patch.set(key, "https://box.test:9851");
+            patch
+        }
         Key::DictationCleanup
         | Key::DictationBacktrack
         | Key::DictationOwnVoiceOnly
@@ -258,11 +277,6 @@ fn change(key: Key) -> Patch {
         | Key::TtsKokoroVoices
         | Key::TtsQwenModel
         | Key::TtsQwenTokenizer
-        | Key::SttBackend
-        | Key::SttModel
-        | Key::SttDevice
-        | Key::SttInterpreter
-        | Key::SttServer
         | Key::SpeakerModel
         | Key::SpeakerSegmentationModel
         | Key::SpeakerProfilesDir

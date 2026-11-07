@@ -79,6 +79,7 @@ enum Command {
         command: wake::WakeCommand,
     },
     /// Pick engines, fetch their models, and register the daemon
+    #[command(args_conflicts_with_subcommands = true)]
     Setup {
         #[command(subcommand)]
         command: Option<setup::SetupCommand>,
@@ -88,6 +89,10 @@ enum Command {
         /// Leave the speech models for later
         #[arg(long)]
         skip_models: bool,
+        /// Set the speech-to-text engine, keeping every other choice and
+        /// downloading only that engine's models
+        #[arg(long, value_name = "ENGINE", conflicts_with_all = ["yes", "skip_models"])]
+        stt: Option<String>,
     },
     /// See and remove the models setup downloaded
     Models {
@@ -106,7 +111,7 @@ enum Command {
         /// Record until you press Esc, run the command again, or Auto-stop ends it
         #[arg(long)]
         toggle: bool,
-        /// Insert finalized transcript segments while recording continues
+        /// Insert finalized segments while recording, where the output and model can stream
         #[arg(long)]
         stream: bool,
         /// Disable project spellings for this recording
@@ -211,8 +216,14 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Service { command } => service::run(command),
         Command::Setup {
             command: None,
+            stt: Some(engine),
+            ..
+        } => setup::set_transcription_engine(&engine),
+        Command::Setup {
+            command: None,
             yes,
             skip_models,
+            stt: None,
         } => setup::run(yes, skip_models),
         Command::Setup {
             command: Some(command),

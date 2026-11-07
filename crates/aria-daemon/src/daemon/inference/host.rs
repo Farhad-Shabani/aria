@@ -29,6 +29,7 @@ use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_primitives::cancel::CancelToken;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::ConfigError;
+use aria_settings::{SettingsCache, SettingsPoll};
 use aria_voice::config::TranscriptionBackend;
 use aria_voice::transcription::TranscriptionError;
 
@@ -49,8 +50,12 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
     let shutdown = ShutdownSignal::install()?;
     let home = aria_settings::config::home_directory()?;
     // A headless server reads engine keys and never writes.
-    let settings = aria_settings::load(&home).map_err(ConfigError::from)?;
-    let config = match TranscriptionBackend::load(&settings, &home) {
+    let cache = Arc::new(
+        SettingsCache::open(aria_settings::default_path(&home), home.clone())
+            .map_err(ConfigError::from)?,
+    );
+    let serving = TranscriptionBackend::load(&cache.effective(), &home);
+    let config = match serving.clone() {
         TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
         TranscriptionBackend::Server { .. } => {
             return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
@@ -65,13 +70,34 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
         .thread_name("aria-inference")
         .build()
         .map_err(HostFailure::Io)?;
+    let _poll = SettingsPoll::spawn(Arc::clone(&cache)).map_err(ConfigError::from)?;
     let result = runtime.block_on(async {
+        tokio::spawn(warn_on_drift(cache, serving, home));
         Host::bind(address, &state, &runtime_paths)?
             .serve(config, shutdown)
             .await
     });
     runtime.shutdown_timeout(Duration::ZERO);
     result
+}
+
+/// The host loads its engine once, so an engine change in the settings file
+/// waits for a restart. It warns once each time the file starts to differ.
+async fn warn_on_drift(cache: Arc<SettingsCache>, serving: TranscriptionBackend, home: PathBuf) {
+    let mut status = cache.status();
+    let mut drifted = false;
+    while status.changed().await.is_ok() {
+        let named = TranscriptionBackend::load(&cache.effective(), &home);
+        let now = named != serving;
+        if now && !drifted {
+            tracing::warn!(
+                serving = serving.backend_name(),
+                named = named.backend_name(),
+                "the engine settings changed; restart `aria serve` to apply them"
+            );
+        }
+        drifted = now;
+    }
 }
 
 /// The LAN and same-user listeners and the pairing state, ready to load the model.

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::primitives::user_home;
 use aria_settings::CheckedSettings;
-use aria_voice::config::{self, LoadedModel};
+use aria_voice::config::{LoadedModel, Section};
 
 use super::assets::{self, Asset};
 use super::{SetupError, model_states, settings_file};
@@ -14,20 +14,22 @@ use super::{SetupError, model_states, settings_file};
 pub struct Model {
     pub name: &'static str,
     pub bytes: u64,
-    pub on_disk: OnDisk,
-    /// The settings table that loads it.
-    pub used_by: Option<&'static str>,
+    pub files: ModelFiles,
+    pub used_by: Vec<Section>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnDisk {
+pub enum ModelFiles {
     Complete,
     /// Some of its files, or an unfinished download.
     Partial,
     Absent,
+    /// Settings load the engine's files from elsewhere, so setup fetches
+    /// nothing, whatever the models folder holds.
+    External,
 }
 
-impl OnDisk {
+impl ModelFiles {
     pub(super) fn of(models: &Path, asset: &Asset) -> Self {
         if assets::present(models, asset) {
             Self::Complete
@@ -38,11 +40,16 @@ impl OnDisk {
         }
     }
 
+    pub fn needs_download(self) -> bool {
+        matches!(self, Self::Partial | Self::Absent)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "installed",
             Self::Partial => "partial",
             Self::Absent => "-",
+            Self::External => "external",
         }
     }
 }
@@ -56,20 +63,25 @@ pub fn list() -> Result<Vec<Model>, SetupError> {
 /// Deletes one model's files and returns the bytes freed.
 pub fn remove(name: &str) -> Result<u64, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
-    let file = settings_file::read(&home)?;
-    removed(&home, &file, name)
+    remove_at(&home, name)
+}
+
+/// Under setup's lock, so a run fetching a model for settings it hasn't
+/// written yet can't lose the files to a removal that saw them unused.
+fn remove_at(home: &Path, name: &str) -> Result<u64, SetupError> {
+    let _lock = super::lock_setup(&aria_settings::default_path(home))?;
+    let file = settings_file::read(home)?;
+    removed(home, &file, name)
 }
 
 fn listed(home: &Path, file: &CheckedSettings) -> Result<Vec<Model>, SetupError> {
-    let models_dir = aria_settings::config::models_dir(home);
-    let loaded = config::loaded_models(file, home);
     Ok(model_states(home, file)?
         .into_iter()
         .map(|model| Model {
             name: model.name,
             bytes: model.bytes,
-            on_disk: model.on_disk,
-            used_by: user(&loaded, &models_dir, model.asset),
+            files: model.files,
+            used_by: model.used_by,
         })
         .collect())
 }
@@ -81,14 +93,13 @@ fn removed(home: &Path, file: &CheckedSettings, name: &str) -> Result<u64, Setup
         .ok_or_else(|| SetupError::UnknownModel {
             name: name.to_owned(),
         })?;
-    let models_dir = aria_settings::config::models_dir(home);
-    let loaded = config::loaded_models(file, home);
-    if let Some(section) = user(&loaded, &models_dir, model.asset) {
+    if !model.used_by.is_empty() {
         return Err(SetupError::ModelInUse {
             name: model.name,
-            section,
+            sections: model.used_by,
         });
     }
+    let models_dir = aria_settings::config::models_dir(home);
     let freed = assets::remove(&models_dir, model.asset)?;
     if freed == 0 {
         return Err(SetupError::ModelNotInstalled { name: model.name });
@@ -97,11 +108,18 @@ fn removed(home: &Path, file: &CheckedSettings, name: &str) -> Result<u64, Setup
 }
 
 /// The section that loads one of the asset's files, if any does.
-fn user(loaded: &[LoadedModel], models_dir: &Path, asset: &assets::Asset) -> Option<&'static str> {
-    loaded
-        .iter()
-        .find(|model| assets::holds(models_dir, asset, &model.path))
-        .map(|model| model.section)
+pub(super) fn users(
+    loaded: &[LoadedModel],
+    models_dir: &Path,
+    asset: &assets::Asset,
+) -> Vec<Section> {
+    let mut sections = Vec::new();
+    for model in loaded {
+        if assets::holds(models_dir, asset, &model.path) && !sections.contains(&model.section) {
+            sections.push(model.section);
+        }
+    }
+    sections
 }
 
 #[cfg(test)]
@@ -120,7 +138,7 @@ mod tests {
             .unwrap()
     }
 
-    fn used_by(file: &CheckedSettings, name: &str) -> Option<&'static str> {
+    fn used_by(file: &CheckedSettings, name: &str) -> Vec<Section> {
         model(Path::new("/home/someone"), file, name).used_by
     }
 
@@ -142,11 +160,12 @@ mod tests {
 
         assert_eq!(
             used_by(&file, aria_settings::config::backend::DEFAULT),
-            Some("stt")
+            [Section::Stt, Section::Listen],
+            "listen runs dictation's engine when it streams"
         );
-        assert_eq!(used_by(&file, "kokoro"), None);
-        assert_eq!(used_by(&file, "speaker"), Some("speaker"));
-        assert_eq!(used_by(&file, "segmentation"), Some("speaker"));
+        assert!(used_by(&file, "kokoro").is_empty());
+        assert_eq!(used_by(&file, "speaker"), [Section::Speaker]);
+        assert_eq!(used_by(&file, "segmentation"), [Section::Speaker]);
     }
 
     #[test]
@@ -157,17 +176,31 @@ mod tests {
              [tts]\nbackend = \"qwen\"\n",
         );
 
-        assert_eq!(used_by(&file, "parakeet"), Some("stt"));
-        assert_eq!(used_by(&file, "moonshine"), Some("listen"));
-        assert_eq!(used_by(&file, "qwen"), Some("tts"));
-        assert_eq!(used_by(&file, "whisper"), None);
+        assert_eq!(used_by(&file, "parakeet"), [Section::Stt]);
+        assert_eq!(used_by(&file, "moonshine"), [Section::Listen]);
+        assert_eq!(used_by(&file, "qwen"), [Section::Tts]);
+        assert!(used_by(&file, "whisper").is_empty());
     }
 
     #[test]
     fn a_model_kept_elsewhere_leaves_the_download_unused() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n");
 
-        assert_eq!(used_by(&file, "parakeet"), None);
+        assert!(used_by(&file, "parakeet").is_empty());
+    }
+
+    #[test]
+    fn a_model_kept_elsewhere_is_external_even_with_its_files_here() {
+        let (home, models) = home();
+        for (relative, _) in assets::PARAKEET.files() {
+            touch(&models.join(relative));
+        }
+        let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"/elsewhere/tdt\"\n");
+
+        assert_eq!(
+            model(home.path(), &file, "parakeet").files,
+            ModelFiles::External
+        );
     }
 
     #[test]
@@ -177,12 +210,12 @@ mod tests {
         let file = file("");
 
         assert_eq!(
-            model(home.path(), &file, "moonshine").on_disk,
-            OnDisk::Partial
+            model(home.path(), &file, "moonshine").files,
+            ModelFiles::Partial
         );
         assert_eq!(
-            model(home.path(), &file, "parakeet").on_disk,
-            OnDisk::Absent
+            model(home.path(), &file, "parakeet").files,
+            ModelFiles::Absent
         );
     }
 
@@ -220,6 +253,17 @@ mod tests {
     }
 
     #[test]
+    fn remove_waits_for_no_setup_run() {
+        let (home, _) = home();
+        let _running = super::super::lock_setup(&aria_settings::default_path(home.path())).unwrap();
+
+        assert!(matches!(
+            remove_at(home.path(), "moonshine"),
+            Err(SetupError::Busy)
+        ));
+    }
+
+    #[test]
     fn remove_refuses_what_it_cannot_take() {
         let (home, models) = home();
         let parakeet = models.join("parakeet/parakeet-tdt-0.6b-v3/vocab.txt");
@@ -229,14 +273,11 @@ mod tests {
 
         assert!(matches!(
             refused("parakeet"),
-            SetupError::ModelInUse { section: "stt", .. }
+            SetupError::ModelInUse { sections, .. } if sections == [Section::Stt, Section::Listen]
         ));
         assert!(matches!(
             refused("speaker"),
-            SetupError::ModelInUse {
-                section: "speaker",
-                ..
-            }
+            SetupError::ModelInUse { sections, .. } if sections == [Section::Speaker]
         ));
         assert!(matches!(
             refused("moonshine"),

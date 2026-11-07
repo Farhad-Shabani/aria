@@ -11,6 +11,7 @@ struct SettingsView: View {
     let promptListChord: ChordBinding
     @ObservedObject var setupStatus: SetupStatus
     let modelDownload: ModelDownload
+    let transcriptionEngineChange: TranscriptionEngineChange
     let setupState: SetupState
     let voices: VoiceProfiles
     let serverTranscription: ServerTranscription
@@ -85,6 +86,8 @@ struct SettingsView: View {
         switch history.current {
         case .pane(let pane): page(pane)
         case .assistant: AssistantSettings(settings: settings, catalog: assistantCatalog)
+        case .storage:
+            StorageSettings(setup: setupStatus)
         case .item(let pane, let id): item(id, in: pane)
         }
     }
@@ -112,13 +115,15 @@ struct SettingsView: View {
         switch pane {
         case .finishSetup:
             FinishSetupSettings(
-                items: setupItems, setup: setupStatus, download: modelDownload, wizard: setupState,
-                health: settingsHealth, poller: poller, open: { history.open(.pane($0)) })
+                items: setupItems, setup: setupStatus, download: modelDownload, health: settingsHealth, poller: poller,
+                open: { history.open(.pane($0)) })
         case .general:
-            GeneralSettings(settings: settings, catalog: assistantCatalog) {
-                history.open(.assistant)
-            }
-        case .dictation: DictationSettings(settings: settings)
+            GeneralSettings(
+                settings: settings, catalog: assistantCatalog, setup: setupStatus,
+                openAssistant: { history.open(.assistant) },
+                openStorage: { history.open(.storage) })
+        case .dictation:
+            DictationSettings(settings: settings, setup: setupStatus, engineChange: transcriptionEngineChange)
         case .recognition:
             RecognitionSettings(
                 settings: settings, voices: voices, serverTranscription: serverTranscription,

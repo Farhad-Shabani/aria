@@ -644,7 +644,8 @@ impl DaemonClient {
 }
 
 /// The outcome is the first terminal message; a stage may still trail it.
-/// The stream ending before one is the daemon going away mid-press.
+/// The stream ending before one is the daemon going away mid-press. A stage
+/// this build can't read is skipped, since only the outcome decides the press.
 fn outcome_from(
     messages: impl IntoIterator<Item = Result<wire::StartDictationResponse, ClientError>>,
     mut observe: impl FnMut(&DictationStage),
@@ -652,9 +653,10 @@ fn outcome_from(
     use wire::start_dictation_response::Body;
     for message in messages {
         match message?.body {
-            Some(Body::Progress(stage)) => {
-                observe(&DictationStage::try_from(&stage)?);
-            }
+            Some(Body::Progress(stage)) => match DictationStage::try_from(&stage) {
+                Ok(stage) => observe(&stage),
+                Err(error) => tracing::debug!(%error, "skipping an unrecognized stage"),
+            },
             Some(Body::Result(result)) => {
                 return Ok(DictationOutcome::Completed(result.into()));
             }
@@ -841,10 +843,14 @@ mod tests {
     fn an_unknown_event_payload_is_skipped_not_fatal() {
         assert!(decode_event(wire::Event { payload: None }).is_none());
         assert!(matches!(
-            decode_event(wire::Event::from(DictationStage::Recording(RecordingId(1)))),
-            Some(Ok(DaemonEvent::Dictation(DictationStage::Recording(
-                RecordingId(1)
-            ))))
+            decode_event(wire::Event::from(DictationStage::Recording {
+                id: RecordingId(1),
+                delivery: aria_settings::DeliveryMode::Complete
+            })),
+            Some(Ok(DaemonEvent::Dictation(DictationStage::Recording {
+                id: RecordingId(1),
+                delivery: aria_settings::DeliveryMode::Complete,
+            })))
         ));
         assert!(matches!(
             decode_event(wire::Event::from(SpeechStage::Speaking)),
@@ -874,7 +880,10 @@ mod tests {
     fn a_press_reports_its_stages_then_its_outcome() {
         let messages = [
             Ok(wire::StartDictationResponse::from(
-                DictationStage::Recording(RecordingId(3)),
+                DictationStage::Recording {
+                    id: RecordingId(3),
+                    delivery: aria_settings::DeliveryMode::Complete,
+                },
             )),
             Ok(wire::StartDictationResponse::from(
                 DictationStage::Transcribing,
@@ -899,7 +908,10 @@ mod tests {
         assert_eq!(
             seen,
             [
-                DictationStage::Recording(RecordingId(3)),
+                DictationStage::Recording {
+                    id: RecordingId(3),
+                    delivery: aria_settings::DeliveryMode::Complete
+                },
                 DictationStage::Transcribing
             ]
         );
@@ -909,9 +921,37 @@ mod tests {
     }
 
     #[test]
+    fn a_stage_this_build_cant_read_leaves_the_outcome_standing() {
+        let unread = wire::StartDictationResponse {
+            body: Some(wire::start_dictation_response::Body::Progress(
+                wire::DictationEvent {
+                    stage: wire::DictationStage::Recording as i32,
+                    recording_id: 3,
+                    ..Default::default()
+                },
+            )),
+        };
+        let messages = [
+            Ok(unread),
+            Ok(wire::StartDictationResponse::from(
+                DictationOutcome::StopAccepted,
+            )),
+        ];
+        let mut seen = Vec::new();
+
+        let outcome = outcome_from(messages, |stage| seen.push(stage.clone()));
+
+        assert!(matches!(outcome, Ok(DictationOutcome::StopAccepted)));
+        assert!(seen.is_empty());
+    }
+
+    #[test]
     fn a_press_that_ends_without_an_outcome_is_an_error() {
         let messages = [Ok(wire::StartDictationResponse::from(
-            DictationStage::Recording(RecordingId(3)),
+            DictationStage::Recording {
+                id: RecordingId(3),
+                delivery: aria_settings::DeliveryMode::Complete,
+            },
         ))];
 
         assert!(matches!(
@@ -924,7 +964,10 @@ mod tests {
     fn a_failed_press_surfaces_its_status() {
         let messages = [
             Ok(wire::StartDictationResponse::from(
-                DictationStage::Recording(RecordingId(3)),
+                DictationStage::Recording {
+                    id: RecordingId(3),
+                    delivery: aria_settings::DeliveryMode::Complete,
+                },
             )),
             Err(ClientError::NotServing),
         ];

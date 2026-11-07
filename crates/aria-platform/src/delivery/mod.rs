@@ -62,6 +62,15 @@ pub enum OutputMode {
     Copy,
 }
 
+impl OutputMode {
+    pub const ALL: &'static [Self] = &[
+        Self::Insert,
+        Self::InsertAndSubmit,
+        Self::InsertOrCopy,
+        Self::Copy,
+    ];
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Application {
     pub name: String,
@@ -271,12 +280,6 @@ pub enum DeliveryError {
 
     #[error("insertion is not available on {}", std::env::consts::OS)]
     InsertionUnsupported,
-
-    #[error(
-        "delivery on {} pastes the whole transcript once recording stops; it cannot stream",
-        std::env::consts::OS
-    )]
-    StreamingUnsupported,
 
     #[cfg(target_os = "linux")]
     #[error(

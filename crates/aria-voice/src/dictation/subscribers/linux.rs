@@ -23,7 +23,7 @@ impl LinuxFeedback {
 
     pub(super) fn observe(&self, stage: &DictationStage) {
         match stage {
-            DictationStage::Recording(..) => play("message-new-instant.oga"),
+            DictationStage::Recording { .. } => play("message-new-instant.oga"),
             DictationStage::Delivered { .. } => play("complete.oga"),
             DictationStage::Failed(code) => {
                 play("dialog-error.oga");

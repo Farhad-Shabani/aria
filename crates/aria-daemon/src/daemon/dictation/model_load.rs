@@ -1,6 +1,7 @@
 //! Model readiness for eager and on-demand transcription engines.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::slot::Slot;
@@ -10,9 +11,15 @@ use aria_kit::transcription::{
 
 type Build<E> = dyn Fn(&CancelToken) -> Result<E, TranscriptionError> + Send + Sync;
 
+/// Loads a deferred model ahead of the first press. A press that comes first
+/// waits on the same load instead of starting its own. Once the model is in,
+/// running it again returns at once, so a stopped preload can simply rerun.
+pub(super) type Preload = Arc<dyn Fn(&CancelToken) -> Result<(), TranscriptionError> + Send + Sync>;
+
 pub(super) enum ModelLoad<E> {
     Loaded(E),
-    Deferred(DeferredModel<E>),
+    /// Shared with a preload, which may still be loading it.
+    Deferred(Arc<DeferredModel<E>>),
 }
 
 pub(super) struct DeferredModel<E> {
@@ -28,10 +35,25 @@ impl<E> ModelLoad<E> {
     pub(super) fn deferred(
         build: impl Fn(&CancelToken) -> Result<E, TranscriptionError> + Send + Sync + 'static,
     ) -> Self {
-        Self::Deferred(DeferredModel {
+        Self::Deferred(Arc::new(DeferredModel {
             build: Box::new(build),
             model: Slot::empty(),
-        })
+        }))
+    }
+
+    pub(super) fn preload(&self) -> Option<Preload>
+    where
+        E: Send + Sync + 'static,
+    {
+        match self {
+            Self::Loaded(_) => None,
+            Self::Deferred(model) => {
+                let model = Arc::clone(model);
+                Some(Arc::new(move |cancel: &CancelToken| {
+                    model.get(cancel).map(drop)
+                }))
+            }
+        }
     }
 
     fn get(&self, cancel: &CancelToken) -> Result<&E, TranscriptionError> {
@@ -44,7 +66,13 @@ impl<E> ModelLoad<E> {
 
 impl<E> DeferredModel<E> {
     fn get(&self, cancel: &CancelToken) -> Result<&E, TranscriptionError> {
-        self.model.get_or_try_init(|| {
+        // A press's own cancel and deadline still end its wait on a preload.
+        let stopped = || {
+            cancel
+                .is_cancelled()
+                .then_some(TranscriptionError::Cancelled)
+        };
+        self.model.get_or_try_init_unless(stopped, || {
             if cancel.is_cancelled() {
                 return Err(TranscriptionError::Cancelled);
             }
@@ -107,6 +135,25 @@ mod tests {
 
         assert!(matches!(first, Err(TranscriptionError::NoSpeech)));
         assert_eq!(*second.expect("the retry should succeed"), 42);
+    }
+
+    #[test]
+    fn a_preload_loads_the_model_the_next_caller_uses() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let build_attempts = Arc::clone(&attempts);
+        let model = ModelLoad::deferred(move |_cancel| {
+            build_attempts.fetch_add(1, Ordering::SeqCst);
+            Ok(7_u32)
+        });
+        let preload = model.preload().expect("a deferred model preloads");
+
+        thread::spawn(move || preload(&CancelToken::never()))
+            .join()
+            .expect("the preload should finish")
+            .expect("the preload should load");
+
+        assert_eq!(*model.get(&CancelToken::never()).unwrap(), 7);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[test]

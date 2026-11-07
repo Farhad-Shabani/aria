@@ -8,16 +8,18 @@ enum DictationEdits {
     /// Milliseconds; 0 is off.
     static let autoStopChoices: [UInt64] = [0, 3000, 5000, 10000, 15000, 20000, 30000, 45000, 60000]
 
-    /// Copy cannot stream. The proto states this on `Settings.delivery_mode`.
-    static func locksDelivery(_ mode: Aria_Daemon_V1_OutputMode) -> Bool {
-        mode == .copy
+    /// Why the daemon says dictation with `output` can't stream. Looking up
+    /// the output shown keeps the answer right while an edit to it is pending.
+    static func streamingUnavailable(
+        for output: Aria_Daemon_V1_OutputMode, in unavailable: [Aria_Daemon_V1_StreamingUnavailableOutput]
+    ) -> Aria_Daemon_V1_StreamingUnavailable? {
+        unavailable.first { $0.outputMode == output }?.reason
     }
 
-    /// The delivery that applies: Complete when the output mode is Copy,
-    /// otherwise the stored choice. Copy leaves the stored choice in place for
-    /// when the output mode changes.
-    static func effectiveDelivery(in settings: Aria_Daemon_V1_Settings) -> Aria_Daemon_V1_DeliveryMode {
-        locksDelivery(settings.outputMode) ? .complete : settings.deliveryMode
+    /// What Deliver shows: Complete while streaming is unavailable, which
+    /// leaves the stored choice in place for when it's possible again.
+    static func shownDelivery(_ stored: Aria_Daemon_V1_DeliveryMode, canStream: Bool) -> Aria_Daemon_V1_DeliveryMode {
+        canStream ? stored : .complete
     }
 
     static func roundedSpeakingRate(_ rate: Double) -> Double {

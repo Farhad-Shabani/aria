@@ -5,7 +5,8 @@
 //! over them; Aria.app drives the same two through `aria setup inspect` and
 //! `aria setup apply`. Every answer defaults to what is configured, and
 //! `--yes` keeps every configured engine, so the unattended rerun the
-//! installer makes never rewrites a working choice.
+//! installer makes never rewrites a working choice. `transcription_engine`
+//! sets the speech-to-text engine alone, outside the rest of setup.
 //!
 //! The terminal run then ends on something that works rather than on a
 //! list of what was written: a voice to recognize, and one press proving
@@ -43,12 +44,13 @@ mod download;
 pub mod models;
 mod prompt;
 mod settings_file;
+pub mod transcription_engine;
 pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
 pub use backends::{Availability, Choice};
 use backends::{Backend, Host, Stt, Tts, choices, stt_choices};
-use models::OnDisk;
+use models::ModelFiles;
 use prompt::Prompts;
 pub use settings_file::{Existing, Selections, SettingsWrite};
 
@@ -148,10 +150,9 @@ pub struct ModelState {
     pub bytes: u64,
     /// Whether it is fetched when nobody answers.
     pub default: bool,
-    pub on_disk: OnDisk,
-    /// Settings point its engine at files elsewhere, so setup has nothing to
-    /// fetch.
-    pub external: bool,
+    pub files: ModelFiles,
+    pub used_by: Vec<config::Section>,
+    pub label: &'static str,
     asset: &'static Asset,
 }
 
@@ -323,7 +324,7 @@ impl Inspection {
     /// wants, that are not on disk yet.
     pub fn downloads_for<'a>(&'a self, selections: &'a Selections) -> Vec<&'a ModelState> {
         self.wanted(selections)
-            .filter(|model| model.on_disk != OnDisk::Complete)
+            .filter(|model| model.files.needs_download())
             .collect()
     }
 
@@ -332,7 +333,7 @@ impl Inspection {
         selections: &'a Selections,
     ) -> impl Iterator<Item = &'a ModelState> + 'a {
         self.models.iter().filter(move |model| {
-            !model.external
+            model.files != ModelFiles::External
                 && model
                     .engine
                     .is_none_or(|engine| engine == selections.stt || engine == selections.tts)
@@ -381,11 +382,7 @@ impl Inspection {
         missing.extend(
             self.models
                 .iter()
-                .filter(|model| {
-                    model.on_disk != OnDisk::Complete
-                        && !model.external
-                        && model.engine.is_some_and(runs)
-                })
+                .filter(|model| model.files.needs_download() && model.engine.is_some_and(runs))
                 .map(|model| Missing::Model(model.name)),
         );
         if self.service.job == Job::Absent {
@@ -409,33 +406,49 @@ fn model_states(home: &Path, file: &CheckedSettings) -> Result<Vec<ModelState>, 
     let loaded = config::loaded_models(file, home);
     // Only the asset's own section counts. Listen's custom moonshine path
     // does not change where transcription looks.
-    let external = |asset: &Asset, engine: Option<&str>, section: &str| {
+    let external = |asset: &Asset, engine: Option<&str>, section: config::Section| {
         let mut section = loaded.iter().filter(|model| model.section == section);
         let configured = section.clone().any(|model| model.engine == engine);
         configured && !section.any(|model| assets::holds(&models_dir, asset, &model.path))
     };
     fn by_engine<B: Backend>(
-        section: &'static str,
-    ) -> impl Iterator<Item = (&'static Asset, Option<&'static str>, &'static str)> {
-        B::ALL.iter().flat_map(move |backend| {
+        section: config::Section,
+    ) -> impl Iterator<
+        Item = (
+            &'static Asset,
+            Option<&'static str>,
+            &'static str,
+            config::Section,
+        ),
+    > {
+        B::ALL.iter().flat_map(move |&backend| {
             backend
                 .model()
                 .assets()
                 .iter()
-                .map(move |asset| (asset, Some(backend.key()), section))
+                .map(move |asset| (asset, Some(backend.key()), backend.label(), section))
         })
     }
-    Ok(by_engine::<Stt>("stt")
-        .chain(by_engine::<Tts>("tts"))
-        .chain(EXTRAS.iter().map(|asset| (asset, None, "speaker")))
-        .map(|(asset, engine, section)| ModelState {
+    Ok(by_engine::<Stt>(config::Section::Stt)
+        .chain(by_engine::<Tts>(config::Section::Tts))
+        .chain(
+            EXTRAS
+                .iter()
+                .map(|asset| (asset, None, asset.title, config::Section::Speaker)),
+        )
+        .map(|(asset, engine, label, section)| ModelState {
             name: asset.name,
             title: asset.title,
             engine,
             bytes: asset.total_bytes(),
             default: asset.default,
-            on_disk: OnDisk::of(&models_dir, asset),
-            external: external(asset, engine, section),
+            files: if external(asset, engine, section) {
+                ModelFiles::External
+            } else {
+                ModelFiles::of(&models_dir, asset)
+            },
+            used_by: models::users(&loaded, &models_dir, asset),
+            label,
             asset,
         })
         .collect())
@@ -503,30 +516,13 @@ pub fn apply(
     let wakeword = install_wakeword(&inspection.exe, &models_dir.join(WAKEWORD_DIR))?;
 
     observe(SetupEvent::Started(Step::Models))?;
-    let mut models = Vec::new();
-    for model in inspection.wanted(selections) {
-        // Check the disk again: a model may have been removed since inspection.
-        let outcome = if assets::present(&models_dir, model.asset) {
-            Outcome::Present
-        } else if options.downloads.iter().any(|name| name == model.name) {
-            assets::obtain(
-                &models_dir,
-                model.asset,
-                options.transfer_meter,
-                &mut |received| {
-                    observe(SetupEvent::Download {
-                        model: model.name,
-                        received,
-                        total: model.bytes,
-                    })
-                },
-            )?;
-            Outcome::Downloaded
-        } else {
-            Outcome::Skipped
-        };
-        models.push((model.name, outcome));
-    }
+    let models = fetch(
+        &models_dir,
+        inspection.wanted(selections),
+        |model| options.downloads.iter().any(|name| name == model.name),
+        options.transfer_meter,
+        observe,
+    )?;
     let settings = selections.write(&inspection.home, endpoint)?;
 
     observe(SetupEvent::Started(Step::Service))?;
@@ -548,6 +544,36 @@ pub fn apply(
         tried: TryOut::NotOffered,
         grant,
     })
+}
+
+/// Fetches each of `models` that `downloads` picks. The disk is checked
+/// again, since a model may have been removed since inspection.
+fn fetch<'a>(
+    models_dir: &Path,
+    models: impl Iterator<Item = &'a ModelState>,
+    downloads: impl Fn(&ModelState) -> bool,
+    transfer_meter: bool,
+    observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
+) -> Result<Vec<(&'static str, Outcome)>, SetupError> {
+    let mut fetched = Vec::new();
+    for model in models {
+        let outcome = if assets::present(models_dir, model.asset) {
+            Outcome::Present
+        } else if downloads(model) {
+            assets::obtain(models_dir, model.asset, transfer_meter, &mut |received| {
+                observe(SetupEvent::Download {
+                    model: model.name,
+                    received,
+                    total: model.bytes,
+                })
+            })?;
+            Outcome::Downloaded
+        } else {
+            Outcome::Skipped
+        };
+        fetched.push((model.name, outcome));
+    }
+    Ok(fetched)
 }
 
 pub fn run(
@@ -581,9 +607,10 @@ pub fn run(
     if !options.skip_models {
         for model in inspection.downloads_for(&selections) {
             // Only the transfer knows how much a resumed download has left.
-            let bytes = match model.on_disk {
-                OnDisk::Partial => format!("up to {}", size(model.bytes)),
-                OnDisk::Complete | OnDisk::Absent => size(model.bytes),
+            let bytes = if model.files == ModelFiles::Partial {
+                format!("up to {}", size(model.bytes))
+            } else {
+                size(model.bytes)
             };
             let question = format!("Download {} ({bytes})?", model.title);
             if prompts.confirm(&question, model.default)? {
@@ -633,6 +660,15 @@ fn ask_selections(
             existing.wake.unwrap_or(false)
         },
     })
+}
+
+/// Settings tables for display, like "stt, listen".
+pub fn tables(sections: &[config::Section]) -> String {
+    sections
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Formats a byte count for display, like "2.5 GB".
@@ -890,6 +926,12 @@ pub enum SetupError {
     #[error("setup knows no model named {name}")]
     UnknownModel { name: String },
 
+    #[error("setup knows no speech-to-text engine named {name}")]
+    UnknownEngine { name: String },
+
+    #[error("{name} can't be set in place; choose it in `aria setup`")]
+    NotSettable { name: &'static str },
+
     #[error("no inference server is paired; run `aria remote pair` first")]
     ServerNotPaired,
 
@@ -905,10 +947,10 @@ pub enum SetupError {
     #[error(transparent)]
     Forget(aria_daemon::RemoteClientError),
 
-    #[error("{name} is in use by `{section}` in settings.toml; change that table first")]
+    #[error("{name} is in use by the {} tables in settings.toml; change them first", tables(.sections))]
     ModelInUse {
         name: &'static str,
-        section: &'static str,
+        sections: Vec<config::Section>,
     },
 
     #[error("settings.toml does not load")]
@@ -1140,7 +1182,7 @@ mod tests {
     }
 
     /// A machine with nothing on it but what `existing` says.
-    fn inspection(existing: Existing) -> Inspection {
+    pub(super) fn inspection(existing: Existing) -> Inspection {
         let host = bare_host();
         let home = PathBuf::from("/nonexistent");
         Inspection {
@@ -1183,7 +1225,40 @@ mod tests {
         }
     }
 
-    fn configured() -> Existing {
+    #[test]
+    fn an_engine_is_settable_in_place_only_when_setup_can_fetch_it() {
+        let inspection = inspection(configured());
+        let settable = |key: &str| {
+            inspection
+                .stt
+                .iter()
+                .find(|choice| choice.key == key)
+                .unwrap()
+                .settable()
+        };
+
+        assert!(settable(backend::MOONSHINE));
+        assert!(!settable(backend::SERVER));
+        assert!(!settable(backend::PARAKEET_MLX), "it fetches its own model");
+    }
+
+    #[test]
+    fn a_model_takes_its_engines_label_or_else_its_title() {
+        let inspection = inspection(configured());
+        let label = |name: &str| {
+            inspection
+                .models
+                .iter()
+                .find(|model| model.name == name)
+                .unwrap()
+                .label
+        };
+
+        assert_eq!(label(backend::WHISPER), Stt::Whisper.label());
+        assert_eq!(label("speaker"), "Speaker verification");
+    }
+
+    pub(super) fn configured() -> Existing {
         Existing {
             stt: Some("whisper".to_owned()),
             tts: Some("kokoro".to_owned()),
@@ -1428,7 +1503,7 @@ mod tests {
     fn nothing_is_missing_once_everything_is_in_place() {
         let mut inspection = inspection(configured());
         for model in &mut inspection.models {
-            model.on_disk = OnDisk::Complete;
+            model.files = ModelFiles::Complete;
         }
         inspection.wakeword_installed = true;
         inspection.service.job = Job::Idle;

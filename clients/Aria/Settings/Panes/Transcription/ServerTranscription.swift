@@ -39,10 +39,12 @@ final class ServerTranscription: ObservableObject {
 
     private let effects: Effects
     private let setup: SetupStatus
+    private let runner: SetupRunner
 
-    init(effects: Effects, setup: SetupStatus) {
+    init(effects: Effects, setup: SetupStatus, runner: SetupRunner) {
         self.effects = effects
         self.setup = setup
+        self.runner = runner
     }
 
     /// Going to the server needs a pairing; coming back never does.
@@ -78,7 +80,7 @@ final class ServerTranscription: ObservableObject {
             try await apply(engine, from: inspection)
         } catch {
             log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
-            notice = .failed(Self.switchFailure)
+            notice = .failed(SetupClientError.message(for: error, otherwise: Self.switchFailure))
         }
     }
 
@@ -122,10 +124,10 @@ final class ServerTranscription: ObservableObject {
         defer { isBusy = false }
         notice = nil
         do {
-            try await effects.forget()
+            try await runner.run { try await effects.forget() }
         } catch {
             log.error("Forgetting the server failed: \(String(describing: error), privacy: .private)")
-            notice = .failed(Self.forgetFailure)
+            notice = .failed(SetupClientError.message(for: error, otherwise: Self.forgetFailure))
             return
         }
         await showChanges()
@@ -177,7 +179,7 @@ final class ServerTranscription: ObservableObject {
         case .builtIn: return true
         case .downloads:
             let models = inspection.models.filter { $0.engineID == engine.id }
-            return !models.isEmpty && models.allSatisfy { $0.onDisk == .complete || $0.external }
+            return !models.isEmpty && models.allSatisfy { $0.files == .complete || $0.files == .external }
         case .fetchedOnFirstUse, .remote, .unspecified, .UNRECOGNIZED: return false
         }
     }
@@ -186,8 +188,10 @@ final class ServerTranscription: ObservableObject {
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = inspection.defaults
         request.selections.transcriptionEngineID = engine
-        try await SetupClient.handingOffDaemon(inspection, stop: effects.stopDaemon, start: effects.startDaemon) {
-            try await effects.apply(request)
+        try await runner.run {
+            try await SetupClient.handingOffDaemon(inspection, stop: effects.stopDaemon, start: effects.startDaemon) {
+                try await effects.apply(request)
+            }
         }
         await showChanges()
     }

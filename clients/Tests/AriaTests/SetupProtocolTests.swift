@@ -98,16 +98,23 @@ final class SetupProtocolTests: XCTestCase {
         let finished = SetupClient.Run(summary: summary, status: 0, stderr: Data())
         XCTAssertEqual(try SetupClient.outcome(finished, cancelled: false).get(), summary)
 
-        let interrupted = SetupClient.Run(summary: nil, status: 1, stderr: Data("interrupted\n".utf8))
+        let interrupted = SetupClient.Run<Aria_Setup_V1_Summary>(
+            summary: nil, status: 1, stderr: Data("interrupted\n".utf8))
         XCTAssertEqual(SetupClient.outcome(interrupted, cancelled: true).failure, .cancelled)
         XCTAssertEqual(SetupClient.outcome(interrupted, cancelled: false).failure, .failed("interrupted"))
 
-        let silent = SetupClient.Run(summary: nil, status: 9, stderr: Data())
+        let silent = SetupClient.Run<Aria_Setup_V1_Summary>(summary: nil, status: 9, stderr: Data())
         XCTAssertEqual(SetupClient.outcome(silent, cancelled: false).failure, .failed("aria setup exited with 9"))
+
+        let busy = SetupClient.Run<Aria_Setup_V1_Summary>(
+            summary: nil, status: SetupClientError.busyStatus,
+            stderr: Data("error: another setup is already running\n".utf8))
+        XCTAssertEqual(SetupClient.outcome(busy, cancelled: false).failure, .busy)
     }
 
     func testOutcomeReportsTruncationWithoutHidingCancellationOrChildFailure() {
-        var run = SetupClient.Run(summary: nil, status: 0, stderr: Data(), frameError: .truncated)
+        var run = SetupClient.Run<Aria_Setup_V1_Summary>(
+            summary: nil, status: 0, stderr: Data(), frameError: .truncated)
         XCTAssertEqual(SetupClient.outcome(run, cancelled: false).failure, .invalidOutput(.truncated))
         XCTAssertEqual(SetupClient.outcome(run, cancelled: true).failure, .cancelled)
         run.status = 1

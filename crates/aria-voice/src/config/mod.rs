@@ -103,39 +103,33 @@ pub struct ListenConfig {
     pub transcripts_dir: PathBuf,
 }
 
-/// The engines that can transcribe a live stream — resolution refuses the
-/// rest, so holding this type is proof the backend streams.
+/// An engine that transcribes a live stream. Only a config whose engine
+/// streams becomes one, so holding it proves the engine streams.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ListenTranscription {
-    Parakeet {
-        model_directory: PathBuf,
-        device: TranscriptionDevice,
-    },
-    Moonshine {
-        model_directory: PathBuf,
-    },
-    Nemotron {
-        model_directory: PathBuf,
-    },
-}
+pub struct ListenTranscription(TranscriptionConfig);
 
 impl ListenTranscription {
-    pub fn backend_name(&self) -> &'static str {
-        match self {
-            Self::Parakeet { .. } => backend::PARAKEET,
-            Self::Moonshine { .. } => backend::MOONSHINE,
-            Self::Nemotron { .. } => backend::NEMOTRON,
+    pub(crate) fn new(config: TranscriptionConfig) -> Result<Self, ConfigError> {
+        if crate::transcription::streams(&config) {
+            Ok(Self(config))
+        } else {
+            Err(ConfigError::ListenUnusableEngine(
+                config.backend_name().to_owned(),
+            ))
         }
     }
 
-    pub(crate) fn model_directory(self) -> PathBuf {
-        match self {
-            Self::Parakeet {
-                model_directory, ..
-            }
-            | Self::Moonshine { model_directory }
-            | Self::Nemotron { model_directory } => model_directory,
-        }
+    pub fn backend_name(&self) -> &'static str {
+        self.0.backend_name()
+    }
+
+    /// Resolves the model a session would load, without reading it.
+    pub fn check_model(&self) -> Result<String, crate::transcription::TranscriptionError> {
+        crate::transcription::check_model(&self.0)
+    }
+
+    pub(crate) fn config(&self) -> &TranscriptionConfig {
+        &self.0
     }
 }
 
@@ -149,7 +143,7 @@ pub struct SpeakerConfig {
     pub profiles_dir: PathBuf,
 }
 
-pub use load::{LoadedModel, loaded_models};
+pub use load::{LoadedModel, Section, loaded_models};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptionConfig {

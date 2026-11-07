@@ -90,6 +90,7 @@ pub(super) struct Actors {
         >,
     >,
     pub(super) settings_poll: aria_settings::SettingsPoll,
+    pub(super) engine: Option<super::dictation::EngineFollower>,
 }
 
 impl Server {
@@ -168,6 +169,9 @@ impl Server {
         tasks.supervise(actors.history);
         if let Some(backlog) = actors.memory {
             tasks.supervise(backlog);
+        }
+        if let Some(engine) = actors.engine {
+            tasks.supervise(engine);
         }
         // Each trigger owns its health lifecycle. Announced before the
         // listener accepts, so a health check never finds an enabled

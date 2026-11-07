@@ -52,6 +52,10 @@ pub mod backend {
         PARAKEET_MLX,
     ];
 
+    /// The local engines that decode while recording, so a dictation can type
+    /// as you speak. A test in `aria-voice` pins this list to the engines.
+    pub const STREAMING: &[&str] = &[WHISPER, PARAKEET, MOONSHINE, NEMOTRON];
+
     /// The canonical name of a local engine, or `None`.
     pub fn local(name: &str) -> Option<&'static str> {
         LOCAL.iter().copied().find(|engine| *engine == name)
@@ -151,7 +155,8 @@ pub enum ConfigError {
 
     /// The engine listen would run, its own or the one stt names, can't stream.
     #[error(
-        "listen cannot stream with the {0} engine; set listen.backend to parakeet, moonshine, or nemotron"
+        "listen cannot stream with the {0} engine; set listen.backend to one of {engines}",
+        engines = backend::STREAMING.join(", ")
     )]
     ListenUnusableEngine(String),
     #[error("cannot locate the Aria settings")]

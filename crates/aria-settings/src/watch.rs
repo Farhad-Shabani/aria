@@ -44,11 +44,14 @@ impl StartupSettings {
         )
     }
 
-    fn restart_required(&self, settings: &SettingsFile) -> Vec<Key> {
+    fn restart_required(&self, settings: &SettingsFile, home: &Path) -> Vec<Key> {
         let values = settings.values();
         self.0
             .iter()
-            .filter(|(key, frozen)| document::value_at(&values, **key) != **frozen)
+            .filter(|(key, frozen)| {
+                document::effective_at(&values, **key, home)
+                    != document::or_default((*frozen).clone(), **key, home)
+            })
             .map(|(key, _frozen)| *key)
             .collect()
     }
@@ -230,7 +233,7 @@ impl SettingsCache {
         self.install(&mut state, loaded.clone(), effective);
         self.publish(
             None,
-            &self.startup.restart_required(&loaded.settings),
+            &self.startup.restart_required(&loaded.settings, &self.home),
             &[],
             loaded.revision.get(),
         );
@@ -276,7 +279,9 @@ impl SettingsCache {
             }
             Err(error) => {
                 state.stamp = seen;
-                let restart_required = self.startup.restart_required(&state.loaded.settings);
+                let restart_required = self
+                    .startup
+                    .restart_required(&state.loaded.settings, &self.home);
                 self.publish(
                     Some(error.fault()),
                     &restart_required,
@@ -286,7 +291,7 @@ impl SettingsCache {
                 return Ok(Reload::Invalid(error));
             }
         };
-        let restart_required = self.startup.restart_required(&loaded.settings);
+        let restart_required = self.startup.restart_required(&loaded.settings, &self.home);
         let values = loaded.settings.values();
         let now = Instant::now();
         state
@@ -712,16 +717,28 @@ mod tests {
     #[test]
     fn a_restart_key_edited_live_keeps_its_startup_choice() {
         let dir = tempfile::tempdir().unwrap();
-        let store = store(dir.path(), "[stt]\nbackend = \"whisper\"\n");
+        let store = store(dir.path(), "[tts]\nbackend = \"kokoro\"\n");
 
-        hand_edit(&store, "[stt]\nbackend = \"moonshine\"\n");
+        hand_edit(&store, "[tts]\nbackend = \"system\"\n");
         let (restart, _reverted) = reloaded(store.poll().expect("polls"));
 
-        assert_eq!(restart, [Key::SttBackend]);
-        assert_eq!(
-            store.effective().choices().stt,
-            crate::SttChoice::Local(crate::LocalStt::Whisper)
+        assert_eq!(restart, [Key::TtsBackend]);
+        assert_eq!(store.effective().choices().tts, crate::TtsEngine::Kokoro);
+    }
+
+    #[test]
+    fn writing_out_a_restart_keys_default_asks_for_no_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path(), "[stt]\nbackend = \"whisper\"\n");
+
+        hand_edit(
+            &store,
+            "[stt]\nbackend = \"whisper\"\n[wake]\nenabled = false\n\
+             model = \"~/.aria/models/wakeword/aria.onnx\"\n[tts]\nbackend = \"system\"\n",
         );
+        let (restart, _reverted) = reloaded(store.poll().expect("polls"));
+
+        assert!(restart.is_empty(), "{restart:?}");
     }
 
     /// The live switch decides, and the frozen table goes unused.

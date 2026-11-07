@@ -2,17 +2,25 @@ import SwiftUI
 
 struct DictationSettings: View {
     let settings: DaemonSettings
+    @ObservedObject var setup: SetupStatus
+    let engineChange: TranscriptionEngineChange
 
     var body: some View {
         SettingsForm(settings: settings) { editor in
+            let unavailable = DictationEdits.streamingUnavailable(
+                for: editor.snapshot.outputMode, in: settings.streamingUnavailable)
+            let delivery = DictationEdits.shownDelivery(editor.snapshot.deliveryMode, canStream: unavailable == nil)
+            Section {
+                SpeechModelPicker(
+                    setup: setup, engineChange: engineChange)
+                deliveryPicker(editor, shown: delivery, unavailable: unavailable)
+            }
             Section("Text") {
                 output(editor)
-                delivery(editor)
             }
             Section {
                 Toggle("Spoken corrections", isOn: editor.binding(\.backtrack, \.backtrack))
-                    .disabled(
-                        !DictationEdits.allowsSpokenCorrections(DictationEdits.effectiveDelivery(in: editor.snapshot)))
+                    .disabled(!DictationEdits.allowsSpokenCorrections(delivery))
             } footer: {
                 Text("Applies corrections you say as you dictate. Needs **Deliver** set to After recording stops.")
             }
@@ -27,30 +35,46 @@ struct DictationSettings: View {
     }
 
     private func output(_ editor: SettingsEditor) -> some View {
-        Picker(selection: editor.binding(\.outputMode, \.outputMode)) {
+        Picker("Output", selection: editor.binding(\.outputMode, \.outputMode)) {
             ForEach(DictationEdits.outputModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
-            }
-        } label: {
-            Text("Output")
-            if DictationEdits.locksDelivery(editor.snapshot.outputMode) {
-                Text("Copying always delivers after recording stops.")
             }
         }
     }
 
-    private func delivery(_ editor: SettingsEditor) -> some View {
+    private func deliveryPicker(
+        _ editor: SettingsEditor, shown: Aria_Daemon_V1_DeliveryMode,
+        unavailable: Aria_Daemon_V1_StreamingUnavailable?
+    ) -> some View {
         Picker(
-            "Deliver",
-            selection: editor.binding(DictationEdits.effectiveDelivery(in: editor.snapshot)) { mode, edit in
+            selection: editor.binding(shown) { mode, edit in
                 edit.deliveryMode = mode
             }
         ) {
             ForEach(DictationEdits.deliveryModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
+        } label: {
+            Text("Deliver")
+            if let unavailable {
+                Text(reason(unavailable))
+            }
         }
-        .disabled(DictationEdits.locksDelivery(editor.snapshot.outputMode))
+        .disabled(unavailable != nil)
+    }
+
+    private func reason(_ reason: Aria_Daemon_V1_StreamingUnavailable) -> String {
+        switch reason {
+        case .copy:
+            return "Copying always delivers after recording stops."
+        case .platform:
+            return "Aria pastes here, so it delivers after recording stops."
+        case .model:
+            let models = setup.speechModels
+            return "\(models.current.flatMap(models.model)?.label ?? "This model") can’t type while you speak."
+        case .unspecified, .UNRECOGNIZED:
+            return "Aria delivers after recording stops."
+        }
     }
 
     private func autoStop(_ editor: SettingsEditor) -> some View {

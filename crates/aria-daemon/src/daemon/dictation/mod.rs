@@ -3,11 +3,13 @@
 
 mod actor;
 mod assembly;
+mod follower;
 mod model_load;
 mod runtime;
 
 pub(in crate::daemon) use actor::{DictationActor, DictationCallError, DictationHandle, channel};
 pub use assembly::DictationInitializationError;
+pub(in crate::daemon) use follower::EngineFollower;
 pub(in crate::daemon) use runtime::{
     AutoStopRule, DictationRuntime, DictationRuntimeError, DictationSetup,
 };

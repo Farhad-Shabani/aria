@@ -6,7 +6,6 @@ struct FinishSetupSettings: View {
     let items: [SetupItem]
     let setup: SetupStatus
     let download: ModelDownload
-    let wizard: SetupState
     let health: SettingsHealth
     let poller: StatusPoller
     let open: (SettingsPane) -> Void
@@ -23,7 +22,7 @@ struct FinishSetupSettings: View {
                     case .server:
                         row(item) { Button("Show Recognition") { open(.recognition) } }
                     case .speechModel(let id):
-                        SpeechModelRow(id: id, download: download, wizard: wizard) {
+                        SpeechModelRow(id: id, download: download) {
                             await setup.refresh()
                             await poller.ensureRunning()
                         }
@@ -51,10 +50,11 @@ struct FinishSetupSettings: View {
 private struct SpeechModelRow: View {
     let id: String
     @ObservedObject var download: ModelDownload
-    @ObservedObject var wizard: SetupState
+    @EnvironmentObject private var runner: SetupRunner
     let downloaded: @MainActor () async -> Void
 
     private var item: SetupItem { .speechModel(id: id) }
+    private var state: ModelDownload.State { download.state(of: id) }
 
     var body: some View {
         LabeledContent {
@@ -63,42 +63,41 @@ private struct SpeechModelRow: View {
             Text(item.title)
             status
         }
-        .onChange(of: download.state) { _, state in
-            guard state == .failed else { return }
+        .onChange(of: state) { _, state in
+            guard case .failed(let message) = state else { return }
             NSAccessibility.post(
                 element: NSApp as Any,
                 notification: .announcementRequested,
-                userInfo: [.announcement: ModelDownload.failure]
+                userInfo: [.announcement: message]
             )
         }
     }
 
     @ViewBuilder
     private var status: some View {
-        switch download.state {
+        switch state {
         case .idle: Text(item.detail)
-        case .downloading(let fraction):
-            ProgressView(value: fraction)
+        case .downloading(let transfer):
+            ProgressView(value: transfer?.fraction)
                 .accessibilityLabel("Downloading speech model")
             Text("Downloading…")
         case .finishing:
             ProgressView()
                 .accessibilityLabel("Finishing setup")
             Text("Finishing…")
-        case .failed: Text(ModelDownload.failure)
+        case .failed(let message): Text(message)
         }
     }
 
     @ViewBuilder
     private var button: some View {
-        switch download.state {
+        switch state {
         case .downloading, .finishing:
             Button("Cancel") { download.cancel() }
-                .disabled(download.state == .finishing)
+                .disabled(state == .finishing)
         case .idle, .failed:
-            // Two setup runs at once make the second one fail.
             Button("Download") { download.start(id, then: downloaded) }
-                .disabled(wizard.step == .applying)
+                .disabled(runner.isRunning)
         }
     }
 }

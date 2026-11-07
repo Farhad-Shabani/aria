@@ -79,34 +79,15 @@ impl Selections {
         })
     }
 
-    /// The keys whose values change. Switching transcription engines resets
-    /// that engine's own keys, so the new engine never gets the old model
-    /// path. Speech engines keep their files in their own tables.
+    /// The keys whose values change. Speech engines keep their files in their
+    /// own tables.
     pub(super) fn patch(
         &self,
         current: &SettingsFile,
         paired_server: Option<&ServerEndpoint>,
     ) -> Result<Patch, SettingsError> {
         let mut patch = Patch::new();
-        if aria_settings::config::transcription_engine(&current.stt) != self.stt {
-            for key in [
-                Key::SttModel,
-                Key::SttDevice,
-                Key::SttInterpreter,
-                Key::SttServer,
-            ] {
-                patch.reset(key);
-            }
-        }
-        if current.stt.backend.as_deref() != Some(self.stt.as_str()) {
-            patch.set(Key::SttBackend, self.stt.as_str());
-        }
-        if self.stt == backend::SERVER
-            && let Some(endpoint) = paired_server
-            && current.stt.server.as_deref() != Some(endpoint.to_string().as_str())
-        {
-            patch.set(Key::SttServer, endpoint.to_string());
-        }
+        transcription_patch(&mut patch, current, &self.stt, paired_server);
         if current.tts.backend.as_deref() != Some(self.tts.as_str()) {
             patch.set(Key::TtsBackend, self.tts.as_str());
         }
@@ -119,6 +100,71 @@ impl Selections {
         }
         Ok(patch)
     }
+}
+
+/// Changing transcription engines resets that engine's own keys, so the new
+/// engine never gets the old model path.
+fn transcription_patch(
+    patch: &mut Patch,
+    current: &SettingsFile,
+    engine: &str,
+    paired_server: Option<&ServerEndpoint>,
+) {
+    if aria_settings::config::transcription_engine(&current.stt) != engine {
+        for key in [
+            Key::SttModel,
+            Key::SttDevice,
+            Key::SttInterpreter,
+            Key::SttServer,
+        ] {
+            patch.reset(key);
+        }
+    }
+    if current.stt.backend.as_deref() != Some(engine) {
+        patch.set(Key::SttBackend, engine);
+    }
+    if engine == backend::SERVER
+        && let Some(endpoint) = paired_server
+        && current.stt.server.as_deref() != Some(endpoint.to_string().as_str())
+    {
+        patch.set(Key::SttServer, endpoint.to_string());
+    }
+}
+
+/// Checks setting `engine` without writing, so a refused write fails
+/// before any download.
+pub(super) fn check_transcription(
+    home: &Path,
+    current: &SettingsFile,
+    engine: &str,
+) -> Result<(), SetupError> {
+    let mut patch = Patch::new();
+    transcription_patch(&mut patch, current, engine, None);
+    accepted(aria_settings::check_patch(
+        &aria_settings::default_path(home),
+        home,
+        &patch,
+    )?)?;
+    Ok(())
+}
+
+/// Writes only the `stt` keys that name `engine`, so every other choice
+/// stays as the file has it now.
+pub(super) fn write_transcription(home: &Path, engine: &str) -> Result<SettingsWrite, SetupError> {
+    let mut changed = false;
+    let written =
+        aria_settings::modify(&aria_settings::default_path(home), home, None, |current| {
+            let mut patch = Patch::new();
+            transcription_patch(&mut patch, current, engine, None);
+            changed = !patch.is_empty();
+            Ok::<_, SettingsError>(patch)
+        })?;
+    accepted(written)?;
+    Ok(if changed {
+        SettingsWrite::Written
+    } else {
+        SettingsWrite::Unchanged
+    })
 }
 
 pub(super) fn read(home: &Path) -> Result<CheckedSettings, SetupError> {

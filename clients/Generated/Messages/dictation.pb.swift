@@ -501,6 +501,11 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
   public var recordingID: UInt64 = 0
 
+  /// Set on DICTATION_STAGE_RECORDING: how the press delivers. A request to
+  /// stream comes back COMPLETE where `SettingsSnapshot.streaming_unavailable`
+  /// lists its output.
+  public var deliveryMode: Aria_Daemon_V1_DeliveryMode = .unspecified
+
   /// The press ends at delivered, cancelled, or failed.
   public var stage: Aria_Daemon_V1_DictationStage = .unspecified
 
@@ -984,7 +989,7 @@ nonisolated extension Aria_Daemon_V1_StopDictationResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DictationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1000,6 +1005,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.wordCount) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.speakerName) }()
       case 8: try { try decoder.decodeSingularEnumField(value: &self.heard) }()
+      case 9: try { try decoder.decodeSingularEnumField(value: &self.deliveryMode) }()
       default: break
       }
     }
@@ -1030,11 +1036,15 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if self.heard != .unspecified {
       try visitor.visitSingularEnumField(value: self.heard, fieldNumber: 8)
     }
+    if self.deliveryMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.deliveryMode, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_DictationEvent, rhs: Aria_Daemon_V1_DictationEvent) -> Bool {
     if lhs.recordingID != rhs.recordingID {return false}
+    if lhs.deliveryMode != rhs.deliveryMode {return false}
     if lhs.stage != rhs.stage {return false}
     if lhs.text != rhs.text {return false}
     if lhs.speakerName != rhs.speakerName {return false}

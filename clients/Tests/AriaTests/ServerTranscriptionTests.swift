@@ -65,11 +65,11 @@ final class ServerTranscriptionTests: XCTestCase {
         return engine
     }
 
-    private static func model(_ engine: String, onDisk: Aria_Setup_V1_OnDisk) -> Aria_Setup_V1_Model {
+    private static func model(_ engine: String, files: Aria_Setup_V1_ModelFiles) -> Aria_Setup_V1_Model {
         var model = Aria_Setup_V1_Model()
         model.id = engine
         model.engineID = engine
-        model.onDisk = onDisk
+        model.files = files
         return model
     }
 
@@ -83,7 +83,7 @@ final class ServerTranscriptionTests: XCTestCase {
             engine("whisper"),
             engine("server", model: .remote),
         ]
-        inspection.models = [model("parakeet", onDisk: .absent), model("whisper", onDisk: .complete)]
+        inspection.models = [model("parakeet", files: .absent), model("whisper", files: .complete)]
         inspection.defaults.transcriptionEngineID = stt
         inspection.defaults.synthesisEngineID = "system"
         inspection.server.endpoint = "https://box:9851"
@@ -94,14 +94,14 @@ final class ServerTranscriptionTests: XCTestCase {
     func testThisMacPrefersThePreviousEngineThenTheFirstWithItsModelOnDisk() {
         var mac = Self.mac(runningOn: "server")
         mac.transcriptionChoices.append(Self.engine("moonshine"))
-        mac.models.append(Self.model("moonshine", onDisk: .complete))
+        mac.models.append(Self.model("moonshine", files: .complete))
         XCTAssertEqual(ServerTranscription.localEngine(in: mac, preferring: nil), "whisper")
         XCTAssertEqual(ServerTranscription.localEngine(in: mac, preferring: "moonshine"), "moonshine")
         XCTAssertEqual(ServerTranscription.localEngine(in: mac, preferring: "parakeet"), "whisper")
 
         mac.models = mac.models.map { model in
             var model = model
-            model.onDisk = .partial
+            model.files = .partial
             return model
         }
         XCTAssertNil(ServerTranscription.localEngine(in: mac, preferring: nil))
@@ -109,7 +109,8 @@ final class ServerTranscriptionTests: XCTestCase {
 
     func testALocationIsChosenOnlyWithAPairingOrToLeaveTheServer() {
         let setup = SetupStatus()
-        let server = ServerTranscription(effects: Spy(Self.mac(runningOn: "whisper")).effects, setup: setup)
+        let server = ServerTranscription(
+            effects: Spy(Self.mac(runningOn: "whisper")).effects, setup: setup, runner: SetupRunner())
         var unpaired = Self.mac(runningOn: "whisper")
         unpaired.clearServer()
 
@@ -128,7 +129,7 @@ final class ServerTranscriptionTests: XCTestCase {
     func testSwitchingAppliesTheEngineAndKeepsTheOtherChoices() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         let setup = SetupStatus()
-        let server = ServerTranscription(effects: spy.effects, setup: setup)
+        let server = ServerTranscription(effects: spy.effects, setup: setup, runner: SetupRunner())
 
         await server.use(.server)
         XCTAssertEqual(setup.transcription, .server)
@@ -146,9 +147,9 @@ final class ServerTranscriptionTests: XCTestCase {
 
     func testThisMacWithoutALocalModelAppliesNothingAndPointsToSetup() async {
         var inspection = Self.mac(runningOn: "server")
-        inspection.models = [Self.model("parakeet", onDisk: .absent), Self.model("whisper", onDisk: .absent)]
+        inspection.models = [Self.model("parakeet", files: .absent), Self.model("whisper", files: .absent)]
         let spy = Spy(inspection)
-        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: SetupRunner())
 
         await server.use(.thisMac)
 
@@ -161,7 +162,7 @@ final class ServerTranscriptionTests: XCTestCase {
         inspection.service.job = .absent
         let spy = Spy(inspection)
         spy.applyFails = true
-        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: SetupRunner())
 
         await server.use(.server)
 
@@ -173,7 +174,7 @@ final class ServerTranscriptionTests: XCTestCase {
     func testASwitchThatLandedIsNotReportedAsFailed() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         spy.inspectFailsAfterApply = true
-        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: SetupRunner())
 
         await server.use(.server)
 
@@ -185,7 +186,8 @@ final class ServerTranscriptionTests: XCTestCase {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         let setup = SetupStatus()
 
-        let paired = await ServerTranscription(effects: spy.effects, setup: setup).pair(invitation: "{}")
+        let paired = await ServerTranscription(effects: spy.effects, setup: setup, runner: SetupRunner()).pair(
+            invitation: "{}")
 
         XCTAssertTrue(paired)
         XCTAssertEqual(spy.paired, ["{}"])
@@ -198,7 +200,7 @@ final class ServerTranscriptionTests: XCTestCase {
     func testAPairingThatLandedSucceedsEvenWhenItsReadBackFails() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         spy.inspectFailsAfterPair = true
-        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: SetupRunner())
 
         let paired = await server.pair(invitation: "{}")
 
@@ -210,7 +212,7 @@ final class ServerTranscriptionTests: XCTestCase {
     func testAFailedPairingShowsTheFallbackAndAppliesNothing() async {
         let spy = Spy(Self.mac(runningOn: "server"))
         spy.pairFails = true
-        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: SetupRunner())
 
         let paired = await server.pair(invitation: "{}")
 
@@ -256,7 +258,7 @@ final class ServerTranscriptionTests: XCTestCase {
         let remote = Spy(Self.mac(runningOn: "server"))
         let setupOnServer = SetupStatus()
         setupOnServer.show(remote.inspection)
-        let onServer = ServerTranscription(effects: remote.effects, setup: setupOnServer)
+        let onServer = ServerTranscription(effects: remote.effects, setup: setupOnServer, runner: SetupRunner())
         XCTAssertFalse(onServer.canForget)
         await onServer.forget()
         XCTAssertEqual(remote.forgotten, 0)
@@ -264,7 +266,7 @@ final class ServerTranscriptionTests: XCTestCase {
         let local = Spy(Self.mac(runningOn: "whisper"))
         let setup = SetupStatus()
         setup.show(local.inspection)
-        let server = ServerTranscription(effects: local.effects, setup: setup)
+        let server = ServerTranscription(effects: local.effects, setup: setup, runner: SetupRunner())
         XCTAssertTrue(server.canForget)
         await server.forget()
         XCTAssertEqual(local.forgotten, 1)
@@ -277,7 +279,7 @@ final class ServerTranscriptionTests: XCTestCase {
         spy.forgetFails = true
         let setup = SetupStatus()
         setup.show(spy.inspection)
-        let server = ServerTranscription(effects: spy.effects, setup: setup)
+        let server = ServerTranscription(effects: spy.effects, setup: setup, runner: SetupRunner())
 
         await server.forget()
 
@@ -289,7 +291,7 @@ final class ServerTranscriptionTests: XCTestCase {
     func testPairingShowsTheAddressAndStartsOverAfterAFailure() async {
         let spy = Spy(Self.mac(runningOn: "whisper"))
         spy.pairFails = true
-        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus())
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: SetupRunner())
         let invitation = #"{"endpoint":"https://box.local:9851"}"#
 
         server.paste("hello")

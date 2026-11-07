@@ -8,7 +8,8 @@
 [dictation]
 # How text reaches the app in front: insert, insert_and_submit, insert_or_copy or copy.
 output_mode = "insert"          # insert_or_copy on Linux
-# streaming types as you speak. complete types once recording stops. Copy and Linux always use complete.
+# streaming types as you speak. complete types once recording stops.
+# copy output, Linux, whisper-candle and parakeet-mlx always use complete.
 delivery_mode = "streaming"
 # Silence, in ms, that ends a recording that stops on silence, such as a wake-word one. 100 to 10000.
 silence_duration_ms = 1500
@@ -46,7 +47,8 @@ enabled = true
 keep_audio = false
 
 [listen]
-# Transcribes system audio: parakeet, moonshine or nemotron. Absent uses the stt engine.
+# Transcribes system audio with an engine that streams. Absent uses the stt engine,
+# or parakeet when that one can't stream.
 # backend = "moonshine"
 # Absent means setup's download for that engine.
 # model = "~/.aria/models/moonshine/base"
@@ -133,18 +135,19 @@ timeout_secs = 5.0
 # ---- Shared engines
 
 [stt]
-# whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx or server. (restart)
+# whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx or server.
+# A change applies between dictations, with no restart.
 backend = "parakeet"
 # A language code such as "en" or "en-us", or "auto" to detect.
 language = "en"
 # A model file or folder. Absent means setup's download in ~/.aria/models.
-# parakeet-mlx takes a Hugging Face repo ID, by default mlx-community/parakeet-tdt-0.6b-v3. (restart)
+# parakeet-mlx takes a Hugging Face repo ID, by default mlx-community/parakeet-tdt-0.6b-v3.
 # model = "~/.aria/models/parakeet/parakeet-tdt-0.6b-v3"
-# cpu or gpu. parakeet only. (restart)
+# cpu or gpu. parakeet only.
 device = "cpu"
-# A Python with parakeet-mlx installed. parakeet-mlx only, and required there. (restart)
+# A Python with parakeet-mlx installed. parakeet-mlx only, and required there.
 # interpreter = "~/.local/share/aria/parakeet-mlx/bin/python3"
-# Your paired server's HTTPS origin. server only, and required there. See the Privacy page in the User Guide. (restart)
+# Your paired server's HTTPS origin. server only, and required there. See the Privacy page in the User Guide.
 # server = "https://your-server:9851"
 
 [tts]

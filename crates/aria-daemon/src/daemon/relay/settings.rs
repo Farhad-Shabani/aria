@@ -113,8 +113,7 @@ fn without_mac_choices(snapshot: &mut wire::SettingsSnapshot) {
 /// Keeps the relay settings, which the key table scopes to the phone,
 /// and refuses the rest. Every proto field is named, so a new one fails to
 /// compile until it names the key it writes. Clearing the vocabulary folder
-/// is allowed; choosing one from a phone is not. Copy output cannot stream,
-/// so it carries the delivery switch the Mac app would have sent alongside.
+/// is allowed; choosing one from a phone is not.
 pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, Status> {
     const METHOD: &str = "SettingsService/Update";
     let wire::SettingsPatch {
@@ -195,11 +194,9 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
             ),
         ));
     }
-    let copies = output_mode == Some(wire::OutputMode::Copy as i32);
     Ok(wire::SettingsPatch {
         stt_language,
         output_mode,
-        delivery_mode: copies.then_some(wire::DeliveryMode::Complete as i32),
         own_voice_only,
         vocabulary_enabled,
         vocabulary_dir,
@@ -374,6 +371,7 @@ mod tests {
     fn a_phone_snapshot_holds_no_paths_or_app_choices() {
         let mut snapshot = wire::SettingsSnapshot {
             revision: 1,
+            streaming_unavailable: Vec::new(),
             settings: Some(wire::Settings {
                 prompts: Some(wire::Prompts {
                     entries: vec![wire::Prompt {
@@ -413,16 +411,13 @@ mod tests {
     }
 
     #[test]
-    fn copy_output_switches_delivery_to_complete() {
+    fn copy_output_leaves_the_delivery_choice_alone() {
         let scoped = scoped(wire::SettingsPatch {
             output_mode: Some(wire::OutputMode::Copy as i32),
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(
-            scoped.delivery_mode,
-            Some(wire::DeliveryMode::Complete as i32)
-        );
+        assert_eq!(scoped.delivery_mode, None);
     }
 
     #[test]

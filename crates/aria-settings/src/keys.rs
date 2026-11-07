@@ -80,8 +80,6 @@ pub(super) const STT_BACKENDS: &[&str] = &[
     backend::SERVER,
 ];
 pub(super) const WAKE_BACKENDS: &[&str] = &[wake_backend::OPEN_WAKE_WORD, wake_backend::LIVEKIT];
-pub(super) const LISTEN_BACKENDS: &[&str] =
-    &[backend::PARAKEET, backend::MOONSHINE, backend::NEMOTRON];
 
 macro_rules! keys {
     ($($variant:ident: $path:literal, $apply:ident, $scope:ident, [$($alias:literal),*], $kind:expr, $default:expr, $description:literal;)+) => {
@@ -181,8 +179,8 @@ keys! {
         "Saves dictation history.";
     HistoryKeepAudio: "history.keep_audio", Live, Phone, [], Kind::Bool, Some("false"),
         "Keeps each recording's audio for 24 hours.";
-    ListenBackend: "listen.backend", Live, Mac, [], Kind::Choice(LISTEN_BACKENDS), None,
-        "Transcribes system audio: parakeet, moonshine or nemotron.";
+    ListenBackend: "listen.backend", Live, Mac, [], Kind::Choice(backend::STREAMING), None,
+        "Transcribes system audio with an engine that streams.";
     ListenModel: "listen.model", Live, Mac, [], Kind::Path, None,
         "Absent means setup's download for that engine.";
     ListenDevice: "listen.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
@@ -231,17 +229,17 @@ keys! {
         "The port it listens on, with mutual TLS.";
     DeliveryTimeoutSecs: "delivery.timeout_secs", Restart, Mac, [], Kind::Number, Some("5.0"),
         "The longest typing or pasting a result may take, for dictation, asks and the phone.";
-    SttBackend: "stt.backend", Restart, Mac, [], Kind::Choice(STT_BACKENDS), Some(backend::DEFAULT),
+    SttBackend: "stt.backend", Live, Mac, [], Kind::Choice(STT_BACKENDS), Some(backend::DEFAULT),
         "whisper, whisper-candle, parakeet, moonshine, nemotron, parakeet-mlx or server.";
     SttLanguage: "stt.language", Live, Phone, [], Kind::Text, Some("\"en\""),
         "A language code such as \"en\" or \"en-us\", or \"auto\" to detect.";
-    SttModel: "stt.model", Restart, Mac, [], Kind::Text, None,
+    SttModel: "stt.model", Live, Mac, [], Kind::Text, None,
         "A model file or folder. parakeet-mlx takes a Hugging Face repo ID.";
-    SttDevice: "stt.device", Restart, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
+    SttDevice: "stt.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
         "cpu or gpu. parakeet only.";
-    SttInterpreter: "stt.interpreter", Restart, Mac, [], Kind::Path, None,
+    SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
-    SttServer: "stt.server", Restart, Mac, [], Kind::Text, None,
+    SttServer: "stt.server", Live, Mac, [], Kind::Text, None,
         "Your paired server's HTTPS origin. server only, and required there.";
     TtsBackend: "tts.backend", Restart, Mac, [], Kind::Choice(&[tts_backend::SYSTEM, tts_backend::KOKORO, tts_backend::QWEN]), Some(tts_backend::DEFAULT),
         "The engine that speaks `aria say` and replies: system, kokoro or qwen.";
@@ -278,6 +276,16 @@ keys! {
 }
 
 impl Key {
+    pub(crate) fn default_value(self) -> serde_json::Value {
+        let Some(literal) = self.default() else {
+            return serde_json::Value::Null;
+        };
+        toml_edit::de::from_str::<serde_json::Value>(&format!("value = {literal}"))
+            .ok()
+            .and_then(|mut table| table.get_mut("value").map(serde_json::Value::take))
+            .unwrap_or(serde_json::Value::Null)
+    }
+
     /// The value an absent key takes, as a TOML literal. `None` when absent
     /// means something no single value says, such as "the caller's directory"
     /// or "the engine's own voice".

@@ -23,6 +23,7 @@ use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader
 use aria_platform::delivery::{Caret, Placement};
 use aria_primitives::error_chain;
 use aria_segmentation::pyannote::Pyannote;
+use aria_settings::StreamingSupport;
 use aria_speaker::wespeaker::WeSpeaker;
 
 use super::{
@@ -459,11 +460,13 @@ where
     pub fn deliver_recording(
         &self,
         recording: &mut RecordingReader,
-        settings: DictationSettings,
+        mut settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         vocabulary: Option<&Vocabulary>,
     ) -> Result<String, DictationError> {
+        // The recording is already finished, so there is nothing to stream.
+        settings.delivery_mode = DeliveryMode::Complete;
         let mut sinks = self.sinks();
         let result = self.deliver_recording_stages(
             recording,
@@ -543,7 +546,7 @@ where
     /// which is the first moment the recording's end is known here.
     fn execute_stages(
         &self,
-        settings: DictationSettings,
+        mut settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         sinks: &mut S,
@@ -551,10 +554,16 @@ where
     ) -> Result<DictationResult, DictationError> {
         check_execution(control)?;
 
-        // A transcript handed back has nowhere to stream to.
-        if settings.delivery_mode == DeliveryMode::Streaming
-            && (!M::INCREMENTAL || settings.transcript_only)
+        // Only here are the engine and the delivery known, so only here can
+        // streaming fall back to Complete, even for a request to stream.
+        if StreamingSupport::new(M::INCREMENTAL, S::STREAMS)
+            .unavailable(settings.output_mode)
+            .is_some()
         {
+            settings.delivery_mode = DeliveryMode::Complete;
+        }
+        // A transcript handed back has nowhere to stream to.
+        if settings.delivery_mode == DeliveryMode::Streaming && settings.transcript_only {
             return Err(DictationError::StreamingDeliveryUnavailable);
         }
 
@@ -634,7 +643,7 @@ where
         events: &DictationEventEmitter,
         stage_started: Instant,
     ) -> Result<RecordingReader, DictationError> {
-        let guard = control.start_recording(events)?;
+        let guard = control.start_recording(settings.delivery_mode, events)?;
         let mode = match settings.stop_mode {
             StopMode::OnSilence => RecordingMode::StopOnSilence {
                 trailing_silence: settings.silence_duration,
@@ -1344,6 +1353,7 @@ where
     B::Error: Into<DictationError>,
 {
     type Error = DictationError;
+    const STREAMS: bool = A::STREAMS && B::STREAMS;
 
     fn dictation_started(
         &mut self,
@@ -2208,21 +2218,74 @@ mod tests {
     }
 
     #[test]
-    fn whole_transcription_rejects_segmented_delivery_before_capture() {
-        let (_directory, capture) = capture();
+    fn whole_transcription_delivers_a_request_to_stream_complete_and_says_so() {
+        let (events, stages) = stage_events();
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
-            capture,
+            Arc::new(ModeSpy::default()),
             Transcription::complete_samples(Answering("hello")),
-            (UnreachableSink, log.cursor()),
+            (log.history(), log.cursor()),
         );
-        let result = pipeline.run(settings(DeliveryMode::Streaming, OutputMode::Insert));
 
+        let result = pipeline
+            .run_observed(
+                settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &events,
+            )
+            .expect("a model that can't stream delivers complete");
+        drop(events);
+
+        assert_eq!(result.text, "hello");
         assert!(matches!(
-            result,
-            Err(DictationError::StreamingDeliveryUnavailable)
+            stages.iter().next(),
+            Some(DictationStage::Recording {
+                delivery: DeliveryMode::Complete,
+                ..
+            })
         ));
-        assert!(log.entries().is_empty());
+    }
+
+    /// Takes text only once recording stops, as a delivery that pastes does.
+    struct PastingSink;
+
+    impl TranscriptSink for PastingSink {
+        type Error = DictationError;
+        const STREAMS: bool = false;
+
+        fn segment(&mut self, _: Utterance<'_>) -> Result<(), DictationError> {
+            Ok(())
+        }
+
+        fn completed(&mut self, _: Utterance<'_>) -> Result<(), DictationError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_delivery_that_cant_stream_delivers_complete_under_a_streaming_engine() {
+        let (events, stages) = stage_events();
+        let pipeline = DictationPipeline::new(
+            Arc::new(ModeSpy::default()),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            PastingSink,
+        );
+
+        let result = pipeline
+            .run_observed(
+                settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &events,
+            )
+            .expect("the press delivers complete");
+        drop(events);
+
+        assert_eq!(result.text, "hello");
+        assert!(matches!(
+            stages.iter().next(),
+            Some(DictationStage::Recording {
+                delivery: DeliveryMode::Complete,
+                ..
+            })
+        ));
     }
 
     /// Records the mode each press asks for, then hands back a finished
@@ -2278,7 +2341,7 @@ mod tests {
         ) -> Vec<&'static str> {
             stages
                 .try_iter()
-                .filter(|stage| !matches!(stage, DictationStage::Recording(_)))
+                .filter(|stage| !matches!(stage, DictationStage::Recording { .. }))
                 .map(|stage| stage.label())
                 .collect()
         }
@@ -2427,6 +2490,32 @@ mod tests {
         assert_eq!(pressed.len(), 1);
         assert_ne!(pressed[0], "ok");
         assert_eq!(*relayed.lock().unwrap(), pressed);
+    }
+
+    #[test]
+    fn a_relayed_recording_is_delivered_complete_even_when_set_to_stream() {
+        let (directory, capture) = capture();
+        let log = CallLog::default();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete_samples(Answering("hello")),
+            (log.history(), log.cursor()),
+        );
+        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
+            .expect("the fixture reads");
+
+        let text = pipeline
+            .deliver_recording(
+                &mut recording,
+                settings(DeliveryMode::Streaming, OutputMode::Copy),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &DictationEventEmitter::unsubscribed(),
+                None,
+            )
+            .expect("the relayed recording is delivered");
+
+        assert_eq!(text, "hello");
+        assert!(log.entries().contains(&"deliver:hello".to_owned()));
     }
 
     #[test]
@@ -3155,7 +3244,9 @@ mod tests {
                 }),
             );
             sinks.dictation_started(&settings, &control).unwrap();
-            let capture = control.start_recording(&events).unwrap();
+            let capture = control
+                .start_recording(settings.delivery_mode, &events)
+                .unwrap();
             let whole = Transcript::new("db2 run db2").unwrap();
             for (text, corrected) in [
                 ("d b", None),
@@ -5016,7 +5107,10 @@ mod tests {
         let stages: Vec<_> = stages.iter().collect();
         assert_eq!(
             stages.first(),
-            Some(&DictationStage::Recording(RecordingId(0)))
+            Some(&DictationStage::Recording {
+                id: RecordingId(0),
+                delivery: DeliveryMode::Streaming
+            })
         );
         assert_eq!(
             stages[stages.len().saturating_sub(2)..],
