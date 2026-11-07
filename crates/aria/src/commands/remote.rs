@@ -75,15 +75,50 @@ fn pair_report(paired: &Result<String, crate::setup::SetupError>) -> serde_json:
         Err(error) => serde_json::json!({
             "paired": false,
             "error": {
-                "code": match error {
-                    crate::setup::SetupError::Pair(error) => {
-                        aria_daemon::PairingFailure::from(error).label()
-                    }
-                    _ => aria_daemon::PairingFailure::Failed.label(),
-                },
+                "code": pairing_failure(error).label(),
                 "message": crate::primitives::error_chain(error),
             },
         }),
+    }
+}
+
+fn pairing_failure(error: &crate::setup::SetupError) -> aria_daemon::PairingFailure {
+    use crate::setup::SetupError;
+    use aria_daemon::PairingFailure;
+
+    match error {
+        SetupError::Pair(error) => PairingFailure::from(error),
+        SetupError::Busy => PairingFailure::Busy,
+        SetupError::Home(_)
+        | SetupError::CurrentExe(_)
+        | SetupError::Signal(_)
+        | SetupError::Io { .. }
+        | SetupError::Prompt(_)
+        | SetupError::UnknownModel { .. }
+        | SetupError::UnknownEngine { .. }
+        | SetupError::NotSettable { .. }
+        | SetupError::ServerNotPaired
+        | SetupError::PairingUnusable { .. }
+        | SetupError::ServerInUse
+        | SetupError::Forget(_)
+        | SetupError::ModelInUse { .. }
+        | SetupError::Config(_)
+        | SetupError::ModelNotInstalled { .. }
+        | SetupError::Request(_)
+        | SetupError::Decode(_)
+        | SetupError::Invalid(_)
+        | SetupError::Respond(_)
+        | SetupError::NotATerminal
+        | SetupError::Spawn { .. }
+        | SetupError::Wait { .. }
+        | SetupError::Command { .. }
+        | SetupError::Interrupted { .. }
+        | SetupError::WrongHash { .. }
+        | SetupError::Untrusted { .. }
+        | SetupError::Service(_)
+        | SetupError::Settings(_)
+        | SetupError::SettingsRefused(_)
+        | SetupError::SettingsChanging => PairingFailure::Failed,
     }
 }
 
@@ -114,5 +149,12 @@ mod tests {
                 "error": { "code": "timeout", "message": "remote operation timed out" },
             })
         );
+    }
+
+    #[test]
+    fn a_pairing_that_waits_on_another_setup_reports_busy() {
+        let report = pair_report(&Err(crate::setup::SetupError::Busy));
+
+        assert_eq!(report["error"]["code"], "busy");
     }
 }

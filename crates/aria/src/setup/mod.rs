@@ -96,7 +96,7 @@ pub struct Inspection {
     pub service: Status,
     pub grant: Grant,
     pub key_remapped: bool,
-    pub runs_on: TranscriptionRunsOn,
+    pub transcription_runs_on: TranscriptionRunsOn,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
@@ -284,7 +284,7 @@ pub fn pair_server(input: impl io::Read) -> Result<String, SetupError> {
 fn pair_server_at(home: &Path, invitation: &str) -> Result<String, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
     check_server_unused(home)?;
-    aria_daemon::pair_server(home, invitation).map_err(SetupError::Pair)
+    aria_daemon::pin_server(home, invitation).map_err(SetupError::Pair)
 }
 
 fn check_server_unused(home: &Path) -> Result<(), SetupError> {
@@ -322,7 +322,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
             .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
-        runs_on: file.choices().stt_runs_on,
+        transcription_runs_on: file.choices().stt_runs_on,
         key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
         existing,
         service,
@@ -345,17 +345,25 @@ impl Inspection {
         &'a self,
         selections: &'a Selections,
     ) -> impl Iterator<Item = &'a ModelState> + 'a {
+        let stt = self.local_stt(&selections.stt);
         self.models.iter().filter(move |model| {
             model.files != ModelFiles::External
                 && model
                     .engine
-                    .is_none_or(|engine| engine == selections.stt || engine == selections.tts)
+                    .is_none_or(|engine| Some(engine) == stt || engine == selections.tts)
         })
+    }
+
+    /// The local engine, while it transcribes. On the server its models
+    /// wait: going back fetches them.
+    fn local_stt<'a>(&self, engine: &'a str) -> Option<&'a str> {
+        (self.transcription_runs_on == TranscriptionRunsOn::Local).then_some(engine)
     }
 
     /// The server transcribes, but no usable pin says where it is.
     fn server_is_unusable(&self) -> bool {
-        self.runs_on == TranscriptionRunsOn::Server && !matches!(self.pairing, Pairing::Paired(_))
+        self.transcription_runs_on == TranscriptionRunsOn::Server
+            && !matches!(self.pairing, Pairing::Paired(_))
     }
 
     /// What a run still has to put in place; empty once setup is done.
@@ -373,10 +381,7 @@ impl Inspection {
             missing.push(Missing::Wakeword);
         }
         // An unset engine still runs as its default, so its model counts.
-        // The local one waits while the server transcribes; going back
-        // fetches its model.
-        let stt = (self.runs_on == TranscriptionRunsOn::Local)
-            .then(|| existing.stt.as_deref().unwrap_or(backend::DEFAULT));
+        let stt = self.local_stt(existing.stt.as_deref().unwrap_or(backend::DEFAULT));
         let tts = existing.tts.as_deref().unwrap_or(tts_backend::DEFAULT);
         let runs = |engine: &str| Some(engine) == stt || engine == tts;
         missing.extend(
@@ -1191,7 +1196,7 @@ mod tests {
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
-            runs_on: TranscriptionRunsOn::Local,
+            transcription_runs_on: TranscriptionRunsOn::Local,
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
@@ -1307,10 +1312,29 @@ mod tests {
         let moonshine = Missing::Model("moonshine");
         assert!(inspection.missing().contains(&moonshine));
 
-        inspection.runs_on = TranscriptionRunsOn::Server;
+        inspection.transcription_runs_on = TranscriptionRunsOn::Server;
         inspection.pairing = paired("https://box.test:9851");
 
         assert!(!inspection.missing().contains(&moonshine));
+    }
+
+    #[test]
+    fn the_local_model_is_not_downloaded_while_the_server_transcribes() {
+        let mut inspection = inspection(Existing {
+            stt: Some(backend::MOONSHINE.to_owned()),
+            ..configured()
+        });
+        inspection.transcription_runs_on = TranscriptionRunsOn::Server;
+        inspection.pairing = paired("https://box.test:9851");
+        let selections = Selections::defaults(&inspection);
+
+        assert_eq!(selections.stt, backend::MOONSHINE);
+        assert!(
+            inspection
+                .downloads_for(&selections)
+                .iter()
+                .all(|model| model.name != "moonshine")
+        );
     }
 
     #[test]
@@ -1583,7 +1607,7 @@ mod tests {
     #[test]
     fn the_server_without_a_usable_pin_needs_setup() {
         let mut inspection = inspection(configured());
-        inspection.runs_on = TranscriptionRunsOn::Server;
+        inspection.transcription_runs_on = TranscriptionRunsOn::Server;
 
         assert!(inspection.missing().contains(&Missing::Settings));
         inspection.pairing = Pairing::Unusable;

@@ -39,7 +39,7 @@ final class ServerTranscription: ObservableObject {
 
     /// Going to the server needs a pairing; coming back never does.
     var needsPairing: Bool {
-        setup.server == nil && setup.transcription != .server
+        setup.server == nil && setup.transcriptionRunsOn != .server
     }
 
     var canChooseRunsOn: Bool {
@@ -70,7 +70,7 @@ final class ServerTranscription: ObservableObject {
     static func pairingMessage(for error: any Error) -> String {
         switch error as? PairingFailure {
         case .invitationInvalid: invitationFailure
-        case .busy: "Another pairing is in progress. Wait for it to finish, then try again."
+        case .busy: "Aria is busy with another pairing or setup. Wait for it to finish, then try again."
         case .unreachable: "Aria couldn’t reach the server. Make sure it’s on and reachable, then try again."
         case .timeout: "The server didn’t respond in time. Try again."
         case .permissionDenied:
@@ -92,7 +92,7 @@ final class ServerTranscription: ObservableObject {
 
     /// Only while transcription runs on your Mac: forgetting the server in use would fail every dictation.
     var canForget: Bool {
-        !isBusy && setup.server != nil && setup.transcription == .local
+        !isBusy && setup.server != nil && setup.transcriptionRunsOn == .local
     }
 
     func forget() async {

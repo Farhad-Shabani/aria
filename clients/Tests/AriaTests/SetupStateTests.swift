@@ -419,6 +419,13 @@ final class SetupStateTests: XCTestCase {
         )
     }
 
+    func testPlanLeavesTheLocalEngineAloneWhileTheServerTranscribes() {
+        var inspection = Self.freshMac()
+        inspection.transcriptionRunsOn = .server
+
+        XCTAssertFalse(SetupState.plan(inspection, inspection.defaults).map(\.id).contains("parakeet"))
+    }
+
     func testPlanSkipsAModelConfiguredElsewhere() {
         var inspection = Self.freshMac()
         inspection.models[0].files = .external

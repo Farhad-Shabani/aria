@@ -100,12 +100,15 @@ final class SetupState: ObservableObject {
     }
 
     /// The models the chosen engines want, plus the ones every install
-    /// wants, whether on disk or not.
+    /// wants, whether on disk or not. While the server transcribes, the
+    /// local engine's models wait until transcription comes back.
     static func wanted(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
         -> [Aria_Setup_V1_Model]
     {
-        inspection.models.filter { model in
-            model.engineID.isEmpty || model.engineID == selections.transcriptionEngineID
+        let transcribesHere = inspection.transcriptionRunsOn != .server
+        return inspection.models.filter { model in
+            model.engineID.isEmpty
+                || (transcribesHere && model.engineID == selections.transcriptionEngineID)
                 || model.engineID == selections.synthesisEngineID
         }
     }
