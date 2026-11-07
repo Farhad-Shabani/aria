@@ -22,7 +22,7 @@ use super::checked::{
     CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
     Voices, WakeEngine,
 };
-use super::keys::{Kind, STT_BACKENDS, WAKE_BACKENDS};
+use super::keys::{Kind, WAKE_BACKENDS};
 use super::limits::MAX_CHAT_TIMEOUT;
 use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
 use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
@@ -1240,7 +1240,7 @@ impl SettingsFile {
             }
             name => {
                 let engine = LocalStt::named(name)
-                    .ok_or_else(|| unsupported(name, STT_BACKENDS, Key::SttBackend))?;
+                    .ok_or_else(|| unsupported(name, backend::LOCAL, Key::SttBackend))?;
                 if let Some(model) = &stt.model {
                     non_empty(model, Key::SttModel)?;
                     absolute_path(Path::new(model), Key::SttModel)?;
