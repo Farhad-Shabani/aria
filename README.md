@@ -38,7 +38,8 @@ own projects, even in the browser through WebAssembly.
 - **Personalize** dictation to type only your voice, spell your project's
   names, and follow rules for each app.
 
-Prompts, app rules, phone pairing, and the voice filter need the Mac app.
+Prompt shortcuts, app rules, phone pairing, and the voice filter need the Mac
+app.
 
 ## Get started
 

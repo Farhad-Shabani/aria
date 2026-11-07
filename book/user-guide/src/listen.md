@@ -83,10 +83,12 @@ aria listen start \
 If the file exists, Listen appends to it. This command starts a session; do not
 run it while another session is recording.
 
-These files have no history expiry. Turning off dictation history does not
-stop Listen from saving them, and clearing history does not delete them.
-They do not get history's private-file protections, so delete them yourself
-when you no longer need them.
+With history on, a session saved under the default folder also appears in
+[history](./history.md) for up to 30 days. Deleting that entry, or clearing history,
+deletes its file. When the entry expires, the file stays. A file you name with
+`--output` never appears in history. Turning off history doesn't stop Listen
+from saving files. They don't get history's private-file protections, so
+delete them when you no longer need them.
 
 [Voice profiles](./speaker-verification.md) can give speakers names. For
 permission or model failures, see [Troubleshooting](./troubleshooting.md#system-audio-fails).

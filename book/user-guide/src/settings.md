@@ -17,12 +17,12 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   muting sound while recording.
 - **Recognition** sets the language, voice filtering, project vocabulary,
   and where transcription runs.
-- **Shortcuts** chooses right Option or Fn for the Aria key, and what
-  starts Ask and the prompt list: an Aria key combo, a shortcut of your own, or
-  nothing.
+- **Shortcuts** chooses right Option or Fn for the Aria key. It also sets
+  what opens Aria and what starts Ask: an Aria key combo, a shortcut of your
+  own, or nothing.
 - **Prompts** lists Markdown files that say what to make of what you say,
   each with its own shortcut. See [Prompts](./prompts.md).
-- **Privacy** controls dictation history, retained audio, and memory.
+- **Privacy** controls history, retained audio, and memory.
 - **Phone** pairs Aria for iPhone.
 - **About** shows the version and checks for updates.
 

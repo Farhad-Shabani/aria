@@ -3,7 +3,7 @@
 # Privacy
 
 Aria processes dictation and speech generation locally by default. Local processing does
-not mean nothing is saved: dictation history is on by default, and transcripts
+not mean nothing is saved: history is on by default, and transcripts
 can also reach your clipboard, other apps, and files.
 
 ## Dictations
@@ -68,14 +68,21 @@ assistant may send the question and project content to cloud services. It
 also keeps its own conversation records. Aria uses read-only settings to
 limit file changes, but those settings do not prevent network access.
 
-Starting a fresh Ask conversation does not delete earlier records. Clearing
-Aria's dictation history does not delete assistant conversations.
+With history on, Aria also saves each question and its reply in
+[history](./history.md) for up to 30 days. Starting a fresh Ask conversation
+doesn't delete earlier records. Clearing Aria's history doesn't delete the
+assistant's conversations.
 
 ## Prompts
 
 [Prompts](./prompts.md) send your spoken words as text, along with the prompt
-file's instructions, to Claude Code or Codex. The assistant may send that
-text to cloud services.
+file's instructions, to Claude Code or Codex. A prompt you run on a history
+entry sends that entry's text instead: an ask's reply, or a Mac Audio
+session's whole transcript. The assistant may send that text to cloud
+services.
+
+With history on, Aria saves the result of a prompt you run on a history entry
+under that entry. It's deleted with the entry.
 
 Each run starts without a project, earlier conversation, or Aria memory.
 Aria also disables the assistant's tools and leaves out its saved instructions
@@ -115,8 +122,9 @@ phone can change only language, output, voice filtering, project vocabulary,
 and history settings.
 
 [System-audio transcripts](./listen.md#transcript-files) are separate files with
-no automatic history expiry. Choose a folder with suitable permissions and
-sharing settings; delete the files when you no longer need them.
+no automatic expiry. History lists sessions saved under the default folder, and
+deleting one there deletes its file. Choose a folder with suitable permissions
+and sharing settings. Delete the files when you no longer need them.
 
 [Project vocabulary](./project-spellings.md) scans the folder you choose. Its cache
 contains collected names and source locations. Disabling corrections keeps
