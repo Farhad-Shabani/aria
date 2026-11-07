@@ -211,6 +211,24 @@ final class ServerTranscriptionTests: XCTestCase {
             ServerTranscription.pairFailure)
     }
 
+    func testPairingWhileTheAppRunsAnotherSetupSaysItIsBusy() async {
+        let spy = Spy(Self.mac(on: .local))
+        let runner = SetupRunner()
+        let server = ServerTranscription(effects: spy.effects, setup: SetupStatus(), runner: runner)
+        let held = Task { try await runner.run { try await Task.sleep(for: .seconds(60)) } }
+        while !runner.isRunning { await Task.yield() }
+
+        let paired = await server.pair(invitation: "{}")
+        held.cancel()
+
+        XCTAssertFalse(paired)
+        XCTAssertEqual(server.pairingFailure, SetupClientError.busyMessage)
+        XCTAssertEqual(
+            ServerTranscription.pairingMessage(
+                for: PairingFailure(report: Data(#"{"paired":false,"error":{"code":"busy"}}"#.utf8))),
+            SetupClientError.busyMessage)
+    }
+
     func testAPairingCodeThisBuildDoesNotKnowIsAPlainFailure() {
         XCTAssertEqual(PairingFailure(report: Data(#"{"paired":false,"error":{"code":"new_code"}}"#.utf8)), .failed)
         XCTAssertEqual(PairingFailure(report: Data("error: not json".utf8)), .failed)

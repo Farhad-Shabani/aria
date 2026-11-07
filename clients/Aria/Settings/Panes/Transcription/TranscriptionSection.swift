@@ -111,6 +111,7 @@ private struct PairServerSheet: View {
 
     @ObservedObject var server: ServerTranscription
     @Binding var isPresented: Bool
+    @EnvironmentObject private var runner: SetupRunner
 
     var body: some View {
         VStack(spacing: SettingsMetrics.sheetSpacing) {
@@ -142,7 +143,7 @@ private struct PairServerSheet: View {
                 if case .confirming(let invitation, _) = server.pairingStep {
                     Button("Pair") { Task { await pair(invitation) } }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(server.isBusy)
+                        .disabled(server.isBusy || runner.isRunning)
                 } else {
                     Button("Paste Invitation") { server.paste(NSPasteboard.general.string(forType: .string) ?? "") }
                         .keyboardShortcut(.defaultAction)

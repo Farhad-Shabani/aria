@@ -106,9 +106,10 @@ final class ServerTranscription: ObservableObject {
     static let invitationFailure = "That invitation didn’t work. Make a new invitation and try again."
 
     static func pairingMessage(for error: any Error) -> String {
-        switch error as? PairingFailure {
+        if error as? SetupClientError == .busy { return SetupClientError.busyMessage }
+        return switch error as? PairingFailure {
         case .invitationInvalid: invitationFailure
-        case .busy: "Aria is busy with another pairing or setup. Wait for it to finish, then try again."
+        case .busy: SetupClientError.busyMessage
         case .unreachable: "Aria couldn’t reach the server. Make sure it’s on and reachable, then try again."
         case .timeout: "The server didn’t respond in time. Try again."
         case .permissionDenied:
