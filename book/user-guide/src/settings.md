@@ -95,19 +95,22 @@ pair:
   **Paste Invitation**. Check the address, click **Pair**, and turn on
   **Transcribe on your server**.
 - **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
-  Then run `aria setup` and choose **Paired inference server**.
+  Then run `aria setup --stt-location server`.
 
-Either way, Aria restarts its service to apply the change. Dictation, recorded
+Either way, the next dictation uses the server, with no restart. Dictation, recorded
 questions, phone relay and history retries then use the server. Streaming and
 previews depend on its engine. If the connection fails, the request stops
 instead of switching to a local engine.
 
 Speech output, wake words and voice profiles stay on the device. System-audio
 listening needs its own local `listen.backend`. To go back, turn off
-**Transcribe on your server**, or choose a local engine in `aria setup`.
+**Transcribe on your server**, or run `aria setup --stt-location local`. Your
+local engine keeps its settings while the server transcribes. If its model
+isn't on disk, Aria downloads it before switching back.
 
 To unpair, turn off **Transcribe on your server** and click **Forget…**, or run
 `aria remote forget`. The server keeps trusting the device until you block it.
+Pairing again also waits until transcription runs on your device.
 
 To block a device, run `aria remote revoke FINGERPRINT` on the server.
 `aria remote pair` prints the fingerprint. In Settings, **Forget…** can copy
@@ -150,8 +153,8 @@ Some keys only work together, so set them in one command:
 
 ```sh
 aria settings set \
-  stt.backend server \
-  stt.server https://your-server:9851
+  stt.backend parakeet-mlx \
+  stt.interpreter /usr/bin/python3
 ```
 
 In the Mac app, click **Restart to Apply**. In a terminal, restart the service:

@@ -118,8 +118,9 @@ without restarting the service:
 aria setup --stt moonshine
 ```
 
-The names are the ones `stt.backend` takes. For Parakeet (MLX) or your server,
-run `aria setup` instead.
+The names are the ones `stt.backend` takes. For Parakeet (MLX), run
+`aria setup` instead. To transcribe on your own server, see
+[Server inference](./settings.md#server-inference).
 
 ### Free model space
 

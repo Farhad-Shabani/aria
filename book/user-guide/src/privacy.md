@@ -39,7 +39,7 @@ protects audio on the way, not from the person running the server. Pairing
 keys sit unencrypted in `~/.aria/inference/`, readable only by your account.
 
 To stop uploads, turn off **Transcribe on your server** in **Settings → Recognition**,
-or choose a local engine in `aria setup`. Cancelling a dictation or revoking
+or run `aria setup --stt-location local`. Cancelling a dictation or revoking
 your device stops what comes next. Neither can take back audio the server
 already has.
 
