@@ -211,7 +211,7 @@ struct PaletteModel: Equatable {
     /// Every command the commands page offers with no prompt input, before search.
     private var pageCommands: [PaletteCommand] {
         [isListening ? .liveTranscript : .newTranscription, .newDictation, .newAsk] + prompts
-            + (canAddPrompt ? [.newPrompt] : []) + (setupSteps > 0 ? [.finishSetup] : []) + [.setUp, .settings]
+            + (canAddPrompt ? [.newPrompt] : []) + [.setUp, .settings] + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }
 

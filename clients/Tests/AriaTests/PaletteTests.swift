@@ -372,6 +372,15 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.selected?.command?.action, .openSettings(nil))
     }
 
+    func testTypingSettingsStillSelectsSettingsWhileSetupStepsAreLeft() {
+        var model = openModel()
+        model.replace(setupSteps: 1)
+
+        model.query = "sett"
+
+        XCTAssertEqual(model.selected?.command?.action, .openSettings(nil))
+    }
+
     func testSearchingAFeaturesNameFindsTheCommandThatStartsIt() {
         var model = openModel()
 
@@ -388,7 +397,7 @@ final class PaletteTests: XCTestCase {
 
         model.replace(setupSteps: 2)
         model.query = "setup"
-        XCTAssertEqual(model.commands.map(\.action), [.openSettings(.finishSetup), .openSetup])
+        XCTAssertEqual(model.commands.map(\.action), [.openSetup, .openSettings(.finishSetup)])
 
         model.replace(setupSteps: 0)
         XCTAssertEqual(model.commands.map(\.action), [.openSetup])
