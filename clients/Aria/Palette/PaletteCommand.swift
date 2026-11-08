@@ -6,7 +6,9 @@ struct PaletteCommand: Equatable, Identifiable {
         case startDictation
         case startAsk
         case runPrompt(id: String)
-        case openSettings
+        /// `nil` opens the pane Settings last showed.
+        case openSettings(SettingsPane?)
+        case openSetup
         case showHistory(HistorySection)
         case clearHistory
         case newPrompt
@@ -23,6 +25,8 @@ struct PaletteCommand: Equatable, Identifiable {
     let chord: Chord?
     /// A key that runs it from the commands page, whatever is typed.
     var key: PaletteKey?
+    /// Words search also finds it by, beside its title.
+    var keywords: [String] = []
     let action: Action
 
     static let liveTranscript = PaletteCommand(
@@ -55,5 +59,11 @@ struct PaletteCommand: Equatable, Identifiable {
     }
     static let settings = PaletteCommand(
         id: "settings", title: "Settings…", symbol: "gearshape", number: nil, chord: nil,
-        key: .settings, action: .openSettings)
+        key: .settings, action: .openSettings(nil))
+    static let finishSetup = PaletteCommand(
+        id: "finish-setup", title: "\(SettingsPane.finishSetup.title)…", symbol: SettingsPane.finishSetup.symbol,
+        number: nil, chord: nil, keywords: ["setup"], action: .openSettings(.finishSetup))
+    static let setUp = PaletteCommand(
+        id: "set-up", title: "Set Up Aria…", symbol: "wand.and.stars", number: nil, chord: nil,
+        keywords: ["setup"], action: .openSetup)
 }

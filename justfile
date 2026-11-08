@@ -161,6 +161,9 @@ rust-clean *args:
 # Swift: the macOS app
 
 swift_srcs := "clients/Aria clients/Shared clients/Tests"
+# Extra xcodebuild settings. CI turns warnings into errors, so a newer local
+# Xcode only warns.
+swift_settings := ""
 
 # Run the macOS app checks
 swift-check: swift-format swift-stubs swift-test
@@ -186,7 +189,7 @@ swift-project:
 swift-test: swift-project
     cd clients && xcodebuild test -project Aria.xcodeproj -scheme Aria \
         -destination "platform=macOS,arch=$(uname -m)" -onlyUsePackageVersionsFromResolvedFile \
-        CODE_SIGNING_ALLOWED=NO -quiet
+        CODE_SIGNING_ALLOWED=NO {{ swift_settings }} -quiet
 
 version := `sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1`
 

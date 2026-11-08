@@ -87,7 +87,7 @@ final class PhonePairingTests: XCTestCase {
         await pairing.turn(on: true)
         XCTAssertEqual(pairing.status, .live(Self.invite("after"), expiresAt: now + 60))
         gate.open()
-        await stale.value
+        _ = await stale.value
 
         XCTAssertEqual(pairing.status, .live(Self.invite("after"), expiresAt: now + 60))
         XCTAssertNil(pairing.phonePairedAt)

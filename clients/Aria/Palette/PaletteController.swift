@@ -20,7 +20,10 @@ final class PaletteController: ObservableObject {
 
     private let prompts: PromptHotkeys
     private let ask: PressController
-    private let openSettings: @MainActor () -> Void
+    private let openSettings: @MainActor (SettingsPane?) -> Void
+    private let openSetup: @MainActor () -> Void
+    private let setup: SetupStatus
+    private let settingsHealth: SettingsHealth
     /// Shows in the pill how typing went, once the palette is gone.
     private let delivered: @MainActor (Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) -> Void
     private lazy var panel = PalettePanel(
@@ -35,6 +38,7 @@ final class PaletteController: ObservableObject {
     private var pageChange: AnyCancellable?
     private var replyChange: AnyCancellable?
     private var promptsChange: AnyCancellable?
+    private var setupChange: AnyCancellable?
     /// Where Edit Prompt finds a prompt. `nil` until the app tracks the settings.
     private var settings: DaemonSettings?
     /// The prompts that are on, in Settings order, as the settings last said.
@@ -48,7 +52,9 @@ final class PaletteController: ObservableObject {
 
     init(
         prompts: PromptHotkeys, ask: PressController, listen: ListenStatus, history: HistoryState,
-        events: DaemonEvents, openSettings: @escaping @MainActor () -> Void,
+        events: DaemonEvents, setup: SetupStatus, settingsHealth: SettingsHealth,
+        openSettings: @escaping @MainActor (SettingsPane?) -> Void,
+        openSetup: @escaping @MainActor () -> Void,
         delivered: @escaping @MainActor (Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) -> Void
     ) {
         self.prompts = prompts
@@ -56,6 +62,9 @@ final class PaletteController: ObservableObject {
         self.listen = listen
         self.history = history
         self.openSettings = openSettings
+        self.openSetup = openSetup
+        self.setup = setup
+        self.settingsHealth = settingsHealth
         self.delivered = delivered
         promptRun = PaletteRun(
             effects: .init(
@@ -116,6 +125,14 @@ final class PaletteController: ObservableObject {
             .sink { [weak self] keepsHistory in self?.model.keepsHistory = keepsHistory }
     }
 
+    /// The app owns the poller, so setup steps start counting once the menu bar item appears.
+    func track(_ poller: StatusPoller) {
+        setupChange = Publishers.CombineLatest3(setup.$items, settingsHealth.$status, poller.$failure)
+            .map { SetupItem.all(inspected: $0, settingsStatus: $1, startFailure: $2).count }
+            .removeDuplicates()
+            .sink { [weak self] steps in self?.model.replace(setupSteps: steps) }
+    }
+
     func press() {
         switch gesture.press(isOpen: panel.isVisible, isBusy: { prompts.isBusy($0) }) {
         case .ignore: break
@@ -155,13 +172,12 @@ final class PaletteController: ObservableObject {
             close()
             gesture.chose(id)
             prompts.press(id)
-        case .openSettings:
-            // The palette's panel never activates Aria, so macOS declines a
-            // plain activate() while another app is in front. Settings then
-            // opens behind it.
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            close()
-            openSettings()
+        case .openSettings(let pane):
+            closeForWindow()
+            openSettings(pane)
+        case .openSetup:
+            closeForWindow()
+            openSetup()
         }
     }
 
@@ -481,6 +497,13 @@ final class PaletteController: ObservableObject {
         if model.escape() { close() }
     }
 
+    /// The palette's panel never activates Aria, so macOS declines a plain
+    /// activate() while another app is in front. A window then opens behind it.
+    private func closeForWindow() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        close()
+    }
+
     private func close() {
         typing?.cancel()
         promptRun.release()
@@ -505,6 +528,9 @@ final class PaletteController: ObservableObject {
         let front = NSWorkspace.shared.frontmostApplication
         frontApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
         model.reset(prompts: enabledPrompts, isListening: listen.isRunning)
+        // As the menu bar menu does, since a step may be done or undone outside Aria.
+        let setup = setup
+        Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
         panel.show(PaletteView(controller: self, listen: listen, history: history))
     }

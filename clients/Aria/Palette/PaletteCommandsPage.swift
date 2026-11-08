@@ -184,11 +184,32 @@ struct PaletteCommandsPage: View {
             PaletteFooterProgress("Clearing…")
         } else if let notice = history.notice {
             Text(notice)
+        } else if controller.model.setupSteps > 0 {
+            // Outranks Searching…, which only flickers by.
+            FinishSetupButton(steps: controller.model.setupSteps) { controller.run(.finishSetup) }
         } else if history.isLoading {
             PaletteFooterProgress("Searching…")
         }
     }
 
+}
+
+/// Finish Setting Up Aria, as the menu bar menu offers it, while steps are left.
+private struct FinishSetupButton: View {
+    let steps: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(SettingsPane.finishSetup.title)
+                CountBadge(count: steps).controlSize(.small)
+            }
+            .frame(minHeight: PaletteBarMetrics.footerHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 /// A capsule in the search field naming the prompt input or the history section.

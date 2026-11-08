@@ -407,7 +407,7 @@ final class SetupState: ObservableObject {
                         inspection, stop: effects.stopDaemon, start: effects.startDaemon
                     ) {
                         try await effects.apply(request) { event in
-                            Task { @MainActor [weak self] in self?.absorb(event) }
+                            Task { @MainActor in self.absorb(event) }
                         }
                     }
                 }

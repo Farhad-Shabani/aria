@@ -73,6 +73,8 @@ struct PaletteModel: Equatable {
     private var editFailure: EditFailure?
     /// New Prompt shows while the prompts are under the daemon's limit.
     var canAddPrompt = false
+    /// The steps left in Finish Setting Up Aria. Its command shows while any are left.
+    private(set) var setupSteps = 0
     private var prompts: [PaletteCommand] = []
     /// Already filtered by the query, newest day first.
     private var entries: [HistoryItem] = []
@@ -102,7 +104,18 @@ struct PaletteModel: Equatable {
     mutating func replace(prompts: [Aria_Daemon_V1_Prompt]) {
         let selectedID = selected?.id
         self.prompts = Self.commands(for: prompts)
-        selectedIndex = items.firstIndex { $0.id == selectedID } ?? min(selectedIndex, max(items.count - 1, 0))
+        reselect(selectedID)
+    }
+
+    /// Follows setup while the palette is open. The selection stays on its row.
+    mutating func replace(setupSteps: Int) {
+        let selectedID = selected?.id
+        self.setupSteps = setupSteps
+        reselect(selectedID)
+    }
+
+    private mutating func reselect(_ id: PaletteItem.ID?) {
+        selectedIndex = items.firstIndex { $0.id == id } ?? min(selectedIndex, max(items.count - 1, 0))
         menuIndex = nil
     }
 
@@ -198,14 +211,16 @@ struct PaletteModel: Equatable {
     /// Every command the commands page offers with no prompt input, before search.
     private var pageCommands: [PaletteCommand] {
         [isListening ? .liveTranscript : .newTranscription, .newDictation, .newAsk] + prompts
-            + (canAddPrompt ? [.newPrompt] : []) + [.settings]
+            + (canAddPrompt ? [.newPrompt] : []) + [.setUp, .settings] + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }
 
     private func matching(_ commands: [PaletteCommand]) -> [PaletteCommand] {
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else { return commands }
-        return commands.filter { $0.title.localizedStandardContains(needle) }
+        return commands.filter { command in
+            ([command.title] + command.keywords).contains { $0.localizedStandardContains(needle) }
+        }
     }
 
     /// With nothing typed, history entries take the commands' place: history

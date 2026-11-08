@@ -61,7 +61,7 @@ struct PaletteActions {
             case .showLiveTranscript: "Show Transcript"
             case .startTranscription, .startDictation, .startAsk: "Start"
             case .runPrompt, .runOneOff: "Run Prompt"
-            case .openSettings, .newPrompt: "Open"
+            case .openSettings, .openSetup, .newPrompt: "Open"
             case .clearHistory: "Clear…"
             case .showHistory: "Show"
             }

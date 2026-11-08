@@ -181,6 +181,7 @@ private struct MenuBarLabel: View {
                 }
                 poller.startPolling()
                 controller.trackHotkeys(settings)
+                controller.palette.track(poller)
                 Task { await settings.sync() }
                 let health = controller.settingsHealth
                 Task { await health.refresh() }

@@ -36,7 +36,7 @@ final class PaletteTests: XCTestCase {
 
         XCTAssertEqual(rows.compactMap(\.number), Array(1...9))
         XCTAssertNil(rows.first { $0.id == prompts[9].id }?.number)
-        XCTAssertEqual(rows.last?.action, .openSettings)
+        XCTAssertEqual(rows.last?.action, .openSettings(nil))
     }
 
     func testNewDictationAndAskFollowTranscriptionAndClearHistoryShowsOnlyWithHistoryOn() {
@@ -368,8 +368,17 @@ final class PaletteTests: XCTestCase {
 
         model.query = "sett"
 
-        XCTAssertEqual(model.commands.map(\.action), [.openSettings])
-        XCTAssertEqual(model.selected?.command?.action, .openSettings)
+        XCTAssertEqual(model.commands.map(\.action), [.openSettings(nil)])
+        XCTAssertEqual(model.selected?.command?.action, .openSettings(nil))
+    }
+
+    func testTypingSettingsStillSelectsSettingsWhileSetupStepsAreLeft() {
+        var model = openModel()
+        model.replace(setupSteps: 1)
+
+        model.query = "sett"
+
+        XCTAssertEqual(model.selected?.command?.action, .openSettings(nil))
     }
 
     func testSearchingAFeaturesNameFindsTheCommandThatStartsIt() {
@@ -380,6 +389,30 @@ final class PaletteTests: XCTestCase {
 
         model.query = "question"
         XCTAssertEqual(model.commands.map(\.action), [.startAsk])
+    }
+
+    func testSearchingSetupFindsSetUpAndFinishSettingUpWhileStepsAreLeft() {
+        var model = openModel()
+        XCTAssertFalse(model.commands.contains(.finishSetup))
+
+        model.replace(setupSteps: 2)
+        model.query = "setup"
+        XCTAssertEqual(model.commands.map(\.action), [.openSetup, .openSettings(.finishSetup)])
+
+        model.replace(setupSteps: 0)
+        XCTAssertEqual(model.commands.map(\.action), [.openSetup])
+    }
+
+    func testSetupStepsChangingKeepsTheSelectionOnItsRow() {
+        var model = openModel()
+        model.moveSelection(by: model.items.count)
+        XCTAssertEqual(model.selected?.command, .settings)
+
+        model.replace(setupSteps: 1)
+        XCTAssertEqual(model.selected?.command, .settings)
+
+        model.replace(setupSteps: 0)
+        XCTAssertEqual(model.selected?.command, .settings)
     }
 
     func testWritingBackTheSameSearchKeepsTheSelection() {
@@ -418,7 +451,7 @@ final class PaletteTests: XCTestCase {
         var model = openModel()
         model.query = "no match"
         let commandComma = Self.key(",", [.command, .capsLock])
-        XCTAssertEqual(model.command(pressing: commandComma)?.action, .openSettings)
+        XCTAssertEqual(model.command(pressing: commandComma)?.action, .openSettings(nil))
         XCTAssertNil(model.command(pressing: Self.key(",", [])))
 
         model.show(.liveTranscript)
@@ -454,7 +487,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testAnEmptyHistoryStillShowsTheCommands() {
-        var model = openModel(history: [])
+        let model = openModel(history: [])
 
         XCTAssertEqual(model.items.compactMap(\.command), model.commands)
     }
@@ -496,7 +529,7 @@ final class PaletteTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let day: TimeInterval = 86_400
-        var model = openModel(history: [Self.entry(3, at: day + 10), Self.entry(2, at: day + 5), Self.entry(1, at: 10)])
+        let model = openModel(history: [Self.entry(3, at: day + 10), Self.entry(2, at: day + 5), Self.entry(1, at: 10)])
 
         let titled = model.items.indices.map { model.dayStarting(at: $0, calendar: calendar) }
 
@@ -707,7 +740,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testReturnIsNamedForTypingOnlyWhenItTypesTheRow() {
-        var model = openModel(history: [Self.entry(1, at: 100)])
+        let model = openModel(history: [Self.entry(1, at: 100)])
 
         XCTAssertEqual(
             PaletteActions(model: model, hasFrontApp: true).returnTitle(typingInto: "Notes"), "Type into Notes")
