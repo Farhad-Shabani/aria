@@ -21,6 +21,7 @@ final class PaletteController: ObservableObject {
     private let prompts: PromptHotkeys
     private let ask: PressController
     private let openSettings: @MainActor (SettingsPane?) -> Void
+    private let openSetup: @MainActor () -> Void
     private let setup: SetupStatus
     private let settingsHealth: SettingsHealth
     /// Shows in the pill how typing went, once the palette is gone.
@@ -53,6 +54,7 @@ final class PaletteController: ObservableObject {
         prompts: PromptHotkeys, ask: PressController, listen: ListenStatus, history: HistoryState,
         events: DaemonEvents, setup: SetupStatus, settingsHealth: SettingsHealth,
         openSettings: @escaping @MainActor (SettingsPane?) -> Void,
+        openSetup: @escaping @MainActor () -> Void,
         delivered: @escaping @MainActor (Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) -> Void
     ) {
         self.prompts = prompts
@@ -60,6 +62,7 @@ final class PaletteController: ObservableObject {
         self.listen = listen
         self.history = history
         self.openSettings = openSettings
+        self.openSetup = openSetup
         self.setup = setup
         self.settingsHealth = settingsHealth
         self.delivered = delivered
@@ -170,12 +173,11 @@ final class PaletteController: ObservableObject {
             gesture.chose(id)
             prompts.press(id)
         case .openSettings(let pane):
-            // The palette's panel never activates Aria, so macOS declines a
-            // plain activate() while another app is in front. Settings then
-            // opens behind it.
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            close()
+            closeForWindow()
             openSettings(pane)
+        case .openSetup:
+            closeForWindow()
+            openSetup()
         }
     }
 
@@ -493,6 +495,13 @@ final class PaletteController: ObservableObject {
     func escape() {
         if model.page == .result { promptRun.cancel() }
         if model.escape() { close() }
+    }
+
+    /// The palette's panel never activates Aria, so macOS declines a plain
+    /// activate() while another app is in front. A window then opens behind it.
+    private func closeForWindow() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        close()
     }
 
     private func close() {

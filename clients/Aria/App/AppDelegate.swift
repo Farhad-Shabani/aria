@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let pane { settingsPaneRequest.pane = pane }
             settings.request()
         },
+        openSetup: { [weak self] in self?.setup.request() },
         delivered: { [weak status] outcome in status?.noteDelivery(outcome) })
     lazy var settingsHealth = SettingsHealth(
         effects: .live(reloadSettings: { [weak self] in await self?.daemonSettings?.sync() }))

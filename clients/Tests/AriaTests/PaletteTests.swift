@@ -382,16 +382,16 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.commands.map(\.action), [.startAsk])
     }
 
-    func testFinishSettingUpShowsWhileStepsAreLeftAndOpensItsPane() {
+    func testSearchingSetupFindsSetUpAndFinishSettingUpWhileStepsAreLeft() {
         var model = openModel()
         XCTAssertFalse(model.commands.contains(.finishSetup))
 
         model.replace(setupSteps: 2)
         model.query = "setup"
-        XCTAssertEqual(model.commands.map(\.action), [.openSettings(.finishSetup)])
+        XCTAssertEqual(model.commands.map(\.action), [.openSettings(.finishSetup), .openSetup])
 
         model.replace(setupSteps: 0)
-        XCTAssertEqual(model.commands, [])
+        XCTAssertEqual(model.commands.map(\.action), [.openSetup])
     }
 
     func testSetupStepsChangingKeepsTheSelectionOnItsRow() {
