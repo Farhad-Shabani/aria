@@ -282,7 +282,7 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
         silence_duration: SilenceDuration::default(),
         auto_stop: None,
         own_voice_only: false,
-        rewriting: Default::default(),
+        cleanup: Default::default(),
         project: None,
         route: crate::dictation::TranscriptRoute::Deliver,
         application: None,
@@ -352,7 +352,7 @@ impl DictationExecutor for RecordsUntilStopped {
         _language: &Language,
         _own_voice_only: bool,
         _project: Option<&aria_settings::Directory>,
-        _rewriting: super::Rewriting,
+        _cleanup: super::Cleanup,
         _cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         Ok(Transcribed {

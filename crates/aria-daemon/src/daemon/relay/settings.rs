@@ -122,8 +122,10 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         silence_duration_ms,
         auto_stop_ms,
         mute_sound,
-        cleanup,
-        backtrack,
+        cleanup_enabled,
+        cleanup_fillers,
+        cleanup_backtrack,
+        cleanup_llm_enabled,
         own_voice_only,
         vocabulary_enabled,
         vocabulary_dir,
@@ -149,8 +151,13 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         ),
         (Key::DictationAutoStopMs, auto_stop_ms.is_some()),
         (Key::DictationMuteSound, mute_sound.is_some()),
-        (Key::DictationCleanup, cleanup.is_some()),
-        (Key::DictationBacktrack, backtrack.is_some()),
+        (Key::DictationCleanupEnabled, cleanup_enabled.is_some()),
+        (Key::DictationCleanupFillers, cleanup_fillers.is_some()),
+        (Key::DictationCleanupBacktrack, cleanup_backtrack.is_some()),
+        (
+            Key::DictationCleanupLlmEnabled,
+            cleanup_llm_enabled.is_some(),
+        ),
         (Key::DictationOwnVoiceOnly, own_voice_only.is_some()),
         (
             Key::DictationVocabularyEnabled,
@@ -482,11 +489,11 @@ mod tests {
                 ..Default::default()
             },
             wire::SettingsPatch {
-                backtrack: Some(true),
+                cleanup_backtrack: Some(true),
                 ..Default::default()
             },
             wire::SettingsPatch {
-                cleanup: Some(true),
+                cleanup_enabled: Some(true),
                 ..Default::default()
             },
             wire::SettingsPatch {

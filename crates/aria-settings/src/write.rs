@@ -1015,15 +1015,15 @@ mod tests {
 
     #[test]
     fn a_write_changes_only_its_line() {
-        let original = "# mine\n\n[dictation]\n# say less\ncleanup = true   # keep\nbacktrack = false\n\n[memory]\nenabled = false\n";
+        let original = "# mine\n\n[dictation.cleanup]\n# say less\nenabled = true   # keep\nbacktrack = false\n\n[memory]\nenabled = false\n";
         let (_dir, path) = file_with(original);
-        let patch = one_key(Key::DictationCleanup, false);
+        let patch = one_key(Key::DictationCleanupEnabled, false);
 
         applied(write(&path, home(), None, &patch).expect("writes"));
 
         assert_eq!(
             fs::read_to_string(&path).expect("read"),
-            original.replace("cleanup = true   # keep", "cleanup = false   # keep")
+            original.replace("enabled = true   # keep", "enabled = false   # keep")
         );
     }
 
@@ -1091,7 +1091,10 @@ mod tests {
         let (_dir, path) = file_with("# shared\n");
 
         thread::scope(|scope| {
-            for (key, value) in [(Key::MemoryEnabled, true), (Key::DictationCleanup, true)] {
+            for (key, value) in [
+                (Key::MemoryEnabled, true),
+                (Key::DictationCleanupEnabled, true),
+            ] {
                 let path = &path;
                 scope.spawn(move || {
                     let mut patch = Patch::new();
@@ -1104,7 +1107,7 @@ mod tests {
         let loaded =
             Loaded::parse(&fs::read_to_string(&path).expect("read"), home()).expect("loads");
         assert_eq!(loaded.settings.memory.enabled, Some(true));
-        assert_eq!(loaded.settings.dictation.cleanup, Some(true));
+        assert_eq!(loaded.settings.dictation.cleanup.enabled, Some(true));
         assert!(loaded.document.to_string().starts_with("# shared\n"));
     }
 

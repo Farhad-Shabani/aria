@@ -52,7 +52,9 @@ pub use document::{
 };
 pub use keys::Scope;
 pub use keys::{Apply, Key};
-pub use limits::{CleanupConfigError, CleanupTarget, MAX_DICTATION_TIMEOUT, is_valid_model_id};
+pub use limits::{
+    LlmCleanupConfigError, LlmCleanupTarget, MAX_DICTATION_TIMEOUT, is_valid_model_id,
+};
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
 };
@@ -337,6 +339,9 @@ pub enum InvalidValue {
     #[error("needs capture.backend = \"microphone\"")]
     NeedsMicrophone,
 
+    #[error("needs {0} set as well")]
+    NeedsKey(Key),
+
     #[error("uses unsupported home syntax")]
     HomeSyntax,
 
@@ -352,7 +357,7 @@ pub enum InvalidValue {
     SharedBinding,
 
     #[error("is not usable: {0}")]
-    Cleanup(#[source] CleanupConfigError),
+    LlmCleanup(#[source] LlmCleanupConfigError),
 
     #[error("is not usable: {0}")]
     SpeakingRate(#[source] SpeakingRateError),

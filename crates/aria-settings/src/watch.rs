@@ -744,11 +744,14 @@ mod tests {
     /// The live switch decides, and the frozen table goes unused.
     #[test]
     fn turning_cleanup_off_leaves_the_frozen_llm_unused_and_loadable() {
-        let llm = "[dictation.cleanup_llm]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\nmodel = \"m\"\n";
+        let llm = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\nmodel = \"m\"\n";
         let dir = tempfile::tempdir().unwrap();
-        let store = store(dir.path(), &format!("[dictation]\ncleanup = true\n{llm}"));
+        let store = store(
+            dir.path(),
+            &format!("[dictation.cleanup]\nenabled = true\n{llm}"),
+        );
 
-        hand_edit(&store, "[dictation]\ncleanup = false\n");
+        hand_edit(&store, "[dictation.cleanup]\nenabled = false\n");
         reloaded(store.poll().expect("polls"));
 
         let effective = store.effective();

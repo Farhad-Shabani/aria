@@ -18,10 +18,6 @@ auto_stop_ms = 10000
 # Mutes other apps while recording, so Aria's own sounds still play.
 # Their sound comes back when recording stops.
 mute_sound = true
-# Drops "um", "uh" and repeated words before delivery.
-cleanup = false
-# Applies a spoken self-correction: "meet at 3, actually 4" becomes "meet at 4". English only.
-backtrack = false
 # Types only what your enrolled voice said. Removing your voice profile turns it off.
 own_voice_only = false
 # The longest one recording may run. (restart)
@@ -29,9 +25,22 @@ max_recording_secs = 600.0
 # The longest a whole dictation may take, recording included. (restart)
 timeout_secs = 660.0
 
-# Cleans up the transcript with a local model as well, while cleanup is on. (restart)
-# [dictation.cleanup_llm]
-# endpoint = "http://127.0.0.1:PORT/v1/chat/completions"   # loopback only
+# Text cleanup. `enabled` is the app's Clean up text switch. Off, nothing below runs.
+[dictation.cleanup]
+enabled = false
+# Drops "um", "uh" and repeated words before delivery.
+fillers = true
+# Applies a spoken self-correction while delivery is complete:
+# "meet at 3, actually 4" becomes "meet at 4". English only.
+backtrack = true
+
+# Cleans up the transcript with a local model as well, while delivery is complete.
+# Ollama serves it at port 11434.
+[dictation.cleanup.llm]
+# Runs the model. false keeps the endpoint and model below.
+enabled = true
+# Both set, or neither. Neither leaves cleanup to its rules. (restart)
+# endpoint = "http://127.0.0.1:11434/v1/chat/completions"   # loopback only
 # model = "MODEL_ID"
 
 [dictation.vocabulary]

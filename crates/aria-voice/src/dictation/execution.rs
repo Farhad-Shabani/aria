@@ -30,8 +30,8 @@ struct OutputSlot {
 }
 
 use super::{
-    DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings, DictationStage,
-    RecordingId, Rewriting, SoundMuting, StopMode,
+    Cleanup, DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings,
+    DictationStage, RecordingId, SoundMuting, StopMode,
 };
 
 /// What a recording said, and the engine that heard it.
@@ -59,7 +59,7 @@ pub trait DictationExecutor: Send + Sync + 'static {
         language: &Language,
         own_voice_only: bool,
         project: Option<&aria_settings::Directory>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
 
@@ -91,7 +91,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         language: &Language,
         own_voice_only: bool,
         project: Option<&aria_settings::Directory>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         (**self).transcribe(
@@ -99,7 +99,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
             language,
             own_voice_only,
             project,
-            rewriting,
+            cleanup,
             cancel,
         )
     }
@@ -731,7 +731,7 @@ where
         language: &Language,
         own_voice_only: bool,
         project: Option<&aria_settings::Directory>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         self.executor.transcribe(
@@ -739,7 +739,7 @@ where
             language,
             own_voice_only,
             project,
-            rewriting,
+            cleanup,
             cancel,
         )
     }
@@ -811,7 +811,7 @@ mod tests {
             silence_duration: SilenceDuration::default(),
             auto_stop: None,
             own_voice_only: false,
-            rewriting: Rewriting::default(),
+            cleanup: Cleanup::default(),
             route: crate::dictation::TranscriptRoute::TranscriptOnly,
             project: None,
             application: None,
@@ -1320,7 +1320,7 @@ mod tests {
                 _: &Language,
                 _: bool,
                 _: Option<&aria_settings::Directory>,
-                _: Rewriting,
+                _: Cleanup,
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {
                 panic!("this test executes local recording");

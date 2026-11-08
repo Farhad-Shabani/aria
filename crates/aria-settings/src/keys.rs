@@ -152,15 +152,19 @@ keys! {
         "The longest a whole dictation may take, recording included.";
     DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("true"),
         "Mutes other apps while recording.";
-    DictationCleanup: "dictation.cleanup", Live, Mac, [], Kind::Bool, Some("false"),
-        "Drops \"um\", \"uh\" and repeated words before delivery.";
-    DictationBacktrack: "dictation.backtrack", Live, Mac, [], Kind::Bool, Some("false"),
-        "Applies a spoken self-correction. English only.";
     DictationOwnVoiceOnly: "dictation.own_voice_only", Live, Phone, [], Kind::Bool, Some("false"),
         "Types only what your enrolled voice said.";
-    DictationCleanupLlmEndpoint: "dictation.cleanup_llm.endpoint", Restart, Mac, [], Kind::Text, None,
-        "A loopback chat-completions endpoint that also cleans the transcript while cleanup is on.";
-    DictationCleanupLlmModel: "dictation.cleanup_llm.model", Restart, Mac, [], Kind::Text, None,
+    DictationCleanupEnabled: "dictation.cleanup.enabled", Live, Mac, [], Kind::Bool, Some("false"),
+        "Runs the cleanups this table turns on. Off, none of them runs.";
+    DictationCleanupFillers: "dictation.cleanup.fillers", Live, Mac, [], Kind::Bool, Some("true"),
+        "Drops \"um\", \"uh\" and repeated words before delivery.";
+    DictationCleanupBacktrack: "dictation.cleanup.backtrack", Live, Mac, [], Kind::Bool, Some("true"),
+        "Applies a spoken self-correction while delivery is complete. English only.";
+    DictationCleanupLlmEnabled: "dictation.cleanup.llm.enabled", Live, Mac, [], Kind::Bool, Some("true"),
+        "Runs the local model. Off keeps its endpoint and model.";
+    DictationCleanupLlmEndpoint: "dictation.cleanup.llm.endpoint", Restart, Mac, [], Kind::Text, None,
+        "A loopback chat-completions endpoint that also cleans the transcript while delivery is complete.";
+    DictationCleanupLlmModel: "dictation.cleanup.llm.model", Restart, Mac, [], Kind::Text, None,
         "The model that endpoint serves.";
     DictationVocabularyEnabled: "dictation.vocabulary.enabled", Live, Phone, [], Kind::Bool, Some("false"),
         "Adds terms from the project you're working in.";

@@ -174,9 +174,9 @@ mod tests {
     use aria_settings::Settings;
     use aria_voice::config::{PairingId, TranscriptionConfig};
     use aria_voice::dictation::{
-        DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
+        Cleanup, DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
         DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
-        ExecutionControl, Rewriting, StopMode, Transcribed,
+        ExecutionControl, StopMode, Transcribed,
     };
     use aria_voice::transcription::{Language, TranscriptionError};
 
@@ -214,7 +214,7 @@ mod tests {
             _: &Language,
             _: bool,
             _: Option<&aria_settings::Directory>,
-            _: Rewriting,
+            _: Cleanup,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             panic!("these tests only press");

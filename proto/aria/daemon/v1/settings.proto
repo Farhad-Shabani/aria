@@ -112,11 +112,15 @@ message Settings {
   optional uint64 auto_stop_ms = 18;
   // Mutes the Mac's sound while recording.
   bool mute_sound = 2;
-  // Drops "um", "uh" and repeated words before delivery.
-  bool cleanup = 22;
-  // Applies a spoken self-correction. Takes effect only with delivery after
-  // recording stops.
-  bool backtrack = 20;
+  // Runs the cleanups turned on below. Off, none of them runs.
+  bool cleanup_enabled = 22;
+  // Drops "um", "uh" and repeated words before delivery, while cleanup is on.
+  bool cleanup_fillers = 23;
+  // Applies a spoken self-correction while cleanup is on. Takes effect only
+  // with delivery after recording stops.
+  bool cleanup_backtrack = 20;
+  // Runs the local model set in the settings file, while cleanup is on.
+  bool cleanup_llm_enabled = 24;
   // Removing the last enrolled owner turns it off.
   bool own_voice_only = 4;
   bool vocabulary_enabled = 5;
@@ -181,8 +185,10 @@ message SettingsPatch {
   // absent leaves it unchanged.
   optional uint64 auto_stop_ms = 18;
   optional bool mute_sound = 2;
-  optional bool cleanup = 22;
-  optional bool backtrack = 20;
+  optional bool cleanup_enabled = 22;
+  optional bool cleanup_fillers = 23;
+  optional bool cleanup_backtrack = 20;
+  optional bool cleanup_llm_enabled = 24;
   // Types only enrolled owner voices.
   optional bool own_voice_only = 4;
   optional bool vocabulary_enabled = 5;

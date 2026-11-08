@@ -1549,9 +1549,11 @@ mod tests {
                     &Language::Automatic,
                     true,
                     Some(&matcher),
-                    aria_voice::dictation::Rewriting {
-                        cleanup: true,
+                    aria_voice::dictation::Cleanup {
+                        enabled: true,
+                        fillers: true,
                         backtrack: false,
+                        llm: true,
                     },
                     "test",
                     &CancelToken::never(),

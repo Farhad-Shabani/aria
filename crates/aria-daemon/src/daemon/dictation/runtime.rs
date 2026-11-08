@@ -385,7 +385,7 @@ impl DictationRuntime {
                 &settings.stt_language,
                 settings.own_voice_only,
                 settings.project.as_ref(),
-                settings.rewriting,
+                settings.cleanup,
                 cancel,
             )
             .map_err(DictationRuntimeError::Execution)
@@ -891,7 +891,7 @@ mod event_tests {
             _: &Language,
             _: bool,
             _: Option<&aria_settings::Directory>,
-            _: aria_voice::dictation::Rewriting,
+            _: aria_voice::dictation::Cleanup,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             panic!("a press never retries history");
@@ -969,7 +969,7 @@ mod history_tests {
             language: &Language,
             own_voice_only: bool,
             project: Option<&aria_settings::Directory>,
-            _: aria_voice::dictation::Rewriting,
+            _: aria_voice::dictation::Cleanup,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());

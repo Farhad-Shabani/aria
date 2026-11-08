@@ -13,8 +13,8 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 - **General** controls launch at login, the status pill, the inline preview,
   captions, and the speaking rate. Open **Assistant** here to choose the app
   and model for Ask and Prompts. **Aria Setup** reopens setup.
-- **Dictation** sets output, delivery, spoken corrections, auto-stop, and
-  muting sound while recording.
+- **Dictation** sets output, delivery, text cleanup, auto-stop, and muting
+  sound while recording.
 - **Recognition** sets the language, voice filtering, project vocabulary,
   and where transcription runs.
 - **Shortcuts** chooses right Option or Fn for the Aria key. It also sets

@@ -6,11 +6,11 @@ use crate::transcription::Language;
 use aria_kit::audio::{AutoStop, SilenceDuration};
 use aria_settings::DeliveryMode;
 
-pub(crate) mod cleanup;
 mod cursor;
 mod event;
 mod execution;
 mod level;
+pub(crate) mod llm;
 #[cfg(target_os = "macos")]
 mod output;
 #[cfg(test)]
@@ -24,7 +24,6 @@ pub mod testing;
 mod transcripts;
 
 pub use aria_platform::delivery::OutputMode;
-pub use cleanup::{CleanupError, LlmCleanup};
 pub use cursor::Cursor;
 pub use event::{
     CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD, GhostSnapshot,
@@ -36,8 +35,9 @@ pub use execution::{
 };
 use level::Meter;
 pub use level::MicLevel;
+pub use llm::{LlmCleanup, LlmCleanupError};
 pub use pipeline::DictationPipeline;
-pub use rewrites::{ConfiguredLayers, Rewrites, Rewriting};
+pub use rewrites::{Cleanup, ConfiguredLayers, Rewrites};
 pub use transcripts::{Delivered, DeliveryOutcome, TranscriptSink, Utterance};
 
 /// Names one recording for as long as the daemon that took it runs. What
@@ -137,7 +137,7 @@ pub struct DictationSettings {
     pub silence_duration: SilenceDuration,
     pub auto_stop: Option<AutoStop>,
     pub own_voice_only: bool,
-    pub rewriting: Rewriting,
+    pub cleanup: Cleanup,
     pub route: TranscriptRoute,
     pub project: Option<aria_settings::Directory>,
     /// The app in front as dictation was admitted.

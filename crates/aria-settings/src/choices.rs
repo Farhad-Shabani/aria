@@ -21,12 +21,16 @@ pub struct Settings {
     /// `None` leaves a manual recording running until it is stopped.
     pub auto_stop: Option<AutoStop>,
     pub mute_sound: bool,
-    /// Drops fillers and doubled words.
-    pub cleanup: bool,
-    /// Applies a spoken self-correction.
-    pub backtrack: bool,
     /// Dictation types only what an enrolled voice said.
     pub own_voice_only: bool,
+    /// Lets the cleanups below run.
+    pub cleanup_enabled: bool,
+    /// Drops fillers and doubled words, while cleanup is on.
+    pub cleanup_fillers: bool,
+    /// Applies a spoken self-correction, while cleanup is on.
+    pub cleanup_backtrack: bool,
+    /// Runs the local model, while cleanup is on and one is set.
+    pub cleanup_llm_enabled: bool,
     pub vocabulary_enabled: bool,
     pub vocabulary_dir: Option<super::Directory>,
     pub history_enabled: bool,
@@ -116,9 +120,11 @@ impl Default for Settings {
             silence_duration: SilenceDuration::default(),
             auto_stop: Some(AutoStop::default()),
             mute_sound: true,
-            cleanup: false,
-            backtrack: false,
             own_voice_only: false,
+            cleanup_enabled: false,
+            cleanup_fillers: true,
+            cleanup_backtrack: true,
+            cleanup_llm_enabled: true,
             vocabulary_enabled: false,
             vocabulary_dir: None,
             history_enabled: true,

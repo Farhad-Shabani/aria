@@ -329,7 +329,7 @@ mod tests {
     use aria_kit::synthesis::{SpeakingRate, Voice};
     use aria_settings::config::tts_backend;
     use aria_settings::testing::{file, test_home};
-    use aria_settings::{CleanupTarget, Loaded};
+    use aria_settings::{LlmCleanupTarget, Loaded};
 
     #[test]
     fn the_server_transcribes_and_the_local_model_stays_in_use() {
@@ -363,23 +363,19 @@ mod tests {
     }
 
     #[test]
-    fn llm_cleanup_requires_cleanup_and_preserves_settings() {
+    fn the_cleanup_model_loads_from_its_table_alone() {
         let home_dir = test_home();
         assert!(
             DictationConfig::load(&file(""), &home_dir, None)
                 .cleanup_llm
                 .is_none()
         );
-        let llm = "[dictation.cleanup_llm]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\nmodel = \"local-model\"\n";
-        let config = DictationConfig::load(
-            &file(&format!("[dictation]\ncleanup = true\n{llm}")),
-            &home_dir,
-            None,
-        );
+        let llm = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\nmodel = \"local-model\"\n";
+        let config = DictationConfig::load(&file(llm), &home_dir, None);
         assert_eq!(
             config.cleanup_llm,
             Some(
-                CleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "local-model")
+                LlmCleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "local-model")
                     .unwrap()
             )
         );

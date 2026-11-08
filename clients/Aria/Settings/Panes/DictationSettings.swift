@@ -15,14 +15,16 @@ struct DictationSettings: View {
                     setup: setup, engineChange: engineChange)
                 deliveryPicker(editor, shown: delivery, unavailable: unavailable)
             }
-            Section("Text") {
-                output(editor)
-            }
             Section {
-                Toggle("Spoken corrections", isOn: editor.binding(\.backtrack, \.backtrack))
-                    .disabled(!DictationEdits.allowsSpokenCorrections(delivery))
+                output(editor)
+                Toggle(isOn: editor.binding(\.cleanupEnabled, \.cleanupEnabled)) {
+                    Text("Clean up text")
+                    Text("Removes filler words like “um” and repeated words.")
+                }
+            } header: {
+                Text("Text")
             } footer: {
-                Text("Applies corrections you say as you dictate. Needs **Deliver** set to After recording stops.")
+                Text("With **Deliver** set to After recording stops, also applies corrections like “no, Tuesday”.")
             }
             Section("Recording") {
                 Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {

@@ -2206,8 +2206,10 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                     .map(|milliseconds| AutoStop::new(Duration::from_millis(milliseconds)))
                     .transpose()?,
                 mute_sound: settings.mute_sound,
-                cleanup: settings.cleanup,
-                backtrack: settings.backtrack,
+                cleanup_enabled: settings.cleanup_enabled,
+                cleanup_fillers: settings.cleanup_fillers,
+                cleanup_backtrack: settings.cleanup_backtrack,
+                cleanup_llm_enabled: settings.cleanup_llm_enabled,
                 own_voice_only: settings.own_voice_only,
                 vocabulary_enabled: settings.vocabulary_enabled,
                 vocabulary_dir: settings
@@ -2347,8 +2349,10 @@ impl From<SettingsPatch> for wire::SettingsPatch {
                 auto_stop.map_or(0, |auto_stop| auto_stop.get().as_millis() as u64)
             }),
             mute_sound: patch.mute_sound,
-            cleanup: patch.cleanup,
-            backtrack: patch.backtrack,
+            cleanup_enabled: patch.cleanup_enabled,
+            cleanup_fillers: patch.cleanup_fillers,
+            cleanup_backtrack: patch.cleanup_backtrack,
+            cleanup_llm_enabled: patch.cleanup_llm_enabled,
             own_voice_only: patch.own_voice_only,
             vocabulary_enabled: patch.vocabulary_enabled,
             vocabulary_dir: patch
@@ -2390,8 +2394,10 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                     .auto_stop
                     .map(|auto_stop| auto_stop.get().as_millis() as u64),
                 mute_sound: snapshot.settings.mute_sound,
-                cleanup: snapshot.settings.cleanup,
-                backtrack: snapshot.settings.backtrack,
+                cleanup_enabled: snapshot.settings.cleanup_enabled,
+                cleanup_fillers: snapshot.settings.cleanup_fillers,
+                cleanup_backtrack: snapshot.settings.cleanup_backtrack,
+                cleanup_llm_enabled: snapshot.settings.cleanup_llm_enabled,
                 own_voice_only: snapshot.settings.own_voice_only,
                 vocabulary_enabled: snapshot.settings.vocabulary_enabled,
                 vocabulary_dir: snapshot
@@ -2473,8 +2479,10 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                 })
                 .transpose()?,
             mute_sound: patch.mute_sound,
-            cleanup: patch.cleanup,
-            backtrack: patch.backtrack,
+            cleanup_enabled: patch.cleanup_enabled,
+            cleanup_fillers: patch.cleanup_fillers,
+            cleanup_backtrack: patch.cleanup_backtrack,
+            cleanup_llm_enabled: patch.cleanup_llm_enabled,
             own_voice_only: patch.own_voice_only,
             vocabulary_enabled: patch.vocabulary_enabled,
             vocabulary_dir: patch

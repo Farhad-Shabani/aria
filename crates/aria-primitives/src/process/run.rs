@@ -102,6 +102,11 @@ pub fn run_with_listener(
     cancel: &CancelToken,
     mut on_stdout: impl FnMut(&[u8]) + Send,
 ) -> Result<Output, RunError> {
+    // A child that exits before the first wait check would otherwise
+    // report success for a run cancelled before it began.
+    if cancel.is_cancelled() {
+        return Err(RunError::Cancelled);
+    }
     let deadline = Instant::now() + bounds.timeout;
     command
         .stdin(if input.is_empty() {
@@ -449,14 +454,38 @@ mod tests {
     }
 
     #[test]
+    fn a_run_cancelled_before_it_starts_spawns_nothing() {
+        let cancel = CancelToken::new();
+        cancel.cancel();
+
+        // Spawning this would fail, so only a run that never spawns says Cancelled.
+        let error = run(
+            &mut Command::new("/nonexistent/aria-test-binary"),
+            b"",
+            failing(),
+            &cancel,
+        )
+        .expect_err("the run is cancelled");
+
+        assert!(matches!(error, RunError::Cancelled), "{error:?}");
+    }
+
+    #[test]
     fn a_panicking_cancel_check_still_stops_the_child() {
         let started = Instant::now();
+        // The check before spawning passes, so the panic comes from the wait.
+        let checks = std::sync::atomic::AtomicUsize::new(0);
         let unwound = std::panic::catch_unwind(|| {
             run(
                 &mut shell("sleep 30"),
                 b"",
                 failing(),
-                &CancelToken::from_fn(|| panic!("the check fails")),
+                &CancelToken::from_fn(move || {
+                    if checks.fetch_add(1, Ordering::Relaxed) > 0 {
+                        panic!("the check fails");
+                    }
+                    false
+                }),
             )
         });
 

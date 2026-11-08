@@ -17,9 +17,9 @@ pub fn is_valid_model_id(model_id: &str) -> bool {
             .any(|character| character.is_whitespace() || character.is_control())
 }
 
-/// Why a `dictation.cleanup_llm` table cannot be used.
+/// Why a `dictation.cleanup.llm` table cannot be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum CleanupConfigError {
+pub enum LlmCleanupConfigError {
     #[error(
         "cleanup endpoint must be HTTP with a literal loopback address, explicit nonzero port, and /v1/chat/completions path"
     )]
@@ -28,38 +28,45 @@ pub enum CleanupConfigError {
     Model,
 }
 
-/// A `dictation.cleanup_llm` table that can be used: a loopback chat endpoint
+/// A `dictation.cleanup.llm` table that can be used: a loopback chat endpoint
 /// and a model name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CleanupTarget {
+pub struct LlmCleanupTarget {
     endpoint: String,
+    /// The address of the same server's model list.
+    listing: String,
     model: String,
 }
 
-impl CleanupTarget {
-    pub fn new(endpoint: &str, model: &str) -> Result<Self, CleanupConfigError> {
-        let address = endpoint
+impl LlmCleanupTarget {
+    pub fn new(endpoint: &str, model: &str) -> Result<Self, LlmCleanupConfigError> {
+        let Some(address) = endpoint
             .strip_prefix("http://")
             .and_then(|rest| rest.strip_suffix("/v1/chat/completions"))
             .and_then(|authority| authority.parse::<SocketAddr>().ok())
-            .filter(|address| address.ip().is_loopback() && address.port() != 0);
-        if address.is_none() {
-            return Err(CleanupConfigError::Endpoint);
-        }
+            .filter(|address| address.ip().is_loopback() && address.port() != 0)
+        else {
+            return Err(LlmCleanupConfigError::Endpoint);
+        };
         if model.is_empty()
             || model.len() > 256
             || model.chars().any(|c| c.is_whitespace() || c.is_control())
         {
-            return Err(CleanupConfigError::Model);
+            return Err(LlmCleanupConfigError::Model);
         }
         Ok(Self {
             endpoint: endpoint.to_owned(),
+            listing: format!("http://{address}/v1/models"),
             model: model.to_owned(),
         })
     }
 
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    pub fn listing(&self) -> &str {
+        &self.listing
     }
 
     pub fn model(&self) -> &str {
@@ -72,12 +79,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_model_listing_is_on_the_same_server() {
+        for (endpoint, listing) in [
+            (
+                "http://127.0.0.1:11434/v1/chat/completions",
+                "http://127.0.0.1:11434/v1/models",
+            ),
+            (
+                "http://[::1]:8080/v1/chat/completions",
+                "http://[::1]:8080/v1/models",
+            ),
+        ] {
+            assert_eq!(
+                LlmCleanupTarget::new(endpoint, "m").unwrap().listing(),
+                listing
+            );
+        }
+    }
+
+    #[test]
     fn configuration_accepts_only_explicit_loopback_chat_endpoints() {
         for endpoint in [
             "http://127.0.0.1:8080/v1/chat/completions",
             "http://[::1]:8080/v1/chat/completions",
         ] {
-            CleanupTarget::new(endpoint, "local/model:1").unwrap();
+            LlmCleanupTarget::new(endpoint, "local/model:1").unwrap();
         }
         for endpoint in [
             "http://localhost:8080/v1/chat/completions",
@@ -93,16 +119,16 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    CleanupTarget::new(endpoint, "local"),
-                    Err(CleanupConfigError::Endpoint)
+                    LlmCleanupTarget::new(endpoint, "local"),
+                    Err(LlmCleanupConfigError::Endpoint)
                 ),
                 "{endpoint}"
             );
         }
         for model in ["", " ", "model\nsecret", &"a".repeat(257)] {
             assert!(matches!(
-                CleanupTarget::new("http://127.0.0.1:80/v1/chat/completions", model),
-                Err(CleanupConfigError::Model)
+                LlmCleanupTarget::new("http://127.0.0.1:80/v1/chat/completions", model),
+                Err(LlmCleanupConfigError::Model)
             ));
         }
     }
