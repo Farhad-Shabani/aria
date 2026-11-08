@@ -161,8 +161,8 @@ rust-clean *args:
 # Swift: the macOS app
 
 swift_srcs := "clients/Aria clients/Shared clients/Tests"
-# Extra xcodebuild settings. CI turns warnings into errors, so a newer local
-# Xcode only warns.
+# Extra xcodebuild settings. CI passes ARIA_WARNINGS_AS_ERRORS=YES. Local
+# builds leave it off, since a newer Xcode may warn about more.
 swift_settings := ""
 
 # Run the macOS app checks

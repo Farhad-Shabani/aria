@@ -25,7 +25,7 @@ struct PaletteCommand: Equatable, Identifiable {
     let chord: Chord?
     /// A key that runs it from the commands page, whatever is typed.
     var key: PaletteKey?
-    /// Words search also finds it by, beside its title.
+    /// Search matches these as well as the title.
     var keywords: [String] = []
     let action: Action
 
