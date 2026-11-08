@@ -203,7 +203,7 @@ private struct FinishSetupButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Text("Finish Setting Up")
-                CountBadge(count: steps)
+                CountBadge(count: steps).controlSize(.small)
             }
             .frame(minHeight: PaletteBarMetrics.footerHeight)
             .contentShape(Rectangle())
