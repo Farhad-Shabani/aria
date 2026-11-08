@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn llm_cleanup_requires_cleanup_and_preserves_settings() {
+    fn the_cleanup_model_loads_from_its_table_alone() {
         let home_dir = test_home();
         assert!(
             DictationConfig::load(&file(""), &home_dir, None)
@@ -371,11 +371,7 @@ mod tests {
                 .is_none()
         );
         let llm = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\nmodel = \"local-model\"\n";
-        let config = DictationConfig::load(
-            &file(&format!("[dictation.cleanup]\nenabled = true\n{llm}")),
-            &home_dir,
-            None,
-        );
+        let config = DictationConfig::load(&file(llm), &home_dir, None);
         assert_eq!(
             config.cleanup_llm,
             Some(
