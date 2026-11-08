@@ -176,17 +176,17 @@ struct PaletteCommandsPage: View {
             NoticeText(notice: ListenStatus.stopFailure)
         } else if let failure = controller.model.promptFailure {
             NoticeText(notice: failure.message)
-        } else if controller.model.keepsHistory, let error = history.error {
-            NoticeText(notice: error.message)
-        } else if controller.model.keepsHistory, history.isClearing {
-            PaletteFooterProgress("Clearing…")
-        } else if controller.model.keepsHistory, let notice = history.notice {
-            Text(notice)
-        } else if controller.model.setupSteps > 0 {
-            // A note on what was just done comes first. Searching… only flickers by.
-            FinishSetupButton(steps: controller.model.setupSteps) { controller.run(.finishSetup) }
         } else if !controller.model.keepsHistory {
             Text("Nothing is saved.")
+        } else if let error = history.error {
+            NoticeText(notice: error.message)
+        } else if history.isClearing {
+            PaletteFooterProgress("Clearing…")
+        } else if let notice = history.notice {
+            Text(notice)
+        } else if controller.model.setupSteps > 0 {
+            // Outranks Searching…, which only flickers by.
+            FinishSetupButton(steps: controller.model.setupSteps) { controller.run(.finishSetup) }
         } else if history.isLoading {
             PaletteFooterProgress("Searching…")
         }
@@ -202,7 +202,7 @@ private struct FinishSetupButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Text("Finish Setting Up")
+                Text(SettingsPane.finishSetup.title)
                 CountBadge(count: steps).controlSize(.small)
             }
             .frame(minHeight: PaletteBarMetrics.footerHeight)
