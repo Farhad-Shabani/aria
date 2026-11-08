@@ -39,7 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var askChordChange: AnyCancellable?
     private(set) lazy var palette = PaletteController(
         prompts: promptHotkeys, ask: askShortcut, listen: listenStatus, history: history, events: events,
-        openSettings: { [weak self] in self?.settings.request() },
+        setup: setupStatus, settingsHealth: settingsHealth,
+        openSettings: { [weak self] pane in
+            guard let self else { return }
+            if let pane { settingsPaneRequest.pane = pane }
+            settings.request()
+        },
         delivered: { [weak status] outcome in status?.noteDelivery(outcome) })
     lazy var settingsHealth = SettingsHealth(
         effects: .live(reloadSettings: { [weak self] in await self?.daemonSettings?.sync() }))
