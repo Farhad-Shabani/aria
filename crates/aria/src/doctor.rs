@@ -16,13 +16,14 @@ use aria_kit::speaker::Engine as SpeakerEngine;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
-use aria_settings::CheckedSettings;
 use aria_settings::WakeEngine;
 use aria_settings::config::ConfigError;
+use aria_settings::{CheckedSettings, CleanupTarget, Settings};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
     CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
 };
+use aria_voice::dictation::{CleanupError, LlmCleanup};
 use aria_voice::transcription::check_model;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
@@ -38,6 +39,7 @@ const LISTEN: &str = "listen";
 const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
 const ARIA_KEY: &str = "aria key";
+const CLEANUP_MODEL: &str = "cleanup model";
 
 const SETTINGS_FAILED: &str = "not checked: the settings failed to load";
 
@@ -95,6 +97,7 @@ pub fn diagnose() -> Report {
                 config.as_ref().ok().map(|config| &config.wake),
             ),
             aria_key(),
+            cleanup_model(config.as_ref().ok().map(|config| &config.dictation)),
         ],
     }
 }
@@ -456,6 +459,58 @@ fn aria_key() -> Check {
     }
 }
 
+/// The model is optional, and every warning still types the rule-cleaned
+/// text, so none of them fails. Each press decides whether it delivers
+/// whole, so this doesn't judge delivery.
+fn cleanup_model(dictation: Option<&DictationConfig>) -> Check {
+    let Some(dictation) = dictation else {
+        return Check::warning(CLEANUP_MODEL, SETTINGS_FAILED);
+    };
+    let Some(target) = &dictation.cleanup_llm else {
+        return Check::ok(CLEANUP_MODEL, "not set; cleanup uses its rules only");
+    };
+    match loaded(|settings, _home| {
+        let settings = Settings::from_file(settings)?;
+        Ok(settings.cleanup_enabled && settings.cleanup_llm_enabled)
+    }) {
+        Ok(cleanup) => cleanup_check(target, cleanup, || LlmCleanup::check_ready(target)),
+        Err(_) => Check::warning(CLEANUP_MODEL, SETTINGS_FAILED),
+    }
+}
+
+fn cleanup_check(
+    target: &CleanupTarget,
+    cleanup: bool,
+    ready: impl FnOnce() -> Result<(), CleanupError>,
+) -> Check {
+    let model = target.model();
+    if !cleanup {
+        return Check::warning(
+            CLEANUP_MODEL,
+            format!("{model} is set, but text cleanup or its model is off, so it never runs"),
+        );
+    }
+    let endpoint = target.endpoint();
+    match ready() {
+        Ok(()) => Check::ok(
+            CLEANUP_MODEL,
+            format!("{model} at {endpoint}; skipped for text typed while you speak"),
+        ),
+        Err(CleanupError::ModelMissing) => Check::warning(
+            CLEANUP_MODEL,
+            format!("{endpoint} doesn't list {model}; dictation types the rule-cleaned text"),
+        ),
+        Err(error @ (CleanupError::Timeout | CleanupError::Transport)) => Check::warning(
+            CLEANUP_MODEL,
+            format!("{endpoint} doesn't answer ({error}); dictation types the rule-cleaned text"),
+        ),
+        Err(error) => Check::warning(
+            CLEANUP_MODEL,
+            format!("{endpoint} answered, but {error}; dictation types the rule-cleaned text"),
+        ),
+    }
+}
+
 impl Check {
     fn ok(name: &'static str, detail: impl Into<String>) -> Self {
         Self::new(name, Status::Ok, detail)
@@ -490,6 +545,44 @@ mod tests {
     use super::*;
 
     const RECORDING_TIMEOUT: Duration = Duration::from_secs(300);
+
+    #[test]
+    fn the_cleanup_model_warns_when_it_would_never_run_or_cannot_be_reached() {
+        let target =
+            CleanupTarget::new("http://127.0.0.1:11434/v1/chat/completions", "qwen2.5:3b").unwrap();
+        let cases = [
+            (false, None, Status::Warning, "its model is off"),
+            (
+                true,
+                Some(CleanupError::ModelMissing),
+                Status::Warning,
+                "doesn't list qwen2.5:3b",
+            ),
+            (
+                true,
+                Some(CleanupError::Transport),
+                Status::Warning,
+                "doesn't answer",
+            ),
+            (
+                true,
+                Some(CleanupError::HttpStatus),
+                Status::Warning,
+                "answered, but",
+            ),
+            (
+                true,
+                None,
+                Status::Ok,
+                "qwen2.5:3b at http://127.0.0.1:11434",
+            ),
+        ];
+        for (cleanup, failure, status, detail) in cases {
+            let check = cleanup_check(&target, cleanup, || failure.map_or(Ok(()), Err));
+            assert_eq!(check.status, status, "{detail}");
+            assert!(check.detail.contains(detail), "{}", check.detail);
+        }
+    }
 
     fn replaying(path: PathBuf) -> Check {
         capture_source(
