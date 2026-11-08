@@ -11,6 +11,9 @@ include:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # CI sets ARIA_WARNINGS_AS_ERRORS=YES. A plain command-line setting would
+    # also reach the package targets, which suppress warnings and reject it.
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: $(ARIA_WARNINGS_AS_ERRORS)
 
 options:
   bundleIdPrefix: io.github.farhad-shabani

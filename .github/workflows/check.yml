@@ -127,4 +127,4 @@ jobs:
         with:
           tool: just@1.58.0
       - name: just swift-check
-        run: just swift-check
+        run: just swift_settings=ARIA_WARNINGS_AS_ERRORS=YES swift-check
