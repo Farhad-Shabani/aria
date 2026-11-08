@@ -125,7 +125,7 @@ final class PaletteController: ObservableObject {
             .sink { [weak self] keepsHistory in self?.model.keepsHistory = keepsHistory }
     }
 
-    /// The app owns the poller, so setup steps start counting once the menu bar item appears.
+    /// The app scene owns the poller, so it arrives after init.
     func track(_ poller: StatusPoller) {
         setupChange = Publishers.CombineLatest3(setup.$items, settingsHealth.$status, poller.$failure)
             .map { SetupItem.all(inspected: $0, settingsStatus: $1, startFailure: $2).count }
@@ -497,8 +497,8 @@ final class PaletteController: ObservableObject {
         if model.escape() { close() }
     }
 
-    /// The palette's panel never activates Aria, so macOS declines a plain
-    /// activate() while another app is in front. A window then opens behind it.
+    /// The palette's panel never activates Aria, and macOS declines a plain
+    /// activate() while another app is in front. The window would open behind that app.
     private func closeForWindow() {
         NSApplication.shared.activate(ignoringOtherApps: true)
         close()
@@ -528,7 +528,7 @@ final class PaletteController: ObservableObject {
         let front = NSWorkspace.shared.frontmostApplication
         frontApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
         model.reset(prompts: enabledPrompts, isListening: listen.isRunning)
-        // As the menu bar menu does, since a step may be done or undone outside Aria.
+        // A step may be done or undone outside Aria.
         let setup = setup
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }

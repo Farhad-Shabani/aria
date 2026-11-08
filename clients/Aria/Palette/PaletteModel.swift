@@ -73,7 +73,7 @@ struct PaletteModel: Equatable {
     private var editFailure: EditFailure?
     /// New Prompt shows while the prompts are under the daemon's limit.
     var canAddPrompt = false
-    /// The steps left in Finish Setting Up Aria. Its command shows while any are left.
+    /// The steps left in Finish Setting Up Aria.
     private(set) var setupSteps = 0
     private var prompts: [PaletteCommand] = []
     /// Already filtered by the query, newest day first.

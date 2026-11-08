@@ -194,7 +194,6 @@ struct PaletteCommandsPage: View {
 
 }
 
-/// Finish Setting Up Aria, as the menu bar menu offers it, while steps are left.
 private struct FinishSetupButton: View {
     let steps: Int
     let action: () -> Void

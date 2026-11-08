@@ -1,4 +1,3 @@
-import AppKit
 import Combine
 import Sparkle
 import os
@@ -50,7 +49,6 @@ final class UpdateController: ObservableObject {
     }
 
     func checkForUpdates() {
-        NSApplication.shared.activate()
         controller.checkForUpdates(nil)
     }
 }
@@ -61,13 +59,13 @@ private final class ReminderDriverDelegate: NSObject, SPUStandardUserDriverDeleg
 
     var supportsGentleScheduledUpdateReminders: Bool { true }
 
-    // Sparkle asks for focus only just after launch.
-    // Otherwise it puts its alert behind other apps, where nobody sees it.
+    // A routine update waits behind the menu's update item.
+    // A critical one interrupts, but only near launch, where Sparkle brings it to the front.
     func standardUserDriverShouldHandleShowingScheduledUpdate(
         _ update: SUAppcastItem,
         andInImmediateFocus immediateFocus: Bool
     ) -> Bool {
-        immediateFocus
+        update.isCriticalUpdate && immediateFocus
     }
 
     func standardUserDriverWillHandleShowingUpdate(
@@ -75,14 +73,11 @@ private final class ReminderDriverDelegate: NSObject, SPUStandardUserDriverDeleg
         forUpdate update: SUAppcastItem,
         state: SPUUserUpdateState
     ) {
-        if handleShowingUpdate {
-            MainActor.assumeIsolated { NSApplication.shared.activate() }
-        } else {
-            publishAvailableVersion(update.displayVersionString)
-        }
+        guard !handleShowingUpdate else { return }
+        publishAvailableVersion(update.displayVersionString)
     }
 
-    // Sparkle's alert can fall behind other apps, so the reminder stays until the session ends.
+    // The menu's update item is the only way back to a hidden update, so it stays until the session ends.
     func standardUserDriverWillFinishUpdateSession() {
         publishAvailableVersion(nil)
     }
