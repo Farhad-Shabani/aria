@@ -27,12 +27,6 @@ enum DictationEdits {
         return min(max(rounded, speakingRateRange.lowerBound), speakingRateRange.upperBound)
     }
 
-    /// Spoken corrections rewrite the whole transcript, which a streamed
-    /// dictation has already typed.
-    static func allowsSpokenCorrections(_ mode: Aria_Daemon_V1_DeliveryMode) -> Bool {
-        mode == .complete
-    }
-
     /// The daemon accepts any whole millisecond in range, so a value set
     /// elsewhere is listed too and the menu always has a match.
     static func autoStopChoices(including current: UInt64) -> [UInt64] {
@@ -91,8 +85,10 @@ extension Aria_Daemon_V1_SettingsPatch {
         if hasSilenceDurationMs { patch.silenceDurationMs = silenceDurationMs }
         if hasAutoStopMs { patch.autoStopMs = autoStopMs }
         if hasMuteSound { patch.muteSound = muteSound }
-        if hasCleanup { patch.cleanup = cleanup }
-        if hasBacktrack { patch.backtrack = backtrack }
+        if hasCleanupEnabled { patch.cleanupEnabled = cleanupEnabled }
+        if hasCleanupFillers { patch.cleanupFillers = cleanupFillers }
+        if hasCleanupBacktrack { patch.cleanupBacktrack = cleanupBacktrack }
+        if hasCleanupLlmEnabled { patch.cleanupLlmEnabled = cleanupLlmEnabled }
         if hasOwnVoiceOnly { patch.ownVoiceOnly = ownVoiceOnly }
         if hasVocabularyEnabled { patch.vocabularyEnabled = vocabularyEnabled }
         if hasVocabularyDir { patch.vocabularyDir = vocabularyDir }
@@ -126,8 +122,10 @@ extension Aria_Daemon_V1_SettingsPatch {
             }
         }
         if hasMuteSound { settings.muteSound = muteSound }
-        if hasCleanup { settings.cleanup = cleanup }
-        if hasBacktrack { settings.backtrack = backtrack }
+        if hasCleanupEnabled { settings.cleanupEnabled = cleanupEnabled }
+        if hasCleanupFillers { settings.cleanupFillers = cleanupFillers }
+        if hasCleanupBacktrack { settings.cleanupBacktrack = cleanupBacktrack }
+        if hasCleanupLlmEnabled { settings.cleanupLlmEnabled = cleanupLlmEnabled }
         if hasOwnVoiceOnly { settings.ownVoiceOnly = ownVoiceOnly }
         if hasVocabularyEnabled { settings.vocabularyEnabled = vocabularyEnabled }
         if hasVocabularyDir {

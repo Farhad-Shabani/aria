@@ -453,17 +453,29 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._muteSound = newValue}
   }
 
-  /// Drops "um", "uh" and repeated words before delivery.
-  public var cleanup: Bool {
-    get {_storage._cleanup}
-    set {_uniqueStorage()._cleanup = newValue}
+  /// Runs the cleanups turned on below. Off, none of them runs.
+  public var cleanupEnabled: Bool {
+    get {_storage._cleanupEnabled}
+    set {_uniqueStorage()._cleanupEnabled = newValue}
   }
 
-  /// Applies a spoken self-correction. Takes effect only with delivery after
-  /// recording stops.
-  public var backtrack: Bool {
-    get {_storage._backtrack}
-    set {_uniqueStorage()._backtrack = newValue}
+  /// Drops "um", "uh" and repeated words before delivery, while cleanup is on.
+  public var cleanupFillers: Bool {
+    get {_storage._cleanupFillers}
+    set {_uniqueStorage()._cleanupFillers = newValue}
+  }
+
+  /// Applies a spoken self-correction while cleanup is on. Takes effect only
+  /// with delivery after recording stops.
+  public var cleanupBacktrack: Bool {
+    get {_storage._cleanupBacktrack}
+    set {_uniqueStorage()._cleanupBacktrack = newValue}
+  }
+
+  /// Runs the local model set in the settings file, while cleanup is on.
+  public var cleanupLlmEnabled: Bool {
+    get {_storage._cleanupLlmEnabled}
+    set {_uniqueStorage()._cleanupLlmEnabled = newValue}
   }
 
   /// Removing the last enrolled owner turns it off.
@@ -637,23 +649,41 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   /// Clears the value of `muteSound`. Subsequent reads from it will return its default value.
   public mutating func clearMuteSound() {_uniqueStorage()._muteSound = nil}
 
-  public var cleanup: Bool {
-    get {_storage._cleanup ?? false}
-    set {_uniqueStorage()._cleanup = newValue}
+  public var cleanupEnabled: Bool {
+    get {_storage._cleanupEnabled ?? false}
+    set {_uniqueStorage()._cleanupEnabled = newValue}
   }
-  /// Returns true if `cleanup` has been explicitly set.
-  public var hasCleanup: Bool {_storage._cleanup != nil}
-  /// Clears the value of `cleanup`. Subsequent reads from it will return its default value.
-  public mutating func clearCleanup() {_uniqueStorage()._cleanup = nil}
+  /// Returns true if `cleanupEnabled` has been explicitly set.
+  public var hasCleanupEnabled: Bool {_storage._cleanupEnabled != nil}
+  /// Clears the value of `cleanupEnabled`. Subsequent reads from it will return its default value.
+  public mutating func clearCleanupEnabled() {_uniqueStorage()._cleanupEnabled = nil}
 
-  public var backtrack: Bool {
-    get {_storage._backtrack ?? false}
-    set {_uniqueStorage()._backtrack = newValue}
+  public var cleanupFillers: Bool {
+    get {_storage._cleanupFillers ?? false}
+    set {_uniqueStorage()._cleanupFillers = newValue}
   }
-  /// Returns true if `backtrack` has been explicitly set.
-  public var hasBacktrack: Bool {_storage._backtrack != nil}
-  /// Clears the value of `backtrack`. Subsequent reads from it will return its default value.
-  public mutating func clearBacktrack() {_uniqueStorage()._backtrack = nil}
+  /// Returns true if `cleanupFillers` has been explicitly set.
+  public var hasCleanupFillers: Bool {_storage._cleanupFillers != nil}
+  /// Clears the value of `cleanupFillers`. Subsequent reads from it will return its default value.
+  public mutating func clearCleanupFillers() {_uniqueStorage()._cleanupFillers = nil}
+
+  public var cleanupBacktrack: Bool {
+    get {_storage._cleanupBacktrack ?? false}
+    set {_uniqueStorage()._cleanupBacktrack = newValue}
+  }
+  /// Returns true if `cleanupBacktrack` has been explicitly set.
+  public var hasCleanupBacktrack: Bool {_storage._cleanupBacktrack != nil}
+  /// Clears the value of `cleanupBacktrack`. Subsequent reads from it will return its default value.
+  public mutating func clearCleanupBacktrack() {_uniqueStorage()._cleanupBacktrack = nil}
+
+  public var cleanupLlmEnabled: Bool {
+    get {_storage._cleanupLlmEnabled ?? false}
+    set {_uniqueStorage()._cleanupLlmEnabled = newValue}
+  }
+  /// Returns true if `cleanupLlmEnabled` has been explicitly set.
+  public var hasCleanupLlmEnabled: Bool {_storage._cleanupLlmEnabled != nil}
+  /// Clears the value of `cleanupLlmEnabled`. Subsequent reads from it will return its default value.
+  public mutating func clearCleanupLlmEnabled() {_uniqueStorage()._cleanupLlmEnabled = nil}
 
   /// Types only enrolled owner voices.
   public var ownVoiceOnly: Bool {
@@ -1455,7 +1485,7 @@ nonisolated extension Aria_Daemon_V1_AssistantModelSetting: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Settings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{1}backtrack\0\u{3}tts_rate\0\u{1}cleanup\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode = .unspecified
@@ -1463,8 +1493,10 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
     var _silenceDurationMs: UInt64 = 0
     var _autoStopMs: UInt64? = nil
     var _muteSound: Bool = false
-    var _cleanup: Bool = false
-    var _backtrack: Bool = false
+    var _cleanupEnabled: Bool = false
+    var _cleanupFillers: Bool = false
+    var _cleanupBacktrack: Bool = false
+    var _cleanupLlmEnabled: Bool = false
     var _ownVoiceOnly: Bool = false
     var _vocabularyEnabled: Bool = false
     var _vocabularyDir: String? = nil
@@ -1495,8 +1527,10 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       _silenceDurationMs = source._silenceDurationMs
       _autoStopMs = source._autoStopMs
       _muteSound = source._muteSound
-      _cleanup = source._cleanup
-      _backtrack = source._backtrack
+      _cleanupEnabled = source._cleanupEnabled
+      _cleanupFillers = source._cleanupFillers
+      _cleanupBacktrack = source._cleanupBacktrack
+      _cleanupLlmEnabled = source._cleanupLlmEnabled
       _ownVoiceOnly = source._ownVoiceOnly
       _vocabularyEnabled = source._vocabularyEnabled
       _vocabularyDir = source._vocabularyDir
@@ -1549,9 +1583,11 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         case 17: try { try decoder.decodeSingularBoolField(value: &_storage._historyKeepAudio) }()
         case 18: try { try decoder.decodeSingularUInt64Field(value: &_storage._autoStopMs) }()
         case 19: try { try decoder.decodeSingularBoolField(value: &_storage._memoryEnabled) }()
-        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._backtrack) }()
+        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupBacktrack) }()
         case 21: try { try decoder.decodeSingularDoubleField(value: &_storage._ttsRate) }()
-        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cleanup) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupEnabled) }()
+        case 23: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupFillers) }()
+        case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
         default: break
         }
       }
@@ -1621,14 +1657,20 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       if _storage._memoryEnabled != false {
         try visitor.visitSingularBoolField(value: _storage._memoryEnabled, fieldNumber: 19)
       }
-      if _storage._backtrack != false {
-        try visitor.visitSingularBoolField(value: _storage._backtrack, fieldNumber: 20)
+      if _storage._cleanupBacktrack != false {
+        try visitor.visitSingularBoolField(value: _storage._cleanupBacktrack, fieldNumber: 20)
       }
       if _storage._ttsRate.bitPattern != 0 {
         try visitor.visitSingularDoubleField(value: _storage._ttsRate, fieldNumber: 21)
       }
-      if _storage._cleanup != false {
-        try visitor.visitSingularBoolField(value: _storage._cleanup, fieldNumber: 22)
+      if _storage._cleanupEnabled != false {
+        try visitor.visitSingularBoolField(value: _storage._cleanupEnabled, fieldNumber: 22)
+      }
+      if _storage._cleanupFillers != false {
+        try visitor.visitSingularBoolField(value: _storage._cleanupFillers, fieldNumber: 23)
+      }
+      if _storage._cleanupLlmEnabled != false {
+        try visitor.visitSingularBoolField(value: _storage._cleanupLlmEnabled, fieldNumber: 24)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1644,8 +1686,10 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
         if _storage._muteSound != rhs_storage._muteSound {return false}
-        if _storage._cleanup != rhs_storage._cleanup {return false}
-        if _storage._backtrack != rhs_storage._backtrack {return false}
+        if _storage._cleanupEnabled != rhs_storage._cleanupEnabled {return false}
+        if _storage._cleanupFillers != rhs_storage._cleanupFillers {return false}
+        if _storage._cleanupBacktrack != rhs_storage._cleanupBacktrack {return false}
+        if _storage._cleanupLlmEnabled != rhs_storage._cleanupLlmEnabled {return false}
         if _storage._ownVoiceOnly != rhs_storage._ownVoiceOnly {return false}
         if _storage._vocabularyEnabled != rhs_storage._vocabularyEnabled {return false}
         if _storage._vocabularyDir != rhs_storage._vocabularyDir {return false}
@@ -1672,7 +1716,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SettingsPatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{1}backtrack\0\u{3}tts_rate\0\u{1}cleanup\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode? = nil
@@ -1680,8 +1724,10 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
     var _silenceDurationMs: UInt64? = nil
     var _autoStopMs: UInt64? = nil
     var _muteSound: Bool? = nil
-    var _cleanup: Bool? = nil
-    var _backtrack: Bool? = nil
+    var _cleanupEnabled: Bool? = nil
+    var _cleanupFillers: Bool? = nil
+    var _cleanupBacktrack: Bool? = nil
+    var _cleanupLlmEnabled: Bool? = nil
     var _ownVoiceOnly: Bool? = nil
     var _vocabularyEnabled: Bool? = nil
     var _vocabularyDir: String? = nil
@@ -1712,8 +1758,10 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       _silenceDurationMs = source._silenceDurationMs
       _autoStopMs = source._autoStopMs
       _muteSound = source._muteSound
-      _cleanup = source._cleanup
-      _backtrack = source._backtrack
+      _cleanupEnabled = source._cleanupEnabled
+      _cleanupFillers = source._cleanupFillers
+      _cleanupBacktrack = source._cleanupBacktrack
+      _cleanupLlmEnabled = source._cleanupLlmEnabled
       _ownVoiceOnly = source._ownVoiceOnly
       _vocabularyEnabled = source._vocabularyEnabled
       _vocabularyDir = source._vocabularyDir
@@ -1766,9 +1814,11 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         case 17: try { try decoder.decodeSingularBoolField(value: &_storage._historyKeepAudio) }()
         case 18: try { try decoder.decodeSingularUInt64Field(value: &_storage._autoStopMs) }()
         case 19: try { try decoder.decodeSingularBoolField(value: &_storage._memoryEnabled) }()
-        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._backtrack) }()
+        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupBacktrack) }()
         case 21: try { try decoder.decodeSingularDoubleField(value: &_storage._ttsRate) }()
-        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cleanup) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupEnabled) }()
+        case 23: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupFillers) }()
+        case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
         default: break
         }
       }
@@ -1838,14 +1888,20 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       try { if let v = _storage._memoryEnabled {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 19)
       } }()
-      try { if let v = _storage._backtrack {
+      try { if let v = _storage._cleanupBacktrack {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 20)
       } }()
       try { if let v = _storage._ttsRate {
         try visitor.visitSingularDoubleField(value: v, fieldNumber: 21)
       } }()
-      try { if let v = _storage._cleanup {
+      try { if let v = _storage._cleanupEnabled {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 22)
+      } }()
+      try { if let v = _storage._cleanupFillers {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 23)
+      } }()
+      try { if let v = _storage._cleanupLlmEnabled {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 24)
       } }()
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1861,8 +1917,10 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
         if _storage._muteSound != rhs_storage._muteSound {return false}
-        if _storage._cleanup != rhs_storage._cleanup {return false}
-        if _storage._backtrack != rhs_storage._backtrack {return false}
+        if _storage._cleanupEnabled != rhs_storage._cleanupEnabled {return false}
+        if _storage._cleanupFillers != rhs_storage._cleanupFillers {return false}
+        if _storage._cleanupBacktrack != rhs_storage._cleanupBacktrack {return false}
+        if _storage._cleanupLlmEnabled != rhs_storage._cleanupLlmEnabled {return false}
         if _storage._ownVoiceOnly != rhs_storage._ownVoiceOnly {return false}
         if _storage._vocabularyEnabled != rhs_storage._vocabularyEnabled {return false}
         if _storage._vocabularyDir != rhs_storage._vocabularyDir {return false}
