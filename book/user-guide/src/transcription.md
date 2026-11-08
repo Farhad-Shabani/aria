@@ -92,8 +92,7 @@ With **Deliver** set to **After recording stops**, Aria also applies spoken
 corrections to the completed text. “Meet me at 3, actually 4” becomes “meet
 me at 4”. “Send it to Ali, scratch that, to Sara” becomes “Send it to Sara”.
 This handles only simple, unambiguous corrections within a clause, in
-English. More complex corrections stay as spoken. Aria can't take back text
-it types while you speak, so that text keeps the original words.
+English. More complex corrections stay as spoken.
 
 **Clean up text** turns all of these on or off. To turn off one of them, set it
 in your settings file:
@@ -126,11 +125,15 @@ endpoint = "http://127.0.0.1:11434/v1/chat/completions"
 model = "qwen2.5:3b"
 ```
 
-The model runs only when **Clean up text** is on. It skips text Aria types
-while you speak, so set **Deliver** to **After recording stops**. To pause the
-model and keep these lines, add `enabled = false` to the table. Aria asks the
-server to load the model when you start recording, so it's ready when you
-stop. A smaller model, such as `qwen2.5:1.5b`, misses most spoken corrections.
+The model runs only when both of these are true:
+
+- **Clean up text** is on.
+- **Deliver** is set to **After recording stops**.
+
+To turn the model off and keep these lines, add `enabled = false` under
+`[dictation.cleanup.llm]`.
+
+A smaller model, such as `qwen2.5:1.5b`, misses most spoken corrections.
 
 If the model doesn't answer within 3 seconds, or adds words you didn't say,
 Aria types the text without it. To check the setup, run `aria doctor` and
