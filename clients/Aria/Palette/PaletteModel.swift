@@ -73,7 +73,7 @@ struct PaletteModel: Equatable {
     private var editFailure: EditFailure?
     /// New Prompt shows while the prompts are under the daemon's limit.
     var canAddPrompt = false
-    var assistant: Aria_Daemon_V1_AssistantId?
+    var assistantName: String?
     /// The steps left in Finish Setting Up Aria.
     private(set) var setupSteps = 0
     private var prompts: [PaletteCommand] = []
@@ -211,7 +211,8 @@ struct PaletteModel: Equatable {
 
     /// Every command the commands page offers with no prompt input, before search.
     private var pageCommands: [PaletteCommand] {
-        [isSystemTranscriptionRunning ? .liveTranscript : .newTranscription, .newDictation, .ask(assistant)] + prompts
+        [isSystemTranscriptionRunning ? .liveTranscript : .newTranscription, .newDictation, .ask(assistantName)]
+            + prompts
             + (canAddPrompt ? [.newPrompt] : []) + [.setUp, .settings] + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }

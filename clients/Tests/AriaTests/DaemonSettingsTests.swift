@@ -75,6 +75,19 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertFalse(settings.isHistoryEnabled)
     }
 
+    func testSyncNamesTheAssistantOnlyOnceTheDaemonDoes() async {
+        let transport = FakeSettingsTransport()
+        var named = snapshot(revision: 3)
+        named.assistantName = "Codex"
+        transport.snapshots = [snapshot(revision: 3), named]
+        let settings = DaemonSettings(transport: transport)
+
+        await settings.sync()
+        XCTAssertNil(settings.assistantName)
+        await settings.sync()
+        XCTAssertEqual(settings.assistantName, "Codex")
+    }
+
     func testSetPushesTheKnownRevisionAndKeepsTheEditVisibleDuringSync() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]

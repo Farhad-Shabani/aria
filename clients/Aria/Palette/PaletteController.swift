@@ -125,10 +125,9 @@ final class PaletteController: ObservableObject {
             .map { $0?.historyEnabled ?? false }
             .removeDuplicates()
             .sink { [weak self] keepsHistory in self?.model.keepsHistory = keepsHistory }
-        assistantChange = settings.$snapshot
-            .map { $0.flatMap { $0.hasAssistantID ? $0.assistantID : nil } }
+        assistantChange = settings.$assistantName
             .removeDuplicates()
-            .sink { [weak self] assistant in self?.model.assistant = assistant }
+            .sink { [weak self] name in self?.model.assistantName = name }
     }
 
     /// The app scene owns the poller, so it arrives after init.

@@ -31,6 +31,8 @@ final class DaemonSettings: ObservableObject {
     @Published private(set) var snapshot: Aria_Daemon_V1_Settings?
     /// The last failed sync or push; cleared by the next one that succeeds.
     @Published private(set) var lastError: (any Error)?
+    /// The chosen assistant's name, as the daemon last said. Nil until it answers.
+    @Published private(set) var assistantName: String?
 
     /// How many conflicts in a row one edit can hit before Aria stops
     /// retrying and tells the person. By then another writer is probably still
@@ -108,6 +110,7 @@ final class DaemonSettings: ObservableObject {
 
     private func adopt(_ answer: Aria_Daemon_V1_SettingsSnapshot) {
         self.answer = answer
+        assistantName = answer.assistantName.isEmpty ? nil : answer.assistantName
         show()
     }
 

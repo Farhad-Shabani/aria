@@ -409,13 +409,9 @@ final class PaletteTests: XCTestCase {
         var model = openModel()
         let askTitle = { model.commands.first { $0.action == .startAsk }?.title }
 
-        XCTAssertEqual(askTitle(), "Ask Your Assistant", "settings haven't named one")
-        model.assistant = .claudeCode
-        XCTAssertEqual(askTitle(), "Ask Claude Code")
-        model.assistant = .codex
+        XCTAssertEqual(askTitle(), "Ask Your Assistant", "the daemon hasn't answered")
+        model.assistantName = "Codex"
         XCTAssertEqual(askTitle(), "Ask Codex")
-        model.assistant = .UNRECOGNIZED(9)
-        XCTAssertEqual(askTitle(), "Ask Your Assistant", "a newer daemon's assistant")
     }
 
     func testSearchingSetupFindsSetUpAndFinishSettingUpWhileStepsAreLeft() {

@@ -38,9 +38,9 @@ struct PaletteCommand: Equatable, Identifiable {
     static let newDictation = PaletteCommand(
         id: "new-dictation", title: "New Dictation", symbol: "mic", number: nil, chord: nil,
         action: .startDictation)
-    static func ask(_ assistant: Aria_Daemon_V1_AssistantId?) -> PaletteCommand {
+    static func ask(_ assistantName: String?) -> PaletteCommand {
         PaletteCommand(
-            id: "new-chat", title: "Ask \(assistant?.name ?? "Your Assistant")", symbol: "bubble.left", number: nil,
+            id: "new-chat", title: "Ask \(assistantName ?? "Your Assistant")", symbol: "bubble.left", number: nil,
             chord: nil, keywords: ["question", "chat"], action: .startAsk)
     }
     static func history(_ section: HistorySection) -> PaletteCommand {
@@ -69,16 +69,4 @@ struct PaletteCommand: Equatable, Identifiable {
     static let setUp = PaletteCommand(
         id: "set-up", title: "Set Up Aria…", symbol: "wand.and.stars", number: nil, chord: nil,
         keywords: ["setup"], action: .openSetup)
-}
-
-extension Aria_Daemon_V1_AssistantId {
-    /// The daemon's `AssistantId::display_name` says the same. The palette can't wait for
-    /// `ListAssistants`, which checks each assistant's command.
-    fileprivate var name: String? {
-        switch self {
-        case .claudeCode: "Claude Code"
-        case .codex: "Codex"
-        case .unspecified, .UNRECOGNIZED: nil
-        }
-    }
 }

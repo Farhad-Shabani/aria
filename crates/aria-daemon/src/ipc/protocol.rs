@@ -2436,6 +2436,12 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                     reason: wire::StreamingUnavailable::from(entry.reason) as i32,
                 })
                 .collect(),
+            assistant_name: snapshot
+                .settings
+                .assistant_id
+                .map(AssistantId::display_name)
+                .unwrap_or_default()
+                .to_owned(),
         }
     }
 }
@@ -3138,6 +3144,29 @@ mod tests {
         assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);
         assert!(failure.message.len() <= MAX_FAILURE_MESSAGE_BYTES);
         assert!(failure.message.ends_with('…'));
+    }
+
+    #[test]
+    fn a_snapshot_names_the_chosen_assistant() {
+        let chosen = SettingsSnapshot {
+            settings: Settings {
+                assistant_id: Some(AssistantId::Codex),
+                ..Settings::default()
+            },
+            ..SettingsSnapshot::default()
+        };
+        assert_eq!(
+            wire::SettingsSnapshot::from(&chosen).assistant_name,
+            "Codex"
+        );
+        let unchosen = SettingsSnapshot {
+            settings: Settings {
+                assistant_id: None,
+                ..Settings::default()
+            },
+            ..SettingsSnapshot::default()
+        };
+        assert_eq!(wire::SettingsSnapshot::from(&unchosen).assistant_name, "");
     }
 
     #[test]

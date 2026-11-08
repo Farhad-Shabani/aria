@@ -86,6 +86,9 @@ message SettingsSnapshot {
   // streams when `delivery_mode` asks it to. An app's dictation follows the
   // entry for its own output.
   repeated StreamingUnavailableOutput streaming_unavailable = 3;
+  // The chosen assistant's name for display, such as "Claude Code". Empty
+  // when no assistant is chosen.
+  string assistant_name = 4;
 }
 
 message SettingsConflict {
