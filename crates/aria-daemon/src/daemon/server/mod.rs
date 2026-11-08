@@ -737,7 +737,7 @@ mod tests {
                 .into_inner();
             assert!(page.entries.is_empty());
             let cleared = history
-                .clear(wire::ClearHistoryRequest {})
+                .clear(wire::ClearHistoryRequest { section: None })
                 .await
                 .unwrap()
                 .into_inner();

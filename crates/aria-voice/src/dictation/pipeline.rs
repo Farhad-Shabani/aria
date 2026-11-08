@@ -434,7 +434,7 @@ where
         events: &DictationEventEmitter,
         vocabulary: Option<&Vocabulary>,
     ) -> Result<DictationResult, DictationError> {
-        let captions = !settings.transcript_only;
+        let captions = settings.route.delivers();
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), false));
         }
@@ -563,7 +563,7 @@ where
             settings.delivery_mode = DeliveryMode::Complete;
         }
         // A transcript handed back has nowhere to stream to.
-        if settings.delivery_mode == DeliveryMode::Streaming && settings.transcript_only {
+        if settings.delivery_mode == DeliveryMode::Streaming && !settings.route.delivers() {
             return Err(DictationError::StreamingDeliveryUnavailable);
         }
 
@@ -891,7 +891,9 @@ impl<'a> Published<'a> {
             heard_to: 0,
             failure: None,
             retried: None,
-            caption: (!settings.transcript_only)
+            caption: settings
+                .route
+                .delivers()
                 .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
             completion: Completion::Pending,
             control,
@@ -2203,7 +2205,11 @@ mod tests {
             );
             let (events, snapshots) = caption_events();
             let mut settings = settings(mode, OutputMode::Insert);
-            settings.transcript_only = transcript_only;
+            settings.route = if transcript_only {
+                crate::dictation::TranscriptRoute::TranscriptOnly
+            } else {
+                crate::dictation::TranscriptRoute::Deliver
+            };
             pipeline.run_observed(settings, &events).unwrap();
             drop(events);
             let snapshots: Vec<_> = snapshots.iter().collect();
@@ -2529,7 +2535,7 @@ mod tests {
             (history.history(), typed.failing_cursor()),
         );
         let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
-        settings.transcript_only = true;
+        settings.route = crate::dictation::TranscriptRoute::TranscriptOnly;
 
         let result = pipeline
             .run(settings)
@@ -2554,7 +2560,7 @@ mod tests {
             (UnreachableSink, log.cursor()),
         );
         let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
-        settings.transcript_only = true;
+        settings.route = crate::dictation::TranscriptRoute::TranscriptOnly;
         let result = pipeline.run(settings);
 
         assert!(matches!(

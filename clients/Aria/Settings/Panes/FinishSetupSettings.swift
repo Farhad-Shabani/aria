@@ -65,11 +65,7 @@ private struct SpeechModelRow: View {
         }
         .onChange(of: state) { _, state in
             guard case .failed(let message) = state else { return }
-            NSAccessibility.post(
-                element: NSApp as Any,
-                notification: .announcementRequested,
-                userInfo: [.announcement: message]
-            )
+            NSAccessibility.announce(message)
         }
     }
 

@@ -1,16 +1,30 @@
 import Foundation
 
-/// Whether a listen session is running, whichever caller started it.
+/// Whether a listen session is running, whichever caller started it, and
+/// the transcript followed so far.
 @MainActor
 final class ListenStatus: ObservableObject {
+    static let stopSymbol = "stop.fill"
+    static let savingNote = "Saving to transcript file"
+    static let startFailure = "Aria couldn’t start transcribing your Mac’s audio. Try again."
+    static let stopFailure = "Aria couldn’t stop transcribing. Try again."
+
     @Published private(set) var isRunning = false
+    @Published private(set) var isStarting = false
+    @Published private(set) var didFailToStart = false
     @Published private(set) var isStopping = false
     @Published private(set) var didFailToStop = false
+    @Published private(set) var transcript = ListenTranscript()
+    /// When the session began, worked out from the first stage seen. `nil`
+    /// until a stage arrives, as for a session that began before Aria opened.
+    @Published private(set) var startedAt: Date?
 
     typealias ReadStatus = @Sendable () async throws -> Bool
+    typealias StartSession = @Sendable () async throws -> Void
     typealias StopSession = @Sendable () async throws -> Void
 
     private let readStatus: ReadStatus
+    private let startSession: StartSession
     private let stopSession: StopSession
     /// Goes up with every stream update, so a status read that one overtook is dropped.
     private var stagesSeen = 0
@@ -19,10 +33,12 @@ final class ListenStatus: ObservableObject {
 
     init(
         readStatus: @escaping ReadStatus = ListenClient.isListening,
+        startSession: @escaping StartSession = ListenClient.start,
         stopSession: @escaping StopSession = ListenClient.stop,
         reconcileInterval: Duration = .seconds(15)
     ) {
         self.readStatus = readStatus
+        self.startSession = startSession
         self.stopSession = stopSession
         self.reconcileInterval = reconcileInterval
     }
@@ -51,19 +67,24 @@ final class ListenStatus: ObservableObject {
 
     /// `nil` means the stream is down. The daemon may be gone, so the state
     /// says no session until a later read or stage reports one.
-    func handle(_ event: Aria_Daemon_V1_ListenEvent?) {
+    func handle(_ event: Aria_Daemon_V1_ListenEvent?, now: Date = Date()) {
         stagesSeen += 1
         guard let event else {
             reconciling?.cancel()
             isRunning = false
             return
         }
+        transcript.apply(event, at: now)
         switch event.stage {
         case .started:
             didFailToStop = false
             isRunning = true
+            startedAt = now
         case .segmentTranscribed, .speakerMerged:
             isRunning = true
+            if startedAt == nil {
+                startedAt = now.addingTimeInterval(-event.offset.timeInterval)
+            }
         case .stopped, .failed:
             isRunning = false
         case .unspecified, .UNRECOGNIZED:
@@ -77,6 +98,21 @@ final class ListenStatus: ObservableObject {
         let stagesAtRead = stagesSeen
         guard let isRunning = try? await readStatus(), stagesSeen == stagesAtRead else { return }
         self.isRunning = isRunning
+    }
+
+    /// Answers once the daemon accepted the session. Capture can still fail
+    /// after that, which the FAILED stage reports.
+    func start() async {
+        guard !isRunning, !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+        didFailToStart = false
+        do {
+            try await startSession()
+            isRunning = true
+        } catch {
+            didFailToStart = true
+        }
     }
 
     /// A session that failed while stopping reports that failure from Stop, yet

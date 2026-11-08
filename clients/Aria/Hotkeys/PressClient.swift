@@ -4,10 +4,6 @@
 /// show an error from a global key press, and every outcome that matters to
 /// the user is already on the event stream.
 enum PressClient {
-    /// The daemon ends a press sooner itself, so this only catches one that
-    /// stopped answering.
-    private static let pressTimeout = Duration.seconds(670)
-
     /// Reads one press to its transcript. Nil for a stop-accepted and for a
     /// recording that failed.
     static func transcribe(
@@ -15,7 +11,8 @@ enum PressClient {
         onRecording: @escaping @MainActor (UInt64) -> Void
     ) async -> DictationClient.Transcript? {
         let outcome = try? await DictationClient.start(
-            stop: .manual, projectDirectory: projectDirectory, timeout: pressTimeout, onRecording: onRecording
+            stop: .manual, projectDirectory: projectDirectory, timeout: DictationClient.pressTimeout,
+            onRecording: onRecording
         )
         switch outcome {
         case .heard(let transcript): return transcript

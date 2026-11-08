@@ -181,9 +181,17 @@ public nonisolated struct Aria_Daemon_V1_ListenEvent: Sendable {
   /// Meaningful only when stage is LISTEN_STAGE_FAILED.
   public var errorCode: Aria_Daemon_V1_ErrorCode = .unspecified
 
-  /// Seconds into the recording, so a follower's clock matches the
-  /// transcript file's however late it attached.
-  public var offsetSeconds: UInt64 = 0
+  /// How far into the recording, in whole seconds, so a follower's clock
+  /// matches the transcript file's however late it attached. Only for
+  /// SEGMENT_TRANSCRIBED.
+  public var offset: SwiftProtobuf.Google_Protobuf_Duration {
+    get {_offset ?? SwiftProtobuf.Google_Protobuf_Duration()}
+    set {_offset = newValue}
+  }
+  /// Returns true if `offset` has been explicitly set.
+  public var hasOffset: Bool {self._offset != nil}
+  /// Clears the value of `offset`. Subsequent reads from it will return its default value.
+  public mutating func clearOffset() {self._offset = nil}
 
   /// For SPEAKER_MERGED: `merged_from_label` becomes `speaker_label` in the
   /// transcript file and subsequent events.
@@ -192,6 +200,8 @@ public nonisolated struct Aria_Daemon_V1_ListenEvent: Sendable {
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _offset: SwiftProtobuf.Google_Protobuf_Duration? = nil
 }
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
@@ -386,7 +396,7 @@ nonisolated extension Aria_Daemon_V1_GetListenStatusResponse: SwiftProtobuf.Mess
 
 nonisolated extension Aria_Daemon_V1_ListenEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListenEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}speaker_label\0\u{3}error_code\0\u{3}offset_seconds\0\u{3}merged_from_label\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}speaker_label\0\u{3}error_code\0\u{1}offset\0\u{3}merged_from_label\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -398,7 +408,7 @@ nonisolated extension Aria_Daemon_V1_ListenEvent: SwiftProtobuf.Message, SwiftPr
       case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.speakerLabel) }()
       case 4: try { try decoder.decodeSingularEnumField(value: &self.errorCode) }()
-      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.offsetSeconds) }()
+      case 5: try { try decoder.decodeSingularMessageField(value: &self._offset) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.mergedFromLabel) }()
       default: break
       }
@@ -406,6 +416,10 @@ nonisolated extension Aria_Daemon_V1_ListenEvent: SwiftProtobuf.Message, SwiftPr
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.stage != .unspecified {
       try visitor.visitSingularEnumField(value: self.stage, fieldNumber: 1)
     }
@@ -418,9 +432,9 @@ nonisolated extension Aria_Daemon_V1_ListenEvent: SwiftProtobuf.Message, SwiftPr
     if self.errorCode != .unspecified {
       try visitor.visitSingularEnumField(value: self.errorCode, fieldNumber: 4)
     }
-    if self.offsetSeconds != 0 {
-      try visitor.visitSingularUInt64Field(value: self.offsetSeconds, fieldNumber: 5)
-    }
+    try { if let v = self._offset {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    } }()
     if !self.mergedFromLabel.isEmpty {
       try visitor.visitSingularStringField(value: self.mergedFromLabel, fieldNumber: 6)
     }
@@ -432,7 +446,7 @@ nonisolated extension Aria_Daemon_V1_ListenEvent: SwiftProtobuf.Message, SwiftPr
     if lhs.text != rhs.text {return false}
     if lhs.speakerLabel != rhs.speakerLabel {return false}
     if lhs.errorCode != rhs.errorCode {return false}
-    if lhs.offsetSeconds != rhs.offsetSeconds {return false}
+    if lhs._offset != rhs._offset {return false}
     if lhs.mergedFromLabel != rhs.mergedFromLabel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

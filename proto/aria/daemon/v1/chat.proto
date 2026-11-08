@@ -23,11 +23,32 @@ service ChatService {
   // Where an ask goes, for a client with no working directory of its own.
   // Answers with the focused project, else the configured one.
   rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
-  // Run a stored prompt on a transcript and type the result into the app the
-  // request names, else the one in front. One fresh assistant run with no
-  // conversation, memory, or tools. Progress and the outcome arrive as
-  // `ChatEvent`s under the ticket, as for `Ask`, and `Cancel` stops it.
+  // Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
+  // into the app the request names, else the one in front. One fresh
+  // assistant run with no conversation, memory, or tools. Progress and the
+  // outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
+  // `Cancel` stops it.
   rpc RunPrompt(RunPromptRequest) returns (AskResponse);
+  // Save a prompt: its file first, then its entry in the prompt list, so a
+  // failed write leaves the list as it was. The daemon rereads settings.toml and
+  // changes only this entry, so another client's edits to other prompts
+  // survive. A full list is PROMPTS_FULL, and a file that can't be
+  // written PROMPT_WRITE_FAILED. Served on the unix socket only.
+  rpc SavePrompt(SavePromptRequest) returns (SavePromptResponse);
+  // Read a prompt's instructions as a run reads them, for an editor to show.
+  // A file over 16 KiB, not UTF-8, or not a regular file is
+  // PROMPT_UNREADABLE. Served on the unix socket only.
+  rpc GetPrompt(GetPromptRequest) returns (GetPromptResponse);
+  // Take a prompt off the list, rereading settings.toml first. Its file
+  // stays where it is. A missing ID is PROMPT_MISSING. Served on the unix
+  // socket only.
+  rpc RemovePrompt(RemovePromptRequest) returns (RemovePromptResponse);
+  // Type text the caller already has, such as a prompt result it showed
+  // first, into the app the request names, else the one in front. Waits for
+  // an ask, prompt run, or other Deliver still typing, but never for an
+  // assistant's run. It answers once its own typing ends. A caller that
+  // goes away first cancels it.
+  rpc Deliver(DeliverRequest) returns (DeliverResponse);
 }
 
 message ListAssistantsRequest {}
@@ -76,14 +97,114 @@ message AskResponse {
 }
 
 message RunPromptRequest {
-  string text = 1;
-  // A stored, enabled Prompt's ID.
-  string prompt_id = 2;
+  // Required.
+  oneof input {
+    string text = 1;
+    // A history entry's full text: an ask's reply, a Mac Audio session's
+    // transcript file, or else the entry's text. The reply is saved under the entry
+    // when history is on. A missing entry is HISTORY_MISSING.
+    uint64 history_entry_id = 6;
+  }
+  // Required.
+  oneof prompt {
+    // A stored, enabled Prompt's ID.
+    string prompt_id = 2;
+    // Instructions for this run alone, run as PROMPT_KIND_COMPOSE: 1 to
+    // 16 KiB of UTF-8, not blank. A result saved under the entry is named
+    // after their first non-blank line.
+    string instructions = 7;
+  }
   // The bundle ID of the app in front when the chord was first pressed. The
-  // result is typed only there. Empty when unknown.
+  // result is typed only there. Empty when unknown. Needs `output_mode`.
   string application_id = 3;
   // As on AskRequest: a tap of the Aria key cancels the run.
   bool tap_cancels = 4;
+  // As on AskRequest. Absent: nothing is typed, and the result arrives only
+  // as the REPLIED event's text.
+  optional OutputMode output_mode = 5;
+}
+
+message SavePromptRequest {
+  // The stored prompt to edit. An edit keeps its chord and whether it's on. A
+  // missing ID is PROMPT_MISSING. Absent adds a prompt, on and with no
+  // chord.
+  optional string id = 1;
+  // Saved trimmed: 1 to 128 bytes, with no control characters. Absent keeps
+  // an edited prompt's name, and names a new prompt after its `file` without
+  // `.md`, cut to fit. A new prompt with neither is INVALID_REQUEST.
+  optional string name = 2;
+  // UNSPECIFIED is invalid.
+  PromptKind kind = 3;
+  // An absolute path to the Markdown file the prompt reads. Absent keeps an
+  // edited prompt's file, and gives a new prompt a file of its own in
+  // ~/.aria/prompts named after it, never over a file already there or one
+  // Aria reads itself.
+  optional string file = 4;
+  // The file's new text: 1 to 16 KiB of UTF-8, not blank. It replaces the
+  // file whole, and a symlinked file keeps its link. Absent leaves the file
+  // as it is. A new file needs it.
+  optional string instructions = 5;
+}
+
+message SavePromptResponse {
+  // The prompt's ID, new when the request named none.
+  string id = 1;
+  // The absolute path the prompt reads.
+  string file = 2;
+}
+
+message GetPromptRequest {
+  // Required.
+  oneof source {
+    // A stored prompt's ID. A missing ID is PROMPT_MISSING.
+    string prompt_id = 1;
+    // An absolute path to a Markdown file, such as one about to be chosen.
+    string file = 2;
+  }
+}
+
+message GetPromptResponse {
+  oneof contents {
+    // The file's text: at most 16 KiB of UTF-8. Empty when the file is
+    // blank, so an editor can fill it.
+    string instructions = 1;
+    // No file is there. Saving instructions creates it.
+    bool missing = 2;
+  }
+}
+
+message RemovePromptRequest {
+  string id = 1;
+}
+
+message RemovePromptResponse {
+  // The absolute path the prompt read, left in place.
+  string file = 1;
+}
+
+// What a prompt makes of what was said. Either way the transcript is
+// material for the assistant, never instructions to it.
+enum PromptKind {
+  PROMPT_KIND_UNSPECIFIED = 0;
+  // The same words and meaning, cleaned up or restyled.
+  PROMPT_KIND_REWRITE = 1;
+  // New text made from what was said, such as a reply, a translation, or a
+  // summary.
+  PROMPT_KIND_COMPOSE = 2;
+}
+
+message DeliverRequest {
+  // At most 64 KiB of UTF-8, and not blank.
+  string text = 1;
+  // As on RunPromptRequest: the only app the text may be typed into. Empty
+  // types into the app in front.
+  string application_id = 2;
+  // Required; UNSPECIFIED is invalid.
+  OutputMode output_mode = 3;
+}
+
+message DeliverResponse {
+  DeliveryOutcome outcome = 1;
 }
 
 message CancelAskRequest {

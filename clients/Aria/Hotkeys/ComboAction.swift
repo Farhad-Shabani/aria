@@ -2,13 +2,13 @@
 /// stored shortcuts say which action, if any, holds it.
 enum ComboAction {
     case ask
-    case promptList
+    case palette
 
     init?(combo: ShortcutCombo, in settings: Aria_Daemon_V1_Settings) {
         if settings.askShortcut.storedBinding == .combo(combo) {
             self = .ask
         } else if settings.promptListShortcut.storedBinding == .combo(combo) {
-            self = .promptList
+            self = .palette
         } else {
             return nil
         }

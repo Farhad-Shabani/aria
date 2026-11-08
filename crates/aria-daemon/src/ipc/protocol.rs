@@ -4,8 +4,9 @@ use super::wire;
 use crate::daemon::relay::{Invite, RelayStage};
 use aria_assistant::chat::{
     AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
-    PromptCall, Step, Ticket,
+    DeliverCall, Instructions, PromptCall, PromptChoice, PromptInput, Step, Ticket,
 };
+use aria_assistant::prompts::{NewSource, PromptContents, PromptDraft, PromptSource};
 use aria_kit::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
 use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
@@ -22,12 +23,13 @@ use aria_settings::{
 };
 use aria_voice::dictation::{
     CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
-    DictationResult, DictationStage, GhostSnapshot, HeardSpeaker, MicLevel, RecordingId, StopMode,
+    DictationResult, DictationRoute, DictationStage, GhostSnapshot, HeardSpeaker, MicLevel,
+    RecordingId, StopMode,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
-use aria_voice::history::ClearHistoryResult;
+use aria_voice::history::{ClearHistoryResult, PromptResult};
 use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
@@ -35,7 +37,7 @@ use aria_voice::transcription::LanguageCodeError;
 use prost::Message;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tonic::Status;
 
 mod inference;
@@ -67,6 +69,42 @@ pub(crate) fn failure_status(mut failure: RpcFailure) -> Status {
         }],
     };
     Status::with_details(code, failure.message, details.encode_to_vec().into())
+}
+
+fn wire_time(since_epoch: Duration) -> prost_types::Timestamp {
+    (UNIX_EPOCH + since_epoch).into()
+}
+
+/// How long after the Unix epoch a wire time is. A time before it is refused.
+fn since_epoch(
+    time: Option<prost_types::Timestamp>,
+    field: &'static str,
+) -> Result<Duration, ProtocolError> {
+    let time = time.ok_or(ProtocolError::MissingBody(field))?;
+    SystemTime::try_from(time)
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .ok_or(ProtocolError::OutOfRange(field))
+}
+
+fn wire_duration(duration: Duration) -> prost_types::Duration {
+    // Only a span past `i64::MAX` seconds fails, and nothing sent is that long.
+    prost_types::Duration::try_from(duration).unwrap_or(prost_types::Duration {
+        seconds: i64::MAX,
+        nanos: 999_999_999,
+    })
+}
+
+/// A wire duration, refusing a negative one.
+fn duration(
+    duration: prost_types::Duration,
+    field: &'static str,
+) -> Result<Duration, ProtocolError> {
+    Duration::try_from(duration).map_err(|_| ProtocolError::OutOfRange(field))
+}
+
+fn millis(duration: Duration, field: &'static str) -> Result<u64, ProtocolError> {
+    u64::try_from(duration.as_millis()).map_err(|_| ProtocolError::OutOfRange(field))
 }
 
 fn bound_message(message: &mut String) {
@@ -116,6 +154,8 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::AssistantTimeout => tonic::Code::DeadlineExceeded,
         RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryProjectUnavailable
+        | RpcErrorCode::HistoryEntryEmpty
+        | RpcErrorCode::HistoryTranscriptUnreadable
         | RpcErrorCode::NoSpeech
         | RpcErrorCode::SpeakerNoSpeech
         | RpcErrorCode::SpeakerModelMissing
@@ -124,10 +164,12 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::AssistantUnavailable
         | RpcErrorCode::AssistantSignedOut
         | RpcErrorCode::PromptUnreadable
+        | RpcErrorCode::PromptsFull
         | RpcErrorCode::ApplicationExcluded
         | RpcErrorCode::SettingsInvalid => tonic::Code::FailedPrecondition,
         RpcErrorCode::SpeakerAlreadyEnrolled => tonic::Code::AlreadyExists,
         RpcErrorCode::HistoryMissing
+        | RpcErrorCode::PromptMissing
         | RpcErrorCode::SpeakerNotEnrolled
         | RpcErrorCode::VoiceUnavailable => tonic::Code::NotFound,
         RpcErrorCode::ListenPermissionDenied | RpcErrorCode::PermissionDenied => {
@@ -145,6 +187,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::AssistantFailed
         | RpcErrorCode::ListenCaptureFailed
         | RpcErrorCode::SpeakerProfileWriteFailed
+        | RpcErrorCode::PromptWriteFailed
         | RpcErrorCode::DurabilityUnconfirmed => tonic::Code::Internal,
         RpcErrorCode::Unknown(_) => tonic::Code::Unknown,
     }
@@ -315,6 +358,14 @@ impl From<ClearHistoryResult> for wire::ClearHistoryResponse {
     }
 }
 
+impl From<Option<aria_voice::history::HistorySection>> for wire::ClearHistoryRequest {
+    fn from(section: Option<aria_voice::history::HistorySection>) -> Self {
+        Self {
+            section: section.map(|section| wire::HistorySection::from(section) as i32),
+        }
+    }
+}
+
 impl From<wire::ClearHistoryResponse> for ClearHistoryResult {
     fn from(response: wire::ClearHistoryResponse) -> Self {
         Self {
@@ -355,8 +406,7 @@ impl TryFrom<Invite> for wire::IssueInviteResponse {
             instance_name: invite.instance,
             code: invite.code.raw().to_owned(),
             fingerprint: invite.fingerprint.to_vec(),
-            expires_in_ms: u32::try_from(invite.expires_in.as_millis())
-                .map_err(|_| ProtocolError::OutOfRange("expires_in_ms"))?,
+            expires_in: Some(wire_duration(invite.expires_in)),
             pairing_count: invite.pairing_count,
         })
     }
@@ -715,23 +765,216 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
     }
 }
 
+impl From<PromptCall> for wire::RunPromptRequest {
+    fn from(call: PromptCall) -> Self {
+        Self {
+            input: Some(match call.input {
+                PromptInput::Text(text) => wire::run_prompt_request::Input::Text(text),
+                PromptInput::Entry(id) => wire::run_prompt_request::Input::HistoryEntryId(id),
+            }),
+            prompt: Some(match call.prompt {
+                PromptChoice::Stored(id) => {
+                    wire::run_prompt_request::Prompt::PromptId(id.as_str().to_owned())
+                }
+                PromptChoice::OneOff(instructions) => {
+                    wire::run_prompt_request::Prompt::Instructions(instructions.as_str().to_owned())
+                }
+            }),
+            application_id: call
+                .application
+                .map(|application| application.as_str().to_owned())
+                .unwrap_or_default(),
+            tap_cancels: call.tap_cancels,
+            output_mode: call
+                .output_mode
+                .map(|mode| wire::OutputMode::from(mode) as i32),
+        }
+    }
+}
+
 impl TryFrom<wire::RunPromptRequest> for PromptCall {
     type Error = ProtocolError;
 
     fn try_from(request: wire::RunPromptRequest) -> Result<Self, Self::Error> {
-        if request.text.trim().is_empty() {
-            return Err(ProtocolError::EmptyPrompt);
-        }
+        let input = match request.input {
+            Some(wire::run_prompt_request::Input::Text(text)) if !text.trim().is_empty() => {
+                PromptInput::Text(text)
+            }
+            Some(wire::run_prompt_request::Input::HistoryEntryId(id)) => {
+                PromptInput::Entry(history_id(id)?)
+            }
+            Some(wire::run_prompt_request::Input::Text(_)) | None => {
+                return Err(ProtocolError::EmptyPrompt);
+            }
+        };
         let application = Some(request.application_id)
             .filter(|id| !id.is_empty())
             .map(ApplicationId::new)
             .transpose()?;
+        let output_mode = request
+            .output_mode
+            .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
+            .transpose()?;
+        // A named app only says where to type, so it needs an output mode.
+        if application.is_some() && output_mode.is_none() {
+            return Err(ProtocolError::MissingBody("output mode for the named app"));
+        }
+        let prompt = match request.prompt {
+            Some(wire::run_prompt_request::Prompt::PromptId(id)) => {
+                PromptChoice::Stored(PromptId::new(id)?)
+            }
+            Some(wire::run_prompt_request::Prompt::Instructions(text)) => {
+                PromptChoice::OneOff(Instructions::new(text)?)
+            }
+            None => return Err(ProtocolError::MissingBody("prompt")),
+        };
         Ok(Self {
-            text: request.text,
-            prompt: PromptId::new(request.prompt_id)?,
+            input,
+            prompt,
             application,
             tap_cancels: request.tap_cancels,
+            output_mode,
         })
+    }
+}
+
+impl TryFrom<wire::SavePromptRequest> for PromptDraft {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::SavePromptRequest) -> Result<Self, Self::Error> {
+        if request
+            .name
+            .as_ref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            return Err(PromptError::Name.into());
+        }
+        let file = request.file.map(prompt_file).transpose()?;
+        let id = request.id.map(PromptId::new).transpose()?;
+        let kind = decode_enum::<wire::PromptKind>(request.kind, "prompt kind")?;
+        let instructions = request.instructions.map(Instructions::new).transpose()?;
+        let name = request.name;
+        if let Some(id) = id {
+            return Ok(Self::Edit {
+                id,
+                name,
+                kind: Some(kind),
+                file,
+                instructions,
+            });
+        }
+        let source = match file {
+            Some(file) => NewSource::Chosen {
+                file,
+                name,
+                instructions,
+            },
+            None => NewSource::Written {
+                name: name.ok_or(ProtocolError::MissingBody(
+                    "name, or a file to name it after",
+                ))?,
+                instructions: instructions.ok_or(ProtocolError::MissingBody("instructions"))?,
+            },
+        };
+        Ok(Self::New { kind, source })
+    }
+}
+
+/// A relative path would name a file beside the daemon, not the caller.
+fn prompt_file(file: String) -> Result<std::path::PathBuf, PromptError> {
+    let path = std::path::PathBuf::from(&file);
+    if path.is_absolute() && !file.contains('\0') {
+        Ok(path)
+    } else {
+        Err(PromptError::File)
+    }
+}
+
+impl TryFrom<wire::GetPromptRequest> for PromptSource {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::GetPromptRequest) -> Result<Self, Self::Error> {
+        match request.source {
+            Some(wire::get_prompt_request::Source::PromptId(id)) => {
+                Ok(Self::Stored(PromptId::new(id)?))
+            }
+            Some(wire::get_prompt_request::Source::File(file)) => {
+                Ok(Self::File(prompt_file(file)?))
+            }
+            None => Err(ProtocolError::MissingBody("prompt source")),
+        }
+    }
+}
+
+impl From<PromptContents> for wire::GetPromptResponse {
+    fn from(contents: PromptContents) -> Self {
+        let contents = match contents {
+            PromptContents::Instructions(text) => {
+                wire::get_prompt_response::Contents::Instructions(text)
+            }
+            PromptContents::Missing => wire::get_prompt_response::Contents::Missing(true),
+        };
+        Self {
+            contents: Some(contents),
+        }
+    }
+}
+
+impl TryFrom<wire::RemovePromptRequest> for PromptId {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::RemovePromptRequest) -> Result<Self, Self::Error> {
+        Ok(Self::new(request.id)?)
+    }
+}
+
+impl From<&Prompt> for wire::RemovePromptResponse {
+    fn from(prompt: &Prompt) -> Self {
+        Self {
+            file: prompt.file().to_string_lossy().into_owned(),
+        }
+    }
+}
+
+impl From<&Prompt> for wire::SavePromptResponse {
+    fn from(prompt: &Prompt) -> Self {
+        Self {
+            id: prompt.id().as_str().to_owned(),
+            file: prompt.file().to_string_lossy().into_owned(),
+        }
+    }
+}
+
+impl TryFrom<wire::DeliverRequest> for DeliverCall {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::DeliverRequest) -> Result<Self, Self::Error> {
+        if request.text.trim().is_empty() {
+            return Err(ProtocolError::EmptyPrompt);
+        }
+        if request.text.len() > aria_platform::delivery::MAX_TEXT_BYTES {
+            return Err(ProtocolError::OutOfRange("text"));
+        }
+        Ok(Self {
+            text: request.text,
+            application: Some(request.application_id)
+                .filter(|id| !id.is_empty())
+                .map(ApplicationId::new)
+                .transpose()?,
+            output_mode: decode_enum::<wire::OutputMode>(request.output_mode, "output mode")?,
+        })
+    }
+}
+
+impl From<aria_platform::delivery::DeliveryOutcome> for wire::DeliverResponse {
+    fn from(outcome: aria_platform::delivery::DeliveryOutcome) -> Self {
+        let outcome = match outcome {
+            aria_platform::delivery::DeliveryOutcome::Inserted => wire::DeliveryOutcome::Inserted,
+            aria_platform::delivery::DeliveryOutcome::Copied => wire::DeliveryOutcome::Copied,
+        };
+        Self {
+            outcome: outcome as i32,
+        }
     }
 }
 
@@ -875,7 +1118,7 @@ impl From<&EnrolledSpeaker> for wire::EnrolledSpeaker {
         Self {
             name: speaker.name.to_string(),
             role: wire::SpeakerRole::from(speaker.role) as i32,
-            enrolled_at_seconds: speaker.enrolled_at,
+            enroll_time: Some(wire_time(Duration::from_secs(speaker.enrolled_at))),
         }
     }
 }
@@ -887,7 +1130,7 @@ impl TryFrom<&wire::EnrolledSpeaker> for EnrolledSpeaker {
         Ok(Self {
             name: speaker_name(&speaker.name)?,
             role: role(speaker.role)?,
-            enrolled_at: speaker.enrolled_at_seconds,
+            enrolled_at: since_epoch(speaker.enroll_time, "enroll_time")?.as_secs(),
         })
     }
 }
@@ -1046,7 +1289,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
-                offset_seconds: 0,
+                offset: None,
                 error_code: 0,
             },
             ListenStage::SegmentTranscribed {
@@ -1058,7 +1301,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 text: text.to_string(),
                 speaker_label: label.map(|label| label.to_string()).unwrap_or_default(),
                 merged_from_label: String::new(),
-                offset_seconds: at_seconds,
+                offset: Some(wire_duration(Duration::from_secs(at_seconds))),
                 error_code: 0,
             },
             ListenStage::SpeakerMerged { from, into } => Self {
@@ -1066,7 +1309,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 text: String::new(),
                 speaker_label: into.to_string(),
                 merged_from_label: from.to_string(),
-                offset_seconds: 0,
+                offset: None,
                 error_code: 0,
             },
             ListenStage::Stopped => Self {
@@ -1074,7 +1317,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
-                offset_seconds: 0,
+                offset: None,
                 error_code: 0,
             },
             ListenStage::Failed(code) => Self {
@@ -1082,7 +1325,7 @@ impl From<ListenStage> for wire::ListenEvent {
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
-                offset_seconds: 0,
+                offset: None,
                 error_code: error_code_to_wire(code),
             },
         }
@@ -1099,7 +1342,11 @@ impl TryFrom<&wire::ListenEvent> for ListenStage {
                 text: Arc::from(event.text.as_str()),
                 label: (!event.speaker_label.is_empty())
                     .then(|| Arc::from(event.speaker_label.as_str())),
-                at_seconds: event.offset_seconds,
+                at_seconds: duration(
+                    event.offset.ok_or(ProtocolError::MissingBody("offset"))?,
+                    "offset",
+                )?
+                .as_secs(),
             }),
             Ok(wire::ListenStage::SpeakerMerged) => Ok(Self::SpeakerMerged {
                 from: Arc::from(event.merged_from_label.as_str()),
@@ -1243,15 +1490,22 @@ impl WireEnum for wire::OutputMode {
 
 impl From<DictationRequest> for wire::StartDictationRequest {
     fn from(request: DictationRequest) -> Self {
+        use wire::start_dictation_request::Route;
+        let route = match request.route {
+            DictationRoute::Deliver(overrides) => Route::Deliver(wire::DeliverRoute {
+                output_mode: overrides
+                    .output_mode
+                    .map(|mode| wire::OutputMode::from(mode) as i32),
+                delivery_mode: overrides
+                    .delivery_mode
+                    .map(|mode| wire::DeliveryMode::from(mode) as i32),
+            }),
+            DictationRoute::TranscriptOnly => Route::TranscriptOnly(wire::TranscriptOnlyRoute {}),
+            DictationRoute::HistoryOnly => Route::HistoryOnly(wire::HistoryOnlyRoute {}),
+        };
         Self {
-            output_mode: request
-                .output_mode
-                .map(|mode| wire::OutputMode::from(mode) as i32),
-            delivery_mode: request
-                .delivery_mode
-                .map(|mode| wire::DeliveryMode::from(mode) as i32),
             stop_mode: wire::StopMode::from(request.stop_mode) as i32,
-            transcript_only: request.transcript_only,
+            route: Some(route),
             project: project_to_wire(request.project),
         }
     }
@@ -1261,21 +1515,26 @@ impl TryFrom<wire::StartDictationRequest> for DictationRequest {
     type Error = ProtocolError;
 
     fn try_from(request: wire::StartDictationRequest) -> Result<Self, Self::Error> {
-        let output_mode = request
-            .output_mode
-            .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
-            .transpose()?;
-        let delivery_mode = request
-            .delivery_mode
-            .map(|value| decode_enum::<wire::DeliveryMode>(value, "delivery mode"))
-            .transpose()?;
+        use wire::start_dictation_request::Route;
         let stop_mode = decode_enum::<wire::StopMode>(request.stop_mode, "stop mode")?;
+        let route = match request.route.ok_or(ProtocolError::MissingBody("route"))? {
+            Route::Deliver(deliver) => DictationRoute::Deliver(DictationOverrides {
+                output_mode: deliver
+                    .output_mode
+                    .map(|value| decode_enum::<wire::OutputMode>(value, "output mode"))
+                    .transpose()?,
+                delivery_mode: deliver
+                    .delivery_mode
+                    .map(|value| decode_enum::<wire::DeliveryMode>(value, "delivery mode"))
+                    .transpose()?,
+            }),
+            Route::TranscriptOnly(wire::TranscriptOnlyRoute {}) => DictationRoute::TranscriptOnly,
+            Route::HistoryOnly(wire::HistoryOnlyRoute {}) => DictationRoute::HistoryOnly,
+        };
 
         Ok(Self {
-            output_mode,
-            delivery_mode,
             stop_mode,
-            transcript_only: request.transcript_only,
+            route,
             project: project_from_wire(request.project)?,
         })
     }
@@ -1333,7 +1592,7 @@ impl TryFrom<wire::ListHistoryRequest> for aria_voice::history::HistoryQuery {
     type Error = ProtocolError;
 
     fn try_from(request: wire::ListHistoryRequest) -> Result<Self, Self::Error> {
-        if request.query.len() > 256
+        if request.query.len() > Self::MAX_QUERY_BYTES
             || !(1..=100).contains(&request.limit)
             || request
                 .before_id
@@ -1342,10 +1601,118 @@ impl TryFrom<wire::ListHistoryRequest> for aria_voice::history::HistoryQuery {
             return Err(ProtocolError::InvalidHistory("query"));
         }
         Ok(Self {
+            section: request.section.map(history_section).transpose()?,
             query: request.query,
             before_id: request.before_id,
             limit: request.limit as usize,
         })
+    }
+}
+
+/// UNSPECIFIED is never a section: an absent filter says "every section".
+pub(crate) fn history_section(
+    value: i32,
+) -> Result<aria_voice::history::HistorySection, ProtocolError> {
+    use aria_voice::history::HistorySection;
+    match wire::HistorySection::try_from(value) {
+        Ok(wire::HistorySection::Dictation) => Ok(HistorySection::Dictation),
+        Ok(wire::HistorySection::Listen) => Ok(HistorySection::Listen),
+        Ok(wire::HistorySection::Ask) => Ok(HistorySection::Ask),
+        Ok(wire::HistorySection::Unspecified) | Err(_) => {
+            Err(ProtocolError::InvalidHistory("section"))
+        }
+    }
+}
+
+impl From<aria_voice::history::HistorySection> for wire::HistorySection {
+    fn from(section: aria_voice::history::HistorySection) -> Self {
+        use aria_voice::history::HistorySection;
+        match section {
+            HistorySection::Dictation => Self::Dictation,
+            HistorySection::Listen => Self::Listen,
+            HistorySection::Ask => Self::Ask,
+        }
+    }
+}
+
+impl From<(u64, Option<&aria_voice::history::Title>)> for wire::RenameHistoryRequest {
+    fn from((id, title): (u64, Option<&aria_voice::history::Title>)) -> Self {
+        Self {
+            id,
+            title: title.map(|title| title.as_str().to_owned()),
+        }
+    }
+}
+
+impl TryFrom<wire::RenameHistoryRequest> for (u64, Option<aria_voice::history::Title>) {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::RenameHistoryRequest) -> Result<Self, Self::Error> {
+        let title = request
+            .title
+            .as_deref()
+            .map(aria_voice::history::Title::new)
+            .transpose()
+            .map_err(|_| ProtocolError::InvalidHistory("title"))?;
+        Ok((history_id(request.id)?, title))
+    }
+}
+
+fn history_content(
+    section: i32,
+    details: Option<wire::history_entry::Details>,
+    dictation: aria_voice::history::DictationContent,
+) -> Result<aria_voice::history::HistoryContent, ProtocolError> {
+    use aria_voice::history::{HistoryContent, HistorySection, TranscriptRead};
+    use wire::history_entry::Details;
+    // A daemon from before sections sends none, and it kept only dictations.
+    if section == wire::HistorySection::Unspecified as i32 && details.is_none() {
+        return Ok(HistoryContent::Dictation(dictation));
+    }
+    match (history_section(section)?, details) {
+        (HistorySection::Dictation, None) => Ok(HistoryContent::Dictation(dictation)),
+        (HistorySection::Listen, Some(Details::Transcript(transcript))) => {
+            let read = match transcript.read.map(wire::HistoryTranscriptRead::try_from) {
+                None => None,
+                Some(Ok(wire::HistoryTranscriptRead::Whole)) => Some(TranscriptRead::Whole),
+                Some(Ok(wire::HistoryTranscriptRead::Truncated)) => Some(TranscriptRead::Truncated),
+                Some(Ok(wire::HistoryTranscriptRead::Unavailable)) => {
+                    Some(TranscriptRead::Unavailable)
+                }
+                Some(Ok(wire::HistoryTranscriptRead::Unspecified) | Err(_)) => {
+                    return Err(ProtocolError::InvalidHistory("transcript read"));
+                }
+            };
+            Ok(HistoryContent::Listen {
+                transcript: transcript.path.into(),
+                read,
+            })
+        }
+        (HistorySection::Ask, Some(Details::Reply(reply))) => Ok(HistoryContent::Ask { reply }),
+        _ => Err(ProtocolError::InvalidHistory("details")),
+    }
+}
+
+fn history_details(
+    content: aria_voice::history::HistoryContent,
+) -> Option<wire::history_entry::Details> {
+    use aria_voice::history::{HistoryContent, TranscriptRead};
+    match content {
+        HistoryContent::Dictation(_) => None,
+        HistoryContent::Ask { reply } => Some(wire::history_entry::Details::Reply(reply)),
+        HistoryContent::Listen { transcript, read } => Some(
+            wire::history_entry::Details::Transcript(wire::HistoryTranscript {
+                path: transcript.to_string_lossy().into_owned(),
+                read: read.map(|read| {
+                    let read = match read {
+                        TranscriptRead::Whole => wire::HistoryTranscriptRead::Whole,
+                        TranscriptRead::Truncated => wire::HistoryTranscriptRead::Truncated,
+                        TranscriptRead::Unavailable => wire::HistoryTranscriptRead::Unavailable,
+                    };
+                    read as i32
+                }),
+            }),
+        ),
     }
 }
 
@@ -1383,7 +1750,9 @@ impl TryFrom<wire::HistoryEntry> for aria_voice::history::HistoryEntry {
 
     fn try_from(entry: wire::HistoryEntry) -> Result<Self, Self::Error> {
         use aria_platform::delivery::Application;
-        use aria_voice::history::{AudioAvailability, HistorySource, HistoryStatus};
+        use aria_voice::history::{
+            AudioAvailability, DictationContent, HistorySource, HistoryStatus,
+        };
         if entry.id == 0 || entry.id > i64::MAX as u64 {
             return Err(ProtocolError::InvalidHistory("id"));
         }
@@ -1399,7 +1768,7 @@ impl TryFrom<wire::HistoryEntry> for aria_voice::history::HistoryEntry {
             Ok(wire::HistoryStatus::Recovered) => HistoryStatus::Recovered,
             _ => return Err(ProtocolError::InvalidHistory("status")),
         };
-        if entry.audio_expires_at_ms.is_some()
+        if entry.audio_expire_time.is_some()
             && entry.audio_availability != wire::HistoryAudioAvailability::Available as i32
         {
             return Err(ProtocolError::InvalidHistory("audio expiry"));
@@ -1408,34 +1777,70 @@ impl TryFrom<wire::HistoryEntry> for aria_voice::history::HistoryEntry {
             Ok(wire::HistoryAudioAvailability::Unavailable) => AudioAvailability::Unavailable,
             Ok(wire::HistoryAudioAvailability::Expired) => AudioAvailability::Expired,
             Ok(wire::HistoryAudioAvailability::Available) => AudioAvailability::Available {
-                expires_at_ms: entry
-                    .audio_expires_at_ms
-                    .ok_or(ProtocolError::InvalidHistory("audio expiry"))?,
+                expires_at_ms: millis(
+                    since_epoch(entry.audio_expire_time, "audio_expire_time")?,
+                    "audio_expire_time",
+                )?,
             },
             _ => return Err(ProtocolError::InvalidHistory("audio")),
         };
+        let dictation = DictationContent {
+            language: entry.language,
+            engine: entry.engine_id,
+            own_voice_only: false,
+            audio,
+            retrying: entry.regenerating,
+        };
         Ok(Self {
             id: entry.id,
-            created_at_ms: entry.created_at_ms,
+            title: entry
+                .title
+                .as_deref()
+                .map(aria_voice::history::Title::new)
+                .transpose()
+                .map_err(|_| ProtocolError::InvalidHistory("title"))?,
+            content: history_content(entry.section, entry.details, dictation)?,
+            created_at_ms: millis(
+                since_epoch(entry.create_time, "create_time")?,
+                "create_time",
+            )?,
+            duration_ms: entry
+                .duration
+                .map(|span| millis(duration(span, "duration")?, "duration"))
+                .transpose()?,
             source,
             application: entry.application.map(|app| Application {
                 name: app.name,
                 bundle_id: app.bundle_id,
             }),
-            duration_ms: entry.duration_ms,
+            project: entry.project_directory.map(std::path::PathBuf::from),
             text: entry.text,
             complete: entry.transcription_complete,
+            result_count: entry.result_count,
             status,
             error: entry.error.map(TryInto::try_into).transpose()?,
-            audio,
-            retrying: entry.regenerating,
-            deletion_pending: entry.deletion_pending,
-            language: entry.language,
-            engine: entry.engine_id,
-            own_voice_only: false,
-            project: None,
             warning: entry.warning,
+            deletion_pending: entry.deletion_pending,
         })
+    }
+}
+
+impl From<aria_voice::history::HistoryEntry> for wire::RenameHistoryResponse {
+    fn from(entry: aria_voice::history::HistoryEntry) -> Self {
+        Self {
+            entry: Some(entry.into()),
+        }
+    }
+}
+
+impl TryFrom<wire::RenameHistoryResponse> for aria_voice::history::HistoryEntry {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::RenameHistoryResponse) -> Result<Self, Self::Error> {
+        response
+            .entry
+            .ok_or(ProtocolError::MissingBody("history entry"))?
+            .try_into()
     }
 }
 
@@ -1463,21 +1868,36 @@ impl TryFrom<wire::ListHistoryResponse> for aria_voice::history::HistoryPage {
 
 impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
     fn from(entry: aria_voice::history::HistoryEntry) -> Self {
-        use aria_voice::history::{AudioAvailability, HistorySource, HistoryStatus};
-        let (audio, audio_expires_at_ms) = match entry.audio {
+        use aria_voice::history::{
+            AudioAvailability, HistoryContent, HistorySource, HistoryStatus,
+        };
+        let (audio, audio_expire_time) = match entry.audio() {
             AudioAvailability::Unavailable => (wire::HistoryAudioAvailability::Unavailable, None),
             AudioAvailability::Expired => (wire::HistoryAudioAvailability::Expired, None),
             AudioAvailability::Available { expires_at_ms } => (
                 wire::HistoryAudioAvailability::Available,
-                Some(expires_at_ms),
+                Some(wire_time(Duration::from_millis(expires_at_ms))),
             ),
         };
+        let section = wire::HistorySection::from(entry.content.section()) as i32;
+        let (details, dictation) = match entry.content {
+            HistoryContent::Dictation(dictation) => (None, Some(dictation)),
+            content => (history_details(content), None),
+        };
+        let regenerating = dictation
+            .as_ref()
+            .is_some_and(|dictation| dictation.retrying);
+        let (language, engine_id) = dictation
+            .map(|dictation| (dictation.language, dictation.engine))
+            .unwrap_or_default();
         Self {
-            can_regenerate: matches!(entry.audio, AudioAvailability::Available { .. })
-                && !entry.retrying
-                && !entry.deletion_pending,
             id: entry.id,
-            created_at_ms: entry.created_at_ms,
+            title: entry.title.map(|title| title.as_str().to_owned()),
+            section,
+            create_time: Some(wire_time(Duration::from_millis(entry.created_at_ms))),
+            duration: entry
+                .duration_ms
+                .map(|ms| wire_duration(Duration::from_millis(ms))),
             source: match entry.source {
                 HistorySource::Local => wire::HistorySource::Local,
                 HistorySource::Relay => wire::HistorySource::Relay,
@@ -1486,9 +1906,15 @@ impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
                 name: app.name,
                 bundle_id: app.bundle_id,
             }),
-            duration_ms: entry.duration_ms,
+            project_directory: entry
+                .project
+                .map(|project| project.to_string_lossy().into_owned()),
             text: entry.text,
             transcription_complete: entry.complete,
+            details,
+            result_count: entry.result_count,
+            engine_id,
+            language,
             status: match entry.status {
                 HistoryStatus::Success => wire::HistoryStatus::Success,
                 HistoryStatus::TranscriptionFailed => wire::HistoryStatus::TranscriptionFailed,
@@ -1496,14 +1922,67 @@ impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
                 HistoryStatus::Recovered => wire::HistoryStatus::Recovered,
             } as i32,
             error: entry.error.map(Into::into),
-            audio_availability: audio as i32,
-            audio_expires_at_ms,
-            regenerating: entry.retrying,
-            deletion_pending: entry.deletion_pending,
-            language: entry.language,
-            engine_id: entry.engine,
             warning: entry.warning,
+            audio_availability: audio as i32,
+            audio_expire_time,
+            regenerating,
+            deletion_pending: entry.deletion_pending,
+            can_regenerate: audio == wire::HistoryAudioAvailability::Available
+                && !regenerating
+                && !entry.deletion_pending,
         }
+    }
+}
+
+/// List carries only the start of each text.
+fn cut_for_list(text: &mut String) {
+    let mut end = text.len().min(512);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+}
+
+impl TryFrom<wire::PromptResult> for PromptResult {
+    type Error = ProtocolError;
+
+    fn try_from(result: wire::PromptResult) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: result.id,
+            created_at_ms: millis(
+                since_epoch(result.create_time, "create_time")?,
+                "create_time",
+            )?,
+            prompt_name: result.prompt_name,
+            text: result.text,
+        })
+    }
+}
+
+impl From<PromptResult> for wire::PromptResult {
+    fn from(result: PromptResult) -> Self {
+        Self {
+            id: result.id,
+            create_time: Some(wire_time(Duration::from_millis(result.created_at_ms))),
+            prompt_name: result.prompt_name,
+            text: result.text,
+        }
+    }
+}
+
+impl From<Vec<PromptResult>> for wire::HistoryThread {
+    fn from(results: Vec<PromptResult>) -> Self {
+        Self {
+            results: results.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl TryFrom<wire::HistoryThread> for Vec<PromptResult> {
+    type Error = ProtocolError;
+
+    fn try_from(thread: wire::HistoryThread) -> Result<Self, Self::Error> {
+        thread.results.into_iter().map(TryInto::try_into).collect()
     }
 }
 
@@ -1515,11 +1994,10 @@ impl From<aria_voice::history::HistoryPage> for wire::ListHistoryResponse {
                 .into_iter()
                 .map(|entry| {
                     let mut entry = wire::HistoryEntry::from(entry);
-                    let mut end = entry.text.len().min(512);
-                    while !entry.text.is_char_boundary(end) {
-                        end -= 1;
+                    cut_for_list(&mut entry.text);
+                    if let Some(wire::history_entry::Details::Reply(reply)) = &mut entry.details {
+                        cut_for_list(reply);
                     }
-                    entry.text.truncate(end);
                     entry
                 })
                 .collect(),
@@ -2457,6 +2935,9 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::AssistantTimeout => wire::ErrorCode::AssistantTimeout,
         RpcErrorCode::AssistantSignedOut => wire::ErrorCode::AssistantSignedOut,
         RpcErrorCode::PromptUnreadable => wire::ErrorCode::PromptUnreadable,
+        RpcErrorCode::PromptMissing => wire::ErrorCode::PromptMissing,
+        RpcErrorCode::PromptsFull => wire::ErrorCode::PromptsFull,
+        RpcErrorCode::PromptWriteFailed => wire::ErrorCode::PromptWriteFailed,
         RpcErrorCode::SpeakerModelMissing => wire::ErrorCode::SpeakerModelMissing,
         RpcErrorCode::SpeakerAlreadyEnrolled => wire::ErrorCode::SpeakerAlreadyEnrolled,
         RpcErrorCode::SpeakerNotEnrolled => wire::ErrorCode::SpeakerNotEnrolled,
@@ -2470,6 +2951,8 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::HistoryAudioUnavailable => wire::ErrorCode::HistoryAudioUnavailable,
         RpcErrorCode::HistoryUnavailable => wire::ErrorCode::HistoryUnavailable,
         RpcErrorCode::HistoryProjectUnavailable => wire::ErrorCode::HistoryProjectUnavailable,
+        RpcErrorCode::HistoryEntryEmpty => wire::ErrorCode::HistoryEntryEmpty,
+        RpcErrorCode::HistoryTranscriptUnreadable => wire::ErrorCode::HistoryTranscriptUnreadable,
         RpcErrorCode::Unknown(value) => return value,
     };
     encoded as i32
@@ -2507,6 +2990,9 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::AssistantTimeout) => RpcErrorCode::AssistantTimeout,
         Ok(wire::ErrorCode::AssistantSignedOut) => RpcErrorCode::AssistantSignedOut,
         Ok(wire::ErrorCode::PromptUnreadable) => RpcErrorCode::PromptUnreadable,
+        Ok(wire::ErrorCode::PromptMissing) => RpcErrorCode::PromptMissing,
+        Ok(wire::ErrorCode::PromptsFull) => RpcErrorCode::PromptsFull,
+        Ok(wire::ErrorCode::PromptWriteFailed) => RpcErrorCode::PromptWriteFailed,
         Ok(wire::ErrorCode::SpeakerModelMissing) => RpcErrorCode::SpeakerModelMissing,
         Ok(wire::ErrorCode::SpeakerAlreadyEnrolled) => RpcErrorCode::SpeakerAlreadyEnrolled,
         Ok(wire::ErrorCode::SpeakerNotEnrolled) => RpcErrorCode::SpeakerNotEnrolled,
@@ -2520,6 +3006,10 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::HistoryAudioUnavailable) => RpcErrorCode::HistoryAudioUnavailable,
         Ok(wire::ErrorCode::HistoryUnavailable) => RpcErrorCode::HistoryUnavailable,
         Ok(wire::ErrorCode::HistoryProjectUnavailable) => RpcErrorCode::HistoryProjectUnavailable,
+        Ok(wire::ErrorCode::HistoryEntryEmpty) => RpcErrorCode::HistoryEntryEmpty,
+        Ok(wire::ErrorCode::HistoryTranscriptUnreadable) => {
+            RpcErrorCode::HistoryTranscriptUnreadable
+        }
         Ok(wire::ErrorCode::Unspecified) => {
             return Err(ProtocolError::InvalidEnum {
                 field: "error code",
@@ -2559,6 +3049,9 @@ pub enum ProtocolError {
 
     #[error("the prompt must not be empty")]
     EmptyPrompt,
+
+    #[error(transparent)]
+    InvalidInstructions(#[from] aria_assistant::chat::InstructionsTextError),
 
     #[error("settings update is missing its patch")]
     MissingSettingsPatch,
@@ -3226,20 +3719,41 @@ mod tests {
     }
 
     #[test]
-    fn a_dictation_request_keeps_transcript_only_across_the_wire() {
-        let request = DictationRequest {
-            output_mode: Some(OutputMode::Copy),
-            delivery_mode: Some(DeliveryMode::Complete),
-            stop_mode: StopMode::Manual,
-            transcript_only: true,
-            project: aria_voice::vocabulary::Context::Default,
+    fn a_dictation_request_keeps_its_route_across_the_wire() {
+        for route in [
+            DictationRoute::Deliver(DictationOverrides {
+                output_mode: Some(OutputMode::Copy),
+                delivery_mode: Some(DeliveryMode::Complete),
+            }),
+            DictationRoute::Deliver(DictationOverrides::default()),
+            DictationRoute::TranscriptOnly,
+            DictationRoute::HistoryOnly,
+        ] {
+            let request = DictationRequest {
+                stop_mode: StopMode::Manual,
+                route,
+                project: aria_voice::vocabulary::Context::Default,
+            };
+
+            let sent = wire::StartDictationRequest::from(request.clone());
+            assert_eq!(
+                DictationRequest::try_from(sent).expect("the request should decode"),
+                request
+            );
+        }
+    }
+
+    #[test]
+    fn a_request_without_a_route_is_refused() {
+        let request = wire::StartDictationRequest {
+            stop_mode: wire::StopMode::Manual as i32,
+            ..Default::default()
         };
 
-        let sent = wire::StartDictationRequest::from(request.clone());
-        assert_eq!(
-            DictationRequest::try_from(sent).expect("the request should decode"),
-            request
-        );
+        assert!(matches!(
+            DictationRequest::try_from(request),
+            Err(ProtocolError::MissingBody("route"))
+        ));
     }
 
     #[test]
@@ -3433,7 +3947,9 @@ mod tests {
                 ),
             ),
             stop_mode: wire::StopMode::OnSilence as i32,
-            ..Default::default()
+            route: Some(wire::start_dictation_request::Route::Deliver(
+                wire::DeliverRoute::default(),
+            )),
         };
         assert_eq!(
             DictationRequest::try_from(disabled).unwrap().project,
@@ -3445,7 +3961,9 @@ mod tests {
                     path.into(),
                 )),
                 stop_mode: wire::StopMode::OnSilence as i32,
-                ..Default::default()
+                route: Some(wire::start_dictation_request::Route::Deliver(
+                    wire::DeliverRoute::default(),
+                )),
             };
             assert!(DictationRequest::try_from(request).is_err());
         }
@@ -3648,6 +4166,14 @@ mod tests {
             error_code_from_wire(304),
             Ok(RpcErrorCode::PromptUnreadable)
         ));
+        for (code, number) in [
+            (RpcErrorCode::PromptMissing, 305),
+            (RpcErrorCode::PromptsFull, 306),
+            (RpcErrorCode::PromptWriteFailed, 307),
+        ] {
+            assert_eq!(error_code_to_wire(code), number);
+            assert_eq!(error_code_from_wire(number).expect("known"), code);
+        }
     }
 
     #[test]
@@ -3722,13 +4248,182 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_prompt_needs_a_name_a_kind_and_an_absolute_file() {
+        let request = |name: &str, file: Option<&str>| wire::SavePromptRequest {
+            id: None,
+            name: Some(name.to_owned()),
+            kind: wire::PromptKind::Compose as i32,
+            file: file.map(str::to_owned),
+            instructions: Some("Three bullets.".to_owned()),
+        };
+
+        assert!(matches!(
+            PromptDraft::try_from(request(" \n", None)),
+            Err(ProtocolError::InvalidPrompt(PromptError::Name))
+        ));
+        assert!(matches!(
+            PromptDraft::try_from(request("Summary", Some("notes/summary.md"))),
+            Err(ProtocolError::InvalidPrompt(PromptError::File))
+        ));
+        let mut unspecified = request("Summary", None);
+        unspecified.kind = wire::PromptKind::Unspecified as i32;
+        assert!(matches!(
+            PromptDraft::try_from(unspecified),
+            Err(ProtocolError::InvalidEnum {
+                field: "prompt kind",
+                ..
+            })
+        ));
+        let mut blank = request("Summary", None);
+        blank.instructions = Some(" ".to_owned());
+        assert!(matches!(
+            PromptDraft::try_from(blank),
+            Err(ProtocolError::InvalidInstructions(_))
+        ));
+
+        let mut unnamed = request("unused", None);
+        unnamed.name = None;
+        assert!(matches!(
+            PromptDraft::try_from(unnamed.clone()),
+            Err(ProtocolError::MissingBody(_))
+        ));
+        let mut empty = request("Summary", None);
+        empty.instructions = None;
+        assert!(matches!(
+            PromptDraft::try_from(empty),
+            Err(ProtocolError::MissingBody("instructions"))
+        ));
+
+        unnamed.file = Some("/notes/summary.md".to_owned());
+        unnamed.instructions = None;
+        assert!(matches!(
+            PromptDraft::try_from(unnamed).expect("decodes"),
+            PromptDraft::New {
+                kind: PromptKind::Compose,
+                source: NewSource::Chosen {
+                    name: None,
+                    instructions: None,
+                    ..
+                },
+            }
+        ));
+
+        let draft =
+            PromptDraft::try_from(request("Summary", Some("/notes/summary.md"))).expect("decodes");
+        let PromptDraft::New {
+            kind,
+            source: NewSource::Chosen { file, name, .. },
+        } = draft
+        else {
+            panic!("a request with no ID is a new prompt: {draft:?}");
+        };
+        assert_eq!(name.as_deref(), Some("Summary"));
+        assert_eq!(kind, PromptKind::Compose);
+        assert_eq!(file, std::path::Path::new("/notes/summary.md"));
+
+        let mut edit = request("Summary", None);
+        edit.id = Some("polish".to_owned());
+        edit.instructions = None;
+        assert!(matches!(
+            PromptDraft::try_from(edit).expect("decodes"),
+            PromptDraft::Edit {
+                kind: Some(PromptKind::Compose),
+                file: None,
+                instructions: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_prompt_is_read_by_its_id_or_an_absolute_file() {
+        let request = |source| wire::GetPromptRequest {
+            source: Some(source),
+        };
+
+        assert_eq!(
+            PromptSource::try_from(request(wire::get_prompt_request::Source::PromptId(
+                "polish".to_owned()
+            )))
+            .expect("decodes"),
+            PromptSource::Stored(PromptId::new("polish").expect("id"))
+        );
+        assert_eq!(
+            PromptSource::try_from(request(wire::get_prompt_request::Source::File(
+                "/notes/polish.md".to_owned()
+            )))
+            .expect("decodes"),
+            PromptSource::File("/notes/polish.md".into())
+        );
+        assert!(matches!(
+            PromptSource::try_from(request(wire::get_prompt_request::Source::File(
+                "notes/polish.md".to_owned()
+            ))),
+            Err(ProtocolError::InvalidPrompt(PromptError::File))
+        ));
+        assert!(matches!(
+            PromptSource::try_from(request(wire::get_prompt_request::Source::PromptId(
+                String::new()
+            ))),
+            Err(ProtocolError::InvalidPrompt(PromptError::Id))
+        ));
+        assert!(matches!(
+            PromptSource::try_from(wire::GetPromptRequest { source: None }),
+            Err(ProtocolError::MissingBody(_))
+        ));
+    }
+
+    #[test]
+    fn a_removal_needs_a_prompt_id() {
+        let request = |id: &str| wire::RemovePromptRequest { id: id.to_owned() };
+
+        assert_eq!(
+            PromptId::try_from(request("polish")).expect("decodes"),
+            PromptId::new("polish").expect("id")
+        );
+        assert!(matches!(
+            PromptId::try_from(request("")),
+            Err(ProtocolError::InvalidPrompt(PromptError::Id))
+        ));
+    }
+
+    #[test]
+    fn a_delivery_needs_text_within_its_limit_and_a_mode() {
+        let call = |text: String, mode: wire::OutputMode| {
+            DeliverCall::try_from(wire::DeliverRequest {
+                text,
+                application_id: String::new(),
+                output_mode: mode as i32,
+            })
+        };
+
+        assert!(call(" ".into(), wire::OutputMode::Insert).is_err());
+        assert!(call("hi".into(), wire::OutputMode::Unspecified).is_err());
+        let limit = aria_platform::delivery::MAX_TEXT_BYTES;
+        assert!(call("x".repeat(limit), wire::OutputMode::Insert).is_ok());
+        assert!(call("x".repeat(limit + 1), wire::OutputMode::Insert).is_err());
+        let call = call("hi".into(), wire::OutputMode::Copy).expect("valid");
+        assert_eq!(call.output_mode, OutputMode::Copy);
+        assert_eq!(call.application, None);
+    }
+
+    fn run_prompt_request() -> wire::RunPromptRequest {
+        wire::RunPromptRequest {
+            input: Some(wire::run_prompt_request::Input::Text("hi".to_owned())),
+            prompt: Some(wire::run_prompt_request::Prompt::PromptId("p".to_owned())),
+            ..Default::default()
+        }
+    }
+
+    #[test]
     fn a_prompt_call_needs_words_a_prompt_id_and_at_most_a_real_app() {
         let call = |text: &str, id: &str, app: &str| {
             PromptCall::try_from(wire::RunPromptRequest {
-                text: text.to_owned(),
-                prompt_id: id.to_owned(),
+                input: Some(wire::run_prompt_request::Input::Text(text.to_owned())),
+                prompt: Some(wire::run_prompt_request::Prompt::PromptId(id.to_owned())),
                 application_id: app.to_owned(),
                 tap_cancels: false,
+                output_mode: Some(wire::OutputMode::InsertOrCopy as i32),
             })
         };
         assert!(matches!(
@@ -3744,6 +4439,105 @@ mod tests {
                 .application
                 .is_some()
         );
+        let typing_nothing = |app: &str| {
+            PromptCall::try_from(wire::RunPromptRequest {
+                application_id: app.to_owned(),
+                ..run_prompt_request()
+            })
+        };
+        assert_eq!(typing_nothing("").expect("valid").output_mode, None);
+        assert!(typing_nothing("com.apple.Notes").is_err());
+    }
+
+    #[test]
+    fn a_prompt_call_runs_a_stored_prompt_or_one_off_instructions_a_run_would_take() {
+        let call = |prompt| {
+            PromptCall::try_from(wire::RunPromptRequest {
+                input: Some(wire::run_prompt_request::Input::HistoryEntryId(7)),
+                prompt,
+                ..run_prompt_request()
+            })
+        };
+        let instructions =
+            |text: String| Some(wire::run_prompt_request::Prompt::Instructions(text));
+
+        assert_eq!(
+            call(instructions("List the action items.".into()))
+                .expect("valid")
+                .prompt,
+            PromptChoice::OneOff(Instructions::new("List the action items.".into()).unwrap())
+        );
+        assert!(matches!(
+            call(instructions(" \n".into())),
+            Err(ProtocolError::InvalidInstructions(_))
+        ));
+        assert!(matches!(
+            call(instructions("a".repeat(16 * 1024 + 1))),
+            Err(ProtocolError::InvalidInstructions(_))
+        ));
+        assert!(matches!(
+            call(None),
+            Err(ProtocolError::MissingBody("prompt"))
+        ));
+    }
+
+    #[test]
+    fn a_prompt_result_round_trips() {
+        let result = PromptResult {
+            id: 3,
+            created_at_ms: 1_700_000_000_000,
+            prompt_name: "Summary".to_owned(),
+            text: "- one\n- two".to_owned(),
+        };
+
+        assert_eq!(
+            PromptResult::try_from(wire::PromptResult::from(result.clone())).unwrap(),
+            result
+        );
+    }
+
+    #[test]
+    fn a_prompt_call_round_trips() {
+        for call in [
+            PromptCall {
+                input: PromptInput::Entry(7),
+                prompt: PromptChoice::Stored(PromptId::new("summary").unwrap()),
+                application: None,
+                tap_cancels: false,
+                output_mode: None,
+            },
+            PromptCall {
+                input: PromptInput::Text("we met on Friday".to_owned()),
+                prompt: PromptChoice::OneOff(
+                    Instructions::new("List the action items.".into()).unwrap(),
+                ),
+                application: Some(ApplicationId::new("com.apple.mail".to_owned()).unwrap()),
+                tap_cancels: true,
+                output_mode: Some(OutputMode::Copy),
+            },
+        ] {
+            let decoded =
+                PromptCall::try_from(wire::RunPromptRequest::from(call.clone())).expect("decodes");
+            assert_eq!(decoded, call);
+        }
+    }
+
+    #[test]
+    fn a_prompt_runs_on_a_real_history_entry_or_nothing() {
+        let on = |input| {
+            PromptCall::try_from(wire::RunPromptRequest {
+                input,
+                ..run_prompt_request()
+            })
+        };
+        assert_eq!(
+            on(Some(wire::run_prompt_request::Input::HistoryEntryId(7)))
+                .expect("valid")
+                .input,
+            PromptInput::Entry(7)
+        );
+        assert!(on(Some(wire::run_prompt_request::Input::HistoryEntryId(0))).is_err());
+        assert!(matches!(on(None), Err(ProtocolError::EmptyPrompt)));
     }
 
     #[test]
@@ -3846,24 +4640,30 @@ mod history_tests {
     fn entry() -> HistoryEntry {
         HistoryEntry {
             id: 42,
+            title: None,
+            content: aria_voice::history::HistoryContent::Dictation(
+                aria_voice::history::DictationContent {
+                    language: "en".to_owned(),
+                    engine: String::new(),
+                    own_voice_only: false,
+                    audio: aria_voice::history::AudioAvailability::Available {
+                        expires_at_ms: 2_000,
+                    },
+                    retrying: false,
+                },
+            ),
             created_at_ms: 1_000,
+            duration_ms: None,
             source: aria_voice::history::HistorySource::Local,
             application: None,
-            duration_ms: None,
+            project: None,
             text: "界".repeat(200),
             complete: false,
+            result_count: 0,
             status: aria_voice::history::HistoryStatus::TranscriptionFailed,
             error: None,
             warning: None,
-            audio: aria_voice::history::AudioAvailability::Available {
-                expires_at_ms: 2_000,
-            },
-            retrying: false,
             deletion_pending: false,
-            language: "en".to_owned(),
-            engine: String::new(),
-            own_voice_only: false,
-            project: None,
         }
     }
 
@@ -3878,6 +4678,7 @@ mod history_tests {
         ] {
             assert!(
                 HistoryQuery::try_from(wire::ListHistoryRequest {
+                    section: None,
                     query,
                     before_id,
                     limit
@@ -3887,14 +4688,126 @@ mod history_tests {
         }
         assert!(
             HistoryQuery::try_from(wire::ListHistoryRequest {
+                section: None,
                 query: "a_%".to_owned(),
                 before_id: Some(2),
                 limit: 100
             })
             .is_ok()
         );
+        let section_filter = |section| wire::ListHistoryRequest {
+            section,
+            limit: 10,
+            ..Default::default()
+        };
+        assert!(
+            HistoryQuery::try_from(section_filter(Some(
+                wire::HistorySection::Unspecified as i32
+            )))
+            .is_err()
+        );
+        assert!(HistoryQuery::try_from(section_filter(Some(99))).is_err());
+        assert_eq!(
+            HistoryQuery::try_from(section_filter(Some(wire::HistorySection::Listen as i32)))
+                .unwrap()
+                .section,
+            Some(aria_voice::history::HistorySection::Listen)
+        );
+        assert_eq!(
+            HistoryQuery::try_from(section_filter(None))
+                .unwrap()
+                .section,
+            None
+        );
         assert!(history_id(0).is_err());
         assert!(history_id(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn an_entry_keeps_its_project_folder_across_the_wire() {
+        let mut entry = entry();
+        entry.project = Some("/Users/me/code/aria".into());
+
+        let wire = wire::HistoryEntry::from(entry.clone());
+
+        assert_eq!(
+            wire.project_directory.as_deref(),
+            Some("/Users/me/code/aria")
+        );
+        assert_eq!(HistoryEntry::try_from(wire).unwrap().project, entry.project);
+    }
+
+    #[test]
+    fn list_cuts_an_ask_reply_as_it_cuts_the_question() {
+        let mut entry = entry();
+        entry.content = aria_voice::history::HistoryContent::Ask {
+            reply: "é".repeat(300),
+        };
+        let page = aria_voice::history::HistoryPage {
+            entries: vec![entry],
+            next_before_id: None,
+            warning: None,
+        };
+
+        let listed = wire::ListHistoryResponse::from(page);
+
+        let Some(wire::history_entry::Details::Reply(reply)) = &listed.entries[0].details else {
+            panic!("an ask lists its reply");
+        };
+        assert_eq!(reply.len(), 512);
+    }
+
+    #[test]
+    fn a_mac_audio_entry_carries_its_transcript_and_needs_one() {
+        use aria_voice::history::{HistoryContent, TranscriptRead};
+        let mut entry = entry();
+        entry.content = HistoryContent::Listen {
+            transcript: "/home/me/.aria/transcripts/a.txt".into(),
+            read: Some(TranscriptRead::Truncated),
+        };
+
+        let wire = wire::HistoryEntry::from(entry.clone());
+        assert_eq!(
+            HistoryEntry::try_from(wire.clone()).unwrap().content,
+            entry.content
+        );
+        let without = wire::HistoryEntry {
+            details: None,
+            ..wire.clone()
+        };
+        assert!(HistoryEntry::try_from(without).is_err());
+
+        let before_sections = wire::HistoryEntry {
+            section: wire::HistorySection::Unspecified as i32,
+            details: None,
+            ..wire.clone()
+        };
+        assert!(matches!(
+            HistoryEntry::try_from(before_sections).unwrap().content,
+            HistoryContent::Dictation(_)
+        ));
+        let unspecified_with_details = wire::HistoryEntry {
+            section: wire::HistorySection::Unspecified as i32,
+            ..wire
+        };
+        assert!(HistoryEntry::try_from(unspecified_with_details).is_err());
+    }
+
+    #[test]
+    fn a_rename_needs_an_id_and_a_title_that_isnt_blank() {
+        type Rename = (u64, Option<aria_voice::history::Title>);
+        let rename = |id, title: Option<&str>| {
+            Rename::try_from(wire::RenameHistoryRequest {
+                id,
+                title: title.map(str::to_owned),
+            })
+        };
+
+        assert!(rename(0, Some("Plan")).is_err());
+        assert!(rename(7, Some("  ")).is_err());
+        assert_eq!(rename(7, None).unwrap(), (7, None));
+        let (_, title) = rename(7, Some(" Plan ")).unwrap();
+        assert_eq!(title.unwrap().as_str(), "Plan");
     }
 
     #[test]
@@ -3927,7 +4840,7 @@ mod history_tests {
         let decoded = HistoryEntry::try_from(encoded.clone()).unwrap();
         assert_eq!(decoded.status, aria_voice::history::HistoryStatus::Success);
         assert_eq!(
-            decoded.audio,
+            decoded.audio(),
             aria_voice::history::AudioAvailability::Available {
                 expires_at_ms: 2_000
             }
@@ -3941,15 +4854,35 @@ mod history_tests {
             assert!(HistoryEntry::try_from(unexpected_expiry).is_err());
         }
         let mut missing_expiry = encoded;
-        missing_expiry.audio_expires_at_ms = None;
+        missing_expiry.audio_expire_time = None;
         assert!(HistoryEntry::try_from(missing_expiry).is_err());
+    }
+
+    #[test]
+    fn a_time_before_the_epoch_or_a_negative_span_is_refused() {
+        let encoded = wire::HistoryEntry::from(entry());
+        let mut before_epoch = encoded.clone();
+        before_epoch.create_time = Some(prost_types::Timestamp {
+            seconds: -1,
+            nanos: 0,
+        });
+        assert!(HistoryEntry::try_from(before_epoch).is_err());
+        let mut negative = encoded.clone();
+        negative.duration = Some(prost_types::Duration {
+            seconds: -1,
+            nanos: 0,
+        });
+        assert!(HistoryEntry::try_from(negative).is_err());
+        let mut undated = encoded;
+        undated.create_time = None;
+        assert!(HistoryEntry::try_from(undated).is_err());
     }
 
     #[test]
     fn history_pages_bound_utf8_previews_and_keep_full_text_separate() {
         let mut original = entry();
         original.project = Some("/private/project".into());
-        original.own_voice_only = true;
+        original.dictation_mut().unwrap().own_voice_only = true;
         let full = wire::HistoryEntry::from(original.clone());
         assert_eq!(full.text.len(), 600);
         assert!(full.can_regenerate);
@@ -3961,7 +4894,7 @@ mod history_tests {
         assert_eq!(page.entries[0].text.len(), 510);
         assert_eq!(page.entries[0].id, 42);
         let mut busy = entry();
-        busy.retrying = true;
+        busy.dictation_mut().unwrap().retrying = true;
         assert!(!wire::HistoryEntry::from(busy).can_regenerate);
     }
 
@@ -3976,6 +4909,14 @@ mod history_tests {
             (RpcErrorCode::HistoryUnavailable, tonic::Code::Unavailable),
             (
                 RpcErrorCode::HistoryProjectUnavailable,
+                tonic::Code::FailedPrecondition,
+            ),
+            (
+                RpcErrorCode::HistoryEntryEmpty,
+                tonic::Code::FailedPrecondition,
+            ),
+            (
+                RpcErrorCode::HistoryTranscriptUnreadable,
                 tonic::Code::FailedPrecondition,
             ),
         ] {

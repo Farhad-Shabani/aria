@@ -205,7 +205,8 @@ impl TargetPolicy {
     }
 }
 
-const MAX_TEXT_BYTES: usize = 64 * 1024;
+/// The most text one delivery types.
+pub const MAX_TEXT_BYTES: usize = 64 * 1024;
 const MAX_DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn validate_text(text: &str) -> Result<(), DeliveryError> {

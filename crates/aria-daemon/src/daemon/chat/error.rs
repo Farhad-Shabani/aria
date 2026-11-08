@@ -51,6 +51,9 @@ pub enum ChatError {
     #[error("that prompt is turned off")]
     PromptOff,
 
+    #[error("failed to read the history entry")]
+    History(#[source] aria_voice::history::HistoryError),
+
     #[error(transparent)]
     Instructions(#[from] InstructionsError),
 }
@@ -60,9 +63,11 @@ impl From<&ChatError> for RpcErrorCode {
         match error {
             ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
             ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
-            ChatError::Assistant(AssistantError::NoWorkdir(_))
-            | ChatError::UnknownPrompt
-            | ChatError::PromptOff => Self::InvalidRequest,
+            ChatError::Assistant(AssistantError::NoWorkdir(_)) | ChatError::PromptOff => {
+                Self::InvalidRequest
+            }
+            ChatError::UnknownPrompt => Self::PromptMissing,
+            ChatError::History(error) => Self::from(error),
             ChatError::Instructions(_) => Self::PromptUnreadable,
             ChatError::Assistant(AssistantError::Timeout(_)) => Self::AssistantTimeout,
             ChatError::Assistant(AssistantError::SignedOut { .. }) => Self::AssistantSignedOut,

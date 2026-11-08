@@ -56,7 +56,10 @@ pub use limits::{CleanupConfigError, CleanupTarget, MAX_DICTATION_TIMEOUT, is_va
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
 };
-pub use prompts::{Prompt, PromptError, PromptId, PromptKind, Prompts};
+pub use prompts::{
+    CLEANUP_PROMPT_FILE, EXTRACT_PROMPT_FILE, MAX_NAME_BYTES as MAX_PROMPT_NAME_BYTES, PROMPTS_DIR,
+    Prompt, PromptError, PromptId, PromptKind, Prompts, RESERVED_PROMPT_FILES,
+};
 pub use store::SettingsStore;
 pub use store::{SettingsPatch, SettingsSnapshot, UpdateResult};
 pub use watch::{SettingsCache, SettingsPoll};

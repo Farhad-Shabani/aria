@@ -11,6 +11,7 @@ mod chat;
 mod context;
 mod dictation;
 pub mod guided;
+mod history;
 mod host;
 mod hotkey;
 mod inference;
@@ -34,7 +35,6 @@ mod subscriptions;
 mod tasks;
 #[cfg(test)]
 mod testing;
-mod transcripts;
 mod vocabulary;
 mod wake;
 
@@ -68,13 +68,15 @@ pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream, TransportFailure};
 pub use aria_assistant::chat::{
     Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
-    Focus, Project, ProjectsError, Step, Ticket,
+    Focus, Instructions, Project, ProjectsError, PromptCall, PromptChoice, PromptInput, Step,
+    Ticket,
 };
 pub use aria_platform::delivery::OutputMode;
 pub use aria_settings::DeliveryMode;
 pub use aria_settings::config::AssistantId;
 pub use aria_voice::dictation::{
-    DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
+    DictationOutcome, DictationRequest, DictationResult, DictationRoute, DictationStage,
+    RecordingId, StopMode,
 };
 pub use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,

@@ -8,7 +8,7 @@
 - [Mac dictation](./macos.md)
 - [Linux dictation](./linux.md)
 - [Terminal dictation](./transcription.md)
-- [Dictation history](./history.md)
+- [History](./history.md)
 - [Read text aloud](./tts.md)
 - [Ask a question](./voice-chat.md)
 - [Prompts (Mac)](./prompts.md)

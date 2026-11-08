@@ -4,17 +4,20 @@
 
 use super::super::config::{load_chat, load_memory};
 use super::super::context::Context;
+use super::super::history::HistoryStore;
 use super::super::subscriptions::Subscriptions;
 use super::error::{ChatError, ResolveError};
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
     AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
     CODEX_BINARY, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
-    ChatSubscribers, ClaudeCodeAssistant, CodexAssistant, Projects, PromptCall, PromptRequest,
-    PromptRun, Session, SessionSpec, SessionStore, Step, Ticket, TurnSink, read_instructions,
+    ChatSubscribers, ClaudeCodeAssistant, CodexAssistant, DeliverCall, Projects, PromptCall,
+    PromptChoice, PromptInput, PromptInstructions, PromptRequest, PromptRun, Session, SessionSpec,
+    SessionStore, Step, Ticket, TurnSink, read_instructions,
 };
 use aria_assistant::memory::MemoryConfig;
 use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
+use aria_assistant::prompts::{self, PromptContents, PromptDraft, PromptSource, SaveError};
 use aria_kit::cancel::CancelToken;
 use aria_platform::delivery::{
     DeliveryError, DeliveryFactory, DeliveryOutcome, OutputMode, PlatformTextDelivery,
@@ -22,13 +25,14 @@ use aria_platform::delivery::{
 };
 use aria_primitives::error_chain;
 use aria_settings::config::AssistantId;
-use aria_settings::rpc::RpcErrorCode;
-use aria_settings::{ApplicationId, SettingsCache, SettingsStore};
+use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::{ApplicationId, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore};
 use aria_voice::config::SpeakerConfig;
+use aria_voice::history::HistoryEntry;
 use aria_voice::speaker::{ProfileStore, Role};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 /// Resume ids outlive the daemon and a reboot, like the assistants' own history.
@@ -61,7 +65,7 @@ pub(in crate::daemon) struct ChatRuntime {
     codex_home: PathBuf,
     sessions: SessionStore,
     #[cfg(test)]
-    assistant_overrides: Option<tests::AssistantOverrides>,
+    pub(in crate::daemon) assistant_overrides: Option<tests::AssistantOverrides>,
     /// Read per ask, so a reply never types into an app with Aria off.
     settings: Arc<SettingsStore>,
     /// Read per ask, so an edit applies to the next ask.
@@ -70,6 +74,9 @@ pub(in crate::daemon) struct ChatRuntime {
     /// in a daemon that runs no backlog.
     memory_wake: Option<mpsc::Sender<()>>,
     delivery: DeliveryFactory,
+    typing: TypingTurns,
+    /// Where asks and prompt results are saved, while history is on.
+    history: Arc<HistoryStore>,
 }
 
 impl ChatRuntime {
@@ -80,6 +87,7 @@ impl ChatRuntime {
         settings: Arc<SettingsStore>,
         cache: Arc<SettingsCache>,
         memory_wake: Option<mpsc::Sender<()>>,
+        history: Arc<HistoryStore>,
     ) -> Self {
         Self {
             emitter: event_emitter(context, subscriptions),
@@ -90,6 +98,8 @@ impl ChatRuntime {
             cache,
             memory_wake,
             delivery: context.delivery.clone(),
+            typing: TypingTurns::default(),
+            history,
             #[cfg(test)]
             assistant_overrides: None,
         }
@@ -222,30 +232,89 @@ impl ChatRuntime {
         });
     }
 
-    /// The prompt and assistant as stored now; a later edit applies to the
-    /// next run.
+    /// The contents of a prompt's file. For a stored prompt, that is the file the list names now.
+    pub(in crate::daemon) fn prompt_contents(
+        &self,
+        source: PromptSource,
+    ) -> Result<PromptContents, ChatError> {
+        let file = match source {
+            PromptSource::File(file) => file,
+            PromptSource::Stored(id) => self
+                .settings
+                .snapshot()
+                .map_err(ChatError::Settings)?
+                .settings
+                .prompts
+                .find(id.as_str())
+                .ok_or(ChatError::UnknownPrompt)?
+                .file()
+                .to_path_buf(),
+        };
+        Ok(prompts::contents(&file)?)
+    }
+
+    /// Saves through the daemon's own store, so the prompt reaches its cache,
+    /// and each client that watches settings, at once.
+    pub(in crate::daemon) fn save_prompt(&self, draft: PromptDraft) -> Result<Prompt, SaveError> {
+        prompts::save(&self.home, &self.settings, draft)
+    }
+
+    pub(in crate::daemon) fn remove_prompt(&self, id: &PromptId) -> Result<Prompt, SaveError> {
+        prompts::remove(&self.settings, id)
+    }
+
+    /// The prompt and assistant as stored now. A later edit applies to the next run. A one-off
+    /// prompt needs no stored prompt.
     pub(in crate::daemon) fn prompt_request(
         &self,
         call: PromptCall,
     ) -> Result<PromptRequest, ChatError> {
         let snapshot = self.settings.snapshot().map_err(ChatError::Settings)?;
-        let prompt = snapshot
-            .settings
-            .prompts
-            .find(call.prompt.as_str())
-            .ok_or(ChatError::UnknownPrompt)?;
-        if !prompt.enabled() {
-            return Err(ChatError::PromptOff);
-        }
+        let (name, kind, instructions) = match call.prompt {
+            PromptChoice::Stored(id) => {
+                let prompt = snapshot
+                    .settings
+                    .prompts
+                    .find(id.as_str())
+                    .ok_or(ChatError::UnknownPrompt)?;
+                if !prompt.enabled() {
+                    return Err(ChatError::PromptOff);
+                }
+                (
+                    prompt.name().to_owned(),
+                    prompt.kind(),
+                    PromptInstructions::File(prompt.file().to_path_buf()),
+                )
+            }
+            PromptChoice::OneOff(instructions) => (
+                prompts::one_off_name(&instructions),
+                PromptKind::Compose,
+                PromptInstructions::OneOff(instructions),
+            ),
+        };
         let assistant_id = snapshot.settings.resolve_assistant_id();
+        let (text, entry) = match call.input {
+            PromptInput::Text(text) => (text, None),
+            PromptInput::Entry(id) => {
+                let text = self
+                    .history
+                    .get(id)
+                    .and_then(HistoryEntry::prompt_text)
+                    .map_err(ChatError::History)?;
+                (text, Some(id))
+            }
+        };
         Ok(PromptRequest {
-            text: call.text,
-            kind: prompt.kind(),
-            file: prompt.file().to_path_buf(),
+            text,
+            name,
+            entry,
+            kind,
+            instructions,
             assistant_id,
             model_id: snapshot.settings.model_id(assistant_id).map(str::to_owned),
             application: call.application,
             tap_cancels: call.tap_cancels,
+            output_mode: call.output_mode,
         })
     }
 
@@ -300,6 +369,15 @@ impl ChatRuntime {
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
         let config = self.chat_config();
+        // Read as the run starts rather than at admission, so turning history
+        // off while the ask waited keeps its reply out of history.
+        let saves_history = self
+            .settings
+            .snapshot()
+            .map_err(ChatError::Settings)?
+            .settings
+            .history_enabled;
+        let started = (SystemTime::now(), Instant::now());
         if !request.workdir.is_dir() {
             return Err(ChatError::Assistant(AssistantError::NoWorkdir(
                 request.workdir,
@@ -351,9 +429,23 @@ impl ChatRuntime {
 
         let delivered = match (refused, delivery) {
             (Some(code), _) => Some(Err(code)),
-            (None, Some(delivery)) => Some(delivery.deliver(&text, cancel)),
+            (None, Some(delivery)) => Some(delivery.deliver(&text, &self.typing, cancel)),
             (None, None) => None,
         };
+        // Saved before the reply goes out, so whoever hears it finds it saved.
+        if saves_history {
+            let failure = delivered
+                .and_then(Result::err)
+                .map(|code| RpcFailure::new(code, "the reply couldn't be typed"));
+            // The question as asked, before any memory was added to it.
+            self.history.save_ask(
+                &request.text,
+                &text,
+                &request.workdir,
+                elapsed_ms(started),
+                failure,
+            );
+        }
         Ok(replied(text, delivered))
     }
 
@@ -368,19 +460,72 @@ impl ChatRuntime {
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
         let config = self.chat_config();
-        let delivery = Delivery::prepare(
-            OutputMode::InsertOrCopy,
-            self.target_policy(request.application.as_ref())?,
-            config.delivery_timeout,
-            &self.delivery,
-            cancel,
-        )?;
+        // Read as the run starts, as an ask's is.
+        let saves_result = request.entry.is_some()
+            && self
+                .settings
+                .snapshot()
+                .map_err(ChatError::Settings)?
+                .settings
+                .history_enabled;
+        let started = (SystemTime::now(), Instant::now());
+        // Prepared before the run, so a front app that refuses typing fails
+        // it before the assistant spends any time.
+        let delivery = request
+            .output_mode
+            .map(|mode| {
+                Delivery::prepare(
+                    mode,
+                    self.target_policy(request.application.as_ref())?,
+                    config.delivery_timeout,
+                    &self.delivery,
+                    cancel,
+                )
+            })
+            .transpose()?;
         let text = self.prompt_answer(assistant, &request, config.timeout, cancel)?;
         if cancel.is_cancelled() {
             return Err(ChatError::Assistant(AssistantError::Cancelled));
         }
-        let delivered = delivery.deliver(&text, cancel);
-        Ok(replied(text, Some(delivered)))
+        let delivered = delivery.map(|delivery| delivery.deliver(&text, &self.typing, cancel));
+        // Saved before the reply goes out, so whoever shows it finds it saved.
+        if let Some(entry) = request
+            .entry
+            .filter(|_| saves_result && !text.trim().is_empty())
+        {
+            let (created_at_ms, _) = elapsed_ms(started);
+            self.history
+                .save_result(entry, &request.name, &text, created_at_ms);
+        }
+        Ok(replied(text, delivered))
+    }
+
+    pub(in crate::daemon) fn deliver(
+        &self,
+        call: &DeliverCall,
+        cancel: &CancelToken,
+    ) -> Result<DeliveryOutcome, ChatError> {
+        #[cfg(test)]
+        if let Some(deliver) = self
+            .assistant_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.deliver.as_ref())
+        {
+            return deliver(call, cancel);
+        }
+        if cancel.is_cancelled() {
+            return Err(ChatError::Delivery(DeliveryError::Cancelled));
+        }
+        let config = self.chat_config();
+        Delivery::prepare(
+            call.output_mode,
+            self.target_policy(call.application.as_ref())?,
+            config.delivery_timeout,
+            &self.delivery,
+            cancel,
+        )?
+        .send(&call.text, &self.typing, cancel)
+        .map_err(ChatError::Delivery)
     }
 
     fn prompt_answer<A: Assistant>(
@@ -390,11 +535,14 @@ impl ChatRuntime {
         timeout: Duration,
         cancel: &CancelToken,
     ) -> Result<String, ChatError> {
-        let instructions = read_instructions(&request.file)?;
+        let instructions = match &request.instructions {
+            PromptInstructions::File(path) => read_instructions(path)?,
+            PromptInstructions::OneOff(instructions) => instructions.clone(),
+        };
         let run = PromptRun {
             model_id: request.model_id.as_deref(),
             kind: request.kind,
-            instructions: &instructions,
+            instructions: instructions.as_str(),
             transcript: &request.text,
         };
         assistant
@@ -597,10 +745,27 @@ impl Delivery {
 
     /// Types the reply at the target; a failure is reported, not fatal,
     /// because the reply itself still reaches the caller.
-    fn deliver(self, text: &str, cancel: &CancelToken) -> Result<DeliveryOutcome, RpcErrorCode> {
+    fn deliver(
+        self,
+        text: &str,
+        typing: &TypingTurns,
+        cancel: &CancelToken,
+    ) -> Result<DeliveryOutcome, RpcErrorCode> {
+        self.send(text, typing, cancel).map_err(|failed| {
+            tracing::warn!(error = %error_chain(&failed), "the reply was not delivered");
+            RpcErrorCode::from(&ChatError::Delivery(failed))
+        })
+    }
+
+    fn send(
+        self,
+        text: &str,
+        typing: &TypingTurns,
+        cancel: &CancelToken,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
+        let _turn = typing.take(cancel)?;
         let text = self.platform.caret(&self.target).insert(text);
-        match self
-            .policy
+        self.policy
             .confirm_front(&self.platform)
             .and_then(|()| {
                 self.platform
@@ -612,14 +777,43 @@ impl Delivery {
                         .finish(&self.target, || cancel.is_cancelled())?;
                 }
                 Ok(outcome)
-            }) {
-            Ok(outcome) => Ok(outcome),
-            Err(failed) => {
-                tracing::warn!(error = %error_chain(&failed), "the reply was not delivered");
-                Err(RpcErrorCode::from(&ChatError::Delivery(failed)))
-            }
-        }
+            })
     }
+}
+
+/// Typing takes turns across asks, prompt runs and saved text, so two texts
+/// never interleave in one app. Only the typing holds a turn, never the
+/// assistant's run before it.
+///
+/// The turn is a lock held across blocking work, because waiting is the point. Each delivery's own
+/// timeout bounds how long a turn lasts. A separate typing thread can't do the typing, since a
+/// prepared macOS target holds Accessibility handles that stay on the thread that made them.
+#[derive(Default)]
+struct TypingTurns(Mutex<()>);
+
+impl TypingTurns {
+    /// Waits for the text typing now, then refuses if cancelled meanwhile.
+    fn take(&self, cancel: &CancelToken) -> Result<MutexGuard<'_, ()>, DeliveryError> {
+        if cancel.is_cancelled() {
+            return Err(DeliveryError::Cancelled);
+        }
+        // The lock guards no data, so a panic while typing leaves nothing
+        // to repair.
+        let turn = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if cancel.is_cancelled() {
+            return Err(DeliveryError::Cancelled);
+        }
+        Ok(turn)
+    }
+}
+
+/// When an operation began, and how long it has run, in milliseconds.
+fn elapsed_ms((created, started): (SystemTime, Instant)) -> (u64, u64) {
+    let created_at_ms = created
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    (created_at_ms, started.elapsed().as_millis() as u64)
 }
 
 /// A reply, and what became of its delivery when one was asked for.
@@ -652,7 +846,9 @@ pub(super) mod tests {
     use std::sync::Mutex;
     use std::sync::mpsc::{Sender, channel};
 
+    use aria_assistant::chat::Instructions;
     use aria_settings::PromptKind;
+    use aria_voice::history::{HistoryContent, HistoryError};
 
     use super::*;
 
@@ -661,21 +857,25 @@ pub(super) mod tests {
         + Send
         + Sync;
     type CheckReady = dyn Fn(AssistantId, &CancelToken) -> AssistantStatus + Send + Sync;
+    type DeliverText =
+        dyn Fn(&DeliverCall, &CancelToken) -> Result<DeliveryOutcome, ChatError> + Send + Sync;
 
-    pub(super) struct AssistantOverrides {
+    pub(in crate::daemon) struct AssistantOverrides {
         pub(super) execute: Box<ExecuteAssistant>,
         pub(super) models: Box<DiscoverModels>,
         pub(super) ready: Box<CheckReady>,
+        /// `None` types for real.
+        pub(in crate::daemon) deliver: Option<Box<DeliverText>>,
     }
 
     /// Records what it was asked and answers with a fresh id each turn.
     #[derive(Default)]
-    pub(in crate::daemon::chat) struct Log {
+    pub(in crate::daemon) struct Log {
         pub(in crate::daemon::chat) sessions: Vec<Option<String>>,
         pub(in crate::daemon::chat) prompts: Vec<String>,
     }
 
-    pub(in crate::daemon::chat) struct FakeAssistant(pub(in crate::daemon::chat) Arc<Mutex<Log>>);
+    pub(in crate::daemon) struct FakeAssistant(pub(in crate::daemon::chat) Arc<Mutex<Log>>);
 
     impl Assistant for FakeAssistant {
         type Session = FakeSession;
@@ -730,7 +930,7 @@ pub(super) mod tests {
             let shutdown = tokio_util::sync::CancellationToken::new();
             let rpc = ChatRpc::new(
                 handle,
-                runtime,
+                Arc::clone(&runtime),
                 DaemonLifetime::Persistent,
                 shutdown.clone(),
             );
@@ -756,7 +956,7 @@ pub(super) mod tests {
         }
     }
 
-    pub(in crate::daemon::chat) struct FakeSession {
+    pub(in crate::daemon) struct FakeSession {
         log: Arc<Mutex<Log>>,
         resume: Option<String>,
     }
@@ -787,12 +987,22 @@ pub(super) mod tests {
         }
     }
 
-    pub(in crate::daemon::chat) fn runtime_with<A: Assistant + 'static>(
+    pub(in crate::daemon) fn runtime_with<A: Assistant + 'static>(
         directory: &Path,
         assistant_factory: impl Fn(AssistantId) -> A + Send + Sync + 'static,
     ) -> (ChatRuntime, std::sync::mpsc::Receiver<ChatStage>) {
         let (runtime, received, _wake) = runtime_waking(directory, assistant_factory);
         (runtime, received)
+    }
+
+    impl ChatRuntime {
+        pub(in crate::daemon) fn settings(&self) -> &SettingsStore {
+            &self.settings
+        }
+
+        pub(in crate::daemon) fn cache(&self) -> &SettingsCache {
+            &self.cache
+        }
     }
 
     fn runtime_waking<A: Assistant + 'static>(
@@ -832,11 +1042,14 @@ pub(super) mod tests {
                 ready: Box::new(move |assistant_id, cancel| {
                     assistant_factory(assistant_id).check_ready(cancel)
                 }),
+                deliver: None,
             }),
             settings: Arc::new(SettingsStore::new(Arc::clone(&cache))),
             cache,
             memory_wake: Some(wake),
             delivery: DeliveryFactory::detect(directory),
+            typing: TypingTurns::default(),
+            history: Arc::new(HistoryStore::open(&directory.join(".aria/history"))),
         };
         (runtime, received, woken)
     }
@@ -877,12 +1090,15 @@ pub(super) mod tests {
     fn prompt_request(file: PathBuf) -> PromptRequest {
         PromptRequest {
             text: "um send it friday".to_owned(),
+            name: "Polish".to_owned(),
+            entry: None,
             kind: PromptKind::Rewrite,
-            file,
+            instructions: PromptInstructions::File(file),
             assistant_id: AssistantId::ClaudeCode,
             model_id: None,
             application: None,
             tap_cancels: false,
+            output_mode: Some(OutputMode::InsertOrCopy),
         }
     }
 
@@ -984,10 +1200,11 @@ pub(super) mod tests {
             })
             .unwrap();
         let call = || PromptCall {
-            text: "hi".to_owned(),
-            prompt: PromptId::new("polish").unwrap(),
+            input: PromptInput::Text("hi".to_owned()),
+            prompt: PromptChoice::Stored(PromptId::new("polish").unwrap()),
             application: None,
             tap_cancels: false,
+            output_mode: None,
         };
         assert_eq!(
             runtime.prompt_request(call()).unwrap().assistant_id,
@@ -1050,30 +1267,35 @@ pub(super) mod tests {
             .expect("stored");
 
         let call = |id: &str| PromptCall {
-            text: "hi".to_owned(),
-            prompt: PromptId::new(id).expect("id"),
+            input: PromptInput::Text("hi".to_owned()),
+            prompt: PromptChoice::Stored(PromptId::new(id).expect("id")),
             application: None,
             tap_cancels: false,
+            output_mode: None,
         };
         let request = runtime
             .prompt_request(call("on"))
             .expect("an enabled prompt");
-        assert_eq!(request.file, home.path().join("on.md"));
+        assert_eq!(
+            request.instructions,
+            PromptInstructions::File(home.path().join("on.md"))
+        );
         assert!(matches!(
             runtime.prompt_request(call("off")),
             Err(ChatError::PromptOff)
         ));
-        assert!(matches!(
-            runtime.prompt_request(call("gone")),
-            Err(ChatError::UnknownPrompt)
-        ));
+        let gone = runtime.prompt_request(call("gone"));
+        assert!(matches!(gone, Err(ChatError::UnknownPrompt)));
+        assert_eq!(
+            gone.as_ref().map_err(RpcErrorCode::from).err(),
+            Some(RpcErrorCode::PromptMissing)
+        );
     }
 
     #[test]
     fn a_prompt_run_for_an_app_no_longer_in_front_never_reaches_the_assistant() {
         let home = tempfile::tempdir().expect("a temp home");
-        let file = home.path().join("polish.md");
-        std::fs::write(&file, "Fix grammar.").expect("the prompt file");
+        let file = prompt_file(home.path(), "Fix grammar.");
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
         let request = PromptRequest {
@@ -1097,10 +1319,90 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn typing_takes_turns_and_a_cancel_while_waiting_types_nothing() {
+        let turns = Arc::new(TypingTurns::default());
+        let first = turns.take(&CancelToken::never()).expect("the first turn");
+        let cancel = CancelToken::new();
+        let waiting = {
+            let (turns, cancel) = (Arc::clone(&turns), cancel.clone());
+            std::thread::spawn(move || turns.take(&cancel).map(drop))
+        };
+
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !waiting.is_finished(),
+            "the second waits while the first types"
+        );
+        cancel.cancel();
+        drop(first);
+
+        let second = waiting.join().expect("the waiting thread ends");
+        assert!(
+            matches!(second, Err(DeliveryError::Cancelled)),
+            "{second:?}"
+        );
+        assert!(
+            turns.take(&CancelToken::never()).is_ok(),
+            "the turn is free again"
+        );
+    }
+
+    #[test]
+    fn a_delivery_types_only_into_the_app_it_names() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+
+        let error = runtime
+            .deliver(
+                &DeliverCall {
+                    text: "Polished.".to_owned(),
+                    application: Some(ApplicationId::new("com.example.left-behind").expect("id")),
+                    output_mode: OutputMode::InsertOrCopy,
+                },
+                &CancelToken::never(),
+            )
+            .expect_err("the named app is not in front");
+
+        assert!(matches!(
+            error,
+            ChatError::Delivery(DeliveryError::TargetChanged)
+        ));
+    }
+
+    #[test]
+    fn a_prompt_run_without_an_output_mode_replies_without_checking_or_typing() {
+        let home = home_with_memory();
+        let file = prompt_file(home.path(), "Fix grammar.");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
+        let request = PromptRequest {
+            application: Some(ApplicationId::new("com.example.left-behind").expect("id")),
+            output_mode: None,
+            ..prompt_request(file)
+        };
+
+        let reply = runtime
+            .run_prompt(
+                &FakeAssistant(Arc::clone(&log)),
+                request,
+                &CancelToken::never(),
+            )
+            .expect("a run that types nothing needs no app in front");
+
+        assert_eq!(
+            reply,
+            ChatStageKind::Replied(ChatReply {
+                text: "Polished.".to_owned(),
+                delivery_error: None,
+                copied: false,
+            })
+        );
+    }
+
+    #[test]
     fn a_prompt_run_hands_one_fresh_run_the_instructions_then_the_transcript() {
         let home = home_with_memory();
-        let instructions = home.path().join("polish.md");
-        std::fs::write(&instructions, "Fix grammar.").expect("the prompt file");
+        let instructions = prompt_file(home.path(), "Fix grammar.");
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
 
@@ -1127,8 +1429,7 @@ pub(super) mod tests {
     #[test]
     fn a_signed_out_prompt_run_says_so() {
         let home = home_with_memory();
-        let instructions = home.path().join("polish.md");
-        std::fs::write(&instructions, "Fix grammar.").expect("the prompt file");
+        let instructions = prompt_file(home.path(), "Fix grammar.");
         let (runtime, _events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
             signed_out: true,
         });
@@ -1229,6 +1530,307 @@ pub(super) mod tests {
         assert!(woken.try_recv().is_err());
     }
 
+    fn asks(runtime: &ChatRuntime) -> Vec<HistoryEntry> {
+        runtime
+            .history
+            .list(aria_voice::history::HistoryQuery {
+                section: Some(aria_voice::history::HistorySection::Ask),
+                query: String::new(),
+                before_id: None,
+                limit: 100,
+            })
+            .expect("history lists")
+            .entries
+    }
+
+    #[test]
+    fn a_replied_ask_is_saved_with_the_question_as_asked_and_its_reply() {
+        let home = home_with_memory();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+
+        let reply = replied(run(
+            &runtime,
+            &events,
+            1,
+            request("When?", home.path(), false),
+        ));
+
+        let saved = asks(&runtime);
+        let [saved] = saved.as_slice() else {
+            panic!("one ask, got {}", saved.len());
+        };
+        assert_eq!(saved.text, "When?", "the memory profile stays out");
+        assert_eq!(saved.content, HistoryContent::Ask { reply });
+        assert_eq!(saved.project.as_deref(), Some(home.path()));
+    }
+
+    #[test]
+    fn an_ask_with_history_off_or_that_failed_is_not_saved() {
+        let home = tempfile::tempdir().expect("a temp home");
+        std::fs::create_dir_all(home.path().join(".aria")).expect("the settings folder");
+        std::fs::write(
+            home.path().join(".aria/settings.toml"),
+            "[history]\nenabled = false\n",
+        )
+        .expect("the settings file");
+        let (off, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        replied(run(&off, &events, 1, request("hi", home.path(), false)));
+        assert!(asks(&off).is_empty());
+
+        let home = tempfile::tempdir().expect("a temp home");
+        let (failing, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
+            signed_out: false,
+        });
+        let kind = run(&failing, &events, 1, request("hi", home.path(), false));
+        assert!(matches!(kind, ChatStageKind::Failed { .. }));
+        assert!(asks(&failing).is_empty());
+    }
+
+    fn prompt_file(home: &Path, text: &str) -> PathBuf {
+        let file = home.join("polish.md");
+        std::fs::write(&file, text).expect("the prompt file");
+        file
+    }
+
+    fn saved_entry(runtime: &ChatRuntime, home: &Path, reply: &str) -> u64 {
+        runtime.history.save_ask(
+            "When?",
+            reply,
+            home,
+            elapsed_ms((SystemTime::now(), Instant::now())),
+            None,
+        );
+        asks(runtime)[0].id
+    }
+
+    /// Stores `file` as the prompt `name` and admits a run of it on `entry`.
+    fn entry_request(
+        runtime: &ChatRuntime,
+        entry: u64,
+        name: &str,
+        file: PathBuf,
+    ) -> Result<PromptRequest, ChatError> {
+        use aria_settings::{Prompt, PromptId, Prompts, SettingsPatch};
+
+        let prompt = Prompt::new(
+            PromptId::new("polish").expect("id"),
+            name.to_owned(),
+            PromptKind::Rewrite,
+            file,
+            true,
+            None,
+        )
+        .expect("prompt");
+        runtime
+            .settings
+            .modify(SettingsPatch {
+                prompts: Some(Prompts::new(vec![prompt]).expect("prompts")),
+                ..SettingsPatch::default()
+            })
+            .expect("stored");
+        runtime.prompt_request(PromptCall {
+            input: PromptInput::Entry(entry),
+            prompt: PromptChoice::Stored(PromptId::new("polish").expect("id")),
+            application: None,
+            tap_cancels: false,
+            output_mode: None,
+        })
+    }
+
+    fn run_on(
+        runtime: &ChatRuntime,
+        assistant: &impl Assistant,
+        entry: u64,
+        file: PathBuf,
+    ) -> Result<ChatStageKind, ChatError> {
+        let request = entry_request(runtime, entry, "Polish", file)?;
+        runtime.run_prompt(assistant, request, &CancelToken::never())
+    }
+
+    #[test]
+    fn a_prompt_run_on_an_entry_reads_its_reply_and_saves_the_result_under_it() {
+        let home = home_with_memory();
+        let file = prompt_file(home.path(), "Fix grammar.");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
+        let entry = saved_entry(&runtime, home.path(), "Friday at noon.");
+
+        let request = entry_request(&runtime, entry, "Polish", file).expect("the run is admitted");
+        assert_eq!(
+            (request.entry, request.name.as_str(), request.text.as_str()),
+            (Some(entry), "Polish", "Friday at noon.")
+        );
+        runtime
+            .run_prompt(
+                &FakeAssistant(Arc::clone(&log)),
+                request,
+                &CancelToken::never(),
+            )
+            .expect("the run replies");
+
+        assert!(log.lock().unwrap().prompts[0].contains("Friday at noon."));
+        let results = runtime.history.results(entry).expect("results list");
+        let [result] = results.as_slice() else {
+            panic!("one result, got {}", results.len());
+        };
+        assert_eq!(
+            (result.prompt_name.as_str(), result.text.as_str()),
+            ("Polish", "Polished.")
+        );
+    }
+
+    #[test]
+    fn a_one_off_prompt_runs_its_own_instructions_as_compose_and_saves_under_its_first_line() {
+        let home = home_with_memory();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&log));
+        let entry = saved_entry(&runtime, home.path(), "Friday at noon.");
+
+        // No prompt is stored: a one-off needs none.
+        let request = runtime
+            .prompt_request(PromptCall {
+                input: PromptInput::Entry(entry),
+                prompt: PromptChoice::OneOff(
+                    Instructions::new("\n  List the action items. \nKeep it short.".into())
+                        .unwrap(),
+                ),
+                application: None,
+                tap_cancels: false,
+                output_mode: None,
+            })
+            .expect("the run is admitted");
+        assert_eq!(
+            (request.name.as_str(), request.kind),
+            ("List the action items.", PromptKind::Compose)
+        );
+        runtime
+            .run_prompt(
+                &FakeAssistant(Arc::clone(&log)),
+                request,
+                &CancelToken::never(),
+            )
+            .expect("the run replies");
+
+        let prompt = log.lock().unwrap().prompts.pop().expect("one prompt run");
+        assert!(prompt.starts_with("\n  List the action items. \nKeep it short."));
+        let results = runtime.history.results(entry).expect("results");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].prompt_name, "List the action items.");
+    }
+
+    #[test]
+    fn a_prompt_cannot_run_on_a_blank_entry() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        runtime.history.save_ask(
+            "When?",
+            " \n",
+            home.path(),
+            elapsed_ms((SystemTime::now(), Instant::now())),
+            None,
+        );
+        let entry = asks(&runtime)[0].id;
+
+        let error = entry_request(&runtime, entry, "Polish", home.path().join("polish.md"))
+            .expect_err("the entry has no text");
+
+        assert!(matches!(
+            error,
+            ChatError::History(HistoryError::EntryEmpty)
+        ));
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::HistoryEntryEmpty);
+    }
+
+    #[test]
+    fn a_prompt_runs_only_on_a_mac_audio_transcript_read_whole() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let folder = home.path().join("transcripts");
+        std::fs::create_dir(&folder).expect("the transcript folder");
+        let transcript = folder.join("session.txt");
+        std::fs::write(&transcript, "[00:00:01] Ship it Friday.").expect("the transcript");
+        let (created_at_ms, _) = elapsed_ms((SystemTime::now(), Instant::now()));
+        runtime
+            .history
+            .save_transcript(&transcript, created_at_ms, 1_000, None);
+        let entry = runtime
+            .history
+            .list(aria_voice::history::HistoryQuery {
+                section: Some(aria_voice::history::HistorySection::Listen),
+                query: String::new(),
+                before_id: None,
+                limit: 1,
+            })
+            .expect("history lists")
+            .entries[0]
+            .id;
+        let file = home.path().join("polish.md");
+        assert_eq!(
+            entry_request(&runtime, entry, "Polish", file.clone())
+                .expect("the whole transcript is read")
+                .text,
+            "[00:00:01] Ship it Friday."
+        );
+
+        std::fs::remove_dir_all(&folder).expect("the transcript's folder goes");
+        let error =
+            entry_request(&runtime, entry, "Polish", file).expect_err("only the excerpt is left");
+
+        assert!(matches!(
+            error,
+            ChatError::History(HistoryError::TranscriptUnreadable)
+        ));
+        assert_eq!(
+            RpcErrorCode::from(&error),
+            RpcErrorCode::HistoryTranscriptUnreadable
+        );
+    }
+
+    #[test]
+    fn a_prompt_run_with_history_off_or_that_failed_saves_no_result() {
+        let home = tempfile::tempdir().expect("a temp home");
+        std::fs::create_dir_all(home.path().join(".aria")).expect("the settings folder");
+        std::fs::write(
+            home.path().join(".aria/settings.toml"),
+            "[history]\nenabled = false\n",
+        )
+        .expect("the settings file");
+        let file = prompt_file(home.path(), "Fix grammar.");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (off, _events) = runtime_with(home.path(), logging_assistants(&log));
+        let entry = saved_entry(&off, home.path(), "Friday at noon.");
+        run_on(&off, &FakeAssistant(log), entry, file).expect("the run replies");
+        assert!(off.history.results(entry).expect("results list").is_empty());
+
+        let home = tempfile::tempdir().expect("a temp home");
+        prompt_file(home.path(), "Fix grammar.");
+        let (failing, _events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
+            signed_out: false,
+        });
+        let entry = saved_entry(&failing, home.path(), "Friday at noon.");
+        let failed = FailingAssistant { signed_out: false };
+        assert!(run_on(&failing, &failed, entry, home.path().join("polish.md")).is_err());
+        assert!(
+            failing
+                .history
+                .results(entry)
+                .expect("results list")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_prompt_cannot_run_on_a_missing_entry() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+
+        assert!(matches!(
+            entry_request(&runtime, 99, "Polish", home.path().join("polish.md")),
+            Err(ChatError::History(HistoryError::Missing))
+        ));
+    }
+
     #[test]
     fn a_failed_turn_is_not_kept() {
         let home = home_with_memory();
@@ -1298,7 +1900,7 @@ pub(super) mod tests {
         }
     }
 
-    pub(in crate::daemon::chat) fn logging_assistants(
+    pub(in crate::daemon) fn logging_assistants(
         log: &Arc<Mutex<Log>>,
     ) -> impl Fn(AssistantId) -> FakeAssistant + Send + Sync + 'static {
         let log = Arc::clone(log);
@@ -1537,7 +2139,7 @@ pub(super) mod tests {
         let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
         let rpc = ChatRpc::new(
             handle,
-            runtime,
+            Arc::clone(&runtime),
             DaemonLifetime::Persistent,
             tokio_util::sync::CancellationToken::new(),
         );
@@ -1794,18 +2396,8 @@ pub(super) mod tests {
         ) -> Result<(), AssistantError> {
             let turn: u64 = text.parse().expect("prompts are turn numbers");
             let _ = self.started.send(turn);
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                if cancel.is_cancelled() {
-                    return Err(AssistantError::Cancelled);
-                }
-                // Held only to look: a session waiting under the lock kept
-                // the other from seeing its cancel.
-                let released = self.release.lock().expect("not poisoned").try_recv();
-                if released.is_ok() || std::time::Instant::now() >= deadline {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(20));
+            if !park(&self.release, cancel) {
+                return Err(AssistantError::Cancelled);
             }
             self.resume = Some(format!("session-{turn}"));
             sink.text(&format!("reply {turn}"));
@@ -1814,6 +2406,57 @@ pub(super) mod tests {
 
         fn resume_id(&self) -> Option<&str> {
             self.resume.as_deref()
+        }
+    }
+
+    /// Waits for a release or the deadline. Returns `false` when cancelled first.
+    fn park(release: &Mutex<std::sync::mpsc::Receiver<()>>, cancel: &CancelToken) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if cancel.is_cancelled() {
+                return false;
+            }
+            // Held only to look, since a job waiting under the lock would keep the other from
+            // seeing its cancel.
+            let released = release.lock().expect("not poisoned").try_recv();
+            if released.is_ok() || std::time::Instant::now() >= deadline {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// What a parked delivery reports as it starts, since it has no ticket
+    /// its caller knows.
+    pub(in crate::daemon::chat) const DELIVERY: u64 = u64::MAX;
+    /// What a parked delivery reports as a cancel ends it.
+    pub(in crate::daemon::chat) const DELIVERY_CANCELLED: u64 = u64::MAX - 1;
+
+    impl ChatRuntime {
+        /// Every job parks until released, reporting its ticket as it starts,
+        /// so a test sees only how the actor schedules it. A delivery types
+        /// once released.
+        pub(in crate::daemon::chat) fn parking(
+            mut self,
+            started: Sender<u64>,
+            release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+        ) -> Self {
+            let overrides = self.assistant_overrides.as_mut().expect("a test runtime");
+            let (deliver_started, deliver_release) = (started.clone(), Arc::clone(&release));
+            overrides.execute = Box::new(move |_runtime, ticket, _job, cancel| {
+                let _ = started.send(ticket.0);
+                park(&release, &cancel);
+            });
+            overrides.deliver = Some(Box::new(move |_call, cancel| {
+                let _ = deliver_started.send(DELIVERY);
+                if park(&deliver_release, cancel) {
+                    Ok(DeliveryOutcome::Inserted)
+                } else {
+                    let _ = deliver_started.send(DELIVERY_CANCELLED);
+                    Err(ChatError::Delivery(DeliveryError::Cancelled))
+                }
+            }));
+            self
         }
     }
 }

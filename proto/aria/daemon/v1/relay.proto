@@ -4,6 +4,8 @@ syntax = "proto3";
 
 package aria.daemon.v1;
 
+import "google/protobuf/duration.proto";
+
 service RelayService {
   // Take one recording from a phone or watch on the LAN, transcribe it
   // through the model this daemon already holds, and deliver the text the
@@ -63,7 +65,8 @@ message IssueInviteResponse {
   string code = 2;
   // SHA-256 of the relay certificate's DER bytes; the phone pins it.
   bytes fingerprint = 3;
-  uint32 expires_in_ms = 4;
+  // How long the code has left when the Mac sends it.
+  google.protobuf.Duration expires_in = 4;
   // Phones paired since the daemon started. If it rises between polls, a
   // phone paired. If it falls, the daemon restarted.
   uint64 pairing_count = 5;

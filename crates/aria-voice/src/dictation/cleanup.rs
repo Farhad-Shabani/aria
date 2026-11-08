@@ -182,7 +182,9 @@ fn transport_error(error: ureq::Error) -> CleanupError {
 }
 
 fn build_prompt(home: &Path) -> Result<String, CleanupError> {
-    let path = home.join(".aria/prompts/cleanup.md");
+    let path = home
+        .join(aria_settings::PROMPTS_DIR)
+        .join(aria_settings::CLEANUP_PROMPT_FILE);
     let mut bytes = Vec::new();
     match std::fs::File::open(path) {
         Ok(file) => {

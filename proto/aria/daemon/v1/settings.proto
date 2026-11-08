@@ -247,17 +247,6 @@ message Prompt {
   Chord chord = 6;
 }
 
-// What a prompt makes of what was said. Either way the transcript is
-// material for the assistant, never instructions to it.
-enum PromptKind {
-  PROMPT_KIND_UNSPECIFIED = 0;
-  // The same words and meaning, cleaned up or restyled.
-  PROMPT_KIND_REWRITE = 1;
-  // New text made from what was said, such as a reply, a translation, or a
-  // summary.
-  PROMPT_KIND_COMPOSE = 2;
-}
-
 // At most 16 entries, each ID and each chord once.
 message Prompts {
   repeated Prompt entries = 1;

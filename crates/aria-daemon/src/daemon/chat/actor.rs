@@ -1,11 +1,11 @@
 //! The supervised owner of chat blocking work.
 //!
-//! Callers hold a [`ChatHandle`]; an ask or a prompt run is answered with a
-//! ticket at once and runs on the blocking pool. Jobs run side by side,
-//! except within a lane: asks on one conversation run one after another,
-//! since a resumed CLI session cannot take two turns at once, and prompt
-//! runs share one lane, so two never type into the same field at once. A
-//! cancel ends one job by ticket; daemon shutdown cancels what is running.
+//! Callers hold a [`ChatHandle`]. An ask or a prompt run is answered with a ticket at once and runs
+//! on the blocking pool. Saved text to type is answered once typed. Asks on one conversation run
+//! one after another, since a resumed CLI session can't take two turns at once. Every other job
+//! runs side by side. Typing takes turns in the runtime, so two texts never type into the same
+//! field at once. A run that types nothing waits for nobody. A cancel ends one job by ticket.
+//! Daemon shutdown cancels what is running.
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -16,10 +16,14 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use aria_assistant::chat::{ChatRequest, PromptRequest, SessionKey, Ticket};
+use aria_assistant::chat::{ChatRequest, DeliverCall, PromptRequest, SessionKey, Ticket};
+use aria_platform::delivery::{DeliveryError, DeliveryOutcome};
 
-use super::super::operation::{CallError, Reply, call, operation_cancellation, panic_message};
+use super::super::operation::{
+    CallError, Reply, call, cancellable_call, operation_cancellation, panic_message,
+};
 use super::super::tasks::Supervised;
+use super::error::ChatError;
 use super::runtime::{ChatJob, ChatRuntime};
 
 /// A handoff slot, not a work queue: the lanes inside the actor are.
@@ -29,9 +33,39 @@ const COMMAND_CAPACITY: usize = 1;
 /// before answering can fail.
 pub(in crate::daemon) type ChatCallError = CallError<Infallible>;
 
-struct SubmitCommand {
-    job: ChatJob,
-    reply: Reply<Ticket, Infallible>,
+/// Typing saved text fails with the same [`ChatError`] a reply's typing does.
+pub(in crate::daemon) type DeliverCallError = CallError<ChatError>;
+
+enum SubmitCommand {
+    /// Answered with a ticket at once. The outcome follows as events.
+    Run {
+        job: ChatJob,
+        reply: Reply<Ticket, Infallible>,
+    },
+    /// Answered once the text is typed.
+    Deliver(DeliverJob),
+}
+
+struct DeliverJob {
+    call: DeliverCall,
+    cancellation: CancelToken,
+    reply: Reply<DeliveryOutcome, ChatError>,
+}
+
+/// What waits in a lane and runs there. A delivery's ticket is never handed out. It only keys the
+/// delivery's lane.
+enum Job {
+    Run(ChatJob),
+    Deliver(DeliverJob),
+}
+
+impl Job {
+    fn tap_cancels(&self) -> bool {
+        match self {
+            Self::Run(job) => job.tap_cancels(),
+            Self::Deliver(_) => false,
+        }
+    }
 }
 
 enum Cancel {
@@ -75,7 +109,27 @@ impl ChatHandle {
     }
 
     async fn submit(&self, job: ChatJob) -> Result<Ticket, ChatCallError> {
-        let (command, pending) = call(|reply| SubmitCommand { job, reply });
+        let (command, pending) = call(|reply| SubmitCommand::Run { job, reply });
+        self.submissions
+            .send(command)
+            .await
+            .map_err(|_closed| CallError::Unavailable)?;
+        pending.wait().await
+    }
+
+    /// Answers once the text is typed, after any text already being typed.
+    /// Dropping the future cancels the delivery.
+    pub(in crate::daemon) async fn deliver(
+        &self,
+        call: DeliverCall,
+    ) -> Result<DeliveryOutcome, DeliverCallError> {
+        let (command, pending) = cancellable_call(|cancellation, reply| {
+            SubmitCommand::Deliver(DeliverJob {
+                call,
+                cancellation,
+                reply,
+            })
+        });
         self.submissions
             .send(command)
             .await
@@ -120,7 +174,7 @@ pub(in crate::daemon) struct ChatActor {
     runtime: Arc<ChatRuntime>,
     next_ticket: u64,
     /// Jobs waiting behind the one running in their lane.
-    lanes: HashMap<Lane, VecDeque<(Ticket, ChatJob)>>,
+    lanes: HashMap<Lane, VecDeque<(Ticket, Job)>>,
     running: HashMap<Lane, Running>,
     /// Each job hands back its lane, so the lane can move on.
     jobs: JoinSet<Lane>,
@@ -130,15 +184,16 @@ pub(in crate::daemon) struct ChatActor {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Lane {
     Session(SessionKey),
-    /// Every prompt run types into the app in front, so they take turns.
-    Prompts,
+    /// A job no other waits behind. Jobs that type take turns only while
+    /// typing, in the runtime.
+    Alone(Ticket),
 }
 
 impl Lane {
-    fn of(job: &ChatJob) -> Self {
+    fn of(ticket: Ticket, job: &Job) -> Self {
         match job {
-            ChatJob::Ask(request) => Self::Session(request.key()),
-            ChatJob::Prompt(_) => Self::Prompts,
+            Job::Run(ChatJob::Ask(request)) => Self::Session(request.key()),
+            Job::Run(ChatJob::Prompt(_)) | Job::Deliver(_) => Self::Alone(ticket),
         }
     }
 }
@@ -192,11 +247,16 @@ impl Supervised for ChatActor {
 
 impl ChatActor {
     fn admit(&mut self, command: SubmitCommand, shutdown: &CancellationToken) {
-        let SubmitCommand { job, reply } = command;
         let ticket = Ticket(self.next_ticket);
         self.next_ticket += 1;
-        reply.answer(ticket);
-        let lane = Lane::of(&job);
+        let job = match command {
+            SubmitCommand::Run { job, reply } => {
+                reply.answer(ticket);
+                Job::Run(job)
+            }
+            SubmitCommand::Deliver(job) => Job::Deliver(job),
+        };
+        let lane = Lane::of(ticket, &job);
         if self.running.contains_key(&lane) {
             self.lanes.entry(lane).or_default().push_back((ticket, job));
         } else {
@@ -204,8 +264,11 @@ impl ChatActor {
         }
     }
 
-    fn start(&mut self, key: Lane, ticket: Ticket, job: ChatJob, shutdown: &CancellationToken) {
-        let token = CancelToken::new();
+    fn start(&mut self, key: Lane, ticket: Ticket, job: Job, shutdown: &CancellationToken) {
+        let token = match &job {
+            Job::Run(_) => CancelToken::new(),
+            Job::Deliver(deliver) => deliver.cancellation.clone(),
+        };
         self.running.insert(
             key.clone(),
             Running {
@@ -217,11 +280,18 @@ impl ChatActor {
         let runtime = Arc::clone(&self.runtime);
         let cancellation = operation_cancellation(token, shutdown.clone());
         self.jobs.spawn_blocking(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                runtime.execute(ticket, job, cancellation);
-            }));
-            if let Err(panic) = outcome {
-                tracing::error!(%ticket, panic = panic_message(panic.as_ref()), "a chat job panicked");
+            match job {
+                Job::Run(job) => {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        runtime.execute(ticket, job, cancellation);
+                    }));
+                    if let Err(panic) = outcome {
+                        tracing::error!(%ticket, panic = panic_message(panic.as_ref()), "a chat job panicked");
+                    }
+                }
+                Job::Deliver(DeliverJob { call, reply, .. }) => {
+                    reply.run("chat delivery", || runtime.deliver(&call, &cancellation));
+                }
             }
             key
         });
@@ -246,8 +316,13 @@ impl ChatActor {
             return true;
         }
         match self.take_waiting(ticket) {
-            Some(job) => {
+            Some(Job::Run(job)) => {
                 self.runtime.cancel_unstarted(ticket, job.assistant_id());
+                true
+            }
+            Some(Job::Deliver(job)) => {
+                job.reply
+                    .fail(ChatError::Delivery(DeliveryError::Cancelled));
                 true
             }
             None => false,
@@ -272,7 +347,7 @@ impl ChatActor {
     }
 
     /// Lifts a job out of its lane, dropping a lane that empties.
-    fn take_waiting(&mut self, ticket: Ticket) -> Option<ChatJob> {
+    fn take_waiting(&mut self, ticket: Ticket) -> Option<Job> {
         let (key, index) = self.lanes.iter().find_map(|(key, lane)| {
             let index = lane.iter().position(|(queued, _)| *queued == ticket)?;
             Some((key.clone(), index))
@@ -312,14 +387,17 @@ impl ChatActor {
         }
     }
 
-    /// Running jobs are cancelled through the shutdown token and waited
-    /// out; waiting jobs are dropped. Subscribers are gone by now, so
-    /// nobody could hear a failure event for them.
+    /// Running jobs are cancelled through the shutdown token and waited out. Waiting jobs are
+    /// dropped. Subscribers are gone by now, so nobody could hear a failure event for them. A
+    /// waiting delivery's caller hears Unavailable.
     async fn drain(mut self) {
         self.submissions.close();
         self.cancels.close();
         while let Some(command) = self.submissions.recv().await {
-            command.reply.unavailable();
+            match command {
+                SubmitCommand::Run { reply, .. } => reply.unavailable(),
+                SubmitCommand::Deliver(job) => job.reply.unavailable(),
+            }
         }
         while let Some(command) = self.cancels.recv().await {
             command.reply.unavailable();
@@ -328,7 +406,11 @@ impl ChatActor {
         if waiting > 0 {
             tracing::warn!(waiting, "dropping chat jobs that never started");
         }
-        self.lanes.clear();
+        for (_, job) in self.lanes.drain().flat_map(|(_, lane)| lane) {
+            if let Job::Deliver(job) = job {
+                job.reply.unavailable();
+            }
+        }
         while let Some(finished) = self.jobs.join_next().await {
             if let Err(error) = finished {
                 tracing::error!(%error, "a chat job ended unexpectedly");
@@ -345,9 +427,12 @@ mod tests {
     use std::time::Duration;
 
     use aria_assistant::chat::ChatStageKind;
+    use aria_platform::delivery::OutputMode;
     use aria_settings::rpc::RpcErrorCode;
 
-    use super::super::runtime::tests::{ParkedAssistant, request, runtime_with};
+    use super::super::runtime::tests::{
+        DELIVERY, DELIVERY_CANCELLED, ParkedAssistant, request, runtime_with,
+    };
     use super::*;
 
     const PATIENCE: Duration = Duration::from_secs(5);
@@ -361,14 +446,37 @@ mod tests {
         actor: tokio::task::JoinHandle<()>,
     }
 
+    impl Harness {
+        fn spawn_delivery(
+            &self,
+        ) -> tokio::task::JoinHandle<Result<DeliveryOutcome, DeliverCallError>> {
+            let handle = self.handle.clone();
+            tokio::spawn(async move { handle.deliver(deliver_call()).await })
+        }
+    }
+
+    /// Asks park in the assistant, then reply. Prompt runs fail at once.
     fn harness(directory: &Path) -> Harness {
+        harness_with(directory, false)
+    }
+
+    /// Every job parks, prompt runs included, and none replies.
+    fn parking_harness(directory: &Path) -> Harness {
+        harness_with(directory, true)
+    }
+
+    fn harness_with(directory: &Path, parks_every_job: bool) -> Harness {
         let (started, started_receiver) = std_channel();
         let (release, release_receiver) = std_channel();
         let release_receiver = Arc::new(Mutex::new(release_receiver));
-        let (runtime, events) = runtime_with(directory, move |_assistant_id| ParkedAssistant {
+        let parked = (started.clone(), Arc::clone(&release_receiver));
+        let (mut runtime, events) = runtime_with(directory, move |_assistant_id| ParkedAssistant {
             started: started.clone(),
             release: Arc::clone(&release_receiver),
         });
+        if parks_every_job {
+            runtime = runtime.parking(parked.0, parked.1);
+        }
         let (handle, actor) = channel(Arc::new(runtime));
         let shutdown = CancellationToken::new();
         let actor = tokio::spawn(actor.run(shutdown.clone()));
@@ -657,23 +765,130 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prompt_runs_share_one_lane_that_no_session_can_name() {
-        let prompt = || {
-            ChatJob::Prompt(PromptRequest {
-                text: "hi".to_owned(),
-                kind: aria_settings::PromptKind::Rewrite,
-                file: "/p.md".into(),
-                assistant_id: aria_settings::config::AssistantId::ClaudeCode,
-                model_id: None,
-                application: None,
-                tap_cancels: false,
-            })
-        };
-        let mut ask = request("hi", Path::new("/w"), false);
-        ask.session = Some("prompt #1".to_owned());
+    fn prompt(output_mode: Option<OutputMode>) -> PromptRequest {
+        PromptRequest {
+            text: "hi".to_owned(),
+            name: "Polish".to_owned(),
+            entry: None,
+            kind: aria_settings::PromptKind::Rewrite,
+            instructions: aria_assistant::chat::PromptInstructions::File("/p.md".into()),
+            assistant_id: aria_settings::config::AssistantId::ClaudeCode,
+            model_id: None,
+            application: None,
+            tap_cancels: false,
+            output_mode,
+        }
+    }
 
-        assert_eq!(Lane::of(&prompt()), Lane::of(&prompt()));
-        assert_ne!(Lane::of(&ChatJob::Ask(ask)), Lane::of(&prompt()));
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn prompt_runs_that_type_think_side_by_side() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        let first = harness
+            .handle
+            .run_prompt(prompt(Some(OutputMode::InsertOrCopy)))
+            .await
+            .expect("the first is taken");
+        let second = harness
+            .handle
+            .run_prompt(prompt(Some(OutputMode::Insert)))
+            .await
+            .expect("the second is taken");
+        let mut started = [
+            started_within(&harness.started, PATIENCE),
+            started_within(&harness.started, PATIENCE),
+        ];
+        started.sort();
+        assert_eq!(
+            started,
+            [Some(first.0), Some(second.0)],
+            "the second runs while the first's assistant does; only their typing takes turns"
+        );
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    fn deliver_call() -> DeliverCall {
+        DeliverCall {
+            text: "Polished.".to_owned(),
+            application: None,
+            output_mode: OutputMode::InsertOrCopy,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn saved_text_does_not_wait_for_a_run_still_thinking() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        let typing = harness
+            .handle
+            .run_prompt(prompt(Some(OutputMode::InsertOrCopy)))
+            .await
+            .expect("the typing run is taken");
+        assert_eq!(started_within(&harness.started, PATIENCE), Some(typing.0));
+        let delivery = harness.spawn_delivery();
+        assert_eq!(
+            started_within(&harness.started, PATIENCE),
+            Some(DELIVERY),
+            "the text starts while the run's assistant still works"
+        );
+
+        harness.release.send(()).expect("one job is released");
+        harness.release.send(()).expect("the other is released");
+        let outcome = delivery.await.expect("the call returns");
+        assert!(
+            matches!(outcome, Ok(DeliveryOutcome::Inserted)),
+            "{outcome:?}"
+        );
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_cancels_saved_text_being_typed() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        let delivery = harness.spawn_delivery();
+        assert_eq!(started_within(&harness.started, PATIENCE), Some(DELIVERY));
+
+        harness.shutdown.cancel();
+        let outcome = tokio::time::timeout(PATIENCE, delivery)
+            .await
+            .expect("the delivery ends without being released")
+            .expect("the call returns");
+        assert!(
+            matches!(
+                outcome,
+                Err(CallError::Runtime(ChatError::Delivery(
+                    DeliveryError::Cancelled
+                )))
+            ),
+            "{outcome:?}"
+        );
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_caller_that_goes_away_cancels_its_saved_text() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        let delivery = harness.spawn_delivery();
+        assert_eq!(started_within(&harness.started, PATIENCE), Some(DELIVERY));
+        delivery.abort();
+
+        assert_eq!(
+            started_within(&harness.started, PATIENCE),
+            Some(DELIVERY_CANCELLED),
+            "the delivery ends without being released"
+        );
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
     }
 }

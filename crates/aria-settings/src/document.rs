@@ -1596,6 +1596,14 @@ pub(super) mod tests {
         Loaded::parse(text, Path::new(HOME)).expect("the text loads")
     }
 
+    #[test]
+    fn a_prompt_kind_names_itself_as_the_file_spells_it() {
+        for kind in [PromptKind::Rewrite, PromptKind::Compose] {
+            let spelled = serde_json::to_value(PromptKindName::from(kind)).expect("serializes");
+            assert_eq!(spelled, kind.as_str());
+        }
+    }
+
     fn refused(text: &str, key: Key) {
         let error = Loaded::parse(text, Path::new(HOME)).expect_err("refused");
         assert!(

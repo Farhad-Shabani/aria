@@ -134,7 +134,8 @@ mod tests {
         assert_eq!(issued.instance_name, "Aria (test)");
         assert_eq!(issued.code, live.raw());
         assert_eq!(issued.fingerprint, pairing.certificate_fingerprint);
-        assert!(issued.expires_in_ms <= 60_000);
+        let expires_in = std::time::Duration::try_from(issued.expires_in.unwrap()).unwrap();
+        assert!(expires_in <= std::time::Duration::from_secs(60));
         assert_eq!(issued.pairing_count, 0);
 
         assert!(codes.redeem(live.raw(), Instant::now()));

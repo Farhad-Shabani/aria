@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread;
 
 use aria_kit::audio::canonical_duration;
 use aria_kit::cancel::CancelToken;
@@ -29,45 +29,33 @@ use aria_speaker::wespeaker::WeSpeaker;
 
 use super::track::VoiceThread;
 
-/// Loads the engine and transcribes until capture ends, on its own thread —
-/// Start answers before the model finishes loading. `vocabulary` corrects
-/// each segment before it is written.
+/// Loads the engine and transcribes until capture ends, then returns how the session ended. The
+/// transcript file is final by then. The caller announces the end with `Stopped` or `Failed`.
+/// `vocabulary` corrects each segment before it is written.
 #[allow(
     clippy::too_many_arguments,
     reason = "the daemon hands over each part a session owns"
 )]
-pub fn spawn_session(
-    config: ListenConfig,
-    speaker_config: SpeakerConfig,
-    vocabulary: Arc<Vocabulary>,
-    events: ListenEventEmitter,
+pub fn run_session(
+    config: &ListenConfig,
+    speaker_config: &SpeakerConfig,
+    vocabulary: &Vocabulary,
+    events: &ListenEventEmitter,
     capture: SystemAudioCapture,
     recording: RecordingReader,
     sink: TranscriptFile,
-    cancel: CancelToken,
-) -> std::io::Result<JoinHandle<Result<(), ListenError>>> {
-    thread::Builder::new()
-        .name("aria-listen".into())
-        .spawn(move || {
-            events.emit(ListenStage::Started);
-            let session = Session {
-                vocabulary: &vocabulary,
-                events: &events,
-            };
-            let result = session.run(
-                &config.transcription,
-                &cancel,
-                &speaker_config,
-                capture,
-                recording,
-                sink,
-            );
-            match &result {
-                Ok(()) => events.emit(ListenStage::Stopped),
-                Err(error) => events.emit(ListenStage::Failed(error.into())),
-            }
-            result
-        })
+    cancel: &CancelToken,
+) -> Result<(), ListenError> {
+    events.emit(ListenStage::Started);
+    let session = Session { vocabulary, events };
+    session.run(
+        &config.transcription,
+        cancel,
+        speaker_config,
+        capture,
+        recording,
+        sink,
+    )
 }
 
 struct Session<'a> {

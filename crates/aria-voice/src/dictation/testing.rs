@@ -284,7 +284,7 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
         own_voice_only: false,
         rewriting: Default::default(),
         project: None,
-        transcript_only: false,
+        route: crate::dictation::TranscriptRoute::Deliver,
         application: None,
         target: aria_platform::delivery::TargetPolicy::default(),
     }

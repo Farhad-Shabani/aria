@@ -1,6 +1,6 @@
 //! The transcript file a listen session writes as it hears.
 
-use std::fs::{DirBuilder, File};
+use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
@@ -13,6 +13,8 @@ use time::macros::format_description;
 
 use crate::dictation::{TranscriptSink, Utterance};
 use crate::speaker::Label;
+
+const MAX_NAME_ATTEMPTS: u32 = 100;
 
 /// A pause this long always starts a new paragraph.
 pub const GAP_BREAK: Duration = Duration::from_secs(3);
@@ -61,28 +63,50 @@ struct Paragraph {
 }
 
 impl TranscriptFile {
-    /// A timestamped file in the transcripts directory.
+    /// A new timestamped file in the transcripts directory. Sessions that
+    /// start in the same second get `-2`, `-3` and so on, so each owns its
+    /// file and deleting one never takes another's text.
     pub fn create(directory: &Path) -> io::Result<(Self, PathBuf)> {
         let stamp = OffsetDateTime::now_utc()
             .format(format_description!(
                 "[year]-[month]-[day]T[hour]-[minute]-[second]Z"
             ))
             .map_err(io::Error::other)?;
-        Self::create_at(directory.join(format!("{stamp}.txt")))
+        for attempt in 1..=MAX_NAME_ATTEMPTS {
+            let name = match attempt {
+                1 => format!("{stamp}.txt"),
+                _ => format!("{stamp}-{attempt}.txt"),
+            };
+            let mut options = File::options();
+            options.create_new(true);
+            match Self::open(directory.join(name), options) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                opened => return opened,
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "every transcript name for this second is taken",
+        ))
     }
 
     /// The caller's exact file, appended to when it already exists. A file or
     /// folder this creates is private to its owner. An existing file keeps
     /// its mode.
     pub fn create_at(path: PathBuf) -> io::Result<(Self, PathBuf)> {
+        let mut options = File::options();
+        options.create(true);
+        Self::open(path, options)
+    }
+
+    fn open(path: PathBuf, mut options: OpenOptions) -> io::Result<(Self, PathBuf)> {
         if let Some(parent) = path.parent() {
             DirBuilder::new()
                 .recursive(true)
                 .mode(0o700)
                 .create(parent)?;
         }
-        let file = File::options()
-            .create(true)
+        let file = options
             .append(true)
             .mode(0o600)
             .custom_flags(
@@ -453,6 +477,15 @@ mod tests {
             aria_primitives::process::WaitOutcome::Exited(status) if status.success()
         ));
         assert!(TranscriptFile::create_at(fifo).is_err());
+    }
+
+    #[test]
+    fn sessions_started_in_the_same_second_get_files_of_their_own() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_first, first) = TranscriptFile::create(directory.path()).unwrap();
+        let (_second, second) = TranscriptFile::create(directory.path()).unwrap();
+
+        assert_ne!(first, second);
     }
 
     #[test]

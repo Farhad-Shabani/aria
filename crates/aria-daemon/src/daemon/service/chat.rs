@@ -9,7 +9,9 @@ use tonic::{Request, Response, Status};
 
 use super::super::chat::ChatError;
 use crate::ipc::wire;
-use aria_assistant::chat::{ChatRequest, PromptCall, Ticket};
+use aria_assistant::chat::{ChatRequest, DeliverCall, PromptCall, Ticket};
+use aria_assistant::prompts::{PromptDraft, PromptSource};
+use aria_settings::PromptId;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
@@ -136,6 +138,67 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         }
     }
 
+    async fn save_prompt(
+        &self,
+        request: Request<wire::SavePromptRequest>,
+    ) -> Result<Response<wire::SavePromptResponse>, Status> {
+        const METHOD: &str = "ChatService/SavePrompt";
+        let draft = PromptDraft::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let runtime = Arc::clone(&self.runtime);
+        let prompt = super::blocking(METHOD, move || runtime.save_prompt(draft))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new((&prompt).into()))
+    }
+
+    async fn remove_prompt(
+        &self,
+        request: Request<wire::RemovePromptRequest>,
+    ) -> Result<Response<wire::RemovePromptResponse>, Status> {
+        const METHOD: &str = "ChatService/RemovePrompt";
+        let id = PromptId::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let runtime = Arc::clone(&self.runtime);
+        let removed = super::blocking(METHOD, move || runtime.remove_prompt(&id))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new((&removed).into()))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: Request<wire::GetPromptRequest>,
+    ) -> Result<Response<wire::GetPromptResponse>, Status> {
+        const METHOD: &str = "ChatService/GetPrompt";
+        let source = PromptSource::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let runtime = Arc::clone(&self.runtime);
+        let contents = super::blocking(METHOD, move || runtime.prompt_contents(source))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(contents.into()))
+    }
+
+    async fn deliver(
+        &self,
+        request: Request<wire::DeliverRequest>,
+    ) -> Result<Response<wire::DeliverResponse>, Status> {
+        const METHOD: &str = "ChatService/Deliver";
+        let call = DeliverCall::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let outcome = self
+            .chat
+            .deliver(call)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(outcome.into()))
+    }
+
     async fn resolve(
         &self,
         _request: Request<wire::ResolveAskRequest>,
@@ -169,5 +232,198 @@ impl ChatRpc {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    use aria_platform::delivery::DeliveryOutcome;
+
+    use super::*;
+    use crate::daemon::chat::{Log, logging_assistants, runtime_with};
+    use crate::daemon::tasks::Supervised;
+    use crate::ipc::wire::chat_service_server::ChatService;
+
+    fn rpc(directory: &Path) -> (Arc<ChatRuntime>, ChatRpc) {
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, _events) = runtime_with(directory, logging_assistants(&log));
+        let runtime = Arc::new(runtime);
+        let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
+        let rpc = ChatRpc::new(
+            handle,
+            Arc::clone(&runtime),
+            DaemonLifetime::OnDemand,
+            tokio_util::sync::CancellationToken::new(),
+        );
+        (runtime, rpc)
+    }
+
+    fn save_request(id: Option<&str>, instructions: &str) -> wire::SavePromptRequest {
+        wire::SavePromptRequest {
+            id: id.map(str::to_owned),
+            name: Some("Summary".to_owned()),
+            kind: wire::PromptKind::Compose as i32,
+            file: None,
+            instructions: Some(instructions.to_owned()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_saved_prompt_reaches_the_settings_cache_at_once() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (runtime, rpc) = rpc(directory.path());
+        let status = runtime.cache().status();
+
+        let saved = rpc
+            .save_prompt(tonic::Request::new(save_request(None, "Three bullets.")))
+            .await
+            .expect("saves")
+            .into_inner();
+
+        assert!(status.has_changed().expect("the cache is open"));
+        let prompts = runtime
+            .settings()
+            .snapshot()
+            .expect("snapshot")
+            .settings
+            .prompts;
+        let stored = prompts.find(&saved.id).expect("the cache holds it");
+        assert_eq!(stored.file(), Path::new(&saved.file));
+        assert_eq!(
+            std::fs::read_to_string(&saved.file).expect("the file"),
+            "Three bullets."
+        );
+
+        let refused = rpc
+            .save_prompt(tonic::Request::new(save_request(
+                Some("gone"),
+                "Three bullets.",
+            )))
+            .await
+            .expect_err("no prompt has that ID");
+        let failure = crate::ipc::protocol::rpc_failure(&refused).expect("a verdict");
+        assert_eq!(failure.code, RpcErrorCode::PromptMissing);
+    }
+
+    #[tokio::test]
+    async fn an_on_demand_daemon_types_saved_text() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (mut runtime, _events) =
+            runtime_with(directory.path(), logging_assistants(&Arc::default()));
+        runtime.assistant_overrides.as_mut().unwrap().deliver =
+            Some(Box::new(|_call, _cancel| Ok(DeliveryOutcome::Copied)));
+        let runtime = Arc::new(runtime);
+        let (handle, actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let actor = tokio::spawn(actor.run(shutdown.clone()));
+        let rpc = ChatRpc::new(
+            handle,
+            Arc::clone(&runtime),
+            DaemonLifetime::OnDemand,
+            shutdown.clone(),
+        );
+
+        let delivered = rpc
+            .deliver(tonic::Request::new(wire::DeliverRequest {
+                text: "Polished.".to_owned(),
+                application_id: String::new(),
+                output_mode: wire::OutputMode::InsertOrCopy.into(),
+            }))
+            .await
+            .expect("the call waits for its own answer")
+            .into_inner();
+
+        assert_eq!(delivered.outcome(), wire::DeliveryOutcome::Copied);
+        shutdown.cancel();
+        actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test]
+    async fn a_prompt_reads_its_instructions_or_says_why_it_cannot() {
+        use wire::get_prompt_request::Source;
+        use wire::get_prompt_response::Contents;
+
+        let directory = tempfile::tempdir().expect("test directory");
+        let (_runtime, rpc) = rpc(directory.path());
+        let saved = rpc
+            .save_prompt(tonic::Request::new(save_request(None, "Three bullets.")))
+            .await
+            .expect("saves")
+            .into_inner();
+        let file = |name: &str| directory.path().join(name).to_string_lossy().into_owned();
+        std::fs::write(file("blank.md"), "").expect("blank");
+        std::fs::write(file("large.md"), "x".repeat(16 * 1024 + 1)).expect("large");
+        let get = |source| {
+            rpc.get_prompt(tonic::Request::new(wire::GetPromptRequest {
+                source: Some(source),
+            }))
+        };
+        let contents = |response: Result<tonic::Response<wire::GetPromptResponse>, _>| {
+            response.expect("reads").into_inner().contents
+        };
+        let code = |response: Result<_, tonic::Status>| {
+            let refused = response.expect_err("refused");
+            crate::ipc::protocol::rpc_failure(&refused)
+                .expect("a verdict")
+                .code
+        };
+
+        assert_eq!(
+            contents(get(Source::PromptId(saved.id)).await),
+            Some(Contents::Instructions("Three bullets.".to_owned()))
+        );
+        assert_eq!(
+            contents(get(Source::File(file("blank.md"))).await),
+            Some(Contents::Instructions(String::new()))
+        );
+        assert_eq!(
+            contents(get(Source::File(file("gone.md"))).await),
+            Some(Contents::Missing(true))
+        );
+        assert_eq!(
+            code(get(Source::File(file("large.md"))).await),
+            RpcErrorCode::PromptUnreadable
+        );
+        assert_eq!(
+            code(get(Source::PromptId("gone".to_owned())).await),
+            RpcErrorCode::PromptMissing
+        );
+    }
+
+    #[tokio::test]
+    async fn a_removed_prompt_leaves_the_list_and_keeps_its_file() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (runtime, rpc) = rpc(directory.path());
+        let saved = rpc
+            .save_prompt(tonic::Request::new(save_request(None, "Three bullets.")))
+            .await
+            .expect("saves")
+            .into_inner();
+        let remove = || {
+            rpc.remove_prompt(tonic::Request::new(wire::RemovePromptRequest {
+                id: saved.id.clone(),
+            }))
+        };
+
+        let removed = remove().await.expect("removes").into_inner();
+
+        assert_eq!(removed.file, saved.file);
+        assert_eq!(
+            std::fs::read_to_string(&removed.file).expect("the file stays"),
+            "Three bullets."
+        );
+        let prompts = runtime
+            .settings()
+            .snapshot()
+            .expect("snapshot")
+            .settings
+            .prompts;
+        assert!(prompts.entries().is_empty());
+        let refused = remove().await.expect_err("no prompt has that ID now");
+        let failure = crate::ipc::protocol::rpc_failure(&refused).expect("a verdict");
+        assert_eq!(failure.code, RpcErrorCode::PromptMissing);
     }
 }

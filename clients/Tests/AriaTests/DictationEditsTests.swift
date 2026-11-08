@@ -44,7 +44,7 @@ final class DictationEditsTests: XCTestCase {
         patch.historyEnabled = false
         patch.historyKeepAudio = true
         patch.muteSound = true
-        patch.prompts.entries = [PromptEdits.makeEntry(for: URL(fileURLWithPath: "/p.md"))]
+        patch.prompts.entries = [.stub(file: "/p.md")]
         var combined = Aria_Daemon_V1_SettingsPatch()
         patch.apply(to: &combined)
         XCTAssertEqual(combined, patch)
@@ -73,8 +73,8 @@ final class DictationEditsTests: XCTestCase {
     func testPatchApplyReplacesEveryPrompt() {
         var snapshot = Aria_Daemon_V1_Settings()
         snapshot.prompts.entries = [
-            PromptEdits.makeEntry(for: URL(fileURLWithPath: "/a.md")),
-            PromptEdits.makeEntry(for: URL(fileURLWithPath: "/b.md")),
+            .stub(file: "/a.md"),
+            .stub(file: "/b.md"),
         ]
         var patch = Aria_Daemon_V1_SettingsPatch()
         patch.prompts = Aria_Daemon_V1_Prompts()

@@ -70,6 +70,11 @@ enum ErrorCode {
   ERROR_CODE_ASSISTANT_SIGNED_OUT = 303;
   // A prompt's instruction file can't be read, or is empty or too large.
   ERROR_CODE_PROMPT_UNREADABLE = 304;
+  // No stored prompt has the ID.
+  ERROR_CODE_PROMPT_MISSING = 305;
+  ERROR_CODE_PROMPTS_FULL = 306;
+  // A prompt's file, or the folder for a new one, can't be written.
+  ERROR_CODE_PROMPT_WRITE_FAILED = 307;
   // No voice-embedding model is installed.
   ERROR_CODE_SPEAKER_MODEL_MISSING = 500;
   ERROR_CODE_SPEAKER_ALREADY_ENROLLED = 501;
@@ -87,4 +92,8 @@ enum ErrorCode {
   ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE = 901;
   ERROR_CODE_HISTORY_UNAVAILABLE = 902;
   ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE = 903;
+  // The history entry has no text to run a prompt on.
+  ERROR_CODE_HISTORY_ENTRY_EMPTY = 904;
+  // A Mac Audio transcript is unreadable, or too long to read in full.
+  ERROR_CODE_HISTORY_TRANSCRIPT_UNREADABLE = 905;
 }

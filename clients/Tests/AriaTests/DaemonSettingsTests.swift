@@ -180,7 +180,7 @@ final class DaemonSettingsTests: XCTestCase {
         let settings = DaemonSettings(transport: transport)
         await settings.sync()
 
-        await settings.edit(promptsEdit { PromptEdits.add(self.prompt("mac-new"), to: &$0) })
+        await settings.edit(promptsEdit { $0.entries.append(self.prompt("mac-new")) })
 
         XCTAssertEqual(transport.sentUpdates.map(\.expectedRevision), [3, 4])
         XCTAssertEqual(

@@ -23,13 +23,17 @@ service DictationService {
 }
 
 message StartDictationRequest {
-  // Absent mode overrides use stored settings; explicit UNSPECIFIED is invalid.
-  optional OutputMode output_mode = 1;
   // Required: no stored setting applies, so UNSPECIFIED is invalid.
   StopMode stop_mode = 2;
-  optional DeliveryMode delivery_mode = 3;
-  // Hand the transcript back without delivering it anywhere.
-  bool transcript_only = 4;
+  // Where the transcript goes besides back to the caller. Required.
+  oneof route {
+    // Typed or copied, and saved to history when history is on.
+    DeliverRoute deliver = 9;
+    // Handed back only: neither typed nor saved.
+    TranscriptOnlyRoute transcript_only = 10;
+    // Not typed, but saved to history when history is on.
+    HistoryOnlyRoute history_only = 11;
+  }
   // Absent uses the daemon-selected project vocabulary.
   oneof project {
     string project_directory = 5;
@@ -38,6 +42,18 @@ message StartDictationRequest {
 }
 
 message ProjectVocabularyDisabled {}
+
+// How the transcript is typed. Each absent mode comes from the app in front's
+// overrides, else the settings. Explicit UNSPECIFIED is invalid.
+message DeliverRoute {
+  optional OutputMode output_mode = 1;
+  optional DeliveryMode delivery_mode = 2;
+}
+
+// A transcript that isn't typed is never streamed.
+message TranscriptOnlyRoute {}
+
+message HistoryOnlyRoute {}
 
 message StartDictationResponse {
   oneof body {

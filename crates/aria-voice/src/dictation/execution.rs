@@ -812,7 +812,7 @@ mod tests {
             auto_stop: None,
             own_voice_only: false,
             rewriting: Rewriting::default(),
-            transcript_only: true,
+            route: crate::dictation::TranscriptRoute::TranscriptOnly,
             project: None,
             application: None,
             target: aria_platform::delivery::TargetPolicy::default(),

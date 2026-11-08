@@ -23,7 +23,6 @@ const MIN_PAIR_LEN: usize = 3;
 const MAX_FACT_CHARS: usize = 300;
 const EXTRACTION_TIMEOUT: Duration = Duration::from_secs(120);
 
-const PROMPT_OVERRIDE: &str = ".aria/prompts/extract.md";
 const DEFAULT_GUIDANCE: &str = include_str!("../../../../prompts/extract.md");
 
 /// The half of the prompt that stays with the code: `parse_candidates` and
@@ -89,7 +88,11 @@ impl Extractor for ClaudeExtractor {
 /// Uses home guidance when nonempty, otherwise bundled guidance.
 /// Appends the fixed output contract in either case.
 pub(crate) fn build_system_prompt(home: &Path) -> String {
-    let override_text = std::fs::read_to_string(home.join(PROMPT_OVERRIDE)).unwrap_or_default();
+    let override_text = std::fs::read_to_string(
+        home.join(aria_settings::PROMPTS_DIR)
+            .join(aria_settings::EXTRACT_PROMPT_FILE),
+    )
+    .unwrap_or_default();
     let guidance = match override_text.trim() {
         "" => DEFAULT_GUIDANCE,
         text => text,

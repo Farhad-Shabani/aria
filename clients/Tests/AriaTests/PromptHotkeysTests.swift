@@ -22,10 +22,6 @@ final class PromptHotkeysTests: XCTestCase {
         await settings.sync()
         let hotkeys = PromptHotkeys(events: DaemonEvents())
         hotkeys.track(settings)
-        let deadline = Date().addingTimeInterval(1)
-        while hotkeys.runnable.isEmpty, Date() < deadline {
-            await Task.yield()
-        }
         let refused = expectation(description: "refused")
         var names: [String] = []
         let refusals = hotkeys.refusals.sink { name in
@@ -33,7 +29,13 @@ final class PromptHotkeysTests: XCTestCase {
             refused.fulfill()
         }
 
-        hotkeys.press("draft")
+        // A press does nothing until the hotkeys have taken in the settings.
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline {
+            hotkeys.press("draft")
+            if hotkeys.isBusy("draft") { break }
+            await Task.yield()
+        }
         await fulfillment(of: [refused], timeout: 1)
         while hotkeys.isBusy("draft"), Date() < deadline {
             await Task.yield()

@@ -5,7 +5,6 @@ private enum Layout {
     static let cornerRadius: CGFloat = 12
     static let barButtonWidth: CGFloat = 26
     static let barButtonHeight: CGFloat = 22
-    static let barDividerHeight: CGFloat = 14
 }
 
 struct ItemList<Item, Row: View>: View {
@@ -58,7 +57,7 @@ struct ItemList<Item, Row: View>: View {
             HStack(spacing: 0) {
                 barButton("Add \(noun)", symbol: "plus", action: add)
                     .disabled(!canAdd)
-                Divider().frame(height: Layout.barDividerHeight)
+                BarDivider()
                 barButton("Remove \(noun)", symbol: "minus") {
                     if let target {
                         remove(target)

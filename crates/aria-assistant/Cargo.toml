@@ -16,6 +16,7 @@ aria-kit        = { workspace = true }
 aria-platform   = { workspace = true, features = [ "sqlite" ] }
 aria-primitives = { workspace = true }
 aria-settings   = { workspace = true }
+getrandom       = { workspace = true, features = [ "std" ] }
 rusqlite        = { workspace = true }
 rustix          = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde           = { workspace = true }

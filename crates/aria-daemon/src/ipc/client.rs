@@ -3,7 +3,7 @@
 //! Synchronous: each client owns a single-threaded tokio runtime and blocks on it.
 
 use super::{protocol, wire};
-use aria_assistant::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, Ticket};
+use aria_assistant::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, PromptCall, Ticket};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
@@ -392,6 +392,19 @@ impl DaemonClient {
         Ok(Ticket::from(response))
     }
 
+    /// Answers with the ticket as soon as the run is taken. The result follows on the event stream,
+    /// as an ask's reply does.
+    pub(crate) fn run_prompt(&self, call: PromptCall) -> Result<Ticket, ClientError> {
+        let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::RunPromptRequest::from(call),
+            |request| chat.run_prompt(request),
+        )?;
+
+        Ok(Ticket::from(response))
+    }
+
     /// Ends the ask; answers whether it was still pending.
     pub(crate) fn cancel_ask(&self, ticket: Ticket) -> Result<bool, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
@@ -422,6 +435,9 @@ impl DaemonClient {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
         let request = wire::ListHistoryRequest {
+            section: query
+                .section
+                .map(|section| wire::HistorySection::from(section) as i32),
             query: query.query,
             before_id: query.before_id,
             limit: u32::try_from(query.limit).map_err(|_| {
@@ -437,13 +453,60 @@ impl DaemonClient {
 
     pub(crate) fn clear_history(
         &self,
+        section: Option<aria_voice::history::HistorySection>,
     ) -> Result<aria_voice::history::ClearHistoryResult, ClientError> {
         let mut history =
             wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
-        let response = self.call(REQUEST_TIMEOUT, wire::ClearHistoryRequest {}, |request| {
-            history.clear(request)
-        })?;
+        let request = wire::ClearHistoryRequest::from(section);
+        let response = self.call(REQUEST_TIMEOUT, request, |request| history.clear(request))?;
         Ok(response.into())
+    }
+
+    pub(crate) fn rename_history(
+        &self,
+        id: u64,
+        title: Option<&aria_voice::history::Title>,
+    ) -> Result<aria_voice::history::HistoryEntry, ClientError> {
+        let mut history =
+            wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
+        let request = wire::RenameHistoryRequest::from((id, title));
+        let response = self.call(REQUEST_TIMEOUT, request, |request| history.rename(request))?;
+        response.try_into().map_err(ClientError::from)
+    }
+
+    /// Reads a Mac Audio session's transcript into the entry, up to Get's read limit.
+    pub(crate) fn get_history(
+        &self,
+        id: u64,
+    ) -> Result<aria_voice::history::HistoryEntry, ClientError> {
+        let mut history =
+            wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
+        let request = wire::GetHistoryRequest { id };
+        let response = self.call(REQUEST_TIMEOUT, request, |request| history.get(request))?;
+        response.try_into().map_err(ClientError::from)
+    }
+
+    /// An entry already gone counts as deleted.
+    pub(crate) fn delete_history(&self, id: u64) -> Result<(), ClientError> {
+        let mut history =
+            wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
+        let request = wire::DeleteHistoryRequest { id };
+        self.call(REQUEST_TIMEOUT, request, |request| history.delete(request))?;
+        Ok(())
+    }
+
+    /// Newest first.
+    pub(crate) fn history_thread(
+        &self,
+        entry_id: u64,
+    ) -> Result<Vec<aria_voice::history::PromptResult>, ClientError> {
+        let mut history =
+            wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
+        let request = wire::GetThreadRequest { entry_id };
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            history.get_thread(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
     }
 
     pub(crate) fn retry_history(

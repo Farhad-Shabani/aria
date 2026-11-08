@@ -36,11 +36,11 @@ struct SpeechModelPicker: View {
         }
         .onChange(of: engineChange.state) { _, state in
             guard case .failed(let message) = state, target != nil else { return }
-            announce(message)
+            NSAccessibility.announce(message)
         }
         .onChange(of: models.current) { previous, current in
             guard previous != nil, let model = current.flatMap(models.model) else { return }
-            announce("Using \(model.label)")
+            NSAccessibility.announce("Using \(model.label)")
         }
     }
 
@@ -108,13 +108,5 @@ struct SpeechModelPicker: View {
     private func choose(_ id: String) {
         guard id != models.current, models.model(id) != nil else { return }
         engineChange.start(id) { await setup.refresh() }
-    }
-
-    private func announce(_ message: String) {
-        NSAccessibility.post(
-            element: NSApp as Any,
-            notification: .announcementRequested,
-            userInfo: [.announcement: message]
-        )
     }
 }

@@ -22,6 +22,51 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+/// What a prompt makes of what was said. Either way the transcript is
+/// material for the assistant, never instructions to it.
+public nonisolated enum Aria_Daemon_V1_PromptKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// The same words and meaning, cleaned up or restyled.
+  case rewrite // = 1
+
+  /// New text made from what was said, such as a reply, a translation, or a
+  /// summary.
+  case compose // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .rewrite
+    case 2: self = .compose
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .rewrite: return 1
+    case .compose: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_PromptKind] = [
+    .unspecified,
+    .rewrite,
+    .compose,
+  ]
+
+}
+
 public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -320,17 +365,311 @@ public nonisolated struct Aria_Daemon_V1_RunPromptRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var text: String = String()
+  /// Required.
+  public var input: Aria_Daemon_V1_RunPromptRequest.OneOf_Input? = nil
+
+  public var text: String {
+    get {
+      if case .text(let v)? = input {return v}
+      return String()
+    }
+    set {input = .text(newValue)}
+  }
+
+  /// A history entry's full text: an ask's reply, a Mac Audio session's
+  /// transcript file, or else the entry's text. The reply is saved under the entry
+  /// when history is on. A missing entry is HISTORY_MISSING.
+  public var historyEntryID: UInt64 {
+    get {
+      if case .historyEntryID(let v)? = input {return v}
+      return 0
+    }
+    set {input = .historyEntryID(newValue)}
+  }
+
+  /// Required.
+  public var prompt: Aria_Daemon_V1_RunPromptRequest.OneOf_Prompt? = nil
 
   /// A stored, enabled Prompt's ID.
-  public var promptID: String = String()
+  public var promptID: String {
+    get {
+      if case .promptID(let v)? = prompt {return v}
+      return String()
+    }
+    set {prompt = .promptID(newValue)}
+  }
+
+  /// Instructions for this run alone, run as PROMPT_KIND_COMPOSE: 1 to
+  /// 16 KiB of UTF-8, not blank. A result saved under the entry is named
+  /// after their first non-blank line.
+  public var instructions: String {
+    get {
+      if case .instructions(let v)? = prompt {return v}
+      return String()
+    }
+    set {prompt = .instructions(newValue)}
+  }
 
   /// The bundle ID of the app in front when the chord was first pressed. The
-  /// result is typed only there. Empty when unknown.
+  /// result is typed only there. Empty when unknown. Needs `output_mode`.
   public var applicationID: String = String()
 
   /// As on AskRequest: a tap of the Aria key cancels the run.
   public var tapCancels: Bool = false
+
+  /// As on AskRequest. Absent: nothing is typed, and the result arrives only
+  /// as the REPLIED event's text.
+  public var outputMode: Aria_Daemon_V1_OutputMode {
+    get {_outputMode ?? .unspecified}
+    set {_outputMode = newValue}
+  }
+  /// Returns true if `outputMode` has been explicitly set.
+  public var hasOutputMode: Bool {self._outputMode != nil}
+  /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
+  public mutating func clearOutputMode() {self._outputMode = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  /// Required.
+  public nonisolated enum OneOf_Input: Equatable, Sendable {
+    case text(String)
+    /// A history entry's full text: an ask's reply, a Mac Audio session's
+    /// transcript file, or else the entry's text. The reply is saved under the entry
+    /// when history is on. A missing entry is HISTORY_MISSING.
+    case historyEntryID(UInt64)
+
+  }
+
+  /// Required.
+  public nonisolated enum OneOf_Prompt: Equatable, Sendable {
+    /// A stored, enabled Prompt's ID.
+    case promptID(String)
+    /// Instructions for this run alone, run as PROMPT_KIND_COMPOSE: 1 to
+    /// 16 KiB of UTF-8, not blank. A result saved under the entry is named
+    /// after their first non-blank line.
+    case instructions(String)
+
+  }
+
+  public init() {}
+
+  fileprivate var _outputMode: Aria_Daemon_V1_OutputMode? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_SavePromptRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The stored prompt to edit. An edit keeps its chord and whether it's on. A
+  /// missing ID is PROMPT_MISSING. Absent adds a prompt, on and with no
+  /// chord.
+  public var id: String {
+    get {_id ?? String()}
+    set {_id = newValue}
+  }
+  /// Returns true if `id` has been explicitly set.
+  public var hasID: Bool {self._id != nil}
+  /// Clears the value of `id`. Subsequent reads from it will return its default value.
+  public mutating func clearID() {self._id = nil}
+
+  /// Saved trimmed: 1 to 128 bytes, with no control characters. Absent keeps
+  /// an edited prompt's name, and names a new prompt after its `file` without
+  /// `.md`, cut to fit. A new prompt with neither is INVALID_REQUEST.
+  public var name: String {
+    get {_name ?? String()}
+    set {_name = newValue}
+  }
+  /// Returns true if `name` has been explicitly set.
+  public var hasName: Bool {self._name != nil}
+  /// Clears the value of `name`. Subsequent reads from it will return its default value.
+  public mutating func clearName() {self._name = nil}
+
+  /// UNSPECIFIED is invalid.
+  public var kind: Aria_Daemon_V1_PromptKind = .unspecified
+
+  /// An absolute path to the Markdown file the prompt reads. Absent keeps an
+  /// edited prompt's file, and gives a new prompt a file of its own in
+  /// ~/.aria/prompts named after it, never over a file already there or one
+  /// Aria reads itself.
+  public var file: String {
+    get {_file ?? String()}
+    set {_file = newValue}
+  }
+  /// Returns true if `file` has been explicitly set.
+  public var hasFile: Bool {self._file != nil}
+  /// Clears the value of `file`. Subsequent reads from it will return its default value.
+  public mutating func clearFile() {self._file = nil}
+
+  /// The file's new text: 1 to 16 KiB of UTF-8, not blank. It replaces the
+  /// file whole, and a symlinked file keeps its link. Absent leaves the file
+  /// as it is. A new file needs it.
+  public var instructions: String {
+    get {_instructions ?? String()}
+    set {_instructions = newValue}
+  }
+  /// Returns true if `instructions` has been explicitly set.
+  public var hasInstructions: Bool {self._instructions != nil}
+  /// Clears the value of `instructions`. Subsequent reads from it will return its default value.
+  public mutating func clearInstructions() {self._instructions = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _id: String? = nil
+  fileprivate var _name: String? = nil
+  fileprivate var _file: String? = nil
+  fileprivate var _instructions: String? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_SavePromptResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The prompt's ID, new when the request named none.
+  public var id: String = String()
+
+  /// The absolute path the prompt reads.
+  public var file: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_GetPromptRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required.
+  public var source: Aria_Daemon_V1_GetPromptRequest.OneOf_Source? = nil
+
+  /// A stored prompt's ID. A missing ID is PROMPT_MISSING.
+  public var promptID: String {
+    get {
+      if case .promptID(let v)? = source {return v}
+      return String()
+    }
+    set {source = .promptID(newValue)}
+  }
+
+  /// An absolute path to a Markdown file, such as one about to be chosen.
+  public var file: String {
+    get {
+      if case .file(let v)? = source {return v}
+      return String()
+    }
+    set {source = .file(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  /// Required.
+  public nonisolated enum OneOf_Source: Equatable, Sendable {
+    /// A stored prompt's ID. A missing ID is PROMPT_MISSING.
+    case promptID(String)
+    /// An absolute path to a Markdown file, such as one about to be chosen.
+    case file(String)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_GetPromptResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var contents: Aria_Daemon_V1_GetPromptResponse.OneOf_Contents? = nil
+
+  /// The file's text: at most 16 KiB of UTF-8. Empty when the file is
+  /// blank, so an editor can fill it.
+  public var instructions: String {
+    get {
+      if case .instructions(let v)? = contents {return v}
+      return String()
+    }
+    set {contents = .instructions(newValue)}
+  }
+
+  /// No file is there. Saving instructions creates it.
+  public var missing: Bool {
+    get {
+      if case .missing(let v)? = contents {return v}
+      return false
+    }
+    set {contents = .missing(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Contents: Equatable, Sendable {
+    /// The file's text: at most 16 KiB of UTF-8. Empty when the file is
+    /// blank, so an editor can fill it.
+    case instructions(String)
+    /// No file is there. Saving instructions creates it.
+    case missing(Bool)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_RemovePromptRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_RemovePromptResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The absolute path the prompt read, left in place.
+  public var file: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_DeliverRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// At most 64 KiB of UTF-8, and not blank.
+  public var text: String = String()
+
+  /// As on RunPromptRequest: the only app the text may be typed into. Empty
+  /// types into the app in front.
+  public var applicationID: String = String()
+
+  /// Required; UNSPECIFIED is invalid.
+  public var outputMode: Aria_Daemon_V1_OutputMode = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_DeliverResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var outcome: Aria_Daemon_V1_DeliveryOutcome = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -461,6 +800,10 @@ public nonisolated struct Aria_Daemon_V1_AssistantModel: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
+
+nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROMPT_KIND_UNSPECIFIED\0\u{1}PROMPT_KIND_REWRITE\0\u{1}PROMPT_KIND_COMPOSE\0")
+}
 
 nonisolated extension Aria_Daemon_V1_AssistantId: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0")
@@ -693,7 +1036,360 @@ nonisolated extension Aria_Daemon_V1_AskResponse: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunPromptRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0\u{3}tap_cancels\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0\u{3}tap_cancels\0\u{3}output_mode\0\u{3}history_entry_id\0\u{1}instructions\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.input != nil {try decoder.handleConflictingOneOf()}
+          self.input = .text(v)
+        }
+      }()
+      case 2: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.prompt != nil {try decoder.handleConflictingOneOf()}
+          self.prompt = .promptID(v)
+        }
+      }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.applicationID) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.tapCancels) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self._outputMode) }()
+      case 6: try {
+        var v: UInt64?
+        try decoder.decodeSingularUInt64Field(value: &v)
+        if let v = v {
+          if self.input != nil {try decoder.handleConflictingOneOf()}
+          self.input = .historyEntryID(v)
+        }
+      }()
+      case 7: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.prompt != nil {try decoder.handleConflictingOneOf()}
+          self.prompt = .instructions(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if case .text(let v)? = self.input {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
+    try { if case .promptID(let v)? = self.prompt {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    if !self.applicationID.isEmpty {
+      try visitor.visitSingularStringField(value: self.applicationID, fieldNumber: 3)
+    }
+    if self.tapCancels != false {
+      try visitor.visitSingularBoolField(value: self.tapCancels, fieldNumber: 4)
+    }
+    try { if let v = self._outputMode {
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 5)
+    } }()
+    try { if case .historyEntryID(let v)? = self.input {
+      try visitor.visitSingularUInt64Field(value: v, fieldNumber: 6)
+    } }()
+    try { if case .instructions(let v)? = self.prompt {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 7)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RunPromptRequest, rhs: Aria_Daemon_V1_RunPromptRequest) -> Bool {
+    if lhs.input != rhs.input {return false}
+    if lhs.prompt != rhs.prompt {return false}
+    if lhs.applicationID != rhs.applicationID {return false}
+    if lhs.tapCancels != rhs.tapCancels {return false}
+    if lhs._outputMode != rhs._outputMode {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_SavePromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SavePromptRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}kind\0\u{1}file\0\u{1}instructions\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self._id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._name) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self._file) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self._instructions) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._id {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._name {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 3)
+    }
+    try { if let v = self._file {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 4)
+    } }()
+    try { if let v = self._instructions {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 5)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_SavePromptRequest, rhs: Aria_Daemon_V1_SavePromptRequest) -> Bool {
+    if lhs._id != rhs._id {return false}
+    if lhs._name != rhs._name {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs._file != rhs._file {return false}
+    if lhs._instructions != rhs._instructions {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_SavePromptResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SavePromptResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}file\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.file) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.file.isEmpty {
+      try visitor.visitSingularStringField(value: self.file, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_SavePromptResponse, rhs: Aria_Daemon_V1_SavePromptResponse) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.file != rhs.file {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_GetPromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetPromptRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prompt_id\0\u{1}file\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.source != nil {try decoder.handleConflictingOneOf()}
+          self.source = .promptID(v)
+        }
+      }()
+      case 2: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.source != nil {try decoder.handleConflictingOneOf()}
+          self.source = .file(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.source {
+    case .promptID?: try {
+      guard case .promptID(let v)? = self.source else { preconditionFailure() }
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    }()
+    case .file?: try {
+      guard case .file(let v)? = self.source else { preconditionFailure() }
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_GetPromptRequest, rhs: Aria_Daemon_V1_GetPromptRequest) -> Bool {
+    if lhs.source != rhs.source {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_GetPromptResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetPromptResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}instructions\0\u{1}missing\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.contents != nil {try decoder.handleConflictingOneOf()}
+          self.contents = .instructions(v)
+        }
+      }()
+      case 2: try {
+        var v: Bool?
+        try decoder.decodeSingularBoolField(value: &v)
+        if let v = v {
+          if self.contents != nil {try decoder.handleConflictingOneOf()}
+          self.contents = .missing(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.contents {
+    case .instructions?: try {
+      guard case .instructions(let v)? = self.contents else { preconditionFailure() }
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    }()
+    case .missing?: try {
+      guard case .missing(let v)? = self.contents else { preconditionFailure() }
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 2)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_GetPromptResponse, rhs: Aria_Daemon_V1_GetPromptResponse) -> Bool {
+    if lhs.contents != rhs.contents {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RemovePromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemovePromptRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RemovePromptRequest, rhs: Aria_Daemon_V1_RemovePromptRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RemovePromptResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemovePromptResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}file\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.file) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.file.isEmpty {
+      try visitor.visitSingularStringField(value: self.file, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RemovePromptResponse, rhs: Aria_Daemon_V1_RemovePromptResponse) -> Bool {
+    if lhs.file != rhs.file {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_DeliverRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeliverRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}application_id\0\u{3}output_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -702,9 +1398,8 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.promptID) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.applicationID) }()
-      case 4: try { try decoder.decodeSingularBoolField(value: &self.tapCancels) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.applicationID) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.outputMode) }()
       default: break
       }
     }
@@ -714,23 +1409,49 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
     }
-    if !self.promptID.isEmpty {
-      try visitor.visitSingularStringField(value: self.promptID, fieldNumber: 2)
-    }
     if !self.applicationID.isEmpty {
-      try visitor.visitSingularStringField(value: self.applicationID, fieldNumber: 3)
+      try visitor.visitSingularStringField(value: self.applicationID, fieldNumber: 2)
     }
-    if self.tapCancels != false {
-      try visitor.visitSingularBoolField(value: self.tapCancels, fieldNumber: 4)
+    if self.outputMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.outputMode, fieldNumber: 3)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_RunPromptRequest, rhs: Aria_Daemon_V1_RunPromptRequest) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_DeliverRequest, rhs: Aria_Daemon_V1_DeliverRequest) -> Bool {
     if lhs.text != rhs.text {return false}
-    if lhs.promptID != rhs.promptID {return false}
     if lhs.applicationID != rhs.applicationID {return false}
-    if lhs.tapCancels != rhs.tapCancels {return false}
+    if lhs.outputMode != rhs.outputMode {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_DeliverResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeliverResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}outcome\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.outcome) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.outcome != .unspecified {
+      try visitor.visitSingularEnumField(value: self.outcome, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_DeliverResponse, rhs: Aria_Daemon_V1_DeliverResponse) -> Bool {
+    if lhs.outcome != rhs.outcome {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

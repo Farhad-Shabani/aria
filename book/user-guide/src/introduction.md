@@ -30,7 +30,7 @@ transcription to a [personal server](./settings.md#server-inference).
 Downloading models needs network access. Ask uses an external assistant, which
 may send your question and project content to cloud services.
 
-Dictation history is enabled by default. Read [Privacy](./privacy.md) before
+History is on by default. Read [Privacy](./privacy.md) before
 recording sensitive material; [history controls](./history.md#saving) explain
 what you can change.
 

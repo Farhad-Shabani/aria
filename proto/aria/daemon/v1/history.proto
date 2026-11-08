@@ -5,6 +5,8 @@ syntax = "proto3";
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 service HistoryService {
   rpc List(ListHistoryRequest) returns (ListHistoryResponse);
@@ -12,14 +14,21 @@ service HistoryService {
   // Missing entries succeed. Active regeneration refuses deletion with BUSY.
   // Audio cleanup may remain pending; List reports cleanup warnings.
   rpc Delete(DeleteHistoryRequest) returns (DeleteHistoryResponse);
-  // Delete all rows, then remove their audio and orphaned recordings. Any
-  // active regeneration refuses the whole operation with BUSY. Later saves
-  // survive; settings and active dictation are unchanged. Do not retry
-  // automatically after a timeout or disconnect: the result is uncertain.
+  // Delete the section's rows, or all rows, then remove their audio and
+  // orphaned recordings. Any active regeneration refuses the whole operation
+  // with BUSY. Later saves survive. Settings and active dictation are
+  // unchanged. Do not retry automatically after a timeout or disconnect,
+  // because the result is uncertain.
   rpc Clear(ClearHistoryRequest) returns (ClearHistoryResponse);
   // Re-transcribe retained audio and replace saved text; never deliver it.
   // Defaults to the original engine and language. Failure preserves saved text.
   rpc Regenerate(RegenerateHistoryRequest) returns (HistoryEntry);
+  // Works on an entry being regenerated. A missing or deleting entry is
+  // HISTORY_MISSING.
+  rpc Rename(RenameHistoryRequest) returns (RenameHistoryResponse);
+  // An entry's prompt results, newest first. A missing entry is
+  // HISTORY_MISSING.
+  rpc GetThread(GetThreadRequest) returns (HistoryThread);
 }
 
 message ListHistoryRequest {
@@ -29,6 +38,8 @@ message ListHistoryRequest {
   optional uint64 before_id = 2;
   // Required range: 1 to 100. Zero is invalid.
   uint32 limit = 3;
+  // Absent lists every section. UNSPECIFIED is invalid.
+  optional HistorySection section = 4;
 }
 
 message ListHistoryResponse {
@@ -49,7 +60,10 @@ message DeleteHistoryRequest {
 
 message DeleteHistoryResponse {}
 
-message ClearHistoryRequest {}
+message ClearHistoryRequest {
+  // Absent clears every section. UNSPECIFIED is invalid.
+  optional HistorySection section = 1;
+}
 
 message ClearHistoryResponse {
   uint64 deleted_entry_count = 1;
@@ -63,33 +77,110 @@ message RegenerateHistoryRequest {
   optional string language = 3;
 }
 
+message RenameHistoryRequest {
+  uint64 id = 1;
+  // Trimmed, then 1 to 256 UTF-8 bytes on one line. Absent removes the title.
+  // Empty or blank is invalid.
+  optional string title = 2;
+}
+
+message RenameHistoryResponse {
+  HistoryEntry entry = 1;
+}
+
+message GetThreadRequest {
+  uint64 entry_id = 1;
+}
+
+message HistoryThread {
+  // At most 20, each with its full text.
+  repeated PromptResult results = 1;
+}
+
+// A prompt's reply, saved under the history entry it ran on. Results don't
+// appear in List, and search doesn't cover them. Deleting their entry, or
+// clearing history, deletes them.
+message PromptResult {
+  uint64 id = 1;
+  google.protobuf.Timestamp create_time = 2;
+  // The prompt's name when it ran.
+  string prompt_name = 3;
+  string text = 4;
+}
+
 message HistoryEntry {
   uint64 id = 1;
-  // Unix epoch milliseconds.
-  uint64 created_at_ms = 2;
-  HistorySource source = 3;
-  HistoryApplication application = 4;
-  optional uint64 duration_ms = 5;
-  string engine_id = 6;
-  string language = 7;
-  string text = 8;
+  // Absent until someone names the entry.
+  optional string title = 2;
+  // UNSPECIFIED, from a daemon before sections, is a DICTATION.
+  HistorySection section = 3;
+  google.protobuf.Timestamp create_time = 4;
+  google.protobuf.Duration duration = 5;
+
+  HistorySource source = 6;
+  HistoryApplication application = 7;
+  // The folder the entry was made in: the project whose vocabulary a
+  // dictation used, or the folder an ask worked in. Absent when none.
+  optional string project_directory = 8;
+
+  string text = 9;
   // Whether transcription finished; List may still return a text preview.
-  bool transcription_complete = 9;
-  HistoryStatus status = 10;
-  RpcError error = 11;
-  HistoryAudioAvailability audio_availability = 12;
-  // Present exactly when audio is AVAILABLE; Unix epoch milliseconds.
-  optional uint64 audio_expires_at_ms = 13;
-  bool regenerating = 14;
-  bool deletion_pending = 15;
+  bool transcription_complete = 10;
+  // Set for a LISTEN or ASK entry. A DICTATION entry has none.
+  oneof details {
+    HistoryTranscript transcript = 11;
+    // An ASK entry's reply. `text` is the question. List cuts it to 512
+    // UTF-8 bytes, as it does `text`.
+    string reply = 12;
+  }
+  // How many prompt results the entry keeps. GetThread reads them.
+  uint32 result_count = 13;
+  string engine_id = 14;
+  string language = 15;
+
+  HistoryStatus status = 16;
+  RpcError error = 17;
+  optional string warning = 18;
+
+  HistoryAudioAvailability audio_availability = 19;
+  // Present exactly when audio is AVAILABLE.
+  google.protobuf.Timestamp audio_expire_time = 20;
+  bool regenerating = 21;
+  bool deletion_pending = 22;
   // Audio is available and neither regeneration nor deletion is pending.
-  bool can_regenerate = 16;
-  optional string warning = 17;
+  bool can_regenerate = 23;
+}
+
+// A Mac Audio session's transcript file. The entry's `text` is the file's
+// first KiB, which search covers. Get reads up to 1 MiB of the file instead.
+// Delete and Clear delete the file as well. Expiry leaves it.
+message HistoryTranscript {
+  string path = 1;
+  // Set by Get only.
+  optional HistoryTranscriptRead read = 2;
+}
+
+enum HistoryTranscriptRead {
+  HISTORY_TRANSCRIPT_READ_UNSPECIFIED = 0;
+  HISTORY_TRANSCRIPT_READ_WHOLE = 1;
+  // The file is longer than 1 MiB. `text` is its start.
+  HISTORY_TRANSCRIPT_READ_TRUNCATED = 2;
+  // The file is gone or unreadable. `text` is the saved excerpt.
+  HISTORY_TRANSCRIPT_READ_UNAVAILABLE = 3;
 }
 
 message HistoryApplication {
   string name = 1;
   optional string bundle_id = 2;
+}
+
+// One kind of saved item. Each section keeps its own entry and text budget.
+enum HistorySection {
+  HISTORY_SECTION_UNSPECIFIED = 0;
+  HISTORY_SECTION_DICTATION = 1;
+  // A Mac Audio session.
+  HISTORY_SECTION_LISTEN = 2;
+  HISTORY_SECTION_ASK = 3;
 }
 
 enum HistorySource {

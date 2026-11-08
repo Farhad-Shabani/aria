@@ -22,6 +22,97 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+public nonisolated enum Aria_Daemon_V1_HistoryTranscriptRead: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case whole // = 1
+
+  /// The file is longer than 1 MiB. `text` is its start.
+  case truncated // = 2
+
+  /// The file is gone or unreadable. `text` is the saved excerpt.
+  case unavailable // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .whole
+    case 2: self = .truncated
+    case 3: self = .unavailable
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .whole: return 1
+    case .truncated: return 2
+    case .unavailable: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_HistoryTranscriptRead] = [
+    .unspecified,
+    .whole,
+    .truncated,
+    .unavailable,
+  ]
+
+}
+
+/// One kind of saved item. Each section keeps its own entry and text budget.
+public nonisolated enum Aria_Daemon_V1_HistorySection: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case dictation // = 1
+
+  /// A Mac Audio session.
+  case listen // = 2
+  case ask // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .dictation
+    case 2: self = .listen
+    case 3: self = .ask
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .dictation: return 1
+    case .listen: return 2
+    case .ask: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_HistorySection] = [
+    .unspecified,
+    .dictation,
+    .listen,
+    .ask,
+  ]
+
+}
+
 public nonisolated enum Aria_Daemon_V1_HistorySource: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -169,11 +260,22 @@ public nonisolated struct Aria_Daemon_V1_ListHistoryRequest: Sendable {
   /// Required range: 1 to 100. Zero is invalid.
   public var limit: UInt32 = 0
 
+  /// Absent lists every section. UNSPECIFIED is invalid.
+  public var section: Aria_Daemon_V1_HistorySection {
+    get {_section ?? .unspecified}
+    set {_section = newValue}
+  }
+  /// Returns true if `section` has been explicitly set.
+  public var hasSection: Bool {self._section != nil}
+  /// Clears the value of `section`. Subsequent reads from it will return its default value.
+  public mutating func clearSection() {self._section = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _beforeID: UInt64? = nil
+  fileprivate var _section: Aria_Daemon_V1_HistorySection? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_ListHistoryResponse: Sendable {
@@ -250,9 +352,21 @@ public nonisolated struct Aria_Daemon_V1_ClearHistoryRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  /// Absent clears every section. UNSPECIFIED is invalid.
+  public var section: Aria_Daemon_V1_HistorySection {
+    get {_section ?? .unspecified}
+    set {_section = newValue}
+  }
+  /// Returns true if `section` has been explicitly set.
+  public var hasSection: Bool {self._section != nil}
+  /// Clears the value of `section`. Subsequent reads from it will return its default value.
+  public mutating func clearSection() {self._section = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _section: Aria_Daemon_V1_HistorySection? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_ClearHistoryResponse: Sendable {
@@ -303,6 +417,108 @@ public nonisolated struct Aria_Daemon_V1_RegenerateHistoryRequest: Sendable {
   fileprivate var _language: String? = nil
 }
 
+public nonisolated struct Aria_Daemon_V1_RenameHistoryRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: UInt64 = 0
+
+  /// Trimmed, then 1 to 256 UTF-8 bytes on one line. Absent removes the title.
+  /// Empty or blank is invalid.
+  public var title: String {
+    get {_title ?? String()}
+    set {_title = newValue}
+  }
+  /// Returns true if `title` has been explicitly set.
+  public var hasTitle: Bool {self._title != nil}
+  /// Clears the value of `title`. Subsequent reads from it will return its default value.
+  public mutating func clearTitle() {self._title = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _title: String? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_RenameHistoryResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var entry: Aria_Daemon_V1_HistoryEntry {
+    get {_entry ?? Aria_Daemon_V1_HistoryEntry()}
+    set {_entry = newValue}
+  }
+  /// Returns true if `entry` has been explicitly set.
+  public var hasEntry: Bool {self._entry != nil}
+  /// Clears the value of `entry`. Subsequent reads from it will return its default value.
+  public mutating func clearEntry() {self._entry = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _entry: Aria_Daemon_V1_HistoryEntry? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_GetThreadRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var entryID: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_HistoryThread: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// At most 20, each with its full text.
+  public var results: [Aria_Daemon_V1_PromptResult] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A prompt's reply, saved under the history entry it ran on. Results don't
+/// appear in List, and search doesn't cover them. Deleting their entry, or
+/// clearing history, deletes them.
+public nonisolated struct Aria_Daemon_V1_PromptResult: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: UInt64 = 0
+
+  public var createTime: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_createTime ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_createTime = newValue}
+  }
+  /// Returns true if `createTime` has been explicitly set.
+  public var hasCreateTime: Bool {self._createTime != nil}
+  /// Clears the value of `createTime`. Subsequent reads from it will return its default value.
+  public mutating func clearCreateTime() {self._createTime = nil}
+
+  /// The prompt's name when it ran.
+  public var promptName: String = String()
+
+  public var text: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _createTime: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+}
+
 public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -313,11 +529,39 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
     set {_uniqueStorage()._id = newValue}
   }
 
-  /// Unix epoch milliseconds.
-  public var createdAtMs: UInt64 {
-    get {_storage._createdAtMs}
-    set {_uniqueStorage()._createdAtMs = newValue}
+  /// Absent until someone names the entry.
+  public var title: String {
+    get {_storage._title ?? String()}
+    set {_uniqueStorage()._title = newValue}
   }
+  /// Returns true if `title` has been explicitly set.
+  public var hasTitle: Bool {_storage._title != nil}
+  /// Clears the value of `title`. Subsequent reads from it will return its default value.
+  public mutating func clearTitle() {_uniqueStorage()._title = nil}
+
+  /// UNSPECIFIED, from a daemon before sections, is a DICTATION.
+  public var section: Aria_Daemon_V1_HistorySection {
+    get {_storage._section}
+    set {_uniqueStorage()._section = newValue}
+  }
+
+  public var createTime: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_storage._createTime ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_uniqueStorage()._createTime = newValue}
+  }
+  /// Returns true if `createTime` has been explicitly set.
+  public var hasCreateTime: Bool {_storage._createTime != nil}
+  /// Clears the value of `createTime`. Subsequent reads from it will return its default value.
+  public mutating func clearCreateTime() {_uniqueStorage()._createTime = nil}
+
+  public var duration: SwiftProtobuf.Google_Protobuf_Duration {
+    get {_storage._duration ?? SwiftProtobuf.Google_Protobuf_Duration()}
+    set {_uniqueStorage()._duration = newValue}
+  }
+  /// Returns true if `duration` has been explicitly set.
+  public var hasDuration: Bool {_storage._duration != nil}
+  /// Clears the value of `duration`. Subsequent reads from it will return its default value.
+  public mutating func clearDuration() {_uniqueStorage()._duration = nil}
 
   public var source: Aria_Daemon_V1_HistorySource {
     get {_storage._source}
@@ -333,24 +577,16 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
   /// Clears the value of `application`. Subsequent reads from it will return its default value.
   public mutating func clearApplication() {_uniqueStorage()._application = nil}
 
-  public var durationMs: UInt64 {
-    get {_storage._durationMs ?? 0}
-    set {_uniqueStorage()._durationMs = newValue}
+  /// The folder the entry was made in: the project whose vocabulary a
+  /// dictation used, or the folder an ask worked in. Absent when none.
+  public var projectDirectory: String {
+    get {_storage._projectDirectory ?? String()}
+    set {_uniqueStorage()._projectDirectory = newValue}
   }
-  /// Returns true if `durationMs` has been explicitly set.
-  public var hasDurationMs: Bool {_storage._durationMs != nil}
-  /// Clears the value of `durationMs`. Subsequent reads from it will return its default value.
-  public mutating func clearDurationMs() {_uniqueStorage()._durationMs = nil}
-
-  public var engineID: String {
-    get {_storage._engineID}
-    set {_uniqueStorage()._engineID = newValue}
-  }
-
-  public var language: String {
-    get {_storage._language}
-    set {_uniqueStorage()._language = newValue}
-  }
+  /// Returns true if `projectDirectory` has been explicitly set.
+  public var hasProjectDirectory: Bool {_storage._projectDirectory != nil}
+  /// Clears the value of `projectDirectory`. Subsequent reads from it will return its default value.
+  public mutating func clearProjectDirectory() {_uniqueStorage()._projectDirectory = nil}
 
   public var text: String {
     get {_storage._text}
@@ -361,6 +597,46 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
   public var transcriptionComplete: Bool {
     get {_storage._transcriptionComplete}
     set {_uniqueStorage()._transcriptionComplete = newValue}
+  }
+
+  /// Set for a LISTEN or ASK entry. A DICTATION entry has none.
+  public var details: OneOf_Details? {
+    get {return _storage._details}
+    set {_uniqueStorage()._details = newValue}
+  }
+
+  public var transcript: Aria_Daemon_V1_HistoryTranscript {
+    get {
+      if case .transcript(let v)? = _storage._details {return v}
+      return Aria_Daemon_V1_HistoryTranscript()
+    }
+    set {_uniqueStorage()._details = .transcript(newValue)}
+  }
+
+  /// An ASK entry's reply. `text` is the question. List cuts it to 512
+  /// UTF-8 bytes, as it does `text`.
+  public var reply: String {
+    get {
+      if case .reply(let v)? = _storage._details {return v}
+      return String()
+    }
+    set {_uniqueStorage()._details = .reply(newValue)}
+  }
+
+  /// How many prompt results the entry keeps. GetThread reads them.
+  public var resultCount: UInt32 {
+    get {_storage._resultCount}
+    set {_uniqueStorage()._resultCount = newValue}
+  }
+
+  public var engineID: String {
+    get {_storage._engineID}
+    set {_uniqueStorage()._engineID = newValue}
+  }
+
+  public var language: String {
+    get {_storage._language}
+    set {_uniqueStorage()._language = newValue}
   }
 
   public var status: Aria_Daemon_V1_HistoryStatus {
@@ -377,20 +653,29 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
   public mutating func clearError() {_uniqueStorage()._error = nil}
 
+  public var warning: String {
+    get {_storage._warning ?? String()}
+    set {_uniqueStorage()._warning = newValue}
+  }
+  /// Returns true if `warning` has been explicitly set.
+  public var hasWarning: Bool {_storage._warning != nil}
+  /// Clears the value of `warning`. Subsequent reads from it will return its default value.
+  public mutating func clearWarning() {_uniqueStorage()._warning = nil}
+
   public var audioAvailability: Aria_Daemon_V1_HistoryAudioAvailability {
     get {_storage._audioAvailability}
     set {_uniqueStorage()._audioAvailability = newValue}
   }
 
-  /// Present exactly when audio is AVAILABLE; Unix epoch milliseconds.
-  public var audioExpiresAtMs: UInt64 {
-    get {_storage._audioExpiresAtMs ?? 0}
-    set {_uniqueStorage()._audioExpiresAtMs = newValue}
+  /// Present exactly when audio is AVAILABLE.
+  public var audioExpireTime: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_storage._audioExpireTime ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_uniqueStorage()._audioExpireTime = newValue}
   }
-  /// Returns true if `audioExpiresAtMs` has been explicitly set.
-  public var hasAudioExpiresAtMs: Bool {_storage._audioExpiresAtMs != nil}
-  /// Clears the value of `audioExpiresAtMs`. Subsequent reads from it will return its default value.
-  public mutating func clearAudioExpiresAtMs() {_uniqueStorage()._audioExpiresAtMs = nil}
+  /// Returns true if `audioExpireTime` has been explicitly set.
+  public var hasAudioExpireTime: Bool {_storage._audioExpireTime != nil}
+  /// Clears the value of `audioExpireTime`. Subsequent reads from it will return its default value.
+  public mutating func clearAudioExpireTime() {_uniqueStorage()._audioExpireTime = nil}
 
   public var regenerating: Bool {
     get {_storage._regenerating}
@@ -408,20 +693,47 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
     set {_uniqueStorage()._canRegenerate = newValue}
   }
 
-  public var warning: String {
-    get {_storage._warning ?? String()}
-    set {_uniqueStorage()._warning = newValue}
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  /// Set for a LISTEN or ASK entry. A DICTATION entry has none.
+  public nonisolated enum OneOf_Details: Equatable, Sendable {
+    case transcript(Aria_Daemon_V1_HistoryTranscript)
+    /// An ASK entry's reply. `text` is the question. List cuts it to 512
+    /// UTF-8 bytes, as it does `text`.
+    case reply(String)
+
   }
-  /// Returns true if `warning` has been explicitly set.
-  public var hasWarning: Bool {_storage._warning != nil}
-  /// Clears the value of `warning`. Subsequent reads from it will return its default value.
-  public mutating func clearWarning() {_uniqueStorage()._warning = nil}
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+/// A Mac Audio session's transcript file. The entry's `text` is the file's
+/// first KiB, which search covers. Get reads up to 1 MiB of the file instead.
+/// Delete and Clear delete the file as well. Expiry leaves it.
+public nonisolated struct Aria_Daemon_V1_HistoryTranscript: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var path: String = String()
+
+  /// Set by Get only.
+  public var read: Aria_Daemon_V1_HistoryTranscriptRead {
+    get {_read ?? .unspecified}
+    set {_read = newValue}
+  }
+  /// Returns true if `read` has been explicitly set.
+  public var hasRead: Bool {self._read != nil}
+  /// Clears the value of `read`. Subsequent reads from it will return its default value.
+  public mutating func clearRead() {self._read = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _storage = _StorageClass.defaultInstance
+  fileprivate var _read: Aria_Daemon_V1_HistoryTranscriptRead? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_HistoryApplication: Sendable {
@@ -451,6 +763,14 @@ public nonisolated struct Aria_Daemon_V1_HistoryApplication: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
+nonisolated extension Aria_Daemon_V1_HistoryTranscriptRead: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HISTORY_TRANSCRIPT_READ_UNSPECIFIED\0\u{1}HISTORY_TRANSCRIPT_READ_WHOLE\0\u{1}HISTORY_TRANSCRIPT_READ_TRUNCATED\0\u{1}HISTORY_TRANSCRIPT_READ_UNAVAILABLE\0")
+}
+
+nonisolated extension Aria_Daemon_V1_HistorySection: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HISTORY_SECTION_UNSPECIFIED\0\u{1}HISTORY_SECTION_DICTATION\0\u{1}HISTORY_SECTION_LISTEN\0\u{1}HISTORY_SECTION_ASK\0")
+}
+
 nonisolated extension Aria_Daemon_V1_HistorySource: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HISTORY_SOURCE_UNSPECIFIED\0\u{1}HISTORY_SOURCE_LOCAL\0\u{1}HISTORY_SOURCE_RELAY\0")
 }
@@ -465,7 +785,7 @@ nonisolated extension Aria_Daemon_V1_HistoryAudioAvailability: SwiftProtobuf._Pr
 
 nonisolated extension Aria_Daemon_V1_ListHistoryRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListHistoryRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}query\0\u{3}before_id\0\u{1}limit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}query\0\u{3}before_id\0\u{1}limit\0\u{1}section\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -476,6 +796,7 @@ nonisolated extension Aria_Daemon_V1_ListHistoryRequest: SwiftProtobuf.Message, 
       case 1: try { try decoder.decodeSingularStringField(value: &self.query) }()
       case 2: try { try decoder.decodeSingularUInt64Field(value: &self._beforeID) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.limit) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self._section) }()
       default: break
       }
     }
@@ -495,6 +816,9 @@ nonisolated extension Aria_Daemon_V1_ListHistoryRequest: SwiftProtobuf.Message, 
     if self.limit != 0 {
       try visitor.visitSingularUInt32Field(value: self.limit, fieldNumber: 3)
     }
+    try { if let v = self._section {
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 4)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -502,6 +826,7 @@ nonisolated extension Aria_Daemon_V1_ListHistoryRequest: SwiftProtobuf.Message, 
     if lhs.query != rhs.query {return false}
     if lhs._beforeID != rhs._beforeID {return false}
     if lhs.limit != rhs.limit {return false}
+    if lhs._section != rhs._section {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -632,18 +957,33 @@ nonisolated extension Aria_Daemon_V1_DeleteHistoryResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_ClearHistoryRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClearHistoryRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}section\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self._section) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._section {
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 1)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_ClearHistoryRequest, rhs: Aria_Daemon_V1_ClearHistoryRequest) -> Bool {
+    if lhs._section != rhs._section {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -728,28 +1068,215 @@ nonisolated extension Aria_Daemon_V1_RegenerateHistoryRequest: SwiftProtobuf.Mes
   }
 }
 
+nonisolated extension Aria_Daemon_V1_RenameHistoryRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameHistoryRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._title) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.id != 0 {
+      try visitor.visitSingularUInt64Field(value: self.id, fieldNumber: 1)
+    }
+    try { if let v = self._title {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RenameHistoryRequest, rhs: Aria_Daemon_V1_RenameHistoryRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs._title != rhs._title {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RenameHistoryResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameHistoryResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entry\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._entry) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._entry {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RenameHistoryResponse, rhs: Aria_Daemon_V1_RenameHistoryResponse) -> Bool {
+    if lhs._entry != rhs._entry {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_GetThreadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetThreadRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}entry_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.entryID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.entryID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.entryID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_GetThreadRequest, rhs: Aria_Daemon_V1_GetThreadRequest) -> Bool {
+    if lhs.entryID != rhs.entryID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_HistoryThread: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".HistoryThread"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}results\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.results) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.results.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.results, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_HistoryThread, rhs: Aria_Daemon_V1_HistoryThread) -> Bool {
+    if lhs.results != rhs.results {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_PromptResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PromptResult"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}create_time\0\u{3}prompt_name\0\u{1}text\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._createTime) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.promptName) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.id != 0 {
+      try visitor.visitSingularUInt64Field(value: self.id, fieldNumber: 1)
+    }
+    try { if let v = self._createTime {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if !self.promptName.isEmpty {
+      try visitor.visitSingularStringField(value: self.promptName, fieldNumber: 3)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_PromptResult, rhs: Aria_Daemon_V1_PromptResult) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs._createTime != rhs._createTime {return false}
+    if lhs.promptName != rhs.promptName {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Aria_Daemon_V1_HistoryEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HistoryEntry"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}created_at_ms\0\u{1}source\0\u{1}application\0\u{3}duration_ms\0\u{3}engine_id\0\u{1}language\0\u{1}text\0\u{3}transcription_complete\0\u{1}status\0\u{1}error\0\u{3}audio_availability\0\u{3}audio_expires_at_ms\0\u{1}regenerating\0\u{3}deletion_pending\0\u{3}can_regenerate\0\u{1}warning\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}section\0\u{3}create_time\0\u{1}duration\0\u{1}source\0\u{1}application\0\u{3}project_directory\0\u{1}text\0\u{3}transcription_complete\0\u{1}transcript\0\u{1}reply\0\u{3}result_count\0\u{3}engine_id\0\u{1}language\0\u{1}status\0\u{1}error\0\u{1}warning\0\u{3}audio_availability\0\u{3}audio_expire_time\0\u{1}regenerating\0\u{3}deletion_pending\0\u{3}can_regenerate\0")
 
   fileprivate class _StorageClass {
     var _id: UInt64 = 0
-    var _createdAtMs: UInt64 = 0
+    var _title: String? = nil
+    var _section: Aria_Daemon_V1_HistorySection = .unspecified
+    var _createTime: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+    var _duration: SwiftProtobuf.Google_Protobuf_Duration? = nil
     var _source: Aria_Daemon_V1_HistorySource = .unspecified
     var _application: Aria_Daemon_V1_HistoryApplication? = nil
-    var _durationMs: UInt64? = nil
-    var _engineID: String = String()
-    var _language: String = String()
+    var _projectDirectory: String? = nil
     var _text: String = String()
     var _transcriptionComplete: Bool = false
+    var _details: Aria_Daemon_V1_HistoryEntry.OneOf_Details?
+    var _resultCount: UInt32 = 0
+    var _engineID: String = String()
+    var _language: String = String()
     var _status: Aria_Daemon_V1_HistoryStatus = .unspecified
     var _error: Aria_Daemon_V1_RpcError? = nil
+    var _warning: String? = nil
     var _audioAvailability: Aria_Daemon_V1_HistoryAudioAvailability = .unspecified
-    var _audioExpiresAtMs: UInt64? = nil
+    var _audioExpireTime: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
     var _regenerating: Bool = false
     var _deletionPending: Bool = false
     var _canRegenerate: Bool = false
-    var _warning: String? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -761,22 +1288,27 @@ nonisolated extension Aria_Daemon_V1_HistoryEntry: SwiftProtobuf.Message, SwiftP
 
     init(copying source: _StorageClass) {
       _id = source._id
-      _createdAtMs = source._createdAtMs
+      _title = source._title
+      _section = source._section
+      _createTime = source._createTime
+      _duration = source._duration
       _source = source._source
       _application = source._application
-      _durationMs = source._durationMs
-      _engineID = source._engineID
-      _language = source._language
+      _projectDirectory = source._projectDirectory
       _text = source._text
       _transcriptionComplete = source._transcriptionComplete
+      _details = source._details
+      _resultCount = source._resultCount
+      _engineID = source._engineID
+      _language = source._language
       _status = source._status
       _error = source._error
+      _warning = source._warning
       _audioAvailability = source._audioAvailability
-      _audioExpiresAtMs = source._audioExpiresAtMs
+      _audioExpireTime = source._audioExpireTime
       _regenerating = source._regenerating
       _deletionPending = source._deletionPending
       _canRegenerate = source._canRegenerate
-      _warning = source._warning
     }
   }
 
@@ -796,22 +1328,47 @@ nonisolated extension Aria_Daemon_V1_HistoryEntry: SwiftProtobuf.Message, SwiftP
         // enabled. https://github.com/apple/swift-protobuf/issues/1034
         switch fieldNumber {
         case 1: try { try decoder.decodeSingularUInt64Field(value: &_storage._id) }()
-        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._createdAtMs) }()
-        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._source) }()
-        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._application) }()
-        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._durationMs) }()
-        case 6: try { try decoder.decodeSingularStringField(value: &_storage._engineID) }()
-        case 7: try { try decoder.decodeSingularStringField(value: &_storage._language) }()
-        case 8: try { try decoder.decodeSingularStringField(value: &_storage._text) }()
-        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._transcriptionComplete) }()
-        case 10: try { try decoder.decodeSingularEnumField(value: &_storage._status) }()
-        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
-        case 12: try { try decoder.decodeSingularEnumField(value: &_storage._audioAvailability) }()
-        case 13: try { try decoder.decodeSingularUInt64Field(value: &_storage._audioExpiresAtMs) }()
-        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._regenerating) }()
-        case 15: try { try decoder.decodeSingularBoolField(value: &_storage._deletionPending) }()
-        case 16: try { try decoder.decodeSingularBoolField(value: &_storage._canRegenerate) }()
-        case 17: try { try decoder.decodeSingularStringField(value: &_storage._warning) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._title) }()
+        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._section) }()
+        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._createTime) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._duration) }()
+        case 6: try { try decoder.decodeSingularEnumField(value: &_storage._source) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._application) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._projectDirectory) }()
+        case 9: try { try decoder.decodeSingularStringField(value: &_storage._text) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._transcriptionComplete) }()
+        case 11: try {
+          var v: Aria_Daemon_V1_HistoryTranscript?
+          var hadOneofValue = false
+          if let current = _storage._details {
+            hadOneofValue = true
+            if case .transcript(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._details = .transcript(v)
+          }
+        }()
+        case 12: try {
+          var v: String?
+          try decoder.decodeSingularStringField(value: &v)
+          if let v = v {
+            if _storage._details != nil {try decoder.handleConflictingOneOf()}
+            _storage._details = .reply(v)
+          }
+        }()
+        case 13: try { try decoder.decodeSingularUInt32Field(value: &_storage._resultCount) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._engineID) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._language) }()
+        case 16: try { try decoder.decodeSingularEnumField(value: &_storage._status) }()
+        case 17: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 18: try { try decoder.decodeSingularStringField(value: &_storage._warning) }()
+        case 19: try { try decoder.decodeSingularEnumField(value: &_storage._audioAvailability) }()
+        case 20: try { try decoder.decodeSingularMessageField(value: &_storage._audioExpireTime) }()
+        case 21: try { try decoder.decodeSingularBoolField(value: &_storage._regenerating) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._deletionPending) }()
+        case 23: try { try decoder.decodeSingularBoolField(value: &_storage._canRegenerate) }()
         default: break
         }
       }
@@ -827,54 +1384,77 @@ nonisolated extension Aria_Daemon_V1_HistoryEntry: SwiftProtobuf.Message, SwiftP
       if _storage._id != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._id, fieldNumber: 1)
       }
-      if _storage._createdAtMs != 0 {
-        try visitor.visitSingularUInt64Field(value: _storage._createdAtMs, fieldNumber: 2)
+      try { if let v = _storage._title {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+      } }()
+      if _storage._section != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._section, fieldNumber: 3)
       }
-      if _storage._source != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._source, fieldNumber: 3)
-      }
-      try { if let v = _storage._application {
+      try { if let v = _storage._createTime {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
       } }()
-      try { if let v = _storage._durationMs {
-        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 5)
+      try { if let v = _storage._duration {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
       } }()
-      if !_storage._engineID.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._engineID, fieldNumber: 6)
+      if _storage._source != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._source, fieldNumber: 6)
       }
-      if !_storage._language.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._language, fieldNumber: 7)
-      }
+      try { if let v = _storage._application {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      try { if let v = _storage._projectDirectory {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 8)
+      } }()
       if !_storage._text.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._text, fieldNumber: 8)
+        try visitor.visitSingularStringField(value: _storage._text, fieldNumber: 9)
       }
       if _storage._transcriptionComplete != false {
-        try visitor.visitSingularBoolField(value: _storage._transcriptionComplete, fieldNumber: 9)
+        try visitor.visitSingularBoolField(value: _storage._transcriptionComplete, fieldNumber: 10)
+      }
+      switch _storage._details {
+      case .transcript?: try {
+        guard case .transcript(let v)? = _storage._details else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+      }()
+      case .reply?: try {
+        guard case .reply(let v)? = _storage._details else { preconditionFailure() }
+        try visitor.visitSingularStringField(value: v, fieldNumber: 12)
+      }()
+      case nil: break
+      }
+      if _storage._resultCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._resultCount, fieldNumber: 13)
+      }
+      if !_storage._engineID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._engineID, fieldNumber: 14)
+      }
+      if !_storage._language.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._language, fieldNumber: 15)
       }
       if _storage._status != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._status, fieldNumber: 10)
+        try visitor.visitSingularEnumField(value: _storage._status, fieldNumber: 16)
       }
       try { if let v = _storage._error {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
+      } }()
+      try { if let v = _storage._warning {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 18)
       } }()
       if _storage._audioAvailability != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._audioAvailability, fieldNumber: 12)
+        try visitor.visitSingularEnumField(value: _storage._audioAvailability, fieldNumber: 19)
       }
-      try { if let v = _storage._audioExpiresAtMs {
-        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 13)
+      try { if let v = _storage._audioExpireTime {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
       } }()
       if _storage._regenerating != false {
-        try visitor.visitSingularBoolField(value: _storage._regenerating, fieldNumber: 14)
+        try visitor.visitSingularBoolField(value: _storage._regenerating, fieldNumber: 21)
       }
       if _storage._deletionPending != false {
-        try visitor.visitSingularBoolField(value: _storage._deletionPending, fieldNumber: 15)
+        try visitor.visitSingularBoolField(value: _storage._deletionPending, fieldNumber: 22)
       }
       if _storage._canRegenerate != false {
-        try visitor.visitSingularBoolField(value: _storage._canRegenerate, fieldNumber: 16)
+        try visitor.visitSingularBoolField(value: _storage._canRegenerate, fieldNumber: 23)
       }
-      try { if let v = _storage._warning {
-        try visitor.visitSingularStringField(value: v, fieldNumber: 17)
-      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -885,26 +1465,70 @@ nonisolated extension Aria_Daemon_V1_HistoryEntry: SwiftProtobuf.Message, SwiftP
         let _storage = _args.0
         let rhs_storage = _args.1
         if _storage._id != rhs_storage._id {return false}
-        if _storage._createdAtMs != rhs_storage._createdAtMs {return false}
+        if _storage._title != rhs_storage._title {return false}
+        if _storage._section != rhs_storage._section {return false}
+        if _storage._createTime != rhs_storage._createTime {return false}
+        if _storage._duration != rhs_storage._duration {return false}
         if _storage._source != rhs_storage._source {return false}
         if _storage._application != rhs_storage._application {return false}
-        if _storage._durationMs != rhs_storage._durationMs {return false}
-        if _storage._engineID != rhs_storage._engineID {return false}
-        if _storage._language != rhs_storage._language {return false}
+        if _storage._projectDirectory != rhs_storage._projectDirectory {return false}
         if _storage._text != rhs_storage._text {return false}
         if _storage._transcriptionComplete != rhs_storage._transcriptionComplete {return false}
+        if _storage._details != rhs_storage._details {return false}
+        if _storage._resultCount != rhs_storage._resultCount {return false}
+        if _storage._engineID != rhs_storage._engineID {return false}
+        if _storage._language != rhs_storage._language {return false}
         if _storage._status != rhs_storage._status {return false}
         if _storage._error != rhs_storage._error {return false}
+        if _storage._warning != rhs_storage._warning {return false}
         if _storage._audioAvailability != rhs_storage._audioAvailability {return false}
-        if _storage._audioExpiresAtMs != rhs_storage._audioExpiresAtMs {return false}
+        if _storage._audioExpireTime != rhs_storage._audioExpireTime {return false}
         if _storage._regenerating != rhs_storage._regenerating {return false}
         if _storage._deletionPending != rhs_storage._deletionPending {return false}
         if _storage._canRegenerate != rhs_storage._canRegenerate {return false}
-        if _storage._warning != rhs_storage._warning {return false}
         return true
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_HistoryTranscript: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".HistoryTranscript"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}read\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self._read) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 1)
+    }
+    try { if let v = self._read {
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_HistoryTranscript, rhs: Aria_Daemon_V1_HistoryTranscript) -> Bool {
+    if lhs.path != rhs.path {return false}
+    if lhs._read != rhs._read {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let voices: VoiceProfiles
     lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus, runner: setupRunner)
     let updates = UpdateController()
-    let history = DictationHistoryState(effects: HistoryClient.effects)
+    let history = HistoryState(effects: HistoryClient.effects)
 
     private static let setupOfferedKey = "setupOffered"
 
@@ -31,19 +31,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let ghost: GhostController
     let askShortcut: PressController
     let promptHotkeys: PromptHotkeys
-    let promptList: PromptList
     private var caption = CaptionState()
     private var shownCommitted: String?
     private var shownProvisional: String?
     private var expiryTimer: Timer?
     private var daemonSettings: DaemonSettings?
     private var askChordChange: AnyCancellable?
+    private(set) lazy var palette = PaletteController(
+        prompts: promptHotkeys, ask: askShortcut, listen: listenStatus, history: history, events: events,
+        openSettings: { [weak self] in self?.settings.request() },
+        delivered: { [weak status] outcome in status?.noteDelivery(outcome) })
     lazy var settingsHealth = SettingsHealth(
         effects: .live(reloadSettings: { [weak self] in await self?.daemonSettings?.sync() }))
 
     override init() {
         promptHotkeys = PromptHotkeys(events: events)
-        promptList = PromptList(prompts: promptHotkeys)
         voices = VoiceProfiles(effects: .live)
         let status = StatusController(events: events, prompts: promptHotkeys)
         self.status = status
@@ -53,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status?.noteAsk(run)
         }
         super.init()
+        status.skips = { [weak self] ticket in self?.palette.shows(ticket: ticket) ?? false }
         events.onHotkey { [weak self] combo in
             self?.run(combo)
         }
@@ -67,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let snapshot = daemonSettings?.snapshot else { return }
         switch ComboAction(combo: combo, in: snapshot) {
         case .ask: askShortcut.press()
-        case .promptList: promptList.press()
+        case .palette: palette.press()
         case nil: break
         }
     }
@@ -91,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in self?.askShortcut.chord.bind(chord) }
             }
         promptHotkeys.track(settings)
-        promptList.track(settings)
+        palette.track(settings)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -106,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dockPresence.start()
         let launchKind = NSAppleEventManager.shared().currentAppleEvent?
             .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
-        settings.didLaunch(atLogin: launchKind == keyAELaunchedAsLogInItem)
+        if launchKind != keyAELaunchedAsLogInItem { palette.open() }
         UserDefaults.standard.register(defaults: [CaptionState.enabledKey: CaptionState.isEnabledByDefault])
 
         caption.setEnabled(UserDefaults.standard.bool(forKey: CaptionState.enabledKey))
@@ -169,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // AppKit restores a minimized window only when this returns true.
         if DockPresence.needsDockIcon(windows: sender.windows) { return true }
-        settings.request()
+        palette.open()
         return false
     }
 

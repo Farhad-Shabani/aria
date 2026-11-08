@@ -32,7 +32,7 @@ use aria_voice::transcription::{
 };
 use aria_voice::vocabulary::Vocabulary;
 
-use super::super::transcripts::{History, TranscriptStore};
+use super::super::history::{History, HistoryStore};
 use super::model_load::{ModelLoad, Preload};
 
 use aria_segmentation::pyannote::Pyannote;
@@ -298,7 +298,7 @@ fn select_local(
 struct ExecutionParts {
     capture: Arc<CaptureBackend>,
     delivery: PlatformTextDelivery,
-    transcripts: Arc<TranscriptStore>,
+    transcripts: Arc<HistoryStore>,
     wake: Option<WakeWordControl>,
     speaker: SpeakerConfig,
     vocabulary: Arc<VocabularyRuntime>,
@@ -541,7 +541,7 @@ pub(super) struct EngineParts {
     capture: Arc<CaptureBackend>,
     delivery: DeliveryFactory,
     delivery_timeout: Duration,
-    transcripts: Arc<TranscriptStore>,
+    transcripts: Arc<HistoryStore>,
     wake: Option<WakeWordControl>,
     speaker: SpeakerConfig,
     vocabulary: Arc<VocabularyRuntime>,
@@ -592,7 +592,7 @@ pub(super) fn build_dictation(
     setup: DictationSetup,
     spool_dir: &Path,
     home: &Path,
-    transcripts: Arc<TranscriptStore>,
+    transcripts: Arc<HistoryStore>,
     loading: ModelLoading,
     microphone: Arc<Gate>,
     sound_muting: SoundMuting,
@@ -823,7 +823,7 @@ mod tests {
                 },
                 &root,
                 &root,
-                Arc::new(TranscriptStore::new()),
+                Arc::new(HistoryStore::new()),
                 ModelLoading::Eager,
                 Gate::new(),
                 SoundMuting::Never,
@@ -839,14 +839,15 @@ mod tests {
         let dictate = move || {
             let mut settings = DictationSettings::resolve(
                 aria_settings::Settings::default(),
-                aria_voice::dictation::DictationRequest::new(
-                    aria_voice::dictation::StopMode::Manual,
-                ),
+                aria_voice::dictation::DictationRequest {
+                    route: aria_voice::dictation::DictationRoute::TranscriptOnly,
+                    ..aria_voice::dictation::DictationRequest::new(
+                        aria_voice::dictation::StopMode::Manual,
+                    )
+                },
                 None,
             );
             settings.own_voice_only = false;
-            settings.transcript_only = true;
-            settings.delivery_mode = aria_settings::DeliveryMode::Complete;
             let coordinator = Arc::clone(&coordinator);
             tokio::task::spawn_blocking(move || {
                 coordinator.execute(
@@ -912,7 +913,7 @@ mod tests {
             setup,
             home.path(),
             home.path(),
-            Arc::new(TranscriptStore::new()),
+            Arc::new(HistoryStore::new()),
             ModelLoading::Eager,
             Gate::new(),
             SoundMuting::Never,

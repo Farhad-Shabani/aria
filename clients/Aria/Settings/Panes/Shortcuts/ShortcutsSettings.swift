@@ -3,7 +3,7 @@ import SwiftUI
 struct ShortcutsSettings: View {
     let settings: DaemonSettings
     let askChord: ChordBinding
-    let promptListChord: ChordBinding
+    let paletteChord: ChordBinding
     let openPrompt: (String) -> Void
 
     var body: some View {
@@ -27,7 +27,23 @@ struct ShortcutsSettings: View {
             }
             Section {
                 HotkeyRecorder(
-                    title: "Shortcut",
+                    title: "Open Aria",
+                    hotkey: editor.snapshot.promptListShortcut,
+                    ariaKey: ariaKey,
+                    binding: paletteChord,
+                    check: { chord in
+                        try await editor.check { $0.promptListShortcut = Aria_Daemon_V1_Shortcut(.chord(chord)) }
+                    }
+                ) {
+                    editor.set(\.promptListShortcut, to: Aria_Daemon_V1_Shortcut($0))
+                }
+                .disabled(!editor.snapshot.hasPromptListShortcut)
+            } footer: {
+                Text("Search commands, prompts, and history.")
+            }
+            Section {
+                HotkeyRecorder(
+                    title: "Ask",
                     hotkey: editor.snapshot.askShortcut,
                     ariaKey: ariaKey,
                     binding: askChord,
@@ -38,29 +54,17 @@ struct ShortcutsSettings: View {
                 }
                 // Nothing to edit until the daemon sends its ask hotkey.
                 .disabled(!editor.snapshot.hasAskShortcut)
-            } header: {
-                Text("Ask")
             } footer: {
                 Text("Tap the Aria key to send. Tap again to cancel.")
             }
-            Section("Prompts") {
-                HotkeyRecorder(
-                    title: "Prompt list shortcut",
-                    hotkey: editor.snapshot.promptListShortcut,
-                    ariaKey: ariaKey,
-                    binding: promptListChord,
-                    check: { chord in
-                        try await editor.check { $0.promptListShortcut = Aria_Daemon_V1_Shortcut(.chord(chord)) }
-                    }
-                ) {
-                    editor.set(\.promptListShortcut, to: Aria_Daemon_V1_Shortcut($0))
-                }
-                .disabled(!editor.snapshot.hasPromptListShortcut)
-                ForEach(editor.snapshot.prompts.entries, id: \.id) { entry in
-                    ItemLink {
-                        openPrompt(entry.id)
-                    } label: {
-                        PromptRow(entry: entry)
+            if !editor.snapshot.prompts.entries.isEmpty {
+                Section("Prompts") {
+                    ForEach(editor.snapshot.prompts.entries, id: \.id) { entry in
+                        ItemLink {
+                            openPrompt(entry.id)
+                        } label: {
+                            PromptRow(entry: entry)
+                        }
                     }
                 }
             }

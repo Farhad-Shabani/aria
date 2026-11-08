@@ -163,9 +163,11 @@ pub(super) async fn record(
         let started_ns = streaming.then(target::uptime_ns).transpose()?;
         let started = Instant::now();
         let mut stream = client.start(wire::StartDictationRequest {
-            output_mode: Some(if streaming { wire::OutputMode::Insert } else { wire::OutputMode::Copy } as i32),
-            delivery_mode: Some(if streaming { wire::DeliveryMode::Streaming } else { wire::DeliveryMode::Complete } as i32),
             stop_mode: if streaming { wire::StopMode::Manual } else { wire::StopMode::OnSilence } as i32,
+            route: Some(wire::start_dictation_request::Route::Deliver(wire::DeliverRoute {
+                output_mode: Some(if streaming { wire::OutputMode::Insert } else { wire::OutputMode::Copy } as i32),
+                delivery_mode: Some(if streaming { wire::DeliveryMode::Streaming } else { wire::DeliveryMode::Complete } as i32),
+            })),
             ..Default::default()
         }).await?.into_inner();
         let mut events = Vec::new();

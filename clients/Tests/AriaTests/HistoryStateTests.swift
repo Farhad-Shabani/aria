@@ -3,26 +3,38 @@ import XCTest
 @testable import Aria
 
 @MainActor
-final class DictationHistoryTests: XCTestCase {
+final class HistoryStateTests: XCTestCase {
     @MainActor
     private final class Harness {
         var entries = [item(2), item(1)]
         var deletionFails = false
         var copied = [String]()
+        var listedSections = [HistorySection?]()
         var copySucceeds = true
         var regenerateContinuation: CheckedContinuation<HistoryItem, Error>?
         var clearCalls = 0
         var clearFailure: HistoryFailure?
         var isCleanupPending = false
 
-        var effects: DictationHistoryState.Effects {
+        var effects: HistoryState.Effects {
             .init(
-                list: { _, _ in HistoryPage(items: self.entries) },
+                list: { _, section, _ in
+                    self.listedSections.append(section)
+                    return HistoryPage(items: self.entries.filter { section == nil || $0.kind.section == section })
+                },
                 get: { id in
                     guard let entry = self.entries.first(where: { $0.id == id }) else {
                         throw HistoryFailure.missing
                     }
                     return entry
+                },
+                thread: { _ in [] },
+                rename: { id, title in
+                    guard let index = self.entries.firstIndex(where: { $0.id == id }) else {
+                        throw HistoryFailure.missing
+                    }
+                    self.entries[index].title = title
+                    return self.entries[index]
                 },
                 delete: { id in
                     if self.deletionFails { throw HistoryFailure.storage }
@@ -45,7 +57,7 @@ final class DictationHistoryTests: XCTestCase {
     }
 
     private static func item(_ id: UInt64) -> HistoryItem {
-        HistoryItem(id: id, text: "Text \(id)", created: Date(timeIntervalSince1970: 100), status: .success)
+        HistoryItem(id: id, created: Date(timeIntervalSince1970: 100), text: "Text \(id)", status: .success)
     }
 
     private func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
@@ -58,7 +70,7 @@ final class DictationHistoryTests: XCTestCase {
 
     func testRefreshPreservesSelectionAndFetchesFullText() async {
         let harness = Harness()
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail?.id == 2 }
         state.select(1)
@@ -74,11 +86,11 @@ final class DictationHistoryTests: XCTestCase {
         let harness = Harness()
         var lists = 0
         var effects = harness.effects
-        effects.list = { _, _ in
+        effects.list = { _, _, _ in
             lists += 1
             return HistoryPage(items: harness.entries)
         }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
 
         state.dictationEnded()
         for _ in 0..<20 { await Task.yield() }
@@ -96,12 +108,32 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(lists, 2)
     }
 
+    func testOpeningListsEverythingRatherThanTheLastSearch() async {
+        let harness = Harness()
+        var queries = [String]()
+        var effects = harness.effects
+        effects.list = { query, _, _ in
+            queries.append(query)
+            return HistoryPage(items: harness.entries)
+        }
+        let state = HistoryState(effects: effects)
+        state.filter(query: "old", section: nil)
+        state.close()
+
+        state.open()
+
+        await waitUntil { !queries.isEmpty }
+        XCTAssertEqual(queries, [""])
+        XCTAssertEqual(state.query, "")
+        state.close()
+    }
+
     func testDaysGroupNewestFirstAndKeepOrderWithinADay() {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = .gmt
         let day: TimeInterval = 86_400
         func entry(_ id: UInt64, at seconds: TimeInterval) -> HistoryItem {
-            HistoryItem(id: id, text: "", created: Date(timeIntervalSince1970: seconds), status: .success)
+            HistoryItem(id: id, created: Date(timeIntervalSince1970: seconds), text: "", status: .success)
         }
         let items = [entry(3, at: day + 50), entry(2, at: 20), entry(1, at: 10)]
 
@@ -113,7 +145,7 @@ final class DictationHistoryTests: XCTestCase {
 
     func testDaysFollowTheListedItems() async {
         let harness = Harness()
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { !state.items.isEmpty }
         XCTAssertEqual(state.days, HistoryDay.grouping(state.items))
@@ -124,11 +156,11 @@ final class DictationHistoryTests: XCTestCase {
         let harness = Harness()
         var continuations: [CheckedContinuation<HistoryPage, Error>] = []
         var effects = harness.effects
-        effects.list = { _, _ in try await withCheckedThrowingContinuation { continuations.append($0) } }
-        let state = DictationHistoryState(effects: effects)
+        effects.list = { _, _, _ in try await withCheckedThrowingContinuation { continuations.append($0) } }
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { continuations.count == 1 }
-        state.search("new")
+        state.filter(query: "new", section: nil)
         state.refresh()
         await waitUntil { continuations.count == 2 }
         continuations[1].resume(returning: HistoryPage(items: [Self.item(1)]))
@@ -143,12 +175,12 @@ final class DictationHistoryTests: XCTestCase {
     func testRefreshKeepsSelectionBeyondFirstPage() async {
         let harness = Harness()
         var effects = harness.effects
-        effects.list = { _, before in
+        effects.list = { _, _, before in
             before == nil
                 ? HistoryPage(items: [harness.entries[0]], next: 2)
                 : HistoryPage(items: [harness.entries[1]])
         }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { state.detail?.id == 2 }
         state.loadMore(after: 2)
@@ -167,7 +199,7 @@ final class DictationHistoryTests: XCTestCase {
         var reads: [UInt64: CheckedContinuation<HistoryItem, Error>] = [:]
         var effects = harness.effects
         effects.get = { id in try await withCheckedThrowingContinuation { reads[id] = $0 } }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { reads[2] != nil }
         state.select(1)
@@ -183,7 +215,7 @@ final class DictationHistoryTests: XCTestCase {
     func testFailedDeleteKeepsEntryAndReportsStorageFailure() async {
         let harness = Harness()
         harness.deletionFails = true
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         state.delete(2)
@@ -195,7 +227,7 @@ final class DictationHistoryTests: XCTestCase {
 
     func testDeleteSelectsNeighborAfterAcknowledgement() async {
         let harness = Harness()
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         state.delete(2)
@@ -204,11 +236,26 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
+    func testAnEntryTheDaemonIsTranscribingCannotBeTranscribedAgain() async {
+        let harness = Harness()
+        harness.entries[0].canRegenerate = true
+        harness.entries[0].isRegenerating = true
+        let state = HistoryState(effects: harness.effects)
+        state.refresh()
+        await waitUntil { state.detail != nil }
+
+        state.regenerate()
+
+        XCTAssertNil(state.regeneratingID)
+        XCTAssertNil(harness.regenerateContinuation)
+        state.close()
+    }
+
     func testRetryAfterSelectionChangeUpdatesOwnRowWithoutCopy() async {
         let harness = Harness()
         harness.entries[0].canRegenerate = true
         harness.entries[0].status = .transcriptionFailed
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         state.regenerate()
@@ -243,7 +290,7 @@ final class DictationHistoryTests: XCTestCase {
             }
             return Self.item(2)
         }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         state.regenerate()
@@ -260,7 +307,7 @@ final class DictationHistoryTests: XCTestCase {
         var effects = harness.effects
         var poll: CheckedContinuation<Void, Error>?
         effects.waitForRegenerate = { try await withCheckedThrowingContinuation { poll = $0 } }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         state.regenerate()
@@ -294,7 +341,7 @@ final class DictationHistoryTests: XCTestCase {
             return harness.entries[0]
         }
         effects.waitForRegenerate = { try await withCheckedThrowingContinuation { poll = $0 } }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { poll != nil }
         state.close()
@@ -303,15 +350,131 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertEqual(reads, 1)
     }
 
+    func testNarrowingToASectionListsOnlyItAndOpeningWidensAgain() async {
+        let harness = Harness()
+        var ask = Self.item(3)
+        ask.kind = .ask(reply: "reply")
+        harness.entries = [ask, Self.item(2)]
+        let state = HistoryState(effects: harness.effects)
+        state.open()
+        await waitUntil { state.items.count == 2 }
+
+        state.filter(query: "", section: .ask)
+        await waitUntil { state.items.count == 1 }
+
+        XCTAssertEqual(state.items.map(\.id), [3])
+        state.close()
+        state.open()
+        await waitUntil { state.items.count == 2 }
+        XCTAssertEqual(harness.listedSections.last, .some(nil))
+        state.close()
+    }
+
+    func testCopyingAnAskTakesItsReply() async {
+        let harness = Harness()
+        var ask = Self.item(3)
+        ask.kind = .ask(reply: "The reply")
+        harness.entries = [ask]
+        let state = HistoryState(effects: harness.effects)
+        state.refresh()
+        await waitUntil { state.detail != nil }
+
+        state.copy()
+
+        XCTAssertEqual(harness.copied, ["The reply"])
+        state.close()
+    }
+
+    func testTypingARowTakesTheWholeText() async {
+        let harness = Harness()
+        harness.entries[0].text = "The whole text"
+        let state = HistoryState(effects: harness.effects)
+
+        let whole = await state.typingText(of: 2)
+
+        XCTAssertEqual(whole, "The whole text")
+    }
+
+    func testCopyingARowTakesTheWholeTextRatherThanWhatTheListHolds() async {
+        let harness = Harness()
+        harness.entries[0].text = "The whole text"
+        let state = HistoryState(effects: harness.effects)
+
+        state.copy(2)
+        await waitUntil { !harness.copied.isEmpty }
+
+        XCTAssertEqual(harness.copied, ["The whole text"])
+        XCTAssertEqual(state.notice, "Copied")
+        state.close()
+    }
+
+    func testAnEarlierRenameThatAnswersLastDoesNotWin() async {
+        let harness = Harness()
+        var renames: [CheckedContinuation<HistoryItem, Error>] = []
+        var effects = harness.effects
+        effects.rename = { _, _ in try await withCheckedThrowingContinuation { renames.append($0) } }
+        let state = HistoryState(effects: effects)
+        state.refresh()
+        await waitUntil { state.detail?.id == 2 }
+
+        state.rename(2, to: "Old")
+        await waitUntil { renames.count == 1 }
+        state.rename(2, to: "New")
+        await waitUntil { renames.count == 2 }
+        var renamed = Self.item(2)
+        renamed.title = "New"
+        renames[1].resume(returning: renamed)
+        await waitUntil { state.detail?.title == "New" }
+        renamed.title = "Old"
+        renames[0].resume(returning: renamed)
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(state.detail?.title, "New")
+        XCTAssertEqual(state.items.first?.title, "New")
+        state.close()
+    }
+
+    func testRenamingTrimsTheNameAndABlankNameRemovesTheTitle() async {
+        let harness = Harness()
+        let state = HistoryState(effects: harness.effects)
+        state.refresh()
+        await waitUntil { state.detail?.id == 2 }
+
+        state.rename(2, to: "  Standup notes ")
+        await waitUntil { state.detail?.title != nil }
+        XCTAssertEqual(state.items.first?.name, "Standup notes")
+
+        state.rename(2, to: "   ")
+        await waitUntil { state.detail?.title == nil }
+        XCTAssertEqual(state.items.first?.name, "Text 2")
+        state.close()
+    }
+
+    func testANameOverTheLimitIsRefusedBeforeItIsSent() {
+        let harness = Harness()
+        let state = HistoryState(effects: harness.effects)
+
+        state.rename(2, to: String(repeating: "é", count: 129))
+
+        XCTAssertEqual(state.error, .nameTooLong)
+        XCTAssertNil(harness.entries.first?.title)
+    }
+
     func testFailedClipboardWriteDoesNotClaimCopied() async {
         let harness = Harness()
         harness.copySucceeds = false
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         state.copy()
         XCTAssertEqual(harness.copied, ["Text 2"])
-        XCTAssertEqual(state.notice, "Aria couldn’t copy the text. Try again.")
+        XCTAssertEqual(state.error, .copyFailed, "a failure shows as an error, not a notice")
+        XCTAssertNil(state.notice)
+
+        harness.copySucceeds = true
+        state.copy()
+        XCTAssertNil(state.error, "copying again replaces the failure")
+        XCTAssertEqual(state.notice, "Copied")
         state.close()
     }
 
@@ -321,15 +484,15 @@ final class DictationHistoryTests: XCTestCase {
         var effects = harness.effects
         var requests: [(String, UInt64?)] = []
         var warning: String?
-        effects.list = { query, before in
+        effects.list = { query, _, before in
             requests.append((query, before))
             guard !harness.entries.isEmpty else { return HistoryPage(items: [], warning: warning) }
             return before == nil
                 ? HistoryPage(items: [harness.entries[0]], next: 2)
                 : HistoryPage(items: [harness.entries[1]])
         }
-        let state = DictationHistoryState(effects: effects)
-        state.search("Text")
+        let state = HistoryState(effects: effects)
+        state.filter(query: "Text", section: nil)
         state.refresh()
         await waitUntil { state.detail?.id == 2 }
         state.loadMore(after: 2)
@@ -341,10 +504,9 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertTrue(state.items.isEmpty)
         XCTAssertNil(state.selectedID)
         XCTAssertNil(state.detail)
-        XCTAssertEqual(state.query, "")
-        XCTAssertEqual(requests.last?.0, "")
+        XCTAssertEqual(requests.last?.0, "Text")
         XCTAssertNil(requests.last?.1)
-        let notice = "Dictation text cleared. Aria will finish removing some recordings later."
+        let notice = "History cleared. Aria will finish removing some recordings later."
         XCTAssertEqual(state.notice, notice)
         state.refresh()
         await waitUntil { !state.isLoading }
@@ -368,10 +530,10 @@ final class DictationHistoryTests: XCTestCase {
         var read: CheckedContinuation<HistoryItem, Error>?
         var clear: CheckedContinuation<HistoryClearResult, Error>?
         var effects = harness.effects
-        effects.list = { _, _ in try await withCheckedThrowingContinuation { lists.append($0) } }
+        effects.list = { _, _, _ in try await withCheckedThrowingContinuation { lists.append($0) } }
         effects.get = { _ in try await withCheckedThrowingContinuation { read = $0 } }
         effects.clear = { try await withCheckedThrowingContinuation { clear = $0 } }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.refresh()
         await waitUntil { lists.count == 1 }
         lists[0].resume(returning: HistoryPage(items: harness.entries, next: 1))
@@ -383,7 +545,6 @@ final class DictationHistoryTests: XCTestCase {
         state.clear()
         state.delete(2)
         state.regenerate()
-        state.search("ignored")
         state.refresh()
         state.loadMore(after: 1)
         state.select(1)
@@ -391,7 +552,6 @@ final class DictationHistoryTests: XCTestCase {
         XCTAssertFalse(state.canClear)
         XCTAssertNil(state.deletingID)
         XCTAssertNil(state.regeneratingID)
-        XCTAssertEqual(state.query, "")
         XCTAssertEqual(state.selectedID, 2)
         XCTAssertEqual(lists.count, 2)
         clear?.resume(returning: HistoryClearResult(deletedEntries: 2, isCleanupPending: false))
@@ -411,7 +571,7 @@ final class DictationHistoryTests: XCTestCase {
         for failure in [HistoryFailure.busy, .storage, .clearUncertain, .unsupported] {
             let harness = Harness()
             harness.clearFailure = failure
-            let state = DictationHistoryState(effects: harness.effects)
+            let state = HistoryState(effects: harness.effects)
             state.refresh()
             await waitUntil { state.detail != nil }
             harness.entries = [Self.item(1)]
@@ -429,7 +589,7 @@ final class DictationHistoryTests: XCTestCase {
     func testClearIsBlockedByKnownRetry() async {
         let harness = Harness()
         harness.entries[1].isRegenerating = true
-        let state = DictationHistoryState(effects: harness.effects)
+        let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
         XCTAssertFalse(state.canClear)
@@ -439,12 +599,31 @@ final class DictationHistoryTests: XCTestCase {
         state.close()
     }
 
+    func testAFilterSetDuringAClearListsOnceTheClearFails() async {
+        let harness = Harness()
+        var clear: CheckedContinuation<HistoryClearResult, Error>?
+        var effects = harness.effects
+        effects.clear = { try await withCheckedThrowingContinuation { clear = $0 } }
+        let state = HistoryState(effects: effects)
+        state.open()
+        await waitUntil { !state.isLoading }
+        state.clear()
+        await waitUntil { clear != nil }
+
+        state.filter(query: "", section: .ask)
+        clear?.resume(throwing: HistoryFailure.storage)
+
+        await waitUntil { !state.isClearing && !state.isLoading }
+        XCTAssertEqual(harness.listedSections.last, .ask)
+        state.close()
+    }
+
     func testCloseDuringClearReleasesControlsAndIgnoresLateCompletion() async {
         let harness = Harness()
         var clears: [CheckedContinuation<HistoryClearResult, Error>] = []
         var effects = harness.effects
         effects.clear = { try await withCheckedThrowingContinuation { clears.append($0) } }
-        let state = DictationHistoryState(effects: effects)
+        let state = HistoryState(effects: effects)
         state.clear()
         await waitUntil { clears.count == 1 }
         state.close()
@@ -472,72 +651,6 @@ final class DictationHistoryTests: XCTestCase {
         }
         for failure in [HistoryFailure.busy, .unsupported] {
             XCTAssertEqual(HistoryClient.clearFailure(failure), failure)
-        }
-    }
-
-    func testMetadataOmitsUnknownApplicationDurationAndWords() throws {
-        var wire = Aria_Daemon_V1_HistoryEntry()
-        wire.id = 1
-        wire.source = .relay
-        wire.status = .transcriptionFailed
-        wire.audioAvailability = .unavailable
-        let item = try HistoryItem(wire)
-        XCTAssertEqual(item.metadata.map(\.0), ["Source", "Status", "Created", "Audio"])
-        XCTAssertEqual(item.source, .relay)
-        XCTAssertEqual(item.source.title, "iPhone or Apple Watch")
-        XCTAssertFalse(item.canRegenerate)
-    }
-
-    func testTranscriptionErrorShowsExplanationInsteadOfRawCategory() throws {
-        var wire = Aria_Daemon_V1_HistoryEntry()
-        wire.id = 1
-        wire.source = .local
-        wire.status = .transcriptionFailed
-        wire.audioAvailability = .unavailable
-        wire.error.code = .transcriptionFailed
-        XCTAssertEqual(
-            try HistoryItem(wire).message, "Aria couldn’t finish transcribing this recording.")
-        wire.error.code = .UNRECOGNIZED(12345)
-        XCTAssertEqual(
-            try HistoryItem(wire).message, "Aria couldn’t finish transcribing this recording.")
-        wire.error.code = .overallTimeout
-        XCTAssertEqual(try HistoryItem(wire).message, "Aria couldn’t finish this recording in time.")
-    }
-
-    func testAudioExpiryMatchesAvailability() throws {
-        var wire = Aria_Daemon_V1_HistoryEntry()
-        wire.id = 1
-        wire.source = .local
-        wire.status = .transcriptionFailed
-        wire.audioAvailability = .available
-        XCTAssertThrowsError(try HistoryItem(wire))
-        wire.audioExpiresAtMs = 1_000
-        let expiry = Date(timeIntervalSince1970: 1)
-        let available = try HistoryItem(wire)
-        XCTAssertEqual(available.audio, .available(until: expiry))
-        XCTAssertEqual(
-            available.metadata.first { $0.0 == "Audio" }?.1,
-            "Available until \(expiry.formatted(date: .abbreviated, time: .shortened))")
-        var successful = available
-        successful.status = .success
-        XCTAssertFalse(successful.metadata.contains { $0.0 == "Audio" })
-        let cases: [(Aria_Daemon_V1_HistoryAudioAvailability, HistoryItem.Audio, String)] = [
-            (.unavailable, .unavailable, "Unavailable"),
-            (.expired, .expired, "Expired"),
-        ]
-        for (audio, expected, description) in cases {
-            wire.audioAvailability = audio
-            XCTAssertThrowsError(try HistoryItem(wire))
-            wire.clearAudioExpiresAtMs()
-            let item = try HistoryItem(wire)
-            XCTAssertEqual(item.audio, expected)
-            XCTAssertEqual(item.metadata.first { $0.0 == "Audio" }?.1, description)
-            wire.audioExpiresAtMs = 1_000
-        }
-        wire.clearAudioExpiresAtMs()
-        for audio in [Aria_Daemon_V1_HistoryAudioAvailability.unspecified, .UNRECOGNIZED(12345)] {
-            wire.audioAvailability = audio
-            XCTAssertThrowsError(try HistoryItem(wire))
         }
     }
 

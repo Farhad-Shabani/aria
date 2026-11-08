@@ -65,6 +65,15 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState(asks: asks), .asking("reading · +1", since: epoch + 1))
     }
 
+    func testAForgottenAskLeavesThePill() {
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 1))
+
+        asks.forget(1)
+
+        XCTAssertNil(PillState(asks: asks))
+    }
+
     func testReplyAndFailureRetireTheirTicket() {
         var asks = AsksInFlight()
         asks.apply(event(.working, ticket: 1))

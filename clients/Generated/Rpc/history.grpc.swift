@@ -87,13 +87,41 @@ public enum Aria_Daemon_V1_HistoryService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Rename" metadata.
+        public enum Rename: Sendable {
+            /// Request type for "Rename".
+            public typealias Input = Aria_Daemon_V1_RenameHistoryRequest
+            /// Response type for "Rename".
+            public typealias Output = Aria_Daemon_V1_RenameHistoryResponse
+            /// Descriptor for "Rename".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.HistoryService"),
+                method: "Rename",
+                type: .unary
+            )
+        }
+        /// Namespace for "GetThread" metadata.
+        public enum GetThread: Sendable {
+            /// Request type for "GetThread".
+            public typealias Input = Aria_Daemon_V1_GetThreadRequest
+            /// Response type for "GetThread".
+            public typealias Output = Aria_Daemon_V1_HistoryThread
+            /// Descriptor for "GetThread".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.HistoryService"),
+                method: "GetThread",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.HistoryService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             List.descriptor,
             Get.descriptor,
             Delete.descriptor,
             Clear.descriptor,
-            Regenerate.descriptor
+            Regenerate.descriptor,
+            Rename.descriptor,
+            GetThread.descriptor
         ]
     }
 }
@@ -179,10 +207,11 @@ extension Aria_Daemon_V1_HistoryService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Delete all rows, then remove their audio and orphaned recordings. Any
-        /// > active regeneration refuses the whole operation with BUSY. Later saves
-        /// > survive; settings and active dictation are unchanged. Do not retry
-        /// > automatically after a timeout or disconnect: the result is uncertain.
+        /// > Delete the section's rows, or all rows, then remove their audio and
+        /// > orphaned recordings. Any active regeneration refuses the whole operation
+        /// > with BUSY. Later saves survive. Settings and active dictation are
+        /// > unchanged. Do not retry automatically after a timeout or disconnect,
+        /// > because the result is uncertain.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ClearHistoryRequest` message.
@@ -223,6 +252,54 @@ extension Aria_Daemon_V1_HistoryService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryEntry>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryEntry>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Works on an entry being regenerated. A missing or deleting entry is
+        /// > HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RenameHistoryRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RenameHistoryRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RenameHistoryResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func rename<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RenameHistoryRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RenameHistoryRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RenameHistoryResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameHistoryResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "GetThread" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > An entry's prompt results, newest first. A missing entry is
+        /// > HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetThreadRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetThreadRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_HistoryThread` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getThread<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetThreadRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetThreadRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryThread>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryThread>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -341,10 +418,11 @@ extension Aria_Daemon_V1_HistoryService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Delete all rows, then remove their audio and orphaned recordings. Any
-        /// > active regeneration refuses the whole operation with BUSY. Later saves
-        /// > survive; settings and active dictation are unchanged. Do not retry
-        /// > automatically after a timeout or disconnect: the result is uncertain.
+        /// > Delete the section's rows, or all rows, then remove their audio and
+        /// > orphaned recordings. Any active regeneration refuses the whole operation
+        /// > with BUSY. Later saves survive. Settings and active dictation are
+        /// > unchanged. Do not retry automatically after a timeout or disconnect,
+        /// > because the result is uncertain.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ClearHistoryRequest` message.
@@ -402,6 +480,76 @@ extension Aria_Daemon_V1_HistoryService {
             try await self.client.unary(
                 request: request,
                 descriptor: Aria_Daemon_V1_HistoryService.Method.Regenerate.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Works on an entry being regenerated. A missing or deleting entry is
+        /// > HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RenameHistoryRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RenameHistoryRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RenameHistoryResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func rename<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RenameHistoryRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RenameHistoryRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RenameHistoryResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameHistoryResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_HistoryService.Method.Rename.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "GetThread" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > An entry's prompt results, newest first. A missing entry is
+        /// > HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetThreadRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetThreadRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_HistoryThread` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getThread<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetThreadRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetThreadRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryThread>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryThread>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_HistoryService.Method.GetThread.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -498,10 +646,11 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Delete all rows, then remove their audio and orphaned recordings. Any
-    /// > active regeneration refuses the whole operation with BUSY. Later saves
-    /// > survive; settings and active dictation are unchanged. Do not retry
-    /// > automatically after a timeout or disconnect: the result is uncertain.
+    /// > Delete the section's rows, or all rows, then remove their audio and
+    /// > orphaned recordings. Any active regeneration refuses the whole operation
+    /// > with BUSY. Later saves survive. Settings and active dictation are
+    /// > unchanged. Do not retry automatically after a timeout or disconnect,
+    /// > because the result is uncertain.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_ClearHistoryRequest` message.
@@ -551,6 +700,66 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RegenerateHistoryRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_HistoryEntry>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rename" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Works on an entry being regenerated. A missing or deleting entry is
+    /// > HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_RenameHistoryRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rename<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RenameHistoryRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameHistoryResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.rename(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RenameHistoryRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_RenameHistoryResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetThread" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > An entry's prompt results, newest first. A missing entry is
+    /// > HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_GetThreadRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getThread<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetThreadRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryThread>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getThread(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetThreadRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_HistoryThread>(),
             options: options,
             onResponse: handleResponse
         )
@@ -656,10 +865,11 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Delete all rows, then remove their audio and orphaned recordings. Any
-    /// > active regeneration refuses the whole operation with BUSY. Later saves
-    /// > survive; settings and active dictation are unchanged. Do not retry
-    /// > automatically after a timeout or disconnect: the result is uncertain.
+    /// > Delete the section's rows, or all rows, then remove their audio and
+    /// > orphaned recordings. Any active regeneration refuses the whole operation
+    /// > with BUSY. Later saves survive. Settings and active dictation are
+    /// > unchanged. Do not retry automatically after a timeout or disconnect,
+    /// > because the result is uncertain.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -716,6 +926,74 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             metadata: metadata
         )
         return try await self.regenerate(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rename" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Works on an entry being regenerated. A missing or deleting entry is
+    /// > HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rename<Result>(
+        _ message: Aria_Daemon_V1_RenameHistoryRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameHistoryResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RenameHistoryRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.rename(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetThread" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > An entry's prompt results, newest first. A missing entry is
+    /// > HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getThread<Result>(
+        _ message: Aria_Daemon_V1_GetThreadRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryThread>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_GetThreadRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getThread(
             request: request,
             options: options,
             onResponse: handleResponse

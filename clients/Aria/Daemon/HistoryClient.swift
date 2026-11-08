@@ -6,14 +6,25 @@ import GRPCProtobuf
 /// The daemon's HistoryService. Every failure comes back as a `HistoryFailure`.
 @MainActor
 enum HistoryClient {
-    static var effects: DictationHistoryState.Effects {
+    static var effects: HistoryState.Effects {
         .init(
-            list: list, get: get, delete: delete, clear: clear, regenerate: regenerate, copy: Pasteboard.copyConcealed)
+            list: list, get: get, thread: thread, rename: rename, delete: delete, clear: clear,
+            regenerate: regenerate, copy: Pasteboard.copyConcealed)
     }
 
-    private static func list(_ query: String, _ before: UInt64?) async throws -> HistoryPage {
+    private static func list(_ query: String, _ section: HistorySection?, _ before: UInt64?) async throws
+        -> HistoryPage
+    {
         var request = Aria_Daemon_V1_ListHistoryRequest()
         request.query = query
+        if let section {
+            request.section =
+                switch section {
+                case .dictation: .dictation
+                case .listen: .listen
+                case .ask: .ask
+                }
+        }
         request.limit = 50
         if let before { request.beforeID = before }
         let sent = request
@@ -35,6 +46,33 @@ enum HistoryClient {
                 request: ClientRequest(message: Aria_Daemon_V1_GetHistoryRequest.with { $0.id = id }), options: options
             ) {
                 try HistoryItem($0.message)
+            }
+        }
+    }
+
+    private static func thread(_ entry: UInt64) async throws -> [PromptResult] {
+        let sent = Aria_Daemon_V1_GetThreadRequest.with { $0.entryID = entry }
+        return try await history { client, options in
+            try await client.getThread(request: ClientRequest(message: sent), options: options) {
+                try $0.message.results.map { result in
+                    guard result.hasCreateTime else { throw DaemonFailure.invalidResponse }
+                    return PromptResult(
+                        id: result.id,
+                        created: result.createTime.date,
+                        promptName: result.promptName, text: result.text)
+                }
+            }
+        }
+    }
+
+    private static func rename(_ id: UInt64, _ title: String?) async throws -> HistoryItem {
+        var request = Aria_Daemon_V1_RenameHistoryRequest()
+        request.id = id
+        if let title { request.title = title }
+        let sent = request
+        return try await history { client, options in
+            try await client.rename(request: ClientRequest(message: sent), options: options) {
+                try HistoryItem($0.message.entry)
             }
         }
     }
@@ -103,13 +141,13 @@ enum HistoryClient {
 
 extension HistoryItem {
     init(_ wire: Aria_Daemon_V1_HistoryEntry) throws {
-        guard wire.hasAudioExpiresAtMs == (wire.audioAvailability == .available),
+        guard wire.hasCreateTime, wire.hasAudioExpireTime == (wire.audioAvailability == .available),
             !wire.hasError || wire.error.code != .unspecified
         else { throw DaemonFailure.invalidResponse }
         let audio: Audio
         switch wire.audioAvailability {
         case .available:
-            audio = .available(until: Date(timeIntervalSince1970: Double(wire.audioExpiresAtMs) / 1_000))
+            audio = .available(until: wire.audioExpireTime.date)
         case .unavailable: audio = .unavailable
         case .expired: audio = .expired
         default: throw DaemonFailure.invalidResponse
@@ -130,19 +168,45 @@ extension HistoryItem {
         }
         self.init(
             id: wire.id,
-            text: wire.text,
-            created: Date(timeIntervalSince1970: Double(wire.createdAtMs) / 1_000),
-            status: wire.deletionPending ? .deletionPending : status,
+            title: wire.hasTitle ? wire.title : nil,
+            kind: try Self.kind(wire),
+            created: wire.createTime.date,
+            duration: wire.hasDuration ? wire.duration.timeInterval : nil,
             source: source,
             application: wire.hasApplication && !wire.application.name.isEmpty ? wire.application.name : nil,
-            duration: wire.hasDurationMs ? Double(wire.durationMs) / 1_000 : nil,
+            project: wire.hasProjectDirectory ? wire.projectDirectory : nil,
+            text: wire.text,
             isComplete: wire.transcriptionComplete,
-            canRegenerate: wire.canRegenerate,
+            resultCount: Int(wire.resultCount),
+            status: wire.deletionPending ? .deletionPending : status,
+            message: wire.hasError ? Self.transcriptionMessage(wire.error.code) : nil,
+            warning: wire.hasWarning ? wire.warning : nil,
             audio: audio,
             isRegenerating: wire.regenerating,
-            warning: wire.hasWarning ? wire.warning : nil,
-            message: wire.hasError ? Self.transcriptionMessage(wire.error.code) : nil
+            canRegenerate: wire.canRegenerate
         )
+    }
+
+    private static func kind(_ wire: Aria_Daemon_V1_HistoryEntry) throws -> Kind {
+        switch (wire.section, wire.details) {
+        // A daemon from before sections sends none, and it kept only dictations.
+        case (.dictation, nil), (.unspecified, nil):
+            return .dictation
+        case (.listen, .transcript(let transcript)?):
+            let read: TranscriptRead?
+            switch transcript.hasRead ? transcript.read : nil {
+            case nil: read = nil
+            case .whole?: read = .whole
+            case .truncated?: read = .truncated
+            case .unavailable?: read = .unavailable
+            default: throw DaemonFailure.invalidResponse
+            }
+            return .listen(transcript: transcript.path, read: read)
+        case (.ask, .reply(let reply)?):
+            return .ask(reply: reply)
+        default:
+            throw DaemonFailure.invalidResponse
+        }
     }
 
     private static func transcriptionMessage(_ code: Aria_Daemon_V1_ErrorCode) -> String {

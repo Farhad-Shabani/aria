@@ -70,6 +70,9 @@ On Linux, [hotkey dictation](./linux.md#try-it) pastes into the focused app.
 `--mode insert` pastes the completed transcript. `--stream` waits too, since
 Aria pastes once recording stops.
 
+To save the transcript to [history](./history.md#dictate-into-history) without
+typing it, add `--history-only`.
+
 On a Mac, Aria adds a space where the text needs one. Dictating “Hello.” and then
 “How are you” types “Hello. How are you”.
 

@@ -22,51 +22,6 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
-/// What a prompt makes of what was said. Either way the transcript is
-/// material for the assistant, never instructions to it.
-public nonisolated enum Aria_Daemon_V1_PromptKind: SwiftProtobuf.Enum, Swift.CaseIterable {
-  public typealias RawValue = Int
-  case unspecified // = 0
-
-  /// The same words and meaning, cleaned up or restyled.
-  case rewrite // = 1
-
-  /// New text made from what was said, such as a reply, a translation, or a
-  /// summary.
-  case compose // = 2
-  case UNRECOGNIZED(Int)
-
-  public init() {
-    self = .unspecified
-  }
-
-  public init?(rawValue: Int) {
-    switch rawValue {
-    case 0: self = .unspecified
-    case 1: self = .rewrite
-    case 2: self = .compose
-    default: self = .UNRECOGNIZED(rawValue)
-    }
-  }
-
-  public var rawValue: Int {
-    switch self {
-    case .unspecified: return 0
-    case .rewrite: return 1
-    case .compose: return 2
-    case .UNRECOGNIZED(let i): return i
-    }
-  }
-
-  // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Aria_Daemon_V1_PromptKind] = [
-    .unspecified,
-    .rewrite,
-    .compose,
-  ]
-
-}
-
 /// Why an output mode can't stream.
 public nonisolated enum Aria_Daemon_V1_StreamingUnavailable: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
@@ -1048,10 +1003,6 @@ public nonisolated struct Aria_Daemon_V1_Shortcut: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
-
-nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROMPT_KIND_UNSPECIFIED\0\u{1}PROMPT_KIND_REWRITE\0\u{1}PROMPT_KIND_COMPOSE\0")
-}
 
 nonisolated extension Aria_Daemon_V1_StreamingUnavailable: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAMING_UNAVAILABLE_UNSPECIFIED\0\u{1}STREAMING_UNAVAILABLE_COPY\0\u{1}STREAMING_UNAVAILABLE_PLATFORM\0\u{1}STREAMING_UNAVAILABLE_MODEL\0")

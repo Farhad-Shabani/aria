@@ -51,11 +51,6 @@ final class PromptHotkeys: ObservableObject {
             }
     }
 
-    /// The prompts that are on, in Settings order.
-    var runnable: [Aria_Daemon_V1_Prompt] {
-        entries.filter(\.enabled)
-    }
-
     func press(_ id: String) {
         controllers[id]?.press()
     }

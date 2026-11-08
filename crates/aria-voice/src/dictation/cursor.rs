@@ -211,7 +211,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         settings: &DictationSettings,
         control: &Arc<ExecutionControl>,
     ) -> Result<(), DeliveryError> {
-        if settings.transcript_only {
+        if !settings.route.delivers() {
             self.target = None;
             return Ok(());
         }
@@ -958,7 +958,7 @@ mod tests {
         let (log, mut cursor) = cursor();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
-        settings.transcript_only = true;
+        settings.route = crate::dictation::TranscriptRoute::TranscriptOnly;
 
         cursor.dictation_started(&settings, &control).unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();

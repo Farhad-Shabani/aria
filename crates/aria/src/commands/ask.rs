@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use aria_daemon::{
-    AskError, AssistantId, ChatRequest, ChatStageKind, Clarify, DaemonSession, Routing, StopMode,
-    Ticket,
+    AskError, AssistantId, ChatReply, ChatRequest, ChatStageKind, Clarify, DaemonSession,
+    PendingAsk, Routing, StopMode, Ticket,
 };
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use clap::Args;
@@ -178,14 +178,40 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Everything above prints first: an armed phase holds the terminal raw,
+    let reply = wait_for_reply(pending, &mut interrupt)?;
+    print_reply(&reply, args.mode);
+    Ok(())
+}
+
+/// Prints a reply nothing typed: one with no mode, or one whose delivery
+/// failed.
+pub(super) fn print_reply(reply: &ChatReply, mode: Option<CliOutputMode>) {
+    match reply.delivery_error {
+        Some(code) => {
+            let reason = code.words();
+            eprintln!("warning: the reply was not delivered ({reason}); printing it instead");
+            println!("{}", reply.text);
+        }
+        None if mode.is_none() => println!("{}", reply.text),
+        None => {}
+    }
+}
+
+/// Shows each step of the ask or prompt run until it ends. Esc or Ctrl-C
+/// cancels it, and a cancelled one ends the process as Ctrl-C would.
+pub(super) fn wait_for_reply(
+    pending: PendingAsk,
+    interrupt: &mut Interrupt,
+) -> anyhow::Result<ChatReply> {
+    let pending_ticket = pending.ticket();
+    // Everything before prints first: an armed phase holds the terminal raw,
     // where a plain newline does not return the carriage.
     let mut working = interrupt.asking(pending_ticket);
     let reply = pending.reply(|stage| {
         let ticket = stage.ticket;
         match &stage.kind {
             ChatStageKind::Working(step) => {
-                working.show(format!("{ticket} {assistant_name} · {step}"));
+                working.show(format!("{ticket} {} · {step}", stage.assistant_id.name()));
             }
             ChatStageKind::Replied(..) => {
                 working.finish();
@@ -207,23 +233,13 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
     if let Some(error) = working.take_failure() {
         eprintln!("warning: {pending_ticket} could not be cancelled: {error:#}");
     }
-    let reply = match reply {
+    match reply {
         Err(AskError::Failed(RpcFailure {
             code: RpcErrorCode::Cancelled,
             ..
         })) if working.cancelled() => std::process::exit(INTERRUPTED),
-        reply => reply?,
-    };
-    match reply.delivery_error {
-        Some(code) => {
-            let reason = code.words();
-            eprintln!("warning: the reply was not delivered ({reason}); printing it instead");
-            println!("{}", reply.text);
-        }
-        None if args.mode.is_none() => println!("{}", reply.text),
-        None => {}
+        reply => Ok(reply?),
     }
-    Ok(())
 }
 
 fn chat_request_from_settings(

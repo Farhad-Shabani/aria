@@ -7,10 +7,6 @@ final class WindowPresentation {
     private var open: (() -> Void)?
     private var isPending = false
 
-    func didLaunch(atLogin: Bool) {
-        if !atLogin { request() }
-    }
-
     func request() {
         guard let open else {
             isPending = true

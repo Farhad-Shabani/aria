@@ -39,4 +39,26 @@ final class ChatClientTests: XCTestCase {
             }
         }
     }
+
+    func testTextFitsDeliveryUpToTheDaemonsLimitInBytes() {
+        let limit = 64 * 1024
+        XCTAssertTrue(ChatClient.fitsDelivery(String(repeating: "a", count: limit)))
+        XCTAssertFalse(ChatClient.fitsDelivery(String(repeating: "a", count: limit + 1)))
+        XCTAssertFalse(ChatClient.fitsDelivery(String(repeating: "é", count: limit / 2 + 1)))
+    }
+
+    func testAPromptRunOnAnEntryNamesItAndNoAppOrOutputMode() {
+        let request = ChatClient.replyRequest(entry: 7, source: .stored(id: "summarize"))
+
+        XCTAssertEqual(request.historyEntryID, 7)
+        XCTAssertEqual(request.promptID, "summarize")
+        XCTAssertFalse(request.hasOutputMode)
+        XCTAssertTrue(request.applicationID.isEmpty)
+    }
+
+    func testAOneOffRunSendsItsInstructionsInPlaceOfAPrompt() {
+        let request = ChatClient.replyRequest(entry: 7, source: .oneOff(instructions: "List the action items."))
+
+        XCTAssertEqual(request.prompt, .instructions("List the action items."))
+    }
 }
