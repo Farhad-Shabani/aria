@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+import "aria/daemon/v1/errors.proto";
+import "google/protobuf/duration.proto";
+
+service SystemTranscriptionService {
+  // Capture the machine's own audio output and transcribe it to a file
+  // until Stop. Served only by a persistent daemon; an on-demand daemon
+  // refuses with UNSUPPORTED. A Start while one runs answers the running
+  // system transcription with `already_running`.
+  rpc Start(StartSystemTranscriptionRequest) returns (StartSystemTranscriptionResponse);
+  rpc Stop(StopSystemTranscriptionRequest) returns (StopSystemTranscriptionResponse);
+  rpc GetStatus(GetSystemTranscriptionStatusRequest) returns (GetSystemTranscriptionStatusResponse);
+}
+
+message StartSystemTranscriptionRequest {
+  // Absolute file path for the transcript. Absent: a timestamped file in
+  // the configured transcripts directory.
+  optional string transcript_path = 1;
+}
+
+message StartSystemTranscriptionResponse {
+  bool already_running = 1;
+  string transcript_path = 2;
+}
+
+message StopSystemTranscriptionRequest {}
+
+message StopSystemTranscriptionResponse {
+  bool was_running = 1;
+  string transcript_path = 2;
+}
+
+message GetSystemTranscriptionStatusRequest {}
+
+message GetSystemTranscriptionStatusResponse {
+  bool running = 1;
+  string transcript_path = 2;
+  // How the last system transcription ended, when it failed after Start returned — a
+  // denied recording permission surfaces here. Empty otherwise.
+  string error_message = 3;
+}
+
+message SystemTranscriptionEvent {
+  SystemTranscriptionStage stage = 1;
+  // The segment just transcribed; only for SEGMENT_TRANSCRIBED.
+  string text = 2;
+  // The tentative live speaker label; empty when unknown.
+  string speaker_label = 3;
+  // Meaningful only when stage is SYSTEM_TRANSCRIPTION_STAGE_FAILED.
+  ErrorCode error_code = 4;
+  // How far into the recording, in whole seconds, so a follower's clock
+  // matches the transcript file's however late it attached. Only for
+  // SEGMENT_TRANSCRIBED.
+  google.protobuf.Duration offset = 5;
+  // For SPEAKER_MERGED: `merged_from_label` becomes `speaker_label` in the
+  // transcript file and subsequent events.
+  string merged_from_label = 6;
+}
+
+enum SystemTranscriptionStage {
+  SYSTEM_TRANSCRIPTION_STAGE_UNSPECIFIED = 0;
+  SYSTEM_TRANSCRIPTION_STAGE_SEGMENT_TRANSCRIBED = 1;
+  SYSTEM_TRANSCRIPTION_STAGE_STOPPED = 2;
+  SYSTEM_TRANSCRIPTION_STAGE_FAILED = 3;
+  SYSTEM_TRANSCRIPTION_STAGE_SPEAKER_MERGED = 4;
+  // The system transcription was accepted. Capture may still fail to start, which FAILED
+  // reports. A subscriber that connects later misses this stage and reads
+  // GetStatus instead.
+  SYSTEM_TRANSCRIPTION_STAGE_STARTED = 5;
+}

@@ -14,8 +14,8 @@ use crate::hearing::{
     Board, Decoding, Event, Hearing, HearingError, TrackingError, hear_saved, hear_to_end,
 };
 use crate::speaker::{Diarizer, Label, Profile, SpeakerName, VoiceprintTracker};
-use crate::transcription::{
-    Language, Mode, Operation, Transcriber, Transcript, TranscriptSegment, Transcription,
+use crate::stt::{
+    Language, Mode, Operation, Recognizer, Transcript, TranscriptSegment, Transcription,
     TranscriptionError,
 };
 use crate::vocabulary::Vocabulary;
@@ -213,7 +213,7 @@ where
     V: VoiceActivityDetector,
     E: Embedder,
     G: Segmenter,
-    T: Transcriber,
+    T: Recognizer,
 {
     /// Transcribes caller-provided audio with the shared engine and speaker
     /// filter, without publishing it to sinks. The result names `engine`, or
@@ -422,7 +422,7 @@ where
     V: VoiceActivityDetector + Send,
     E: Embedder + Send,
     G: Segmenter + Send,
-    T: Transcriber,
+    T: Recognizer,
     M: Mode,
     S: TranscriptSink,
     S::Error: Into<DictationError>,
@@ -580,7 +580,7 @@ where
                 .map_err(|error| stop_recording(control, map_sink_error(error, control)))
                 .map_err(|error| log_delivery_error(stage_started.elapsed(), error))?;
             tracing::info!(stage = "transcription", "dictation stage started");
-            // Held only for the transcription stage: the meter ends with
+            // Held only for the transcribing stage: the meter ends with
             // capture, and the pill has its next stage to draw by then.
             let meter = Meter::watching(&recording, control, events);
             // Transcription can fail before it has read the press to its end —
@@ -1436,7 +1436,7 @@ fn check_execution(control: &ExecutionControl) -> Result<(), DictationError> {
     Ok(())
 }
 
-/// The press ends inside transcription, so the recording stage is logged from
+/// The press ends while transcribing, so the recording stage is logged from
 /// what the reader saw rather than from when this runs.
 fn log_capture_stage(recording: &RecordingReader, stage_started: Instant) {
     let Some(ended_at) = recording.ended_at() else {
@@ -1537,9 +1537,9 @@ mod tests {
     };
     use crate::dictation::{Cursor, RecordingId};
     use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
-    use crate::transcription::{
-        Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcription,
-        TranscriptionAudio,
+    use crate::stt::{
+        Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Stream, Streaming,
+        Transcription,
     };
     use aria_kit::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
@@ -1568,7 +1568,7 @@ mod tests {
 
     struct Parts(&'static [&'static str]);
 
-    impl Transcriber for Parts {
+    impl Recognizer for Parts {
         fn validate_language(
             &self,
             _: &Language,
@@ -1577,9 +1577,9 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -1610,7 +1610,7 @@ mod tests {
     /// Answers "hello" to any audio at all, and nothing to none.
     struct Echoing;
 
-    impl Transcriber for Echoing {
+    impl Recognizer for Echoing {
         fn validate_language(
             &self,
             _language: &Language,
@@ -1619,21 +1619,21 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            audio: TranscriptionAudio<'_>,
+            audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
             let heard = match audio {
-                TranscriptionAudio::Samples(samples) => !samples.is_empty(),
-                TranscriptionAudio::Wav(_) => true,
+                RecognitionAudio::Samples(samples) => !samples.is_empty(),
+                RecognitionAudio::Wav(_) => true,
             };
             Ok(Hypothesis::new(if heard { "hello" } else { "" }))
         }
     }
 
-    impl Transcriber for Answering {
+    impl Recognizer for Answering {
         fn validate_language(
             &self,
             _language: &Language,
@@ -1642,9 +1642,9 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _audio: TranscriptionAudio<'_>,
+            _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -1820,7 +1820,7 @@ mod tests {
         V: VoiceActivityDetector + Send,
         E: Embedder + Send,
         G: Segmenter + Send,
-        T: Transcriber,
+        T: Recognizer,
         M: Mode,
         S: TranscriptSink,
         S::Error: Into<DictationError>,
@@ -1896,7 +1896,7 @@ mod tests {
         calls: std::sync::atomic::AtomicUsize,
     }
 
-    impl Transcriber for Scripted {
+    impl Recognizer for Scripted {
         fn validate_language(
             &self,
             _language: &Language,
@@ -1905,9 +1905,9 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _audio: TranscriptionAudio<'_>,
+            _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -2128,7 +2128,7 @@ mod tests {
     #[test]
     fn caption_failure_before_transcription_still_clears_the_recording() {
         struct Cancelled;
-        impl Transcriber for Cancelled {
+        impl Recognizer for Cancelled {
             fn validate_language(
                 &self,
                 _language: &Language,
@@ -2136,9 +2136,9 @@ mod tests {
             ) -> Result<(), TranscriptionError> {
                 Err(TranscriptionError::Cancelled)
             }
-            fn transcribe_with(
+            fn recognize_with(
                 &self,
-                _audio: TranscriptionAudio<'_>,
+                _audio: RecognitionAudio<'_>,
                 _language: &Language,
                 _cancel: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -2423,7 +2423,7 @@ mod tests {
     #[test]
     fn a_relayed_recording_that_fails_ends_in_history_as_a_press_does() {
         struct Failing;
-        impl Transcriber for Failing {
+        impl Recognizer for Failing {
             fn validate_language(
                 &self,
                 _language: &Language,
@@ -2431,9 +2431,9 @@ mod tests {
             ) -> Result<(), TranscriptionError> {
                 Ok(())
             }
-            fn transcribe_with(
+            fn recognize_with(
                 &self,
-                _audio: TranscriptionAudio<'_>,
+                _audio: RecognitionAudio<'_>,
                 _language: &Language,
                 _cancel: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -2757,7 +2757,7 @@ mod tests {
         aria_harness::artifact::write_json(std::path::Path::new(&output), &json!({
             "schema": 1,
             "provenance": aria_harness::artifact::Provenance::capture().unwrap(),
-            "measurement": "production streaming pipeline and owned sink; immediate WAV replay, deterministic transcriber; not real-ASR or platform insertion latency",
+            "measurement": "production streaming pipeline and owned sink; immediate WAV replay, deterministic recognizer; not real-ASR or platform insertion latency",
             "rows": rows,
         })).unwrap();
     }
@@ -3648,12 +3648,12 @@ mod tests {
     }
 
     /// Hears levels in samples.
-    fn levels(inputs: Arc<Mutex<Vec<bool>>>) -> impl Transcriber {
+    fn levels(inputs: Arc<Mutex<Vec<bool>>>) -> impl Recognizer {
         Hypotheses(move |audio| Ok(hear_levels(audio.require_samples("levels")?, &inputs)))
     }
 
     /// Hears levels in a saved WAV.
-    fn wav_levels(inputs: Arc<Mutex<Vec<bool>>>) -> impl Transcriber {
+    fn wav_levels(inputs: Arc<Mutex<Vec<bool>>>) -> impl Recognizer {
         Hypotheses(move |audio| {
             let path = audio
                 .require_wav("test")?
@@ -3834,7 +3834,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 Finished(source.clone()),
                 diarizer(VoiceByLevel),
-                Transcription::<_, crate::transcription::Whole>::delegated(model),
+                Transcription::<_, crate::stt::Whole>::delegated(model),
                 (log.history(), log.cursor()),
             );
 
@@ -3897,7 +3897,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             Finished([OWN_SPEECH, PAUSE, OWN_SPEECH].concat()),
             diarizer(VoiceByLevel),
-            Transcription::<_, crate::transcription::Whole>::delegated(model),
+            Transcription::<_, crate::stt::Whole>::delegated(model),
             (log.history(), log.cursor()),
         );
 
@@ -3990,7 +3990,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
                 diarizer(VoiceByLevel),
-                Transcription::<_, crate::transcription::Whole>::delegated(model),
+                Transcription::<_, crate::stt::Whole>::delegated(model),
                 (log.history(), log.cursor()),
             );
 
@@ -4012,7 +4012,7 @@ mod tests {
 
     /// Decodes a saved `source` held from stream position `origin`,
     /// keeping only the owner's words.
-    fn decode_from<T: Transcriber, M: Mode>(
+    fn decode_from<T: Recognizer, M: Mode>(
         transcription: Transcription<T, M>,
         source: &[f32],
         origin: u64,
@@ -4062,7 +4062,7 @@ mod tests {
         });
 
         let decoded = decode_from(
-            Transcription::<_, crate::transcription::Whole>::delegated(model),
+            Transcription::<_, crate::stt::Whole>::delegated(model),
             OWN_SPEECH,
             8_000,
         );
@@ -4161,7 +4161,7 @@ mod tests {
                 let pipeline = filtered_pipeline(
                     Finished(source.clone()),
                     diarizer(VoiceByLevel),
-                    Transcription::<_, crate::transcription::Whole>::delegated(model),
+                    Transcription::<_, crate::stt::Whole>::delegated(model),
                     (log.history(), log.cursor()),
                 );
                 let cancel = CancelToken::new();
@@ -4998,7 +4998,7 @@ mod tests {
     }
 
     /// Runs one press and returns its result and the sink log.
-    fn press<C: AudioCapture, T: Transcriber, M: Mode, V: VoiceActivityDetector + Send>(
+    fn press<C: AudioCapture, T: Recognizer, M: Mode, V: VoiceActivityDetector + Send>(
         capture: C,
         transcription: Transcription<T, M>,
         detector: Option<V>,

@@ -37,7 +37,7 @@ pub struct Settings {
     pub history_keep_audio: bool,
     pub assistant_id: Option<AssistantId>,
     pub assistant_models: BTreeMap<AssistantId, String>,
-    /// Asks are sent to the assistant to remember facts.
+    /// Questions you speak are sent to Claude to remember facts.
     pub memory_enabled: bool,
     pub prompts: Prompts,
     pub application_overrides: ApplicationOverrides,
@@ -70,7 +70,7 @@ impl Settings {
         self.assistant_id.unwrap_or(AssistantId::DEFAULT)
     }
 
-    /// One shortcut can run only one thing: the ask, the prompt list, or a
+    /// One shortcut can run only one thing: a chat, the prompt list, or a
     /// prompt. Prompts hold chords only, so a combo can clash only between
     /// the first two.
     pub(crate) fn shares_a_binding(&self) -> bool {
@@ -95,7 +95,7 @@ impl Settings {
     }
 }
 
-/// What starts the ask or the prompt list: an Aria key combo, or a chord of
+/// What starts a chat or the prompt list: an Aria key combo, or a chord of
 /// the user's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shortcut {

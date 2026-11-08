@@ -238,7 +238,7 @@ _swift-stubs out: _swift-plugins
         proto/aria/daemon/v1/errors.proto \
         proto/aria/daemon/v1/events.proto \
         proto/aria/daemon/v1/history.proto \
-        proto/aria/daemon/v1/listen.proto \
+        proto/aria/daemon/v1/system_transcription.proto \
         proto/aria/daemon/v1/settings.proto \
         proto/aria/daemon/v1/relay.proto \
         proto/aria/daemon/v1/speaker.proto \

@@ -29,17 +29,17 @@ use super::chat::ChatActor;
 use super::dictation::DictationActor;
 use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
-use super::listen::ListenState;
 use super::memory::MemoryBacklog;
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, InviteRpc, ListenRpc,
-    SettingsRpc, SpeakerRpc, SpeechRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, InviteRpc, SettingsRpc,
+    SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings::SettingsActor;
 use super::shutdown::ShutdownSignal;
 use super::speaker::SpeakerActor;
 use super::speech::SpeechActor;
 use super::subscriptions::Subscriptions;
+use super::system_transcription::SystemTranscriptionState;
 use super::tasks::RuntimeTasks;
 use super::wake::WakeTrigger;
 
@@ -142,9 +142,9 @@ impl Server {
         let activity = Activity::new();
         let subscriptions = services.events.subscriptions();
         // Held past the router, which otherwise owns the only handle: a live
-        // listen session has to be stopped inside the drain rather than by
+        // system transcription has to be stopped inside the drain rather than by
         // the router's own drop, which runs after it.
-        let listen = services.listen.state();
+        let system_transcription = services.system_transcription.state();
         // Bound and advertised before the unix router is built, so a taken
         // port is reported while there is still a plain daemon to fall back
         // to. `_advert` unregisters when this scope ends, panic included.
@@ -219,7 +219,7 @@ impl Server {
             &subscriptions,
             &tasks,
             &activity,
-            listen,
+            system_transcription,
         )
         .await
     }
@@ -287,7 +287,7 @@ pub(super) struct Services {
     pub(super) dictation: DictationRpc,
     pub(super) speech: SpeechRpc,
     pub(super) chat: ChatRpc,
-    pub(super) listen: ListenRpc,
+    pub(super) system_transcription: SystemTranscriptionRpc,
     pub(super) settings: SettingsRpc,
     pub(super) vocabulary: VocabularyRpc,
     pub(super) speaker: SpeakerRpc,
@@ -314,7 +314,9 @@ async fn build_router(
         .set_serving::<wire::chat_service_server::ChatServiceServer<ChatRpc>>()
         .await;
     health_reporter
-        .set_serving::<wire::listen_service_server::ListenServiceServer<ListenRpc>>()
+        .set_serving::<wire::system_transcription_service_server::SystemTranscriptionServiceServer<
+            SystemTranscriptionRpc,
+        >>()
         .await;
     health_reporter
         .set_serving::<wire::settings_service_server::SettingsServiceServer<SettingsRpc>>()
@@ -362,9 +364,11 @@ async fn build_router(
         .add_service(wire::chat_service_server::ChatServiceServer::new(
             services.chat,
         ))
-        .add_service(wire::listen_service_server::ListenServiceServer::new(
-            services.listen,
-        ))
+        .add_service(
+            wire::system_transcription_service_server::SystemTranscriptionServiceServer::new(
+                services.system_transcription,
+            ),
+        )
         .add_service(wire::settings_service_server::SettingsServiceServer::new(
             services.settings,
         ))
@@ -393,7 +397,7 @@ async fn drain(
     subscriptions: &Subscriptions,
     tasks: &RuntimeTasks,
     activity: &Activity,
-    listen: Arc<ListenState>,
+    system_transcription: Arc<SystemTranscriptionState>,
 ) -> Result<()> {
     tracing::info!(
         reason = reason.label(),
@@ -404,7 +408,7 @@ async fn drain(
     // The session joins its own threads, so it goes to the blocking pool —
     // and it starts here rather than after the drain, so the two wind down
     // together and the grace period covers both.
-    let stopping = tokio::task::spawn_blocking(move || listen.stop());
+    let stopping = tokio::task::spawn_blocking(move || system_transcription.stop());
     // Open event streams would otherwise hold the drain until the grace
     // period expires on every stop.
     subscriptions.close_all();
@@ -418,9 +422,9 @@ async fn drain(
             Ok(Err(failure)) => tracing::warn!(
                 code = failure.code.label(),
                 message = failure.message,
-                "the listen session failed while the daemon stopped"
+                "the system transcription failed while the daemon stopped"
             ),
-            Err(_join) => tracing::error!("the listen stop task panicked"),
+            Err(_join) => tracing::error!("the system transcription stop task panicked"),
         }
         grpc_result
     };
@@ -691,7 +695,9 @@ mod tests {
                 wire::chat_service_server::ChatServiceServer::<ChatRpc>::NAME,
                 wire::settings_service_server::SettingsServiceServer::<SettingsRpc>::NAME,
                 wire::history_service_server::HistoryServiceServer::<HistoryRpc>::NAME,
-                wire::listen_service_server::ListenServiceServer::<ListenRpc>::NAME,
+                wire::system_transcription_service_server::SystemTranscriptionServiceServer::<
+                    SystemTranscriptionRpc,
+                >::NAME,
                 wire::speaker_service_server::SpeakerServiceServer::<SpeakerRpc>::NAME,
                 wire::events_service_server::EventsServiceServer::<EventsService>::NAME,
             ] {

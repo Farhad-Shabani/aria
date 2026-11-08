@@ -1,4 +1,4 @@
-name: an idle daemon reports nothing listening, playing, or in its vocabulary
+name: an idle daemon reports nothing transcribing, playing, or in its vocabulary
 settings: |
   [stt]
   backend = "whisper"
@@ -11,9 +11,9 @@ expect:
   daemon:
     startup: success
   client:
-    - run: [listen, status]
+    - run: [transcribe, status]
       stdout_contains:
-        - "not listening"
+        - "not transcribing"
     - run: [vocabulary, status]
       stdout_contains:
         - "Disabled: 0 terms"

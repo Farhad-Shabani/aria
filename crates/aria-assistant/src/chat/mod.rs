@@ -1,8 +1,8 @@
 //! Domain types for talking to coding assistants.
 //!
-//! The daemon owns conversations keyed by assistant and session name. Each ask
-//! returns a [`Ticket`]; its reply arrives through [`ChatStage`] events.
-//! A [`Step`] describes the assistant's activity while the ask is running.
+//! The daemon owns conversations keyed by assistant and session name. Each chat
+//! gets a [`Ticket`]; its reply arrives through [`ChatStage`] events.
+//! A [`Step`] describes the assistant's activity while the chat is running.
 
 mod config;
 pub use config::ChatConfig;
@@ -43,7 +43,7 @@ pub use subscribers::ChatSubscribers;
 
 pub const EVENT_THREAD: &str = "aria-chat-events";
 
-/// Names one ask for as long as the daemon that took it runs.
+/// Names one chat for as long as the daemon that took it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ticket(pub u64);
 
@@ -73,7 +73,7 @@ pub struct ChatRequest {
     pub session: Option<String>,
     /// Forget the running conversation and start another.
     pub new: bool,
-    /// Deliver the reply like a transcript instead of only announcing it.
+    /// Deliver the reply like dictated text instead of only announcing it.
     pub output_mode: Option<OutputMode>,
     /// The daemon's own-voice gate judged the recording this came from as
     /// the owner's. Typed text, and a recording nothing judged, are not.
@@ -395,13 +395,13 @@ pub enum AssistantError {
     #[error("the assistant exceeded its deadline of {0:?}")]
     Timeout(Duration),
 
-    #[error("the ask was cancelled")]
+    #[error("the chat was cancelled")]
     Cancelled,
 }
 
-/// Where an ask goes when its caller has no working directory of its own.
+/// Where a chat goes when its caller has no working directory of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AskTarget {
+pub struct ChatTarget {
     pub workdir: PathBuf,
     pub assistant_id: AssistantId,
 }

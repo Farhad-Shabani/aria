@@ -22,7 +22,7 @@ use super::invalid_request;
 pub(in crate::daemon) struct ChatRpc {
     chat: ChatHandle,
     /// Resolving reads the disk and starts no assistant, so it answers here
-    /// rather than queueing behind a running ask.
+    /// rather than queueing behind a running chat.
     runtime: Arc<ChatRuntime>,
     lifetime: DaemonLifetime,
     shutdown: CancellationToken,
@@ -201,8 +201,8 @@ impl wire::chat_service_server::ChatService for ChatRpc {
 
     async fn resolve(
         &self,
-        _request: Request<wire::ResolveAskRequest>,
-    ) -> Result<Response<wire::ResolveAskResponse>, Status> {
+        _request: Request<wire::ResolveChatTargetRequest>,
+    ) -> Result<Response<wire::ResolveChatTargetResponse>, Status> {
         const METHOD: &str = "ChatService/Resolve";
         self.require_persistent(METHOD)?;
         let runtime = Arc::clone(&self.runtime);
@@ -219,7 +219,7 @@ impl wire::chat_service_server::ChatService for ChatRpc {
 }
 
 impl ChatRpc {
-    /// A ticketed ask outlives its RPC, and an on-demand daemon does not
+    /// A ticketed chat outlives its RPC, and an on-demand daemon does not
     /// outlive the request that started it.
     fn require_persistent(&self, method: &'static str) -> Result<(), Status> {
         if self.lifetime == DaemonLifetime::OnDemand {

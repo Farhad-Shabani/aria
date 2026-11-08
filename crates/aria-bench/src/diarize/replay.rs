@@ -1,7 +1,7 @@
-//! The listen stack replayed offline: a WAV heard in realtime through
+//! The system transcription stack replayed offline: a WAV heard in realtime through
 //! streaming transcription, the speech map, the speaker tracker and the gate a
-//! listen session keeps its words by. Settled labels come afterwards, from
-//! the voice track, as they do in listen.
+//! system transcription keeps its words by. Settled labels come afterwards, from
+//! the voice track, as they do in system transcription.
 
 use std::path::Path;
 use std::time::Duration;
@@ -12,9 +12,7 @@ use aria_kit::transcription::next_heard;
 use aria_kit::voice_activity::{SileroVad, SpeechDetector};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::speaker::{Diarizer, Label, VoiceprintTracker};
-use aria_voice::transcription::{
-    Language, Streaming, Transcriber, Transcription, TranscriptionError,
-};
+use aria_voice::stt::{Language, Recognizer, Streaming, Transcription, TranscriptionError};
 
 use crate::diarize::BenchError;
 
@@ -28,9 +26,9 @@ pub(crate) struct Segment {
     embedding: Option<Vec<f32>>,
 }
 
-/// Close to what a listen session without the voice track ends with: the
+/// Close to what a system transcription without the voice track ends with: the
 /// live embeddings grouped again over the whole recording. Relabels each
-/// segment by its own embedding, where listen relabels each paragraph by the
+/// segment by its own embedding, where system transcription relabels each paragraph by the
 /// average of its segments' embeddings.
 pub(crate) fn relabeled(
     diarizer: &Diarizer<WeSpeaker>,
@@ -54,9 +52,9 @@ pub(crate) struct Dropped {
     pub(crate) samples: u64,
 }
 
-/// The listen session's loop, replayed from a WAV. With a `diarizer`, a
-/// tracker labels voices live, as listen's does.
-pub(crate) fn hear<T: Transcriber>(
+/// The system transcription's loop, replayed from a WAV. With a `diarizer`, a
+/// tracker labels voices live, as system transcription's does.
+pub(crate) fn hear<T: Recognizer>(
     transcription: &Transcription<T, Streaming>,
     wav: &Path,
     spool_dir: &Path,

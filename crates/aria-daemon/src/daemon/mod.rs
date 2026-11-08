@@ -15,7 +15,6 @@ mod history;
 mod host;
 mod hotkey;
 mod inference;
-mod listen;
 #[cfg(test)]
 mod live_keys;
 mod log;
@@ -32,6 +31,7 @@ mod shutdown;
 mod speaker;
 mod speech;
 mod subscriptions;
+mod system_transcription;
 mod tasks;
 #[cfg(test)]
 mod testing;
@@ -49,9 +49,10 @@ pub use inference::host::{InferenceHostError, serve_inference};
 pub use inference::pairing::{Forgotten, PairingFailure, pair_server, read_invitation};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
-    AskError, Clarify, DaemonSession, ListenCommandError, ListenFollow, ListenSnapshot,
-    ListenStarted, ListenStopped, PendingAsk, RouteError, Routing, StartupError, WakeWordStatus,
-    WakeWordStatusError, restart_required_keys,
+    Clarify, DaemonSession, PendingChat, ReplyError, RouteError, Routing, StartupError,
+    SystemTranscriptionCommandError, SystemTranscriptionFollow, SystemTranscriptionSnapshot,
+    SystemTranscriptionStarted, SystemTranscriptionStopped, WakeWordStatus, WakeWordStatusError,
+    restart_required_keys,
 };
 #[cfg(target_os = "macos")]
 pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
@@ -81,6 +82,6 @@ pub use aria_voice::dictation::{
 pub use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
-pub use aria_voice::listen::ListenStage;
 pub use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 pub use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+pub use aria_voice::system_transcription::SystemTranscriptionStage;

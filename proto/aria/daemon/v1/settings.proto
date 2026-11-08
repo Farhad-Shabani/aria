@@ -86,6 +86,9 @@ message SettingsSnapshot {
   // streams when `delivery_mode` asks it to. An app's dictation follows the
   // entry for its own output.
   repeated StreamingUnavailableOutput streaming_unavailable = 3;
+  // The chosen assistant's name for display, such as "Claude Code". Empty
+  // when no assistant is chosen.
+  string assistant_name = 4;
 }
 
 message SettingsConflict {
@@ -139,7 +142,7 @@ message Settings {
 
   // Memory
 
-  // Asks are sent to the assistant to remember facts.
+  // Questions you speak are sent to Claude to remember facts.
   bool memory_enabled = 19;
 
   // Prompts
@@ -153,7 +156,7 @@ message Settings {
   // Shortcuts
 
   AriaKey aria_key = 11;
-  // Starts an ask: Aria key + Shift unless changed. The Aria key then sends
+  // Starts a chat: Aria key + Shift unless changed. The Aria key then sends
   // and cancels it.
   Shortcut ask_shortcut = 12;
   // Lists the prompts that are on, so one runs without its own chord. Aria
@@ -238,7 +241,7 @@ message SettingsPatch {
 }
 
 // A Markdown file that says what to make of a recording, and the chord
-// that runs it the way the ask shortcut runs an ask.
+// that runs it the way the Ask shortcut starts a chat.
 message Prompt {
   // Stable across renames: what RunPrompt names.
   string id = 1;

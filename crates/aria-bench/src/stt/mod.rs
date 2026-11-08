@@ -1,4 +1,4 @@
-//! Word error rate for each transcription backend, over one shared corpus.
+//! Word error rate for each recognition backend, over one shared corpus.
 //!
 //! Latency says nothing about whether a backend heard the words. Every engine
 //! gets the same audio, the same normalization, and the same scorer. Every
@@ -31,7 +31,7 @@ use aria_kit::audio::{
     ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
 };
 use aria_kit::primitives::error_chain;
-use aria_voice::transcription::{Language, LanguageCode, TranscriptionError};
+use aria_voice::stt::{Language, LanguageCode, TranscriptionError};
 
 pub use backends::{BackendRequest, SelectionError, Skipped};
 pub use corpus::{Built, CorpusError};
@@ -47,7 +47,7 @@ use record::{Descriptor, Preview, Record, RecordWriter, Segment};
 /// Longer than any single utterance a read-speech corpus holds.
 const MAXIMUM_UTTERANCE: Duration = Duration::from_secs(120);
 
-pub use aria_voice::transcription::Cadence;
+pub use aria_voice::stt::Cadence;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -95,7 +95,7 @@ pub struct Summary {
     pub substitutions: usize,
     pub deletions: usize,
     pub insertions: usize,
-    /// Attempts the backend could not transcribe at all. Their reference
+    /// Attempts the backend could not recognize at all. Their reference
     /// words still count against it, so a failing backend cannot score well by
     /// answering less.
     pub failures: usize,

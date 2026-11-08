@@ -1,24 +1,24 @@
 import SwiftUI
 
-/// The Mac Audio session's transcript, as it streams in.
+/// The transcript, as it streams in.
 struct PaletteLivePage: View {
     @ObservedObject var controller: PaletteController
-    @ObservedObject var listen: ListenStatus
+    @ObservedObject var systemTranscription: SystemTranscriptionStatus
     @ObservedObject var history: HistoryState
 
     var body: some View {
         PaletteBars {
             header
         } content: {
-            ListenTranscriptView(transcript: listen.transcript, isRunning: listen.isRunning)
+            SystemTranscriptView(transcript: systemTranscription.transcript, isRunning: systemTranscription.isRunning)
         } bottom: {
             PaletteFooter {
-                if listen.didFailToStop {
-                    NoticeText(notice: ListenStatus.stopFailure)
+                if systemTranscription.didFailToStop {
+                    NoticeText(notice: SystemTranscriptionStatus.stopFailure)
                 } else if let error = history.error {
                     NoticeText(notice: error.message)
                 } else {
-                    Text(history.notice ?? ListenStatus.savingNote)
+                    Text(history.notice ?? SystemTranscriptionStatus.savingNote)
                 }
             } actions: {
                 PaletteFooterActions(
@@ -26,14 +26,14 @@ struct PaletteLivePage: View {
             }
         }
         .announcingNotes(of: history)
-        .announcingStopFailure(of: listen)
+        .announcingStopFailure(of: systemTranscription)
     }
 
     private var header: some View {
         PaletteHeader(back: controller.escape) {
-            Text("Mac Audio")
+            Text("Live Transcript")
         } detail: {
-            ListenClock(listen)
+            SystemTranscriptionClock(systemTranscription)
         }
     }
 }

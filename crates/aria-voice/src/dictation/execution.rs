@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use aria_kit::cancel::{CancelToken, Deadline};
 
 use crate::microphone::{Admitted, Claim, Gate};
-use crate::transcription::{Language, Transcript, TranscriptionError};
+use crate::stt::{Language, Transcript, TranscriptionError};
 use aria_kit::audio::{CaptureError, RecordingReader};
 use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
@@ -190,7 +190,7 @@ pub enum DictationError {
     Speaker(#[source] crate::hearing::TrackingError),
 
     #[error("transcription failed: {0}")]
-    Transcription(#[source] crate::transcription::TranscriptionError),
+    Transcription(#[source] crate::stt::TranscriptionError),
 
     #[error("text delivery failed: {0}")]
     Delivery(#[source] aria_platform::delivery::DeliveryError),
@@ -790,7 +790,7 @@ mod tests {
     use std::thread;
 
     use crate::dictation::testing::{Edge, HEARD, RecordsUntilStopped, recording_started};
-    use crate::transcription::LanguageCode;
+    use crate::stt::LanguageCode;
     use aria_kit::audio::SilenceDuration;
     use aria_platform::delivery::OutputMode;
     use aria_settings::DeliveryMode;
@@ -1056,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_recording_does_not_pretend_to_transcribe() {
+    fn a_cancelled_recording_does_not_pretend_to_recognize() {
         let (events, stages) = announcing();
         let cancel = CancelToken::new();
         let policy = DictationPolicy::new(Duration::from_secs(5)).expect("a valid policy");
@@ -1086,7 +1086,7 @@ mod tests {
     /// A capture that failed to start never polled its stop. Its scope
     /// ends with no `Transcribing`: there was nothing to transcribe.
     #[test]
-    fn a_capture_that_never_ran_does_not_pretend_to_transcribe() {
+    fn a_capture_that_never_ran_does_not_pretend_to_recognize() {
         let (events, stages) = announcing();
         let control = ExecutionControl::for_test(StopMode::Manual);
 

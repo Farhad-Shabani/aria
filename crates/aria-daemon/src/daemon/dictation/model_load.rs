@@ -1,4 +1,4 @@
-//! Model readiness for eager and on-demand transcription engines.
+//! Model readiness for eager and on-demand recognition engines.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::slot::Slot;
 use aria_kit::transcription::{
-    ChunkStream, Hypothesis, Language, Transcriber, TranscriptionAudio, TranscriptionError,
+    ChunkStream, Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
 };
 
 type Build<E> = dyn Fn(&CancelToken) -> Result<E, TranscriptionError> + Send + Sync;
@@ -82,7 +82,7 @@ impl<E> DeferredModel<E> {
     }
 }
 
-impl<E: Transcriber> Transcriber for ModelLoad<E> {
+impl<E: Recognizer> Recognizer for ModelLoad<E> {
     fn validate_language(
         &self,
         language: &Language,
@@ -91,13 +91,13 @@ impl<E: Transcriber> Transcriber for ModelLoad<E> {
         self.get(cancel)?.validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        self.get(cancel)?.transcribe_with(audio, language, cancel)
+        self.get(cancel)?.recognize_with(audio, language, cancel)
     }
 
     fn open_stream(

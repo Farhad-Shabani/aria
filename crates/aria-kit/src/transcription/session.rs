@@ -5,7 +5,7 @@
 use std::marker::PhantomData;
 
 use super::{
-    Language, Layer, Mode, Operation, Streaming, Transcriber, Transcript, TranscriptSegment,
+    Language, Layer, Mode, Operation, Recognizer, Streaming, Transcript, TranscriptSegment,
     Transcription, TranscriptionError,
 };
 use crate::audio::RecordingReader;
@@ -31,7 +31,7 @@ pub struct Session<'a, T, M: Mode, L = ()> {
     mode: PhantomData<M>,
 }
 
-impl<'a, T: Transcriber, M: Mode, L: Layer> Session<'a, T, M, L> {
+impl<'a, T: Recognizer, M: Mode, L: Layer> Session<'a, T, M, L> {
     /// Runs against a recording the caller already has. Whoever feeds it also
     /// ends it; `finish` only waits for that end and finishes the transcript.
     pub fn over(
@@ -63,7 +63,7 @@ impl<'a, T: Transcriber, M: Mode, L: Layer> Session<'a, T, M, L> {
 }
 
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
-impl<'a, T: Transcriber, M: Mode, L: Layer> Session<'a, T, M, L> {
+impl<'a, T: Recognizer, M: Mode, L: Layer> Session<'a, T, M, L> {
     /// Opens the microphone and records one utterance until stopped. `finish`
     /// ends the recording; until then every [`Streaming`] step blocks on
     /// captured audio.
@@ -94,7 +94,7 @@ impl<'a, T: Transcriber, M: Mode, L: Layer> Session<'a, T, M, L> {
     }
 }
 
-impl<'a, T: Transcriber, L: Layer> Session<'a, T, Streaming, L> {
+impl<'a, T: Recognizer, L: Layer> Session<'a, T, Streaming, L> {
     /// The next committed stretch of words, or `None` once the input has
     /// ended and the tail is delivered. Committed words are never revised.
     pub fn next_finalized(&mut self) -> Result<Option<TranscriptSegment>, TranscriptionError> {
@@ -123,7 +123,7 @@ mod tests {
     use crate::audio::CANONICAL_SAMPLE_RATE;
     use crate::audio::testing::{Pace, paced, recorded};
     use crate::cancel::CancelToken;
-    use crate::transcription::{Cadence, Hypothesis, TranscriptionAudio};
+    use crate::transcription::{Cadence, Hypothesis, RecognitionAudio};
 
     const STRIDE_MS: usize = 100;
     const STRIDE: usize = STRIDE_MS * CANONICAL_SAMPLE_RATE as usize / 1000;
@@ -151,7 +151,7 @@ mod tests {
         }
     }
 
-    impl Transcriber for Scripted {
+    impl Recognizer for Scripted {
         fn validate_language(
             &self,
             _language: &Language,
@@ -160,9 +160,9 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _audio: TranscriptionAudio<'_>,
+            _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {

@@ -1,4 +1,4 @@
-//! In-process transcription through the Parakeet TDT ONNX bindings.
+//! In-process recognition through the Parakeet TDT ONNX bindings.
 //!
 //! ```no_run
 //! use aria_stt::{parakeet::{Device, Parakeet}, prelude::*};
@@ -33,8 +33,8 @@ use aria_kit::audio::{CANONICAL_SAMPLE_RATE, CHANNELS};
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, Stream, StreamingEngine, TimedWord,
-    Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, validate_model_directory,
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
+    StreamingEngine, TimedWord, TranscriptionError, check_cancelled, validate_model_directory,
     word_timings,
 };
 
@@ -152,7 +152,7 @@ impl StreamingEngine for Parakeet {
     const STREAM: Stream = Stream::Agreement(CADENCE);
 }
 
-impl Transcriber for Parakeet {
+impl Recognizer for Parakeet {
     /// Accepts any language: the engine takes no language input.
     fn validate_language(
         &self,
@@ -162,9 +162,9 @@ impl Transcriber for Parakeet {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {

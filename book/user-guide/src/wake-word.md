@@ -3,8 +3,8 @@
 # Wake word
 
 Wake-word monitoring starts dictation when a local model detects its trained
-phrase. The recording stops on silence and delivers one complete transcript
-using your output setting. It does not ask an assistant a question.
+phrase. The recording stops on silence and delivers the completed text using
+your output setting. It does not ask an assistant a question.
 
 This keeps microphone monitoring active while the daemon runs. Wake-triggered
 dictation follows the same [history setting](./history.md)
@@ -13,7 +13,7 @@ stream already used by the daemon; stop the daemon to stop its capture.
 
 ## Setup
 
-First make [ordinary dictation](./transcription.md) work. You need a persistent
+First make [ordinary dictation](./terminal-dictation.md) work. You need a persistent
 daemon using microphone capture and a compatible wake-word model.
 Aria ships no wake-word model. Place an openWakeWord classifier in
 `~/.aria/models/wakeword` as `aria.onnx`, beside `melspectrogram.onnx` and

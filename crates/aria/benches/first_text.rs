@@ -5,9 +5,7 @@ use anyhow::{Context, ensure};
 use aria::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture};
 use aria_harness::{inputs, stats};
 use aria_stt::{CancelToken, EngineConfig};
-use aria_voice::transcription::{
-    Language, LanguageCode, Stream, Streaming, Transcriber, Transcription,
-};
+use aria_voice::stt::{Language, LanguageCode, Recognizer, Stream, Streaming, Transcription};
 
 mod engines;
 
@@ -119,9 +117,9 @@ fn measure(
     observation: &mut engines::Observation,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
-    let transcriber = EngineConfig::try_from(engine.config.clone())?.load(&CancelToken::never())?;
+    let recognizer = EngineConfig::try_from(engine.config.clone())?.load(&CancelToken::never())?;
     observation.startup_ms = Some(started.elapsed().as_millis() as u64);
-    let transcription = Transcription::stream(stream, transcriber);
+    let transcription = Transcription::stream(stream, recognizer);
     let language = Language::Specific(LanguageCode::english());
     for run in 0..options.warmups + options.runs {
         let elapsed = first_text_ms(&transcription, &language, &inputs.wav, Instant::now)
@@ -147,7 +145,7 @@ fn measure(
     Ok(())
 }
 
-fn first_text_ms<T: Transcriber>(
+fn first_text_ms<T: Recognizer>(
     transcription: &Transcription<T, Streaming>,
     language: &Language,
     wav: &Path,
@@ -193,7 +191,7 @@ mod tests {
     use super::*;
     use aria_kit::cancel::CancelToken;
     use aria_settings::config::backend;
-    use aria_voice::transcription::{Hypothesis, TranscriptionAudio, TranscriptionError};
+    use aria_voice::stt::{Hypothesis, RecognitionAudio, TranscriptionError};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -201,7 +199,7 @@ mod tests {
 
     struct InitializationProbe(Arc<AtomicBool>);
 
-    impl Transcriber for InitializationProbe {
+    impl Recognizer for InitializationProbe {
         fn validate_language(
             &self,
             _: &Language,
@@ -214,9 +212,9 @@ mod tests {
             Err(TranscriptionError::NoNativeStream)
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {

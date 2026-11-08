@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Runs an ask, or a stored prompt, from a press: a chord, an Aria key
+/// Runs a chat, or a stored prompt, from a press: a chord, an Aria key
 /// combo, or the prompt list. A press only starts the run. The Aria key
 /// then stops its recording and cancels it, daemon-side.
 ///
@@ -26,7 +26,7 @@ final class PressController {
     /// there.
     private var pressedIn: String?
 
-    /// An ask ends on the event stream, not on the call that started it: a
+    /// A chat ends on the event stream, not on the call that started it: a
     /// reply, a failure, or the daemon's own cancel.
     init(
         events: DaemonEvents,
@@ -62,7 +62,7 @@ final class PressController {
 
     var isBusy: Bool { !gesture.isIdle }
 
-    /// One `Start` spans the whole recording and answers with the transcript
+    /// One `Start` spans the whole recording and answers with the text
     /// once it has been stopped. Nothing is typed at that point: the reply
     /// is what gets delivered, not what was said.
     ///

@@ -57,12 +57,12 @@ struct PaletteEntryDetail: View {
         switch entry.kind {
         case .dictation:
             Text(entry.text)
-        case .listen(let transcript, let read):
+        case .systemTranscription(let transcript, let read):
             if let note = Self.note(transcript: transcript, read: read) {
                 Text(note).foregroundStyle(.secondary)
             }
             Text(entry.text)
-        case .ask(let reply):
+        case .chat(let reply):
             VStack(alignment: .leading, spacing: 12) {
                 Text(entry.text).font(.headline)
                 Text(reply)
@@ -91,7 +91,7 @@ struct PaletteEntryDetail: View {
                 Text(note).foregroundStyle(.secondary)
             }
             if !entry.text.isEmpty {
-                Text("Incomplete transcript").font(.caption).foregroundStyle(.secondary)
+                Text("Incomplete text").font(.caption).foregroundStyle(.secondary)
             }
         case .deliveryFailed:
             Text("Aria couldn’t type the text. You can copy it below.")

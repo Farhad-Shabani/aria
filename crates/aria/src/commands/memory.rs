@@ -18,7 +18,7 @@ pub(super) enum MemoryCommand {
     Why { id: i64 },
     /// Delete a fact for good
     Forget { id: i64 },
-    /// Delete every fact, learned substitution, and remembered ask
+    /// Delete every fact, learned substitution, and remembered chat
     Clear,
     /// Approve or reject each fact waiting for review
     Review,
@@ -92,7 +92,8 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
         }
         MemoryCommand::Clear => {
             let (store, dir) = open_store()?;
-            if answer("Delete every fact, learned substitution, and remembered ask? [y/N] ")? != "y"
+            if answer("Delete every fact, learned substitution, and remembered chat? [y/N] ")?
+                != "y"
             {
                 return Ok(());
             }

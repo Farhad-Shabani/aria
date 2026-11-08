@@ -10,14 +10,14 @@ struct Pill: Equatable {
 }
 
 extension Pill {
-    /// Only Aria's own work glows: an ask, or a ticket of no prompt.
-    /// Dictation and prompts do not. `ask` is the last recording an ask
+    /// Only Aria's own work glows: a chat's recording, or a ticketed run with no prompt.
+    /// Dictation and prompts do not. `chat` is the last recording a chat
     /// press started, and `prompt` the prompt behind the run.
-    static func glows(run: RunID?, ask: RunID?, prompt: String?) -> Bool {
+    static func glows(run: RunID?, chat: RunID?, prompt: String?) -> Bool {
         guard prompt == nil else { return false }
         switch run {
         case .ticket: return true
-        case .recording: return run == ask
+        case .recording: return run == chat
         case nil: return false
         }
     }
@@ -103,9 +103,9 @@ private struct GlowFrame {
     var lift: Double
 }
 
-/// Light rising from the pill's floor while Aria works on an ask. It lifts
-/// past rest and settles, so it draws the eye once and then stays quiet. An
-/// ask is known a beat after the pill appears, so its glow rises in late.
+/// Light rising from the pill's floor while Aria works on a chat. It lifts
+/// past rest and settles, so it draws the eye once and then stays quiet. A
+/// chat is known a beat after the pill appears, so its glow rises in late.
 private struct FloorGlow: View {
     let isLit: Bool
 
@@ -121,8 +121,8 @@ private struct FloorGlow: View {
             // of the height. Dividing by it in the x scale leaves `spread` of the width.
             EllipticalGradient(
                 colors: [
-                    OverlayStyle.askGlow.opacity(OverlayStyle.askGlowOpacity * frame.brightness),
-                    OverlayStyle.askGlow.opacity(0),
+                    OverlayStyle.chatGlow.opacity(OverlayStyle.chatGlowOpacity * frame.brightness),
+                    OverlayStyle.chatGlow.opacity(0),
                 ],
                 center: .bottom,
                 endRadiusFraction: GlowTuning.reach

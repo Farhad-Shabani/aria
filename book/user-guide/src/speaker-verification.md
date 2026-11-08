@@ -3,11 +3,11 @@
 # Voice profiles (Mac)
 
 This chapter is for Mac users. Enabling dictation filtering needs the Mac app,
-and speaker labels are used by Mac system-audio transcription.
+and Transcription, which uses speaker labels, runs only on a Mac.
 
 A voice profile gives Aria a name for a speaker. An **owner** profile can also
-help it select your speech during dictation; a **guest** supplies labels for
-[system-audio transcripts](./listen.md).
+help it select your speech during dictation. A **guest** supplies labels for
+[transcripts](./transcribe-system-audio.md).
 
 This is a recognition aid, not authentication. Filtering can allow other
 voices through when it cannot make a confident match.
@@ -81,8 +81,8 @@ aria speaker owner partner
 
 The previous owner becomes a guest.
 
-In system-audio transcripts, Listen names a voice with a profile once it
-is sure who is speaking. Other voices get numbers, such as Speaker 1.
+Transcription names a voice with a profile once it is sure who is
+speaking. Other voices get numbers, such as Speaker 1.
 Labels can change as more audio arrives, so the saved transcript may differ
 from what the terminal printed first.
 

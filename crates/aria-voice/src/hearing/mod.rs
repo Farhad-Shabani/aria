@@ -19,7 +19,7 @@ use aria_kit::speaker::{Admission, Gate, Released, SpeakerTracker, Timeline, Tur
 use aria_kit::transcription::HeardUpdate;
 use aria_kit::voice_activity::{SpeechMap, VoiceActivityDetector};
 
-use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
+use crate::stt::{Operation, Recognizer, Transcript, TranscriptionError};
 pub(crate) use board::Board;
 use board::Wake;
 use decoder::DecodeThread;
@@ -222,7 +222,7 @@ impl<'scope> Hearing<'scope> {
         cancel: &CancelToken,
     ) -> Result<Self, HearingError>
     where
-        T: Transcriber,
+        T: Recognizer,
         V: VoiceActivityDetector + Send + 'scope,
         K: SpeakerTracker + Send + 'scope,
     {
@@ -454,7 +454,7 @@ impl<'scope> Hearing<'scope> {
     }
 
     /// Lets the walk forget audio before both the oldest held segment and
-    /// the decoder's retained audio. Only a listen session forgets.
+    /// the decoder's retained audio. Only a system transcription forgets.
     fn forget_decided(&self) {
         if self.gate.admission() == Admission::Spoken && self.turns.is_some() {
             let undecided = self.gate.undecided_from().unwrap_or(u64::MAX);
@@ -480,20 +480,20 @@ mod tests {
     use super::*;
     use crate::dictation::testing::{Loud, Operations};
     use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
-    use crate::transcription::{Language, Streaming, Transcription};
+    use crate::stt::{Language, Streaming, Transcription};
 
     const SECOND: u64 = 16_000;
 
     /// Starts a hearing of `recording` under `admission`, decoded by
-    /// `transcriber`, with `tracker` judging voices, and hands it to `act`.
+    /// `recognizer`, with `tracker` judging voices, and hands it to `act`.
     fn hearing<R>(
-        transcriber: impl Transcriber,
+        recognizer: impl Recognizer,
         mut recording: RecordingReader,
         tracker: Option<VoiceprintTracker<'_, Voice, LevelSegmenter>>,
         admission: Admission,
         act: impl FnOnce(Hearing<'_>) -> R,
     ) -> R {
-        let transcription = Transcription::<_, Streaming>::delegated(transcriber);
+        let transcription = Transcription::<_, Streaming>::delegated(recognizer);
         let speech = SpeechDetector::new(Loud, recording.held_from());
         let feed = TurnFeed::start(&mut recording, speech, tracker);
         let board = Board::new();
@@ -514,7 +514,7 @@ mod tests {
     }
 
     /// Finalizes "hello" at once, then stalls until `go_on` says to.
-    fn stalling(go_on: Receiver<()>) -> impl Transcriber {
+    fn stalling(go_on: Receiver<()>) -> impl Recognizer {
         let go_on = Mutex::new(Some(go_on));
         Operations(move |_: &CancelToken| {
             let go_on = go_on.lock().unwrap().take().expect("one operation");
@@ -623,7 +623,7 @@ mod tests {
     }
 
     /// Finalizes each `(text, span)` in turn, then completes at `end`.
-    fn scripted(segments: Vec<(&'static str, Range<u64>)>, end: u64) -> impl Transcriber {
+    fn scripted(segments: Vec<(&'static str, Range<u64>)>, end: u64) -> impl Recognizer {
         let segments = Mutex::new(Some(segments));
         Operations(move |_: &CancelToken| {
             let mut segments = segments
@@ -654,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn a_listen_hearing_without_a_tracker_drops_what_has_no_speech_under_it() {
+    fn a_system_transcription_hearing_without_a_tracker_drops_what_has_no_speech_under_it() {
         // Speech, two seconds of silence, then speech up to an end that is
         // not on the detector's frame grid.
         let end = 4 * SECOND + 3;

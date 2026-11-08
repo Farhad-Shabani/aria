@@ -31,7 +31,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
   public typealias RawValue = Int
   case unspecified // = 0
 
-  /// The upload is complete; transcription is starting.
+  /// The upload is complete; transcribing is starting.
   case transcribing // = 1
 
   /// Transcription and delivery succeeded. Terminal.
@@ -263,7 +263,7 @@ public nonisolated struct Aria_Daemon_V1_RelayEvent: Sendable {
 
   public var stage: Aria_Daemon_V1_RelayStage = .unspecified
 
-  /// The transcript; only on COMPLETED.
+  /// The text; only on COMPLETED.
   public var text: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

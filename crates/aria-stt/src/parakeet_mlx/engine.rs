@@ -8,11 +8,11 @@ use aria_kit::backend::ModelDownload;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
 use aria_kit::transcription::{
-    AudioInputKind, Engine, Hypothesis, Language, Transcriber, TranscriptionAudio,
-    TranscriptionError, check_cancelled,
+    AudioInputKind, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
+    check_cancelled,
 };
 
-use super::protocol::{BACKEND, Phase, start, still_serving, transcribe};
+use super::protocol::{BACKEND, Phase, recognize, start, still_serving};
 
 pub struct ParakeetMlx {
     interpreter: PathBuf,
@@ -98,7 +98,7 @@ impl Engine for ParakeetMlx {
     }
 }
 
-impl Transcriber for ParakeetMlx {
+impl Recognizer for ParakeetMlx {
     /// Accepts any language: the engine takes no language input.
     fn validate_language(
         &self,
@@ -108,9 +108,9 @@ impl Transcriber for ParakeetMlx {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        input: TranscriptionAudio<'_>,
+        input: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
@@ -128,7 +128,7 @@ impl Transcriber for ParakeetMlx {
             None => slot.insert(start(&self.interpreter, &self.model, cancel)?),
         };
 
-        let outcome = transcribe(sidecar, audio_path, self.chunk_samples, cancel);
+        let outcome = recognize(sidecar, audio_path, self.chunk_samples, cancel);
         if !still_serving(sidecar, &outcome) {
             slot.take();
         }
@@ -171,8 +171,8 @@ mod tests {
 
     #[test]
     fn samples_input_is_refused_before_any_sidecar_is_started() {
-        let outcome = unspawnable().transcribe_with(
-            TranscriptionAudio::Samples(&[]),
+        let outcome = unspawnable().recognize_with(
+            RecognitionAudio::Samples(&[]),
             &Language::Automatic,
             &CancelToken::never(),
         );
@@ -193,8 +193,8 @@ mod tests {
         let mut recording = aria_kit::audio::RecordingReader::from_wav_file(&path)
             .expect("the fixture should load");
 
-        let outcome = unspawnable().transcribe_with(
-            TranscriptionAudio::Wav(
+        let outcome = unspawnable().recognize_with(
+            RecognitionAudio::Wav(
                 recording
                     .finished_audio()
                     .expect("the fixture should finish"),

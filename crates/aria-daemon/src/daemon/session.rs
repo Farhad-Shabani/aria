@@ -9,8 +9,8 @@ use crate::ipc::{
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
 };
 use aria_assistant::chat::{
-    Ambiguous, AskTarget, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
-    ChatStageKind, Focus, Mention, Project, Projects, ProjectsError, PromptCall, Ticket,
+    Ambiguous, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind,
+    ChatTarget, Focus, Mention, Project, Projects, ProjectsError, PromptCall, Ticket,
 };
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
@@ -22,9 +22,9 @@ use aria_voice::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
 use aria_voice::enrollment::{EnrolledSpeaker, EnrollmentRequest, EnrollmentResult};
-use aria_voice::listen::ListenStage;
 use aria_voice::speaker::SpeakerName;
 use aria_voice::speech::{SpeechOutcome, SpeechRequest};
+use aria_voice::system_transcription::SystemTranscriptionStage;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -119,23 +119,23 @@ impl DaemonSession {
         self.client.request_dictation(request, observe)
     }
 
-    /// Hands the ask to the daemon. The reply arrives on the event stream,
-    /// subscribed before the ask goes out so it cannot slip past.
-    pub fn ask(&self, request: ChatRequest) -> Result<PendingAsk, ClientError> {
+    /// Hands the chat to the daemon. The reply arrives on the event stream,
+    /// subscribed before the chat goes out so it cannot slip past.
+    pub fn ask(&self, request: ChatRequest) -> Result<PendingChat, ClientError> {
         let events = self.client.subscribe()?;
         let ticket = self.client.ask(request)?;
-        Ok(PendingAsk { ticket, events })
+        Ok(PendingChat { ticket, events })
     }
 
-    /// Hands a prompt run to the daemon. Its result arrives as an ask's
+    /// Hands a prompt run to the daemon. Its result arrives as a chat's
     /// reply does, on the event stream subscribed before the run goes out.
-    pub fn run_prompt(&self, call: PromptCall) -> Result<PendingAsk, ClientError> {
+    pub fn run_prompt(&self, call: PromptCall) -> Result<PendingChat, ClientError> {
         let events = self.client.subscribe()?;
         let ticket = self.client.run_prompt(call)?;
-        Ok(PendingAsk { ticket, events })
+        Ok(PendingChat { ticket, events })
     }
 
-    /// Ends the named recording so its transcript comes back. False when it
+    /// Ends the named recording so its text comes back. False when it
     /// is not the one running.
     pub fn stop_dictation(&self, recording: RecordingId) -> Result<bool, ClientError> {
         self.client.stop_dictation(recording)
@@ -148,12 +148,12 @@ impl DaemonSession {
         self.client.list_assistant_models(assistant_id)
     }
 
-    /// Where an ask goes when the caller has no working directory.
-    pub fn resolve_ask(&self) -> Result<AskTarget, ClientError> {
-        self.client.resolve_ask()
+    /// Where a chat goes when the caller has no working directory.
+    pub fn resolve_chat_target(&self) -> Result<ChatTarget, ClientError> {
+        self.client.resolve_chat_target()
     }
 
-    /// Ends an ask, running or waiting; `false` when it was neither.
+    /// Ends a chat, running or waiting; `false` when it was neither.
     pub fn cancel(&self, ticket: Ticket) -> Result<bool, ClientError> {
         self.client.cancel_ask(ticket)
     }
@@ -278,7 +278,7 @@ impl DaemonSession {
         self.client.retry_history(id, options)
     }
 
-    /// Reads a Mac Audio session's transcript into the entry, up to Get's read limit.
+    /// Reads a system transcription's transcript into the entry, up to Get's read limit.
     pub fn get_history(&self, id: u64) -> Result<aria_voice::history::HistoryEntry, ClientError> {
         self.client.get_history(id)
     }
@@ -354,7 +354,7 @@ impl DaemonSession {
         self.client.update_settings(expected_revision, patch)
     }
 
-    /// Connects to a running daemon and never starts one: a ticketed ask
+    /// Connects to a running daemon and never starts one: a ticketed chat
     /// outlives its request, which a temporary daemon would not.
     pub fn connect_at(paths: &PreparedRuntimePaths) -> Result<Self, StartupError> {
         connect_existing(paths).map(Self::existing)
@@ -378,19 +378,19 @@ impl DaemonSession {
 impl DaemonSession {
     /// `output` names the exact transcript file. The daemon resolves
     /// nothing, so a relative path is made absolute here.
-    pub fn listen_start(
+    pub fn system_transcription_start(
         &self,
         output: Option<PathBuf>,
-    ) -> Result<ListenStarted, ListenCommandError> {
+    ) -> Result<SystemTranscriptionStarted, SystemTranscriptionCommandError> {
         let output = output
             .map(|path| {
                 std::path::absolute(&path)
-                    .map_err(|_error| ListenCommandError::UnresolvableOutput(path))
+                    .map_err(|_error| SystemTranscriptionCommandError::UnresolvableOutput(path))
             })
             .transpose()?;
         self.client
-            .listen_start(output.map(|path| path.display().to_string()))
-            .map_err(ListenCommandError::Call)
+            .system_transcription_start(output.map(|path| path.display().to_string()))
+            .map_err(SystemTranscriptionCommandError::Call)
     }
 
     /// Records the samples and stores the voice they agree on. Progress
@@ -412,23 +412,30 @@ impl DaemonSession {
         self.client.set_owner(name.to_string())
     }
 
-    pub fn listen_stop(&self) -> Result<ListenStopped, ClientError> {
-        self.client.listen_stop()
+    pub fn system_transcription_stop(&self) -> Result<SystemTranscriptionStopped, ClientError> {
+        self.client.system_transcription_stop()
     }
 
-    pub fn listen_status(&self) -> Result<ListenSnapshot, ClientError> {
-        self.client.listen_status()
+    pub fn system_transcription_status(&self) -> Result<SystemTranscriptionSnapshot, ClientError> {
+        self.client.system_transcription_status()
     }
 
-    /// Follows the running listen session. Subscribed before the status
-    /// check, so a session ending in between is not missed.
-    pub fn follow_listen(&self) -> Result<ListenFollow, ListenCommandError> {
-        let events = self.client.subscribe().map_err(ListenCommandError::Call)?;
-        let status = self.listen_status().map_err(ListenCommandError::Call)?;
-        if !status.listening {
-            return Err(ListenCommandError::NotListening);
+    /// Follows the running system transcription. Subscribed before the status
+    /// check, so a system transcription ending in between is not missed.
+    pub fn follow_system_transcription(
+        &self,
+    ) -> Result<SystemTranscriptionFollow, SystemTranscriptionCommandError> {
+        let events = self
+            .client
+            .subscribe()
+            .map_err(SystemTranscriptionCommandError::Call)?;
+        let status = self
+            .system_transcription_status()
+            .map_err(SystemTranscriptionCommandError::Call)?;
+        if !status.running {
+            return Err(SystemTranscriptionCommandError::NotRunning);
         }
-        Ok(ListenFollow {
+        Ok(SystemTranscriptionFollow {
             events,
             transcript: status.transcript,
             ended: false,
@@ -436,16 +443,16 @@ impl DaemonSession {
     }
 }
 
-/// The stages of a running listen session, ending with `Stopped` or
+/// The stages of a running system transcription, ending with `Stopped` or
 /// `Failed`. Ends early when the daemon closes the stream.
-pub struct ListenFollow {
+pub struct SystemTranscriptionFollow {
     events: EventStream,
     pub transcript: PathBuf,
     ended: bool,
 }
 
-impl Iterator for ListenFollow {
-    type Item = Result<ListenStage, ClientError>;
+impl Iterator for SystemTranscriptionFollow {
+    type Item = Result<SystemTranscriptionStage, ClientError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.ended {
@@ -453,8 +460,11 @@ impl Iterator for ListenFollow {
         }
         loop {
             match self.events.next()? {
-                Ok(DaemonEvent::Listen(stage)) => {
-                    self.ended = matches!(stage, ListenStage::Stopped | ListenStage::Failed(_));
+                Ok(DaemonEvent::SystemTranscription(stage)) => {
+                    self.ended = matches!(
+                        stage,
+                        SystemTranscriptionStage::Stopped | SystemTranscriptionStage::Failed(_)
+                    );
                     return Some(Ok(stage));
                 }
                 Ok(_) => {}
@@ -464,21 +474,21 @@ impl Iterator for ListenFollow {
     }
 }
 
-/// An ask the daemon has taken, with the stream its reply arrives on.
-pub struct PendingAsk {
+/// A chat the daemon has taken, with the stream its reply arrives on.
+pub struct PendingChat {
     ticket: Ticket,
     events: EventStream,
 }
 
-impl PendingAsk {
+impl PendingChat {
     pub fn ticket(&self) -> Ticket {
         self.ticket
     }
 
     /// Waits for the reply, skipping every other event on the way. Each
-    /// stage of this ask passes through `observe` first, so a caller can
+    /// stage of this chat passes through `observe` first, so a caller can
     /// show progress.
-    pub fn reply(self, observe: impl FnMut(&ChatStage)) -> Result<ChatReply, AskError> {
+    pub fn reply(self, observe: impl FnMut(&ChatStage)) -> Result<ChatReply, ReplyError> {
         reply_from(self.ticket, self.events, observe)
     }
 }
@@ -487,7 +497,7 @@ fn reply_from(
     ticket: Ticket,
     events: impl IntoIterator<Item = Result<DaemonEvent, ClientError>>,
     mut observe: impl FnMut(&ChatStage),
-) -> Result<ChatReply, AskError> {
+) -> Result<ChatReply, ReplyError> {
     for event in events {
         let DaemonEvent::Chat(stage) = event? else {
             continue;
@@ -500,17 +510,17 @@ fn reply_from(
             ChatStageKind::Working(..) => {}
             ChatStageKind::Replied(reply) => return Ok(reply),
             ChatStageKind::Failed { code, message } => {
-                return Err(AskError::Failed(RpcFailure::new(code, message)));
+                return Err(ReplyError::Failed(RpcFailure::new(code, message)));
             }
         }
     }
-    Err(AskError::DaemonStopped(ticket))
+    Err(ReplyError::DaemonStopped(ticket))
 }
 
-/// How to settle an ask that names two projects.
+/// How to settle a question that names two projects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Clarify {
-    /// Ask aloud and record one answer, ending it the same way as the ask.
+    /// Ask aloud and record one answer, ending it the same way as the question.
     Aloud { stop_mode: StopMode },
     /// Refuse: nobody is listening for a question.
     Refuse,
@@ -520,7 +530,7 @@ pub enum Clarify {
 pub enum Routing {
     Ready {
         request: ChatRequest,
-        /// Set when the text named a project: the one to keep for later asks.
+        /// Set when the text named a project: the one to keep for later chats.
         focus: Option<Focus>,
     },
     /// The question or the answer was stopped before it ended.
@@ -538,7 +548,7 @@ pub enum RouteError {
     #[error(transparent)]
     Request(#[from] ChatRequestError),
 
-    #[error("the ask names {}", .0.names().join(" and "))]
+    #[error("the question names {}", .0.names().join(" and "))]
     Ambiguous(Ambiguous),
 
     #[error("heard {heard:?}, not {}", candidates.names().join(" or "))]
@@ -555,8 +565,8 @@ pub enum RouteError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum AskError {
-    /// The daemon's verdict, whether the ask failed or the stream carrying it did.
+pub enum ReplyError {
+    /// The daemon's verdict, whether the chat failed or the stream carrying it did.
     #[error(transparent)]
     Failed(RpcFailure),
 
@@ -567,7 +577,7 @@ pub enum AskError {
     Stream(ClientError),
 }
 
-impl From<ClientError> for AskError {
+impl From<ClientError> for ReplyError {
     fn from(error: ClientError) -> Self {
         match error {
             ClientError::Rpc(failure) => Self::Failed(failure),
@@ -576,15 +586,17 @@ impl From<ClientError> for AskError {
     }
 }
 
-pub use aria_voice::listen::{ListenSnapshot, ListenStarted, ListenStopped};
+pub use aria_voice::system_transcription::{
+    SystemTranscriptionSnapshot, SystemTranscriptionStarted, SystemTranscriptionStopped,
+};
 
 #[derive(Debug, thiserror::Error)]
-pub enum ListenCommandError {
+pub enum SystemTranscriptionCommandError {
     #[error("cannot resolve the output path {}", .0.display())]
     UnresolvableOutput(PathBuf),
 
-    #[error("nothing is listening")]
-    NotListening,
+    #[error("nothing is transcribing")]
+    NotRunning,
 
     #[error(transparent)]
     Call(ClientError),
@@ -627,7 +639,7 @@ pub enum StartupError {
     Runtime(#[source] RuntimeError),
 
     #[error(
-        "no Aria daemon is running, and on {} a transcript survives only while the process that copied it does; start `aria daemon` first",
+        "no Aria daemon is running, and on {} dictated text survives only while the process that copied it does; start `aria daemon` first",
         std::env::consts::OS
     )]
     DaemonRequired,
@@ -862,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pending_ask_shows_its_own_stages_and_returns_its_reply() {
+    fn a_pending_chat_shows_its_own_stages_and_returns_its_reply() {
         let mine = ChatReply {
             text: "one".to_owned(),
             delivery_error: None,
@@ -892,11 +904,11 @@ mod tests {
     }
 
     #[test]
-    fn a_verdict_on_the_stream_fails_the_ask_like_one_on_the_ask() {
+    fn a_verdict_on_the_stream_fails_the_chat_like_one_on_the_ask() {
         let refused = RpcFailure::new(aria_settings::rpc::RpcErrorCode::Cancelled, "cancelled");
         let reply = reply_from(Ticket(1), [Err(ClientError::Rpc(refused.clone()))], |_| {});
 
-        assert!(matches!(reply, Err(AskError::Failed(failure)) if failure == refused));
+        assert!(matches!(reply, Err(ReplyError::Failed(failure)) if failure == refused));
     }
 
     #[test]
@@ -907,7 +919,7 @@ mod tests {
             |_| {},
         );
 
-        assert!(matches!(reply, Err(AskError::DaemonStopped(Ticket(1)))));
+        assert!(matches!(reply, Err(ReplyError::DaemonStopped(Ticket(1)))));
     }
 
     #[test]

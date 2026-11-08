@@ -14,9 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var setupState = SetupState(effects: .live, runner: setupRunner)
     let setupStatus = SetupStatus()
     lazy var modelDownload = ModelDownload(effects: .live, runner: setupRunner)
-    lazy var transcriptionEngineChange = TranscriptionEngineChange(effects: .live, runner: setupRunner)
+    lazy var sttEngineChange = SttEngineChange(effects: .live, runner: setupRunner)
     let voices: VoiceProfiles
-    lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus, runner: setupRunner)
+    lazy var serverStt = ServerStt(effects: .live, setup: setupStatus, runner: setupRunner)
     let updates = UpdateController()
     let history = HistoryState(effects: HistoryClient.effects)
 
@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel = FloatingPanel(
         width: OverlayStyle.captionWidth, bottomMargin: OverlayStyle.captionBottomMargin)
     let status: StatusController
-    let listenStatus: ListenStatus
+    let systemTranscriptionStatus: SystemTranscriptionStatus
     private let ghost: GhostController
     let askShortcut: PressController
     let promptHotkeys: PromptHotkeys
@@ -38,7 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var daemonSettings: DaemonSettings?
     private var askChordChange: AnyCancellable?
     private(set) lazy var palette = PaletteController(
-        prompts: promptHotkeys, ask: askShortcut, listen: listenStatus, history: history, events: events,
+        prompts: promptHotkeys, ask: askShortcut, systemTranscription: systemTranscriptionStatus, history: history,
+        events: events,
         setup: setupStatus, settingsHealth: settingsHealth,
         openSettings: { [weak self] pane in
             guard let self else { return }
@@ -55,10 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voices = VoiceProfiles(effects: .live)
         let status = StatusController(events: events, prompts: promptHotkeys)
         self.status = status
-        listenStatus = ListenStatus(events: events)
+        systemTranscriptionStatus = SystemTranscriptionStatus(events: events)
         ghost = GhostController(events: events)
         askShortcut = PressController(events: events, operation: .ask) { [weak status] run in
-            status?.noteAsk(run)
+            status?.noteChat(run)
         }
         super.init()
         status.skips = { [weak self] ticket in self?.palette.shows(ticket: ticket) ?? false }

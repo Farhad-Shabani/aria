@@ -369,6 +369,10 @@ public nonisolated struct Aria_Daemon_V1_SettingsSnapshot: Sendable {
   /// entry for its own output.
   public var streamingUnavailable: [Aria_Daemon_V1_StreamingUnavailableOutput] = []
 
+  /// The chosen assistant's name for display, such as "Claude Code". Empty
+  /// when no assistant is chosen.
+  public var assistantName: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -523,7 +527,7 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._assistantModels = newValue}
   }
 
-  /// Asks are sent to the assistant to remember facts.
+  /// Questions you speak are sent to Claude to remember facts.
   public var memoryEnabled: Bool {
     get {_storage._memoryEnabled}
     set {_uniqueStorage()._memoryEnabled = newValue}
@@ -552,7 +556,7 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._ariaKey = newValue}
   }
 
-  /// Starts an ask: Aria key + Shift unless changed. The Aria key then sends
+  /// Starts a chat: Aria key + Shift unless changed. The Aria key then sends
   /// and cancels it.
   public var askShortcut: Aria_Daemon_V1_Shortcut {
     get {_storage._askShortcut ?? Aria_Daemon_V1_Shortcut()}
@@ -831,7 +835,7 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
 }
 
 /// A Markdown file that says what to make of a recording, and the chord
-/// that runs it the way the ask shortcut runs an ask.
+/// that runs it the way the Ask shortcut starts a chat.
 public nonisolated struct Aria_Daemon_V1_Prompt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1372,7 +1376,7 @@ nonisolated extension Aria_Daemon_V1_CheckSettingsResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SettingsSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}settings\0\u{3}streaming_unavailable\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}settings\0\u{3}streaming_unavailable\0\u{3}assistant_name\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1383,6 +1387,7 @@ nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, Sw
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
       case 3: try { try decoder.decodeRepeatedMessageField(value: &self.streamingUnavailable) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.assistantName) }()
       default: break
       }
     }
@@ -1402,6 +1407,9 @@ nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, Sw
     if !self.streamingUnavailable.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.streamingUnavailable, fieldNumber: 3)
     }
+    if !self.assistantName.isEmpty {
+      try visitor.visitSingularStringField(value: self.assistantName, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1409,6 +1417,7 @@ nonisolated extension Aria_Daemon_V1_SettingsSnapshot: SwiftProtobuf.Message, Sw
     if lhs.revision != rhs.revision {return false}
     if lhs._settings != rhs._settings {return false}
     if lhs.streamingUnavailable != rhs.streamingUnavailable {return false}
+    if lhs.assistantName != rhs.assistantName {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

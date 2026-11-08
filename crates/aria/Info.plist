@@ -7,8 +7,8 @@
     <key>CFBundleName</key>
     <string>Aria</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Aria uses the microphone for speech transcription and optional wake-word detection.</string>
+    <string>Aria uses the microphone for speech recognition and optional wake-word detection.</string>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>Aria transcribes this Mac's system audio into local transcript files when you start listen mode.</string>
+    <string>Aria transcribes this Mac's system audio into local transcript files when you start a transcription.</string>
 </dict>
 </plist>

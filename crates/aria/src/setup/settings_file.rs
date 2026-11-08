@@ -59,7 +59,7 @@ impl Selections {
     /// own tables.
     pub(super) fn patch(&self, current: &SettingsFile) -> Patch {
         let mut patch = Patch::new();
-        transcription_patch(&mut patch, current, &self.stt);
+        stt_patch(&mut patch, current, &self.stt);
         if current.tts.backend.as_deref() != Some(self.tts.as_str()) {
             patch.set(Key::TtsBackend, self.tts.as_str());
         }
@@ -74,10 +74,10 @@ impl Selections {
     }
 }
 
-/// Changing transcription engines resets that engine's own keys, so the new
+/// Changing recognition engines resets that engine's own keys, so the new
 /// engine never gets the old model path.
-fn transcription_patch(patch: &mut Patch, current: &SettingsFile, engine: &str) {
-    if aria_settings::config::transcription_engine(&current.stt) != engine {
+fn stt_patch(patch: &mut Patch, current: &SettingsFile, engine: &str) {
+    if aria_settings::config::stt_engine(&current.stt) != engine {
         for key in [Key::SttModel, Key::SttDevice, Key::SttInterpreter] {
             patch.reset(key);
         }
@@ -97,22 +97,22 @@ fn runs_on_patch(current: &SettingsFile, runs_on: RunsOn) -> Patch {
 
 /// Checks setting `engine` without writing, so a refused write fails
 /// before any download.
-pub(super) fn check_transcription(
+pub(super) fn check_stt(
     home: &Path,
     current: &SettingsFile,
     engine: &str,
 ) -> Result<(), SetupError> {
     let mut patch = Patch::new();
-    transcription_patch(&mut patch, current, engine);
+    stt_patch(&mut patch, current, engine);
     check(home, &patch)
 }
 
 /// Writes only the `stt` keys that name `engine`, so every other choice
 /// stays as the file has it now.
-pub(super) fn write_transcription(home: &Path, engine: &str) -> Result<SettingsWrite, SetupError> {
+pub(super) fn write_stt(home: &Path, engine: &str) -> Result<SettingsWrite, SetupError> {
     write(home, |current| {
         let mut patch = Patch::new();
-        transcription_patch(&mut patch, current, engine);
+        stt_patch(&mut patch, current, engine);
         patch
     })
 }

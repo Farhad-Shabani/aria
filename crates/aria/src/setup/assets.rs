@@ -104,7 +104,7 @@ pub(super) const QWEN: Asset = Asset {
 pub(super) const SPEAKER: &str = "speaker";
 
 /// Wanted by a feature rather than by a chosen engine: speaker
-/// verification and the diarization `aria listen` does.
+/// verification and the diarization `aria transcribe` does.
 pub(super) const EXTRAS: [Asset; 2] = [
     Asset {
         name: SPEAKER,

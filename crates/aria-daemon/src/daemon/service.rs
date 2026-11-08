@@ -10,12 +10,12 @@ mod dictation;
 mod events;
 mod history;
 mod inference;
-mod listen;
 mod pairing;
 mod relay;
 mod settings;
 mod speaker;
 mod speech;
+mod system_transcription;
 mod vocabulary;
 
 use crate::ipc::protocol::failure_status;
@@ -31,12 +31,12 @@ pub(super) use history::{HistoryRpc, HistoryWorker};
 pub(super) use inference::{
     InferenceAdminRpc, InferencePairingRpc, InferenceRpc, authenticate as authenticate_inference,
 };
-pub(super) use listen::ListenRpc;
 pub(super) use pairing::{InviteRpc, PairingRpc};
 pub(super) use relay::RelayRpc;
 pub(super) use settings::SettingsRpc;
 pub(super) use speaker::SpeakerRpc;
 pub(super) use speech::SpeechRpc;
+pub(super) use system_transcription::SystemTranscriptionRpc;
 pub(super) use vocabulary::VocabularyRpc;
 
 fn invalid_request(method: &'static str, error: &dyn std::error::Error) -> Status {

@@ -5,7 +5,7 @@ use crate::inference::{
     Strategy,
 };
 use crate::ipc::wire;
-use aria_voice::transcription::{TranscriptSegment, TranscriptUpdate};
+use aria_voice::stt::{TranscriptSegment, TranscriptUpdate};
 
 use super::ProtocolError;
 

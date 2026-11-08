@@ -1,4 +1,4 @@
-//! Which project an ask names. A project is a git repo directly under a
+//! Which project a question names. A project is a git repo directly under a
 //! configured root, named by its folder. Matching is a closed vocabulary:
 //! a name counts when it appears as whole words anywhere in the utterance.
 
@@ -23,7 +23,7 @@ pub struct Project {
     pub path: PathBuf,
 }
 
-/// The repos an ask may name, and the one later asks fall back to.
+/// The repos a question may name, and the one later chats fall back to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Projects {
     home: PathBuf,
@@ -57,7 +57,7 @@ impl Projects {
         self.focused.as_ref()
     }
 
-    /// The project to keep for later asks.
+    /// The project to keep for later chats.
     pub fn focus(&self, project: Project) -> Focus {
         Focus::on(&self.home, project)
     }
@@ -212,7 +212,7 @@ impl Ambiguous {
     }
 }
 
-/// The project later asks fall back to, and where it is kept.
+/// The project later chats fall back to, and where it is kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Focus {
     directory: PathBuf,

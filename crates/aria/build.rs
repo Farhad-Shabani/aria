@@ -7,7 +7,7 @@ const SETUP_PROTOS: &[&str] = &["../../proto/aria/setup/v1/setup.proto"];
 
 fn main() -> Result<(), Box<dyn Error>> {
     if std::env::var("CARGO_CFG_TARGET_OS")?.as_str() == "macos" {
-        // Tap symbols are absent before 14.2; listen checks the OS before use.
+        // Tap symbols are absent before 14.2; system transcription checks the OS before use.
         println!("cargo:rustc-link-arg=-Wl,-weak_framework,CoreAudio");
         let plist = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?).join("Info.plist");
         println!("cargo:rerun-if-changed={}", plist.display());

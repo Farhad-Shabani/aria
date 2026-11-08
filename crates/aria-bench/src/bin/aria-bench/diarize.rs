@@ -54,7 +54,7 @@ pub(crate) struct Cli {
     /// Take the speech boundaries from the word spans, not the voice detector
     #[arg(long, conflicts_with = "by_voice")]
     word_timeline: bool,
-    /// Label from the voice alone, with no transcriber in the path
+    /// Label from the voice alone, with no recognizer in the path
     #[arg(long, requires = "audio")]
     by_voice: bool,
     /// Label through the pyannote segmentation net, which can report overlap
@@ -72,7 +72,7 @@ pub(crate) struct Cli {
     /// Place each voiceprint as it arrives, the way a live session must
     #[arg(long, requires = "segmented", conflicts_with = "speakers")]
     online: bool,
-    /// Run the voice track listen ships, rather than this crate's copy of it
+    /// Run the voice track that system transcription ships, rather than this crate's copy of it
     #[arg(long, requires = "audio", conflicts_with_all = ["by_voice", "word_timeline", "segmented"])]
     as_shipped: bool,
     /// Ask the track who owned each speech run, the way the transcript is
@@ -126,7 +126,7 @@ pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
             .unwrap_or("recording")
             .to_owned();
         let timeline = match cli.word_timeline {
-            true => Timeline::Transcriber,
+            true => Timeline::Recognizer,
             false => Timeline::VoiceActivity,
         };
         if cli.as_shipped {

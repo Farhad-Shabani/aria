@@ -19,7 +19,7 @@ use aria_settings::config::{ConfigError, backend};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
-use aria_voice::config::{DictationConfig, SpeakerConfig, TranscriptionBackend};
+use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
     DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
     DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
@@ -27,7 +27,7 @@ use aria_voice::dictation::{
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
-use aria_voice::transcription::Language;
+use aria_voice::stt::Language;
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -198,7 +198,7 @@ impl DictationRuntime {
         });
     }
 
-    /// Startup waits for the model here, so a daemon that cannot transcribe
+    /// Startup waits for the model here, so a daemon that cannot recognize speech
     /// says so before it accepts a press. The caller runs the returned monitor
     /// and engine follower. A runtime dictates but watches neither the wake
     /// word nor settings.
@@ -268,7 +268,7 @@ impl DictationRuntime {
         self.microphone.stop_manual_recording()
     }
 
-    /// Ends the named recording and lets transcription finish. Returns false
+    /// Ends the named recording and lets it finish transcribing. Returns false
     /// if it is not running, without loading a deferred coordinator.
     pub(in crate::daemon) fn stop_recording(&self, recording: RecordingId) -> bool {
         self.ready()
@@ -304,7 +304,7 @@ impl DictationRuntime {
         })
     }
 
-    /// A retry re-transcribes a stored recording, so no app is in front.
+    /// A retry transcribes a stored recording again, so no app is in front.
     pub(in crate::daemon) fn history_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
@@ -479,7 +479,7 @@ impl DictationRuntime {
         })?;
         // A swap may have changed the engine since the retry setup was read.
         let backend = running.map_or_else(
-            || setup.dictation.transcription.clone(),
+            || setup.dictation.stt.clone(),
             |engine| engine.backend.clone(),
         );
         let target = retry_target(&backend, &setup.home, requested)?;
@@ -552,15 +552,15 @@ fn names_an_engine(label: &str) -> bool {
 }
 
 fn retry_target<'a>(
-    backend: &TranscriptionBackend,
+    backend: &SttBackend,
     home: &std::path::Path,
     requested: &'a str,
 ) -> Result<RetryTarget<'a>, HistoryError> {
     let named = names_an_engine(requested).then_some(requested);
     match (backend, named) {
-        (TranscriptionBackend::Server(_), engine) => Ok(RetryTarget::Server { engine }),
-        (TranscriptionBackend::Local(local), None) => Ok(RetryTarget::Local(local.clone())),
-        (TranscriptionBackend::Local(local), Some(engine)) => local
+        (SttBackend::Server(_), engine) => Ok(RetryTarget::Server { engine }),
+        (SttBackend::Local(local), None) => Ok(RetryTarget::Local(local.clone())),
+        (SttBackend::Local(local), Some(engine)) => local
             .for_backend(engine, home)
             .map(RetryTarget::Local)
             .map_err(|error| HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)),
@@ -986,7 +986,7 @@ mod history_tests {
                 return Err(DictationError::NoSpeech);
             }
             Ok(Transcribed {
-                transcript: aria_voice::transcription::Transcript::new("recovered words").unwrap(),
+                transcript: aria_voice::stt::Transcript::new("recovered words").unwrap(),
                 engine: "test",
             })
         }
@@ -1263,8 +1263,7 @@ mod history_tests {
             let home_dir = home.clone();
             let mut config =
                 DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
-            config.transcription =
-                TranscriptionBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
+            config.stt = SttBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,
                 pace: aria_kit::audio::ReplayPace::Immediate,

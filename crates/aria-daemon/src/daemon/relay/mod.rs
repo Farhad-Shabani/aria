@@ -273,9 +273,9 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::SpeakerInconsistentSamples
         | RpcErrorCode::SpeakerProfileWriteFailed
         | RpcErrorCode::SpeakerNoSpeech
-        | RpcErrorCode::ListenUnsupportedOs
-        | RpcErrorCode::ListenPermissionDenied
-        | RpcErrorCode::ListenCaptureFailed
+        | RpcErrorCode::SystemTranscriptionUnsupportedOs
+        | RpcErrorCode::SystemTranscriptionPermissionDenied
+        | RpcErrorCode::SystemTranscriptionCaptureFailed
         | RpcErrorCode::HistoryMissing
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable

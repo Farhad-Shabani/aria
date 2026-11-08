@@ -3,7 +3,7 @@ import SwiftUI
 struct DictationSettings: View {
     let settings: DaemonSettings
     @ObservedObject var setup: SetupStatus
-    let engineChange: TranscriptionEngineChange
+    let engineChange: SttEngineChange
 
     var body: some View {
         SettingsForm(settings: settings) { editor in

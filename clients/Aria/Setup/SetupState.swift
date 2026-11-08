@@ -100,16 +100,16 @@ final class SetupState: ObservableObject {
     }
 
     /// The models the chosen engines want, plus the ones every install
-    /// wants, whether on disk or not. While the server transcribes, the
-    /// local engine's models wait until transcription comes back.
+    /// wants, whether on disk or not. While the server recognizes, the
+    /// local engine's models wait until recognition comes back.
     static func wanted(_ inspection: Aria_Setup_V1_Inspection, _ selections: Aria_Setup_V1_Selections)
         -> [Aria_Setup_V1_Model]
     {
-        let transcribesHere = inspection.transcriptionRunsOn != .server
+        let recognizesHere = inspection.sttRunsOn != .server
         return inspection.models.filter { model in
             model.engineID.isEmpty
-                || (transcribesHere && model.engineID == selections.transcriptionEngineID)
-                || model.engineID == selections.synthesisEngineID
+                || (recognizesHere && model.engineID == selections.sttEngineID)
+                || model.engineID == selections.ttsEngineID
         }
     }
 
@@ -160,8 +160,8 @@ final class SetupState: ObservableObject {
         -> String?
     {
         let chosen = [
-            (selections.transcriptionEngineID, inspection.transcriptionChoices),
-            (selections.synthesisEngineID, inspection.synthesisChoices),
+            (selections.sttEngineID, inspection.sttChoices),
+            (selections.ttsEngineID, inspection.ttsChoices),
         ]
         for (key, engines) in chosen {
             guard let engine = engines.first(where: { $0.id == key }) else { continue }
@@ -171,11 +171,11 @@ final class SetupState: ObservableObject {
     }
 
     /// The wizard opens itself once, and only while something is missing. A
-    /// transcription model setup still has to download reopens it, because the
+    /// speech model setup still has to download reopens it, because the
     /// daemon can't start without one.
     static func shouldOffer(_ inspection: Aria_Setup_V1_Inspection, offeredBefore: Bool) -> Bool {
         guard !wizardWork(in: inspection).isEmpty else { return false }
-        return !offeredBefore || SetupStatus.isMissingTranscriptionModel(in: inspection)
+        return !offeredBefore || SetupStatus.isMissingSttModel(in: inspection)
     }
 
     /// What the wizard can put in place. A remapped Aria key shows only in
@@ -226,8 +226,8 @@ final class SetupState: ObservableObject {
     /// setup cannot size.
     var selfFetchingNotes: [String] {
         let chosen = [
-            (selections.transcriptionEngineID, inspection.transcriptionChoices),
-            (selections.synthesisEngineID, inspection.synthesisChoices),
+            (selections.sttEngineID, inspection.sttChoices),
+            (selections.ttsEngineID, inspection.ttsChoices),
         ]
         return chosen.compactMap { key, engines in
             engines.first { $0.id == key && $0.modelSource == .fetchedOnFirstUse }
@@ -368,7 +368,7 @@ final class SetupState: ObservableObject {
             do {
                 heard = try await effects.transcribe()
             } catch {
-                notice = Self.notice(for: error, during: "try-out transcription", otherwise: Self.transcribeFailure)
+                notice = Self.notice(for: error, during: "try-out transcription", otherwise: Self.transcriptionFailure)
                 return
             }
             do {
@@ -472,7 +472,7 @@ final class SetupState: ObservableObject {
     static let inspectFailure = "Aria couldn’t check your Mac. Try again, or run `aria doctor` in Terminal to see why."
     static let applyFailure = "Setup couldn’t finish. Try again, or run `aria doctor` in Terminal to see why."
     static let missingBinary = "Aria’s installation is incomplete. Reinstall Aria, then try again."
-    static let transcribeFailure = "Aria couldn’t transcribe that. Try again."
+    static let transcriptionFailure = "Aria couldn’t transcribe that. Try again."
     static let speakFailure = "Aria couldn’t read the reply aloud. Try again."
     static let unknownFailure = "Something went wrong. Try again."
 
@@ -553,7 +553,7 @@ extension SetupState.Step {
 
     var caption: String? {
         switch self {
-        case .inspecting, .welcome: "Dictation stays on your Mac. Ask uses your selected assistant."
+        case .inspecting, .welcome: "Dictation stays on your Mac. Chat uses your selected assistant."
         case .choices: "Speech stays on your Mac. You can change these later."
         case .applying: "This takes a moment. Downloads can be canceled."
         case .grant: "Aria uses it to hear the Aria key and type what you say."

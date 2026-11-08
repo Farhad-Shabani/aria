@@ -1,4 +1,4 @@
-//! How an ask or a prompt run fails, settings included.
+//! How a chat or a prompt run fails, settings included.
 
 use aria_assistant::chat::{AssistantError, InstructionsError, ProjectsError, SessionStoreError};
 use aria_platform::delivery::DeliveryError;

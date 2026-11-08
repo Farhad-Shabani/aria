@@ -12,9 +12,9 @@ use aria_kit::audio::{CaptureError, Clip, ClipError, RecordingReader, ResampleEr
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::error_chain;
 use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
-use aria_voice::config::TranscriptionDevice;
-use aria_voice::transcription::{
-    Language, LanguageCode, Transcriber, Transcript, Transcription, TranscriptionError, Whole,
+use aria_voice::config::SttDevice;
+use aria_voice::stt::{
+    Language, LanguageCode, Recognizer, Transcript, Transcription, TranscriptionError, Whole,
 };
 
 use super::backends::Loaded;
@@ -33,20 +33,20 @@ pub enum AsrRequest {
 
 /// One loaded judge over one loaded ASR backend.
 pub(super) struct Judge {
-    transcription: Transcription<Box<dyn Transcriber>, Whole>,
+    transcription: Transcription<Box<dyn Recognizer>, Whole>,
 }
 
 impl Judge {
     pub(super) fn load(request: &AsrRequest) -> Result<Self, TranscriptionError> {
-        let backend: Box<dyn Transcriber> = match request {
+        let backend: Box<dyn Recognizer> = match request {
             AsrRequest::Parakeet {
                 model_directory,
                 gpu,
             } => Box::new(aria_stt::parakeet::Parakeet::load(
                 model_directory.clone(),
                 match gpu {
-                    true => TranscriptionDevice::Gpu,
-                    false => TranscriptionDevice::Cpu,
+                    true => SttDevice::Gpu,
+                    false => SttDevice::Cpu,
                 },
             )?),
             AsrRequest::WhisperCandle { model_directory } => Box::new(

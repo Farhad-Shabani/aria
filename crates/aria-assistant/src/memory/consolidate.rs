@@ -51,7 +51,7 @@ pub(crate) fn consolidate_backlog(
     }
     if !cancel.is_cancelled() {
         if let Err(error) = store.prune_turns() {
-            tracing::warn!(error = %error_chain(&error), "old memory asks were not pruned");
+            tracing::warn!(error = %error_chain(&error), "old memory chats were not pruned");
         }
         write_profile(store, dir)?;
     }

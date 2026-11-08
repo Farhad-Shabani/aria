@@ -325,7 +325,7 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
   /// owner's; see DictationResult.own_voice.
   public var ownVoice: Bool = false
 
-  /// Deliver the reply like a transcript instead of only announcing it.
+  /// Deliver the reply like dictated text instead of only announcing it.
   public var outputMode: Aria_Daemon_V1_OutputMode {
     get {_outputMode ?? .unspecified}
     set {_outputMode = newValue}
@@ -337,7 +337,7 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
 
   /// A tap of the Aria key cancels this run while it is in flight. The Mac
   /// app sets it on a run a key press started, so one key drives the run.
-  /// Absent means no: a terminal's ask, or an older client's, is never ended
+  /// Absent means no: a terminal's chat, or an older client's, is never ended
   /// by a tap.
   public var tapCancels: Bool = false
 
@@ -376,8 +376,8 @@ public nonisolated struct Aria_Daemon_V1_RunPromptRequest: Sendable {
     set {input = .text(newValue)}
   }
 
-  /// A history entry's full text: an ask's reply, a Mac Audio session's
-  /// transcript file, or else the entry's text. The reply is saved under the entry
+  /// A history entry's full text: a chat's reply, a transcript
+  /// file, or else the entry's text. The reply is saved under the entry
   /// when history is on. A missing entry is HISTORY_MISSING.
   public var historyEntryID: UInt64 {
     get {
@@ -433,8 +433,8 @@ public nonisolated struct Aria_Daemon_V1_RunPromptRequest: Sendable {
   /// Required.
   public nonisolated enum OneOf_Input: Equatable, Sendable {
     case text(String)
-    /// A history entry's full text: an ask's reply, a Mac Audio session's
-    /// transcript file, or else the entry's text. The reply is saved under the entry
+    /// A history entry's full text: a chat's reply, a transcript
+    /// file, or else the entry's text. The reply is saved under the entry
     /// when history is on. A missing entry is HISTORY_MISSING.
     case historyEntryID(UInt64)
 
@@ -701,7 +701,7 @@ public nonisolated struct Aria_Daemon_V1_CancelAskResponse: Sendable {
   public init() {}
 }
 
-public nonisolated struct Aria_Daemon_V1_ResolveAskRequest: Sendable {
+public nonisolated struct Aria_Daemon_V1_ResolveChatTargetRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -711,7 +711,7 @@ public nonisolated struct Aria_Daemon_V1_ResolveAskRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Aria_Daemon_V1_ResolveAskResponse: Sendable {
+public nonisolated struct Aria_Daemon_V1_ResolveChatTargetResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1517,8 +1517,8 @@ nonisolated extension Aria_Daemon_V1_CancelAskResponse: SwiftProtobuf.Message, S
   }
 }
 
-nonisolated extension Aria_Daemon_V1_ResolveAskRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".ResolveAskRequest"
+nonisolated extension Aria_Daemon_V1_ResolveChatTargetRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResolveChatTargetRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1530,14 +1530,14 @@ nonisolated extension Aria_Daemon_V1_ResolveAskRequest: SwiftProtobuf.Message, S
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_ResolveAskRequest, rhs: Aria_Daemon_V1_ResolveAskRequest) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_ResolveChatTargetRequest, rhs: Aria_Daemon_V1_ResolveChatTargetRequest) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Daemon_V1_ResolveAskResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".ResolveAskResponse"
+nonisolated extension Aria_Daemon_V1_ResolveChatTargetResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResolveChatTargetResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workdir\0\u{3}assistant_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1563,7 +1563,7 @@ nonisolated extension Aria_Daemon_V1_ResolveAskResponse: SwiftProtobuf.Message, 
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_ResolveAskResponse, rhs: Aria_Daemon_V1_ResolveAskResponse) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_ResolveChatTargetResponse, rhs: Aria_Daemon_V1_ResolveChatTargetResponse) -> Bool {
     if lhs.workdir != rhs.workdir {return false}
     if lhs.assistantID != rhs.assistantID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

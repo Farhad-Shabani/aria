@@ -526,7 +526,7 @@ impl AgreementState {
     ) -> Result<Option<ChunkStep>, TranscriptionError> {
         let tail = self.agreement.take_tail(None);
         let tail = self.commit(tail);
-        // Nobody spoke, which is an ordinary end to a listen session, not a
+        // Nobody spoke, which is an ordinary end to a streaming transcription, not a
         // failure. `Operation::finish` still answers `NoSpeech` for callers
         // that asked for a transcript and got none.
         let words = std::mem::take(&mut self.transcript).join(" ");

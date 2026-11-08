@@ -3,10 +3,9 @@
 // Setup as `aria::setup` exposes it: look at what the machine has, then
 // put the chosen pieces in place. Aria.app speaks it over the stdio of
 // the hidden `aria setup inspect`, `aria setup apply`,
-// `aria setup set-transcription-engine` and
-// `aria setup set-transcription-runs-on`, one message per length-delimited
-// frame. Apply runs the whole of setup; the two setters each change one
-// choice alone.
+// `aria setup set-stt-engine` and `aria setup set-stt-runs-on`, one
+// message per length-delimited frame. Apply runs the whole of setup; the
+// two setters each change one choice alone.
 //
 // Recording a voice and the test press are not here: they are ordinary
 // daemon RPCs (SpeakerService, DictationService, SpeechService), and the
@@ -22,8 +21,8 @@ message Inspection {
   // What `aria setup --yes` would answer: a configured value verbatim,
   // even one setup does not know, else the default engine.
   Selections defaults = 3;
-  repeated Choice transcription_choices = 4;
-  repeated Choice synthesis_choices = 5;
+  repeated Choice stt_choices = 4;
+  repeated Choice tts_choices = 5;
   // In the order setup offers them.
   repeated Model models = 7;
   bool wakeword_installed = 8;
@@ -34,7 +33,7 @@ message Inspection {
   // Unset when nothing is paired.
   PairedServer server = 12;
   // On the server, the local engine stays configured for the way back.
-  RunsOn transcription_runs_on = 13;
+  RunsOn stt_runs_on = 13;
 }
 
 // Where a model runs: on this machine, or on the paired server.
@@ -45,7 +44,7 @@ enum RunsOn {
   RUNS_ON_SERVER = 2;
 }
 
-// The server the pairing pins. Transcription on the server reaches only it.
+// The server the pairing pins. Recognition on the server reaches only it.
 message PairedServer {
   string endpoint = 1;
   // Hex, the form `aria remote revoke` takes on the server.
@@ -62,8 +61,8 @@ message Choice {
   // Exactly one per family: the configured one, else the first that runs.
   bool default = 5;
   ModelSource model_source = 6;
-  // Set only on transcription choices. True when a
-  // `SetTranscriptionEngineRequest` can set this engine without the rest of
+  // Set only on stt choices. True when a
+  // `SetSttEngineRequest` can set this engine without the rest of
   // setup: it runs on this Mac, and setup can download its model or it
   // needs none.
   bool settable = 8;
@@ -110,7 +109,7 @@ message Model {
 enum ModelUse {
   MODEL_USE_UNSPECIFIED = 0;
   MODEL_USE_STT = 1;
-  MODEL_USE_LISTEN = 2;
+  MODEL_USE_SYSTEM_TRANSCRIPTION = 2;
   MODEL_USE_TTS = 3;
   MODEL_USE_SPEAKER = 4;
 }
@@ -149,8 +148,8 @@ message Missing {
 
 // The three answers, as settings.toml spells them.
 message Selections {
-  string transcription_engine_id = 1;
-  string synthesis_engine_id = 2;
+  string stt_engine_id = 1;
+  string tts_engine_id = 2;
   bool wake = 4;
 }
 
@@ -205,41 +204,41 @@ message Summary {
 // Sets the speech-to-text engine in place: that engine's own missing models
 // first, then the settings that name it. Every other choice stays, and
 // nothing restarts.
-message SetTranscriptionEngineRequest {
+message SetSttEngineRequest {
   string engine_id = 1;
 }
 
 // Events until the change ends, then exactly one summary. STEP_MODELS starts
 // only when it fetches something; STEP_SETTINGS starts the write.
-message SetTranscriptionEngineResponse {
+message SetSttEngineResponse {
   oneof body {
     SetupEvent event = 1;
-    SetTranscriptionEngineSummary summary = 2;
+    SetSttEngineSummary summary = 2;
   }
 }
 
-message SetTranscriptionEngineSummary {
+message SetSttEngineSummary {
   SettingsWrite settings = 1;
   repeated ModelOutcome models = 2;
 }
 
-// Sets where dictation transcribes. Going to the server needs a pairing.
+// Sets where dictation recognizes speech. Going to the server needs a pairing.
 // Coming back first fetches the local engine's missing models. Only
 // `stt.runs_on` changes, and nothing restarts.
-message SetTranscriptionRunsOnRequest {
+message SetSttRunsOnRequest {
   RunsOn runs_on = 1;
 }
 
 // Events until the change ends, then exactly one summary. STEP_MODELS starts
 // only when it fetches something; STEP_SETTINGS starts the write.
-message SetTranscriptionRunsOnResponse {
+message SetSttRunsOnResponse {
   oneof body {
     SetupEvent event = 1;
-    SetTranscriptionRunsOnSummary summary = 2;
+    SetSttRunsOnSummary summary = 2;
   }
 }
 
-message SetTranscriptionRunsOnSummary {
+message SetSttRunsOnSummary {
   SettingsWrite settings = 1;
   repeated ModelOutcome models = 2;
 }

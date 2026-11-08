@@ -6,8 +6,8 @@ use super::*;
 use crate::audio::Recording;
 use crate::audio::testing::recorded;
 use crate::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, Session, Stream, TimedWord, Transcriber,
-    Transcription, TranscriptionAudio,
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer, Session,
+    Stream, TimedWord, Transcription,
 };
 
 struct Scripted(Mutex<VecDeque<Hypothesis>>);
@@ -20,14 +20,14 @@ impl Scripted {
     }
 }
 
-impl Transcriber for Scripted {
+impl Recognizer for Scripted {
     fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        _: TranscriptionAudio<'_>,
+        _: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
@@ -110,14 +110,14 @@ fn complete_and_streaming_sessions_apply_real_layers() {
 
 struct WavScripted(&'static str);
 
-impl Transcriber for WavScripted {
+impl Recognizer for WavScripted {
     fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
@@ -148,14 +148,14 @@ fn whole_wav_layers_process_text_and_can_remove_all_speech() {
 
 struct NativeScripted;
 
-impl Transcriber for NativeScripted {
+impl Recognizer for NativeScripted {
     fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        _: TranscriptionAudio<'_>,
+        _: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {

@@ -30,20 +30,23 @@ struct PaletteCommand: Equatable, Identifiable {
     let action: Action
 
     static let liveTranscript = PaletteCommand(
-        id: "live-transcript", title: "Mac Audio", symbol: "waveform", number: nil, chord: nil,
-        action: .showLiveTranscript)
+        id: "live-transcript", title: "Live Transcript", symbol: "waveform", number: nil, chord: nil,
+        keywords: ["transcribe", "system audio", "mac audio"], action: .showLiveTranscript)
     static let newTranscription = PaletteCommand(
-        id: "new-transcription", title: "Transcribe Mac Audio", symbol: "waveform", number: nil, chord: nil,
-        action: .startTranscription)
+        id: "new-transcription", title: "Transcribe System Audio", symbol: "waveform", number: nil, chord: nil,
+        keywords: ["mac audio"], action: .startTranscription)
     static let newDictation = PaletteCommand(
         id: "new-dictation", title: "New Dictation", symbol: "mic", number: nil, chord: nil,
         action: .startDictation)
-    static let newAsk = PaletteCommand(
-        id: "new-ask", title: "Ask a Question", symbol: "bubble.left", number: nil, chord: nil, action: .startAsk)
+    static func ask(_ assistantName: String?) -> PaletteCommand {
+        PaletteCommand(
+            id: "new-chat", title: "Ask \(assistantName ?? "Your Assistant")", symbol: "bubble.left", number: nil,
+            chord: nil, keywords: ["question", "chat"], action: .startAsk)
+    }
     static func history(_ section: HistorySection) -> PaletteCommand {
         PaletteCommand(
             id: "history-\(section)", title: section.historyTitle, symbol: section.symbol, number: nil, chord: nil,
-            action: .showHistory(section))
+            keywords: ["history"], action: .showHistory(section))
     }
     /// No key: clearing everything takes typing its name and confirming.
     static let clearHistory = PaletteCommand(

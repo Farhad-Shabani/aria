@@ -13,7 +13,6 @@ mod dictate;
 mod doctor;
 mod events;
 mod history;
-mod listen;
 mod logging;
 mod memory;
 mod models;
@@ -24,6 +23,7 @@ mod service;
 mod settings;
 mod setup;
 mod speaker;
+mod transcribe;
 mod vocabulary;
 mod wake;
 
@@ -38,7 +38,7 @@ pub struct Cli {
 enum Command {
     #[command(hide = true)]
     Daemon,
-    #[command(about = "Host transcription for paired devices without opening audio devices")]
+    #[command(about = "Host speech recognition for paired devices without opening audio devices")]
     Serve {
         #[arg(long)]
         bind: std::net::SocketAddr,
@@ -96,15 +96,15 @@ enum Command {
         /// Leave the speech models for later
         #[arg(long)]
         skip_models: bool,
-        /// Set the speech-to-text engine, keeping every other choice and
-        /// downloading only that engine's models
-        #[arg(long, value_name = "ENGINE", conflicts_with_all = ["yes", "skip_models"])]
+        /// Set the speech model, keeping every other choice and downloading
+        /// only its files
+        #[arg(long, value_name = "MODEL", conflicts_with_all = ["yes", "skip_models"])]
         stt: Option<String>,
-        /// Transcribe on the paired server, keeping the local engine and its
+        /// Recognize speech on the paired server, keeping the local model and its
         /// settings for later
         #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt", "local"])]
         server: bool,
-        /// Transcribe on this machine again
+        /// Recognize speech on this machine again
         #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt"])]
         local: bool,
     },
@@ -118,7 +118,7 @@ enum Command {
         #[command(subcommand)]
         command: service::ServiceCommand,
     },
-    /// Record one utterance and deliver the transcript
+    /// Record one utterance and deliver its text
     Dictate {
         #[arg(long, value_enum)]
         mode: Option<CliOutputMode>,
@@ -131,7 +131,7 @@ enum Command {
         /// Disable project spellings for this recording
         #[arg(long)]
         no_project: bool,
-        /// Save the transcript to history without typing it
+        /// Save the text to history without typing it
         #[arg(long, conflicts_with_all = ["mode", "stream"])]
         history_only: bool,
     },
@@ -142,10 +142,10 @@ enum Command {
     },
     /// Ask an assistant a question and print its reply
     Ask(ask::AskArgs),
-    /// Transcribe the machine's own audio output to a file
-    Listen {
+    /// Transcribe what this machine plays to a file
+    Transcribe {
         #[command(subcommand)]
-        command: listen::ListenCommand,
+        command: transcribe::TranscribeCommand,
     },
     /// Enroll a voice so Aria can tell who is speaking
     Speaker {
@@ -236,17 +236,17 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             command: None,
             stt: Some(engine),
             ..
-        } => setup::set_transcription_engine(&engine),
+        } => setup::set_stt_engine(&engine),
         Command::Setup {
             command: None,
             server: true,
             ..
-        } => setup::set_transcription_runs_on(RunsOn::Server),
+        } => setup::set_stt_runs_on(RunsOn::Server),
         Command::Setup {
             command: None,
             local: true,
             ..
-        } => setup::set_transcription_runs_on(RunsOn::Local),
+        } => setup::set_stt_runs_on(RunsOn::Local),
         Command::Setup {
             command: None,
             yes,
@@ -271,7 +271,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             command: assistant::AssistantCommand::Models { assistant_id, json },
         } => assistant::models(assistant_id, json),
         Command::Ask(args) => ask::run(args),
-        Command::Listen { command } => listen::run(command),
+        Command::Transcribe { command } => transcribe::run(command),
         Command::Speaker { command } => speaker::run(command),
         Command::Say {
             text,

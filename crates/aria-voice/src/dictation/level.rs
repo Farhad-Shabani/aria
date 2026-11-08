@@ -32,7 +32,7 @@ pub(crate) struct Meter {
 
 impl Meter {
     /// Reads its own fork of the recording, so it neither waits on the
-    /// transcriber nor pins the audio the transcriber has finished with.
+    /// recognizer nor pins the audio the recognizer has finished with.
     pub(crate) fn watching(
         recording: &RecordingReader,
         control: &Arc<ExecutionControl>,

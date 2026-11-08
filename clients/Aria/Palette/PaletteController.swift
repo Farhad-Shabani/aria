@@ -15,7 +15,7 @@ final class PaletteController: ObservableObject {
     /// Where Return types text: the app in front when the palette opened.
     private(set) var frontApp: NSRunningApplication?
     private(set) lazy var chord = ChordBinding { [weak self] in self?.press() }
-    let listen: ListenStatus
+    let systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
 
     private let prompts: PromptHotkeys
@@ -32,7 +32,8 @@ final class PaletteController: ObservableObject {
     private var gesture = PaletteGesture()
     private var chordChange: AnyCancellable?
     private var historySettingChange: AnyCancellable?
-    private var listenChange: AnyCancellable?
+    private var assistantChange: AnyCancellable?
+    private var systemTranscriptionChange: AnyCancellable?
     private var entriesChange: AnyCancellable?
     private var filterChange: AnyCancellable?
     private var pageChange: AnyCancellable?
@@ -51,7 +52,8 @@ final class PaletteController: ObservableObject {
     private var openings = 0
 
     init(
-        prompts: PromptHotkeys, ask: PressController, listen: ListenStatus, history: HistoryState,
+        prompts: PromptHotkeys, ask: PressController, systemTranscription: SystemTranscriptionStatus,
+        history: HistoryState,
         events: DaemonEvents, setup: SetupStatus, settingsHealth: SettingsHealth,
         openSettings: @escaping @MainActor (SettingsPane?) -> Void,
         openSetup: @escaping @MainActor () -> Void,
@@ -59,7 +61,7 @@ final class PaletteController: ObservableObject {
     ) {
         self.prompts = prompts
         self.ask = ask
-        self.listen = listen
+        self.systemTranscription = systemTranscription
         self.history = history
         self.openSettings = openSettings
         self.openSetup = openSetup
@@ -90,9 +92,9 @@ final class PaletteController: ObservableObject {
             .map(\.page)
             .removeDuplicates()
             .sink { [weak self] _ in self?.history.forgetCopied() }
-        listenChange = listen.$isRunning
+        systemTranscriptionChange = systemTranscription.$isRunning
             .removeDuplicates()
-            .sink { [weak self] isRunning in self?.model.isListening = isRunning }
+            .sink { [weak self] isRunning in self?.model.isSystemTranscriptionRunning = isRunning }
         entriesChange = history.$days
             .sink { [weak self] days in self?.model.replace(entries: days.flatMap(\.items)) }
         // The model owns what the list is narrowed to. History only follows.
@@ -123,6 +125,9 @@ final class PaletteController: ObservableObject {
             .map { $0?.historyEnabled ?? false }
             .removeDuplicates()
             .sink { [weak self] keepsHistory in self?.model.keepsHistory = keepsHistory }
+        assistantChange = settings.$assistantName
+            .removeDuplicates()
+            .sink { [weak self] name in self?.model.assistantName = name }
     }
 
     /// The app scene owns the poller, so it arrives after init.
@@ -151,7 +156,7 @@ final class PaletteController: ObservableObject {
             close()
             Task { await DictationClient.dictateToHistory() }
         case .startAsk:
-            // The palette closes before recording starts, so the ask begins with the app in front,
+            // The palette closes before recording starts, so the chat begins with the app in front,
             // as the Ask shortcut does.
             close()
             ask.press()
@@ -273,8 +278,9 @@ final class PaletteController: ObservableObject {
 
     private var decisions: PaletteActions {
         PaletteActions(
-            model: model, result: promptRun.result, isListening: listen.isRunning, isStopping: listen.isStopping,
-            hasTranscript: !listen.transcript.lines.isEmpty, detail: history.detail, history: history.work,
+            model: model, result: promptRun.result, isSystemTranscriptionRunning: systemTranscription.isRunning,
+            isStopping: systemTranscription.isStopping,
+            hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail, history: history.work,
             hasFrontApp: frontApp != nil)
     }
 
@@ -284,7 +290,7 @@ final class PaletteController: ObservableObject {
         case .copyDetail:
             if let result = focusedResult { history.copy(text: result.text) } else { history.copy() }
         case .copyText(let text): history.copy(text: text)
-        case .copyTranscript: history.copy(text: listen.transcript.text)
+        case .copyTranscript: history.copy(text: systemTranscription.transcript.text)
         case .runPrompt(let entry): model.attach(entry)
         case .transcribeAgain: history.regenerate()
         case .rename(let entry): model.startRenaming(entry)
@@ -489,7 +495,7 @@ final class PaletteController: ObservableObject {
     }
 
     func stopTranscription() {
-        Task { await listen.stop() }
+        Task { await systemTranscription.stop() }
     }
 
     func escape() {
@@ -518,8 +524,8 @@ final class PaletteController: ObservableObject {
     private func startTranscription() {
         let opening = openings
         Task {
-            await listen.start()
-            if !listen.didFailToStart, opening == openings { close() }
+            await systemTranscription.start()
+            if !systemTranscription.didFailToStart, opening == openings { close() }
         }
     }
 
@@ -527,11 +533,11 @@ final class PaletteController: ObservableObject {
         openings += 1
         let front = NSWorkspace.shared.frontmostApplication
         frontApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
-        model.reset(prompts: enabledPrompts, isListening: listen.isRunning)
+        model.reset(prompts: enabledPrompts, isSystemTranscriptionRunning: systemTranscription.isRunning)
         // A step may be done or undone outside Aria.
         let setup = setup
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
-        panel.show(PaletteView(controller: self, listen: listen, history: history))
+        panel.show(PaletteView(controller: self, systemTranscription: systemTranscription, history: history))
     }
 }

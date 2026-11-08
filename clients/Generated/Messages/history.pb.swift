@@ -74,9 +74,9 @@ public nonisolated enum Aria_Daemon_V1_HistorySection: SwiftProtobuf.Enum, Swift
   case unspecified // = 0
   case dictation // = 1
 
-  /// A Mac Audio session.
-  case listen // = 2
-  case ask // = 3
+  /// A system transcription.
+  case systemTranscription // = 2
+  case chat // = 3
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -87,8 +87,8 @@ public nonisolated enum Aria_Daemon_V1_HistorySection: SwiftProtobuf.Enum, Swift
     switch rawValue {
     case 0: self = .unspecified
     case 1: self = .dictation
-    case 2: self = .listen
-    case 3: self = .ask
+    case 2: self = .systemTranscription
+    case 3: self = .chat
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -97,8 +97,8 @@ public nonisolated enum Aria_Daemon_V1_HistorySection: SwiftProtobuf.Enum, Swift
     switch self {
     case .unspecified: return 0
     case .dictation: return 1
-    case .listen: return 2
-    case .ask: return 3
+    case .systemTranscription: return 2
+    case .chat: return 3
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -107,8 +107,8 @@ public nonisolated enum Aria_Daemon_V1_HistorySection: SwiftProtobuf.Enum, Swift
   public static let allCases: [Aria_Daemon_V1_HistorySection] = [
     .unspecified,
     .dictation,
-    .listen,
-    .ask,
+    .systemTranscription,
+    .chat,
   ]
 
 }
@@ -578,7 +578,7 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
   public mutating func clearApplication() {_uniqueStorage()._application = nil}
 
   /// The folder the entry was made in: the project whose vocabulary a
-  /// dictation used, or the folder an ask worked in. Absent when none.
+  /// dictation used, or the folder a chat worked in. Absent when none.
   public var projectDirectory: String {
     get {_storage._projectDirectory ?? String()}
     set {_uniqueStorage()._projectDirectory = newValue}
@@ -599,7 +599,7 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
     set {_uniqueStorage()._transcriptionComplete = newValue}
   }
 
-  /// Set for a LISTEN or ASK entry. A DICTATION entry has none.
+  /// Set for a SYSTEM_TRANSCRIPTION or CHAT entry. A DICTATION entry has none.
   public var details: OneOf_Details? {
     get {return _storage._details}
     set {_uniqueStorage()._details = newValue}
@@ -613,7 +613,7 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
     set {_uniqueStorage()._details = .transcript(newValue)}
   }
 
-  /// An ASK entry's reply. `text` is the question. List cuts it to 512
+  /// A CHAT entry's reply. `text` is the question. List cuts it to 512
   /// UTF-8 bytes, as it does `text`.
   public var reply: String {
     get {
@@ -695,10 +695,10 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  /// Set for a LISTEN or ASK entry. A DICTATION entry has none.
+  /// Set for a SYSTEM_TRANSCRIPTION or CHAT entry. A DICTATION entry has none.
   public nonisolated enum OneOf_Details: Equatable, Sendable {
     case transcript(Aria_Daemon_V1_HistoryTranscript)
-    /// An ASK entry's reply. `text` is the question. List cuts it to 512
+    /// A CHAT entry's reply. `text` is the question. List cuts it to 512
     /// UTF-8 bytes, as it does `text`.
     case reply(String)
 
@@ -709,7 +709,7 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-/// A Mac Audio session's transcript file. The entry's `text` is the file's
+/// A system transcription's transcript file. The entry's `text` is the file's
 /// first KiB, which search covers. Get reads up to 1 MiB of the file instead.
 /// Delete and Clear delete the file as well. Expiry leaves it.
 public nonisolated struct Aria_Daemon_V1_HistoryTranscript: Sendable {
@@ -768,7 +768,7 @@ nonisolated extension Aria_Daemon_V1_HistoryTranscriptRead: SwiftProtobuf._Proto
 }
 
 nonisolated extension Aria_Daemon_V1_HistorySection: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HISTORY_SECTION_UNSPECIFIED\0\u{1}HISTORY_SECTION_DICTATION\0\u{1}HISTORY_SECTION_LISTEN\0\u{1}HISTORY_SECTION_ASK\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HISTORY_SECTION_UNSPECIFIED\0\u{1}HISTORY_SECTION_DICTATION\0\u{1}HISTORY_SECTION_SYSTEM_TRANSCRIPTION\0\u{1}HISTORY_SECTION_CHAT\0")
 }
 
 nonisolated extension Aria_Daemon_V1_HistorySource: SwiftProtobuf._ProtoNameProviding {

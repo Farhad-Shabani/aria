@@ -11,10 +11,10 @@ struct SettingsView: View {
     let paletteChord: ChordBinding
     @ObservedObject var setupStatus: SetupStatus
     let modelDownload: ModelDownload
-    let transcriptionEngineChange: TranscriptionEngineChange
+    let sttEngineChange: SttEngineChange
     let setupState: SetupState
     let voices: VoiceProfiles
-    let serverTranscription: ServerTranscription
+    let serverStt: ServerStt
     @ObservedObject var settingsHealth: SettingsHealth
     @ObservedObject var paneRequest: SettingsPaneRequest
     @StateObject private var assistantCatalog = AssistantCatalog()
@@ -123,10 +123,10 @@ struct SettingsView: View {
                 openAssistant: { history.open(.assistant) },
                 openStorage: { history.open(.storage) })
         case .dictation:
-            DictationSettings(settings: settings, setup: setupStatus, engineChange: transcriptionEngineChange)
+            DictationSettings(settings: settings, setup: setupStatus, engineChange: sttEngineChange)
         case .recognition:
             RecognitionSettings(
-                settings: settings, voices: voices, serverTranscription: serverTranscription,
+                settings: settings, voices: voices, serverStt: serverStt,
                 setup: setupStatus)
         case .shortcuts:
             ShortcutsSettings(

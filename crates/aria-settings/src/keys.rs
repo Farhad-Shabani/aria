@@ -163,7 +163,7 @@ keys! {
     DictationCleanupLlmEnabled: "dictation.cleanup.llm.enabled", Live, Mac, [], Kind::Bool, Some("true"),
         "Runs the local model. Off keeps its endpoint and model.";
     DictationCleanupLlmEndpoint: "dictation.cleanup.llm.endpoint", Restart, Mac, [], Kind::Text, None,
-        "A loopback chat-completions endpoint that also cleans the transcript while delivery is complete.";
+        "A loopback chat-completions endpoint that also cleans the text while delivery is complete.";
     DictationCleanupLlmModel: "dictation.cleanup.llm.model", Restart, Mac, [], Kind::Text, None,
         "The model that endpoint serves.";
     DictationVocabularyEnabled: "dictation.vocabulary.enabled", Live, Phone, [], Kind::Bool, Some("false"),
@@ -174,14 +174,14 @@ keys! {
         "Saves dictation history.";
     HistoryKeepAudio: "history.keep_audio", Live, Phone, [], Kind::Bool, Some("false"),
         "Keeps each recording's audio for 24 hours.";
-    ListenBackend: "listen.backend", Live, Mac, [], Kind::Choice(backend::STREAMING), None,
-        "Transcribes system audio with an engine that streams.";
-    ListenModel: "listen.model", Live, Mac, [], Kind::Path, None,
+    SystemTranscriptionBackend: "transcription.backend", Live, Mac, [], Kind::Choice(backend::STREAMING), None,
+        "Transcribes your Mac's audio with an engine that streams.";
+    SystemTranscriptionModel: "transcription.model", Live, Mac, [], Kind::Path, None,
         "Absent means setup's download for that engine.";
-    ListenDevice: "listen.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
+    SystemTranscriptionDevice: "transcription.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
         "cpu or gpu. parakeet only.";
-    ListenTranscriptsDir: "listen.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
-        "Where listen writes transcripts.";
+    SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
+        "Where Transcription saves transcripts.";
     AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex"]), Some("claude-code"),
         "Who answers `aria ask`: claude-code or codex.";
     AssistantModels: "assistant.models", Live, Mac, [], Kind::Models, None,
@@ -189,15 +189,15 @@ keys! {
     AssistantWorkdir: "assistant.workdir", Live, Mac, [], Kind::Path, None,
         "Where the assistant works. Absent means the caller's directory.";
     AssistantProjectRoots: "assistant.project_roots", Live, Mac, [], Kind::PathList, Some("[]"),
-        "Folders whose git repos an ask may name.";
+        "Folders whose git repos a chat may name.";
     AssistantTimeoutSecs: "assistant.timeout_secs", Live, Mac, [], Kind::Number, Some("300.0"),
         "The longest a reply may take, at most 570.";
     MemoryEnabled: "memory.enabled", Live, Mac, [], Kind::Bool, Some("false"),
         "Remembers facts you state while asking, and shows them to the assistant later.";
     MemoryExtractModel: "memory.extract_model", Live, Mac, [], Kind::Text, Some("\"sonnet\""),
-        "The model that extracts facts after an ask.";
+        "The model that extracts facts after a chat.";
     MemoryMaxFactsPerSession: "memory.max_facts_per_session", Live, Mac, [], Kind::Integer, Some("10"),
-        "The most facts kept from one ask session.";
+        "The most facts kept from one conversation.";
     MemoryDir: "memory.dir", Restart, Mac, [], Kind::Path, Some("\"~/.aria/memory\""),
         "Holds the facts, and lexicon.txt, the terms that fix misheard words.";
     Prompts: "prompts", Live, Mac, [], Kind::Prompts, None,
@@ -207,7 +207,7 @@ keys! {
     ShortcutsAriaKey: "shortcuts.aria_key", Live, Mac, [], Kind::Choice(&["right_option", "fn"]), Some("right_option"),
         "The Aria key: right_option or fn. Tap to dictate, hold to talk.";
     ShortcutsAsk: "shortcuts.ask", Live, Mac, [], Kind::ShortcutEntry, Some("\"shift\""),
-        "Starts an ask: shift or command held with the Aria key, a chord, or off.";
+        "Starts a chat: shift or command held with the Aria key, a chord, or off.";
     ShortcutsPromptList: "shortcuts.prompt_list", Live, Mac, [], Kind::ShortcutEntry, Some("\"command\""),
         "Lists the prompts that are on: shift, command, a chord, or off.";
     WakeEnabled: "wake.enabled", Restart, Mac, [], Kind::Bool, Some("false"),
@@ -223,7 +223,7 @@ keys! {
     PhonePort: "phone.port", Restart, Mac, [], Kind::Integer, Some("9850"),
         "The port it listens on, with mutual TLS.";
     DeliveryTimeoutSecs: "delivery.timeout_secs", Restart, Mac, [], Kind::Number, Some("5.0"),
-        "The longest typing or pasting a result may take, for dictation, asks and the phone.";
+        "The longest typing or pasting a result may take, for dictation, chats and the phone.";
     SttBackend: "stt.backend", Live, Mac, [], Kind::Choice(backend::LOCAL), Some(backend::DEFAULT),
         "whisper, whisper-candle, parakeet, moonshine, nemotron or parakeet-mlx.";
     SttLanguage: "stt.language", Live, Phone, [], Kind::Text, Some("\"en\""),
@@ -235,7 +235,7 @@ keys! {
     SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
     SttRunsOn: "stt.runs_on", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),
-        "Where dictation transcribes: local, or server for your paired server.";
+        "Where speech recognition runs: local, or server for your paired server.";
     TtsBackend: "tts.backend", Restart, Mac, [], Kind::Choice(&[tts_backend::SYSTEM, tts_backend::KOKORO, tts_backend::QWEN]), Some(tts_backend::DEFAULT),
         "The engine that speaks `aria say` and replies: system, kokoro or qwen.";
     TtsRate: "tts.rate", Live, Mac, [], Kind::Number, Some("1.0"),
@@ -259,7 +259,7 @@ keys! {
     SpeakerModel: "speaker.model", Restart, Mac, [], Kind::Path, Some("\"~/.aria/models/wespeaker/en/model.onnx\""),
         "Tells voices apart. Without it, transcripts have no speaker labels.";
     SpeakerSegmentationModel: "speaker.segmentation_model", Restart, Mac, [], Kind::Path, Some("\"~/.aria/models/pyannote/segmentation-3.0.onnx\""),
-        "Estimates who speaks in each audio frame, for Listen.";
+        "Estimates who speaks in each audio frame, for Transcription.";
     SpeakerProfilesDir: "speaker.profiles_dir", Restart, Mac, [], Kind::Path, Some("\"~/.aria/speakers\""),
         "Enrolled voice profiles.";
     CaptureBackend: "capture.backend", Restart, Mac, [], Kind::Choice(&["microphone", "wav_file"]), Some("microphone"),
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn the_runs_on_choices_are_every_place_transcription_runs() {
+    fn the_runs_on_choices_are_every_place_recognition_runs() {
         let names: Vec<&str> = crate::RunsOn::ALL
             .iter()
             .map(|runs_on| runs_on.name())

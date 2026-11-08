@@ -114,7 +114,7 @@ cargo test --release --locked -p aria --lib \
 
 It alternates enabled/disabled matching, records first sink receipt and gaps, and checks
 that concatenated delivered segments equal the final transcript. Its deterministic
-transcriber and immediate WAV replay isolate pipeline behavior; they do not establish
+recognizer and immediate WAV replay isolate pipeline behavior; they do not establish
 real-ASR streaming latency or platform insertion latency.
 
 For real macOS streaming insertion, run `dictation_latency` with the existing model,

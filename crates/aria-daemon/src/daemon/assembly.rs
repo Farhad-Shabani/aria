@@ -25,12 +25,11 @@ use super::dictation::{DictationInitializationError, DictationRuntime, Dictation
 use super::history::HistoryStore;
 use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
-use super::listen::ListenState;
 use super::memory::{self, MemoryBacklog};
 use super::server::{Actors, Relay, Server, ServerError, Services};
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, ListenRpc, RelayRpc, SettingsRpc, SpeakerRpc,
-    SpeechRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, RelayRpc, SettingsRpc, SpeakerRpc, SpeechRpc,
+    SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings;
 use super::shutdown::ShutdownError;
@@ -39,6 +38,7 @@ use super::speaker::SpeakerRuntime;
 use super::speech;
 use super::speech::SpeechRuntime;
 use super::subscriptions::Subscriptions;
+use super::system_transcription::SystemTranscriptionState;
 use super::tasks::RuntimeTasks;
 use super::wake::WakeTrigger;
 
@@ -192,7 +192,7 @@ fn compose(
         relay_port,
     } = workers;
     // A daemon that lives on catches up on what the last one left and keeps
-    // up with the owner's asks; one serving a single press has no time for
+    // up with the owner's chats; one serving a single press has no time for
     // an LLM call.
     let memory_backlog = matches!(context.lifetime, DaemonLifetime::Persistent).then(|| {
         MemoryBacklog::new(
@@ -260,12 +260,12 @@ fn compose(
         dictation: DictationRpc::new(dictation, dictation_runtime),
         speech: SpeechRpc::new(speech),
         chat: ChatRpc::new(chat, chat_runtime, context.lifetime, tasks.cancellation()),
-        listen: ListenRpc::new(Arc::new(ListenState::new(
+        system_transcription: SystemTranscriptionRpc::new(Arc::new(SystemTranscriptionState::new(
             context.lifetime,
             context.home.clone(),
             Arc::clone(&cache),
             Arc::clone(&settings),
-            listen_event_emitter(Arc::clone(&subscriptions)),
+            system_transcription_event_emitter(Arc::clone(&subscriptions)),
             Arc::clone(&vocabulary),
             Arc::clone(&history_store),
         ))),
@@ -356,11 +356,11 @@ fn speech_event_emitter(
     )
 }
 
-fn listen_event_emitter(
+fn system_transcription_event_emitter(
     subscriptions: Arc<Subscriptions>,
-) -> aria_voice::listen::ListenEventEmitter {
-    aria_voice::listen::ListenEventEmitter::subscribed_by(
-        aria_voice::listen::EVENT_THREAD,
+) -> aria_voice::system_transcription::SystemTranscriptionEventEmitter {
+    aria_voice::system_transcription::SystemTranscriptionEventEmitter::subscribed_by(
+        aria_voice::system_transcription::EVENT_THREAD,
         move |stage| {
             subscriptions.broadcast(stage);
         },
@@ -393,7 +393,7 @@ fn build_workers(
     }
 }
 
-/// Settings, the transcription model, and the wake-word model load here, so a
+/// Settings, the speech model, and the wake-word model load here, so a
 /// daemon missing one says so before it accepts a press.
 fn eager_workers(
     context: &Context<'_>,

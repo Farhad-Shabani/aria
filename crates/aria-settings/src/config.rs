@@ -32,7 +32,7 @@ pub mod tts_backend {
 
 /// Names an engine under `stt.backend`, and labels that engine in
 /// its own logs and errors. `SERVER` only labels a dictation the paired
-/// server transcribed.
+/// server recognized.
 pub mod backend {
     pub const SERVER: &str = "server";
     pub const WHISPER: &str = "whisper";
@@ -153,12 +153,12 @@ pub enum ConfigError {
     #[error("unknown assistant {0:?}; use aria ask --help to list choices")]
     UnknownAssistant(String),
 
-    /// The engine listen would run, its own or the one stt names, can't stream.
+    /// The engine that system transcription would run, its own or the one stt names, can't stream.
     #[error(
-        "listen cannot stream with the {0} engine; set listen.backend to one of {engines}",
+        "transcription cannot stream with the {0} engine; set transcription.backend to one of {engines}",
         engines = backend::STREAMING.join(", ")
     )]
-    ListenUnusableEngine(String),
+    SystemTranscriptionUnusableEngine(String),
     #[error("cannot locate the Aria settings")]
     Home(#[source] UserHomeError),
 
@@ -223,8 +223,8 @@ pub fn model_location(value: Option<&Path>, default: impl AsRef<Path>, home: &Pa
     value.map_or_else(|| models_dir(home).join(default), Path::to_path_buf)
 }
 
-/// The transcription engine the section names, or the default.
-pub fn transcription_engine(file: &Stt) -> &str {
+/// The recognition engine the section names, or the default.
+pub fn stt_engine(file: &Stt) -> &str {
     file.backend.as_deref().unwrap_or(backend::DEFAULT)
 }
 

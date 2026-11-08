@@ -1,4 +1,4 @@
-//! In-process transcription through whisper.cpp bindings.
+//! In-process recognition through whisper.cpp bindings.
 //!
 //! Each decoded word carries whisper.cpp's token timing, which the
 //! streaming path reads.
@@ -40,9 +40,9 @@ use whisper_rs::{
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, SILENCE_FLOOR, Stream, StreamingEngine,
-    TimedWord, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
-    validate_model_file, word_timings,
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer,
+    SILENCE_FLOOR, Stream, StreamingEngine, TimedWord, TranscriptionError, check_cancelled,
+    english_only, validate_model_file, word_timings,
 };
 
 /// Names this engine under `stt.backend` and in its own errors.
@@ -109,7 +109,7 @@ impl WhisperConfig {
 }
 
 impl Whisper {
-    /// Loads the model once; it stays resident for every transcription.
+    /// Loads the model once; it stays resident for every recognition.
     pub fn load(model: impl Into<PathBuf>) -> Result<Self, TranscriptionError> {
         Self::load_from(WhisperConfig::new(model), &CancelToken::never())
     }
@@ -149,7 +149,7 @@ impl StreamingEngine for Whisper {
     const STREAM: Stream = Stream::Agreement(CADENCE);
 }
 
-impl Transcriber for Whisper {
+impl Recognizer for Whisper {
     fn validate_language(
         &self,
         language: &Language,
@@ -158,9 +158,9 @@ impl Transcriber for Whisper {
         supported_language(self.multilingual, language)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {

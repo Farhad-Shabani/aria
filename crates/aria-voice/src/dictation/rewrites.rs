@@ -8,7 +8,7 @@ use aria_kit::transcription::layer::{Backtrack, Layer, Layered, RemoveHesitation
 
 use super::{LlmCleanup, LlmCleanupError, llm};
 use crate::config::DictationConfig;
-use crate::transcription::{Transcript, TranscriptionError};
+use crate::stt::{Transcript, TranscriptionError};
 use crate::vocabulary::Vocabulary;
 
 /// The layers the settings can add after the deterministic passes.

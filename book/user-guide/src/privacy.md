@@ -3,7 +3,7 @@
 # Privacy
 
 Aria processes dictation and speech generation locally by default. Local processing does
-not mean nothing is saved: history is on by default, and transcripts
+not mean nothing is saved: history is on by default, and text
 can also reach your clipboard, other apps, and files.
 
 ## Dictations
@@ -22,19 +22,19 @@ doesn't record, save, or send their sound.
 
 ## Text cleanup with a local model
 
-When you [set a local model](./transcription.md#use-a-local-model), Aria sends
-each completed transcript to that server. Aria connects only to an address on
-your own Mac. The server decides where the text goes next. A proxy or a cloud
-model, such as Ollama's cloud models, sends it off your Mac. Any program
-running under your account could listen on that port and read the text. What
-the server keeps is up to the server.
+When you [set a local model](./terminal-dictation.md#use-a-local-model),
+Aria sends the completed text of each dictation to that server. Aria connects
+only to an address on your own Mac. The server decides where the text goes
+next. A proxy or a cloud model, such as Ollama's cloud models, sends it off
+your Mac. Any program running under your account could listen on that port and
+read the text. What the server keeps is up to the server.
 
 ## Server inference
 
 When you [use a server](./settings.md#server-inference), your audio goes
-to it for transcription. Whoever runs that server can hear the audio and read
+to it for recognition. Whoever runs that server can hear the audio and read
 the text. Pairing alone sends nothing; uploads start only when you switch
-transcription to the server.
+recognition to the server.
 
 Your voice profile and corrections never leave your computer. **Only type my
 voice** checks the speaker before upload when you deliver **After recording
@@ -43,11 +43,11 @@ audio leaves before Aria knows who spoke. The check helps recognition; it
 cannot promise that other voices are left out.
 
 The server keeps no history. It deletes its working copies when each
-transcription ends, though crashes and backups can keep them. Encryption
+recognition ends, though crashes and backups can keep them. Encryption
 protects audio on the way, not from the person running the server. Pairing
 keys sit unencrypted in `~/.aria/inference/`, readable only by your account.
 
-To stop uploads, turn off **Transcribe on your server** in **Settings → Recognition**,
+To stop uploads, turn off **Recognize speech on your server** in **Settings → Recognition**,
 or run `aria setup --local`. Cancelling a dictation or revoking
 your device stops what comes next. Neither can take back audio the server
 already has.
@@ -58,8 +58,8 @@ Copying exposes text to apps and clipboard managers that can read your
 clipboard. Typing inserts it into the focused app, which controls its own
 saving and sharing. Cancelling Aria cannot recall text already delivered.
 
-On Linux, Aria pastes through the clipboard and the selection, so a
-transcript it inserts stays on both. Aria asks clipboard managers to skip it,
+On Linux, Aria pastes through the clipboard and the selection, so text it
+inserts stays on both. Aria asks clipboard managers to skip it,
 but they may not. The udev rule that lets the hotkey read your keyboard lets
 every program you run read every key and inject input too. Aria reads key presses only to tell its
 hotkey apart from typing, and never records what you type.
@@ -70,15 +70,15 @@ records what you type.
 To place spaces, Aria reads two characters before the cursor and one after
 it. It skips password fields and never saves or logs them.
 
-## Questions
+## Chats
 
-[Ask](./voice-chat.md) sends your question to Claude Code or Codex. That
+[Chat](./chat.md) sends your question to Claude Code or Codex. That
 assistant may send the question and project content to cloud services. It
 also keeps its own conversation records. Aria uses read-only settings to
 limit file changes, but those settings do not prevent network access.
 
 With history on, Aria also saves each question and its reply in
-[history](./history.md) for up to 30 days. Starting a fresh Ask conversation
+[history](./history.md) for up to 30 days. Starting a fresh conversation
 doesn't delete earlier records. Clearing Aria's history doesn't delete the
 assistant's conversations.
 
@@ -86,8 +86,8 @@ assistant's conversations.
 
 [Prompts](./prompts.md) send your spoken words as text, along with the prompt
 file's instructions, to Claude Code or Codex. A prompt you run on a history
-entry sends that entry's text instead: an ask's reply, or a Mac Audio
-session's whole transcript. The assistant may send that text to cloud
+entry sends that entry's text instead: a chat's reply, or a transcript's
+whole text. The assistant may send that text to cloud
 services.
 
 With history on, Aria saves the result of a prompt you run on a history entry
@@ -103,12 +103,12 @@ and settings. Prompt recordings are not kept in dictation history.
 
 With **Memory** on, Aria saves the text of what you ask in your own voice. It
 sends that text to Claude to find facts about you and words Aria mishears. Aria
-adds those facts to later asks. Memory needs your voice profile. Without one,
+adds those facts to later chats. Memory needs your voice profile. Without one,
 Aria saves nothing.
 
 Memory lives in `~/.aria/memory/`, or the folder `memory.dir` names. Only your
-user account and administrators can read it. Aria deletes an ask once it's 30
-days old and Aria has checked it for facts. Facts and learned substitutions
+user account and administrators can read it. Aria deletes a saved chat once
+it's 30 days old and Aria has checked it for facts. Facts and learned substitutions
 stay until you delete them.
 
 Turning **Memory** off keeps what's stored. To delete it, run
@@ -130,9 +130,9 @@ credentials. Only your user account and administrators can read it. A paired
 phone can change only language, output, voice filtering, project vocabulary,
 and history settings.
 
-[System-audio transcripts](./listen.md#transcript-files) are separate files with
-no automatic expiry. History lists sessions saved under the default folder, and
-deleting one there deletes its file. Choose a folder with suitable permissions
+[Transcripts](./transcribe-system-audio.md#transcript-files) are separate files
+with no automatic expiry. History lists transcripts saved under the default
+folder, and deleting one there deletes its file. Choose a folder with suitable permissions
 and sharing settings. Delete the files when you no longer need them.
 
 [Project vocabulary](./project-spellings.md) scans the folder you choose. Its cache

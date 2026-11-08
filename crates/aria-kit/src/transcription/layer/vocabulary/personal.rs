@@ -251,7 +251,7 @@ const COMMON_TOKENS: &[&str] = &[
     "twenty",
 ];
 
-/// How a transcriber renders a compact term: digits as words, a hyphen as
+/// How a recognizer renders a compact term: digits as words, a hyphen as
 /// a break, a short letter run spelled out. Only a term with a digit
 /// expands; "to-do" as "to do" would rewrite everyday speech.
 fn expand_term_variants(term: &str) -> Vec<String> {

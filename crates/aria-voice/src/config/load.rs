@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use aria_kit::audio::ReplayPace;
 
 use super::{
-    CaptureConfig, DictationConfig, ListenConfig, ListenTranscription, PairingId, SpeakerConfig,
-    SpeechDefaults, TranscriptionBackend, TranscriptionConfig, TranscriptionDevice, TtsBackend,
+    CaptureConfig, DictationConfig, PairingId, SpeakerConfig, SpeechDefaults, SttBackend,
+    SttConfig, SttDevice, SystemTranscriptionConfig, SystemTranscriptionEngine, TtsBackend,
     TtsConfig, TtsFallback, TtsModel,
 };
 use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
@@ -18,39 +18,41 @@ use aria_settings::{
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
 
-const DEFAULT_LISTEN_TRANSCRIPTS_DIR: &str = ".aria/transcripts";
+const DEFAULT_SYSTEM_TRANSCRIPTION_TRANSCRIPTS_DIR: &str = ".aria/transcripts";
 const DEFAULT_SPEAKERS_DIR: &str = ".aria/speakers";
-/// The engine a setting makes listen run: its own backend, or the stt engine
+/// The engine that a setting makes system transcription run: its own backend, or the stt engine
 /// when that one streams. `None` when no setting chooses one.
-fn chosen_listen_engine(settings: &CheckedSettings, home: &Path) -> Option<TranscriptionConfig> {
-    match settings.choices().listen {
+fn chosen_system_transcription_engine(
+    settings: &CheckedSettings,
+    home: &Path,
+) -> Option<SttConfig> {
+    match settings.choices().system_transcription {
         Some(engine) => Some(local(
             engine,
-            settings.listen.model.as_deref(),
-            settings.listen.device,
+            settings.system_transcription.model.as_deref(),
+            settings.system_transcription.device,
             home,
         )),
         None => match settings.choices().stt_runs_on {
-            RunsOn::Local => Some(TranscriptionConfig::load(settings, home))
-                .filter(crate::transcription::streams),
+            RunsOn::Local => Some(SttConfig::load(settings, home)).filter(crate::stt::streams),
             RunsOn::Server => None,
         },
     }
 }
 
-impl ListenConfig {
-    /// Parakeet stands in when no setting chooses an engine listen can run, so
-    /// changing dictation's model never turns listen off.
+impl SystemTranscriptionConfig {
+    /// Parakeet stands in when no setting chooses an engine system transcription can run, so
+    /// changing dictation's model never turns system transcription off.
     pub fn load(settings: &CheckedSettings, home: &Path) -> Result<Self, ConfigError> {
-        let transcription = chosen_listen_engine(settings, home)
+        let transcription = chosen_system_transcription_engine(settings, home)
             .unwrap_or_else(|| local(LocalStt::Parakeet, None, None, home));
         Ok(Self {
-            transcription: ListenTranscription::new(transcription)?,
+            engine: SystemTranscriptionEngine::new(transcription)?,
             transcripts_dir: settings
-                .listen
+                .system_transcription
                 .transcripts_dir
                 .clone()
-                .unwrap_or_else(|| home.join(DEFAULT_LISTEN_TRANSCRIPTS_DIR)),
+                .unwrap_or_else(|| home.join(DEFAULT_SYSTEM_TRANSCRIPTION_TRANSCRIPTS_DIR)),
         })
     }
 }
@@ -129,7 +131,7 @@ impl SpeechDefaults {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Stt,
-    Listen,
+    SystemTranscription,
     Tts,
     Speaker,
 }
@@ -138,7 +140,7 @@ impl std::fmt::Display for Section {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Stt => "stt",
-            Self::Listen => "listen",
+            Self::SystemTranscription => "transcription",
             Self::Tts => "tts",
             Self::Speaker => "speaker",
         })
@@ -155,7 +157,7 @@ pub struct LoadedModel {
 }
 
 /// The models `settings` make Aria load. The local engine counts while the
-/// server transcribes, since going back loads it.
+/// server recognizes, since going back loads it.
 pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel> {
     let mut models = Vec::new();
     let mut add = |section, engine, path| {
@@ -165,18 +167,22 @@ pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel
             path,
         });
     };
-    let engine = TranscriptionConfig::load(settings, home);
+    let engine = SttConfig::load(settings, home);
     let name = engine.backend_name();
     if let Some(path) = engine.model_path() {
         add(Section::Stt, Some(name), path);
     }
     // Fallback Parakeet isn't any setting's choice, so it stays deletable.
-    // Listen then reports it missing when a session starts.
-    if let Some(engine) = chosen_listen_engine(settings, home)
-        && let Ok(listen) = ListenTranscription::new(engine)
-        && let Some(path) = listen.config().clone().model_path()
+    // System transcription then reports it missing when a session starts.
+    if let Some(engine) = chosen_system_transcription_engine(settings, home)
+        && let Ok(system_transcription) = SystemTranscriptionEngine::new(engine)
+        && let Some(path) = system_transcription.config().clone().model_path()
     {
-        add(Section::Listen, Some(listen.backend_name()), path);
+        add(
+            Section::SystemTranscription,
+            Some(system_transcription.backend_name()),
+            path,
+        );
     }
     let tts = TtsConfig::load(settings, home);
     let engine = Some(tts.backend.name());
@@ -218,7 +224,7 @@ impl DictationConfig {
                     pace: replay_pace(settings.capture.pace),
                 },
             },
-            transcription: TranscriptionBackend::load(settings, home, pairing),
+            stt: SttBackend::load(settings, home, pairing),
             dictation_timeouts: choices.timeouts,
             cleanup_llm: choices.cleanup.clone(),
         }
@@ -232,17 +238,17 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
     }
 }
 
-impl TranscriptionBackend {
+impl SttBackend {
     pub fn load(settings: &CheckedSettings, home: &Path, pairing: Option<PairingId>) -> Self {
         match settings.choices().stt_runs_on {
             RunsOn::Server => Self::Server(pairing),
-            RunsOn::Local => Self::Local(TranscriptionConfig::load(settings, home)),
+            RunsOn::Local => Self::Local(SttConfig::load(settings, home)),
         }
     }
 }
 
-impl TranscriptionConfig {
-    /// The local engine, which the settings keep while the server transcribes.
+impl SttConfig {
+    /// The local engine, which the settings keep while the server recognizes.
     pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
         let stt = &settings.stt;
         match &settings.choices().stt {
@@ -264,10 +270,7 @@ impl TranscriptionConfig {
 }
 
 /// The defaults of an engine a caller names, not the file.
-pub(super) fn transcription_defaults(
-    backend: &str,
-    home: &Path,
-) -> Result<TranscriptionConfig, ConfigError> {
+pub(super) fn stt_defaults(backend: &str, home: &Path) -> Result<SttConfig, ConfigError> {
     match LocalStt::named(backend) {
         Some(engine) => Ok(local(engine, None, None, home)),
         None if backend == backend::PARAKEET_MLX => Err(ConfigError::Invalid {
@@ -291,35 +294,35 @@ fn local(
     model: Option<&Path>,
     device: Option<DeviceName>,
     home: &Path,
-) -> TranscriptionConfig {
+) -> SttConfig {
     match engine {
-        LocalStt::Whisper => TranscriptionConfig::Whisper {
+        LocalStt::Whisper => SttConfig::Whisper {
             model: model_location(
                 model,
                 model_file(model_folder::WHISPER, &aria_stt::whisper::MODEL[0]),
                 home,
             ),
         },
-        LocalStt::WhisperCandle => TranscriptionConfig::WhisperCandle {
+        LocalStt::WhisperCandle => SttConfig::WhisperCandle {
             model_directory: model_location(model, model_folder::WHISPER_CANDLE, home),
         },
-        LocalStt::Parakeet => TranscriptionConfig::Parakeet {
+        LocalStt::Parakeet => SttConfig::Parakeet {
             model_directory: model_location(model, model_folder::PARAKEET, home),
-            device: transcription_device(device),
+            device: stt_device(device),
         },
-        LocalStt::Moonshine => TranscriptionConfig::Moonshine {
+        LocalStt::Moonshine => SttConfig::Moonshine {
             model_directory: model_location(model, model_folder::MOONSHINE, home),
         },
-        LocalStt::Nemotron => TranscriptionConfig::Nemotron {
+        LocalStt::Nemotron => SttConfig::Nemotron {
             model_directory: model_location(model, model_folder::NEMOTRON, home),
         },
     }
 }
 
-fn transcription_device(device: Option<DeviceName>) -> TranscriptionDevice {
+fn stt_device(device: Option<DeviceName>) -> SttDevice {
     match device {
-        None | Some(DeviceName::Cpu) => TranscriptionDevice::Cpu,
-        Some(DeviceName::Gpu) => TranscriptionDevice::Gpu,
+        None | Some(DeviceName::Cpu) => SttDevice::Cpu,
+        Some(DeviceName::Gpu) => SttDevice::Gpu,
     }
 }
 
@@ -332,15 +335,15 @@ mod tests {
     use aria_settings::{LlmCleanupTarget, Loaded};
 
     #[test]
-    fn the_server_transcribes_and_the_local_model_stays_in_use() {
+    fn the_server_recognizes_and_the_local_model_stays_in_use() {
         let file = file(
             "[stt]\nbackend = \"whisper\"\nmodel = \"/models/whisper\"\nruns_on = \"server\"\n",
         );
 
         let pairing = PairingId::new([7; 32]);
         assert_eq!(
-            TranscriptionBackend::load(&file, &test_home(), Some(pairing.clone())),
-            TranscriptionBackend::Server(Some(pairing))
+            SttBackend::load(&file, &test_home(), Some(pairing.clone())),
+            SttBackend::Server(Some(pairing))
         );
         let models = loaded_models(&file, Path::new("/missing-home"));
         assert!(models.iter().any(|model| model.section == Section::Stt
@@ -349,16 +352,16 @@ mod tests {
     }
 
     #[test]
-    fn listen_runs_locally_while_dictation_uses_a_server() {
+    fn system_transcription_runs_locally_while_dictation_uses_a_server() {
         let server = "[stt]\nbackend = \"moonshine\"\nruns_on = \"server\"\n";
         let engine = |text: &str| {
-            ListenConfig::load(&file(text), &test_home())
+            SystemTranscriptionConfig::load(&file(text), &test_home())
                 .unwrap()
-                .transcription
+                .engine
                 .backend_name()
         };
         assert_eq!(engine(server), backend::PARAKEET);
-        let moonshine = format!("{server}[listen]\nbackend = \"moonshine\"\n");
+        let moonshine = format!("{server}[transcription]\nbackend = \"moonshine\"\n");
         assert_eq!(engine(&moonshine), backend::MOONSHINE);
     }
 
@@ -418,7 +421,7 @@ mod tests {
         let defaults = [
             (
                 "whisper",
-                TranscriptionConfig::Whisper {
+                SttConfig::Whisper {
                     model: PathBuf::from(
                         "/home/user/.aria/models/whisper/ggml-large-v3-turbo-q8_0.bin",
                     ),
@@ -426,22 +429,22 @@ mod tests {
             ),
             (
                 "parakeet",
-                TranscriptionConfig::Parakeet {
+                SttConfig::Parakeet {
                     model_directory: PathBuf::from(
                         "/home/user/.aria/models/parakeet/parakeet-tdt-0.6b-v3",
                     ),
-                    device: TranscriptionDevice::Cpu,
+                    device: SttDevice::Cpu,
                 },
             ),
             (
                 "moonshine",
-                TranscriptionConfig::Moonshine {
+                SttConfig::Moonshine {
                     model_directory: PathBuf::from("/home/user/.aria/models/moonshine/base"),
                 },
             ),
             (
                 "nemotron",
-                TranscriptionConfig::Nemotron {
+                SttConfig::Nemotron {
                     model_directory: PathBuf::from(
                         "/home/user/.aria/models/nemotron/nemotron-speech-streaming-en-0.6b",
                     ),
@@ -450,18 +453,18 @@ mod tests {
         ];
 
         for (backend, expected) in defaults {
-            let transcription = transcription_defaults(backend, Path::new("/home/user"))
-                .expect("a default must resolve");
-            assert_eq!(transcription, expected, "{backend}");
+            let stt =
+                stt_defaults(backend, Path::new("/home/user")).expect("a default must resolve");
+            assert_eq!(stt, expected, "{backend}");
         }
     }
 
     #[test]
     fn retry_backend_keeps_matching_config_and_uses_other_engine_defaults() {
         let home = Path::new("/tmp/retry-config");
-        let configured = TranscriptionConfig::Parakeet {
+        let configured = SttConfig::Parakeet {
             model_directory: home.join("custom"),
-            device: TranscriptionDevice::Cpu,
+            device: SttDevice::Cpu,
         };
         assert_eq!(
             configured.for_backend(backend::PARAKEET, home).unwrap(),
@@ -469,19 +472,19 @@ mod tests {
         );
         assert_eq!(
             configured.for_backend(backend::WHISPER, home).unwrap(),
-            transcription_defaults(backend::WHISPER, home).unwrap()
+            stt_defaults(backend::WHISPER, home).unwrap()
         );
         assert!(configured.for_backend(backend::PARAKEET_MLX, home).is_err());
     }
 
     #[test]
-    fn transcription_resolves_a_parakeet_model_directory() {
+    fn stt_resolves_a_parakeet_model_directory() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n");
         assert_eq!(
-            TranscriptionBackend::load(&file, &test_home(), None),
-            TranscriptionBackend::Local(TranscriptionConfig::Parakeet {
+            SttBackend::load(&file, &test_home(), None),
+            SttBackend::Local(SttConfig::Parakeet {
                 model_directory: PathBuf::from("/home/user/models/tdt"),
-                device: TranscriptionDevice::Cpu,
+                device: SttDevice::Cpu,
             })
         );
     }
@@ -493,8 +496,8 @@ mod tests {
              model = \"mlx-community/whisper\"\n",
         );
         assert_eq!(
-            TranscriptionBackend::load(&file, &test_home(), None),
-            TranscriptionBackend::Local(TranscriptionConfig::ParakeetMlx {
+            SttBackend::load(&file, &test_home(), None),
+            SttBackend::Local(SttConfig::ParakeetMlx {
                 model: "mlx-community/whisper".to_owned(),
                 interpreter: PathBuf::from("/home/user/py"),
             })
@@ -503,7 +506,7 @@ mod tests {
 
     #[test]
     fn defaults_for_an_unknown_engine_are_refused() {
-        let error = transcription_defaults("vosk", Path::new("/home/user"))
+        let error = stt_defaults("vosk", Path::new("/home/user"))
             .expect_err("an unknown backend must be rejected");
         // A retry never names the server, so the list offers only local engines.
         assert!(matches!(
@@ -600,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn listen_inherits_the_transcription_model() {
+    fn system_transcription_inherits_the_transcription_model() {
         let home = Path::new("/home/user");
         let loaded = loaded_models(&file("[stt]\nbackend = \"parakeet\"\n"), home);
         let models = home.join(".aria/models");
@@ -614,7 +617,7 @@ mod tests {
                     path: models.join("parakeet/parakeet-tdt-0.6b-v3"),
                 },
                 LoadedModel {
-                    section: Section::Listen,
+                    section: Section::SystemTranscription,
                     engine: Some(backend::PARAKEET),
                     path: models.join("parakeet/parakeet-tdt-0.6b-v3"),
                 },
@@ -629,7 +632,7 @@ mod tests {
                     path: models.join("pyannote/segmentation-3.0.onnx"),
                 },
             ],
-            "listen inherits the transcription model"
+            "System transcription inherits the speech model"
         );
     }
 
@@ -643,36 +646,41 @@ mod tests {
             |model| model.section == Section::Stt && model.path == Path::new("/home/user/tdt")
         ));
         assert!(
-            loaded.iter().any(|model| model.section == Section::Listen
-                && model.path == Path::new("/home/user/tdt"))
+            loaded
+                .iter()
+                .any(|model| model.section == Section::SystemTranscription
+                    && model.path == Path::new("/home/user/tdt"))
         );
     }
 
     #[test]
     fn mac_audio_admits_only_an_engine_that_streams() {
-        let whisper = TranscriptionConfig::Whisper {
+        let whisper = SttConfig::Whisper {
             model: PathBuf::from("/models/whisper.bin"),
         };
-        let tiny = TranscriptionConfig::WhisperCandle {
+        let tiny = SttConfig::WhisperCandle {
             model_directory: PathBuf::from("/models/tiny"),
         };
 
-        assert!(ListenTranscription::new(whisper).is_ok());
+        assert!(SystemTranscriptionEngine::new(whisper).is_ok());
         assert!(matches!(
-            ListenTranscription::new(tiny),
-            Err(ConfigError::ListenUnusableEngine(_))
+            SystemTranscriptionEngine::new(tiny),
+            Err(ConfigError::SystemTranscriptionUnusableEngine(_))
         ));
     }
 
     #[test]
-    fn listen_inherits_a_streaming_transcription_backend() {
-        let listen = ListenConfig::load(&file("[stt]\nbackend = \"moonshine\"\n"), &test_home())
-            .expect("moonshine must be inherited");
+    fn system_transcription_inherits_a_streaming_transcription_backend() {
+        let system_transcription = SystemTranscriptionConfig::load(
+            &file("[stt]\nbackend = \"moonshine\"\n"),
+            &test_home(),
+        )
+        .expect("moonshine must be inherited");
 
         assert_eq!(
-            listen,
-            ListenConfig {
-                transcription: ListenTranscription::new(TranscriptionConfig::Moonshine {
+            system_transcription,
+            SystemTranscriptionConfig {
+                engine: SystemTranscriptionEngine::new(SttConfig::Moonshine {
                     model_directory: PathBuf::from("/home/user/.aria/models/moonshine/base"),
                 })
                 .unwrap(),
@@ -690,8 +698,9 @@ mod tests {
                 ""
             };
             let file = file(&format!("[stt]\nbackend = \"{engine}\"\n{interpreter}"));
-            let listen = ListenConfig::load(&file, &test_home()).expect("listen always loads");
-            let ran = listen.transcription.backend_name();
+            let system_transcription = SystemTranscriptionConfig::load(&file, &test_home())
+                .expect("System transcription always loads");
+            let ran = system_transcription.engine.backend_name();
             let expected = if backend::STREAMING.contains(&engine) {
                 engine
             } else {
@@ -702,18 +711,19 @@ mod tests {
     }
 
     #[test]
-    fn an_own_listen_backend_outranks_the_transcription_table() {
+    fn an_own_system_transcription_backend_outranks_the_stt_table() {
         let file = file(
-            "[stt]\nbackend = \"whisper\"\n[listen]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n",
+            "[stt]\nbackend = \"whisper\"\n[transcription]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n",
         );
 
-        let listen = ListenConfig::load(&file, &test_home()).expect("the listen table must win");
+        let system_transcription = SystemTranscriptionConfig::load(&file, &test_home())
+            .expect("the transcription table must win");
 
         assert_eq!(
-            listen.transcription,
-            ListenTranscription::new(TranscriptionConfig::Parakeet {
+            system_transcription.engine,
+            SystemTranscriptionEngine::new(SttConfig::Parakeet {
                 model_directory: PathBuf::from("/home/user/models/tdt"),
-                device: TranscriptionDevice::Cpu,
+                device: SttDevice::Cpu,
             })
             .unwrap()
         );
@@ -741,8 +751,8 @@ mod tests {
             SpeakerConfig::load(&empty.speaker, &home_dir)
         );
         assert_eq!(
-            ListenConfig::load(&defaults, &home_dir).unwrap(),
-            ListenConfig::load(&empty, &home_dir).unwrap()
+            SystemTranscriptionConfig::load(&defaults, &home_dir).unwrap(),
+            SystemTranscriptionConfig::load(&empty, &home_dir).unwrap()
         );
     }
 

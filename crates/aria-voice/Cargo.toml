@@ -2,7 +2,7 @@
 name                 = "aria-voice"
 version.workspace    = true
 edition.workspace    = true
-description          = "Aria's speech features: dictation, listening, speaking, enrollment, and the engines they run on"
+description          = "Aria's speech features: dictation, system transcription, speaking, enrollment, and the engines they run on"
 license              = "GPL-3.0-only"
 repository.workspace = true
 readme.workspace     = true

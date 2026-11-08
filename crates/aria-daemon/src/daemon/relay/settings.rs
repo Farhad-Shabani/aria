@@ -379,6 +379,7 @@ mod tests {
         let mut snapshot = wire::SettingsSnapshot {
             revision: 1,
             streaming_unavailable: Vec::new(),
+            assistant_name: String::new(),
             settings: Some(wire::Settings {
                 prompts: Some(wire::Prompts {
                     entries: vec![wire::Prompt {

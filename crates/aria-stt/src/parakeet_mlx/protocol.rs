@@ -61,7 +61,7 @@ fn handshake(
         .map_err(|error| phase.transport(error))?
     {
         Reply::Ready { protocol, .. } if protocol == PROTOCOL_VERSION => {
-            tracing::info!(backend = BACKEND, model, "transcription sidecar ready");
+            tracing::info!(backend = BACKEND, model, "speech recognition sidecar ready");
             Ok(())
         }
         Reply::Ready { protocol, .. } => Err(phase.unusable(format!(
@@ -74,7 +74,7 @@ fn handshake(
     }
 }
 
-pub(super) fn transcribe(
+pub(super) fn recognize(
     sidecar: &mut Sidecar,
     audio_path: &str,
     chunk_samples: Option<usize>,
@@ -82,7 +82,7 @@ pub(super) fn transcribe(
 ) -> Result<String, TranscriptionError> {
     let phase = Phase::Inference;
     let request = Request {
-        op: "transcribe",
+        op: "recognize",
         audio_path,
         chunk_samples,
     };
@@ -102,7 +102,7 @@ pub(super) fn transcribe(
 
 /// Which half of the backend's life a failure belongs to. Bringing the child
 /// up and asking it a question fail the same ways, but the pipeline treats a
-/// backend that cannot load differently from a press that did not transcribe.
+/// backend that cannot load differently from a press that did not recognize.
 pub(super) enum Phase<'a> {
     Load { model: &'a str },
     Inference,
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn a_request_carries_the_operation_and_the_audio_path() {
         let line = serde_json::to_string(&Request {
-            op: "transcribe",
+            op: "recognize",
             audio_path: "/tmp/recording.wav",
             chunk_samples: None,
         })
@@ -278,14 +278,14 @@ mod tests {
 
         assert_eq!(
             line,
-            r#"{"op":"transcribe","audio_path":"/tmp/recording.wav"}"#
+            r#"{"op":"recognize","audio_path":"/tmp/recording.wav"}"#
         );
     }
 
     #[test]
     fn a_streaming_request_names_its_chunk() {
         let line = serde_json::to_string(&Request {
-            op: "transcribe",
+            op: "recognize",
             audio_path: "/tmp/recording.wav",
             chunk_samples: Some(12000),
         })
@@ -293,7 +293,7 @@ mod tests {
 
         assert_eq!(
             line,
-            r#"{"op":"transcribe","audio_path":"/tmp/recording.wav","chunk_samples":12000}"#
+            r#"{"op":"recognize","audio_path":"/tmp/recording.wav","chunk_samples":12000}"#
         );
     }
 
@@ -410,7 +410,7 @@ mod tests {
     fn a_transcript_is_read_back_from_the_sidecar() {
         let mut sidecar = stub(r#"read line; echo '{"ok":true,"text":"hello there"}'"#);
 
-        let text = transcribe(
+        let text = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -425,7 +425,7 @@ mod tests {
     fn a_sidecar_that_reports_a_failure_keeps_serving() {
         let mut sidecar = stub(r#"while read line; do echo '{"ok":false,"error":"boom"}'; done"#);
 
-        let outcome = transcribe(
+        let outcome = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -449,7 +449,7 @@ mod tests {
     fn a_cancelled_press_stops_the_sidecar_instead_of_waiting() {
         let mut sidecar = stub("sleep 600");
 
-        let outcome = transcribe(&mut sidecar, "/tmp/recording.wav", None, &{
+        let outcome = recognize(&mut sidecar, "/tmp/recording.wav", None, &{
             let token = CancelToken::new();
             token.cancel();
             token
@@ -466,7 +466,7 @@ mod tests {
     fn a_second_readiness_report_is_refused() {
         let mut sidecar = stub(&format!("read line; {READY}"));
 
-        let outcome = transcribe(
+        let outcome = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -486,7 +486,7 @@ mod tests {
     fn a_child_that_dies_mid_request_is_not_reused() {
         let mut sidecar = stub("read line; exit 1");
 
-        let outcome = transcribe(
+        let outcome = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,

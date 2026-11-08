@@ -1,4 +1,4 @@
-//! In-process transcription through the Nemotron streaming ASR ONNX
+//! In-process recognition through the Nemotron streaming ASR ONNX
 //! bindings.
 //!
 //! The encoder streams by design: it takes 560 ms of audio at a time against
@@ -35,9 +35,9 @@ use parakeet_rs::{ExecutionConfig, NemotronHandle, TokenInfo};
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, ChunkStream, Emitted, Engine, Hypothesis, Language, Stream, StreamingEngine,
-    TimedWord, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
-    validate_model_directory, word_timings,
+    AudioInputKind, ChunkStream, Emitted, Engine, Hypothesis, Language, RecognitionAudio,
+    Recognizer, Stream, StreamingEngine, TimedWord, TranscriptionError, check_cancelled,
+    english_only, validate_model_directory, word_timings,
 };
 
 /// Names this engine under `stt.backend` and in its own errors.
@@ -158,7 +158,7 @@ impl StreamingEngine for Nemotron {
     const STREAM: Stream = Stream::Native;
 }
 
-impl Transcriber for Nemotron {
+impl Recognizer for Nemotron {
     fn validate_language(
         &self,
         language: &Language,
@@ -169,9 +169,9 @@ impl Transcriber for Nemotron {
 
     /// The whole input through the chunked path, so a bounded decode says
     /// what a live one would have.
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {

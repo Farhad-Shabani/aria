@@ -22,14 +22,14 @@ extension View {
 private enum PaletteDeletion {
     static func title(_ kind: HistoryItem.Kind?) -> String {
         switch kind {
-        case .listen: "Delete This Mac Audio Session?"
-        case .ask: "Delete This Ask?"
+        case .systemTranscription: "Delete This Transcript?"
+        case .chat: "Delete This Chat?"
         case .dictation, nil: "Delete This Dictation?"
         }
     }
 
     static func suffix(_ entry: HistoryItem) -> String {
-        if case .listen = entry.kind { return " along with its transcript file." }
+        if case .systemTranscription = entry.kind { return " along with its transcript file." }
         if case .available = entry.audio { return " along with its saved recording." }
         return "."
     }

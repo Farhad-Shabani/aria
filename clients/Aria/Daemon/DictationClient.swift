@@ -17,7 +17,7 @@ enum DictationClient {
     enum Outcome: Equatable, Sendable {
         case heard(Transcript)
         /// Another client was recording, so this call stopped theirs and the
-        /// transcript went to them.
+        /// text went to them.
         case stopAccepted
     }
 

@@ -3,7 +3,9 @@
 //! Synchronous: each client owns a single-threaded tokio runtime and blocks on it.
 
 use super::{protocol, wire};
-use aria_assistant::chat::{AskTarget, AssistantModel, ChatRequest, ChatStage, PromptCall, Ticket};
+use aria_assistant::chat::{
+    AssistantModel, ChatRequest, ChatStage, ChatTarget, PromptCall, Ticket,
+};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
@@ -11,8 +13,11 @@ use aria_voice::dictation::{DictationOutcome, DictationRequest, DictationStage, 
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
-use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+use aria_voice::system_transcription::{
+    SystemTranscriptionSnapshot, SystemTranscriptionStage, SystemTranscriptionStarted,
+    SystemTranscriptionStopped,
+};
 use protocol::TransportFailure;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +27,7 @@ use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 
-/// Bounded by the longest dictation: recording, transcription, delivery.
+/// Bounded by the longest dictation: recording, transcribing, delivery.
 const DICTATION_TIMEOUT: Duration = Duration::from_secs(670);
 /// Base client deadline for one utterance; grows with the text.
 const SPEECH_BASE_TIMEOUT: Duration = Duration::from_secs(45);
@@ -32,8 +37,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MODEL_LIST_TIMEOUT: Duration = Duration::from_secs(40);
 /// A refresh walks the project folder and rebuilds the catalog.
 const VOCABULARY_REFRESH_TIMEOUT: Duration = Duration::from_secs(120);
-/// Stop waits for the listen session's final decode to drain.
-const LISTEN_STOP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Stop waits for the system transcription's final decode to drain.
+const SYSTEM_TRANSCRIPTION_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 /// One enrollment sample waits out the daemon's no-speech timeout and then
 /// however long the person speaks. Ten samples is the ceiling the daemon
 /// accepts, and the margin is for the model load before the first one.
@@ -339,7 +344,7 @@ impl DaemonClient {
     }
 
     /// Ends the named recording; answers whether it was the one running.
-    /// The `request_dictation` it belongs to then ends with the transcript.
+    /// The `request_dictation` it belongs to then ends with the text.
     pub(crate) fn stop_dictation(&self, recording: RecordingId) -> Result<bool, ClientError> {
         let mut dictation =
             wire::dictation_service_client::DictationServiceClient::new(self.channel.clone());
@@ -369,17 +374,19 @@ impl DaemonClient {
         Ok(response.try_into()?)
     }
 
-    /// Where an ask goes when the caller has no working directory.
-    pub(crate) fn resolve_ask(&self) -> Result<AskTarget, ClientError> {
+    /// Where a chat goes when the caller has no working directory.
+    pub(crate) fn resolve_chat_target(&self) -> Result<ChatTarget, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
-        let response = self.call(REQUEST_TIMEOUT, wire::ResolveAskRequest {}, |request| {
-            chat.resolve(request)
-        })?;
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::ResolveChatTargetRequest {},
+            |request| chat.resolve(request),
+        )?;
 
-        AskTarget::try_from(response).map_err(ClientError::from)
+        ChatTarget::try_from(response).map_err(ClientError::from)
     }
 
-    /// Answers with the ticket as soon as the ask is taken; the reply
+    /// Answers with the ticket as soon as the chat is taken; the reply
     /// follows on the event stream.
     pub(crate) fn ask(&self, request: ChatRequest) -> Result<Ticket, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
@@ -393,7 +400,7 @@ impl DaemonClient {
     }
 
     /// Answers with the ticket as soon as the run is taken. The result follows on the event stream,
-    /// as an ask's reply does.
+    /// as a chat's reply does.
     pub(crate) fn run_prompt(&self, call: PromptCall) -> Result<Ticket, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
         let response = self.call(
@@ -405,7 +412,7 @@ impl DaemonClient {
         Ok(Ticket::from(response))
     }
 
-    /// Ends the ask; answers whether it was still pending.
+    /// Ends the chat; answers whether it was still pending.
     pub(crate) fn cancel_ask(&self, ticket: Ticket) -> Result<bool, ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
         let response = self.call(
@@ -474,7 +481,7 @@ impl DaemonClient {
         response.try_into().map_err(ClientError::from)
     }
 
-    /// Reads a Mac Audio session's transcript into the entry, up to Get's read limit.
+    /// Reads a system transcription's transcript into the entry, up to Get's read limit.
     pub(crate) fn get_history(
         &self,
         id: u64,
@@ -608,16 +615,18 @@ impl DaemonClient {
         UpdateResult::try_from(response).map_err(ClientError::from)
     }
 
-    pub(crate) fn listen_start(
+    pub(crate) fn system_transcription_start(
         &self,
         transcript_path: Option<String>,
-    ) -> Result<ListenStarted, ClientError> {
-        let mut listen =
-            wire::listen_service_client::ListenServiceClient::new(self.channel.clone());
+    ) -> Result<SystemTranscriptionStarted, ClientError> {
+        let mut system_transcription =
+            wire::system_transcription_service_client::SystemTranscriptionServiceClient::new(
+                self.channel.clone(),
+            );
         let response = self.call(
             REQUEST_TIMEOUT,
-            wire::StartListenRequest { transcript_path },
-            |request| listen.start(request),
+            wire::StartSystemTranscriptionRequest { transcript_path },
+            |request| system_transcription.start(request),
         )?;
         Ok(response.into())
     }
@@ -664,22 +673,32 @@ impl DaemonClient {
         Ok(())
     }
 
-    pub(crate) fn listen_stop(&self) -> Result<ListenStopped, ClientError> {
-        let mut listen =
-            wire::listen_service_client::ListenServiceClient::new(self.channel.clone());
-        let response = self.call(LISTEN_STOP_TIMEOUT, wire::StopListenRequest {}, |request| {
-            listen.stop(request)
-        })?;
+    pub(crate) fn system_transcription_stop(
+        &self,
+    ) -> Result<SystemTranscriptionStopped, ClientError> {
+        let mut system_transcription =
+            wire::system_transcription_service_client::SystemTranscriptionServiceClient::new(
+                self.channel.clone(),
+            );
+        let response = self.call(
+            SYSTEM_TRANSCRIPTION_STOP_TIMEOUT,
+            wire::StopSystemTranscriptionRequest {},
+            |request| system_transcription.stop(request),
+        )?;
         Ok(response.into())
     }
 
-    pub(crate) fn listen_status(&self) -> Result<ListenSnapshot, ClientError> {
-        let mut listen =
-            wire::listen_service_client::ListenServiceClient::new(self.channel.clone());
+    pub(crate) fn system_transcription_status(
+        &self,
+    ) -> Result<SystemTranscriptionSnapshot, ClientError> {
+        let mut system_transcription =
+            wire::system_transcription_service_client::SystemTranscriptionServiceClient::new(
+                self.channel.clone(),
+            );
         let response = self.call(
             REQUEST_TIMEOUT,
-            wire::GetListenStatusRequest {},
-            |request| listen.get_status(request),
+            wire::GetSystemTranscriptionStatusRequest {},
+            |request| system_transcription.get_status(request),
         )?;
         Ok(response.into())
     }
@@ -767,13 +786,13 @@ pub enum DaemonEvent {
     Dictation(DictationStage),
     Chat(ChatStage),
     Speech(SpeechStage),
-    Listen(ListenStage),
+    SystemTranscription(SystemTranscriptionStage),
     Enrollment(EnrollmentStage),
     Settings(SettingsStatus),
 }
 
 /// A newer daemon's event kinds must not end the stream. An older daemon's
-/// chat event must: without its assistant, the ask it answers would wait forever.
+/// chat event must: without its assistant, the chat it answers would wait forever.
 fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> {
     match event.payload {
         Some(
@@ -821,13 +840,15 @@ fn decode_event(event: wire::Event) -> Option<Result<DaemonEvent, ClientError>> 
         Some(wire::event::Payload::Settings(status)) => {
             Some(Ok(DaemonEvent::Settings(status.into())))
         }
-        Some(wire::event::Payload::Listen(event)) => match ListenStage::try_from(&event) {
-            Ok(stage) => Some(Ok(DaemonEvent::Listen(stage))),
-            Err(error) => {
-                tracing::debug!(%error, "skipping an unrecognized stage");
-                None
+        Some(wire::event::Payload::SystemTranscription(event)) => {
+            match SystemTranscriptionStage::try_from(&event) {
+                Ok(stage) => Some(Ok(DaemonEvent::SystemTranscription(stage))),
+                Err(error) => {
+                    tracing::debug!(%error, "skipping an unrecognized stage");
+                    None
+                }
             }
-        },
+        }
         None => {
             tracing::debug!("skipping an unrecognized event payload");
             None
@@ -921,7 +942,7 @@ mod tests {
         ));
     }
 
-    // Skipping an invalid chat event would leave its ask waiting forever.
+    // Skipping an invalid chat event would leave its chat waiting forever.
     #[test]
     fn a_chat_event_without_an_assistant_ends_the_stream_loudly() {
         let stale = wire::Event {

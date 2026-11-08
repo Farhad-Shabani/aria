@@ -1,7 +1,7 @@
 //! What the desktop and a paired inference server exchange, independent of
 //! the wire encoding.
 
-use aria_voice::transcription::{Language, TranscriptUpdate};
+use aria_voice::stt::{Language, TranscriptUpdate};
 
 /// Uploads are mono PCM16 at this rate, so sample positions are wire units.
 const SAMPLE_RATE: u64 = 16_000;
@@ -28,7 +28,7 @@ pub(crate) struct Start {
     pub(crate) strategy: Strategy,
 }
 
-/// What a server runs. Every engine transcribes whole recordings, so
+/// What a server runs. Every engine recognizes whole recordings, so
 /// `strategy` names the strongest one it supports.
 pub(crate) struct Info {
     pub(crate) engine: String,

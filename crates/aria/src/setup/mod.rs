@@ -1,12 +1,12 @@
 //! `aria setup`: the guided first run. `inspect` looks at what this
 //! machine has. `apply` fetches the models the chosen engines need plus the
-//! ones `aria listen` uses, writes the engines to settings.toml, and installs
+//! ones `aria transcribe` uses, writes the engines to settings.toml, and installs
 //! the daemon as a service. Neither asks anything. `run` is the terminal front
 //! over them; Aria.app drives the same two through `aria setup inspect` and
 //! `aria setup apply`. Every answer defaults to what is configured, and
 //! `--yes` keeps every configured engine, so the unattended rerun the
-//! installer makes never rewrites a working choice. `transcription_engine`
-//! sets the speech-to-text engine alone, and `transcription_runs_on` where
+//! installer makes never rewrites a working choice. `stt_engine`
+//! sets the speech-to-text engine alone, and `stt_runs_on` where
 //! it runs, each outside the rest of setup.
 //!
 //! The terminal run then ends on something that works rather than on a
@@ -45,8 +45,8 @@ mod download;
 pub mod models;
 mod prompt;
 mod settings_file;
-pub mod transcription_engine;
-pub mod transcription_runs_on;
+pub mod stt_engine;
+pub mod stt_runs_on;
 pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
@@ -96,7 +96,7 @@ pub struct Inspection {
     pub service: Status,
     pub grant: Grant,
     pub key_remapped: bool,
-    pub transcription_runs_on: RunsOn,
+    pub stt_runs_on: RunsOn,
     /// Whether wake-word models ship beside the binary.
     wakeword_bundled: bool,
     pairing: Pairing,
@@ -322,7 +322,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
             .all(|file| models_dir.join(WAKEWORD_DIR).join(file).is_file()),
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
-        transcription_runs_on: file.choices().stt_runs_on,
+        stt_runs_on: file.choices().stt_runs_on,
         key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
         existing,
         service,
@@ -354,15 +354,15 @@ impl Inspection {
         })
     }
 
-    /// The local engine, while it transcribes. On the server its models
+    /// The local engine, while it recognizes. On the server its models
     /// wait: going back fetches them.
     fn local_stt<'a>(&self, engine: &'a str) -> Option<&'a str> {
-        (self.transcription_runs_on == RunsOn::Local).then_some(engine)
+        (self.stt_runs_on == RunsOn::Local).then_some(engine)
     }
 
-    /// The server transcribes, but no usable pin says where it is.
+    /// The server recognizes, but no usable pin says where it is.
     fn server_is_unusable(&self) -> bool {
-        self.transcription_runs_on == RunsOn::Server && !matches!(self.pairing, Pairing::Paired(_))
+        self.stt_runs_on == RunsOn::Server && !matches!(self.pairing, Pairing::Paired(_))
     }
 
     /// What a run still has to put in place; empty once setup is done.
@@ -408,8 +408,8 @@ impl Inspection {
 fn model_states(home: &Path, file: &CheckedSettings) -> Result<Vec<ModelState>, SetupError> {
     let models_dir = aria_settings::config::models_dir(home);
     let loaded = config::loaded_models(file, home);
-    // Only the asset's own section counts. Listen's custom moonshine path
-    // does not change where transcription looks.
+    // Only the asset's own section counts. System transcription's custom moonshine
+    // path does not change where dictation looks.
     let external = |asset: &Asset, engine: Option<&str>, section: config::Section| {
         let mut section = loaded.iter().filter(|model| model.section == section);
         let configured = section.clone().any(|model| model.engine == engine);
@@ -660,7 +660,7 @@ fn ask_selections(
     })
 }
 
-/// Settings tables for display, like "stt, listen".
+/// Settings tables for display, like "stt, transcription".
 pub fn tables(sections: &[config::Section]) -> String {
     sections
         .iter()
@@ -924,7 +924,7 @@ pub enum SetupError {
     #[error("setup knows no model named {name}")]
     UnknownModel { name: String },
 
-    #[error("setup knows no speech-to-text engine named {name}")]
+    #[error("setup knows no speech model named {name}")]
     UnknownEngine { name: String },
 
     #[error("{name} can't be set in place; choose it in `aria setup`")]
@@ -939,7 +939,7 @@ pub enum SetupError {
     #[error("another setup is already running")]
     Busy,
 
-    #[error("transcription runs on the paired server; run `aria setup --local` first")]
+    #[error("speech recognition runs on the paired server; run `aria setup --local` first")]
     ServerInUse,
 
     #[error(transparent)]
@@ -1195,7 +1195,7 @@ mod tests {
             wakeword_installed: false,
             wakeword_bundled: true,
             pairing: Pairing::Unpaired,
-            transcription_runs_on: RunsOn::Local,
+            stt_runs_on: RunsOn::Local,
             existing,
             service: Status {
                 unit: PathBuf::from("/nonexistent/aria.plist"),
@@ -1303,7 +1303,7 @@ mod tests {
     }
 
     #[test]
-    fn the_local_model_is_not_missing_while_the_server_transcribes() {
+    fn the_local_model_is_not_missing_while_the_server_recognizes() {
         let mut inspection = inspection(Existing {
             stt: Some(backend::MOONSHINE.to_owned()),
             ..configured()
@@ -1311,19 +1311,19 @@ mod tests {
         let moonshine = Missing::Model("moonshine");
         assert!(inspection.missing().contains(&moonshine));
 
-        inspection.transcription_runs_on = RunsOn::Server;
+        inspection.stt_runs_on = RunsOn::Server;
         inspection.pairing = paired("https://box.test:9851");
 
         assert!(!inspection.missing().contains(&moonshine));
     }
 
     #[test]
-    fn the_local_model_is_not_downloaded_while_the_server_transcribes() {
+    fn the_local_model_is_not_downloaded_while_the_server_recognizes() {
         let mut inspection = inspection(Existing {
             stt: Some(backend::MOONSHINE.to_owned()),
             ..configured()
         });
-        inspection.transcription_runs_on = RunsOn::Server;
+        inspection.stt_runs_on = RunsOn::Server;
         inspection.pairing = paired("https://box.test:9851");
         let selections = Selections::defaults(&inspection);
 
@@ -1423,17 +1423,17 @@ mod tests {
         assert!(inspection.missing().contains(&Missing::Model("kokoro")));
     }
 
-    /// Listen's custom moonshine path does not cover transcription, which
+    /// System transcription's custom moonshine path does not cover dictation, which
     /// loads the default one.
     #[test]
-    fn a_model_kept_elsewhere_for_listen_still_downloads_for_transcription() {
+    fn a_model_kept_elsewhere_for_system_transcription_still_downloads_for_dictation() {
         let mut inspection = inspection(Existing {
             stt: Some("moonshine".to_owned()),
             ..configured()
         });
         let file = aria_settings::testing::file(
             "[stt]\nbackend = \"whisper\"\n\
-             [listen]\nbackend = \"moonshine\"\nmodel = \"/elsewhere/moonshine\"\n",
+             [transcription]\nbackend = \"moonshine\"\nmodel = \"/elsewhere/moonshine\"\n",
         );
         inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);
@@ -1556,7 +1556,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_refuses_while_the_server_transcribes() {
+    fn pairing_refuses_while_the_server_recognizes() {
         let home = tempfile::tempdir().unwrap();
         let config = aria_settings::default_path(home.path());
         fs::create_dir_all(home.path().join(".aria")).unwrap();
@@ -1606,7 +1606,7 @@ mod tests {
     #[test]
     fn the_server_without_a_usable_pin_needs_setup() {
         let mut inspection = inspection(configured());
-        inspection.transcription_runs_on = RunsOn::Server;
+        inspection.stt_runs_on = RunsOn::Server;
 
         assert!(inspection.missing().contains(&Missing::Settings));
         inspection.pairing = Pairing::Unusable;

@@ -53,7 +53,7 @@ fn noise(count: usize) -> impl Iterator<Item = i16> {
     .take(count)
 }
 
-fn transcribe(
+fn recognize(
     transcription: &Transcription<ParakeetMlx, Whole>,
     path: &PathBuf,
 ) -> Result<Transcript, TranscriptionError> {
@@ -101,7 +101,7 @@ fn the_sidecar_survives_an_adversarial_whole_decode_matrix() {
     // keeps serving after whatever each clip provoked.
     let transcription = Transcription::complete_wav(engine);
     for (name, clip) in clips {
-        survives(name, transcribe(&transcription, &clip));
+        survives(name, recognize(&transcription, &clip));
     }
 }
 
@@ -115,7 +115,7 @@ fn streaming_folds_a_sub_hop_tail_instead_of_crashing_the_encoder() {
         ("full-hop-tail", 8 * 16000 + 160),
     ] {
         let clip = fixture_wav(name, noise(total));
-        survives(name, transcribe(&transcription, &clip));
+        survives(name, recognize(&transcription, &clip));
     }
 }
 
@@ -127,7 +127,7 @@ fn a_chunk_below_one_mel_hop_fails_the_request_but_not_the_sidecar() {
     // Twice: the second refusal proves the sidecar survived the first.
     for _ in 0..2 {
         let clip = fixture_wav("sub-hop-chunk", noise(16000));
-        let error = transcribe(&transcription, &clip).expect_err("a sub-hop chunk must be refused");
+        let error = recognize(&transcription, &clip).expect_err("a sub-hop chunk must be refused");
         assert!(
             matches!(
                 &error,

@@ -69,12 +69,12 @@ enum SetupClient {
 
     /// Fetches the engine's missing models, then writes the settings that name
     /// it. Cancelling interrupts the run as it interrupts `apply`.
-    static func setTranscriptionEngine(
-        _ request: Aria_Setup_V1_SetTranscriptionEngineRequest,
+    static func setSttEngine(
+        _ request: Aria_Setup_V1_SetSttEngineRequest,
         onEvent: @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
-    ) async throws -> Aria_Setup_V1_SetTranscriptionEngineSummary {
-        try await run("set-transcription-engine", request, onEvent: onEvent) { bytes in
-            switch try Aria_Setup_V1_SetTranscriptionEngineResponse(serializedBytes: bytes).body {
+    ) async throws -> Aria_Setup_V1_SetSttEngineSummary {
+        try await run("set-stt-engine", request, onEvent: onEvent) { bytes in
+            switch try Aria_Setup_V1_SetSttEngineResponse(serializedBytes: bytes).body {
             case .event(let event): .event(event)
             case .summary(let summary): .summary(summary)
             case nil: nil
@@ -83,13 +83,13 @@ enum SetupClient {
     }
 
     /// Fetches the local engine's missing models when coming back, then
-    /// writes where transcription runs.
-    static func setTranscriptionRunsOn(
-        _ request: Aria_Setup_V1_SetTranscriptionRunsOnRequest,
+    /// writes where recognition runs.
+    static func setSttRunsOn(
+        _ request: Aria_Setup_V1_SetSttRunsOnRequest,
         onEvent: @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
-    ) async throws -> Aria_Setup_V1_SetTranscriptionRunsOnSummary {
-        try await run("set-transcription-runs-on", request, onEvent: onEvent) { bytes in
-            switch try Aria_Setup_V1_SetTranscriptionRunsOnResponse(serializedBytes: bytes).body {
+    ) async throws -> Aria_Setup_V1_SetSttRunsOnSummary {
+        try await run("set-stt-runs-on", request, onEvent: onEvent) { bytes in
+            switch try Aria_Setup_V1_SetSttRunsOnResponse(serializedBytes: bytes).body {
             case .event(let event): .event(event)
             case .summary(let summary): .summary(summary)
             case nil: nil

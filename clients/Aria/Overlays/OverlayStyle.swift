@@ -26,10 +26,10 @@ enum OverlayStyle {
     /// How much of the blur shows. AppKit fixes the radius, so a lighter blur
     /// mixes in the sharp windows behind.
     static let frostBlur = 0.5
-    /// The glow of Aria's own work: Ask's color, used nowhere else.
-    static let askGlow = Color(red: 0.75, green: 0.35, blue: 0.95)
+    /// The glow of Aria's own work: Chat's color, used nowhere else.
+    static let chatGlow = Color(red: 0.75, green: 0.35, blue: 0.95)
     /// How opaque that glow is at rest.
-    static let askGlowOpacity = 0.45
+    static let chatGlowOpacity = 0.45
     /// A faint top light and lit edge, so the pane looks slightly raised.
     static let frostSheen = Color.white.opacity(0.05)
     static let frostEdge = LinearGradient(

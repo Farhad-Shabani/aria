@@ -6,7 +6,7 @@ struct AssistantSettings: View {
 
     var body: some View {
         SettingsForm(settings: settings) { editor in
-            ItemPage(title: "Assistant", subtitle: "Ask and Prompts") {
+            ItemPage(title: "Assistant", subtitle: "Chat and Prompts") {
                 SettingsIcon(symbol: "sparkles", side: SettingsMetrics.headerIconSide)
             } content: {
                 Section {

@@ -8,7 +8,7 @@ use aria_kit::audio::RecordingReader;
 use aria_kit::transcription::next_heard_update;
 
 use super::board::{Board, Decoded};
-use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
+use crate::stt::{Operation, Recognizer, Transcript, TranscriptionError};
 
 pub(super) struct DecodeThread<'scope> {
     board: Arc<Board>,
@@ -18,7 +18,7 @@ pub(super) struct DecodeThread<'scope> {
 impl<'scope> DecodeThread<'scope> {
     /// Decodes `recording` to its end. Every update goes on `board`, and the
     /// decoder's end follows the last, however the decoder ends.
-    pub(super) fn spawn<'env, T: Transcriber>(
+    pub(super) fn spawn<'env, T: Recognizer>(
         scope: &'scope Scope<'scope, 'env>,
         mut operation: Operation<'scope, T>,
         recording: &'scope mut RecordingReader,
@@ -68,7 +68,7 @@ impl Drop for Done<'_> {
     }
 }
 
-fn decode<T: Transcriber>(
+fn decode<T: Recognizer>(
     operation: &mut Operation<'_, T>,
     recording: &mut RecordingReader,
     previews: bool,

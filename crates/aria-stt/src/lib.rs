@@ -1,4 +1,4 @@
-//! Local speech-to-text engines behind `aria-kit`'s transcription contract.
+//! Local speech-to-text engines behind `aria-kit`'s recognition contract.
 //!
 //! Each engine is a module behind a Cargo feature, and none is on by default:
 //! `moonshine`, `nemotron`, `parakeet`, `parakeet-mlx`, `whisper`, and

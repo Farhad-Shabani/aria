@@ -34,7 +34,7 @@ struct PaletteModel: Equatable {
         }
     }
     /// A running session pins its row first, where the selection starts.
-    var isListening = false {
+    var isSystemTranscriptionRunning = false {
         didSet {
             selectedIndex = 0
             menuIndex = nil
@@ -73,6 +73,7 @@ struct PaletteModel: Equatable {
     private var editFailure: EditFailure?
     /// New Prompt shows while the prompts are under the daemon's limit.
     var canAddPrompt = false
+    var assistantName: String?
     /// The steps left in Finish Setting Up Aria.
     private(set) var setupSteps = 0
     private var prompts: [PaletteCommand] = []
@@ -85,9 +86,9 @@ struct PaletteModel: Equatable {
     }
 
     /// Starts afresh each time the palette opens.
-    mutating func reset(prompts: [Aria_Daemon_V1_Prompt], isListening: Bool) {
+    mutating func reset(prompts: [Aria_Daemon_V1_Prompt], isSystemTranscriptionRunning: Bool) {
         self.prompts = Self.commands(for: prompts)
-        self.isListening = isListening
+        self.isSystemTranscriptionRunning = isSystemTranscriptionRunning
         page = .commands
         query = ""
         section = nil
@@ -210,7 +211,8 @@ struct PaletteModel: Equatable {
 
     /// Every command the commands page offers with no prompt input, before search.
     private var pageCommands: [PaletteCommand] {
-        [isListening ? .liveTranscript : .newTranscription, .newDictation, .newAsk] + prompts
+        [isSystemTranscriptionRunning ? .liveTranscript : .newTranscription, .newDictation, .ask(assistantName)]
+            + prompts
             + (canAddPrompt ? [.newPrompt] : []) + [.setUp, .settings] + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }
@@ -230,7 +232,7 @@ struct PaletteModel: Equatable {
         let entries = keepsHistory ? threaded(entries) : []
         guard section == nil else { return entries }
         guard !isShowingHistoryFirst else {
-            return (isListening ? [.command(.liveTranscript)] : []) + entries
+            return (isSystemTranscriptionRunning ? [.command(.liveTranscript)] : []) + entries
         }
         return commands.map(PaletteItem.command) + entries
     }

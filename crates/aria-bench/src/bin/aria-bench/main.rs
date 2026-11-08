@@ -17,7 +17,7 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(name = "aria-bench", about = "Benchmarks per model family")]
 enum Cli {
-    /// Word error rate per transcription backend.
+    /// Word error rate per recognition backend.
     Stt(stt::Cli),
     /// Analyze recorded STT results without loading a model.
     CompareStt(stt::CompareCli),

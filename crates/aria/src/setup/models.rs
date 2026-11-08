@@ -160,8 +160,8 @@ mod tests {
 
         assert_eq!(
             used_by(&file, aria_settings::config::backend::DEFAULT),
-            [Section::Stt, Section::Listen],
-            "listen runs dictation's engine when it streams"
+            [Section::Stt, Section::SystemTranscription],
+            "System transcription runs dictation's engine when it streams"
         );
         assert!(used_by(&file, "kokoro").is_empty());
         assert_eq!(used_by(&file, "speaker"), [Section::Speaker]);
@@ -172,12 +172,12 @@ mod tests {
     fn each_section_uses_the_model_of_its_engine() {
         let file = file(
             "[stt]\nbackend = \"parakeet\"\n\
-             [listen]\nbackend = \"moonshine\"\n\
+             [transcription]\nbackend = \"moonshine\"\n\
              [tts]\nbackend = \"qwen\"\n",
         );
 
         assert_eq!(used_by(&file, "parakeet"), [Section::Stt]);
-        assert_eq!(used_by(&file, "moonshine"), [Section::Listen]);
+        assert_eq!(used_by(&file, "moonshine"), [Section::SystemTranscription]);
         assert_eq!(used_by(&file, "qwen"), [Section::Tts]);
         assert!(used_by(&file, "whisper").is_empty());
     }
@@ -273,7 +273,7 @@ mod tests {
 
         assert!(matches!(
             refused("parakeet"),
-            SetupError::ModelInUse { sections, .. } if sections == [Section::Stt, Section::Listen]
+            SetupError::ModelInUse { sections, .. } if sections == [Section::Stt, Section::SystemTranscription]
         ));
         assert!(matches!(
             refused("speaker"),

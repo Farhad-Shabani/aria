@@ -40,8 +40,8 @@ on its own starts Aria.
 
 ## How text arrives
 
-Aria puts the transcript on the clipboard and on the selection, then presses
-**Shift+Insert** to paste. The transcript stays on the clipboard afterwards.
+Aria puts the text on the clipboard and on the selection, then presses
+**Shift+Insert** to paste. The text stays on the clipboard afterwards.
 
 Text arrives once you stop recording, not while you speak.
 

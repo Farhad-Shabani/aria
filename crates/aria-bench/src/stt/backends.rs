@@ -15,10 +15,10 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{Transcript, TranscriptUpdate};
 use aria_settings::config::backend;
 use aria_stt::{EngineConfig, moonshine, nemotron, parakeet, parakeet_mlx, whisper};
-use aria_voice::config::{TranscriptionConfig, TranscriptionDevice};
-use aria_voice::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcriber,
-    Transcription, TranscriptionAudio, TranscriptionError, Whole, check_model,
+use aria_voice::config::{SttConfig, SttDevice};
+use aria_voice::stt::{
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
+    Streaming, Transcription, TranscriptionError, Whole, check_model,
 };
 
 use super::Mode;
@@ -88,7 +88,7 @@ pub struct Skipped {
 /// Defers loading so a benchmark can keep one model resident at a time.
 pub(super) struct Selection {
     pub(super) descriptor: Descriptor,
-    config: TranscriptionConfig,
+    config: SttConfig,
     cadence: Option<Cadence>,
 }
 
@@ -98,7 +98,7 @@ impl Selection {
         let config = EngineConfig::try_from(self.config.clone())?;
         let input = config.input();
         let engine = Timed {
-            inner: load_transcriber(config, self.cadence)?,
+            inner: load_recognizer(config, self.cadence)?,
             timing: timing.clone(),
         };
         let decoding = self.decoding();
@@ -227,11 +227,11 @@ impl Composed {
 /// stepped replay it is also the clock: each finished decode releases the
 /// next stride of audio.
 pub(super) struct Timed {
-    inner: Box<dyn Transcriber>,
+    inner: Box<dyn Recognizer>,
     timing: Timing,
 }
 
-impl Transcriber for Timed {
+impl Recognizer for Timed {
     fn validate_language(
         &self,
         language: &Language,
@@ -240,14 +240,14 @@ impl Transcriber for Timed {
         self.inner.validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
         let started = Instant::now();
-        let heard = self.inner.transcribe_with(audio, language, cancel);
+        let heard = self.inner.recognize_with(audio, language, cancel);
         self.timing.decoded(started);
         heard
     }
@@ -312,10 +312,10 @@ impl ChunkStream for TimedStream {
     }
 }
 
-fn load_transcriber(
+fn load_recognizer(
     config: EngineConfig,
     cadence: Option<Cadence>,
-) -> Result<Box<dyn Transcriber>, TranscriptionError> {
+) -> Result<Box<dyn Recognizer>, TranscriptionError> {
     // With a cadence the sidecar streams natively. `EngineConfig` has no
     // option for that, so this loads the engine directly.
     if let (EngineConfig::ParakeetMlx(config), Some(cadence)) = (&config, cadence) {
@@ -359,7 +359,7 @@ pub(super) fn selections(
             Ok(_) => selected.push(selection),
             Err(failure) => {
                 let detail = aria_kit::primitives::error_chain(&failure);
-                tracing::warn!(%detail, "a transcription backend cannot be used");
+                tracing::warn!(%detail, "a recognition backend cannot be used");
                 skipped.push(Skipped {
                     backend: request.name(),
                     reason: failure.to_string(),
@@ -416,10 +416,10 @@ fn effective_cadence(
 impl Selection {
     fn decoding(&self) -> Decoding {
         match (self.cadence, &self.config) {
-            (Some(cadence), TranscriptionConfig::ParakeetMlx { .. }) => Decoding::ChunkedFile {
+            (Some(cadence), SttConfig::ParakeetMlx { .. }) => Decoding::ChunkedFile {
                 chunk_samples: cadence.stride_samples(),
             },
-            (_, TranscriptionConfig::Nemotron { .. }) => Decoding::Native {
+            (_, SttConfig::Nemotron { .. }) => Decoding::Native {
                 chunk_samples: nemotron::CHUNK_SAMPLES,
             },
             (Some(cadence), _) => Decoding::agreement(cadence),
@@ -433,14 +433,14 @@ impl Selection {
         provisional: bool,
     ) -> Result<super::analysis::Engine, aria_harness::artifact::ArtifactError> {
         let model = match &self.config {
-            TranscriptionConfig::Whisper { model } => Some(model),
-            TranscriptionConfig::WhisperCandle { model_directory }
-            | TranscriptionConfig::Parakeet {
+            SttConfig::Whisper { model } => Some(model),
+            SttConfig::WhisperCandle { model_directory }
+            | SttConfig::Parakeet {
                 model_directory, ..
             }
-            | TranscriptionConfig::Moonshine { model_directory }
-            | TranscriptionConfig::Nemotron { model_directory } => Some(model_directory),
-            TranscriptionConfig::ParakeetMlx { .. } => None,
+            | SttConfig::Moonshine { model_directory }
+            | SttConfig::Nemotron { model_directory } => Some(model_directory),
+            SttConfig::ParakeetMlx { .. } => None,
         };
         let model_sha256 = model
             .map(|model| aria_harness::artifact::fingerprint(model))
@@ -464,7 +464,7 @@ impl Selection {
                     device: Some(whisper::gpu_backend().unwrap_or("cpu")),
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::Whisper {
+                config: SttConfig::Whisper {
                     model: model.clone(),
                 },
                 cadence,
@@ -476,15 +476,15 @@ impl Selection {
                     device: None,
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::WhisperCandle {
+                config: SttConfig::WhisperCandle {
                     model_directory: model.clone(),
                 },
                 cadence: None,
             },
             BackendRequest::Parakeet { model, gpu } => {
                 let device = match gpu {
-                    true => TranscriptionDevice::Gpu,
-                    false => TranscriptionDevice::Cpu,
+                    true => SttDevice::Gpu,
+                    false => SttDevice::Cpu,
                 };
                 Self {
                     descriptor: Descriptor {
@@ -493,7 +493,7 @@ impl Selection {
                         device: Some(device_name(device)),
                         model_bytes: model_bytes(model),
                     },
-                    config: TranscriptionConfig::Parakeet {
+                    config: SttConfig::Parakeet {
                         model_directory: model.clone(),
                         device,
                     },
@@ -507,7 +507,7 @@ impl Selection {
                     device: None,
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::Moonshine {
+                config: SttConfig::Moonshine {
                     model_directory: model.clone(),
                 },
                 cadence,
@@ -519,7 +519,7 @@ impl Selection {
                     device: None,
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::Nemotron {
+                config: SttConfig::Nemotron {
                     model_directory: model.clone(),
                 },
                 cadence: None,
@@ -533,7 +533,7 @@ impl Selection {
                     // path this side of the boundary knows.
                     model_bytes: None,
                 },
-                config: TranscriptionConfig::ParakeetMlx {
+                config: SttConfig::ParakeetMlx {
                     model: model.clone(),
                     interpreter: interpreter.clone(),
                 },
@@ -543,10 +543,10 @@ impl Selection {
     }
 }
 
-fn device_name(device: TranscriptionDevice) -> &'static str {
+fn device_name(device: SttDevice) -> &'static str {
     match device {
-        TranscriptionDevice::Cpu => "cpu",
-        TranscriptionDevice::Gpu => "gpu",
+        SttDevice::Cpu => "cpu",
+        SttDevice::Gpu => "gpu",
     }
 }
 
@@ -585,7 +585,7 @@ mod tests {
         fail_second: bool,
     }
 
-    impl Transcriber for TraceEngine {
+    impl Recognizer for TraceEngine {
         fn validate_language(
             &self,
             _: &Language,
@@ -594,9 +594,9 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {

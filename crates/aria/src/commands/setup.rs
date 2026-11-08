@@ -17,12 +17,12 @@ pub(super) enum SetupCommand {
     /// Read one ApplyRequest, write ApplyResponses until the summary
     #[command(hide = true)]
     Apply,
-    /// Read one SetTranscriptionEngineRequest, write responses until the summary
+    /// Read one SetSttEngineRequest, write responses until the summary
     #[command(hide = true)]
-    SetTranscriptionEngine,
-    /// Read one SetTranscriptionRunsOnRequest, write responses until the summary
+    SetSttEngine,
+    /// Read one SetSttRunsOnRequest, write responses until the summary
     #[command(hide = true)]
-    SetTranscriptionRunsOn,
+    SetSttRunsOn,
 }
 
 pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
@@ -42,15 +42,15 @@ pub(super) fn run(yes: bool, skip_models: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
-    let summary = crate::setup::transcription_engine::set_transcription_engine(
+pub(super) fn set_stt_engine(engine: &str) -> anyhow::Result<()> {
+    let summary = crate::setup::stt_engine::set_stt_engine(
         engine,
         std::io::stdout().is_terminal(),
         &mut |_| Ok(()),
     )
-    .context("setting the speech engine did not finish")?;
+    .context("setting the speech model did not finish")?;
     println!();
-    println!("speech       {}", summary.engine);
+    println!("speech model {}", summary.engine);
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -58,15 +58,15 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn set_transcription_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
-    let summary = crate::setup::transcription_runs_on::set_transcription_runs_on(
+pub(super) fn set_stt_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
+    let summary = crate::setup::stt_runs_on::set_stt_runs_on(
         runs_on,
         std::io::stdout().is_terminal(),
         &mut |_| Ok(()),
     )
-    .context("setting where transcription runs did not finish")?;
+    .context("setting where speech recognition runs did not finish")?;
     println!();
-    println!("transcribes  {}", summary.runs_on.name());
+    println!("recognition  {}", summary.runs_on.name());
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -77,7 +77,7 @@ pub(super) fn set_transcription_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
 fn print_summary(summary: &crate::setup::Summary) {
     let selections = &summary.selections;
     println!();
-    println!("speech       {}", selections.stt);
+    println!("speech model {}", selections.stt);
     println!("voice        {}", selections.tts);
     println!("wake word    {}", on_off(selections.wake));
     println!("settings     {}", settings_write_message(&summary.settings));
@@ -117,11 +117,11 @@ pub(super) fn run_for_app(command: SetupCommand) -> anyhow::Result<()> {
     match command {
         SetupCommand::Inspect => crate::setup::wire::inspect(&mut stdout),
         SetupCommand::Apply => crate::setup::wire::apply(&mut std::io::stdin().lock(), &mut stdout),
-        SetupCommand::SetTranscriptionEngine => {
-            crate::setup::wire::set_transcription_engine(&mut std::io::stdin().lock(), &mut stdout)
+        SetupCommand::SetSttEngine => {
+            crate::setup::wire::set_stt_engine(&mut std::io::stdin().lock(), &mut stdout)
         }
-        SetupCommand::SetTranscriptionRunsOn => {
-            crate::setup::wire::set_transcription_runs_on(&mut std::io::stdin().lock(), &mut stdout)
+        SetupCommand::SetSttRunsOn => {
+            crate::setup::wire::set_stt_runs_on(&mut std::io::stdin().lock(), &mut stdout)
         }
     }
     .context("setup did not finish")
@@ -231,11 +231,11 @@ mod tests {
                 ..
             }
         ));
-        let cli = Cli::try_parse_from(["aria", "setup", "set-transcription-engine"]).unwrap();
+        let cli = Cli::try_parse_from(["aria", "setup", "set-stt-engine"]).unwrap();
         assert!(matches!(
             cli.command,
             Command::Setup {
-                command: Some(SetupCommand::SetTranscriptionEngine),
+                command: Some(SetupCommand::SetSttEngine),
                 ..
             }
         ));

@@ -1,7 +1,7 @@
 //! Diarization accuracy over synthesized ground-truth conversations.
 //!
 //! A TTS engine renders scripted multi-speaker conversations, the real
-//! listen stack (streaming STT, speech map, speaker tracker, gate) hears them
+//! system transcription stack (streaming STT, speech map, speaker tracker, gate) hears them
 //! replayed in realtime, and the tracker's and the voice track's labels are
 //! scored against the script.
 //!
@@ -37,7 +37,7 @@ use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
 use aria_kit::voice_activity::VoiceActivityError;
 use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 use aria_voice::speaker::{Diarizer, Label};
-use aria_voice::transcription::{StreamingEngine, Transcription, TranscriptionError};
+use aria_voice::stt::{StreamingEngine, Transcription, TranscriptionError};
 
 /// Longer than any scenario's realtime replay.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
@@ -48,10 +48,10 @@ pub(crate) const SAMPLE_RATE: f64 = CANONICAL_SAMPLE_RATE as f64;
 /// Where a recording's speech boundaries come from. Word spans stop at the
 /// last word, so the pauses inside a turn read as silence; the voice detector
 /// answers over the audio itself, and scores nine points better on AMI
-/// ES2004a for it. `Transcriber` stays available to measure the difference.
+/// ES2004a for it. `Recognizer` stays available to measure the difference.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Timeline {
-    Transcriber,
+    Recognizer,
     VoiceActivity,
 }
 
@@ -136,7 +136,7 @@ pub fn label_recording<Stt: StreamingEngine>(
 }
 
 /// The voice track's labels for each segment's audio, with gaps closed as
-/// listen closes them. The bench settles per segment where listen settles
+/// system transcription closes them. The bench settles per segment where system transcription settles
 /// per paragraph.
 fn settled(
     segmentation: &Path,
@@ -161,9 +161,9 @@ fn settled(
     Ok(labels)
 }
 
-/// Fills unnamed segments from their neighbours, as listen's transcript does.
+/// Fills unnamed segments from their neighbours, as system transcription's transcript does.
 fn settle_gaps(labels: &mut [Option<Label>], segments: &[replay::Segment]) {
-    let gap = (aria_voice::listen::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
+    let gap = (aria_voice::system_transcription::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
     aria_voice::speaker::settle(labels, |index| {
         segments
             .get(index + 1)
@@ -180,7 +180,7 @@ pub(crate) fn embedder(speaker: SpeakerConfig) -> Result<WeSpeaker, BenchError> 
 }
 
 /// The recording's speech, as the voice detector hears it rather than as the
-/// transcriber chopped it.
+/// recognizer chopped it.
 fn speech_regions(wav: &Path) -> Result<Vec<Range<u64>>, BenchError> {
     let samples = sibling::read(wav)?;
     Ok(sibling::speech(&samples)?
@@ -195,7 +195,7 @@ fn speech_regions(wav: &Path) -> Result<Vec<Range<u64>>, BenchError> {
 const NAMING_REACH: f64 = 1.0;
 
 /// Names each stretch of speech after the words spoken over it, or failing
-/// that after the closest words within `NAMING_REACH`. Speech the transcriber
+/// that after the closest words within `NAMING_REACH`. Speech the recognizer
 /// never put words to is otherwise dropped, and a dropped stretch costs the
 /// same as a misnamed one — so a nearby name beats no name.
 fn attribute(regions: Vec<Range<u64>>, turns: &[Turn]) -> Vec<Turn> {
@@ -344,7 +344,7 @@ pub struct ScenarioReport {
     /// segment was released.
     pub live_accuracy: f64,
     /// The same, for the labels a session without the voice track ends
-    /// with, relabeled per segment rather than per paragraph as listen does.
+    /// with, relabeled per segment rather than per paragraph as system transcription does.
     pub fallback_accuracy: f64,
     /// The same, for the labels the transcript ends with: the voice track's.
     pub final_accuracy: f64,
@@ -361,7 +361,7 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             speaker,
             segmentation,
         } = self;
-        // The same composition the listen daemon runs.
+        // The same composition the daemon runs for system transcription.
         let transcription = Transcription::streaming(stt);
         let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
@@ -429,7 +429,7 @@ pub enum BenchError {
     },
 
     // The bench exists to score labels, so an unlabeled run is a failure
-    // rather than the graceful degradation a listen session would take.
+    // rather than the graceful degradation a system transcription would take.
     #[error("the speaker model did not load, so the run would measure nothing")]
     SpeakerModel(#[source] SpeakerError),
 
@@ -452,7 +452,7 @@ pub enum BenchError {
         source: CaptureError,
     },
 
-    #[error("failed to transcribe the {scenario} scenario")]
+    #[error("failed to transcribe speech in the {scenario} scenario")]
     Transcription {
         scenario: &'static str,
         #[source]

@@ -10,7 +10,7 @@ use aria_kit::primitives::slot::Slot;
 use aria_kit::voice_activity::SileroVad;
 
 use super::super::capture::{CaptureBackend, PreparedCapture};
-use super::super::inference::client::RemoteTranscriber;
+use super::super::inference::client::RemoteRecognizer;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::DictationSetup;
 use aria_kit::audio::{CaptureError, RecordingReader, WakeWordControl, WakeWordMonitor};
@@ -18,16 +18,14 @@ use aria_platform::delivery::{DeliveryError, DeliveryFactory, PlatformTextDelive
 use aria_settings::Directory;
 use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
-use aria_voice::config::{
-    DictationConfig, PairingId, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
-};
+use aria_voice::config::{DictationConfig, PairingId, SpeakerConfig, SttBackend, SttConfig};
 use aria_voice::dictation::{
     Cleanup, ConfiguredLayers, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
     DictationExecutor, DictationPipeline, DictationPolicy, DictationPolicyError, DictationResult,
     DictationSettings, ExecutionControl, LlmCleanupError, Rewrites, SoundMuting, Transcribed,
 };
-use aria_voice::transcription::{
-    Language, Mode, Streaming, Transcriber, Transcription, TranscriptionError, Whole,
+use aria_voice::stt::{
+    Language, Mode, Recognizer, Streaming, Transcription, TranscriptionError, Whole,
 };
 use aria_voice::vocabulary::Vocabulary;
 
@@ -47,7 +45,7 @@ pub(super) type RuntimeExecutor = Box<dyn DictationExecutor>;
 /// so a transcript the app refuses is still on record.
 type Sinks = (History, Cursor<PlatformTextDelivery>);
 
-struct EngineExecution<T: Transcriber, M: Mode> {
+struct EngineExecution<T: Recognizer, M: Mode> {
     engine: &'static str,
     pipeline: DictationPipeline<
         Arc<CaptureBackend>,
@@ -68,7 +66,7 @@ struct EngineExecution<T: Transcriber, M: Mode> {
 
 impl<T, M> EngineExecution<T, M>
 where
-    T: Transcriber,
+    T: Recognizer,
     M: Mode,
 {
     /// Runs `work` against the current vocabulary and enrolled voices, with
@@ -93,7 +91,7 @@ where
 
 impl<T, M> DictationExecutor for EngineExecution<T, M>
 where
-    T: Transcriber,
+    T: Recognizer,
     M: Mode,
 {
     fn execute(
@@ -178,7 +176,7 @@ pub enum DictationInitializationError {
     #[error("failed to load the wake-word model")]
     WakeModel(#[source] aria_wake::Error),
 
-    #[error("failed to initialize transcription")]
+    #[error("failed to initialize speech recognition")]
     Transcription(#[source] TranscriptionError),
 
     #[error("failed to initialize text delivery")]
@@ -188,7 +186,7 @@ pub enum DictationInitializationError {
     Policy(#[source] DictationPolicyError),
 }
 
-/// Whether startup blocks on the model, so a daemon that cannot transcribe
+/// Whether startup blocks on the model, so a daemon that cannot recognize speech
 /// says so before it accepts a press instead of failing the press itself.
 #[derive(Clone, Copy)]
 pub(super) enum ModelLoading {
@@ -200,7 +198,7 @@ impl ModelLoading {
     fn load(
         self,
         engine: EngineConfig,
-    ) -> Result<ModelLoad<Box<dyn Transcriber>>, TranscriptionError> {
+    ) -> Result<ModelLoad<Box<dyn Recognizer>>, TranscriptionError> {
         match self {
             Self::Eager => Ok(ModelLoad::loaded(load_engine(
                 engine,
@@ -216,16 +214,16 @@ impl ModelLoading {
 fn load_engine(
     engine: EngineConfig,
     cancel: &CancelToken,
-) -> Result<Box<dyn Transcriber>, TranscriptionError> {
+) -> Result<Box<dyn Recognizer>, TranscriptionError> {
     let name = engine.name();
     let started = Instant::now();
-    let transcriber = engine.load(cancel)?;
+    let recognizer = engine.load(cancel)?;
     tracing::info!(
         engine = name,
         load_ms = started.elapsed().as_millis(),
-        "transcription model loaded"
+        "speech model loaded"
     );
-    Ok(transcriber)
+    Ok(recognizer)
 }
 
 /// Type-erased so capture can open between selecting the engine and building
@@ -237,7 +235,7 @@ struct SelectedEngine {
 }
 
 impl SelectedEngine {
-    fn new<T: Transcriber, M: Mode>(
+    fn new<T: Recognizer, M: Mode>(
         name: &'static str,
         transcription: Transcription<T, M>,
         preload: Option<Preload>,
@@ -251,13 +249,13 @@ impl SelectedEngine {
 }
 
 fn select_engine(
-    backend: TranscriptionBackend,
+    backend: SttBackend,
     loading: ModelLoading,
     home: &Path,
 ) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
-        TranscriptionBackend::Local(config) => select_local(config, loading),
-        TranscriptionBackend::Server(pairing) => select_remote(home, pairing.as_ref()),
+        SttBackend::Local(config) => select_local(config, loading),
+        SttBackend::Server(pairing) => select_remote(home, pairing.as_ref()),
     }
 }
 
@@ -267,7 +265,7 @@ fn select_remote(
     home: &Path,
     pairing: Option<&PairingId>,
 ) -> Result<SelectedEngine, TranscriptionError> {
-    let remote = RemoteTranscriber::open_matching(home, pairing)?;
+    let remote = RemoteRecognizer::open_matching(home, pairing)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
         Transcription::<_, Streaming>::delegated(remote),
@@ -276,7 +274,7 @@ fn select_remote(
 }
 
 fn select_local(
-    config: TranscriptionConfig,
+    config: SttConfig,
     loading: ModelLoading,
 ) -> Result<SelectedEngine, TranscriptionError> {
     let engine = EngineConfig::try_from(config)?;
@@ -313,7 +311,7 @@ impl ExecutionParts {
         transcription: Transcription<T, M>,
     ) -> RuntimeExecutor
     where
-        T: Transcriber,
+        T: Recognizer,
         M: Mode,
     {
         let (diarizer, segmenter) = speaker::tracking_models(&self.speaker);
@@ -339,7 +337,7 @@ impl ExecutionParts {
 
 pub(super) struct DictationEngine {
     pub(super) name: &'static str,
-    pub(super) backend: TranscriptionBackend,
+    pub(super) backend: SttBackend,
     executor: RuntimeExecutor,
     preload: Option<Preload>,
 }
@@ -378,7 +376,7 @@ impl EngineSlot {
 
     #[cfg(test)]
     pub(super) fn of(name: &'static str, executor: RuntimeExecutor) -> Self {
-        let backend = TranscriptionBackend::Local(TranscriptionConfig::Moonshine {
+        let backend = SttBackend::Local(SttConfig::Moonshine {
             model_directory: PathBuf::from("/models"),
         });
         Self::new(DictationEngine::built(name, backend, executor))
@@ -389,7 +387,7 @@ impl EngineSlot {
 impl DictationEngine {
     pub(super) fn built(
         name: &'static str,
-        backend: TranscriptionBackend,
+        backend: SttBackend,
         executor: RuntimeExecutor,
     ) -> Self {
         Self {
@@ -452,12 +450,12 @@ impl DictationExecutor for EngineSlot {
 
 /// Shared, so an engine that can't be built tries again on each press.
 pub(super) type BuildEngine =
-    Arc<dyn Fn(&TranscriptionBackend) -> Result<DictationEngine, DictationError> + Send + Sync>;
+    Arc<dyn Fn(&SttBackend) -> Result<DictationEngine, DictationError> + Send + Sync>;
 
 impl DictationEngine {
     /// Stands in for an engine that can't be built, so the slot never keeps
     /// an engine the settings no longer name, such as a server turned off.
-    pub(super) fn unusable(backend: TranscriptionBackend, build: BuildEngine) -> Self {
+    pub(super) fn unusable(backend: SttBackend, build: BuildEngine) -> Self {
         Self {
             name: backend.backend_name(),
             backend: backend.clone(),
@@ -482,7 +480,7 @@ impl DictationEngine {
 /// transient failure costs one failed press, and a working engine isn't
 /// rebuilt each press.
 struct Unusable {
-    backend: TranscriptionBackend,
+    backend: SttBackend,
     build: BuildEngine,
     built: Slot<DictationEngine>,
 }
@@ -550,10 +548,7 @@ pub(super) struct EngineParts {
 }
 
 impl EngineParts {
-    pub(super) fn engine(
-        &self,
-        backend: &TranscriptionBackend,
-    ) -> Result<DictationEngine, DictationError> {
+    pub(super) fn engine(&self, backend: &SttBackend) -> Result<DictationEngine, DictationError> {
         let selected = select_engine(backend.clone(), ModelLoading::OnFirstUse, &self.home)
             .map_err(DictationError::Transcription)?;
         let parts = ExecutionParts {
@@ -603,7 +598,7 @@ pub(super) fn build_dictation(
         dictation:
             DictationConfig {
                 capture,
-                transcription,
+                stt,
                 dictation_timeouts: timeouts,
                 cleanup_llm: _,
             },
@@ -618,9 +613,9 @@ pub(super) fn build_dictation(
     let policy =
         DictationPolicy::new(timeouts.overall()).map_err(DictationInitializationError::Policy)?;
     let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording())?;
-    let backend = transcription.clone();
-    let engine = select_engine(transcription, loading, home)
-        .map_err(DictationInitializationError::Transcription)?;
+    let backend = stt.clone();
+    let engine =
+        select_engine(stt, loading, home).map_err(DictationInitializationError::Transcription)?;
     let (capture, wake) = capture
         .open()
         .map_err(DictationInitializationError::Capture)?;
@@ -666,7 +661,7 @@ pub(super) fn build_dictation(
 /// What a history retry runs on. A named server `engine` must match what the
 /// server runs.
 pub(super) enum RetryTarget<'a> {
-    Local(TranscriptionConfig),
+    Local(SttConfig),
     Server { engine: Option<&'a str> },
 }
 
@@ -703,7 +698,7 @@ pub(super) fn transcribe_retry(
 }
 
 /// A retry decodes the stored recording once, so every engine runs whole.
-type RetryTranscription = Transcription<Box<dyn Transcriber>, Whole>;
+type RetryTranscription = Transcription<Box<dyn Recognizer>, Whole>;
 
 fn retry_transcription(
     home: &Path,
@@ -712,11 +707,11 @@ fn retry_transcription(
 ) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
     match target {
         RetryTarget::Server { engine } => {
-            let mut remote = RemoteTranscriber::open(home)?;
+            let mut remote = RemoteRecognizer::open(home)?;
             if let Some(engine) = engine {
                 remote = remote.require_engine(engine)?;
             }
-            let remote: Box<dyn Transcriber> = Box::new(remote);
+            let remote: Box<dyn Recognizer> = Box::new(remote);
             Ok((
                 Transcription::delegated(remote),
                 aria_settings::config::backend::SERVER,
@@ -744,7 +739,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let select = |pairing| {
             select_engine(
-                TranscriptionBackend::Server(pairing),
+                SttBackend::Server(pairing),
                 ModelLoading::OnFirstUse,
                 home.path(),
             )
@@ -803,8 +798,7 @@ mod tests {
             );
             let mut dictation =
                 DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
-            dictation.transcription =
-                TranscriptionBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
+            dictation.stt = SttBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
                 pace: ReplayPace::Immediate,
@@ -881,7 +875,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let home_dir = home.path().to_owned();
         let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
-        config.transcription = TranscriptionBackend::Local(TranscriptionConfig::Whisper {
+        config.stt = SttBackend::Local(SttConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
         config.capture = CaptureConfig::WavFile {
@@ -959,7 +953,7 @@ mod tests {
             ),
             None,
         );
-        let TranscriptionBackend::Local(engine) = config.transcription.clone() else {
+        let SttBackend::Local(engine) = config.stt.clone() else {
             panic!("the default backend is local");
         };
         let target = RetryTarget::Local(engine);

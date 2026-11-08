@@ -1,6 +1,6 @@
-//! One ask, start to finish: the assistant named by the request, the
+//! One chat, start to finish: the assistant named by the request, the
 //! conversation it continues, and the reply's optional delivery. Ordering
-//! between asks is the actor's job; here only the record file is shared.
+//! between chats is the actor's job; here only the record file is shared.
 
 use super::super::config::{load_chat, load_memory};
 use super::super::context::Context;
@@ -9,9 +9,9 @@ use super::super::subscriptions::Subscriptions;
 use super::error::{ChatError, ResolveError};
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
-    AskTarget, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
-    CODEX_BINARY, ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind,
-    ChatSubscribers, ClaudeCodeAssistant, CodexAssistant, DeliverCall, Projects, PromptCall,
+    Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY, CODEX_BINARY,
+    ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers,
+    ChatTarget, ClaudeCodeAssistant, CodexAssistant, DeliverCall, Projects, PromptCall,
     PromptChoice, PromptInput, PromptInstructions, PromptRequest, PromptRun, Session, SessionSpec,
     SessionStore, Step, Ticket, TurnSink, read_instructions,
 };
@@ -66,21 +66,21 @@ pub(in crate::daemon) struct ChatRuntime {
     sessions: SessionStore,
     #[cfg(test)]
     pub(in crate::daemon) assistant_overrides: Option<tests::AssistantOverrides>,
-    /// Read per ask, so a reply never types into an app with Aria off.
+    /// Read per chat, so a reply never types into an app with Aria off.
     settings: Arc<SettingsStore>,
-    /// Read per ask, so an edit applies to the next ask.
+    /// Read per chat, so an edit applies to the next chat.
     cache: Arc<SettingsCache>,
     /// Nudges the memory backlog after a turn worth remembering. `None`
     /// in a daemon that runs no backlog.
     memory_wake: Option<mpsc::Sender<()>>,
     delivery: DeliveryFactory,
     typing: TypingTurns,
-    /// Where asks and prompt results are saved, while history is on.
+    /// Where chats and prompt results are saved, while history is on.
     history: Arc<HistoryStore>,
 }
 
 impl ChatRuntime {
-    /// Resolves the assistant's settings per ask.
+    /// Resolves the assistant's settings per chat.
     pub(in crate::daemon) fn new(
         context: &Context<'_>,
         subscriptions: Arc<Subscriptions>,
@@ -318,7 +318,7 @@ impl ChatRuntime {
         })
     }
 
-    /// Ends an ask that never ran, the way a cancelled run ends.
+    /// Ends a chat that never ran, the way a cancelled run ends.
     pub(in crate::daemon) fn cancel_unstarted(&self, ticket: Ticket, assistant_id: AssistantId) {
         self.emitter.emit(ChatStage {
             ticket,
@@ -327,11 +327,11 @@ impl ChatRuntime {
         });
     }
 
-    /// Where an ask goes for a caller with no working directory: the
+    /// Where a chat goes for a caller with no working directory: the
     /// project in focus, else the one the settings pin. Reading the focus
     /// file and scanning the roots touches the disk, so callers run it off
     /// the reactor.
-    pub(in crate::daemon) fn resolve_target(&self) -> Result<AskTarget, ResolveError> {
+    pub(in crate::daemon) fn resolve_target(&self) -> Result<ChatTarget, ResolveError> {
         let snapshot = self.settings.snapshot().map_err(ResolveError::Settings)?;
         let assistant_id = snapshot.settings.resolve_assistant_id();
         let config = self.chat_config();
@@ -351,7 +351,7 @@ impl ChatRuntime {
                 "the assistant's working directory is not a directory",
             )));
         }
-        Ok(AskTarget {
+        Ok(ChatTarget {
             workdir,
             assistant_id,
         })
@@ -370,7 +370,7 @@ impl ChatRuntime {
     ) -> Result<ChatStageKind, ChatError> {
         let config = self.chat_config();
         // Read as the run starts rather than at admission, so turning history
-        // off while the ask waited keeps its reply out of history.
+        // off while the chat waited keeps its reply out of history.
         let saves_history = self
             .settings
             .snapshot()
@@ -438,7 +438,7 @@ impl ChatRuntime {
                 .and_then(Result::err)
                 .map(|code| RpcFailure::new(code, "the reply couldn't be typed"));
             // The question as asked, before any memory was added to it.
-            self.history.save_ask(
+            self.history.save_chat(
                 &request.text,
                 &text,
                 &request.workdir,
@@ -460,7 +460,7 @@ impl ChatRuntime {
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
         let config = self.chat_config();
-        // Read as the run starts, as an ask's is.
+        // Read as the run starts, as a chat's is.
         let saves_result = request.entry.is_some()
             && self
                 .settings
@@ -581,7 +581,7 @@ impl ChatRuntime {
         cancel: &CancelToken,
     ) -> Result<String, ChatError> {
         let key = request.key();
-        // Forgetting happens before the ask, so a failed one cannot
+        // Forgetting happens before the chat, so a failed one cannot
         // resurrect the session the user asked to drop.
         let resume = if request.new {
             self.sessions.forget(&key)?;
@@ -599,7 +599,7 @@ impl ChatRuntime {
             .prompt(prompt, recorder, cancel, timeout)
             .map_err(|error| diagnosed(assistant, request.assistant_id, error, cancel));
         // The assistant may have deleted the session it was asked to resume.
-        // Kept, its id would fail every later ask on this key.
+        // Kept, its id would fail every later chat on this key.
         if resume.is_some() && matches!(prompted, Err(AssistantError::Failed(_))) {
             self.sessions.forget(&key)?;
         }
@@ -622,7 +622,7 @@ impl ChatRuntime {
     /// can be the one it judged for.
     fn remember(&self, memory: &MemoryConfig, request: &ChatRequest) {
         if !self.owner_enrolled() {
-            tracing::warn!("no owner is enrolled; the ask is not remembered");
+            tracing::warn!("no owner is enrolled; the chat is not remembered");
             return;
         }
         let session = request.key().to_string();
@@ -781,7 +781,7 @@ impl Delivery {
     }
 }
 
-/// Typing takes turns across asks, prompt runs and saved text, so two texts
+/// Typing takes turns across chats, prompt runs and saved text, so two texts
 /// never interleave in one app. Only the typing holds a turn, never the
 /// assistant's run before it.
 ///
@@ -1103,7 +1103,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn an_ask_into_a_missing_workdir_is_refused_as_invalid() {
+    fn a_chat_into_a_missing_workdir_is_refused_as_invalid() {
         let home = tempfile::tempdir().unwrap();
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         let missing = home.path().join("gone");
@@ -1120,7 +1120,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn ask_models_are_bound_at_admission_and_request_overrides_win() {
+    fn chat_models_are_bound_at_admission_and_request_overrides_win() {
         use aria_settings::SettingsPatch;
         let home = tempfile::tempdir().unwrap();
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
@@ -1166,7 +1166,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn prompts_and_ask_targets_share_the_saved_assistant() {
+    fn prompts_and_chat_targets_share_the_saved_assistant() {
         use aria_settings::{Prompt, PromptId, Prompts, SettingsPatch};
 
         let home = tempfile::tempdir().unwrap();
@@ -1480,7 +1480,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn memory_on_shows_the_profile_and_keeps_a_typed_ask_out() {
+    fn memory_on_shows_the_profile_and_keeps_a_typed_chat_out() {
         let home = home_with_memory();
         enroll_owner(home.path());
         let log = Arc::new(Mutex::new(Log::default()));
@@ -1498,7 +1498,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn an_ask_in_the_owners_voice_is_kept_and_wakes_the_backlog() {
+    fn a_chat_in_the_owners_voice_is_kept_and_wakes_the_backlog() {
         let home = home_with_memory();
         enroll_owner(home.path());
         let log = Arc::new(Mutex::new(Log::default()));
@@ -1530,11 +1530,11 @@ pub(super) mod tests {
         assert!(woken.try_recv().is_err());
     }
 
-    fn asks(runtime: &ChatRuntime) -> Vec<HistoryEntry> {
+    fn chats(runtime: &ChatRuntime) -> Vec<HistoryEntry> {
         runtime
             .history
             .list(aria_voice::history::HistoryQuery {
-                section: Some(aria_voice::history::HistorySection::Ask),
+                section: Some(aria_voice::history::HistorySection::Chat),
                 query: String::new(),
                 before_id: None,
                 limit: 100,
@@ -1544,7 +1544,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_replied_ask_is_saved_with_the_question_as_asked_and_its_reply() {
+    fn a_replied_chat_is_saved_with_the_question_as_asked_and_its_reply() {
         let home = home_with_memory();
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
@@ -1556,17 +1556,17 @@ pub(super) mod tests {
             request("When?", home.path(), false),
         ));
 
-        let saved = asks(&runtime);
+        let saved = chats(&runtime);
         let [saved] = saved.as_slice() else {
-            panic!("one ask, got {}", saved.len());
+            panic!("one chat, got {}", saved.len());
         };
         assert_eq!(saved.text, "When?", "the memory profile stays out");
-        assert_eq!(saved.content, HistoryContent::Ask { reply });
+        assert_eq!(saved.content, HistoryContent::Chat { reply });
         assert_eq!(saved.project.as_deref(), Some(home.path()));
     }
 
     #[test]
-    fn an_ask_with_history_off_or_that_failed_is_not_saved() {
+    fn a_chat_with_history_off_or_that_failed_is_not_saved() {
         let home = tempfile::tempdir().expect("a temp home");
         std::fs::create_dir_all(home.path().join(".aria")).expect("the settings folder");
         std::fs::write(
@@ -1576,7 +1576,7 @@ pub(super) mod tests {
         .expect("the settings file");
         let (off, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         replied(run(&off, &events, 1, request("hi", home.path(), false)));
-        assert!(asks(&off).is_empty());
+        assert!(chats(&off).is_empty());
 
         let home = tempfile::tempdir().expect("a temp home");
         let (failing, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
@@ -1584,7 +1584,7 @@ pub(super) mod tests {
         });
         let kind = run(&failing, &events, 1, request("hi", home.path(), false));
         assert!(matches!(kind, ChatStageKind::Failed { .. }));
-        assert!(asks(&failing).is_empty());
+        assert!(chats(&failing).is_empty());
     }
 
     fn prompt_file(home: &Path, text: &str) -> PathBuf {
@@ -1594,14 +1594,14 @@ pub(super) mod tests {
     }
 
     fn saved_entry(runtime: &ChatRuntime, home: &Path, reply: &str) -> u64 {
-        runtime.history.save_ask(
+        runtime.history.save_chat(
             "When?",
             reply,
             home,
             elapsed_ms((SystemTime::now(), Instant::now())),
             None,
         );
-        asks(runtime)[0].id
+        chats(runtime)[0].id
     }
 
     /// Stores `file` as the prompt `name` and admits a run of it on `entry`.
@@ -1723,14 +1723,14 @@ pub(super) mod tests {
     fn a_prompt_cannot_run_on_a_blank_entry() {
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        runtime.history.save_ask(
+        runtime.history.save_chat(
             "When?",
             " \n",
             home.path(),
             elapsed_ms((SystemTime::now(), Instant::now())),
             None,
         );
-        let entry = asks(&runtime)[0].id;
+        let entry = chats(&runtime)[0].id;
 
         let error = entry_request(&runtime, entry, "Polish", home.path().join("polish.md"))
             .expect_err("the entry has no text");
@@ -1757,7 +1757,7 @@ pub(super) mod tests {
         let entry = runtime
             .history
             .list(aria_voice::history::HistoryQuery {
-                section: Some(aria_voice::history::HistorySection::Listen),
+                section: Some(aria_voice::history::HistorySection::SystemTranscription),
                 query: String::new(),
                 before_id: None,
                 limit: 1,
@@ -1957,7 +1957,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn an_explicit_ask_assistant_does_not_change_the_shared_choice() {
+    fn an_explicit_chat_assistant_does_not_change_the_shared_choice() {
         let directory = tempfile::tempdir().unwrap();
         let log = Arc::new(Mutex::new(Log::default()));
         let assistant_factory = move |assistant_id| {
@@ -1984,11 +1984,11 @@ pub(super) mod tests {
         assert_eq!(replied(reply), "reply 1");
         let snapshot = runtime.settings.snapshot().unwrap();
         assert_eq!(snapshot.settings.assistant_id, Some(AssistantId::Codex));
-        assert_eq!(snapshot.revision, written, "the ask writes no setting");
+        assert_eq!(snapshot.revision, written, "the chat writes no setting");
     }
 
     #[test]
-    fn an_unstarted_ask_ends_as_cancelled_under_its_ticket() {
+    fn an_unstarted_chat_ends_as_cancelled_under_its_ticket() {
         let directory = tempfile::tempdir().expect("test directory");
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, events) = runtime_with(directory.path(), logging_assistants(&log));
@@ -2066,7 +2066,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn forgetting_drops_only_the_asked_conversation_even_when_the_ask_fails() {
+    fn forgetting_drops_only_the_asked_conversation_even_when_the_chat_fails() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let elsewhere = tempfile::tempdir().expect("another directory");
@@ -2173,7 +2173,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_cancelled_ask_never_starts() {
+    fn a_cancelled_chat_never_starts() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let log = Arc::new(Mutex::new(Log::default()));
@@ -2340,7 +2340,7 @@ pub(super) mod tests {
         }
     }
 
-    /// An assistant that answers only when told to, so a test can hold an ask
+    /// An assistant that answers only when told to, so a test can hold a chat
     /// open and watch what the actor does with the next one.
     pub(in crate::daemon::chat) struct ParkedAssistant {
         pub(in crate::daemon::chat) started: Sender<u64>,

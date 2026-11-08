@@ -7,8 +7,8 @@ use aria_harness::{
     inputs, stats,
 };
 use aria_settings::config::backend;
-use aria_voice::config::{TranscriptionConfig, TranscriptionDevice};
-use aria_voice::transcription::{Cadence, Stream};
+use aria_voice::config::{SttConfig, SttDevice};
+use aria_voice::stt::{Cadence, Stream};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const MOONSHINE_MODEL_ENV: &str = "ARIA_TEST_MOONSHINE_MODEL";
@@ -24,7 +24,7 @@ pub(crate) const DEFAULT_RUNS: u32 = 10;
 
 pub(crate) struct BenchEngine {
     pub(crate) backend: &'static str,
-    pub(crate) config: TranscriptionConfig,
+    pub(crate) config: SttConfig,
 }
 
 pub(crate) fn discover() -> anyhow::Result<Vec<BenchEngine>> {
@@ -50,34 +50,34 @@ pub(crate) fn discover() -> anyhow::Result<Vec<BenchEngine>> {
     if let Some(model) = path(backend::WHISPER, WHISPER_MODEL_ENV)? {
         engines.push(BenchEngine {
             backend: backend::WHISPER,
-            config: TranscriptionConfig::Whisper { model },
+            config: SttConfig::Whisper { model },
         });
     }
     if let Some(model_directory) = path(backend::WHISPER_CANDLE, WHISPER_CANDLE_MODEL_ENV)? {
         engines.push(BenchEngine {
             backend: backend::WHISPER_CANDLE,
-            config: TranscriptionConfig::WhisperCandle { model_directory },
+            config: SttConfig::WhisperCandle { model_directory },
         });
     }
     if let Some(model_directory) = path(backend::PARAKEET, PARAKEET_MODEL_ENV)? {
         engines.push(BenchEngine {
             backend: backend::PARAKEET,
-            config: TranscriptionConfig::Parakeet {
+            config: SttConfig::Parakeet {
                 model_directory,
-                device: TranscriptionDevice::Cpu,
+                device: SttDevice::Cpu,
             },
         });
     }
     if let Some(model_directory) = path(backend::MOONSHINE, MOONSHINE_MODEL_ENV)? {
         engines.push(BenchEngine {
             backend: backend::MOONSHINE,
-            config: TranscriptionConfig::Moonshine { model_directory },
+            config: SttConfig::Moonshine { model_directory },
         });
     }
     if let Some(model_directory) = path(backend::NEMOTRON, NEMOTRON_MODEL_ENV)? {
         engines.push(BenchEngine {
             backend: backend::NEMOTRON,
-            config: TranscriptionConfig::Nemotron { model_directory },
+            config: SttConfig::Nemotron { model_directory },
         });
     }
     if wanted(backend::PARAKEET_MLX)
@@ -112,7 +112,7 @@ fn parakeet_mlx() -> anyhow::Result<Option<BenchEngine>> {
     }
     Ok(Some(BenchEngine {
         backend: backend::PARAKEET_MLX,
-        config: TranscriptionConfig::ParakeetMlx {
+        config: SttConfig::ParakeetMlx {
             model: repository,
             interpreter,
         },
@@ -339,22 +339,22 @@ pub(crate) struct Observation {
 impl Observation {
     pub(crate) fn new(engine: &BenchEngine, mode: &str) -> anyhow::Result<Self> {
         let model_sha256 = match &engine.config {
-            TranscriptionConfig::Whisper { model } => Some(artifact::fingerprint(model)?),
-            TranscriptionConfig::WhisperCandle { model_directory }
-            | TranscriptionConfig::Moonshine { model_directory }
-            | TranscriptionConfig::Nemotron { model_directory }
-            | TranscriptionConfig::Parakeet {
+            SttConfig::Whisper { model } => Some(artifact::fingerprint(model)?),
+            SttConfig::WhisperCandle { model_directory }
+            | SttConfig::Moonshine { model_directory }
+            | SttConfig::Nemotron { model_directory }
+            | SttConfig::Parakeet {
                 model_directory, ..
             } => Some(artifact::fingerprint(model_directory)?),
-            TranscriptionConfig::ParakeetMlx { .. } => None,
+            SttConfig::ParakeetMlx { .. } => None,
         };
         Ok(Self {
             backend: engine.backend.into(),
             configuration: match &engine.config {
-                TranscriptionConfig::Parakeet { device, .. } => {
+                SttConfig::Parakeet { device, .. } => {
                     format!("{mode}; device={device:?}")
                 }
-                TranscriptionConfig::ParakeetMlx { model, interpreter } => format!(
+                SttConfig::ParakeetMlx { model, interpreter } => format!(
                     "{mode}; repository={model}; interpreter_sha256={}",
                     artifact::fingerprint(interpreter)?
                 ),

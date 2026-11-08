@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use aria_kit::synthesis::{SpeakingRate, SynthesisError, Voice};
-use aria_voice::transcription::TranscriptionError;
+use aria_voice::stt::TranscriptionError;
 use tempfile::TempDir;
 
 pub use backends::{EngineRequest, Skipped};

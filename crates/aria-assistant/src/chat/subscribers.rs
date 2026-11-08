@@ -16,7 +16,7 @@ impl ChatSubscribers {
     }
 }
 
-/// Distinct from dictation's end cue, so an ask and a press tell apart by ear.
+/// Distinct from dictation's end cue, so a chat and a dictation sound different.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sound_for(kind: &ChatStageKind) -> Option<String> {
     use aria_platform::feedback::SYSTEM_SOUNDS;

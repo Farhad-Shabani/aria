@@ -10,9 +10,9 @@ use std::time::Duration;
 use aria_kit::cancel::CancelToken;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
-use aria_voice::config::TranscriptionBackend;
+use aria_voice::config::SttBackend;
 use aria_voice::microphone::Gate;
-use aria_voice::transcription::TranscriptionError;
+use aria_voice::stt::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
 use super::super::inference::pairing_id;
@@ -91,15 +91,15 @@ impl EngineFollower {
 
     fn follow(&self, stop: &CancelToken) {
         let pairing = pairing_id(&self.home);
-        let target = TranscriptionBackend::load(&self.cache.effective(), &self.home, pairing);
+        let target = SttBackend::load(&self.cache.effective(), &self.home, pairing);
         settle(&self.slot, &self.microphone, target, &self.build, stop);
     }
 
     /// Whether the server engine runs on a pairing that no longer stands.
     fn moved(&self) -> bool {
         match &self.slot.current().backend {
-            TranscriptionBackend::Server(pairing) => *pairing != pairing_id(&self.home),
-            TranscriptionBackend::Local(_) => false,
+            SttBackend::Server(pairing) => *pairing != pairing_id(&self.home),
+            SttBackend::Local(_) => false,
         }
     }
 }
@@ -116,7 +116,7 @@ enum Settled {
 fn settle(
     slot: &EngineSlot,
     microphone: &Arc<Gate>,
-    target: TranscriptionBackend,
+    target: SttBackend,
     build: &BuildEngine,
     stop: &CancelToken,
 ) -> Settled {
@@ -172,13 +172,13 @@ mod tests {
 
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
-    use aria_voice::config::{PairingId, TranscriptionConfig};
+    use aria_voice::config::{PairingId, SttConfig};
     use aria_voice::dictation::{
         Cleanup, DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
         DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
         ExecutionControl, StopMode, Transcribed,
     };
-    use aria_voice::transcription::{Language, TranscriptionError};
+    use aria_voice::stt::{Language, TranscriptionError};
 
     use super::super::assembly::RuntimeExecutor;
     use super::super::model_load::Preload;
@@ -240,14 +240,14 @@ mod tests {
         (executor, dropped)
     }
 
-    fn local(directory: &str) -> TranscriptionBackend {
-        TranscriptionBackend::Local(TranscriptionConfig::Moonshine {
+    fn local(directory: &str) -> SttBackend {
+        SttBackend::Local(SttConfig::Moonshine {
             model_directory: Path::new(directory).to_path_buf(),
         })
     }
 
-    fn server(id: u8) -> TranscriptionBackend {
-        TranscriptionBackend::Server(Some(PairingId::new([id; 32])))
+    fn server(id: u8) -> SttBackend {
+        SttBackend::Server(Some(PairingId::new([id; 32])))
     }
 
     fn settings() -> DictationSettings {
@@ -273,7 +273,7 @@ mod tests {
     ) -> (BuildEngine, Arc<AtomicBool>) {
         let preloaded_after_drop = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&preloaded_after_drop);
-        let build: BuildEngine = Arc::new(move |backend: &TranscriptionBackend| {
+        let build: BuildEngine = Arc::new(move |backend: &SttBackend| {
             let (executor, _) = named(name);
             let old_dropped = Arc::clone(&old_dropped);
             let seen = Arc::clone(&seen);
@@ -305,7 +305,7 @@ mod tests {
         let cache = Arc::new(SettingsCache::open(path, home.path().to_path_buf()).unwrap());
         let (old, _) = named("old");
         let slot = EngineSlot::of("old", old);
-        let build: BuildEngine = Arc::new(|backend: &TranscriptionBackend| {
+        let build: BuildEngine = Arc::new(|backend: &SttBackend| {
             let (executor, _) = named(backend.backend_name());
             Ok(DictationEngine::built(
                 backend.backend_name(),
@@ -349,7 +349,7 @@ mod tests {
         let slot = EngineSlot::of("local", old);
         let builds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&builds);
-        let build: BuildEngine = Arc::new(move |backend: &TranscriptionBackend| {
+        let build: BuildEngine = Arc::new(move |backend: &SttBackend| {
             let name =
                 ["first pairing", "second pairing"][counted.fetch_add(1, Ordering::SeqCst).min(1)];
             let (executor, _) = named(name);
@@ -423,7 +423,7 @@ mod tests {
     fn a_server_turned_off_stops_receiving_audio_even_when_the_new_model_fails() {
         let (remote, remote_dropped) = named("server");
         let slot = EngineSlot::new(DictationEngine::built("server", server(1), remote));
-        let failing: BuildEngine = Arc::new(|_: &TranscriptionBackend| {
+        let failing: BuildEngine = Arc::new(|_: &SttBackend| {
             Err(DictationError::Transcription(
                 TranscriptionError::NoNativeStream,
             ))
@@ -504,7 +504,7 @@ mod tests {
     fn an_unusable_engine_keeps_the_first_build_that_succeeds() {
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
-        let build: BuildEngine = Arc::new(move |backend: &TranscriptionBackend| {
+        let build: BuildEngine = Arc::new(move |backend: &SttBackend| {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Err(DictationError::Transcription(
                     TranscriptionError::NoNativeStream,

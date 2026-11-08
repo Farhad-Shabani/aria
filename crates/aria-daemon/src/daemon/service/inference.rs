@@ -22,7 +22,7 @@ use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 const GET_INFO: &str = "InferenceService/GetInfo";
-const TRANSCRIBE: &str = "InferenceService/Transcribe";
+const RECOGNIZE: &str = "InferenceService/Recognize";
 const PAIR: &str = "InferencePairingService/Pair";
 const INVITE: &str = "InferenceAdminService/Invite";
 const REVOKE: &str = "InferenceAdminService/Revoke";
@@ -49,7 +49,7 @@ impl InferenceRpc {
 
 #[tonic::async_trait]
 impl wire::inference_service_server::InferenceService for InferenceRpc {
-    type TranscribeStream =
+    type RecognizeStream =
         Pin<Box<dyn Stream<Item = Result<wire::InferenceResponse, Status>> + Send>>;
     async fn get_info(
         &self,
@@ -59,33 +59,33 @@ impl wire::inference_service_server::InferenceService for InferenceRpc {
         Ok(Response::new(self.engine.info().into()))
     }
 
-    async fn transcribe(
+    async fn recognize(
         &self,
         request: Request<tonic::Streaming<wire::InferenceRequest>>,
-    ) -> Result<Response<Self::TranscribeStream>, Status> {
+    ) -> Result<Response<Self::RecognizeStream>, Status> {
         let deadline = Instant::now()
-            + request_timeout(&request).map_err(|failure| super::failed(TRANSCRIBE, failure))?;
+            + request_timeout(&request).map_err(|failure| super::failed(RECOGNIZE, failure))?;
         let peer =
-            presented(&request).ok_or_else(|| super::failed(TRANSCRIBE, unauthenticated()))?;
+            presented(&request).ok_or_else(|| super::failed(RECOGNIZE, unauthenticated()))?;
         let admission = self
             .access
             .admit(peer)
-            .map_err(|error| super::failed(TRANSCRIBE, RpcFailure::from(error)))?;
+            .map_err(|error| super::failed(RECOGNIZE, RpcFailure::from(error)))?;
         let cancel = admission.async_cancel().clone();
         let cancel_on_drop = cancel.clone().drop_guard();
         let mut requests = request.into_inner();
         let start = until(&cancel, deadline, read_start(&mut requests))
             .await
-            .map_err(|failure| super::failed(TRANSCRIBE, failure))?;
+            .map_err(|failure| super::failed(RECOGNIZE, failure))?;
         let (prepared, input) = self
             .engine
             .prepare(start)
-            .map_err(|failure| super::failed(TRANSCRIBE, failure))?;
+            .map_err(|failure| super::failed(RECOGNIZE, failure))?;
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         let (finish, terminal) = oneshot::channel();
         let engine = Arc::clone(&self.engine);
         let worker = self.jobs.spawn_blocking(move || {
-            let result = engine.transcribe(prepared, &events, &admission.blocking_cancel());
+            let result = engine.recognize(prepared, &events, &admission.blocking_cancel());
             (result, admission)
         });
         let supervising = cancel.clone();
@@ -214,9 +214,9 @@ impl Stream for Output {
                         self.stage = Stage::Done;
                         self.updates.close();
                         let error = match failure {
-                            Ok(Err(error)) => super::failed(TRANSCRIBE, error),
+                            Ok(Err(error)) => super::failed(RECOGNIZE, error),
                             _ => super::failed(
-                                TRANSCRIBE,
+                                RECOGNIZE,
                                 internal("the inference supervisor stopped unexpectedly"),
                             ),
                         };
@@ -522,7 +522,7 @@ mod tests {
         for _ in 0..QUEUE_CAPACITY {
             events
                 .try_send(Event::Update {
-                    update: aria_voice::transcription::TranscriptUpdate::Provisional {
+                    update: aria_voice::stt::TranscriptUpdate::Provisional {
                         text: "private text".into(),
                         source_window: None,
                     },
@@ -562,7 +562,7 @@ mod tests {
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         events
             .try_send(Event::Update {
-                update: aria_voice::transcription::TranscriptUpdate::Provisional {
+                update: aria_voice::stt::TranscriptUpdate::Provisional {
                     text: "words".into(),
                     source_window: None,
                 },
@@ -623,7 +623,7 @@ mod tests {
         let (events, updates) = mpsc::channel(QUEUE_CAPACITY);
         events
             .try_send(Event::Update {
-                update: aria_voice::transcription::TranscriptUpdate::Provisional {
+                update: aria_voice::stt::TranscriptUpdate::Provisional {
                     text: "private words".into(),
                     source_window: None,
                 },

@@ -86,7 +86,7 @@ pub(super) struct RunArgs {
     /// The text to run on. Without it or --entry, it is read from stdin
     #[arg(long)]
     text: Option<String>,
-    /// Deliver the reply like a transcript instead of printing it
+    /// Deliver the reply like dictated text instead of printing it
     #[arg(long, value_enum)]
     mode: Option<CliOutputMode>,
 }

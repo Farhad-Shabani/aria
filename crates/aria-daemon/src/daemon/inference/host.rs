@@ -31,8 +31,8 @@ use aria_primitives::cancel::CancelToken;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::ConfigError;
 use aria_settings::{SettingsCache, SettingsPoll};
-use aria_voice::config::TranscriptionBackend;
-use aria_voice::transcription::TranscriptionError;
+use aria_voice::config::SttBackend;
+use aria_voice::stt::TranscriptionError;
 
 use super::engine::Engine;
 use super::identity::{self, ServerAccess};
@@ -55,10 +55,10 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
         SettingsCache::open(aria_settings::default_path(&home), home.clone())
             .map_err(ConfigError::from)?,
     );
-    let serving = TranscriptionBackend::load(&cache.effective(), &home, pairing_id(&home));
+    let serving = SttBackend::load(&cache.effective(), &home, pairing_id(&home));
     let config = match serving.clone() {
-        TranscriptionBackend::Local(engine) => EngineConfig::try_from(engine)?,
-        TranscriptionBackend::Server(_) => {
+        SttBackend::Local(engine) => EngineConfig::try_from(engine)?,
+        SttBackend::Server(_) => {
             return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
                 backend: aria_settings::config::backend::SERVER,
             }));
@@ -84,11 +84,11 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
 
 /// The host loads its engine once, so an engine change in the settings file
 /// waits for a restart. It warns once each time the file starts to differ.
-async fn warn_on_drift(cache: Arc<SettingsCache>, serving: TranscriptionBackend, home: PathBuf) {
+async fn warn_on_drift(cache: Arc<SettingsCache>, serving: SttBackend, home: PathBuf) {
     let mut status = cache.status();
     let mut drifted = false;
     while status.changed().await.is_ok() {
-        let named = TranscriptionBackend::load(&cache.effective(), &home, pairing_id(&home));
+        let named = SttBackend::load(&cache.effective(), &home, pairing_id(&home));
         let now = named != serving;
         if now && !drifted {
             tracing::warn!(
@@ -258,7 +258,7 @@ async fn public_router(
         .await;
     let authentication = Arc::clone(&access);
     let paired = move |request: tonic::Request<()>| {
-        authenticate("InferenceService/Transcribe", &authentication, &request)?;
+        authenticate("InferenceService/Recognize", &authentication, &request)?;
         Ok(request)
     };
     tonic::transport::Server::builder()
@@ -358,9 +358,9 @@ pub(in crate::daemon) mod tests {
     use crate::daemon::relay::fingerprint;
     use aria_kit::audio::RecordingReader;
     use aria_settings::config::ServerEndpoint;
-    use aria_voice::transcription::{
-        AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, Stream as RecognitionStream,
-        Transcriber, Transcription, TranscriptionAudio, Whole,
+    use aria_voice::stt::{
+        AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer,
+        Stream as RecognitionStream, Transcription, Whole,
     };
 
     #[derive(Default)]
@@ -384,7 +384,7 @@ pub(in crate::daemon) mod tests {
 
     struct Fake(Arc<Observed>);
 
-    impl Transcriber for Fake {
+    impl Recognizer for Fake {
         fn validate_language(
             &self,
             _: &Language,
@@ -392,13 +392,13 @@ pub(in crate::daemon) mod tests {
         ) -> Result<(), TranscriptionError> {
             Ok(())
         }
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            audio: TranscriptionAudio<'_>,
+            audio: RecognitionAudio<'_>,
             language: &Language,
             cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
-            assert!(matches!(audio, TranscriptionAudio::Samples(samples) if !samples.is_empty()));
+            assert!(matches!(audio, RecognitionAudio::Samples(samples) if !samples.is_empty()));
             self.0
                 .samples
                 .lock()
@@ -474,7 +474,7 @@ pub(in crate::daemon) mod tests {
             name: &'static str,
             input: AudioInputKind,
             stream: Option<RecognitionStream>,
-            transcriber: Box<dyn Transcriber>,
+            recognizer: Box<dyn Recognizer>,
             observed: Arc<Observed>,
         ) -> Self {
             let directory = tempfile::tempdir().unwrap();
@@ -500,7 +500,7 @@ pub(in crate::daemon) mod tests {
                 name,
                 input,
                 stream,
-                transcriber,
+                recognizer,
                 paths.spool_dir().to_owned(),
                 ownership,
             ));
@@ -620,8 +620,8 @@ pub(in crate::daemon) mod tests {
     }
 
     impl PairedClient {
-        pub(in crate::daemon) fn transcriber(&self) -> super::super::client::RemoteTranscriber {
-            super::super::client::RemoteTranscriber::open(self.home.path()).unwrap()
+        pub(in crate::daemon) fn recognizer(&self) -> super::super::client::RemoteRecognizer {
+            super::super::client::RemoteRecognizer::open(self.home.path()).unwrap()
         }
     }
 
@@ -651,12 +651,12 @@ pub(in crate::daemon) mod tests {
             stop(),
         ]
     }
-    async fn transcribe(
+    async fn recognize(
         channel: Channel,
         messages: Vec<wire::InferenceRequest>,
     ) -> Result<wire::InferenceComplete, tonic::Status> {
         let response = wire::inference_service_client::InferenceServiceClient::new(channel)
-            .transcribe(tokio_stream::iter(messages))
+            .recognize(tokio_stream::iter(messages))
             .await?;
         completed(response.into_inner()).await
     }
@@ -746,13 +746,13 @@ pub(in crate::daemon) mod tests {
             "whisper"
         );
         for _ in 0..2 {
-            let response = transcribe(fixture.channel.clone(), recording())
+            let response = recognize(fixture.channel.clone(), recording())
                 .await
                 .unwrap();
             assert_eq!(response.text, "raw model words");
             assert_eq!(response.engine_id, "whisper");
         }
-        let response = transcribe(
+        let response = recognize(
             fixture.channel.clone(),
             vec![
                 start(wire::RecognitionStrategy::Streaming),
@@ -793,7 +793,7 @@ pub(in crate::daemon) mod tests {
             info(fixture.channel.clone()).await.unwrap().strategies,
             vec![wire::RecognitionStrategy::Whole as i32]
         );
-        let error = transcribe(
+        let error = recognize(
             fixture.channel.clone(),
             vec![
                 start(wire::RecognitionStrategy::Streaming),
@@ -819,7 +819,7 @@ pub(in crate::daemon) mod tests {
             .unwrap();
         let response =
             wire::inference_service_client::InferenceServiceClient::new(fixture.channel.clone())
-                .transcribe(tokio_stream::wrappers::ReceiverStream::new(receive))
+                .recognize(tokio_stream::wrappers::ReceiverStream::new(receive))
                 .await
                 .unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -861,7 +861,7 @@ pub(in crate::daemon) mod tests {
         ];
         for messages in cases {
             assert_eq!(
-                transcribe(fixture.channel.clone(), messages)
+                recognize(fixture.channel.clone(), messages)
                     .await
                     .unwrap_err()
                     .code(),
@@ -875,7 +875,7 @@ pub(in crate::daemon) mod tests {
             stop(),
         ];
         assert_eq!(
-            transcribe(fixture.channel.clone(), too_large)
+            recognize(fixture.channel.clone(), too_large)
                 .await
                 .unwrap_err()
                 .code(),
@@ -888,7 +888,7 @@ pub(in crate::daemon) mod tests {
             .extend((0..chunks_past_ten_minutes).map(|_| audio(vec![0; MAX_AUDIO_MESSAGE_BYTES])));
         too_long.push(stop());
         assert_eq!(
-            transcribe(fixture.channel.clone(), too_long)
+            recognize(fixture.channel.clone(), too_long)
                 .await
                 .unwrap_err()
                 .code(),
@@ -897,7 +897,7 @@ pub(in crate::daemon) mod tests {
         fixture.idle().await;
         assert_eq!(fixture.observed.calls.load(Ordering::SeqCst), 0);
         assert!(
-            transcribe(fixture.channel.clone(), recording())
+            recognize(fixture.channel.clone(), recording())
                 .await
                 .is_ok()
         );
@@ -909,7 +909,7 @@ pub(in crate::daemon) mod tests {
         let mut fixture = Fixture::start().await;
         fixture.pair().await;
         let _release = fixture.hold_model();
-        let work = tokio::spawn(transcribe(fixture.channel.clone(), recording()));
+        let work = tokio::spawn(recognize(fixture.channel.clone(), recording()));
         tokio::time::timeout(Duration::from_secs(2), fixture.observed.entered.notified())
             .await
             .unwrap();
@@ -917,7 +917,7 @@ pub(in crate::daemon) mod tests {
         let _ = work.await;
         fixture.model_cancelled().await;
         assert_eq!(
-            transcribe(fixture.channel.clone(), recording())
+            recognize(fixture.channel.clone(), recording())
                 .await
                 .unwrap_err()
                 .code(),
@@ -931,7 +931,7 @@ pub(in crate::daemon) mod tests {
         // The tracker lets go before the worker's returned admission drops.
         fixture.idle().await;
         assert!(
-            transcribe(fixture.channel.clone(), recording())
+            recognize(fixture.channel.clone(), recording())
                 .await
                 .is_ok()
         );
@@ -943,7 +943,7 @@ pub(in crate::daemon) mod tests {
         let mut fixture = Fixture::start().await;
         fixture.pair().await;
         let _release = fixture.hold_model();
-        let work = tokio::spawn(transcribe(fixture.channel.clone(), recording()));
+        let work = tokio::spawn(recognize(fixture.channel.clone(), recording()));
         tokio::time::timeout(Duration::from_secs(2), fixture.observed.entered.notified())
             .await
             .unwrap();
@@ -964,7 +964,7 @@ pub(in crate::daemon) mod tests {
         request.set_timeout(Duration::from_millis(200));
         let result =
             wire::inference_service_client::InferenceServiceClient::new(fixture.channel.clone())
-                .transcribe(request)
+                .recognize(request)
                 .await;
         let result = match result {
             Ok(response) => completed(response.into_inner()).await,
@@ -978,7 +978,7 @@ pub(in crate::daemon) mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "requires ARIA_TEST_WHISPER_MODEL and real native inference"]
     async fn whisper_headless_loopback_reuses_a_warm_model() {
-        use super::super::client::RemoteTranscriber;
+        use super::super::client::RemoteRecognizer;
         use std::time::Instant;
 
         aria_stt::whisper::install_logging_hooks();
@@ -1018,7 +1018,7 @@ pub(in crate::daemon) mod tests {
                 .transcribe_with(&mut recording, &Language::Automatic, &CancelToken::never())
                 .unwrap();
             let local_time = began.elapsed();
-            let client = RemoteTranscriber::open(&home)
+            let client = RemoteRecognizer::open(&home)
                 .unwrap()
                 .require_engine(name)
                 .unwrap();

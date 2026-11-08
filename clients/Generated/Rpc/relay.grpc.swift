@@ -85,7 +85,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   CANCELLED - the client's own stream failed
         /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
         /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
-        /// > Delivery failures do not return the transcript and can include partial delivery.
+        /// > Delivery failures do not return the text and can include partial delivery.
         ///
         /// - Parameters:
         ///   - request: A streaming request producing `Aria_Daemon_V1_RelayRequest` messages.
@@ -149,7 +149,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   CANCELLED - the client's own stream failed
         /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
         /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
-        /// > Delivery failures do not return the transcript and can include partial delivery.
+        /// > Delivery failures do not return the text and can include partial delivery.
         ///
         /// - Parameters:
         ///   - request: A streaming request producing `Aria_Daemon_V1_RelayRequest` messages.
@@ -210,7 +210,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   CANCELLED - the client's own stream failed
     /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
     /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
-    /// > Delivery failures do not return the transcript and can include partial delivery.
+    /// > Delivery failures do not return the text and can include partial delivery.
     ///
     /// - Parameters:
     ///   - request: A streaming request producing `Aria_Daemon_V1_RelayRequest` messages.
@@ -265,7 +265,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   CANCELLED - the client's own stream failed
     /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
     /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
-    /// > Delivery failures do not return the transcript and can include partial delivery.
+    /// > Delivery failures do not return the text and can include partial delivery.
     ///
     /// - Parameters:
     ///   - metadata: Additional metadata to send, defaults to empty.

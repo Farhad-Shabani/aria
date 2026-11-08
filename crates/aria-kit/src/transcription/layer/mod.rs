@@ -19,7 +19,7 @@ const MAX_TEXT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("processed transcription exceeds 64 KiB")]
+    #[error("processed transcript exceeds 64 KiB")]
     TooLarge,
     #[error("a transcription layer failed")]
     Failed(#[source] Cause),

@@ -25,7 +25,7 @@ service DictationService {
 message StartDictationRequest {
   // Required: no stored setting applies, so UNSPECIFIED is invalid.
   StopMode stop_mode = 2;
-  // Where the transcript goes besides back to the caller. Required.
+  // Where the text goes besides back to the caller. Required.
   oneof route {
     // Typed or copied, and saved to history when history is on.
     DeliverRoute deliver = 9;
@@ -43,14 +43,14 @@ message StartDictationRequest {
 
 message ProjectVocabularyDisabled {}
 
-// How the transcript is typed. Each absent mode comes from the app in front's
+// How the text is typed. Each absent mode comes from the app in front's
 // overrides, else the settings. Explicit UNSPECIFIED is invalid.
 message DeliverRoute {
   optional OutputMode output_mode = 1;
   optional DeliveryMode delivery_mode = 2;
 }
 
-// A transcript that isn't typed is never streamed.
+// Text that isn't typed is never streamed.
 message TranscriptOnlyRoute {}
 
 message HistoryOnlyRoute {}
@@ -104,7 +104,7 @@ message DictationEvent {
   // speaker's words.
   HeardSpeaker heard = 8;
   // Set on DICTATION_STAGE_DELIVERED. Unspecified for a press that
-  // asked only for its transcript.
+  // asked only for its text.
   DeliveryOutcome outcome = 5;
   // Set on DICTATION_STAGE_DELIVERED: how many words landed.
   uint32 word_count = 6;
@@ -186,7 +186,7 @@ enum DictationStage {
   DICTATION_STAGE_SEGMENT_QUEUED = 10;
 }
 
-// Where a delivered transcript went.
+// Where delivered text went.
 enum DeliveryOutcome {
   DELIVERY_OUTCOME_UNSPECIFIED = 0;
   DELIVERY_OUTCOME_INSERTED = 1;

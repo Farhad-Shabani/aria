@@ -128,7 +128,7 @@ def load_model(model_id):
 
 
 def warm(model):
-    """Warms the transcription path before reporting readiness."""
+    """Warms the recognition path before reporting readiness."""
     with _probe_recording([0] * WARMUP_SAMPLES) as probe:
         transcribe(model, probe)
 
@@ -136,7 +136,7 @@ def warm(model):
 def parse_request(request_line):
     request = json.loads(request_line)
     operation = request.get("op")
-    if operation != "transcribe":
+    if operation != "recognize":
         raise ValueError(f"unknown op {operation!r}")
 
     audio_path = request["audio_path"]

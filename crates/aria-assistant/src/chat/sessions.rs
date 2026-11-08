@@ -12,7 +12,7 @@ use super::SessionKey;
 /// assistants' own history.
 pub struct SessionStore {
     path: PathBuf,
-    /// Asks on different records run side by side; the file is the one
+    /// Chats on different records run side by side; the file is the one
     /// thing they share.
     lock: Mutex<()>,
 }
@@ -66,7 +66,7 @@ impl SessionStore {
 }
 
 /// A file that does not decode counts as empty: a stale file should not
-/// block an ask, and the next reply rewrites it.
+/// block a chat, and the next reply rewrites it.
 fn read_records(path: &Path) -> Result<Vec<SessionRecord>, SessionStoreError> {
     let record = match std::fs::read_to_string(path) {
         Ok(record) => record,

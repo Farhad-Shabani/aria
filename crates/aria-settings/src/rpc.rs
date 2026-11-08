@@ -17,7 +17,7 @@ use crate::SettingsError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // Declared in the wire enum's numeric order: generic, dictation, speech, chat,
-// speaker, listen, history.
+// speaker, system transcription, history.
 pub enum RpcErrorCode {
     InvalidRequest,
     Busy,
@@ -59,9 +59,9 @@ pub enum RpcErrorCode {
     SpeakerInconsistentSamples,
     SpeakerProfileWriteFailed,
     SpeakerNoSpeech,
-    ListenUnsupportedOs,
-    ListenPermissionDenied,
-    ListenCaptureFailed,
+    SystemTranscriptionUnsupportedOs,
+    SystemTranscriptionPermissionDenied,
+    SystemTranscriptionCaptureFailed,
     HistoryMissing,
     HistoryAudioUnavailable,
     HistoryUnavailable,
@@ -129,9 +129,9 @@ impl RpcErrorCode {
             Self::SpeakerInconsistentSamples => "speaker_inconsistent_samples",
             Self::SpeakerProfileWriteFailed => "speaker_profile_write_failed",
             Self::SpeakerNoSpeech => "speaker_no_speech",
-            Self::ListenUnsupportedOs => "listen_unsupported_os",
-            Self::ListenPermissionDenied => "listen_permission_denied",
-            Self::ListenCaptureFailed => "listen_capture_failed",
+            Self::SystemTranscriptionUnsupportedOs => "system_transcription_unsupported_os",
+            Self::SystemTranscriptionPermissionDenied => "system_transcription_permission_denied",
+            Self::SystemTranscriptionCaptureFailed => "system_transcription_capture_failed",
             Self::HistoryMissing => "history_missing",
             Self::HistoryAudioUnavailable => "history_audio_unavailable",
             Self::HistoryUnavailable => "history_unavailable",

@@ -4,7 +4,7 @@
 /// show an error from a global key press, and every outcome that matters to
 /// the user is already on the event stream.
 enum PressClient {
-    /// Reads one press to its transcript. Nil for a stop-accepted and for a
+    /// Reads one press to its text. Nil for a stop-accepted and for a
     /// recording that failed.
     static func transcribe(
         projectDirectory: String?,
@@ -20,11 +20,11 @@ enum PressClient {
         }
     }
 
-    static func resolve() async -> AskTarget? {
+    static func resolve() async -> ChatTarget? {
         try? await ChatClient.resolve()
     }
 
-    static func ask(heard: DictationClient.Transcript, target: AskTarget) async -> UInt64? {
+    static func ask(heard: DictationClient.Transcript, target: ChatTarget) async -> UInt64? {
         try? await ChatClient.ask(text: heard.text, target: target, ownVoice: heard.ownVoice)
     }
 

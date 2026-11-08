@@ -203,7 +203,7 @@ mod tests {
     use super::*;
 
     /// A recording that ends mid-window leaves the spectrogram running past
-    /// the audio. Only the frames the audio reached may be transcribed.
+    /// the audio. Only the frames the audio reached may be recognized.
     #[test]
     fn padding_never_counts_as_something_spoken() {
         for seconds in [1, 15, 20, 30, 45] {

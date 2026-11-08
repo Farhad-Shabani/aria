@@ -81,12 +81,12 @@ fn missing_control_token(name: &str) -> TranscriptionError {
     inference_failed(EngineError(format!("the vocabulary has no {name} token")))
 }
 
-/// Transcribes every window of `mel` that holds audio, and joins what they
+/// Recognizes every window of `mel` that holds audio, and joins what they
 /// heard.
 ///
 /// `spoken` counts the frames the recording itself produced. The spectrogram
 /// runs past them — Whisper reads fixed windows, so the last one is padded to
-/// length — and a window starting beyond the audio would transcribe silence.
+/// length — and a window starting beyond the audio would recognize silence.
 pub(super) fn all_windows(
     model: &mut Whisper,
     tokenizer: &Tokenizer,

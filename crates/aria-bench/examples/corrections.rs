@@ -10,7 +10,7 @@ use aria_bench::stt::{reference_matches, word_errors, words};
 use aria_kit::audio::{CANONICAL_SAMPLE_RATE, canonical_samples, read_wav};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    Hypothesis, Language, Transcriber, TranscriptionAudio, TranscriptionError,
+    Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
 };
 use aria_stt::parakeet::{Device, Parakeet};
 use serde::Deserialize;
@@ -132,7 +132,7 @@ struct CachedDecode {
 fn evaluate(
     trace: &Trace,
     samples: &[f32],
-    engine: &impl Transcriber,
+    engine: &impl Recognizer,
     policy: Policy,
     cache: &mut HashMap<(usize, usize), CachedDecode>,
 ) -> serde_json::Value {
@@ -175,8 +175,8 @@ fn evaluate(
         cache_hits += usize::from(cache.contains_key(&(start, end)));
         let decoded = cache.entry((start, end)).or_insert_with(|| {
             let started = Instant::now();
-            let hypothesis = engine.transcribe_with(
-                TranscriptionAudio::Samples(&samples[start..end]),
+            let hypothesis = engine.recognize_with(
+                RecognitionAudio::Samples(&samples[start..end]),
                 &Language::Automatic,
                 &CancelToken::never(),
             );
@@ -339,7 +339,7 @@ mod tests {
 
     struct Scripted(Mutex<VecDeque<Decode>>);
 
-    impl Transcriber for Scripted {
+    impl Recognizer for Scripted {
         fn validate_language(
             &self,
             _: &Language,
@@ -348,14 +348,14 @@ mod tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            audio: TranscriptionAudio<'_>,
+            audio: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
             let decode = self.0.lock().unwrap().pop_front().unwrap();
-            let TranscriptionAudio::Samples(samples) = audio else {
+            let RecognitionAudio::Samples(samples) = audio else {
                 panic!("corrections decode sample slices");
             };
             assert_eq!(samples.len(), decode.samples.len());

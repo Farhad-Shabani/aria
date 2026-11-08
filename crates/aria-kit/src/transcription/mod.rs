@@ -49,7 +49,7 @@ pub const SILENCE_FLOOR: f32 = 5e-5;
 /// An implementation must:
 /// - poll `cancel` at its natural pause points and answer
 ///   [`TranscriptionError::Cancelled`];
-/// - accept only its supported [`TranscriptionAudio`] representation;
+/// - accept only its supported [`RecognitionAudio`] representation;
 /// - wrap its own failures in [`BackendError::engine`] under
 ///   [`TranscriptionError::Load`] or [`TranscriptionError::Inference`];
 /// - refuse languages it cannot honour — [`english_only`] covers
@@ -57,18 +57,18 @@ pub const SILENCE_FLOOR: f32 = 5e-5;
 /// - validate model paths with [`validate_model_file`] or
 ///   [`validate_model_directory`] before reading them, on targets that have
 ///   a filesystem.
-pub trait Transcriber: Send + Sync + 'static {
+pub trait Recognizer: Send + Sync + 'static {
     fn validate_language(
         &self,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<(), TranscriptionError>;
 
-    /// Transcribes one bounded audio input: a whole recording or a streaming
+    /// Recognizes one bounded audio input: a whole recording or a streaming
     /// buffer, which the engine cannot tell apart.
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError>;
@@ -76,7 +76,7 @@ pub trait Transcriber: Send + Sync + 'static {
     /// A decoder with its own state that takes audio a chunk at a time, for
     /// an engine whose encoder streams. `None`, the default, means the
     /// engine decodes bounded inputs only, and streaming runs by agreement.
-    /// A wrapper around another transcriber must forward this, or a native
+    /// A wrapper around another recognizer must forward this, or a native
     /// stream fails with [`TranscriptionError::NoNativeStream`].
     fn open_stream(
         &self,
@@ -87,7 +87,7 @@ pub trait Transcriber: Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Runs a whole operation on the transcriber's side, for one that decodes
+    /// Runs a whole operation on the recognizer's side, for one that decodes
     /// elsewhere. Only [`Transcription::delegated`] calls it; `incremental`
     /// says whether the mode streams. The default `None` fails that
     /// transcription with [`TranscriptionError::NoDelegatedOperation`].
@@ -131,7 +131,7 @@ pub enum Stream {
 }
 
 /// Shared construction contract: an engine name, configuration, validation, and loading.
-pub trait Engine: Transcriber + Sized {
+pub trait Engine: Recognizer + Sized {
     const NAME: &'static str;
 
     /// The files to download for this engine, all into one folder. Empty
@@ -157,7 +157,7 @@ pub trait StreamingEngine: Engine {
     const STREAM: Stream;
 }
 
-impl<T: Transcriber + ?Sized> Transcriber for std::sync::Arc<T> {
+impl<T: Recognizer + ?Sized> Recognizer for std::sync::Arc<T> {
     fn validate_language(
         &self,
         language: &Language,
@@ -166,13 +166,13 @@ impl<T: Transcriber + ?Sized> Transcriber for std::sync::Arc<T> {
         (**self).validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        (**self).transcribe_with(audio, language, cancel)
+        (**self).recognize_with(audio, language, cancel)
     }
 
     fn open_stream(
@@ -193,7 +193,7 @@ impl<T: Transcriber + ?Sized> Transcriber for std::sync::Arc<T> {
     }
 }
 
-impl<T: Transcriber + ?Sized> Transcriber for Box<T> {
+impl<T: Recognizer + ?Sized> Recognizer for Box<T> {
     fn validate_language(
         &self,
         language: &Language,
@@ -202,13 +202,13 @@ impl<T: Transcriber + ?Sized> Transcriber for Box<T> {
         (**self).validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        (**self).transcribe_with(audio, language, cancel)
+        (**self).recognize_with(audio, language, cancel)
     }
 
     fn open_stream(
@@ -245,13 +245,13 @@ impl std::fmt::Display for AudioInputKind {
 }
 
 /// One bounded input to a speech-to-text engine.
-pub enum TranscriptionAudio<'a> {
+pub enum RecognitionAudio<'a> {
     Samples(&'a [f32]),
     #[cfg(not(target_family = "wasm"))]
     Wav(&'a RecordedAudio),
 }
 
-impl<'a> TranscriptionAudio<'a> {
+impl<'a> RecognitionAudio<'a> {
     pub fn kind(&self) -> AudioInputKind {
         match self {
             Self::Samples(_) => AudioInputKind::Samples,
@@ -290,10 +290,10 @@ impl<'a> TranscriptionAudio<'a> {
     }
 }
 
-impl std::fmt::Debug for TranscriptionAudio<'_> {
+impl std::fmt::Debug for RecognitionAudio<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("TranscriptionAudio")
+            .debug_struct("RecognitionAudio")
             .field("kind", &self.kind())
             .finish_non_exhaustive()
     }
@@ -414,7 +414,7 @@ impl std::fmt::Debug for Hypothesis {
 
 pub struct Transcription<T, M: Mode, L = ()> {
     plan: Plan<M::Config>,
-    transcriber: T,
+    recognizer: T,
     layers: L,
 }
 
@@ -425,7 +425,7 @@ enum Plan<C> {
 }
 
 pub struct Operation<'a, T, L = ()> {
-    transcriber: &'a T,
+    recognizer: &'a T,
     language: &'a Language,
     cancel: CancelToken,
     strategy: Strategy,
@@ -539,7 +539,7 @@ impl OperationSource {
 /// Public items here stay unnameable outside this module.
 mod sealed {
     use super::{
-        CancelToken, Language, OperationSource, Transcriber, TranscriptionError, agreement, native,
+        CancelToken, Language, OperationSource, Recognizer, TranscriptionError, agreement, native,
     };
 
     pub enum Strategy {
@@ -560,11 +560,11 @@ mod sealed {
     pub trait Sealed {
         type Config: Copy + Send + Sync + 'static;
 
-        /// The strategy one operation runs. Takes the transcriber because a
+        /// The strategy one operation runs. Takes the recognizer because a
         /// native stream is opened on it.
-        fn strategy<T: Transcriber>(
+        fn strategy<T: Recognizer>(
             config: Self::Config,
-            transcriber: &T,
+            recognizer: &T,
             language: &Language,
             cancel: &CancelToken,
         ) -> Result<Strategy, TranscriptionError>;
@@ -589,9 +589,9 @@ impl Mode for Whole {
 impl sealed::Sealed for Whole {
     type Config = WholeRecordingInput;
 
-    fn strategy<T: Transcriber>(
+    fn strategy<T: Recognizer>(
         config: Self::Config,
-        _transcriber: &T,
+        _recognizer: &T,
         _language: &Language,
         _cancel: &CancelToken,
     ) -> Result<Strategy, TranscriptionError> {
@@ -611,9 +611,9 @@ impl Mode for Streaming {
 impl sealed::Sealed for Streaming {
     type Config = Stream;
 
-    fn strategy<T: Transcriber>(
+    fn strategy<T: Recognizer>(
         config: Self::Config,
-        transcriber: &T,
+        recognizer: &T,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Strategy, TranscriptionError> {
@@ -621,7 +621,7 @@ impl sealed::Sealed for Streaming {
             Stream::Agreement(cadence) => Ok(Strategy::Agreement(Box::new(
                 agreement::AgreementState::new(cadence),
             ))),
-            Stream::Native => match transcriber.open_stream(language, cancel)? {
+            Stream::Native => match recognizer.open_stream(language, cancel)? {
                 Some(stream) => Ok(Strategy::Native(Box::new(native::NativeState::new(stream)))),
                 None => Err(TranscriptionError::NoNativeStream),
             },
@@ -630,19 +630,19 @@ impl sealed::Sealed for Streaming {
 }
 
 impl<T> Transcription<T, Whole> {
-    pub fn complete_samples(transcriber: T) -> Self {
+    pub fn complete_samples(recognizer: T) -> Self {
         Self {
             plan: Plan::Local(WholeRecordingInput::Samples),
-            transcriber,
+            recognizer,
             layers: (),
         }
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn complete_wav(transcriber: T) -> Self {
+    pub fn complete_wav(recognizer: T) -> Self {
         Self {
             plan: Plan::Local(WholeRecordingInput::Wav),
-            transcriber,
+            recognizer,
             layers: (),
         }
     }
@@ -650,10 +650,10 @@ impl<T> Transcription<T, Whole> {
     /// One decode of the whole recording, handed over as `input` — an
     /// engine's [`Engine::INPUT`].
     #[cfg(not(target_family = "wasm"))]
-    pub fn complete(input: AudioInputKind, transcriber: T) -> Self {
+    pub fn complete(input: AudioInputKind, recognizer: T) -> Self {
         match input {
-            AudioInputKind::Samples => Self::complete_samples(transcriber),
-            AudioInputKind::Wav => Self::complete_wav(transcriber),
+            AudioInputKind::Samples => Self::complete_samples(recognizer),
+            AudioInputKind::Wav => Self::complete_wav(recognizer),
         }
     }
 }
@@ -662,28 +662,28 @@ impl<T> Transcription<T, Streaming> {
     /// The escape hatch: agreement over an engine that has not verified a
     /// cadence, for experiments. A supported streaming path goes through
     /// [`Transcription::streaming`].
-    pub fn agreement(cadence: Cadence, transcriber: T) -> Self {
-        Self::stream(Stream::Agreement(cadence), transcriber)
+    pub fn agreement(cadence: Cadence, recognizer: T) -> Self {
+        Self::stream(Stream::Agreement(cadence), recognizer)
     }
 
-    /// Streams the way `stream` says, over any transcriber. A wrapper around
+    /// Streams the way `stream` says, over any recognizer. A wrapper around
     /// an engine passes that engine's [`StreamingEngine::STREAM`] here.
-    pub fn stream(stream: Stream, transcriber: T) -> Self {
+    pub fn stream(stream: Stream, recognizer: T) -> Self {
         Self {
             plan: Plan::Local(stream),
-            transcriber,
+            recognizer,
             layers: (),
         }
     }
 }
 
 impl<T, M: Mode> Transcription<T, M> {
-    /// Runs each operation through the transcriber's own
-    /// [`Transcriber::open_operation`].
-    pub fn delegated(transcriber: T) -> Self {
+    /// Runs each operation through the recognizer's own
+    /// [`Recognizer::open_operation`].
+    pub fn delegated(recognizer: T) -> Self {
         Self {
             plan: Plan::Delegated,
-            transcriber,
+            recognizer,
             layers: (),
         }
     }
@@ -699,13 +699,13 @@ impl<T, M: Mode, L: Layer> Transcription<T, M, L> {
     pub fn with<N: Layer>(self, layer: N) -> Transcription<T, M, Layered<N, L>> {
         Transcription {
             plan: self.plan,
-            transcriber: self.transcriber,
+            recognizer: self.recognizer,
             layers: Layered::new(self.layers, layer),
         }
     }
 }
 
-impl<T: Transcriber, M: Mode, L: Layer> Transcription<T, M, L> {
+impl<T: Recognizer, M: Mode, L: Layer> Transcription<T, M, L> {
     /// Starts an operation without a cancellation token.
     pub fn start<'a>(
         &'a self,
@@ -720,19 +720,19 @@ impl<T: Transcriber, M: Mode, L: Layer> Transcription<T, M, L> {
         cancel: &CancelToken,
     ) -> Result<Operation<'a, T, L>, TranscriptionError> {
         check_cancelled(cancel)?;
-        self.transcriber.validate_language(language, cancel)?;
+        self.recognizer.validate_language(language, cancel)?;
         check_cancelled(cancel)?;
         let strategy = match self.plan {
-            Plan::Local(config) => M::strategy(config, &self.transcriber, language, cancel)?,
+            Plan::Local(config) => M::strategy(config, &self.recognizer, language, cancel)?,
             Plan::Delegated => self
-                .transcriber
+                .recognizer
                 .open_operation(language, M::INCREMENTAL, cancel)?
                 .map(Strategy::Delegated)
                 .ok_or(TranscriptionError::NoDelegatedOperation)?,
         };
         check_cancelled(cancel)?;
         Ok(Operation {
-            transcriber: &self.transcriber,
+            recognizer: &self.recognizer,
             language,
             cancel: cancel.clone(),
             strategy,
@@ -771,7 +771,7 @@ impl<T: Transcriber, M: Mode, L: Layer> Transcription<T, M, L> {
     }
 }
 
-impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
+impl<T: Recognizer, L: Layer> Operation<'_, T, L> {
     pub fn next_finalized(
         &mut self,
         recording: &mut RecordingReader,
@@ -795,7 +795,7 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
 
     /// How far audio had been read for decoding when the latest update was
     /// produced. A local strategy reads the caller's recording; a delegated
-    /// one reports where the transcriber read to.
+    /// one reports where the recognizer read to.
     pub fn read_to(&self) -> u64 {
         self.read_to
     }
@@ -812,7 +812,7 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
     /// done with everything behind it can release that audio.
     ///
     /// Whole-recording transcription holds position zero: it hands the
-    /// transcriber the entire recording at once.
+    /// recognizer the entire recording at once.
     pub fn retained_from(&self) -> u64 {
         let strategy = self.strategy_retained_from();
         self.output
@@ -918,10 +918,10 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
                 if self.transcript.is_some() {
                     return Ok(None);
                 }
-                let segment = transcribe_complete(
+                let segment = recognize_complete(
                     *input,
                     recording,
-                    self.transcriber,
+                    self.recognizer,
                     self.language,
                     &self.cancel,
                 )?;
@@ -934,8 +934,8 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
             Strategy::Agreement(state) => {
                 let cancel = self.cancel.clone();
                 match state.next_with(recording, &cancel, previews, |samples| {
-                    self.transcriber.transcribe_with(
-                        TranscriptionAudio::Samples(samples),
+                    self.recognizer.recognize_with(
+                        RecognitionAudio::Samples(samples),
                         self.language,
                         &cancel,
                     )
@@ -970,10 +970,10 @@ impl<T: Transcriber, L: Layer> Operation<'_, T, L> {
     }
 }
 
-fn transcribe_complete<T: Transcriber>(
+fn recognize_complete<T: Recognizer>(
     input: WholeRecordingInput,
     recording: &mut RecordingReader,
-    transcriber: &T,
+    recognizer: &T,
     language: &Language,
     cancel: &CancelToken,
 ) -> Result<TranscriptSegment, TranscriptionError> {
@@ -982,8 +982,8 @@ fn transcribe_complete<T: Transcriber>(
         WholeRecordingInput::Samples => {
             recording.fill().map_err(TranscriptionError::Capture)?;
             check_cancelled(cancel)?;
-            let hypothesis = transcriber.transcribe_with(
-                TranscriptionAudio::Samples(recording.samples()),
+            let hypothesis = recognizer.recognize_with(
+                RecognitionAudio::Samples(recording.samples()),
                 language,
                 cancel,
             )?;
@@ -996,7 +996,7 @@ fn transcribe_complete<T: Transcriber>(
                 .map_err(TranscriptionError::Capture)?;
             check_cancelled(cancel)?;
             let hypothesis =
-                transcriber.transcribe_with(TranscriptionAudio::Wav(audio), language, cancel)?;
+                recognizer.recognize_with(RecognitionAudio::Wav(audio), language, cancel)?;
             (hypothesis, 0)
         }
     };
@@ -1421,7 +1421,7 @@ pub enum TranscriptionError {
     #[error("no speech was transcribed")]
     NoSpeech,
 
-    #[error("the transcriber was asked to run an operation but offers none")]
+    #[error("the recognizer was asked to run an operation but offers none")]
     NoDelegatedOperation,
 
     #[error("transcript segment has invalid text or audio bounds")]
@@ -1478,7 +1478,7 @@ mod operation_source_tests {
         openings: Arc<Mutex<Vec<bool>>>,
     }
 
-    impl Transcriber for Delegated {
+    impl Recognizer for Delegated {
         fn validate_language(
             &self,
             _: &Language,
@@ -1487,9 +1487,9 @@ mod operation_source_tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -1538,10 +1538,10 @@ mod operation_source_tests {
     #[test]
     fn delegated_updates_preserve_completion_and_audio_spans() {
         let openings = Arc::new(Mutex::new(Vec::new()));
-        let transcriber: Arc<dyn Transcriber> = Arc::new(Delegated {
+        let recognizer: Arc<dyn Recognizer> = Arc::new(Delegated {
             openings: Arc::clone(&openings),
         });
-        let transcription = Transcription::<_, Streaming>::delegated(transcriber);
+        let transcription = Transcription::<_, Streaming>::delegated(recognizer);
         let mut recording = RecordingReader::from_samples(&[0.5; 40]);
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
@@ -1574,10 +1574,10 @@ mod operation_source_tests {
     #[test]
     fn boxed_whole_operations_skip_previews_and_open_once() {
         let openings = Arc::new(Mutex::new(Vec::new()));
-        let transcriber: Box<dyn Transcriber> = Box::new(Delegated {
+        let recognizer: Box<dyn Recognizer> = Box::new(Delegated {
             openings: Arc::clone(&openings),
         });
-        let transcription = Transcription::<_, Whole>::delegated(transcriber);
+        let transcription = Transcription::<_, Whole>::delegated(recognizer);
         let mut recording = RecordingReader::from_samples(&[0.5; 40]);
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
@@ -1594,7 +1594,7 @@ mod operation_source_tests {
 
     struct Local;
 
-    impl Transcriber for Local {
+    impl Recognizer for Local {
         fn validate_language(
             &self,
             _: &Language,
@@ -1603,9 +1603,9 @@ mod operation_source_tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -1614,7 +1614,7 @@ mod operation_source_tests {
     }
 
     #[test]
-    fn only_a_delegated_plan_runs_the_transcribers_operation() {
+    fn only_a_delegated_plan_runs_the_recognizers_operation() {
         let openings = Arc::new(Mutex::new(Vec::new()));
         let delegating = Delegated {
             openings: Arc::clone(&openings),
@@ -1935,14 +1935,14 @@ mod coordinator_tests {
 
     use super::*;
 
-    struct FakeTranscriber {
+    struct FakeRecognizer {
         response: &'static str,
         words: Vec<TimedWord>,
         reject_language: bool,
         inputs: Mutex<Vec<AudioInputKind>>,
     }
 
-    impl FakeTranscriber {
+    impl FakeRecognizer {
         fn answering(response: &'static str) -> Self {
             Self {
                 response,
@@ -1965,7 +1965,7 @@ mod coordinator_tests {
         }
     }
 
-    impl Transcriber for FakeTranscriber {
+    impl Recognizer for FakeRecognizer {
         fn validate_language(
             &self,
             language: &Language,
@@ -1980,9 +1980,9 @@ mod coordinator_tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            audio: TranscriptionAudio<'_>,
+            audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -2015,7 +2015,7 @@ mod coordinator_tests {
         }
     }
 
-    impl Transcriber for Chunked {
+    impl Recognizer for Chunked {
         fn validate_language(
             &self,
             _language: &Language,
@@ -2024,9 +2024,9 @@ mod coordinator_tests {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _audio: TranscriptionAudio<'_>,
+            _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -2043,10 +2043,10 @@ mod coordinator_tests {
     }
 
     #[test]
-    fn a_boxed_or_shared_transcriber_still_opens_its_stream() {
+    fn a_boxed_or_shared_recognizer_still_opens_its_stream() {
         let (_directory, mut boxed_recording) = recorded(&[1, 2, 3, 4]);
         let (_directory, mut shared_recording) = recorded(&[1, 2, 3, 4]);
-        let boxed: Box<dyn Transcriber> = Box::new(Chunked);
+        let boxed: Box<dyn Recognizer> = Box::new(Chunked);
         let shared = Arc::new(Chunked);
 
         let from_boxed = Transcription::stream(Stream::Native, boxed)
@@ -2063,7 +2063,7 @@ mod coordinator_tests {
     #[test]
     fn completion_is_available_before_pending_final_segments_and_preview_clear() {
         struct Ending(std::sync::atomic::AtomicBool);
-        impl Transcriber for Ending {
+        impl Recognizer for Ending {
             fn validate_language(
                 &self,
                 _: &Language,
@@ -2071,9 +2071,9 @@ mod coordinator_tests {
             ) -> Result<(), TranscriptionError> {
                 Ok(())
             }
-            fn transcribe_with(
+            fn recognize_with(
                 &self,
-                _: TranscriptionAudio<'_>,
+                _: RecognitionAudio<'_>,
                 _: &Language,
                 _: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -2122,7 +2122,7 @@ mod coordinator_tests {
 
     #[test]
     fn native_and_whole_updates_finalize_every_word() {
-        fn check<T: Transcriber, M: Mode>(transcription: Transcription<T, M>, expected: &str) {
+        fn check<T: Recognizer, M: Mode>(transcription: Transcription<T, M>, expected: &str) {
             let (_directory, mut recording) = recorded(&[1, 2, 3, 4]);
             let mut operation = transcription.start(&Language::Automatic).expect("starts");
             let mut segments = Vec::new();
@@ -2144,7 +2144,7 @@ mod coordinator_tests {
             "hello hello",
         );
         check(
-            Transcription::complete_samples(FakeTranscriber::answering("hello there")),
+            Transcription::complete_samples(FakeRecognizer::answering("hello there")),
             "hello there",
         );
     }
@@ -2152,7 +2152,7 @@ mod coordinator_tests {
     #[test]
     fn streaming_natively_without_a_stream_is_an_error() {
         let transcription =
-            Transcription::stream(Stream::Native, FakeTranscriber::answering("hello"));
+            Transcription::stream(Stream::Native, FakeRecognizer::answering("hello"));
 
         let outcome = transcription.start(&Language::Automatic).map(|_| ());
 
@@ -2162,29 +2162,29 @@ mod coordinator_tests {
     #[test]
     fn complete_samples_invokes_the_engine_once() {
         let (_directory, mut recording) = recorded(&[1, 2, 3]);
-        let transcriber = Arc::new(FakeTranscriber::answering("hello there"));
-        let transcription = Transcription::complete_samples(Arc::clone(&transcriber));
+        let recognizer = Arc::new(FakeRecognizer::answering("hello there"));
+        let transcription = Transcription::complete_samples(Arc::clone(&recognizer));
 
         let transcript = transcription
             .transcribe(&mut recording, &Language::Automatic)
             .expect("the fake returns speech");
 
         assert_eq!(transcript.as_str(), "hello there");
-        assert_eq!(transcriber.inputs(), [AudioInputKind::Samples]);
+        assert_eq!(recognizer.inputs(), [AudioInputKind::Samples]);
     }
 
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn complete_wav_preserves_the_file_input_boundary() {
         let (_directory, mut recording) = recorded(&[1, 2, 3]);
-        let transcriber = Arc::new(FakeTranscriber::answering("hello there"));
-        let transcription = Transcription::complete_wav(Arc::clone(&transcriber));
+        let recognizer = Arc::new(FakeRecognizer::answering("hello there"));
+        let transcription = Transcription::complete_wav(Arc::clone(&recognizer));
 
         transcription
             .transcribe(&mut recording, &Language::Automatic)
             .expect("the fake returns speech");
 
-        assert_eq!(transcriber.inputs(), [AudioInputKind::Wav]);
+        assert_eq!(recognizer.inputs(), [AudioInputKind::Wav]);
         assert!(recording.samples().is_empty());
     }
 
@@ -2194,7 +2194,7 @@ mod coordinator_tests {
         recording.fill().unwrap();
         recording.release_before(16_000);
         let transcription = Transcription::complete_samples(
-            FakeTranscriber::answering("hello  there").with_words(vec![
+            FakeRecognizer::answering("hello  there").with_words(vec![
                 TimedWord {
                     start: 0.1,
                     end: 0.2,
@@ -2227,7 +2227,7 @@ mod coordinator_tests {
         recording.fill().unwrap();
         recording.release_before(16_000);
         let transcription =
-            Transcription::complete_wav(FakeTranscriber::answering("hello").with_words(vec![
+            Transcription::complete_wav(FakeRecognizer::answering("hello").with_words(vec![
                 TimedWord {
                     start: 0.1,
                     end: 0.2,
@@ -2256,7 +2256,7 @@ mod coordinator_tests {
         ] {
             let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
             let transcription = Transcription::complete_samples(
-                FakeTranscriber::answering("hello there").with_words(words),
+                FakeRecognizer::answering("hello there").with_words(words),
             );
             let mut operation = transcription.start(&Language::Automatic).unwrap();
 
@@ -2277,7 +2277,7 @@ mod coordinator_tests {
         let expected = 8_000..16_000;
         let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
         let transcription = Transcription::complete_samples(
-            FakeTranscriber::answering("hello").with_words(vec![timing]),
+            FakeRecognizer::answering("hello").with_words(vec![timing]),
         );
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
@@ -2292,7 +2292,7 @@ mod coordinator_tests {
     fn complete_encloses_all_word_bounds_without_reordering_words() {
         let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
         let transcription = Transcription::complete_samples(
-            FakeTranscriber::answering("hello there").with_words(vec![
+            FakeRecognizer::answering("hello there").with_words(vec![
                 TimedWord {
                     start: 0.3,
                     end: 0.8,
@@ -2333,7 +2333,7 @@ mod coordinator_tests {
         ] {
             let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
             let transcription = Transcription::complete_samples(
-                FakeTranscriber::answering("hello").with_words(vec![timing]),
+                FakeRecognizer::answering("hello").with_words(vec![timing]),
             );
             let mut operation = transcription.start(&Language::Automatic).unwrap();
 
@@ -2350,7 +2350,7 @@ mod coordinator_tests {
         for text in ["hello there", "um hello"] {
             let mut recording = RecordingReader::from_samples(&[0.5; 16_000]);
             let transcription =
-                Transcription::complete_samples(FakeTranscriber::answering(text).with_words(vec![
+                Transcription::complete_samples(FakeRecognizer::answering(text).with_words(vec![
                     TimedWord {
                         start: 0.1,
                         end: 0.2,
@@ -2374,7 +2374,7 @@ mod coordinator_tests {
     #[test]
     fn an_empty_hypothesis_becomes_terminal_no_speech() {
         let (_directory, mut recording) = recorded(&[1, 2, 3]);
-        let transcription = Transcription::complete_samples(FakeTranscriber::answering("   "));
+        let transcription = Transcription::complete_samples(FakeRecognizer::answering("   "));
 
         let outcome = transcription.transcribe(&mut recording, &Language::Automatic);
 
@@ -2384,24 +2384,24 @@ mod coordinator_tests {
     #[test]
     fn cancellation_prevents_complete_inference() {
         let (_directory, mut recording) = recorded(&[1, 2, 3]);
-        let transcriber = Arc::new(FakeTranscriber::answering("unreachable"));
-        let transcription = Transcription::complete_samples(Arc::clone(&transcriber));
+        let recognizer = Arc::new(FakeRecognizer::answering("unreachable"));
+        let transcription = Transcription::complete_samples(Arc::clone(&recognizer));
         let cancel = CancelToken::new();
         cancel.cancel();
 
         let outcome = transcription.transcribe_with(&mut recording, &Language::Automatic, &cancel);
 
         assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
-        assert!(transcriber.inputs().is_empty());
+        assert!(recognizer.inputs().is_empty());
     }
 
     #[test]
     fn language_rejection_prevents_complete_inference() {
         let (_directory, mut recording) = recorded(&[1, 2, 3]);
-        let mut fake = FakeTranscriber::answering("unreachable");
+        let mut fake = FakeRecognizer::answering("unreachable");
         fake.reject_language = true;
-        let transcriber = Arc::new(fake);
-        let transcription = Transcription::complete_samples(Arc::clone(&transcriber));
+        let recognizer = Arc::new(fake);
+        let transcription = Transcription::complete_samples(Arc::clone(&recognizer));
 
         let outcome = transcription.transcribe(&mut recording, &Language::Automatic);
 
@@ -2409,7 +2409,7 @@ mod coordinator_tests {
             outcome,
             Err(TranscriptionError::UnsupportedLanguage { .. })
         ));
-        assert!(transcriber.inputs().is_empty());
+        assert!(recognizer.inputs().is_empty());
     }
 
     #[test]

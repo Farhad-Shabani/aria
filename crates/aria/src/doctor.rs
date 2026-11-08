@@ -21,21 +21,21 @@ use aria_settings::config::ConfigError;
 use aria_settings::{CheckedSettings, LlmCleanupTarget, Settings};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
-    CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
+    CaptureConfig, DictationConfig, SpeakerConfig, SttBackend, SystemTranscriptionConfig,
 };
 use aria_voice::dictation::{LlmCleanup, LlmCleanupError};
-use aria_voice::transcription::check_model;
+use aria_voice::stt::check_model;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 
 const SETTINGS: &str = "settings";
 const RUNTIME_DIRECTORY: &str = "runtime directory";
 const AUDIO_CAPTURE: &str = "audio capture";
-const TRANSCRIPTION_MODEL: &str = "transcription model";
+const SPEECH_MODEL: &str = "speech model";
 const WAKE_WORD_MODEL: &str = "wake-word model";
 const SPEAKER_MODEL: &str = "speaker model";
 const SEGMENTATION_MODEL: &str = "segmentation model";
-const LISTEN: &str = "listen";
+const SYSTEM_TRANSCRIPTION: &str = "system audio transcription";
 const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
 const ARIA_KEY: &str = "aria key";
@@ -86,11 +86,11 @@ pub fn diagnose() -> Report {
             settings_check(config.as_ref()),
             runtime_directory(prepared.as_ref()),
             audio_capture(config.as_ref().ok().map(|config| &config.dictation)),
-            transcription_model(config.as_ref().ok().map(|config| &config.dictation)),
+            stt_model(config.as_ref().ok().map(|config| &config.dictation)),
             wake_word_model(config.as_ref().ok().map(|config| &config.wake)),
             speaker_model(),
             segmentation_model(),
-            listen(),
+            system_transcription(),
             relay(config.as_ref().ok().map(|config| config.relay)),
             daemon(
                 prepared.as_ref().ok(),
@@ -109,7 +109,7 @@ fn settings_check(config: Result<&DaemonConfig, &ConfigError>) -> Check {
             format!(
                 "{}, backend {}, wake {}",
                 settings_file(),
-                config.dictation.transcription.backend_name(),
+                config.dictation.stt.backend_name(),
                 wake_status(&config.wake),
             ),
         ),
@@ -169,24 +169,24 @@ fn capture_source(capture: &CaptureConfig, recording_timeout: Duration) -> Check
     }
 }
 
-fn transcription_model(config: Option<&DictationConfig>) -> Check {
+fn stt_model(config: Option<&DictationConfig>) -> Check {
     match config {
         Some(config) => match aria_settings::config::home_directory() {
-            Ok(home) => model(&config.transcription, &home),
-            Err(error) => Check::failed(TRANSCRIPTION_MODEL, error_chain(&error)),
+            Ok(home) => model(&config.stt, &home),
+            Err(error) => Check::failed(SPEECH_MODEL, error_chain(&error)),
         },
-        None => Check::warning(TRANSCRIPTION_MODEL, SETTINGS_FAILED),
+        None => Check::warning(SPEECH_MODEL, SETTINGS_FAILED),
     }
 }
 
-fn model(transcription: &TranscriptionBackend, home: &Path) -> Check {
-    let engine = match transcription {
-        TranscriptionBackend::Local(engine) => engine,
-        TranscriptionBackend::Server(_) => return server(home),
+fn model(stt: &SttBackend, home: &Path) -> Check {
+    let engine = match stt {
+        SttBackend::Local(engine) => engine,
+        SttBackend::Server(_) => return server(home),
     };
     match check_model(engine) {
-        Ok(detail) => Check::ok(TRANSCRIPTION_MODEL, detail),
-        Err(error) => Check::failed(TRANSCRIPTION_MODEL, error_chain(&error)),
+        Ok(detail) => Check::ok(SPEECH_MODEL, detail),
+        Err(error) => Check::failed(SPEECH_MODEL, error_chain(&error)),
     }
 }
 
@@ -194,14 +194,14 @@ fn model(transcription: &TranscriptionBackend, home: &Path) -> Check {
 fn server(home: &Path) -> Check {
     match aria_daemon::paired_server(home) {
         Ok(Some(paired)) => Check::ok(
-            TRANSCRIPTION_MODEL,
-            format!("server {}; no local transcription model", paired.endpoint),
+            SPEECH_MODEL,
+            format!("server {}; no local speech model", paired.endpoint),
         ),
         Ok(None) => Check::failed(
-            TRANSCRIPTION_MODEL,
+            SPEECH_MODEL,
             "no server is paired; run `aria remote pair` first",
         ),
-        Err(error) => Check::failed(TRANSCRIPTION_MODEL, error_chain(&error)),
+        Err(error) => Check::failed(SPEECH_MODEL, error_chain(&error)),
     }
 }
 
@@ -268,7 +268,7 @@ fn speaker_model() -> Check {
     }
 }
 
-/// A missing segmentation model warns: Listen still names speakers, less
+/// A missing segmentation model warns: system transcription still names speakers, less
 /// reliably, and dictation still types every voice.
 fn segmentation_model() -> Check {
     let resolved = loaded(|settings, home| Ok(SpeakerConfig::load(&settings.speaker, home)))
@@ -283,38 +283,40 @@ fn segmentation_model() -> Check {
         Ok(model) => Check::ok(SEGMENTATION_MODEL, model.display().to_string()),
         Err(detail) => Check::warning(
             SEGMENTATION_MODEL,
-            format!("{detail}; listen names speakers by guess, and Only type my voice cannot run"),
+            format!(
+                "{detail}; Transcription names speakers by guess, and Only type my voice cannot run"
+            ),
         ),
     }
 }
 
-/// Listen accepts any engine that streams. A config or model Listen can't use
-/// warns because dictation can still work without Listen.
-fn listen() -> Check {
-    let resolved = loaded(ListenConfig::load);
+/// System transcription accepts any engine that streams. A config or model it can't
+/// use warns, because dictation still works without it.
+fn system_transcription() -> Check {
+    let resolved = loaded(SystemTranscriptionConfig::load);
     match resolved {
-        Ok(config) => match config.transcription.check_model() {
+        Ok(config) => match config.engine.check_model() {
             Ok(_) => Check::ok(
-                LISTEN,
+                SYSTEM_TRANSCRIPTION,
                 format!(
                     "{} writing to {}",
-                    config.transcription.backend_name(),
+                    config.engine.backend_name(),
                     config.transcripts_dir.display()
                 ),
             ),
             Err(error) => Check::warning(
-                LISTEN,
+                SYSTEM_TRANSCRIPTION,
                 format!(
-                    "{}; Mac Audio can't start until {} is downloaded",
+                    "{}; Transcription can't start until {} is downloaded",
                     error_chain(&error),
-                    config.transcription.backend_name()
+                    config.engine.backend_name()
                 ),
             ),
         },
         Err(error) => Check::warning(
-            LISTEN,
+            SYSTEM_TRANSCRIPTION,
             format!(
-                "{}; set listen.backend to one of {} to capture meetings",
+                "{}; set transcription.backend to one of {} to transcribe your Mac's audio",
                 error_chain(&error),
                 aria_settings::config::backend::STREAMING.join(", ")
             ),
@@ -600,7 +602,7 @@ mod tests {
         let home = tempfile::TempDir::new().unwrap();
         aria_daemon::pair_server_for_tests(home.path(), "https://example.test:9851");
 
-        let check = model(&TranscriptionBackend::Server(None), home.path());
+        let check = model(&SttBackend::Server(None), home.path());
 
         assert_eq!(check.status, Status::Ok);
         assert!(check.detail.contains("https://example.test:9851"));
@@ -610,7 +612,7 @@ mod tests {
     fn the_server_without_a_pairing_fails() {
         let home = tempfile::TempDir::new().unwrap();
 
-        let unpaired = model(&TranscriptionBackend::Server(None), home.path());
+        let unpaired = model(&SttBackend::Server(None), home.path());
 
         assert_eq!(unpaired.status, Status::Failed);
         assert!(unpaired.detail.contains("aria remote pair"));
@@ -651,7 +653,7 @@ mod tests {
     #[test]
     fn a_missing_model_fails_and_says_which_backend() {
         let check = model(
-            &TranscriptionBackend::Local(aria_voice::config::TranscriptionConfig::Whisper {
+            &SttBackend::Local(aria_voice::config::SttConfig::Whisper {
                 model: PathBuf::from("/nonexistent/model.bin"),
             }),
             Path::new("/nonexistent"),
@@ -681,11 +683,7 @@ mod tests {
     /// thing it never looked at.
     #[test]
     fn failed_settings_leave_its_dependants_unchecked() {
-        for check in [
-            audio_capture(None),
-            transcription_model(None),
-            wake_word_model(None),
-        ] {
+        for check in [audio_capture(None), stt_model(None), wake_word_model(None)] {
             assert_eq!(check.status, Status::Warning);
             assert_eq!(check.detail, SETTINGS_FAILED);
         }

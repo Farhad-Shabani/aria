@@ -1,6 +1,6 @@
 //! Who is speaking, cut from the audio itself: turns of speech between
 //! pauses, each judged as the owner's voice or another's. The audio sets the
-//! clock, not the transcriber, so a decoder that finalizes late or in big
+//! clock, not the recognizer, so a decoder that finalizes late or in big
 //! pieces cannot merge two voices into one turn.
 
 use std::ops::Range;

@@ -1,4 +1,4 @@
-//! The profile block: every active fact rendered once to a file, so an ask
+//! The profile block: every active fact rendered once to a file, so a chat
 //! pays one small read to show the assistant what it knows.
 
 use std::io::Write;
@@ -86,7 +86,7 @@ pub fn write_profile(store: &Store, dir: &Path) -> Result<(), StoreError> {
 }
 
 /// The block as written, or `None` when there is none or it cannot be
-/// read: memory never fails an ask.
+/// read: memory never fails a chat.
 pub fn load_profile_block(dir: &Path) -> Option<String> {
     let path = dir.join(PROFILE_FILE);
     let text = match std::fs::read_to_string(&path) {

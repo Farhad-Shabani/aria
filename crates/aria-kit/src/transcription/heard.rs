@@ -3,7 +3,7 @@
 
 use crate::audio::RecordingReader;
 use crate::transcription::{
-    Layer, Operation, Transcriber, TranscriptSegment, TranscriptUpdate, TranscriptionError,
+    Layer, Operation, Recognizer, TranscriptSegment, TranscriptUpdate, TranscriptionError,
 };
 
 /// The next finalized segment, or `None` once the recording ends. Decoding,
@@ -12,7 +12,7 @@ use crate::transcription::{
 ///
 /// Freeing is safe without asking anyone: a second reader of the same
 /// recording holds its own fork and frees its own audio.
-pub fn next_heard<T: Transcriber, L: Layer>(
+pub fn next_heard<T: Recognizer, L: Layer>(
     operation: &mut Operation<'_, T, L>,
     recording: &mut RecordingReader,
 ) -> Result<Option<Heard>, TranscriptionError> {
@@ -27,7 +27,7 @@ pub fn next_heard<T: Transcriber, L: Layer>(
 
 /// [`next_heard`], with the decoder's provisional text between finalized
 /// segments when `previews` asks for it.
-pub fn next_heard_update<T: Transcriber, L: Layer>(
+pub fn next_heard_update<T: Recognizer, L: Layer>(
     operation: &mut Operation<'_, T, L>,
     recording: &mut RecordingReader,
     previews: bool,
@@ -90,7 +90,7 @@ mod tests {
         use crate::audio::testing::{Pace, paced};
         use crate::cancel::CancelToken;
         use crate::transcription::{
-            Cadence, Hypothesis, Language, TimedWord, Transcription, TranscriptionAudio,
+            Cadence, Hypothesis, Language, RecognitionAudio, TimedWord, Transcription,
         };
         use std::sync::Mutex;
 
@@ -99,7 +99,7 @@ mod tests {
             calls: Mutex<usize>,
             timed: bool,
         }
-        impl Transcriber for Script {
+        impl Recognizer for Script {
             fn validate_language(
                 &self,
                 _: &Language,
@@ -107,9 +107,9 @@ mod tests {
             ) -> Result<(), TranscriptionError> {
                 Ok(())
             }
-            fn transcribe_with(
+            fn recognize_with(
                 &self,
-                audio: TranscriptionAudio<'_>,
+                audio: RecognitionAudio<'_>,
                 _: &Language,
                 _: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -184,7 +184,7 @@ mod tests {
         use crate::audio::testing::{Pace, paced};
         use crate::cancel::CancelToken;
         use crate::transcription::{
-            Cadence, Hypothesis, Language, Transcription, TranscriptionAudio,
+            Cadence, Hypothesis, Language, RecognitionAudio, Transcription,
         };
         use std::sync::Mutex;
 
@@ -192,7 +192,7 @@ mod tests {
             pace: Pace,
             calls: Mutex<usize>,
         }
-        impl Transcriber for Script {
+        impl Recognizer for Script {
             fn validate_language(
                 &self,
                 _: &Language,
@@ -201,9 +201,9 @@ mod tests {
                 Ok(())
             }
 
-            fn transcribe_with(
+            fn recognize_with(
                 &self,
-                _: TranscriptionAudio<'_>,
+                _: RecognitionAudio<'_>,
                 _: &Language,
                 _: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {

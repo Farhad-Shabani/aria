@@ -1,4 +1,4 @@
-//! In-process transcription through candle's Whisper implementation.
+//! In-process recognition through candle's Whisper implementation.
 //!
 //! Whisper in pure Rust, which is what makes this the one engine that reaches
 //! a browser: the others bind a native runtime with no wasm build. It loads
@@ -36,7 +36,7 @@ use tokenizers::Tokenizer;
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    Hypothesis, Language, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled,
+    Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError, check_cancelled,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -86,7 +86,7 @@ const MEL_BANDS: usize = 80;
 
 pub struct WhisperCandle {
     /// One resident model. Decoding mutates its key-value cache, so a
-    /// transcription holds it for the whole utterance.
+    /// recognition holds it for the whole utterance.
     model: Mutex<Whisper>,
     tokenizer: Tokenizer,
     config: Config,
@@ -129,7 +129,7 @@ impl WhisperCandle {
     }
 }
 
-impl Transcriber for WhisperCandle {
+impl Recognizer for WhisperCandle {
     fn validate_language(
         &self,
         language: &Language,
@@ -138,9 +138,9 @@ impl Transcriber for WhisperCandle {
         decode::Prompt::new(&self.tokenizer, &self.config, language).map(|_prompt| ())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {

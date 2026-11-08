@@ -82,9 +82,9 @@ const RESULTS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS results (
 const RESULTS_PER_ENTRY: usize = 20;
 /// How much text all results keep together, across entries.
 const RESULTS_TEXT_BYTES: usize = 8 * 1024 * 1024;
-/// The start of a Mac Audio transcript that its entry keeps and search covers.
+/// The start of a transcript that its entry keeps and search covers.
 const EXCERPT_BYTES: usize = 1024;
-/// How much of a Mac Audio transcript Get reads into the entry.
+/// How much of a transcript Get reads into the entry.
 const MAX_TRANSCRIPT_READ: u64 = 1024 * 1024;
 
 /// How much one section keeps before it evicts its own oldest entries.
@@ -100,11 +100,11 @@ fn budget(section: HistorySection) -> Budget {
             text_bytes: 8 * 1024 * 1024,
         },
         // A session's text stays in its transcript file.
-        HistorySection::Listen => Budget {
+        HistorySection::SystemTranscription => Budget {
             entries: 500,
             text_bytes: 512 * 1024,
         },
-        HistorySection::Ask => Budget {
+        HistorySection::Chat => Budget {
             entries: 500,
             text_bytes: 8 * 1024 * 1024,
         },
@@ -325,7 +325,7 @@ impl Store {
         })
     }
 
-    /// Saves a finished Mac Audio session that wrote `transcript`. The file stays the session's
+    /// Saves a finished system transcription that wrote `transcript`. The file stays the session's
     /// text, and the entry keeps its excerpt. An empty transcript saves nothing.
     pub fn save_transcript(
         &self,
@@ -346,7 +346,7 @@ impl Store {
         let entry = HistoryEntry {
             id: 0,
             title: None,
-            content: HistoryContent::Listen {
+            content: HistoryContent::SystemTranscription {
                 transcript: transcript.to_path_buf(),
                 read: None,
             },
@@ -369,9 +369,9 @@ impl Store {
         self.insert(entry, None).map(Some)
     }
 
-    /// Saves an ask that replied: the question as asked, the folder it worked
+    /// Saves a chat that replied: the question as asked, the folder it worked
     /// in, and the reply. `failure` is why the reply couldn't be typed.
-    pub fn save_ask(
+    pub fn save_chat(
         &self,
         question: &str,
         reply: &str,
@@ -383,7 +383,7 @@ impl Store {
         let entry = HistoryEntry {
             id: 0,
             title: None,
-            content: HistoryContent::Ask {
+            content: HistoryContent::Chat {
                 reply: reply.to_owned(),
             },
             created_at_ms,
@@ -474,7 +474,7 @@ impl Store {
         Ok(results)
     }
 
-    /// A Mac Audio entry comes back with its transcript read, up to `MAX_TRANSCRIPT_READ`, outside
+    /// A transcript entry comes back with its transcript read, up to `MAX_TRANSCRIPT_READ`, outside
     /// the lock.
     pub fn get(&self, id: u64) -> Result<HistoryEntry, HistoryError> {
         validate_id(id)?;
@@ -483,7 +483,7 @@ impl Store {
             self.maintain(&mut state)?;
             load(&state, id)?
         };
-        if let HistoryContent::Listen { transcript, read } = &mut entry.content {
+        if let HistoryContent::SystemTranscription { transcript, read } = &mut entry.content {
             match read_transcript(transcript) {
                 Some((text, whole)) => {
                     entry.text = text;
@@ -694,7 +694,7 @@ impl Store {
             if state.pinned.contains(&entry.id) {
                 continue;
             }
-            // Expiry takes the row only: a Mac Audio transcript stays a file
+            // Expiry takes the row only: a transcript stays a file
             // the person keeps. A row whose file someone removed goes too.
             if entry.deletion_pending
                 || now.saturating_sub(entry.created_at_ms) >= TEXT_TTL_MS
@@ -1000,7 +1000,8 @@ fn validate_entry(entry: &HistoryEntry) -> Result<(), HistoryError> {
     let dictation = entry.dictation();
     if transcript_path(&entry.content)
         .is_some_and(|path| !path.is_absolute() || path.as_os_str().len() > 4096)
-        || (entry.content.section() == HistorySection::Listen && entry.text.len() > EXCERPT_BYTES)
+        || (entry.content.section() == HistorySection::SystemTranscription
+            && entry.text.len() > EXCERPT_BYTES)
     {
         return Err(HistoryError::InvalidRequest);
     }
@@ -1076,15 +1077,15 @@ fn check_size(file: &File, limit: u64) -> Result<(), HistoryError> {
 
 fn transcript_path(content: &HistoryContent) -> Option<&Path> {
     match content {
-        HistoryContent::Listen { transcript, .. } => Some(transcript),
-        HistoryContent::Dictation(_) | HistoryContent::Ask { .. } => None,
+        HistoryContent::SystemTranscription { transcript, .. } => Some(transcript),
+        HistoryContent::Dictation(_) | HistoryContent::Chat { .. } => None,
     }
 }
 
 fn reply(content: &HistoryContent) -> Option<&str> {
     match content {
-        HistoryContent::Ask { reply } => Some(reply),
-        HistoryContent::Dictation(_) | HistoryContent::Listen { .. } => None,
+        HistoryContent::Chat { reply } => Some(reply),
+        HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
     }
 }
 
@@ -1168,8 +1169,8 @@ fn add_missing_columns(connection: &Database) -> Result<(), HistoryError> {
 fn section_number(section: HistorySection) -> u8 {
     match section {
         HistorySection::Dictation => 0,
-        HistorySection::Listen => 1,
-        HistorySection::Ask => 2,
+        HistorySection::SystemTranscription => 1,
+        HistorySection::Chat => 2,
     }
 }
 
@@ -1239,9 +1240,9 @@ fn stored_code(code: RpcErrorCode) -> i32 {
         RpcErrorCode::SpeakerInconsistentSamples => 503,
         RpcErrorCode::SpeakerProfileWriteFailed => 504,
         RpcErrorCode::SpeakerNoSpeech => 505,
-        RpcErrorCode::ListenUnsupportedOs => 800,
-        RpcErrorCode::ListenPermissionDenied => 801,
-        RpcErrorCode::ListenCaptureFailed => 802,
+        RpcErrorCode::SystemTranscriptionUnsupportedOs => 800,
+        RpcErrorCode::SystemTranscriptionPermissionDenied => 801,
+        RpcErrorCode::SystemTranscriptionCaptureFailed => 802,
         RpcErrorCode::HistoryMissing => 900,
         RpcErrorCode::HistoryAudioUnavailable => 901,
         RpcErrorCode::HistoryUnavailable => 902,
@@ -1294,9 +1295,9 @@ fn code_from_stored(number: i32) -> Option<RpcErrorCode> {
         503 => RpcErrorCode::SpeakerInconsistentSamples,
         504 => RpcErrorCode::SpeakerProfileWriteFailed,
         505 => RpcErrorCode::SpeakerNoSpeech,
-        800 => RpcErrorCode::ListenUnsupportedOs,
-        801 => RpcErrorCode::ListenPermissionDenied,
-        802 => RpcErrorCode::ListenCaptureFailed,
+        800 => RpcErrorCode::SystemTranscriptionUnsupportedOs,
+        801 => RpcErrorCode::SystemTranscriptionPermissionDenied,
+        802 => RpcErrorCode::SystemTranscriptionCaptureFailed,
         900 => RpcErrorCode::HistoryMissing,
         901 => RpcErrorCode::HistoryAudioUnavailable,
         902 => RpcErrorCode::HistoryUnavailable,
@@ -1380,11 +1381,11 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
             audio,
             retrying: false,
         }),
-        (1, Some(transcript), None) => HistoryContent::Listen {
+        (1, Some(transcript), None) => HistoryContent::SystemTranscription {
             transcript,
             read: None,
         },
-        (2, None, Some(reply)) => HistoryContent::Ask { reply },
+        (2, None, Some(reply)) => HistoryContent::Chat { reply },
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(HistoryEntry {
@@ -1585,10 +1586,10 @@ mod tests {
         VALUES(?1,0,NULL,NULL,NULL,?2,1,0,NULL,'en',0,NULL,'test')";
     const SELECT_BEFORE_SECTIONS: &str = "SELECT id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine FROM entries";
 
-    /// A Mac Audio entry as the store keeps one, without reading the file.
-    fn listening(text: &str, transcript: &Path) -> HistoryEntry {
+    /// A transcript entry as the store keeps one, without reading the file.
+    fn system_transcription(text: &str, transcript: &Path) -> HistoryEntry {
         HistoryEntry {
-            content: HistoryContent::Listen {
+            content: HistoryContent::SystemTranscription {
                 transcript: transcript.to_path_buf(),
                 read: None,
             },
@@ -1602,7 +1603,7 @@ mod tests {
         (directory, store)
     }
 
-    /// Saves `file` as a Mac Audio entry that just ended.
+    /// Saves `file` as a transcript entry that just ended.
     fn linked(store: &Store, file: &Path) -> HistoryEntry {
         store
             .save_transcript(file, now_ms(), 0, None)
@@ -1654,7 +1655,7 @@ mod tests {
         let (_directory, store) = opened();
         store
             .insert(
-                listening("session", Path::new("/no-folder/session.txt")),
+                system_transcription("session", Path::new("/no-folder/session.txt")),
                 None,
             )
             .unwrap();
@@ -1683,7 +1684,7 @@ mod tests {
             sections,
             [
                 ("from an older daemon".to_owned(), HistorySection::Dictation),
-                ("session".to_owned(), HistorySection::Listen),
+                ("session".to_owned(), HistorySection::SystemTranscription),
             ]
         );
     }
@@ -1694,7 +1695,7 @@ mod tests {
         let first = save(&store, "one", HistoryStatus::Success, None);
         store
             .insert(
-                listening("session", Path::new("/no-folder/session.txt")),
+                system_transcription("session", Path::new("/no-folder/session.txt")),
                 None,
             )
             .unwrap();
@@ -1720,7 +1721,9 @@ mod tests {
         let file = transcript(directory.path(), "[00:00:01] heard");
         store.save_transcript(&file, now_ms(), 1_000, None).unwrap();
 
-        let cleared = store.clear(Some(HistorySection::Listen)).unwrap();
+        let cleared = store
+            .clear(Some(HistorySection::SystemTranscription))
+            .unwrap();
 
         assert_eq!(cleared.deleted_entries, 1);
         assert!(!cleared.cleanup_pending);
@@ -1774,22 +1777,22 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_reads_an_asks_reply_and_any_other_entrys_text() {
-        let ask = HistoryEntry {
-            content: HistoryContent::Ask {
+    fn a_prompt_reads_a_chats_reply_and_any_other_entrys_text() {
+        let chat = HistoryEntry {
+            content: HistoryContent::Chat {
                 reply: "Friday.".into(),
             },
             ..entry("When?", HistoryStatus::Success)
         };
         let whole = HistoryEntry {
-            content: HistoryContent::Listen {
+            content: HistoryContent::SystemTranscription {
                 transcript: PathBuf::from("/transcripts/session.txt"),
                 read: Some(TranscriptRead::Whole),
             },
             ..entry("[00:00:01] Ship it.", HistoryStatus::Success)
         };
 
-        assert_eq!(ask.prompt_text().unwrap(), "Friday.");
+        assert_eq!(chat.prompt_text().unwrap(), "Friday.");
         assert_eq!(whole.prompt_text().unwrap(), "[00:00:01] Ship it.");
         assert_eq!(
             entry("Hello", HistoryStatus::Success)
@@ -1801,14 +1804,14 @@ mod tests {
 
     #[test]
     fn a_prompt_cannot_read_a_blank_entry() {
-        let blank_ask = HistoryEntry {
-            content: HistoryContent::Ask {
+        let blank_chat = HistoryEntry {
+            content: HistoryContent::Chat {
                 reply: " \n".into(),
             },
             ..entry("When?", HistoryStatus::Success)
         };
 
-        for blank in [entry(" \n", HistoryStatus::Success), blank_ask] {
+        for blank in [entry(" \n", HistoryStatus::Success), blank_chat] {
             let error = blank.prompt_text().expect_err("no text");
             assert!(matches!(error, HistoryError::EntryEmpty));
             assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::HistoryEntryEmpty);
@@ -1823,7 +1826,7 @@ mod tests {
             Some(TranscriptRead::Unavailable),
         ] {
             let partial = HistoryEntry {
-                content: HistoryContent::Listen {
+                content: HistoryContent::SystemTranscription {
                     transcript: PathBuf::from("/transcripts/session.txt"),
                     read,
                 },
@@ -2023,7 +2026,7 @@ mod tests {
         let (_directory, store) = opened();
         let session = store
             .insert(
-                listening("session", Path::new("/no-folder/session.txt")),
+                system_transcription("session", Path::new("/no-folder/session.txt")),
                 None,
             )
             .unwrap();
@@ -2039,10 +2042,10 @@ mod tests {
     }
 
     #[test]
-    fn an_ask_keeps_its_reply_which_search_finds_and_its_budget_counts() {
+    fn a_chat_keeps_its_reply_which_search_finds_and_its_budget_counts() {
         let (_directory, store) = opened();
         let asked = HistoryEntry {
-            content: HistoryContent::Ask {
+            content: HistoryContent::Chat {
                 reply: "Tuesday at noon".into(),
             },
             ..entry("When is lunch?", HistoryStatus::Success)
@@ -2060,7 +2063,7 @@ mod tests {
             "When is lunch?".len() + "Tuesday at noon".len()
         );
         let oversized = HistoryEntry {
-            content: HistoryContent::Ask {
+            content: HistoryContent::Chat {
                 reply: "x".repeat(MAX_ENTRY_BYTES + 1),
             },
             ..asked
@@ -2088,7 +2091,7 @@ mod tests {
         assert_eq!(got.text, text);
         assert_eq!(
             got.content,
-            HistoryContent::Listen {
+            HistoryContent::SystemTranscription {
                 transcript: file,
                 read: Some(TranscriptRead::Whole)
             }
@@ -2113,7 +2116,10 @@ mod tests {
     fn a_session_that_failed_is_linked_as_a_failed_transcription() {
         let (directory, store) = opened();
         let file = transcript(directory.path(), "[00:00:01] partial");
-        let failure = RpcFailure::new(RpcErrorCode::ListenCaptureFailed, "capture stopped");
+        let failure = RpcFailure::new(
+            RpcErrorCode::SystemTranscriptionCaptureFailed,
+            "capture stopped",
+        );
 
         let linked = store
             .save_transcript(&file, now_ms(), 1_000, Some(failure.clone()))
@@ -2135,7 +2141,7 @@ mod tests {
         assert_eq!(got.text.len(), MAX_TRANSCRIPT_READ as usize);
         assert!(matches!(
             got.content,
-            HistoryContent::Listen {
+            HistoryContent::SystemTranscription {
                 read: Some(TranscriptRead::Truncated),
                 ..
             }
@@ -2157,7 +2163,7 @@ mod tests {
         assert_eq!(got.text, "kept excerpt");
         assert!(matches!(
             got.content,
-            HistoryContent::Listen {
+            HistoryContent::SystemTranscription {
                 read: Some(TranscriptRead::Unavailable),
                 ..
             }
@@ -2216,7 +2222,7 @@ mod tests {
         linked(&store, &file);
         store
             .insert(
-                listening("unmounted", Path::new("/no-folder/session.txt")),
+                system_transcription("unmounted", Path::new("/no-folder/session.txt")),
                 None,
             )
             .unwrap();

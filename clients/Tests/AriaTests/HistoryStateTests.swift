@@ -352,14 +352,14 @@ final class HistoryStateTests: XCTestCase {
 
     func testNarrowingToASectionListsOnlyItAndOpeningWidensAgain() async {
         let harness = Harness()
-        var ask = Self.item(3)
-        ask.kind = .ask(reply: "reply")
-        harness.entries = [ask, Self.item(2)]
+        var chat = Self.item(3)
+        chat.kind = .chat(reply: "reply")
+        harness.entries = [chat, Self.item(2)]
         let state = HistoryState(effects: harness.effects)
         state.open()
         await waitUntil { state.items.count == 2 }
 
-        state.filter(query: "", section: .ask)
+        state.filter(query: "", section: .chat)
         await waitUntil { state.items.count == 1 }
 
         XCTAssertEqual(state.items.map(\.id), [3])
@@ -370,11 +370,11 @@ final class HistoryStateTests: XCTestCase {
         state.close()
     }
 
-    func testCopyingAnAskTakesItsReply() async {
+    func testCopyingAChatTakesItsReply() async {
         let harness = Harness()
-        var ask = Self.item(3)
-        ask.kind = .ask(reply: "The reply")
-        harness.entries = [ask]
+        var chat = Self.item(3)
+        chat.kind = .chat(reply: "The reply")
+        harness.entries = [chat]
         let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
@@ -610,11 +610,11 @@ final class HistoryStateTests: XCTestCase {
         state.clear()
         await waitUntil { clear != nil }
 
-        state.filter(query: "", section: .ask)
+        state.filter(query: "", section: .chat)
         clear?.resume(throwing: HistoryFailure.storage)
 
         await waitUntil { !state.isClearing && !state.isLoading }
-        XCTAssertEqual(harness.listedSections.last, .ask)
+        XCTAssertEqual(harness.listedSections.last, .chat)
         state.close()
     }
 

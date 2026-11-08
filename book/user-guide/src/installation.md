@@ -91,7 +91,7 @@ The system voice needs no model. You can leave optional features at their
 defaults.
 
 You only need a Claude Code or Codex account if you want to use
-[Ask](./voice-chat.md) or [Prompts](./prompts.md). Choose your assistant later
+[Chat](./chat.md) or [Prompts](./prompts.md). Choose your assistant later
 in **Settings → General → Assistant**, or from the
 [terminal](./settings.md#assistant).
 
@@ -110,16 +110,16 @@ record audio to test microphone permission.
 
 ### Switch the speech model
 
-To change only the speech-to-text engine, name it. Setup keeps your other
-choices, downloads that engine's model if it isn't on disk, and switches
-without restarting the service:
+To change only the speech model, name it. Setup keeps your other choices,
+downloads the model if it isn't on disk, and switches without restarting the
+service:
 
 ```sh
 aria setup --stt moonshine
 ```
 
 The names are the ones `stt.backend` takes. For Parakeet (MLX), run
-`aria setup` instead. To transcribe on your own server, see
+`aria setup` instead. To recognize speech on your own server, see
 [Server inference](./settings.md#server-inference).
 
 ### Free model space

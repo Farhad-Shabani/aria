@@ -3,17 +3,18 @@ import SwiftUI
 struct EnginesPage: View {
     @ObservedObject var state: SetupState
 
-    private var serverTranscribes: Bool { state.inspection.transcriptionRunsOn == .server }
+    private var serverRecognizes: Bool { state.inspection.sttRunsOn == .server }
 
     var body: some View {
         Form {
             Section {
                 picker(
-                    "Speech to text", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID,
-                    note: serverTranscribes ? "Your server transcribes. Change this in Settings > Recognition." : nil
+                    "Speech model", state.inspection.sttChoices, $state.selections.sttEngineID,
+                    note: serverRecognizes
+                        ? "Your server recognizes speech. Change this in Settings > Recognition." : nil
                 )
-                .disabled(serverTranscribes)
-                picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)
+                .disabled(serverRecognizes)
+                picker("Text to speech", state.inspection.ttsChoices, $state.selections.ttsEngineID)
             }
             DownloadsSection(state: state)
         }

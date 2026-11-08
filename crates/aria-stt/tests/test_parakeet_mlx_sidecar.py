@@ -83,13 +83,13 @@ class TestChunkBounds:
 class TestParseRequest:
     def test_a_request_yields_its_path_and_chunk(self, tmp_path):
         clip = _write_wav(tmp_path)
-        line = json.dumps({"op": "transcribe", "audio_path": str(clip), "chunk_samples": 12000})
+        line = json.dumps({"op": "recognize", "audio_path": str(clip), "chunk_samples": 12000})
 
         assert sidecar.parse_request(line) == (str(clip), 12000)
 
     def test_the_chunk_is_optional(self, tmp_path):
         clip = _write_wav(tmp_path)
-        line = json.dumps({"op": "transcribe", "audio_path": str(clip)})
+        line = json.dumps({"op": "recognize", "audio_path": str(clip)})
 
         assert sidecar.parse_request(line) == (str(clip), None)
 
@@ -99,10 +99,10 @@ class TestParseRequest:
 
     def test_a_missing_audio_path_is_refused(self):
         with pytest.raises(KeyError):
-            sidecar.parse_request(json.dumps({"op": "transcribe"}))
+            sidecar.parse_request(json.dumps({"op": "recognize"}))
 
     def test_a_nonexistent_recording_is_refused(self):
-        line = json.dumps({"op": "transcribe", "audio_path": "/nonexistent.wav"})
+        line = json.dumps({"op": "recognize", "audio_path": "/nonexistent.wav"})
 
         with pytest.raises(FileNotFoundError):
             sidecar.parse_request(line)
@@ -111,13 +111,13 @@ class TestParseRequest:
     def test_a_non_positive_chunk_is_refused(self, tmp_path, chunk_samples):
         clip = _write_wav(tmp_path)
         line = json.dumps(
-            {"op": "transcribe", "audio_path": str(clip), "chunk_samples": chunk_samples}
+            {"op": "recognize", "audio_path": str(clip), "chunk_samples": chunk_samples}
         )
 
         with pytest.raises(ValueError, match="chunk_samples"):
             sidecar.parse_request(line)
 
-    @pytest.mark.parametrize("line", ["[]", "5", '"transcribe"'])
+    @pytest.mark.parametrize("line", ["[]", "5", '"recognize"'])
     def test_json_that_is_not_an_object_is_refused(self, line):
         with pytest.raises((ValueError, AttributeError, TypeError)):
             sidecar.parse_request(line)
@@ -161,7 +161,7 @@ class TestWireFormat:
 class TestServe:
     def test_one_bad_request_does_not_stop_the_next(self, tmp_path, monkeypatch):
         clip = _write_wav(tmp_path)
-        good = json.dumps({"op": "transcribe", "audio_path": str(clip)})
+        good = json.dumps({"op": "recognize", "audio_path": str(clip)})
         monkeypatch.setattr(sys, "stdin", io.StringIO(f'{{"op":"reticulate"}}\n{good}\n'))
         frames = io.StringIO()
         model = SimpleNamespace(

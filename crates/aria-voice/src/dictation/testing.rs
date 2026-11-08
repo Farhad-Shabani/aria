@@ -6,8 +6,8 @@ use super::{
     TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
-use crate::transcription::{
-    Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
+use crate::stt::{
+    Hypothesis, Language, RecognitionAudio, Recognizer, Transcript, TranscriptionError,
 };
 use aria_kit::audio::{RecordingReader, SilenceDuration};
 use aria_kit::cancel::CancelToken;
@@ -206,19 +206,19 @@ impl VoiceActivityDetector for Loud {
 /// An engine that decodes whole audio by calling its closure.
 pub struct Hypotheses<F>(pub F)
 where
-    F: Fn(TranscriptionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static;
+    F: Fn(RecognitionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static;
 
-impl<F> Transcriber for Hypotheses<F>
+impl<F> Recognizer for Hypotheses<F>
 where
-    F: Fn(TranscriptionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static,
+    F: Fn(RecognitionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static,
 {
     fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
@@ -231,7 +231,7 @@ pub struct Operations<F>(pub F)
 where
     F: Fn(&CancelToken) -> OperationSource + Send + Sync + 'static;
 
-impl<F> Transcriber for Operations<F>
+impl<F> Recognizer for Operations<F>
 where
     F: Fn(&CancelToken) -> OperationSource + Send + Sync + 'static,
 {
@@ -239,9 +239,9 @@ where
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        _: TranscriptionAudio<'_>,
+        _: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
