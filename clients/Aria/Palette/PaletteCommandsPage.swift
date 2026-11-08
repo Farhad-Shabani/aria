@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PaletteCommandsPage: View {
     @ObservedObject var controller: PaletteController
-    @ObservedObject var listen: ListenStatus
+    @ObservedObject var systemTranscription: SystemTranscriptionStatus
     @ObservedObject var history: HistoryState
 
     var body: some View {
@@ -46,7 +46,7 @@ struct PaletteCommandsPage: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "All saved dictations, Mac Audio sessions, and asks will be deleted, with their recordings "
+                "All saved dictations, transcripts, and chats will be deleted, with their recordings "
                     + "and transcript files. This can’t be undone. Your history setting won’t change."
             )
         }
@@ -54,11 +54,11 @@ struct PaletteCommandsPage: View {
         .onChange(of: controller.model.promptFailure) { _, failure in
             if let failure { NSAccessibility.announce(failure.message) }
         }
-        .onChange(of: listen.didFailToStart) { _, didFail in
+        .onChange(of: systemTranscription.didFailToStart) { _, didFail in
             guard didFail else { return }
-            NSAccessibility.announce(ListenStatus.startFailure)
+            NSAccessibility.announce(SystemTranscriptionStatus.startFailure)
         }
-        .announcingStopFailure(of: listen)
+        .announcingStopFailure(of: systemTranscription)
     }
 
     private var searchField: some View {
@@ -141,7 +141,7 @@ struct PaletteCommandsPage: View {
         switch item {
         case .command(let command) where command.action == .showLiveTranscript:
             PaletteLiveRow(
-                listen: listen, isSelected: isSelected,
+                systemTranscription: systemTranscription, isSelected: isSelected,
                 show: { controller.run(command) }, stop: { controller.stopTranscription() })
         case .command(let command):
             PaletteCommandRow(command: command, isSelected: isSelected) { controller.run(command) }
@@ -168,12 +168,12 @@ struct PaletteCommandsPage: View {
 
     @ViewBuilder
     private var footerNote: some View {
-        if listen.isStarting {
+        if systemTranscription.isStarting {
             PaletteFooterProgress("Starting…")
-        } else if listen.didFailToStart {
-            NoticeText(notice: ListenStatus.startFailure)
-        } else if listen.didFailToStop {
-            NoticeText(notice: ListenStatus.stopFailure)
+        } else if systemTranscription.didFailToStart {
+            NoticeText(notice: SystemTranscriptionStatus.startFailure)
+        } else if systemTranscription.didFailToStop {
+            NoticeText(notice: SystemTranscriptionStatus.stopFailure)
         } else if let failure = controller.model.promptFailure {
             NoticeText(notice: failure.message)
         } else if !controller.model.keepsHistory {

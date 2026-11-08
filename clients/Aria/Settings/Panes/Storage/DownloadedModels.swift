@@ -46,7 +46,7 @@ extension DownloadedModels.Model {
     private static func feature(_ use: Aria_Setup_V1_ModelUse) -> String {
         switch use {
         case .stt: "Dictation"
-        case .listen: "Mac Audio"
+        case .systemTranscription: "Transcription"
         case .tts: "Spoken Content"
         case .speaker: "Voice"
         case .unspecified, .UNRECOGNIZED: "Aria"

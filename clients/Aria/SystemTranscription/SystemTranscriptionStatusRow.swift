@@ -1,10 +1,10 @@
 import SwiftUI
 
-struct ListenStatusRow: View {
+struct SystemTranscriptionStatusRow: View {
     private static let iconSide: CGFloat = 26
     private static let stopSide: CGFloat = 24
 
-    @ObservedObject var status: ListenStatus
+    @ObservedObject var status: SystemTranscriptionStatus
 
     var body: some View {
         if status.isRunning {
@@ -18,7 +18,7 @@ struct ListenStatusRow: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Transcribing your Mac’s audio")
-                        Text(ListenStatus.savingNote)
+                        Text(SystemTranscriptionStatus.savingNote)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -26,7 +26,7 @@ struct ListenStatusRow: View {
                     stopControl.frame(width: Self.stopSide, height: Self.stopSide)
                 }
                 if status.didFailToStop {
-                    NoticeText(notice: ListenStatus.stopFailure)
+                    NoticeText(notice: SystemTranscriptionStatus.stopFailure)
                         .font(.caption)
                 }
             }
@@ -43,7 +43,7 @@ struct ListenStatusRow: View {
             Button {
                 Task { await status.stop() }
             } label: {
-                Image(systemName: ListenStatus.stopSymbol).font(.caption)
+                Image(systemName: SystemTranscriptionStatus.stopSymbol).font(.caption)
             }
             .buttonStyle(MenuIconButtonStyle())
             .help("Stop Transcribing")
@@ -53,9 +53,9 @@ struct ListenStatusRow: View {
 }
 
 extension View {
-    func announcingStopFailure(of status: ListenStatus) -> some View {
+    func announcingStopFailure(of status: SystemTranscriptionStatus) -> some View {
         onChange(of: status.didFailToStop) { _, didFail in
-            if didFail { NSAccessibility.announce(ListenStatus.stopFailure) }
+            if didFail { NSAccessibility.announce(SystemTranscriptionStatus.stopFailure) }
         }
     }
 }

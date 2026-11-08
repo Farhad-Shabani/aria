@@ -286,7 +286,55 @@ fn move_aliases(
         }
         moved = true;
     }
-    Ok(moved)
+    Ok(retire_renamed_tables(document, aliases) || moved)
+}
+
+/// An older table, such as `[listen]`, left holding no values: a bare header,
+/// keys commented out, or a comment above it once its keys moved. It would
+/// fail as an unknown field, so it goes, and its comments move to the new table.
+fn retire_renamed_tables(document: &mut DocumentMut, aliases: &[(Key, &str)]) -> bool {
+    let mut renamed: Vec<(&str, &str)> = aliases
+        .iter()
+        .filter_map(|(key, alias)| Some((alias.split_once('.')?.0, key.path().split_once('.')?.0)))
+        .filter(|(old, new)| old != new)
+        .collect();
+    renamed.dedup();
+    let mut retired = false;
+    for (old, new) in renamed {
+        let root = document.as_table_mut();
+        let Some(Item::Table(table)) = root.get(old) else {
+            continue;
+        };
+        if !table.is_empty() {
+            continue;
+        }
+        let comments = table
+            .decor()
+            .prefix()
+            .and_then(|prefix| prefix.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let Some(Item::Table(table)) = root.remove(old) else {
+            continue;
+        };
+        match root.get_mut(new) {
+            Some(Item::Table(current)) => {
+                let below = current
+                    .decor()
+                    .prefix()
+                    .and_then(|prefix| prefix.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                current.decor_mut().set_prefix(format!("{comments}{below}"));
+            }
+            Some(_) => {}
+            None => {
+                root.insert(new, Item::Table(table));
+            }
+        }
+        retired = true;
+    }
+    retired
 }
 
 /// Removes the value at `path` with its key, then the tables above it that
@@ -379,8 +427,8 @@ pub struct SettingsFile {
     pub dictation: Dictation,
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) history: History,
-    #[serde(skip_serializing_if = "is_default")]
-    pub listen: Listen,
+    #[serde(rename = "transcription", skip_serializing_if = "is_default")]
+    pub system_transcription: SystemTranscription,
     #[serde(skip_serializing_if = "is_default")]
     pub assistant: Assistant,
     #[serde(skip_serializing_if = "is_default")]
@@ -458,7 +506,7 @@ pub(crate) struct History {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Listen {
+pub struct SystemTranscription {
     pub backend: Option<String>,
     pub model: Option<PathBuf>,
     pub device: Option<DeviceName>,
@@ -763,7 +811,7 @@ impl From<AriaKey> for AriaKeyName {
     }
 }
 
-/// What starts the ask or the prompt list: a word, or a chord table.
+/// What starts a chat or the prompt list: a word, or a chord table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShortcutEntry {
     Off,
@@ -984,7 +1032,7 @@ impl SettingsFile {
         let Self {
             dictation,
             history: _,
-            listen,
+            system_transcription,
             assistant,
             memory,
             prompts,
@@ -1007,8 +1055,14 @@ impl SettingsFile {
                 Key::DictationVocabularyDir,
                 dictation.vocabulary.dir.as_mut(),
             ),
-            (Key::ListenModel, listen.model.as_mut()),
-            (Key::ListenTranscriptsDir, listen.transcripts_dir.as_mut()),
+            (
+                Key::SystemTranscriptionModel,
+                system_transcription.model.as_mut(),
+            ),
+            (
+                Key::SystemTranscriptionTranscriptsDir,
+                system_transcription.transcripts_dir.as_mut(),
+            ),
             (Key::AssistantWorkdir, assistant.workdir.as_mut()),
             (Key::MemoryDir, memory.dir.as_mut()),
             (Key::WakeModel, wake.model.as_mut()),
@@ -1049,7 +1103,7 @@ impl SettingsFile {
         let settings = Settings::from_file(self)?;
         let cleanup = self.validate_dictation()?;
         let timeouts = self.validate_timeouts()?;
-        let listen = self.validate_listen()?;
+        let system_transcription = self.validate_system_transcription()?;
         let assistant_timeout = self.validate_assistant()?;
         self.validate_memory()?;
         validate_shortcuts(&settings)?;
@@ -1061,7 +1115,7 @@ impl SettingsFile {
         Ok(Choices {
             stt,
             stt_runs_on: self.stt.runs_on.unwrap_or_default(),
-            listen,
+            system_transcription,
             tts,
             voices,
             rate: settings.tts_rate,
@@ -1145,17 +1199,23 @@ impl SettingsFile {
         })
     }
 
-    fn validate_listen(&self) -> Result<Option<LocalStt>, SettingsError> {
-        let listen = &self.listen;
-        let Some(backend_name) = &listen.backend else {
+    fn validate_system_transcription(&self) -> Result<Option<LocalStt>, SettingsError> {
+        let system_transcription = &self.system_transcription;
+        let Some(backend_name) = &system_transcription.backend else {
             return Ok(None);
         };
         let engine = LocalStt::named(backend_name)
             .filter(|engine| engine.streams())
-            .ok_or_else(|| unsupported(backend_name, backend::STREAMING, Key::ListenBackend))?;
-        if listen.device.is_some() && engine != LocalStt::Parakeet {
+            .ok_or_else(|| {
+                unsupported(
+                    backend_name,
+                    backend::STREAMING,
+                    Key::SystemTranscriptionBackend,
+                )
+            })?;
+        if system_transcription.device.is_some() && engine != LocalStt::Parakeet {
             return Err(invalid(
-                Key::ListenDevice,
+                Key::SystemTranscriptionDevice,
                 InvalidValue::NotApplicable {
                     backend: backend_name.clone(),
                 },
@@ -1311,8 +1371,14 @@ impl SettingsFile {
 
     fn validate_paths(&self) -> Result<(), SettingsError> {
         for (key, path) in [
-            (Key::ListenModel, &self.listen.model),
-            (Key::ListenTranscriptsDir, &self.listen.transcripts_dir),
+            (
+                Key::SystemTranscriptionModel,
+                &self.system_transcription.model,
+            ),
+            (
+                Key::SystemTranscriptionTranscriptsDir,
+                &self.system_transcription.transcripts_dir,
+            ),
             (Key::MemoryDir, &self.memory.dir),
             (Key::WakeModel, &self.wake.model),
             (Key::SttInterpreter, &self.stt.interpreter),
@@ -1756,6 +1822,48 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_listen_table_from_before_the_rename_loads_as_transcription() {
+        let loaded = Loaded::parse(
+            "[listen]\nbackend = \"parakeet\"\ndevice = \"gpu\"\ntranscripts_dir = \"~/notes\"\n",
+            Path::new(HOME),
+        )
+        .expect("loads");
+        assert_eq!(
+            loaded.settings.system_transcription.backend.as_deref(),
+            Some("parakeet")
+        );
+        let text = loaded.document.to_string();
+        assert!(text.contains("[transcription]"), "{text}");
+        assert!(!text.contains("[listen]"), "{text}");
+    }
+
+    #[test]
+    fn a_listen_table_left_without_values_loads_and_takes_the_new_name() {
+        for text in [
+            "[listen]\n",
+            "[listen]\n# backend = \"parakeet\"\n",
+            "# system audio\n[listen]\nbackend = \"parakeet\"\n",
+        ] {
+            let loaded = Loaded::parse(text, Path::new(HOME)).expect(text);
+            let written = loaded.document.to_string();
+            assert!(!written.contains("[listen]"), "{text:?} wrote {written:?}");
+        }
+        let commented = Loaded::parse(
+            "# system audio\n[listen]\nbackend = \"parakeet\"\n",
+            Path::new(HOME),
+        )
+        .expect("loads");
+        assert!(
+            commented
+                .document
+                .to_string()
+                .contains("# system audio\n[transcription]"),
+            "{}",
+            commented.document
+        );
+    }
+
+    #[test]
     fn an_alias_beside_its_current_key_is_refused_by_both_names() {
         let error = Loaded::parse_with(
             "[assistant]\nid = \"codex\"\n[chat]\nagent = \"claude-code\"\n",
@@ -1797,7 +1905,7 @@ pub(super) mod tests {
         let SettingsFile {
             dictation,
             history,
-            listen,
+            system_transcription,
             assistant,
             memory,
             prompts: _,
@@ -1827,7 +1935,10 @@ pub(super) mod tests {
                 as_json(serde_json::to_value(&dictation.vocabulary)),
             ),
             ("history", as_json(serde_json::to_value(history))),
-            ("listen", as_json(serde_json::to_value(listen))),
+            (
+                "transcription",
+                as_json(serde_json::to_value(system_transcription)),
+            ),
             ("assistant", as_json(serde_json::to_value(assistant))),
             ("memory", as_json(serde_json::to_value(memory))),
             ("shortcuts", as_json(serde_json::to_value(shortcuts))),
@@ -1867,7 +1978,7 @@ pub(super) mod tests {
             "[memory]\ndir = \"notes\"\n",
             "[assistant]\nworkdir = \"src\"\n",
             "[assistant]\nproject_roots = [\"src\"]\n",
-            "[listen]\ntranscripts_dir = \"out\"\n",
+            "[transcription]\ntranscripts_dir = \"out\"\n",
         ] {
             let error = Loaded::parse(text, Path::new(HOME)).unwrap_err();
             assert!(error.to_string().contains("absolute"), "{error}");
@@ -1919,7 +2030,7 @@ pub(super) mod tests {
              [tts.kokoro]\nmodel = \"~/a\"\nvoices = \"~/a\"\n\
              [tts.qwen]\nmodel = \"~/a\"\ntokenizer = \"~/a\"\n\
              [stt]\nbackend = \"parakeet-mlx\"\nmodel = \"~/a\"\ninterpreter = \"~/a\"\n\
-             [listen]\nmodel = \"~/a\"\ntranscripts_dir = \"~/a\"\n\
+             [transcription]\nmodel = \"~/a\"\ntranscripts_dir = \"~/a\"\n\
              [speaker]\nmodel = \"~/a\"\nsegmentation_model = \"~/a\"\nprofiles_dir = \"~/a\"\n\
              [capture]\npath = \"~/a\"\n",
         );
@@ -1933,8 +2044,8 @@ pub(super) mod tests {
             Key::TtsQwenTokenizer,
             Key::SttModel,
             Key::SttInterpreter,
-            Key::ListenModel,
-            Key::ListenTranscriptsDir,
+            Key::SystemTranscriptionModel,
+            Key::SystemTranscriptionTranscriptsDir,
             Key::SpeakerModel,
             Key::SpeakerSegmentationModel,
             Key::SpeakerProfilesDir,
@@ -2213,7 +2324,10 @@ pub(super) mod tests {
             Key::SttInterpreter,
         );
         refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
-        refused("[listen]\nbackend = \"server\"\n", Key::ListenBackend);
+        refused(
+            "[transcription]\nbackend = \"server\"\n",
+            Key::SystemTranscriptionBackend,
+        );
     }
 
     #[test]
@@ -2254,12 +2368,12 @@ pub(super) mod tests {
     #[test]
     fn mac_audio_takes_any_engine_that_streams() {
         for engine in backend::STREAMING {
-            let text = format!("[listen]\nbackend = \"{engine}\"\n");
+            let text = format!("[transcription]\nbackend = \"{engine}\"\n");
             assert!(Loaded::parse(&text, Path::new(HOME)).is_ok(), "{engine}");
         }
         refused(
-            "[listen]\nbackend = \"whisper-candle\"\n",
-            Key::ListenBackend,
+            "[transcription]\nbackend = \"whisper-candle\"\n",
+            Key::SystemTranscriptionBackend,
         );
     }
 

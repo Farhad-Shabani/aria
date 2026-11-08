@@ -11,7 +11,7 @@ enum MenuBarState: Equatable {
     case attention
     case updateAvailable
 
-    init(daemon: DaemonState, pill: PillState?, isListenRunning: Bool, isUpdateAvailable: Bool) {
+    init(daemon: DaemonState, pill: PillState?, isSystemTranscriptionRunning: Bool, isUpdateAvailable: Bool) {
         switch (daemon, pill) {
         case (.stopped, _): self = .stopped
         case (.working, _): self = .switching
@@ -20,7 +20,7 @@ enum MenuBarState: Equatable {
         case (.running, .delivered), (.running, .replied): self = .done
         case (.running, .failed), (.running, .noReply): self = .attention
         case (.running, .cancelled), (.running, .interrupted), (.running, .excluded), (.running, nil):
-            if isListenRunning {
+            if isSystemTranscriptionRunning {
                 self = .transcribingSystemAudio
             } else {
                 self = isUpdateAvailable ? .updateAvailable : .ready

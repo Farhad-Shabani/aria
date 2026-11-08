@@ -1,4 +1,4 @@
-//! Listen mode: the machine's own audio output, captured through a Core
+//! System transcription: the machine's own audio output, captured through a Core
 //! Audio process tap and transcribed continuously into a transcript file.
 
 mod event;
@@ -7,8 +7,8 @@ mod sink;
 mod tap;
 mod track;
 
-pub use event::ListenStage;
-pub use event::{EVENT_THREAD, ListenEventEmitter};
+pub use event::SystemTranscriptionStage;
+pub use event::{EVENT_THREAD, SystemTranscriptionEventEmitter};
 pub use session::run_session;
 pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
@@ -20,25 +20,25 @@ use std::path::PathBuf;
 use crate::transcription::TranscriptionError;
 use aria_settings::rpc::RpcErrorCode;
 
-pub struct ListenStarted {
-    pub already_listening: bool,
+pub struct SystemTranscriptionStarted {
+    pub already_running: bool,
     pub transcript: PathBuf,
 }
 
-pub struct ListenStopped {
-    pub was_listening: bool,
+pub struct SystemTranscriptionStopped {
+    pub was_running: bool,
     pub transcript: PathBuf,
 }
 
-pub struct ListenSnapshot {
-    pub listening: bool,
+pub struct SystemTranscriptionSnapshot {
+    pub running: bool,
     pub transcript: PathBuf,
     /// How the last session ended, when it failed after Start answered.
     pub error: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ListenError {
+pub enum SystemTranscriptionError {
     #[error("failed to start the system-audio worker")]
     Spawn(#[source] std::io::Error),
 
@@ -60,7 +60,7 @@ pub enum ListenError {
         source: Option<Cause>,
     },
 
-    #[error("listen transcription failed")]
+    #[error("transcription failed")]
     Transcription(#[source] TranscriptionError),
 
     #[error("failed to write the transcript file")]
@@ -69,14 +69,16 @@ pub enum ListenError {
 
 /// The category a client sees, whether the failure ends a `stop` call or
 /// reaches a follower as an event.
-impl From<&ListenError> for RpcErrorCode {
-    fn from(error: &ListenError) -> Self {
+impl From<&SystemTranscriptionError> for RpcErrorCode {
+    fn from(error: &SystemTranscriptionError) -> Self {
         match error {
-            ListenError::UnsupportedOs => Self::ListenUnsupportedOs,
-            ListenError::PermissionDenied => Self::ListenPermissionDenied,
-            ListenError::Spawn(_) | ListenError::CaptureFailed { .. } => Self::ListenCaptureFailed,
-            ListenError::Transcription(_) => Self::TranscriptionFailed,
-            ListenError::Transcript(_) => Self::Internal,
+            SystemTranscriptionError::UnsupportedOs => Self::SystemTranscriptionUnsupportedOs,
+            SystemTranscriptionError::PermissionDenied => Self::SystemTranscriptionPermissionDenied,
+            SystemTranscriptionError::Spawn(_) | SystemTranscriptionError::CaptureFailed { .. } => {
+                Self::SystemTranscriptionCaptureFailed
+            }
+            SystemTranscriptionError::Transcription(_) => Self::TranscriptionFailed,
+            SystemTranscriptionError::Transcript(_) => Self::Internal,
         }
     }
 }

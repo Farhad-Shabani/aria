@@ -10,19 +10,19 @@ import "aria/daemon/v1/errors.proto";
 service ChatService {
   rpc ListAssistants(ListAssistantsRequest) returns (ListAssistantsResponse);
   rpc ListModels(ListAssistantModelsRequest) returns (ListAssistantModelsResponse);
-  // Hand one prompt to an assistant. Answers with a ticket as soon as the ask
-  // is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-  // run side by side, except that asks on one conversation (assistant and
+  // Send one question to an assistant. Answers with a ticket as soon as the chat
+  // is taken; the reply follows as a `ChatEvent` under that ticket. Chats
+  // run side by side, except that chats on one conversation (assistant and
   // session) take turns. Served only by a persistent daemon; an on-demand
   // daemon refuses with UNSUPPORTED.
   rpc Ask(AskRequest) returns (AskResponse);
-  // Stop an ask that is running or still waiting its turn. Its assistant is
-  // killed and the ask ends as a FAILED event with CANCELLED; the
+  // Stop a chat that is running or still waiting its turn. Its assistant is
+  // killed and the chat ends as a FAILED event with CANCELLED; the
   // conversation stays resumable.
   rpc Cancel(CancelAskRequest) returns (CancelAskResponse);
-  // Where an ask goes, for a client with no working directory of its own.
+  // Where a chat goes, for a client with no working directory of its own.
   // Answers with the focused project, else the configured one.
-  rpc Resolve(ResolveAskRequest) returns (ResolveAskResponse);
+  rpc Resolve(ResolveChatTargetRequest) returns (ResolveChatTargetResponse);
   // Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
   // into the app the request names, else the one in front. One fresh
   // assistant run with no conversation, memory, or tools. Progress and the
@@ -45,7 +45,7 @@ service ChatService {
   rpc RemovePrompt(RemovePromptRequest) returns (RemovePromptResponse);
   // Type text the caller already has, such as a prompt result it showed
   // first, into the app the request names, else the one in front. Waits for
-  // an ask, prompt run, or other Deliver still typing, but never for an
+  // a chat, prompt run, or other Deliver still typing, but never for an
   // assistant's run. It answers once its own typing ends. A caller that
   // goes away first cancels it.
   rpc Deliver(DeliverRequest) returns (DeliverResponse);
@@ -82,12 +82,12 @@ message AskRequest {
   // owner's; see DictationResult.own_voice.
   bool own_voice = 7;
 
-  // Deliver the reply like a transcript instead of only announcing it.
+  // Deliver the reply like dictated text instead of only announcing it.
   optional OutputMode output_mode = 8;
 
   // A tap of the Aria key cancels this run while it is in flight. The Mac
   // app sets it on a run a key press started, so one key drives the run.
-  // Absent means no: a terminal's ask, or an older client's, is never ended
+  // Absent means no: a terminal's chat, or an older client's, is never ended
   // by a tap.
   bool tap_cancels = 9;
 }
@@ -100,8 +100,8 @@ message RunPromptRequest {
   // Required.
   oneof input {
     string text = 1;
-    // A history entry's full text: an ask's reply, a Mac Audio session's
-    // transcript file, or else the entry's text. The reply is saved under the entry
+    // A history entry's full text: a chat's reply, a transcript
+    // file, or else the entry's text. The reply is saved under the entry
     // when history is on. A missing entry is HISTORY_MISSING.
     uint64 history_entry_id = 6;
   }
@@ -216,9 +216,9 @@ message CancelAskResponse {
   bool was_pending = 1;
 }
 
-message ResolveAskRequest {}
+message ResolveChatTargetRequest {}
 
-message ResolveAskResponse {
+message ResolveChatTargetResponse {
   // Both are what `Ask` wants: it takes no empty workdir and no
   // unspecified assistant.
   string workdir = 1;

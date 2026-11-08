@@ -8,7 +8,7 @@ use cidre::{cat, cf, core_audio as ca, ns, os};
 use rtrb::{Producer, RingBuffer};
 
 use super::failure;
-use crate::listen::ListenError;
+use crate::system_transcription::SystemTranscriptionError;
 use aria_kit::audio::{RecordingWriter, ResampleError, Resampler, Stopper, f32_from_pcm16};
 use aria_primitives::error_chain;
 
@@ -39,7 +39,7 @@ impl AsRef<ca::Device> for Registration {
 }
 
 impl Registration {
-    fn unregister(&mut self) -> Result<(), ListenError> {
+    fn unregister(&mut self) -> Result<(), SystemTranscriptionError> {
         let _ = self
             .failed
             .compare_exchange(0, CLOSED, Ordering::AcqRel, Ordering::Acquire);
@@ -85,7 +85,9 @@ enum SampleFormat {
 }
 
 impl SampleFormat {
-    fn from_description(format: &cat::AudioStreamBasicDesc) -> Result<Self, ListenError> {
+    fn from_description(
+        format: &cat::AudioStreamBasicDesc,
+    ) -> Result<Self, SystemTranscriptionError> {
         if format.channels_per_frame != 1
             || !format.is_native_endian()
             || format.frames_per_packet != 1
@@ -195,25 +197,28 @@ unsafe fn receive_buffer(input: &cat::AudioBufList<1>, context: &mut Callback) {
     }
 }
 
-fn native_error(operation: &'static str, error: os::Error) -> ListenError {
+fn native_error(operation: &'static str, error: os::Error) -> SystemTranscriptionError {
     if error == ca::hardware_err::PERMISSIONS {
-        ListenError::PermissionDenied
+        SystemTranscriptionError::PermissionDenied
     } else {
-        ListenError::CaptureFailed {
+        SystemTranscriptionError::CaptureFailed {
             operation,
             source: Some(Box::new(error)),
         }
     }
 }
 
-pub(super) fn run(mut capture: RecordingWriter, stop: Stopper) -> Result<(), ListenError> {
+pub(super) fn run(
+    mut capture: RecordingWriter,
+    stop: Stopper,
+) -> Result<(), SystemTranscriptionError> {
     if stop.is_stopped() {
         capture.finish();
         return Ok(());
     }
     let version = ns::ProcessInfo::current().os_version();
     if (version.major, version.minor) < (14, 2) {
-        return Err(ListenError::UnsupportedOs);
+        return Err(SystemTranscriptionError::UnsupportedOs);
     }
     let mut description = ca::TapDesc::with_mono_global_tap_excluding_processes(&ns::Array::new());
     description.set_private(true);
@@ -295,7 +300,9 @@ pub(super) fn run(mut capture: RecordingWriter, stop: Stopper) -> Result<(), Lis
                 .map_err(|e| native_error("check tap format", e))?
                 != format
             {
-                return Err(failure("system-audio format changed; restart listen"));
+                return Err(failure(
+                    "system-audio format changed; restart the transcription",
+                ));
             }
             if !device
                 .device
@@ -337,14 +344,14 @@ pub(super) fn run(mut capture: RecordingWriter, stop: Stopper) -> Result<(), Lis
     Ok(())
 }
 
-fn resample_failure(error: ResampleError) -> ListenError {
-    ListenError::CaptureFailed {
+fn resample_failure(error: ResampleError) -> SystemTranscriptionError {
+    SystemTranscriptionError::CaptureFailed {
         operation: "resample",
         source: Some(Box::new(error)),
     }
 }
 
-fn check_callback(failed: &AtomicU8) -> Result<(), ListenError> {
+fn check_callback(failed: &AtomicU8) -> Result<(), SystemTranscriptionError> {
     match failed.load(Ordering::Acquire) {
         0 | CLOSED => Ok(()),
         QUEUE_FULL => Err(failure("system-audio queue overflow")),

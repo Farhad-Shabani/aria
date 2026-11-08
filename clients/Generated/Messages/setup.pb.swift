@@ -173,7 +173,7 @@ public nonisolated enum Aria_Setup_V1_ModelUse: SwiftProtobuf.Enum, Swift.CaseIt
   public typealias RawValue = Int
   case unspecified // = 0
   case stt // = 1
-  case listen // = 2
+  case systemTranscription // = 2
   case tts // = 3
   case speaker // = 4
   case UNRECOGNIZED(Int)
@@ -186,7 +186,7 @@ public nonisolated enum Aria_Setup_V1_ModelUse: SwiftProtobuf.Enum, Swift.CaseIt
     switch rawValue {
     case 0: self = .unspecified
     case 1: self = .stt
-    case 2: self = .listen
+    case 2: self = .systemTranscription
     case 3: self = .tts
     case 4: self = .speaker
     default: self = .UNRECOGNIZED(rawValue)
@@ -197,7 +197,7 @@ public nonisolated enum Aria_Setup_V1_ModelUse: SwiftProtobuf.Enum, Swift.CaseIt
     switch self {
     case .unspecified: return 0
     case .stt: return 1
-    case .listen: return 2
+    case .systemTranscription: return 2
     case .tts: return 3
     case .speaker: return 4
     case .UNRECOGNIZED(let i): return i
@@ -208,7 +208,7 @@ public nonisolated enum Aria_Setup_V1_ModelUse: SwiftProtobuf.Enum, Swift.CaseIt
   public static let allCases: [Aria_Setup_V1_ModelUse] = [
     .unspecified,
     .stt,
-    .listen,
+    .systemTranscription,
     .tts,
     .speaker,
   ]
@@ -1113,7 +1113,7 @@ nonisolated extension Aria_Setup_V1_Availability: SwiftProtobuf._ProtoNameProvid
 }
 
 nonisolated extension Aria_Setup_V1_ModelUse: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_USE_UNSPECIFIED\0\u{1}MODEL_USE_STT\0\u{1}MODEL_USE_LISTEN\0\u{1}MODEL_USE_TTS\0\u{1}MODEL_USE_SPEAKER\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_USE_UNSPECIFIED\0\u{1}MODEL_USE_STT\0\u{1}MODEL_USE_SYSTEM_TRANSCRIPTION\0\u{1}MODEL_USE_TTS\0\u{1}MODEL_USE_SPEAKER\0")
 }
 
 nonisolated extension Aria_Setup_V1_ModelFiles: SwiftProtobuf._ProtoNameProviding {

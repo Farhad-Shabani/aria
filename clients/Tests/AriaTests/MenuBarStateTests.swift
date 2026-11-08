@@ -6,11 +6,12 @@ final class MenuBarStateTests: XCTestCase {
     private let epoch = Date(timeIntervalSince1970: 1_000)
 
     private func state(
-        _ daemon: DaemonState = .running, pill: PillState? = nil, isListenRunning: Bool = false,
+        _ daemon: DaemonState = .running, pill: PillState? = nil, isSystemTranscriptionRunning: Bool = false,
         isUpdateAvailable: Bool = false
     ) -> MenuBarState {
         MenuBarState(
-            daemon: daemon, pill: pill, isListenRunning: isListenRunning, isUpdateAvailable: isUpdateAvailable)
+            daemon: daemon, pill: pill, isSystemTranscriptionRunning: isSystemTranscriptionRunning,
+            isUpdateAvailable: isUpdateAvailable)
     }
 
     func testTheDaemonComesFirst() {
@@ -40,15 +41,15 @@ final class MenuBarStateTests: XCTestCase {
         XCTAssertEqual(state(pill: .excluded("Slack")), .ready)
     }
 
-    func testAListenSessionOutranksAnIdleMark() {
-        XCTAssertEqual(state(isListenRunning: true), .transcribingSystemAudio)
-        XCTAssertEqual(state(isListenRunning: true, isUpdateAvailable: true), .transcribingSystemAudio)
-        XCTAssertEqual(state(pill: .cancelled, isListenRunning: true), .transcribingSystemAudio)
+    func testASystemTranscriptionOutranksAnIdleMark() {
+        XCTAssertEqual(state(isSystemTranscriptionRunning: true), .transcribingSystemAudio)
+        XCTAssertEqual(state(isSystemTranscriptionRunning: true, isUpdateAvailable: true), .transcribingSystemAudio)
+        XCTAssertEqual(state(pill: .cancelled, isSystemTranscriptionRunning: true), .transcribingSystemAudio)
     }
 
-    func testAPressAndAStoppedDaemonOutrankAListenSession() {
-        XCTAssertEqual(state(pill: .recording(since: epoch), isListenRunning: true), .listening)
-        XCTAssertEqual(state(.stopped, isListenRunning: true), .stopped)
+    func testAPressAndAStoppedDaemonOutrankASystemTranscription() {
+        XCTAssertEqual(state(pill: .recording(since: epoch), isSystemTranscriptionRunning: true), .listening)
+        XCTAssertEqual(state(.stopped, isSystemTranscriptionRunning: true), .stopped)
     }
 
     func testAWaitingUpdateShowsOnlyWhenIdle() {

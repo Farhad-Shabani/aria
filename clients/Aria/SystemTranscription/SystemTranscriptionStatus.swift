@@ -1,9 +1,9 @@
 import Foundation
 
-/// Whether a listen session is running, whichever caller started it, and
+/// Whether a system transcription is running, whichever caller started it, and
 /// the transcript followed so far.
 @MainActor
-final class ListenStatus: ObservableObject {
+final class SystemTranscriptionStatus: ObservableObject {
     static let stopSymbol = "stop.fill"
     static let savingNote = "Saving to transcript file"
     static let startFailure = "Aria couldn’t start transcribing your Mac’s audio. Try again."
@@ -14,7 +14,7 @@ final class ListenStatus: ObservableObject {
     @Published private(set) var didFailToStart = false
     @Published private(set) var isStopping = false
     @Published private(set) var didFailToStop = false
-    @Published private(set) var transcript = ListenTranscript()
+    @Published private(set) var transcript = SystemTranscript()
     /// When the session began, worked out from the first stage seen. `nil`
     /// until a stage arrives, as for a session that began before Aria opened.
     @Published private(set) var startedAt: Date?
@@ -32,9 +32,9 @@ final class ListenStatus: ObservableObject {
     private var reconciling: Task<Void, Never>?
 
     init(
-        readStatus: @escaping ReadStatus = ListenClient.isListening,
-        startSession: @escaping StartSession = ListenClient.start,
-        stopSession: @escaping StopSession = ListenClient.stop,
+        readStatus: @escaping ReadStatus = SystemTranscriptionClient.isRunning,
+        startSession: @escaping StartSession = SystemTranscriptionClient.start,
+        stopSession: @escaping StopSession = SystemTranscriptionClient.stop,
         reconcileInterval: Duration = .seconds(15)
     ) {
         self.readStatus = readStatus
@@ -45,7 +45,7 @@ final class ListenStatus: ObservableObject {
 
     convenience init(events: DaemonEvents) {
         self.init()
-        events.onListen { [weak self] event in self?.handle(event) }
+        events.onSystemTranscription { [weak self] event in self?.handle(event) }
         events.onStreamOpened { [weak self] in self?.startReconciling() }
     }
 
@@ -67,7 +67,7 @@ final class ListenStatus: ObservableObject {
 
     /// `nil` means the stream is down. The daemon may be gone, so the state
     /// says no session until a later read or stage reports one.
-    func handle(_ event: Aria_Daemon_V1_ListenEvent?, now: Date = Date()) {
+    func handle(_ event: Aria_Daemon_V1_SystemTranscriptionEvent?, now: Date = Date()) {
         stagesSeen += 1
         guard let event else {
             reconciling?.cancel()

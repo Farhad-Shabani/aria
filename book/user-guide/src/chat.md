@@ -1,14 +1,14 @@
-{{#title Ask Claude Code and Codex by voice - Aria User Guide}}
+{{#title Chat with Claude Code or Codex by voice - Aria User Guide}}
 
-# Ask a question
+# Chat with Claude Code or Codex
 
-Ask sends a typed or spoken question to Claude Code or Codex and prints the
-reply in your terminal. It does not read replies aloud.
+Chat sends a typed or spoken question to Claude Code or Codex and prints the
+reply in your terminal. It doesn't read replies aloud.
 
-**Your question and project content read by the assistant may go to cloud services.**
-Aria transcribes spoken questions before sending the text. The assistant
-keeps its own conversation records. Read [Privacy](./privacy.md#questions)
-before using private project content.
+**Your question and project content read by the assistant may go to cloud
+services.** Aria transcribes spoken questions before sending the text. The
+assistant keeps its own conversation records. Read
+[Privacy](./privacy.md#chats) before using private project content.
 
 ## Before you start
 
@@ -89,6 +89,7 @@ that question. Neither option changes your saved settings.
 To see or change your usual assistant and model, follow
 [Assistant settings](./settings.md#assistant).
 
-If Ask cannot start its assistant, check [Troubleshooting](./troubleshooting.md#ask-cannot-start).
+If a chat can't start its assistant, check
+[Troubleshooting](./troubleshooting.md#chat-cant-start).
 For names in spoken questions, [Project vocabulary](./project-spellings.md) explains
 how to prepare the folder's spellings.

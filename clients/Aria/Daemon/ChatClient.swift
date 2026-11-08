@@ -49,8 +49,8 @@ struct AssistantModel: Equatable, Sendable {
     let name: String
 }
 
-/// Where an ask goes: the project in front, and the assistant chosen in settings.
-struct AskTarget: Sendable {
+/// Where a chat goes: the project in front, and the assistant chosen in settings.
+struct ChatTarget: Sendable {
     let workdir: String
     let assistantID: Aria_Daemon_V1_AssistantId
 }
@@ -86,20 +86,20 @@ enum ChatClient {
         }
     }
 
-    static func resolve() async throws -> AskTarget {
+    static func resolve() async throws -> ChatTarget {
         try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .resolve(request: ClientRequest(message: .init()), options: options) {
                     let resolved = try $0.message
-                    return AskTarget(workdir: resolved.workdir, assistantID: resolved.assistantID)
+                    return ChatTarget(workdir: resolved.workdir, assistantID: resolved.assistantID)
                 }
         }
     }
 
-    /// Starts an ask from a press and returns its ticket. The reply is typed
+    /// Starts a chat from a press and returns its ticket. The reply is typed
     /// where the user is looking, or copied when the app in front refuses
     /// insertion, and the Aria key cancels the run.
-    static func ask(text: String, target: AskTarget, ownVoice: Bool) async throws -> UInt64 {
+    static func ask(text: String, target: ChatTarget, ownVoice: Bool) async throws -> UInt64 {
         var request = Aria_Daemon_V1_AskRequest()
         request.text = text
         request.workdir = target.workdir

@@ -1,4 +1,4 @@
-//! What a listen session announces while it runs.
+//! What a system transcription announces while it runs.
 
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ListenStage {
+pub enum SystemTranscriptionStage {
     /// The session was accepted. Capture may still fail to start, which
     /// `Failed` reports.
     Started,
@@ -28,6 +28,6 @@ pub enum ListenStage {
     Failed(RpcErrorCode),
 }
 
-pub type ListenEventEmitter = EventEmitter<ListenStage>;
+pub type SystemTranscriptionEventEmitter = EventEmitter<SystemTranscriptionStage>;
 
-pub const EVENT_THREAD: &str = "aria-listen-events";
+pub const EVENT_THREAD: &str = "aria-transcribe-events";

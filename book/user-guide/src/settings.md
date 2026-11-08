@@ -12,13 +12,13 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 
 - **General** controls launch at login, the status pill, the inline preview,
   captions, and the speaking rate. Open **Assistant** here to choose the app
-  and model for Ask and Prompts. **Aria Setup** reopens setup.
+  and model for Chat and Prompts. **Aria Setup** reopens setup.
 - **Dictation** sets output, delivery, text cleanup, auto-stop, and muting
   sound while recording.
 - **Recognition** sets the language, voice filtering, project vocabulary,
   and where transcription runs.
 - **Shortcuts** chooses right Option or Fn for the Aria key. It also sets
-  what opens Aria and what starts Ask: an Aria key combo, a shortcut of your
+  what opens Aria and what starts a chat: an Aria key combo, a shortcut of your
   own, or nothing.
 - **Prompts** lists Markdown files that say what to make of what you say,
   each with its own shortcut. See [Prompts](./prompts.md).
@@ -32,8 +32,8 @@ These choices still depend on the selected model's supported languages.
 ## Assistant
 
 In **Settings → General → Assistant**, choose **App** (Claude Code or Codex)
-and **Model**. [Install and sign in](./voice-chat.md#before-you-start) first.
-Changes apply to the next Ask or Prompt in both the Mac app and terminal.
+and **Model**. [Install and sign in](./chat.md#before-you-start) first.
+Changes apply to the next chat or prompt in both the Mac app and terminal.
 
 Each assistant remembers its own model. **Default** lets the assistant choose.
 **Other…** accepts a model ID. An unavailable model causes an error, not a
@@ -49,7 +49,7 @@ aria settings reset assistant.models.codex          # let the assistant choose
 
 Add `--assistant codex` or `--assistant claude-code` to list the other
 assistant's models. For a single question, use
-[Ask's options](./voice-chat.md#use-a-different-assistant-or-model).
+[Chat's options](./chat.md#use-a-different-assistant-or-model).
 
 Without a choice, Aria uses Claude Code.
 
@@ -102,8 +102,8 @@ questions, phone relay and history retries then use the server. Streaming and
 previews depend on its engine. If the connection fails, the request stops
 instead of switching to a local engine.
 
-Speech output, wake words and voice profiles stay on the device. System-audio
-listening needs its own local `listen.backend`. To go back, turn off
+Speech output, wake words and voice profiles stay on the device.
+Transcription needs its own local `transcription.backend`. To go back, turn off
 **Transcribe on your server**, or run `aria setup --local`. Your
 local engine keeps its settings while the server transcribes. If its model
 isn't on disk, Aria downloads it before switching back.

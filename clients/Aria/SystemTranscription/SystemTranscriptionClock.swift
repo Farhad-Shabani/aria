@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct ListenClock: View {
+struct SystemTranscriptionClock: View {
     let startedAt: Date?
     let isRunning: Bool
     /// The last offset the session reported, for the ended label.
@@ -34,10 +34,10 @@ struct ListenClock: View {
     }
 }
 
-extension ListenClock {
-    init(_ listen: ListenStatus) {
+extension SystemTranscriptionClock {
+    init(_ systemTranscription: SystemTranscriptionStatus) {
         self.init(
-            startedAt: listen.startedAt, isRunning: listen.isRunning,
-            endedAfterSeconds: listen.transcript.offsetSeconds)
+            startedAt: systemTranscription.startedAt, isRunning: systemTranscription.isRunning,
+            endedAfterSeconds: systemTranscription.transcript.offsetSeconds)
     }
 }

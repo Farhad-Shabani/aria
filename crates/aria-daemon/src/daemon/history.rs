@@ -142,13 +142,13 @@ impl HistoryStore {
             store.save_transcript(transcript, created_at_ms, duration_ms, failure)
         });
         if let Err(error) = saved {
-            tracing::warn!(error = %error_chain(&error), "listen history could not be saved");
+            tracing::warn!(error = %error_chain(&error), "system transcription history could not be saved");
             self.warn(error.to_string());
         }
     }
 
-    /// Saves an ask that replied. `failure` is why its reply couldn't be typed.
-    pub(super) fn save_ask(
+    /// Saves a chat that replied. `failure` is why its reply couldn't be typed.
+    pub(super) fn save_chat(
         &self,
         question: &str,
         reply: &str,
@@ -157,7 +157,7 @@ impl HistoryStore {
         failure: Option<RpcFailure>,
     ) {
         let saved = self.storage().and_then(|store| {
-            store.save_ask(
+            store.save_chat(
                 question,
                 reply,
                 workdir,
@@ -169,8 +169,8 @@ impl HistoryStore {
         let warning = match saved {
             Ok(entry) => entry.warning,
             Err(error) => {
-                tracing::warn!(error = %error_chain(&error), "ask history could not be saved");
-                Some(format!("An ask could not be saved to history: {error}"))
+                tracing::warn!(error = %error_chain(&error), "chat history could not be saved");
+                Some(format!("A chat could not be saved to history: {error}"))
             }
         };
         if let Some(message) = warning {
@@ -530,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn ask_disabled_history_cancellation_and_rejected_speech_leave_no_entries() {
+    fn transcript_only_disabled_history_cancellation_and_rejected_speech_leave_no_entries() {
         let directory = tempfile::tempdir().unwrap();
         let saved = store(directory.path());
         let mut sink = History::new(Arc::clone(&saved), "test");

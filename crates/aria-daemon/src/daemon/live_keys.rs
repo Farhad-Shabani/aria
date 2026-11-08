@@ -6,14 +6,14 @@
 //! microphone or an assistant. Bugs of this class come from a value captured
 //! once, and every read here goes through the per-operation entry point:
 //! `DictationSettings::resolve` for a press, `next_utterance` for
-//! speech, and the config load an ask, a memory run and a listen session each
+//! speech, and the config load a chat, a memory run and a system transcription each
 //! make on start.
 
 use super::speech::next_utterance;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use aria_settings::TtsEngine;
 use aria_settings::{Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify};
-use aria_voice::config::ListenConfig;
+use aria_voice::config::SystemTranscriptionConfig;
 use aria_voice::dictation::{DictationRequest, StopMode};
 use aria_voice::speech::SpeechRequest;
 use std::fs;
@@ -32,7 +32,7 @@ output_mode = \"insert\"
 enabled = true
 dir = \"/project\"
 
-[listen]
+[transcription]
 backend = \"parakeet\"
 ";
 
@@ -82,7 +82,7 @@ impl LiveHarness {
         format!("{:?}", self.settings.snapshot().unwrap().settings)
     }
 
-    fn next_ask(&self) -> String {
+    fn next_chat(&self) -> String {
         let settings = self.cache.effective();
         format!("{:?}", super::config::load_chat(&settings))
     }
@@ -108,9 +108,12 @@ impl LiveHarness {
         )
     }
 
-    fn next_listen(&self) -> String {
+    fn next_system_transcription(&self) -> String {
         let settings = self.cache.effective();
-        format!("{:?}", ListenConfig::load(&settings, &self.home))
+        format!(
+            "{:?}",
+            SystemTranscriptionConfig::load(&settings, &self.home)
+        )
     }
 
     fn next_utterance(&self, engine: TtsEngine) -> String {
@@ -142,7 +145,7 @@ impl LiveHarness {
             | Key::HistoryEnabled
             | Key::HistoryKeepAudio
             | Key::ApplicationOverrides => self.next_press(),
-            // The app and an ask read these from the settings.
+            // The app and a chat read these from the settings.
             Key::AssistantId
             | Key::AssistantModels
             | Key::ShortcutsAsk
@@ -150,7 +153,7 @@ impl LiveHarness {
             | Key::Prompts => self.next_setting_read(),
             Key::ShortcutsAriaKey => format!("{:?}", *self.cache.aria_key().borrow()),
             Key::AssistantWorkdir | Key::AssistantProjectRoots | Key::AssistantTimeoutSecs => {
-                self.next_ask()
+                self.next_chat()
             }
             Key::MemoryEnabled | Key::MemoryExtractModel | Key::MemoryMaxFactsPerSession => {
                 self.next_memory_run()
@@ -158,10 +161,10 @@ impl LiveHarness {
             Key::TtsRate | Key::TtsSystemVoice => self.next_utterance(TtsEngine::System),
             Key::TtsKokoroVoice => self.next_utterance(TtsEngine::Kokoro),
             Key::TtsQwenVoice => self.next_utterance(TtsEngine::Qwen),
-            Key::ListenBackend
-            | Key::ListenModel
-            | Key::ListenDevice
-            | Key::ListenTranscriptsDir => self.next_listen(),
+            Key::SystemTranscriptionBackend
+            | Key::SystemTranscriptionModel
+            | Key::SystemTranscriptionDevice
+            | Key::SystemTranscriptionTranscriptsDir => self.next_system_transcription(),
             Key::SttBackend
             | Key::SttModel
             | Key::SttDevice
@@ -249,10 +252,10 @@ fn change(key: Key) -> Patch {
         Key::ApplicationOverrides => entry(key, "com.app", "{ output_mode = \"copy\" }"),
         Key::TtsRate => set(key, 1.5),
         Key::TtsSystemVoice | Key::TtsKokoroVoice | Key::TtsQwenVoice => set(key, "a-voice"),
-        Key::ListenBackend | Key::SttBackend => set(key, "moonshine"),
-        Key::ListenModel | Key::SttModel => set(key, "/model"),
-        Key::ListenDevice | Key::SttDevice => set(key, "gpu"),
-        Key::ListenTranscriptsDir => set(key, "/transcripts"),
+        Key::SystemTranscriptionBackend | Key::SttBackend => set(key, "moonshine"),
+        Key::SystemTranscriptionModel | Key::SttModel => set(key, "/model"),
+        Key::SystemTranscriptionDevice | Key::SttDevice => set(key, "gpu"),
+        Key::SystemTranscriptionTranscriptsDir => set(key, "/transcripts"),
         // Each key needs the one engine that takes it, so the patch sets it too.
         Key::SttInterpreter => {
             let mut patch = set(Key::SttBackend, "parakeet-mlx");

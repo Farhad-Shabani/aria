@@ -87,7 +87,7 @@ struct PaletteResult: Equatable {
         guard event.ticket == ticket, isRunning else { return }
         switch event.stage {
         case .working:
-            state = .running(Ask(ticket: ticket, step: event.step, skill: event.skill, since: .now).stepTitle)
+            state = .running(PendingChat(ticket: ticket, step: event.step, skill: event.skill, since: .now).stepTitle)
         case .replied:
             state = .replied(event.text)
         case .failed:
@@ -106,7 +106,7 @@ struct PaletteResult: Equatable {
         case .cancelled: "The prompt was canceled."
         case .historyMissing: "This entry is no longer in history."
         case .historyEntryEmpty: "This entry has no text to run a prompt on."
-        case .historyTranscriptUnreadable: "Aria can’t read this session’s whole transcript, so the prompt didn’t run."
+        case .historyTranscriptUnreadable: "Aria can’t read this whole transcript, so the prompt didn’t run."
         default: failed
         }
     }

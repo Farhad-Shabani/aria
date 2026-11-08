@@ -21,7 +21,7 @@ use aria_settings::config::ConfigError;
 use aria_settings::{CheckedSettings, LlmCleanupTarget, Settings};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
-    CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
+    CaptureConfig, DictationConfig, SpeakerConfig, SystemTranscriptionConfig, TranscriptionBackend,
 };
 use aria_voice::dictation::{LlmCleanup, LlmCleanupError};
 use aria_voice::transcription::check_model;
@@ -35,7 +35,7 @@ const TRANSCRIPTION_MODEL: &str = "transcription model";
 const WAKE_WORD_MODEL: &str = "wake-word model";
 const SPEAKER_MODEL: &str = "speaker model";
 const SEGMENTATION_MODEL: &str = "segmentation model";
-const LISTEN: &str = "listen";
+const SYSTEM_TRANSCRIPTION: &str = "system audio transcription";
 const PHONE: &str = "phone";
 const DAEMON: &str = "daemon";
 const ARIA_KEY: &str = "aria key";
@@ -90,7 +90,7 @@ pub fn diagnose() -> Report {
             wake_word_model(config.as_ref().ok().map(|config| &config.wake)),
             speaker_model(),
             segmentation_model(),
-            listen(),
+            system_transcription(),
             relay(config.as_ref().ok().map(|config| config.relay)),
             daemon(
                 prepared.as_ref().ok(),
@@ -268,7 +268,7 @@ fn speaker_model() -> Check {
     }
 }
 
-/// A missing segmentation model warns: Listen still names speakers, less
+/// A missing segmentation model warns: system transcription still names speakers, less
 /// reliably, and dictation still types every voice.
 fn segmentation_model() -> Check {
     let resolved = loaded(|settings, home| Ok(SpeakerConfig::load(&settings.speaker, home)))
@@ -283,19 +283,21 @@ fn segmentation_model() -> Check {
         Ok(model) => Check::ok(SEGMENTATION_MODEL, model.display().to_string()),
         Err(detail) => Check::warning(
             SEGMENTATION_MODEL,
-            format!("{detail}; listen names speakers by guess, and Only type my voice cannot run"),
+            format!(
+                "{detail}; Transcription names speakers by guess, and Only type my voice cannot run"
+            ),
         ),
     }
 }
 
-/// Listen accepts any engine that streams. A config or model Listen can't use
-/// warns because dictation can still work without Listen.
-fn listen() -> Check {
-    let resolved = loaded(ListenConfig::load);
+/// System transcription accepts any engine that streams. A config or model it can't
+/// use warns, because dictation still works without it.
+fn system_transcription() -> Check {
+    let resolved = loaded(SystemTranscriptionConfig::load);
     match resolved {
         Ok(config) => match config.transcription.check_model() {
             Ok(_) => Check::ok(
-                LISTEN,
+                SYSTEM_TRANSCRIPTION,
                 format!(
                     "{} writing to {}",
                     config.transcription.backend_name(),
@@ -303,18 +305,18 @@ fn listen() -> Check {
                 ),
             ),
             Err(error) => Check::warning(
-                LISTEN,
+                SYSTEM_TRANSCRIPTION,
                 format!(
-                    "{}; Mac Audio can't start until {} is downloaded",
+                    "{}; Transcription can't start until {} is downloaded",
                     error_chain(&error),
                     config.transcription.backend_name()
                 ),
             ),
         },
         Err(error) => Check::warning(
-            LISTEN,
+            SYSTEM_TRANSCRIPTION,
             format!(
-                "{}; set listen.backend to one of {} to capture meetings",
+                "{}; set transcription.backend to one of {} to transcribe your Mac's audio",
                 error_chain(&error),
                 aria_settings::config::backend::STREAMING.join(", ")
             ),

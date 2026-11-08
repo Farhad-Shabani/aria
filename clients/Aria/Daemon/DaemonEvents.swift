@@ -16,7 +16,7 @@ final class DaemonEvents {
     private var levelHandlers: [(Float) -> Void] = []
     private var hotkeyHandlers: [(ShortcutCombo) -> Void] = []
     private var settingsHandlers: [(Aria_Daemon_V1_SettingsStatus?) -> Void] = []
-    private var listenHandlers: [(Aria_Daemon_V1_ListenEvent?) -> Void] = []
+    private var systemTranscriptionHandlers: [(Aria_Daemon_V1_SystemTranscriptionEvent?) -> Void] = []
     private var streamOpenedHandlers: [() -> Void] = []
 
     /// Called with `nil` whenever the stream is not carrying events.
@@ -65,10 +65,10 @@ final class DaemonEvents {
         settingsHandlers.append(handle)
     }
 
-    /// Called for each listen stage that arrives, and with `nil` whenever the
+    /// Called for each system transcription stage that arrives, and with `nil` whenever the
     /// stream is not carrying events. Lossy at the source: a stage can go missing.
-    func onListen(_ handle: @escaping (Aria_Daemon_V1_ListenEvent?) -> Void) {
-        listenHandlers.append(handle)
+    func onSystemTranscription(_ handle: @escaping (Aria_Daemon_V1_SystemTranscriptionEvent?) -> Void) {
+        systemTranscriptionHandlers.append(handle)
     }
 
     /// Called each time the stream connects. It doesn't replay what it missed.
@@ -91,7 +91,7 @@ final class DaemonEvents {
                 self?.publish(caption: nil)
                 self?.publish(ghost: nil)
                 self?.publish(settings: nil)
-                self?.publish(listen: nil)
+                self?.publish(systemTranscription: nil)
                 try? await Task.sleep(for: Self.retryDelay)
             }
         }
@@ -121,8 +121,8 @@ final class DaemonEvents {
         for handler in settingsHandlers { handler(settings) }
     }
 
-    private func publish(listen: Aria_Daemon_V1_ListenEvent?) {
-        for handler in listenHandlers { handler(listen) }
+    private func publish(systemTranscription: Aria_Daemon_V1_SystemTranscriptionEvent?) {
+        for handler in systemTranscriptionHandlers { handler(systemTranscription) }
     }
 
     private func publish(level: Float) {
@@ -160,8 +160,8 @@ final class DaemonEvents {
                         case .hotkey(let hotkey):
                             guard let combo = ShortcutCombo(wire: hotkey.combo) else { continue }
                             await MainActor.run { self.publish(hotkey: combo) }
-                        case .listen(let listen):
-                            await MainActor.run { self.publish(listen: listen) }
+                        case .systemTranscription(let systemTranscription):
+                            await MainActor.run { self.publish(systemTranscription: systemTranscription) }
                         case .settings(let settings):
                             await MainActor.run { self.publish(settings: settings) }
                         default:

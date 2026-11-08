@@ -10,9 +10,9 @@ final class PaletteTests: XCTestCase {
         HistoryItem(id: id, created: Date(timeIntervalSince1970: seconds), text: "Text \(id)", status: .success)
     }
 
-    private func openModel(isListening: Bool = false, history: [HistoryItem]? = nil) -> PaletteModel {
+    private func openModel(isSystemTranscriptionRunning: Bool = false, history: [HistoryItem]? = nil) -> PaletteModel {
         var model = PaletteModel()
-        model.reset(prompts: prompts, isListening: isListening)
+        model.reset(prompts: prompts, isSystemTranscriptionRunning: isSystemTranscriptionRunning)
         if let history {
             model.keepsHistory = true
             model.replace(entries: history)
@@ -50,7 +50,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testASectionShowsOnlyItsEntriesAndEscapeWidensItBeforeClosing() {
-        var model = openModel(isListening: true, history: [Self.entry(1, at: 100)])
+        var model = openModel(isSystemTranscriptionRunning: true, history: [Self.entry(1, at: 100)])
         model.show(section: .dictation)
 
         XCTAssertEqual(model.items.map(\.id), ["entry-1"], "no commands, no live row")
@@ -70,7 +70,7 @@ final class PaletteTests: XCTestCase {
         let sections = model.commands.compactMap { command -> HistorySection? in
             if case .showHistory(let section) = command.action { section } else { nil }
         }
-        XCTAssertEqual(sections, [.dictation, .listen, .ask])
+        XCTAssertEqual(sections, [.dictation, .systemTranscription, .chat])
     }
 
     func testARenameHoldsTheSelectionAndEscapeEndsItFirst() {
@@ -222,7 +222,7 @@ final class PaletteTests: XCTestCase {
         XCTAssertTrue(model.cycleSection(by: 1))
         XCTAssertEqual(model.section, .dictation)
         XCTAssertTrue(model.cycleSection(by: -2))
-        XCTAssertEqual(model.section, .ask, "back past All wraps round")
+        XCTAssertEqual(model.section, .chat, "back past All wraps round")
 
         model.startRenaming(Self.entry(1, at: 100))
         XCTAssertFalse(model.cycleSection(by: 1), "a rename keeps the key")
@@ -284,7 +284,7 @@ final class PaletteTests: XCTestCase {
 
     func testWithNoPromptsAnEntryCannotBeAttached() {
         var model = PaletteModel()
-        model.reset(prompts: [], isListening: false)
+        model.reset(prompts: [], isSystemTranscriptionRunning: false)
 
         model.attach(Self.entry(1, at: 100))
 
@@ -334,7 +334,7 @@ final class PaletteTests: XCTestCase {
         var model = openModel()
         model.isConfirmingClear = true
 
-        model.reset(prompts: prompts, isListening: false)
+        model.reset(prompts: prompts, isSystemTranscriptionRunning: false)
 
         XCTAssertFalse(model.isConfirmingClear)
     }
@@ -344,14 +344,14 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.commands.first?.action, .startTranscription)
 
         model.moveSelection(by: 2)
-        model.isListening = true
+        model.isSystemTranscriptionRunning = true
 
         XCTAssertEqual(model.selected?.command?.action, .showLiveTranscript)
         XCTAssertFalse(model.commands.contains { $0.action == .startTranscription })
     }
 
     func testADigitRunsItsPromptOnlyOnTheCommandsPageWithNothingTyped() {
-        var model = openModel(isListening: true)
+        var model = openModel(isSystemTranscriptionRunning: true)
         XCTAssertEqual(model.command(forNumber: 2)?.action, .runPrompt(id: prompts[1].id))
 
         model.query = "s"
@@ -389,6 +389,33 @@ final class PaletteTests: XCTestCase {
 
         model.query = "question"
         XCTAssertEqual(model.commands.map(\.action), [.startAsk])
+
+        model.query = "chat"
+        XCTAssertEqual(model.commands.map(\.action), [.startAsk])
+    }
+
+    func testSearchingHistoryFindsEverySectionBeforeClearing() {
+        var model = openModel()
+        model.keepsHistory = true
+
+        model.query = "history"
+
+        XCTAssertEqual(
+            model.commands.map(\.action),
+            HistorySection.allCases.map { .showHistory($0) } + [.clearHistory])
+    }
+
+    func testTheAskCommandNamesTheChosenAssistant() {
+        var model = openModel()
+        let askTitle = { model.commands.first { $0.action == .startAsk }?.title }
+
+        XCTAssertEqual(askTitle(), "Ask Your Assistant", "settings haven't named one")
+        model.assistant = .claudeCode
+        XCTAssertEqual(askTitle(), "Ask Claude Code")
+        model.assistant = .codex
+        XCTAssertEqual(askTitle(), "Ask Codex")
+        model.assistant = .UNRECOGNIZED(9)
+        XCTAssertEqual(askTitle(), "Ask Your Assistant", "a newer daemon's assistant")
     }
 
     func testSearchingSetupFindsSetUpAndFinishSettingUpWhileStepsAreLeft() {
@@ -436,7 +463,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testEscapeLeavesAPageThenClearsTheQueryThenCloses() {
-        var model = openModel(isListening: true)
+        var model = openModel(isSystemTranscriptionRunning: true)
         model.query = "mac"
         model.show(.liveTranscript)
 
@@ -466,7 +493,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testWithNothingTypedSavedDictationsReplaceTheCommandsBelowTheLiveRow() {
-        var model = openModel(isListening: true)
+        var model = openModel(isSystemTranscriptionRunning: true)
         model.replace(entries: [Self.entry(2, at: 200), Self.entry(1, at: 100)])
         XCTAssertEqual(model.items.compactMap(\.command), model.commands)
 
@@ -572,7 +599,7 @@ final class PaletteTests: XCTestCase {
         XCTAssertNil(model.promptFailure)
 
         model.failToEdit(on: row, .offline)
-        model.reset(prompts: prompts, isListening: false)
+        model.reset(prompts: prompts, isSystemTranscriptionRunning: false)
         XCTAssertNil(model.promptFailure)
     }
 
@@ -599,7 +626,7 @@ final class PaletteTests: XCTestCase {
         model.open(PromptDraft())
         model.draft?.name = "Summary"
 
-        model.reset(prompts: prompts, isListening: false)
+        model.reset(prompts: prompts, isSystemTranscriptionRunning: false)
         XCTAssertEqual(model.page, .commands)
         model.open(PromptDraft())
         XCTAssertEqual(model.draft?.name, "Summary")
@@ -720,11 +747,11 @@ final class PaletteTests: XCTestCase {
     }
 
     func testStopIsDisabledWhileTheSessionStops() {
-        let model = openModel(isListening: true)
+        let model = openModel(isSystemTranscriptionRunning: true)
         XCTAssertEqual(model.selected?.command?.action, .showLiveTranscript)
 
-        let running = PaletteActions(model: model, isListening: true).all
-        let stopping = PaletteActions(model: model, isListening: true, isStopping: true).all
+        let running = PaletteActions(model: model, isSystemTranscriptionRunning: true).all
+        let stopping = PaletteActions(model: model, isSystemTranscriptionRunning: true, isStopping: true).all
 
         XCTAssertEqual(running.map(\.kind), [.stop])
         XCTAssertEqual(running.map(\.isEnabled), [true])

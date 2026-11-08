@@ -1,6 +1,6 @@
 //! The consolidation backlog in a persistent daemon: once at start, for
 //! whatever the last daemon left, then after each lull in the owner's
-//! asks. Extraction runs on the blocking pool and stops with the daemon.
+//! chats. Extraction runs on the blocking pool and stops with the daemon.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,7 +15,7 @@ use aria_assistant::memory::run_backlog;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
 
-/// How long the asks have to go quiet before their turns are extracted.
+/// How long the chats have to go quiet before their turns are extracted.
 const QUIET: Duration = Duration::from_secs(120);
 
 /// One nudge per recorded turn; more than one waiting says nothing new.
@@ -63,7 +63,7 @@ impl MemoryBacklog {
         }
     }
 
-    /// Waits for a nudge, then for the asks to stay quiet.
+    /// Waits for a nudge, then for the chats to stay quiet.
     async fn lull(&mut self, shutdown: &CancellationToken) -> bool {
         tokio::select! {
             biased;

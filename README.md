@@ -67,7 +67,7 @@ Then try it from a terminal:
 aria dictate          # speak; type into a Mac app or copy the text
 aria ask              # speak a question; your assistant answers
 aria say "Done for today."
-aria listen start     # Mac only: system audio, by speaker
+aria transcribe start # Mac only: your Mac's audio, by speaker
 ```
 
 ## What leaves your computer
@@ -86,10 +86,10 @@ has no telemetry or crash reporting.
 
 **Text and files**, only when you use these features
 
-- **Ask and prompts:** your words go to Claude Code or Codex, with the prompt
-  if you run one. For Ask, the assistant may also read files in your project
-  and send them to its provider. Prompts read no files.
-- **Memory (off by default):** spoken Ask conversations go to Claude Code,
+- **Chat and prompts:** your words go to Claude Code or Codex, with the
+  prompt if you run one. In a chat, the assistant may also read files in your
+  project and send them to its provider. Prompts read no files.
+- **Memory (off by default):** spoken chats go to Claude Code,
   which picks out facts you mention. Aria saves them in `~/.aria/memory`.
 
 **Network**

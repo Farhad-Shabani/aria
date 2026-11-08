@@ -23,7 +23,7 @@ final class PressGestureTests: XCTestCase {
         XCTAssertTrue(gesture.isIdle)
     }
 
-    func testALostStreamFreesAnAskInFlight() {
+    func testALostStreamFreesAChatInFlight() {
         var gesture = PressGesture()
         XCTAssertEqual(gesture.press(), .record)
         gesture.issued(ticket: 1)

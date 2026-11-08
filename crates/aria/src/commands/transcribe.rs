@@ -1,13 +1,13 @@
 use std::io::Write;
 
-use aria_daemon::{DaemonSession, ListenStage};
+use aria_daemon::{DaemonSession, SystemTranscriptionStage};
 use clap::Subcommand;
 
 use super::runtime_paths;
 
 #[derive(Subcommand)]
-pub(super) enum ListenCommand {
-    /// Start capturing system audio into a new transcript file
+pub(super) enum TranscribeCommand {
+    /// Start transcribing what this machine plays into a transcript file
     Start {
         /// Write the transcript to this exact file instead of a timestamped
         /// one in the configured transcripts directory
@@ -17,49 +17,49 @@ pub(super) enum ListenCommand {
         #[arg(long, short)]
         follow: bool,
     },
-    /// Print the running capture's transcript as it grows
+    /// Print the running transcript as it grows
     Follow,
-    /// Stop the running capture
+    /// Stop transcribing
     Stop,
-    /// Report whether a capture is running and where it writes
+    /// Report whether Transcription is running and where it writes
     Status,
-    /// Start when idle, stop when listening
+    /// Start when idle, stop when transcribing
     Toggle {
-        /// Transcript file to use when this toggle starts a capture
+        /// Transcript file to use when this toggle starts Transcription
         #[arg(long, short)]
         output: Option<std::path::PathBuf>,
     },
 }
 
-pub(super) fn run(command: ListenCommand) -> anyhow::Result<()> {
+pub(super) fn run(command: TranscribeCommand) -> anyhow::Result<()> {
     let paths = runtime_paths()?;
     let session = DaemonSession::connect_at(&paths)?;
     match command {
-        ListenCommand::Start { output, follow } => {
+        TranscribeCommand::Start { output, follow } => {
             start(&session, output)?;
             if follow {
                 follow_transcript(&session)?;
             }
             Ok(())
         }
-        ListenCommand::Follow => follow_transcript(&session),
-        ListenCommand::Stop => stop(&session),
-        ListenCommand::Status => {
-            let status = session.listen_status()?;
+        TranscribeCommand::Follow => follow_transcript(&session),
+        TranscribeCommand::Stop => stop(&session),
+        TranscribeCommand::Status => {
+            let status = session.system_transcription_status()?;
             match status.error {
-                _ if status.listening => {
-                    println!("listening -> {}", status.transcript.display());
+                _ if status.running => {
+                    println!("transcribing -> {}", status.transcript.display());
                 }
-                None => println!("not listening"),
+                None => println!("not transcribing"),
                 Some(failure) => {
-                    println!("not listening; the last session failed: {failure}");
+                    println!("not transcribing; the last transcription failed: {failure}");
                     std::process::exit(1);
                 }
             }
             Ok(())
         }
-        ListenCommand::Toggle { output } => {
-            if session.listen_status()?.listening {
+        TranscribeCommand::Toggle { output } => {
+            if session.system_transcription_status()?.running {
                 stop(&session)
             } else {
                 start(&session, output)
@@ -69,13 +69,13 @@ pub(super) fn run(command: ListenCommand) -> anyhow::Result<()> {
 }
 
 fn start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow::Result<()> {
-    let started = session.listen_start(output)?;
-    let already = if started.already_listening {
+    let started = session.system_transcription_start(output)?;
+    let already = if started.already_running {
         "already "
     } else {
         ""
     };
-    println!("{already}listening -> {}", started.transcript.display());
+    println!("{already}transcribing -> {}", started.transcript.display());
     Ok(())
 }
 
@@ -83,7 +83,7 @@ fn start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow:
 /// Ctrl-C or stop. Labels are the tentative live ones; the transcript
 /// file's final rewrite may settle on others.
 fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
-    let follow = session.follow_listen()?;
+    let follow = session.follow_system_transcription()?;
     let transcript_path = follow.transcript.display().to_string();
 
     // Paragraph-style streaming, mirroring the transcript file's look: a
@@ -96,8 +96,8 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
     let mut failure = None;
     for stage in follow {
         match stage? {
-            ListenStage::Started => {}
-            ListenStage::SegmentTranscribed {
+            SystemTranscriptionStage::Started => {}
+            SystemTranscriptionStage::SegmentTranscribed {
                 text,
                 label,
                 at_seconds,
@@ -106,13 +106,18 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
                 let label = label.as_deref().map(str::to_owned);
                 let mut stdout = std::io::stdout().lock();
                 if open_label.as_ref() != Some(&label)
-                    || now.duration_since(last_segment) >= aria_voice::listen::GAP_BREAK
+                    || now.duration_since(last_segment)
+                        >= aria_voice::system_transcription::GAP_BREAK
                 {
                     if open_label.is_some() {
                         writeln!(stdout)?;
                         writeln!(stdout)?;
                     }
-                    write!(stdout, "{} ", aria_voice::listen::stamp(at_seconds))?;
+                    write!(
+                        stdout,
+                        "{} ",
+                        aria_voice::system_transcription::stamp(at_seconds)
+                    )?;
                     if let Some(label) = &label {
                         write!(stdout, "{label}: ")?;
                     }
@@ -127,7 +132,7 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
             // The terminal only appends, so a correction is a note rather
             // than a rewrite of what is already on screen. The file is where
             // the old name actually changes.
-            ListenStage::SpeakerMerged { from, into } => {
+            SystemTranscriptionStage::SpeakerMerged { from, into } => {
                 let mut stdout = std::io::stdout().lock();
                 if open_label.is_some() {
                     writeln!(stdout)?;
@@ -137,8 +142,8 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
                 stdout.flush()?;
                 open_label = None;
             }
-            ListenStage::Stopped => break,
-            ListenStage::Failed(code) => {
+            SystemTranscriptionStage::Stopped => break,
+            SystemTranscriptionStage::Failed(code) => {
                 failure = Some(code);
                 break;
             }
@@ -155,11 +160,11 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
 }
 
 fn stop(session: &DaemonSession) -> anyhow::Result<()> {
-    let stopped = session.listen_stop()?;
-    if stopped.was_listening {
+    let stopped = session.system_transcription_stop()?;
+    if stopped.was_running {
         println!("stopped -> {}", stopped.transcript.display());
     } else {
-        println!("nothing was listening");
+        println!("nothing was transcribing");
     }
     Ok(())
 }
@@ -171,41 +176,41 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn listen_commands_are_public_subcommands() {
+    fn transcribe_commands_are_public_subcommands() {
         let parse = |arguments: &[&str]| {
-            let cli = Cli::try_parse_from(arguments).expect("the listen command should parse");
-            let Command::Listen { command } = cli.command else {
-                panic!("a listen invocation should parse as Listen");
+            let cli = Cli::try_parse_from(arguments).expect("the transcribe command should parse");
+            let Command::Transcribe { command } = cli.command else {
+                panic!("a transcribe invocation should parse as Transcribe");
             };
             command
         };
 
         assert!(matches!(
-            parse(&["aria", "listen", "start"]),
-            ListenCommand::Start {
+            parse(&["aria", "transcribe", "start"]),
+            TranscribeCommand::Start {
                 output: None,
                 follow: false
             }
         ));
         assert!(matches!(
-            parse(&["aria", "listen", "start", "-o", "meeting.txt", "--follow"]),
-            ListenCommand::Start { output: Some(path), follow: true } if path == std::path::Path::new("meeting.txt")
+            parse(&["aria", "transcribe", "start", "-o", "meeting.txt", "--follow"]),
+            TranscribeCommand::Start { output: Some(path), follow: true } if path == std::path::Path::new("meeting.txt")
         ));
         assert!(matches!(
-            parse(&["aria", "listen", "follow"]),
-            ListenCommand::Follow
+            parse(&["aria", "transcribe", "follow"]),
+            TranscribeCommand::Follow
         ));
         assert!(matches!(
-            parse(&["aria", "listen", "stop"]),
-            ListenCommand::Stop
+            parse(&["aria", "transcribe", "stop"]),
+            TranscribeCommand::Stop
         ));
         assert!(matches!(
-            parse(&["aria", "listen", "status"]),
-            ListenCommand::Status
+            parse(&["aria", "transcribe", "status"]),
+            TranscribeCommand::Status
         ));
         assert!(matches!(
-            parse(&["aria", "listen", "toggle"]),
-            ListenCommand::Toggle { output: None }
+            parse(&["aria", "transcribe", "toggle"]),
+            TranscribeCommand::Toggle { output: None }
         ));
     }
 }

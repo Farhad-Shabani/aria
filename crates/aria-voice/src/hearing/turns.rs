@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn a_listen_walk_forgets_what_was_decided() {
+    fn a_system_transcription_walk_forgets_what_was_decided() {
         let (mut recording, mut writer) = Recording::open();
         let speech = SpeechDetector::new(Loud, 0);
         let feed = TurnFeed::start(&mut recording, speech, None::<VoiceprintTracker<'_, Voice>>);

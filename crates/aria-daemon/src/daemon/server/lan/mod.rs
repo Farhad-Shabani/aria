@@ -570,7 +570,7 @@ mod tests {
             "/aria.daemon.v1.InferenceAdminService/Invite",
             "/aria.daemon.v1.InferencePairingService/Pair",
             "/aria.daemon.v1.InviteService/IssueInvite",
-            "/aria.daemon.v1.ListenService/GetStatus",
+            "/aria.daemon.v1.SystemTranscriptionService/GetStatus",
             "/aria.daemon.v1.SpeakerService/List",
             "/aria.daemon.v1.SpeechService/Stop",
             "/aria.daemon.v1.VocabularyService/GetStatus",

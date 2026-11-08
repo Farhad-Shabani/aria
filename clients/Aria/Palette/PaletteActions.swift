@@ -4,7 +4,7 @@ struct PaletteActions {
     let model: PaletteModel
     /// The run the result page shows.
     var result: PaletteResult?
-    var isListening = false
+    var isSystemTranscriptionRunning = false
     var isStopping = false
     var hasTranscript = false
     /// The entry the entry page shows.
@@ -34,7 +34,7 @@ struct PaletteActions {
             return detail.map { actions(for: $0, isOpen: true) } ?? []
         case .liveTranscript:
             let copy = PaletteAction(kind: .copyTranscript, isInFooter: true, isEnabled: hasTranscript)
-            return isListening ? [copy, stop] : [copy]
+            return isSystemTranscriptionRunning ? [copy, stop] : [copy]
         case .result:
             switch result?.state {
             case .replied(let text)?:

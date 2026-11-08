@@ -12,3 +12,8 @@ default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/Farhad-Shabani/aria"
 site-url = "/aria/user-guide/"
+
+[output.html.redirect]
+"/listen.html" = "transcribe-system-audio.html"
+"/voice-chat.html" = "chat.html"
+"/transcription.html" = "terminal-dictation.html"

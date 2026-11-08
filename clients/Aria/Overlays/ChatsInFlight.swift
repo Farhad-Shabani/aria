@@ -1,7 +1,7 @@
 import Foundation
 
-/// One ask the daemon has not answered yet.
-struct Ask: Equatable {
+/// One chat the daemon has not answered yet.
+struct PendingChat: Equatable {
     let ticket: UInt64
     var step: Aria_Daemon_V1_ChatStep
     var skill: String
@@ -17,33 +17,33 @@ struct Ask: Equatable {
     }
 }
 
-/// Which asks the daemon has not answered yet, by ticket.
-struct AsksInFlight: Equatable {
-    private var asks: [UInt64: Ask] = [:]
+/// Which chats the daemon has not answered yet, by ticket.
+struct ChatsInFlight: Equatable {
+    private var chats: [UInt64: PendingChat] = [:]
 
-    var count: Int { asks.count }
-    var oldest: Ask? { asks.min(by: { $0.key < $1.key })?.value }
+    var count: Int { chats.count }
+    var oldest: PendingChat? { chats.min(by: { $0.key < $1.key })?.value }
 
-    /// Drops an ask that something else shows from here on.
+    /// Drops a chat that something else shows from here on.
     mutating func forget(_ ticket: UInt64) {
-        asks[ticket] = nil
+        chats[ticket] = nil
     }
 
-    /// `nil` is the stream going away, and every ask with it.
+    /// `nil` is the stream going away, and every chat with it.
     mutating func apply(_ event: Aria_Daemon_V1_ChatEvent?, now: Date = Date()) {
         guard let event else {
-            asks = [:]
+            chats = [:]
             return
         }
         switch event.stage {
         case .working:
-            var ask =
-                asks[event.ticket]
-                ?? Ask(ticket: event.ticket, step: .thinking, skill: "", since: now)
-            ask.step = event.step
-            ask.skill = event.skill
-            asks[event.ticket] = ask
-        case .replied, .failed: asks[event.ticket] = nil
+            var chat =
+                chats[event.ticket]
+                ?? PendingChat(ticket: event.ticket, step: .thinking, skill: "", since: now)
+            chat.step = event.step
+            chat.skill = event.skill
+            chats[event.ticket] = chat
+        case .replied, .failed: chats[event.ticket] = nil
         default: break
         }
     }

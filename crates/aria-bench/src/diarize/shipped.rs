@@ -1,7 +1,7 @@
-//! Scores the voice track listen actually runs, not a copy of it.
+//! Scores the voice track that system transcription actually runs, not a copy of it.
 //!
 //! [`label_as_shipped`] scores the track's own timeline. [`label_as_attributed`]
-//! scores its attribution of independently chosen spans, as Listen does.
+//! scores its attribution of independently chosen spans, as system transcription does.
 //! These exercise different paths and can expose different labeling errors.
 //!
 //! Neither exercises the live release floor: a finished recording is handed
@@ -50,7 +50,7 @@ pub fn label_as_shipped(run: Run<'_>) -> Result<Labeled, BenchError> {
 /// Labels a recording by asking the track who owned each span, the way the
 /// transcript is written.
 ///
-/// Listen asks about paragraphs, which the transcriber cut. Here the voice
+/// System transcription asks about paragraphs, which the transcriber cut. Here the voice
 /// detector cuts them: an independent source, as a paragraph is, without
 /// needing a transcriber in the path. What this measures is the ownership
 /// rule — `turns` shapes its runs before reporting them, and `attribute`

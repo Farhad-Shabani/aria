@@ -49,7 +49,7 @@ Other keyboard or mouse input while you hold the key can cancel the recording.
 Settings calls the key you tap the **Aria key**: right Option, or Fn if you
 chose it. Hold it, tap a second key, then let go:
 
-- **⇧ Shift** asks your agent. Speak, then tap the Aria key to send. Tap it
+- **⇧ Shift** asks your assistant. Speak, then tap the Aria key to send. Tap it
   again while Aria thinks to cancel.
 - **⌘ Command** opens Aria, where you
   [pick a prompt](./prompts.md#pick-a-prompt-in-aria).
@@ -58,7 +58,7 @@ Each is a setting under **Settings → Shortcuts**: keep the combo, record a
 shortcut of your own instead, or turn it off. **Restore Defaults** brings
 the combos back.
 
-While an ask or prompt runs, pressing its combo again does nothing. The Aria
+While a chat or prompt runs, pressing its combo again does nothing. The Aria
 key alone sends and cancels it.
 
 Any other key pressed with the Aria key cancels the press. Option shortcuts
@@ -90,9 +90,9 @@ open **Settings → General → Storage** and click the trash button beside it.
 Models that a setting loads have no trash button. Choose a deleted model again
 to download it.
 
-When your speech model can't type while you speak, Mac Audio uses Parakeet.
-Parakeet still has a trash button then. If you delete it, Mac Audio reports it
-missing when a transcription starts.
+When your speech model can't type while you speak, Transcription uses
+Parakeet. Parakeet still has a trash button then. If you delete it,
+Transcription reports it missing when a transcription starts.
 
 ## Captions
 
@@ -101,7 +101,7 @@ a panel while you record. Captions work with either delivery choice.
 
 **Settings → Dictation → Deliver** decides when Aria types. With
 **While speaking**, Aria types finalized segments as you speak. With
-**After recording stops**, it types the completed transcript when you stop.
+**After recording stops**, it types the completed text when you stop.
 If you switch away while Aria types segments, it keeps recording. The status
 pill shows the icon of the app it's waiting for. Aria types what you said once
 you're back in that field. If you stop while away, the status pill says where
@@ -113,8 +113,8 @@ not report their cursor show none, and neither does **Only type my voice**.
 Turn them off with **Show inline preview** under **Settings → General → On
 screen**.
 
-If output is set to copy, paste the transcript after recording; copying always
-uses the completed text. Output choices are under **Settings → Dictation**.
+If output is set to copy, paste the text after recording. Copying always uses
+the completed text. Output choices are under **Settings → Dictation**.
 
 ## Per-app settings
 
@@ -124,7 +124,7 @@ dictation starts. Switching apps mid-recording changes nothing. Other apps use
 **Settings → Dictation**. Flags such as `aria dictate --mode copy` still win.
 
 Switch off the switch at the top of an app's page, and Aria starts no
-dictation or Ask and types or copies nothing while that app is in front, even
+dictation or chat and types or copies nothing while that app is in front, even
 from the phone. A dictation started in another app keeps recording. Its words
 wait for that app.
 

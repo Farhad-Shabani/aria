@@ -2,14 +2,16 @@ import SwiftUI
 
 struct PaletteView: View {
     @ObservedObject var controller: PaletteController
-    let listen: ListenStatus
+    let systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
 
     var body: some View {
         Group {
             switch controller.model.page {
-            case .commands: PaletteCommandsPage(controller: controller, listen: listen, history: history)
-            case .liveTranscript: PaletteLivePage(controller: controller, listen: listen, history: history)
+            case .commands:
+                PaletteCommandsPage(controller: controller, systemTranscription: systemTranscription, history: history)
+            case .liveTranscript:
+                PaletteLivePage(controller: controller, systemTranscription: systemTranscription, history: history)
             case .entry: PaletteEntryPage(controller: controller, history: history)
             case .result: PaletteResultPage(controller: controller, run: controller.promptRun, history: history)
             case .prompt:

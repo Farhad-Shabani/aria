@@ -6,7 +6,7 @@ struct PaletteLiveRow: View {
     /// padding to end where other rows' trailing text does.
     private static let recordGlyphInset: CGFloat = 3
 
-    @ObservedObject var listen: ListenStatus
+    @ObservedObject var systemTranscription: SystemTranscriptionStatus
     let isSelected: Bool
     let show: () -> Void
     let stop: () -> Void
@@ -17,10 +17,10 @@ struct PaletteLiveRow: View {
         PaletteRow(symbol: "waveform", isSelected: isSelected, isSymbolAnimating: true, action: show) {
             HStack(spacing: 10) {
                 heard
-                ListenClock(listen).paletteRowDetail()
+                SystemTranscriptionClock(systemTranscription).paletteRowDetail()
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Mac Audio")
+            .accessibilityLabel("Live Transcript")
             .accessibilityHint("Shows the transcript.")
         } accessory: {
             recordButton.padding(.trailing, -Self.recordGlyphInset)
@@ -28,7 +28,7 @@ struct PaletteLiveRow: View {
     }
 
     private var heard: some View {
-        let words = listen.transcript.lines.last?.text ?? "Mac Audio"
+        let words = systemTranscription.transcript.lines.last?.text ?? "Live Transcript"
         return ZStack(alignment: .leading) {
             Text(words)
                 .paletteRowText(truncation: .head)
@@ -42,7 +42,7 @@ struct PaletteLiveRow: View {
     /// Red while recording, as a recorder's is. Hovering turns it into a stop symbol.
     @ViewBuilder
     private var recordButton: some View {
-        if listen.isStopping {
+        if systemTranscription.isStopping {
             ProgressView().controlSize(.small).frame(width: Self.recordSide, height: Self.recordSide)
                 .accessibilityLabel("Stopping")
         } else {

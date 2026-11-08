@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use aria_daemon::{
-    AskError, AssistantId, ChatReply, ChatRequest, ChatStageKind, Clarify, DaemonSession,
-    PendingAsk, Routing, StopMode, Ticket,
+    AssistantId, ChatReply, ChatRequest, ChatStageKind, Clarify, DaemonSession, PendingChat,
+    ReplyError, Routing, StopMode, Ticket,
 };
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use clap::Args;
@@ -37,13 +37,13 @@ pub(super) struct AskArgs {
     /// Print the ticket and return; the reply shows up in `aria events`
     #[arg(long)]
     pub(super) detach: bool,
-    /// Deliver the reply like a transcript instead of printing it
+    /// Deliver the reply like dictated text instead of printing it
     #[arg(long, value_enum)]
     pub(super) mode: Option<CliOutputMode>,
     /// Record until you press Esc, run the command again, or Auto-stop ends it
     #[arg(long)]
     pub(super) toggle: bool,
-    /// Cancel a pending ask by its ticket instead of asking
+    /// Cancel a waiting reply by its ticket instead of asking
     #[arg(
         long,
         value_name = "TICKET",
@@ -161,7 +161,7 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
     let workdir = request.workdir.display().to_string();
     let pending = match session.ask(request) {
         Ok(pending) => pending,
-        // What was said is not lost with the ask that failed.
+        // What was said is not lost with the chat that failed.
         Err(error) if spoken.is_some() => {
             eprintln!("note: you said: {text}");
             return Err(error.into());
@@ -197,10 +197,10 @@ pub(super) fn print_reply(reply: &ChatReply, mode: Option<CliOutputMode>) {
     }
 }
 
-/// Shows each step of the ask or prompt run until it ends. Esc or Ctrl-C
+/// Shows each step of the chat or prompt run until it ends. Esc or Ctrl-C
 /// cancels it, and a cancelled one ends the process as Ctrl-C would.
 pub(super) fn wait_for_reply(
-    pending: PendingAsk,
+    pending: PendingChat,
     interrupt: &mut Interrupt,
 ) -> anyhow::Result<ChatReply> {
     let pending_ticket = pending.ticket();
@@ -234,7 +234,7 @@ pub(super) fn wait_for_reply(
         eprintln!("warning: {pending_ticket} could not be cancelled: {error:#}");
     }
     match reply {
-        Err(AskError::Failed(RpcFailure {
+        Err(ReplyError::Failed(RpcFailure {
             code: RpcErrorCode::Cancelled,
             ..
         })) if working.cancelled() => std::process::exit(INTERRUPTED),

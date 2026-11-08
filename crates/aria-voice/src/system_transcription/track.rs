@@ -42,7 +42,7 @@ impl<'scope> VoiceThread<'scope> {
         let walking = Arc::clone(&track);
         let (sender, merges) = channel();
         let thread = std::thread::Builder::new()
-            .name("aria-listen-voices".into())
+            .name("aria-transcribe-voices".into())
             .spawn_scoped(scope, move || walk(&walking, audio, &sender))?;
         Ok(Self {
             track,

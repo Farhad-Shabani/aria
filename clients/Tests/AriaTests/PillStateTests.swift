@@ -20,7 +20,7 @@ final class PillStateTests: XCTestCase {
         return event
     }
 
-    func testAFailedAskNamesACauseThePersonCanFix() {
+    func testAFailedChatNamesACauseThePersonCanFix() {
         var failed = event(.failed, ticket: 1)
         failed.errorCode = .assistantSignedOut
         XCTAssertEqual(PillState(ended: failed), .failed("assistant signed out"))
@@ -39,56 +39,56 @@ final class PillStateTests: XCTestCase {
             PillState.failed(PillState.unreadablePrompt).label(prompt: name))
     }
 
-    func testNoAsksNoPill() {
-        XCTAssertNil(PillState(asks: AsksInFlight()))
+    func testNoChatsNoPill() {
+        XCTAssertNil(PillState(chats: ChatsInFlight()))
     }
 
-    func testOneAskNamesTheAssistantAndItsStep() {
-        var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 3), now: epoch)
-        XCTAssertEqual(PillState(asks: asks), .asking("thinking", since: epoch))
+    func testOneChatNamesTheAssistantAndItsStep() {
+        var chats = ChatsInFlight()
+        chats.apply(event(.working, ticket: 3), now: epoch)
+        XCTAssertEqual(PillState(chats: chats), .asking("thinking", since: epoch))
 
-        asks.apply(event(.working, ticket: 3, step: .reading), now: epoch + 5)
-        XCTAssertEqual(PillState(asks: asks), .asking("reading", since: epoch))
+        chats.apply(event(.working, ticket: 3, step: .reading), now: epoch + 5)
+        XCTAssertEqual(PillState(chats: chats), .asking("reading", since: epoch))
     }
 
     func testSkillStepCarriesTheSkillName() {
-        var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 1, step: .skill, skill: "pair"), now: epoch)
-        XCTAssertEqual(PillState(asks: asks), .asking("using pair", since: epoch))
+        var chats = ChatsInFlight()
+        chats.apply(event(.working, ticket: 1, step: .skill, skill: "pair"), now: epoch)
+        XCTAssertEqual(PillState(chats: chats), .asking("using pair", since: epoch))
     }
 
-    func testSeveralAsksCountTheRestBehindTheOldest() {
-        var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 5, assistantID: .codex, step: .running), now: epoch)
-        asks.apply(event(.working, ticket: 3, step: .reading), now: epoch + 1)
-        XCTAssertEqual(PillState(asks: asks), .asking("reading · +1", since: epoch + 1))
+    func testSeveralChatsCountTheRestBehindTheOldest() {
+        var chats = ChatsInFlight()
+        chats.apply(event(.working, ticket: 5, assistantID: .codex, step: .running), now: epoch)
+        chats.apply(event(.working, ticket: 3, step: .reading), now: epoch + 1)
+        XCTAssertEqual(PillState(chats: chats), .asking("reading · +1", since: epoch + 1))
     }
 
-    func testAForgottenAskLeavesThePill() {
-        var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 1))
+    func testAForgottenChatLeavesThePill() {
+        var chats = ChatsInFlight()
+        chats.apply(event(.working, ticket: 1))
 
-        asks.forget(1)
+        chats.forget(1)
 
-        XCTAssertNil(PillState(asks: asks))
+        XCTAssertNil(PillState(chats: chats))
     }
 
     func testReplyAndFailureRetireTheirTicket() {
-        var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 1))
-        asks.apply(event(.working, ticket: 2))
-        asks.apply(event(.replied, ticket: 1))
-        XCTAssertEqual(asks.count, 1)
-        asks.apply(event(.failed, ticket: 2))
-        XCTAssertNil(PillState(asks: asks))
+        var chats = ChatsInFlight()
+        chats.apply(event(.working, ticket: 1))
+        chats.apply(event(.working, ticket: 2))
+        chats.apply(event(.replied, ticket: 1))
+        XCTAssertEqual(chats.count, 1)
+        chats.apply(event(.failed, ticket: 2))
+        XCTAssertNil(PillState(chats: chats))
     }
 
-    func testLosingTheStreamClearsEveryAsk() {
-        var asks = AsksInFlight()
-        asks.apply(event(.working, ticket: 1))
-        asks.apply(nil)
-        XCTAssertEqual(asks.count, 0)
+    func testLosingTheStreamClearsEveryChat() {
+        var chats = ChatsInFlight()
+        chats.apply(event(.working, ticket: 1))
+        chats.apply(nil)
+        XCTAssertEqual(chats.count, 0)
     }
 
     func testMotionPerState() {
@@ -110,7 +110,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState(event), .delivered(.inserted, words: 1))
         XCTAssertEqual(PillState(event)?.label(), "1 word")
 
-        // A daemon too old to say, or a press that only wanted its transcript.
+        // A daemon too old to say, or a press that only wanted its text.
         event.outcome = .unspecified
         XCTAssertEqual(PillState(event), .delivered(.unknown, words: 1))
     }
@@ -181,7 +181,7 @@ final class PillStateTests: XCTestCase {
         XCTAssertNotNil(PillState.failed("no speech").life)
     }
 
-    func testAPromptsNameLeadsItsRunAndAnAskNamesNoAssistant() {
+    func testAPromptsNameLeadsItsRunAndAChatNamesNoAssistant() {
         let asking = PillState.asking("reading · +1", since: epoch)
         XCTAssertEqual(asking.label(), "reading · +1")
         XCTAssertEqual(PillState.noReply.label(), "no reply")
@@ -201,12 +201,12 @@ final class PillStateTests: XCTestCase {
     }
 
     func testOnlyAriasOwnWorkGlows() {
-        XCTAssertFalse(Pill.glows(run: .recording(1), ask: nil, prompt: nil), "dictation")
-        XCTAssertTrue(Pill.glows(run: .recording(1), ask: .recording(1), prompt: nil), "an ask")
-        XCTAssertFalse(Pill.glows(run: .recording(2), ask: .recording(1), prompt: nil), "a later dictation")
-        XCTAssertFalse(Pill.glows(run: .recording(1), ask: nil, prompt: "Polish"), "a prompt")
-        XCTAssertTrue(Pill.glows(run: .ticket(7), ask: nil, prompt: nil), "an ask's ticket")
-        XCTAssertFalse(Pill.glows(run: .ticket(7), ask: nil, prompt: "Polish"), "a prompt's ticket")
-        XCTAssertFalse(Pill.glows(run: nil, ask: nil, prompt: nil))
+        XCTAssertFalse(Pill.glows(run: .recording(1), chat: nil, prompt: nil), "dictation")
+        XCTAssertTrue(Pill.glows(run: .recording(1), chat: .recording(1), prompt: nil), "a chat")
+        XCTAssertFalse(Pill.glows(run: .recording(2), chat: .recording(1), prompt: nil), "a later dictation")
+        XCTAssertFalse(Pill.glows(run: .recording(1), chat: nil, prompt: "Polish"), "a prompt")
+        XCTAssertTrue(Pill.glows(run: .ticket(7), chat: nil, prompt: nil), "a chat's ticket")
+        XCTAssertFalse(Pill.glows(run: .ticket(7), chat: nil, prompt: "Polish"), "a prompt's ticket")
+        XCTAssertFalse(Pill.glows(run: nil, chat: nil, prompt: nil))
     }
 }

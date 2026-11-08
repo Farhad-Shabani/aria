@@ -21,8 +21,8 @@ enum HistoryClient {
             request.section =
                 switch section {
                 case .dictation: .dictation
-                case .listen: .listen
-                case .ask: .ask
+                case .systemTranscription: .systemTranscription
+                case .chat: .chat
                 }
         }
         request.limit = 50
@@ -192,7 +192,7 @@ extension HistoryItem {
         // A daemon from before sections sends none, and it kept only dictations.
         case (.dictation, nil), (.unspecified, nil):
             return .dictation
-        case (.listen, .transcript(let transcript)?):
+        case (.systemTranscription, .transcript(let transcript)?):
             let read: TranscriptRead?
             switch transcript.hasRead ? transcript.read : nil {
             case nil: read = nil
@@ -201,9 +201,9 @@ extension HistoryItem {
             case .unavailable?: read = .unavailable
             default: throw DaemonFailure.invalidResponse
             }
-            return .listen(transcript: transcript.path, read: read)
-        case (.ask, .reply(let reply)?):
-            return .ask(reply: reply)
+            return .systemTranscription(transcript: transcript.path, read: read)
+        case (.chat, .reply(let reply)?):
+            return .chat(reply: reply)
         default:
             throw DaemonFailure.invalidResponse
         }

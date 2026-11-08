@@ -1,4 +1,5 @@
-//! The listen service: wire translation over the daemon's listen slot.
+//! The system transcription service: wire translation over the daemon's
+//! system transcription slot.
 
 use std::sync::Arc;
 
@@ -6,32 +7,34 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 
-use super::super::listen::ListenState;
+use super::super::system_transcription::SystemTranscriptionState;
 
-pub(in crate::daemon) struct ListenRpc {
-    state: Arc<ListenState>,
+pub(in crate::daemon) struct SystemTranscriptionRpc {
+    state: Arc<SystemTranscriptionState>,
 }
 
-impl ListenRpc {
-    pub(in crate::daemon) fn new(state: Arc<ListenState>) -> Self {
+impl SystemTranscriptionRpc {
+    pub(in crate::daemon) fn new(state: Arc<SystemTranscriptionState>) -> Self {
         Self { state }
     }
 
     /// The slot itself, for shutdown: draining has to stop a live session on
     /// a blocking task, rather than leave it to a Drop that lands on the
     /// runtime's driver thread once the grace period is already spent.
-    pub(in crate::daemon) fn state(&self) -> Arc<ListenState> {
+    pub(in crate::daemon) fn state(&self) -> Arc<SystemTranscriptionState> {
         Arc::clone(&self.state)
     }
 }
 
 #[tonic::async_trait]
-impl wire::listen_service_server::ListenService for ListenRpc {
+impl wire::system_transcription_service_server::SystemTranscriptionService
+    for SystemTranscriptionRpc
+{
     async fn start(
         &self,
-        request: Request<wire::StartListenRequest>,
-    ) -> Result<Response<wire::StartListenResponse>, Status> {
-        const METHOD: &str = "ListenService/Start";
+        request: Request<wire::StartSystemTranscriptionRequest>,
+    ) -> Result<Response<wire::StartSystemTranscriptionResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/Start";
         let output = Option::<std::path::PathBuf>::try_from(request.into_inner())
             .map_err(|error| super::invalid_request(METHOD, &error))?;
         let state = Arc::clone(&self.state);
@@ -46,9 +49,9 @@ impl wire::listen_service_server::ListenService for ListenRpc {
 
     async fn stop(
         &self,
-        _request: Request<wire::StopListenRequest>,
-    ) -> Result<Response<wire::StopListenResponse>, Status> {
-        const METHOD: &str = "ListenService/Stop";
+        _request: Request<wire::StopSystemTranscriptionRequest>,
+    ) -> Result<Response<wire::StopSystemTranscriptionResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/Stop";
         let state = Arc::clone(&self.state);
         match super::blocking(METHOD, move || state.stop()).await? {
             Ok(stopped) => {
@@ -61,9 +64,9 @@ impl wire::listen_service_server::ListenService for ListenRpc {
 
     async fn get_status(
         &self,
-        _request: Request<wire::GetListenStatusRequest>,
-    ) -> Result<Response<wire::GetListenStatusResponse>, Status> {
-        const METHOD: &str = "ListenService/GetStatus";
+        _request: Request<wire::GetSystemTranscriptionStatusRequest>,
+    ) -> Result<Response<wire::GetSystemTranscriptionStatusResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/GetStatus";
         let state = Arc::clone(&self.state);
         let status = super::blocking(METHOD, move || state.status()).await?;
         // The app polls this, so info would fill the log.

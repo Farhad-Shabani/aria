@@ -27,7 +27,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Aria uses the microphone to hear what you dictate.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Aria uses your Mac’s audio to transcribe what plays during a listen session. Transcripts stay on your Mac.</string>
+	<string>Aria uses your Mac’s audio to transcribe what it plays. Transcripts stay on your Mac.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

@@ -1,6 +1,6 @@
 //! `aria setup`: the guided first run. `inspect` looks at what this
 //! machine has. `apply` fetches the models the chosen engines need plus the
-//! ones `aria listen` uses, writes the engines to settings.toml, and installs
+//! ones `aria transcribe` uses, writes the engines to settings.toml, and installs
 //! the daemon as a service. Neither asks anything. `run` is the terminal front
 //! over them; Aria.app drives the same two through `aria setup inspect` and
 //! `aria setup apply`. Every answer defaults to what is configured, and
@@ -408,8 +408,8 @@ impl Inspection {
 fn model_states(home: &Path, file: &CheckedSettings) -> Result<Vec<ModelState>, SetupError> {
     let models_dir = aria_settings::config::models_dir(home);
     let loaded = config::loaded_models(file, home);
-    // Only the asset's own section counts. Listen's custom moonshine path
-    // does not change where transcription looks.
+    // Only the asset's own section counts. System transcription's custom moonshine
+    // path does not change where dictation looks.
     let external = |asset: &Asset, engine: Option<&str>, section: config::Section| {
         let mut section = loaded.iter().filter(|model| model.section == section);
         let configured = section.clone().any(|model| model.engine == engine);
@@ -660,7 +660,7 @@ fn ask_selections(
     })
 }
 
-/// Settings tables for display, like "stt, listen".
+/// Settings tables for display, like "stt, transcription".
 pub fn tables(sections: &[config::Section]) -> String {
     sections
         .iter()
@@ -1423,17 +1423,17 @@ mod tests {
         assert!(inspection.missing().contains(&Missing::Model("kokoro")));
     }
 
-    /// Listen's custom moonshine path does not cover transcription, which
+    /// System transcription's custom moonshine path does not cover dictation, which
     /// loads the default one.
     #[test]
-    fn a_model_kept_elsewhere_for_listen_still_downloads_for_transcription() {
+    fn a_model_kept_elsewhere_for_system_transcription_still_downloads_for_dictation() {
         let mut inspection = inspection(Existing {
             stt: Some("moonshine".to_owned()),
             ..configured()
         });
         let file = aria_settings::testing::file(
             "[stt]\nbackend = \"whisper\"\n\
-             [listen]\nbackend = \"moonshine\"\nmodel = \"/elsewhere/moonshine\"\n",
+             [transcription]\nbackend = \"moonshine\"\nmodel = \"/elsewhere/moonshine\"\n",
         );
         inspection.models = model_states(&inspection.home, &file).unwrap();
         let selections = Selections::defaults(&inspection);

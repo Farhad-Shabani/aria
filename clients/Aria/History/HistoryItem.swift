@@ -2,21 +2,21 @@ import Foundation
 
 /// One kind of saved item, which history can be narrowed to.
 enum HistorySection: Equatable, Sendable, CaseIterable {
-    case dictation, listen, ask
+    case dictation, systemTranscription, chat
 
     var historyTitle: String {
         switch self {
         case .dictation: "Dictation History"
-        case .listen: "Mac Audio History"
-        case .ask: "Ask History"
+        case .systemTranscription: "Transcription History"
+        case .chat: "Chat History"
         }
     }
 
     var symbol: String {
         switch self {
         case .dictation: "mic"
-        case .listen: "waveform"
-        case .ask: "bubble.left"
+        case .systemTranscription: "waveform"
+        case .chat: "bubble.left"
         }
     }
 }
@@ -44,25 +44,25 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
 
     enum Kind: Equatable, Sendable {
         case dictation
-        /// A Mac Audio session. `text` is its transcript, or only its start when `read` isn't
+        /// A system transcription of the Mac’s audio. `text` is its transcript, or only its start when `read` isn't
         /// `.whole`.
-        case listen(transcript: String, read: TranscriptRead?)
+        case systemTranscription(transcript: String, read: TranscriptRead?)
         /// `text` is the question.
-        case ask(reply: String)
+        case chat(reply: String)
 
         var title: String {
             switch self {
             case .dictation: "Dictation"
-            case .listen: "Mac Audio"
-            case .ask: "Ask"
+            case .systemTranscription: "Transcript"
+            case .chat: "Chat"
             }
         }
 
         var section: HistorySection {
             switch self {
             case .dictation: .dictation
-            case .listen: .listen
-            case .ask: .ask
+            case .systemTranscription: .systemTranscription
+            case .chat: .chat
             }
         }
 
@@ -92,7 +92,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     var duration: Double?
     var source: Source = .local
     var application: String?
-    /// The folder it was made in, such as where an ask's assistant worked.
+    /// The folder it was made in, such as where a chat's assistant worked.
     var project: String?
     var text: String
     var isComplete = true
@@ -117,8 +117,8 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
         let countsWords =
             switch kind {
             case .dictation: isComplete
-            case .listen(_, let read): read == .whole
-            case .ask: false
+            case .systemTranscription(_, let read): read == .whole
+            case .chat: false
             }
         if countsWords, !text.isEmpty {
             parts.append("\(text.split(whereSeparator: \.isWhitespace).count) words")
@@ -127,7 +127,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     }
 
     var copyText: String {
-        if case .ask(let reply) = kind { reply } else { text }
+        if case .chat(let reply) = kind { reply } else { text }
     }
 
     var canCopy: Bool { !copyText.isEmpty && status != .deletionPending }
@@ -135,16 +135,16 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
 
     var origin: String {
         switch kind {
-        case .dictation, .ask: place ?? kind.title
-        case .listen: elapsed ?? kind.title
+        case .dictation, .chat: place ?? kind.title
+        case .systemTranscription: elapsed ?? kind.title
         }
     }
 
     private var place: String? {
         switch kind {
         case .dictation: application ?? source.title
-        case .ask: project.map { URL(fileURLWithPath: $0).lastPathComponent }
-        case .listen: nil
+        case .chat: project.map { URL(fileURLWithPath: $0).lastPathComponent }
+        case .systemTranscription: nil
         }
     }
 

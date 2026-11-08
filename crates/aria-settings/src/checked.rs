@@ -42,8 +42,8 @@ pub struct Choices {
     /// The local engine, kept while the server transcribes.
     pub stt: SttChoice,
     pub stt_runs_on: RunsOn,
-    /// `None` while listen runs the stt engine.
-    pub listen: Option<LocalStt>,
+    /// `None` while system transcription runs the stt engine.
+    pub system_transcription: Option<LocalStt>,
     pub tts: TtsEngine,
     pub voices: Voices,
     pub rate: SpeakingRate,

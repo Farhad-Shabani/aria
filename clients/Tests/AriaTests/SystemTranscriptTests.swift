@@ -2,12 +2,12 @@ import XCTest
 
 @testable import Aria
 
-final class ListenTranscriptTests: XCTestCase {
+final class SystemTranscriptTests: XCTestCase {
     private func event(
-        _ stage: Aria_Daemon_V1_ListenStage, text: String = "", speakerLabel: String = "",
+        _ stage: Aria_Daemon_V1_SystemTranscriptionStage, text: String = "", speakerLabel: String = "",
         at offset: UInt64 = 0, mergedFrom: String = ""
-    ) -> Aria_Daemon_V1_ListenEvent {
-        var event = Aria_Daemon_V1_ListenEvent()
+    ) -> Aria_Daemon_V1_SystemTranscriptionEvent {
+        var event = Aria_Daemon_V1_SystemTranscriptionEvent()
         event.stage = stage
         event.text = text
         event.speakerLabel = speakerLabel
@@ -19,7 +19,7 @@ final class ListenTranscriptTests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 1_000)
 
     func testSegmentsBecomeLinesAndCopyAsTheFileWritesThem() {
-        var transcript = ListenTranscript()
+        var transcript = SystemTranscript()
         transcript.apply(event(.segmentTranscribed, text: " Morning. ", speakerLabel: "Speaker 1", at: 3), at: start)
         transcript.apply(event(.segmentTranscribed, text: "   ", at: 4), at: start)
         transcript.apply(event(.segmentTranscribed, text: "Hi.", at: 3725), at: start)
@@ -29,7 +29,7 @@ final class ListenTranscriptTests: XCTestCase {
     }
 
     func testOneSpeakersWordsShareALineUntilAPause() {
-        var transcript = ListenTranscript()
+        var transcript = SystemTranscript()
         let say = { (text: String, seconds: TimeInterval) in
             transcript.apply(
                 self.event(.segmentTranscribed, text: text, speakerLabel: "Speaker 1"),
@@ -37,13 +37,13 @@ final class ListenTranscriptTests: XCTestCase {
         }
         say("One", 0)
         say("two.", 2)
-        say("Three.", 2 + ListenTranscript.paragraphGap)
+        say("Three.", 2 + SystemTranscript.paragraphGap)
 
         XCTAssertEqual(transcript.lines.map(\.text), ["One two.", "Three."])
     }
 
     func testAMergedSpeakerRelabelsEarlierLines() {
-        var transcript = ListenTranscript()
+        var transcript = SystemTranscript()
         transcript.apply(event(.segmentTranscribed, text: "One.", speakerLabel: "Speaker 2"), at: start)
         transcript.apply(event(.segmentTranscribed, text: "Two.", speakerLabel: "Speaker 1"), at: start)
 
@@ -53,22 +53,22 @@ final class ListenTranscriptTests: XCTestCase {
     }
 
     func testANewSessionStartsAnEmptyTranscript() {
-        var transcript = ListenTranscript()
+        var transcript = SystemTranscript()
         transcript.apply(event(.segmentTranscribed, text: "Old.", at: 90), at: start)
 
         transcript.apply(event(.started), at: start)
 
-        XCTAssertEqual(transcript, ListenTranscript())
+        XCTAssertEqual(transcript, SystemTranscript())
     }
 
     func testOnlyTheNewestLinesAreKept() {
-        var transcript = ListenTranscript()
-        for index in 0...ListenTranscript.lineLimit {
-            let arrived = start.addingTimeInterval(Double(index) * ListenTranscript.paragraphGap)
+        var transcript = SystemTranscript()
+        for index in 0...SystemTranscript.lineLimit {
+            let arrived = start.addingTimeInterval(Double(index) * SystemTranscript.paragraphGap)
             transcript.apply(event(.segmentTranscribed, text: "Line \(index).", at: UInt64(index)), at: arrived)
         }
 
-        XCTAssertEqual(transcript.lines.count, ListenTranscript.lineLimit)
+        XCTAssertEqual(transcript.lines.count, SystemTranscript.lineLimit)
         XCTAssertEqual(transcript.lines.first?.text, "Line 1.")
     }
 }

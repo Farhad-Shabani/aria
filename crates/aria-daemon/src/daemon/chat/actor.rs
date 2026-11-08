@@ -1,7 +1,7 @@
 //! The supervised owner of chat blocking work.
 //!
-//! Callers hold a [`ChatHandle`]. An ask or a prompt run is answered with a ticket at once and runs
-//! on the blocking pool. Saved text to type is answered once typed. Asks on one conversation run
+//! Callers hold a [`ChatHandle`]. A chat or a prompt run is answered with a ticket at once and runs
+//! on the blocking pool. Saved text to type is answered once typed. Chats on one conversation run
 //! one after another, since a resumed CLI session can't take two turns at once. Every other job
 //! runs side by side. Typing takes turns in the runtime, so two texts never type into the same
 //! field at once. A run that types nothing waits for nobody. A cancel ends one job by ticket.
@@ -71,7 +71,7 @@ impl Job {
 enum Cancel {
     Ticket(Ticket),
     /// The newest job in flight that a tap of the Aria key may end. Two at
-    /// once, an ask and a prompt run, take one tap each, newest first.
+    /// once, a chat and a prompt run, take one tap each, newest first.
     Tapped,
 }
 
@@ -91,7 +91,7 @@ pub(in crate::daemon) struct ChatHandle {
 }
 
 impl ChatHandle {
-    /// Answers as soon as the ask is taken; the reply follows as an event.
+    /// Answers as soon as the chat is taken; the reply follows as an event.
     pub(in crate::daemon) async fn ask(
         &self,
         request: ChatRequest,
@@ -100,7 +100,7 @@ impl ChatHandle {
     }
 
     /// Answers as soon as the run is taken; the outcome follows as an
-    /// event, as for an ask.
+    /// event, as for a chat.
     pub(in crate::daemon) async fn run_prompt(
         &self,
         request: PromptRequest,
@@ -455,7 +455,7 @@ mod tests {
         }
     }
 
-    /// Asks park in the assistant, then reply. Prompt runs fail at once.
+    /// Chats park in the assistant, then reply. Prompt runs fail at once.
     fn harness(directory: &Path) -> Harness {
         harness_with(directory, false)
     }
@@ -495,7 +495,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn asks_on_one_conversation_take_turns_while_others_overlap() {
+    async fn chats_on_one_conversation_take_turns_while_others_overlap() {
         let directory = tempfile::tempdir().expect("test directory");
         let elsewhere = tempfile::tempdir().expect("another directory");
         let harness = harness(directory.path());
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_waiting_ask_is_cancelled_without_touching_the_running_one() {
+    async fn a_waiting_chat_is_cancelled_without_touching_the_running_one() {
         let directory = tempfile::tempdir().expect("test directory");
         let harness = harness(directory.path());
 
@@ -586,7 +586,7 @@ mod tests {
         assert!(harness.handle.cancel(second).await.expect("answered"));
         assert!(!harness.handle.cancel(second).await.expect("answered"));
 
-        // The running ask's opening stage may sit ahead of the refusal.
+        // The running chat's opening stage may sit ahead of the refusal.
         let refused = (0..3)
             .filter_map(|_| harness.events.recv_timeout(PATIENCE).ok())
             .find_map(|stage| ended_as(&stage, second));
@@ -601,12 +601,12 @@ mod tests {
         assert_eq!(
             started_within(&harness.started, Duration::from_millis(200)),
             None,
-            "the cancelled ask never starts"
+            "the cancelled chat never starts"
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_running_ask_is_cancelled_and_frees_its_conversation() {
+    async fn a_running_chat_is_cancelled_and_frees_its_conversation() {
         let directory = tempfile::tempdir().expect("test directory");
         let harness = harness(directory.path());
 
@@ -689,12 +689,12 @@ mod tests {
             .handle
             .ask(pressed_request("1", directory.path()))
             .await
-            .expect("the pressed ask is taken");
+            .expect("the pressed chat is taken");
         let typed = harness
             .handle
             .ask(request("2", elsewhere.path(), false))
             .await
-            .expect("the typed ask is taken");
+            .expect("the typed chat is taken");
         assert!(started_within(&harness.started, PATIENCE).is_some());
         assert!(started_within(&harness.started, PATIENCE).is_some());
 
@@ -702,26 +702,29 @@ mod tests {
         assert_eq!(
             ended_within(&harness, pressed),
             Some(RpcErrorCode::Cancelled),
-            "the older pressed ask ends, not the newer typed one"
+            "the older pressed chat ends, not the newer typed one"
         );
 
         let waiting = harness
             .handle
             .ask(pressed_request("3", elsewhere.path()))
             .await
-            .expect("the waiting pressed ask is taken");
+            .expect("the waiting pressed chat is taken");
         assert!(harness.handle.cancel_tapped().await.expect("answered"));
         assert_eq!(
             ended_within(&harness, waiting),
             Some(RpcErrorCode::Cancelled),
-            "the pressed ask waiting behind the typed one ends"
+            "the pressed chat waiting behind the typed one ends"
         );
         assert!(
             !harness.handle.cancel_tapped().await.expect("answered"),
-            "a typed ask is not a tap's to end"
+            "a typed chat is not a tap's to end"
         );
 
-        harness.release.send(()).expect("the typed ask is released");
+        harness
+            .release
+            .send(())
+            .expect("the typed chat is released");
         let replied = (0..3)
             .filter_map(|_| harness.events.recv_timeout(PATIENCE).ok())
             .find(|stage| matches!(stage.kind, ChatStageKind::Replied(..)))
@@ -730,7 +733,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn shutdown_drops_waiting_asks_and_waits_out_the_running_one() {
+    async fn shutdown_drops_waiting_chats_and_waits_out_the_running_one() {
         let directory = tempfile::tempdir().expect("test directory");
         let harness = harness(directory.path());
 
@@ -753,7 +756,7 @@ mod tests {
         assert_eq!(
             started_within(&harness.started, Duration::from_millis(200)),
             None,
-            "the waiting ask never starts"
+            "the waiting chat never starts"
         );
         assert!(
             harness

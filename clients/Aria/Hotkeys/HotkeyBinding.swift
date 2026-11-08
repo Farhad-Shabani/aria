@@ -1,4 +1,4 @@
-/// What starts the ask or the prompt list: the Aria key held with a
+/// What starts a chat or the prompt list: the Aria key held with a
 /// modifier, or a chord of the user's own. Nil is off.
 enum ShortcutBinding: Equatable {
     case combo(ShortcutCombo)

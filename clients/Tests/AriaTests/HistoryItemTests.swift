@@ -14,29 +14,30 @@ final class HistoryItemTests: XCTestCase {
         return wire
     }
 
-    func testMacAudioAndAskEntriesKeepWhatOnlyTheyCarry() throws {
-        var listen = Self.wire(.listen)
-        listen.text = "[00:00:01] heard"
-        listen.transcript = .with {
+    func testTranscriptAndChatEntriesKeepWhatOnlyTheyCarry() throws {
+        var systemTranscription = Self.wire(.systemTranscription)
+        systemTranscription.text = "[00:00:01] heard"
+        systemTranscription.transcript = .with {
             $0.path = "/Users/me/.aria/transcripts/a.txt"
             $0.read = .truncated
         }
-        let session = try HistoryItem(listen)
-        XCTAssertEqual(session.kind, .listen(transcript: "/Users/me/.aria/transcripts/a.txt", read: .truncated))
-        XCTAssertEqual(session.origin, "Mac Audio", "no length, so it names its kind")
-        listen.duration = .init(seconds: 2_520)
-        XCTAssertEqual(try HistoryItem(listen).origin, "42 min")
+        let session = try HistoryItem(systemTranscription)
+        XCTAssertEqual(
+            session.kind, .systemTranscription(transcript: "/Users/me/.aria/transcripts/a.txt", read: .truncated))
+        XCTAssertEqual(session.origin, "Transcript", "no length, so it names its kind")
+        systemTranscription.duration = .init(seconds: 2_520)
+        XCTAssertEqual(try HistoryItem(systemTranscription).origin, "42 min")
         XCTAssertFalse(session.facts.contains("words"), "only part of the file was read")
 
-        var ask = Self.wire(.ask)
-        ask.text = "When is lunch?"
-        ask.reply = "Noon."
-        let asked = try HistoryItem(ask)
-        XCTAssertEqual(asked.kind, .ask(reply: "Noon."))
+        var chat = Self.wire(.chat)
+        chat.text = "When is lunch?"
+        chat.reply = "Noon."
+        let asked = try HistoryItem(chat)
+        XCTAssertEqual(asked.kind, .chat(reply: "Noon."))
         XCTAssertEqual(asked.copyText, "Noon.")
-        XCTAssertEqual(asked.origin, "Ask", "no folder, so it names its kind")
-        ask.projectDirectory = "/Users/me/code/aria"
-        XCTAssertEqual(try HistoryItem(ask).origin, "aria")
+        XCTAssertEqual(asked.origin, "Chat", "no folder, so it names its kind")
+        chat.projectDirectory = "/Users/me/code/aria"
+        XCTAssertEqual(try HistoryItem(chat).origin, "aria")
     }
 
     func testAnEntryFromADaemonBeforeSectionsIsADictation() throws {
@@ -47,8 +48,8 @@ final class HistoryItemTests: XCTestCase {
     }
 
     func testASectionWithoutItsDetailsIsInvalid() {
-        XCTAssertThrowsError(try HistoryItem(Self.wire(.listen)))
-        XCTAssertThrowsError(try HistoryItem(Self.wire(.ask)))
+        XCTAssertThrowsError(try HistoryItem(Self.wire(.systemTranscription)))
+        XCTAssertThrowsError(try HistoryItem(Self.wire(.chat)))
         var dictation = Self.wire(.dictation)
         dictation.reply = "stray"
         XCTAssertThrowsError(try HistoryItem(dictation))

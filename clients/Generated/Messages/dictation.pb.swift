@@ -150,7 +150,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
 
 }
 
-/// Where a delivered transcript went.
+/// Where delivered text went.
 public nonisolated enum Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -331,7 +331,7 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
   /// Required: no stored setting applies, so UNSPECIFIED is invalid.
   public var stopMode: Aria_Daemon_V1_StopMode = .unspecified
 
-  /// Where the transcript goes besides back to the caller. Required.
+  /// Where the text goes besides back to the caller. Required.
   public var route: Aria_Daemon_V1_StartDictationRequest.OneOf_Route? = nil
 
   /// Typed or copied, and saved to history when history is on.
@@ -382,7 +382,7 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  /// Where the transcript goes besides back to the caller. Required.
+  /// Where the text goes besides back to the caller. Required.
   public nonisolated enum OneOf_Route: Equatable, Sendable {
     /// Typed or copied, and saved to history when history is on.
     case deliver(Aria_Daemon_V1_DeliverRoute)
@@ -413,7 +413,7 @@ public nonisolated struct Aria_Daemon_V1_ProjectVocabularyDisabled: Sendable {
   public init() {}
 }
 
-/// How the transcript is typed. Each absent mode comes from the app in front's
+/// How the text is typed. Each absent mode comes from the app in front's
 /// overrides, else the settings. Explicit UNSPECIFIED is invalid.
 public nonisolated struct Aria_Daemon_V1_DeliverRoute: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -446,7 +446,7 @@ public nonisolated struct Aria_Daemon_V1_DeliverRoute: Sendable {
   fileprivate var _deliveryMode: Aria_Daemon_V1_DeliveryMode? = nil
 }
 
-/// A transcript that isn't typed is never streamed.
+/// Text that isn't typed is never streamed.
 public nonisolated struct Aria_Daemon_V1_TranscriptOnlyRoute: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -595,7 +595,7 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   public var heard: Aria_Daemon_V1_HeardSpeaker = .unspecified
 
   /// Set on DICTATION_STAGE_DELIVERED. Unspecified for a press that
-  /// asked only for its transcript.
+  /// asked only for its text.
   public var outcome: Aria_Daemon_V1_DeliveryOutcome = .unspecified
 
   /// Set on DICTATION_STAGE_DELIVERED: how many words landed.

@@ -72,7 +72,7 @@ pub(crate) struct Cli {
     /// Place each voiceprint as it arrives, the way a live session must
     #[arg(long, requires = "segmented", conflicts_with = "speakers")]
     online: bool,
-    /// Run the voice track listen ships, rather than this crate's copy of it
+    /// Run the voice track that system transcription ships, rather than this crate's copy of it
     #[arg(long, requires = "audio", conflicts_with_all = ["by_voice", "word_timeline", "segmented"])]
     as_shipped: bool,
     /// Ask the track who owned each speech run, the way the transcript is

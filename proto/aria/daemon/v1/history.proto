@@ -120,16 +120,16 @@ message HistoryEntry {
   HistorySource source = 6;
   HistoryApplication application = 7;
   // The folder the entry was made in: the project whose vocabulary a
-  // dictation used, or the folder an ask worked in. Absent when none.
+  // dictation used, or the folder a chat worked in. Absent when none.
   optional string project_directory = 8;
 
   string text = 9;
   // Whether transcription finished; List may still return a text preview.
   bool transcription_complete = 10;
-  // Set for a LISTEN or ASK entry. A DICTATION entry has none.
+  // Set for a SYSTEM_TRANSCRIPTION or CHAT entry. A DICTATION entry has none.
   oneof details {
     HistoryTranscript transcript = 11;
-    // An ASK entry's reply. `text` is the question. List cuts it to 512
+    // A CHAT entry's reply. `text` is the question. List cuts it to 512
     // UTF-8 bytes, as it does `text`.
     string reply = 12;
   }
@@ -151,7 +151,7 @@ message HistoryEntry {
   bool can_regenerate = 23;
 }
 
-// A Mac Audio session's transcript file. The entry's `text` is the file's
+// A system transcription's transcript file. The entry's `text` is the file's
 // first KiB, which search covers. Get reads up to 1 MiB of the file instead.
 // Delete and Clear delete the file as well. Expiry leaves it.
 message HistoryTranscript {
@@ -178,9 +178,9 @@ message HistoryApplication {
 enum HistorySection {
   HISTORY_SECTION_UNSPECIFIED = 0;
   HISTORY_SECTION_DICTATION = 1;
-  // A Mac Audio session.
-  HISTORY_SECTION_LISTEN = 2;
-  HISTORY_SECTION_ASK = 3;
+  // A system transcription.
+  HISTORY_SECTION_SYSTEM_TRANSCRIPTION = 2;
+  HISTORY_SECTION_CHAT = 3;
 }
 
 enum HistorySource {

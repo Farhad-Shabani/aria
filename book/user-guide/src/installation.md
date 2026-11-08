@@ -91,7 +91,7 @@ The system voice needs no model. You can leave optional features at their
 defaults.
 
 You only need a Claude Code or Codex account if you want to use
-[Ask](./voice-chat.md) or [Prompts](./prompts.md). Choose your assistant later
+[Chat](./chat.md) or [Prompts](./prompts.md). Choose your assistant later
 in **Settings → General → Assistant**, or from the
 [terminal](./settings.md#assistant).
 

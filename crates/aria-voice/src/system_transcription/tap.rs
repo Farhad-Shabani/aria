@@ -1,6 +1,6 @@
 use std::thread::{self, JoinHandle};
 
-use super::ListenError;
+use super::SystemTranscriptionError;
 use aria_kit::audio::{Recording, RecordingReader, RecordingWriter, Stopper};
 use aria_primitives::error_chain;
 use aria_primitives::thread::raise_scheduling_class;
@@ -10,17 +10,19 @@ mod macos;
 
 pub struct SystemAudioCapture {
     stop: Stopper,
-    worker: Option<JoinHandle<Result<(), ListenError>>>,
+    worker: Option<JoinHandle<Result<(), SystemTranscriptionError>>>,
 }
 
 impl SystemAudioCapture {
-    pub fn spawn() -> Result<(Self, RecordingReader), ListenError> {
+    pub fn spawn() -> Result<(Self, RecordingReader), SystemTranscriptionError> {
         Self::spawn_with(run)
     }
 
     fn spawn_with(
-        run: impl FnOnce(RecordingWriter, Stopper) -> Result<(), ListenError> + Send + 'static,
-    ) -> Result<(Self, RecordingReader), ListenError> {
+        run: impl FnOnce(RecordingWriter, Stopper) -> Result<(), SystemTranscriptionError>
+        + Send
+        + 'static,
+    ) -> Result<(Self, RecordingReader), SystemTranscriptionError> {
         let (recording, capture) = Recording::open();
         let stop = Stopper::new();
         let worker_stop = stop.clone();
@@ -30,7 +32,7 @@ impl SystemAudioCapture {
                 raise_scheduling_class();
                 run(capture, worker_stop)
             })
-            .map_err(ListenError::Spawn)?;
+            .map_err(SystemTranscriptionError::Spawn)?;
         let tap = Self {
             stop,
             worker: Some(worker),
@@ -40,8 +42,8 @@ impl SystemAudioCapture {
 
     #[cfg(test)]
     pub(crate) fn spawn_fake(
-        outcome: Result<(), ListenError>,
-    ) -> Result<(Self, RecordingReader), ListenError> {
+        outcome: Result<(), SystemTranscriptionError>,
+    ) -> Result<(Self, RecordingReader), SystemTranscriptionError> {
         Self::spawn_with(move |writer, _| {
             writer.finish();
             outcome
@@ -52,11 +54,11 @@ impl SystemAudioCapture {
         self.stop.clone()
     }
 
-    pub(crate) fn finish(mut self) -> Result<(), ListenError> {
+    pub(crate) fn finish(mut self) -> Result<(), SystemTranscriptionError> {
         self.join()
     }
 
-    fn join(&mut self) -> Result<(), ListenError> {
+    fn join(&mut self) -> Result<(), SystemTranscriptionError> {
         match self.worker.take() {
             Some(worker) => worker
                 .join()
@@ -75,8 +77,8 @@ impl Drop for SystemAudioCapture {
     }
 }
 
-fn failure(operation: &'static str) -> ListenError {
-    ListenError::CaptureFailed {
+fn failure(operation: &'static str) -> SystemTranscriptionError {
+    SystemTranscriptionError::CaptureFailed {
         operation,
         source: None,
     }
@@ -86,8 +88,8 @@ fn failure(operation: &'static str) -> ListenError {
 use macos::run;
 
 #[cfg(not(target_os = "macos"))]
-fn run(_: RecordingWriter, _: Stopper) -> Result<(), ListenError> {
-    Err(ListenError::UnsupportedOs)
+fn run(_: RecordingWriter, _: Stopper) -> Result<(), SystemTranscriptionError> {
+    Err(SystemTranscriptionError::UnsupportedOs)
 }
 
 #[cfg(test)]
@@ -124,8 +126,12 @@ mod tests {
     #[test]
     fn finish_preserves_a_native_startup_failure() {
         let (tap, mut recording) =
-            SystemAudioCapture::spawn_with(|_, _| Err(ListenError::PermissionDenied)).unwrap();
-        assert!(matches!(tap.finish(), Err(ListenError::PermissionDenied)));
+            SystemAudioCapture::spawn_with(|_, _| Err(SystemTranscriptionError::PermissionDenied))
+                .unwrap();
+        assert!(matches!(
+            tap.finish(),
+            Err(SystemTranscriptionError::PermissionDenied)
+        ));
         assert!(recording.fill().is_err());
     }
 }

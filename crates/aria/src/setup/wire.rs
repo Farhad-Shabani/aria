@@ -261,7 +261,7 @@ impl From<Section> for generated::ModelUse {
     fn from(section: Section) -> Self {
         match section {
             Section::Stt => Self::Stt,
-            Section::Listen => Self::Listen,
+            Section::SystemTranscription => Self::SystemTranscription,
             Section::Tts => Self::Tts,
             Section::Speaker => Self::Speaker,
         }
@@ -495,7 +495,7 @@ mod tests {
                 .unwrap()
         };
         let tiny = "[stt]\nbackend = \"whisper-candle\"\n";
-        let chosen = format!("{tiny}[listen]\nbackend = \"parakeet\"\n");
+        let chosen = format!("{tiny}[transcription]\nbackend = \"parakeet\"\n");
 
         assert_eq!(
             used_by(tiny, "whisper-candle"),
@@ -508,11 +508,11 @@ mod tests {
         assert!(used_by(tiny, "moonshine").is_empty());
         assert!(
             used_by(tiny, "parakeet").is_empty(),
-            "Mac Audio's fallback is no setting, so it can be deleted"
+            "System transcription's fallback is no setting, so it can be deleted"
         );
         assert_eq!(
             used_by(&chosen, "parakeet"),
-            [generated::ModelUse::Listen as i32]
+            [generated::ModelUse::SystemTranscription as i32]
         );
     }
 

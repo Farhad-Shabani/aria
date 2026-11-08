@@ -23,7 +23,7 @@ message SettingsPosition {
 
 // One flat vocabulary, ranges per capability: 1-99 generic, 100-199
 // dictation/delivery, 200-299 speech, 300-399 chat, 500-599 speaker,
-// 800-899 listen, 900-999 history. Shared operations may use other ranges.
+// 800-899 system transcription, 900-999 history. Shared operations may use other ranges.
 // Keep an unknown code and report it; never fail the connection over one.
 enum ErrorCode {
   // No error on non-failure events. Invalid in RpcError or a FAILED event.
@@ -84,16 +84,16 @@ enum ErrorCode {
   ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED = 504;
   ERROR_CODE_SPEAKER_NO_SPEECH = 505;
   // System-audio capture needs macOS 14.2 or newer.
-  ERROR_CODE_LISTEN_UNSUPPORTED_OS = 800;
+  ERROR_CODE_SYSTEM_TRANSCRIPTION_UNSUPPORTED_OS = 800;
   // System Audio Recording permission is missing or was denied.
-  ERROR_CODE_LISTEN_PERMISSION_DENIED = 801;
-  ERROR_CODE_LISTEN_CAPTURE_FAILED = 802;
+  ERROR_CODE_SYSTEM_TRANSCRIPTION_PERMISSION_DENIED = 801;
+  ERROR_CODE_SYSTEM_TRANSCRIPTION_CAPTURE_FAILED = 802;
   ERROR_CODE_HISTORY_MISSING = 900;
   ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE = 901;
   ERROR_CODE_HISTORY_UNAVAILABLE = 902;
   ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE = 903;
   // The history entry has no text to run a prompt on.
   ERROR_CODE_HISTORY_ENTRY_EMPTY = 904;
-  // A Mac Audio transcript is unreadable, or too long to read in full.
+  // A transcript is unreadable, or too long to read in full.
   ERROR_CODE_HISTORY_TRANSCRIPT_UNREADABLE = 905;
 }

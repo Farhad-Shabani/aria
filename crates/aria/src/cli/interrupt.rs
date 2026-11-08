@@ -167,7 +167,7 @@ impl Interrupt {
         phase
     }
 
-    /// Esc cancels this ask. The line stays empty until the assistant reports
+    /// Esc cancels this chat. The line stays empty until the assistant reports
     /// a step.
     pub(crate) fn asking(&mut self, ticket: Ticket) -> Phase<'_> {
         self.arm(Some(Interruption::Cancel(ticket)), "cancel", Keyboard::Ours)

@@ -1,7 +1,7 @@
 //! Diarization accuracy over synthesized ground-truth conversations.
 //!
 //! A TTS engine renders scripted multi-speaker conversations, the real
-//! listen stack (streaming STT, speech map, speaker tracker, gate) hears them
+//! system transcription stack (streaming STT, speech map, speaker tracker, gate) hears them
 //! replayed in realtime, and the tracker's and the voice track's labels are
 //! scored against the script.
 //!
@@ -136,7 +136,7 @@ pub fn label_recording<Stt: StreamingEngine>(
 }
 
 /// The voice track's labels for each segment's audio, with gaps closed as
-/// listen closes them. The bench settles per segment where listen settles
+/// system transcription closes them. The bench settles per segment where system transcription settles
 /// per paragraph.
 fn settled(
     segmentation: &Path,
@@ -161,9 +161,9 @@ fn settled(
     Ok(labels)
 }
 
-/// Fills unnamed segments from their neighbours, as listen's transcript does.
+/// Fills unnamed segments from their neighbours, as system transcription's transcript does.
 fn settle_gaps(labels: &mut [Option<Label>], segments: &[replay::Segment]) {
-    let gap = (aria_voice::listen::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
+    let gap = (aria_voice::system_transcription::GAP_BREAK.as_secs_f64() * SAMPLE_RATE) as u64;
     aria_voice::speaker::settle(labels, |index| {
         segments
             .get(index + 1)
@@ -344,7 +344,7 @@ pub struct ScenarioReport {
     /// segment was released.
     pub live_accuracy: f64,
     /// The same, for the labels a session without the voice track ends
-    /// with, relabeled per segment rather than per paragraph as listen does.
+    /// with, relabeled per segment rather than per paragraph as system transcription does.
     pub fallback_accuracy: f64,
     /// The same, for the labels the transcript ends with: the voice track's.
     pub final_accuracy: f64,
@@ -361,7 +361,7 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             speaker,
             segmentation,
         } = self;
-        // The same composition the listen daemon runs.
+        // The same composition the daemon runs for system transcription.
         let transcription = Transcription::streaming(stt);
         let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
@@ -429,7 +429,7 @@ pub enum BenchError {
     },
 
     // The bench exists to score labels, so an unlabeled run is a failure
-    // rather than the graceful degradation a listen session would take.
+    // rather than the graceful degradation a system transcription would take.
     #[error("the speaker model did not load, so the run would measure nothing")]
     SpeakerModel(#[source] SpeakerError),
 

@@ -30,20 +30,23 @@ struct PaletteCommand: Equatable, Identifiable {
     let action: Action
 
     static let liveTranscript = PaletteCommand(
-        id: "live-transcript", title: "Mac Audio", symbol: "waveform", number: nil, chord: nil,
-        action: .showLiveTranscript)
+        id: "live-transcript", title: "Live Transcript", symbol: "waveform", number: nil, chord: nil,
+        keywords: ["transcribe", "system audio", "mac audio"], action: .showLiveTranscript)
     static let newTranscription = PaletteCommand(
-        id: "new-transcription", title: "Transcribe Mac Audio", symbol: "waveform", number: nil, chord: nil,
-        action: .startTranscription)
+        id: "new-transcription", title: "Transcribe System Audio", symbol: "waveform", number: nil, chord: nil,
+        keywords: ["mac audio"], action: .startTranscription)
     static let newDictation = PaletteCommand(
         id: "new-dictation", title: "New Dictation", symbol: "mic", number: nil, chord: nil,
         action: .startDictation)
-    static let newAsk = PaletteCommand(
-        id: "new-ask", title: "Ask a Question", symbol: "bubble.left", number: nil, chord: nil, action: .startAsk)
+    static func ask(_ assistant: Aria_Daemon_V1_AssistantId?) -> PaletteCommand {
+        PaletteCommand(
+            id: "new-ask", title: "Ask \(assistant?.name ?? "Your Assistant")", symbol: "bubble.left", number: nil,
+            chord: nil, keywords: ["question", "chat"], action: .startAsk)
+    }
     static func history(_ section: HistorySection) -> PaletteCommand {
         PaletteCommand(
             id: "history-\(section)", title: section.historyTitle, symbol: section.symbol, number: nil, chord: nil,
-            action: .showHistory(section))
+            keywords: ["history"], action: .showHistory(section))
     }
     /// No key: clearing everything takes typing its name and confirming.
     static let clearHistory = PaletteCommand(
@@ -66,4 +69,16 @@ struct PaletteCommand: Equatable, Identifiable {
     static let setUp = PaletteCommand(
         id: "set-up", title: "Set Up Aria…", symbol: "wand.and.stars", number: nil, chord: nil,
         keywords: ["setup"], action: .openSetup)
+}
+
+extension Aria_Daemon_V1_AssistantId {
+    /// The daemon's `AssistantId::display_name` says the same. The palette can't wait for
+    /// `ListAssistants`, which checks each assistant's command.
+    fileprivate var name: String? {
+        switch self {
+        case .claudeCode: "Claude Code"
+        case .codex: "Codex"
+        case .unspecified, .UNRECOGNIZED: nil
+        }
+    }
 }

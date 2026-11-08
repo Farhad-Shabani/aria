@@ -108,25 +108,25 @@ impl TranscriptionBackend {
     }
 }
 
-/// Listen mode: system-audio capture transcribed to a file. Loaded per Start,
-/// never at daemon startup, so a broken listen section blocks nothing else.
+/// System transcription: system-audio capture transcribed to a file. Loaded per Start,
+/// never at daemon startup, so a broken transcription section blocks nothing else.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListenConfig {
-    pub transcription: ListenTranscription,
+pub struct SystemTranscriptionConfig {
+    pub transcription: SystemTranscriptionEngine,
     pub transcripts_dir: PathBuf,
 }
 
 /// An engine that transcribes a live stream. Only a config whose engine
 /// streams becomes one, so holding it proves the engine streams.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListenTranscription(TranscriptionConfig);
+pub struct SystemTranscriptionEngine(TranscriptionConfig);
 
-impl ListenTranscription {
+impl SystemTranscriptionEngine {
     pub(crate) fn new(config: TranscriptionConfig) -> Result<Self, ConfigError> {
         if crate::transcription::streams(&config) {
             Ok(Self(config))
         } else {
-            Err(ConfigError::ListenUnusableEngine(
+            Err(ConfigError::SystemTranscriptionUnusableEngine(
                 config.backend_name().to_owned(),
             ))
         }
@@ -151,7 +151,7 @@ impl ListenTranscription {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpeakerConfig {
     pub model: PathBuf,
-    /// Segmentation model path. If unavailable, Listen labels per segment.
+    /// Segmentation model path. If unavailable, system transcription labels per segment.
     pub segmentation_model: PathBuf,
     pub profiles_dir: PathBuf,
 }

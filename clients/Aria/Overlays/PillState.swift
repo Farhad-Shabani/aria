@@ -16,7 +16,7 @@ enum PillState: Equatable {
     case excluded(String?)
     /// A press that failed, in the words the person needs.
     case failed(String)
-    /// An ask in flight: its step, such as `reading · +1`, and since when.
+    /// A chat in flight: its step, such as `reading · +1`, and since when.
     case asking(String, since: Date)
     case replied(copied: Bool)
     case noReply
@@ -52,22 +52,22 @@ enum PillState: Equatable {
         .failed([shortened(name), unreadablePrompt].joined(separator: " · "))
     }
 
-    /// The pill for an ask that just ended, or nothing for one under way.
+    /// The pill for a chat that just ended, or nothing for one under way.
     init?(ended event: Aria_Daemon_V1_ChatEvent) {
         switch event.stage {
         case .replied: self = .replied(copied: event.copied)
-        case .failed: self = event.errorCode.askMessage.map(PillState.failed) ?? .noReply
+        case .failed: self = event.errorCode.chatMessage.map(PillState.failed) ?? .noReply
         default: return nil
         }
     }
 
-    /// The pill for the asks in flight: the oldest one's step, and how many
+    /// The pill for the chats in flight: the oldest one's step, and how many
     /// others are in flight.
-    init?(asks: AsksInFlight) {
-        guard let oldest = asks.oldest else { return nil }
+    init?(chats: ChatsInFlight) {
+        guard let oldest = chats.oldest else { return nil }
         var step = oldest.stepLabel
-        if asks.count > 1 {
-            step += " · +\(asks.count - 1)"
+        if chats.count > 1 {
+            step += " · +\(chats.count - 1)"
         }
         self = .asking(step, since: oldest.since)
     }
@@ -190,7 +190,7 @@ extension StartApp {
     }
 }
 
-/// Where a delivered transcript went. Mirrors the daemon's own
+/// Where delivered text went. Mirrors the daemon's own
 /// `DeliveryOutcome`.
 enum DeliveryOutcome: Equatable {
     case inserted
@@ -199,7 +199,7 @@ enum DeliveryOutcome: Equatable {
     case inHistory
     /// Never typed, and history saving is off.
     case notTyped
-    /// A press that asked only for its transcript, or a daemon too old to say.
+    /// A press that asked only for its text, or a daemon too old to say.
     case unknown
 
     init(_ code: Aria_Daemon_V1_DeliveryOutcome) {
@@ -227,8 +227,8 @@ extension Aria_Daemon_V1_ErrorCode {
         }
     }
 
-    /// What a failed ask says when the person can fix the cause.
-    fileprivate var askMessage: String? {
+    /// What a failed chat says when the person can fix the cause.
+    fileprivate var chatMessage: String? {
         switch self {
         case .assistantSignedOut: return "assistant signed out"
         case .assistantUnavailable: return "assistant not installed"

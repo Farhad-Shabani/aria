@@ -1,13 +1,13 @@
 import Foundation
 
-/// The lines of the Mac Audio session Aria has followed, built from the event stream. The daemon
+/// The lines of the system transcription Aria has followed, built from the event stream. The daemon
 /// writes the whole transcript to a file.
-struct ListenTranscript: Equatable {
+struct SystemTranscript: Equatable {
     /// An hours-long session stays small in memory. Older lines stay in the
     /// transcript file.
     static let lineLimit = 2000
     /// A gap this long opens a new line, as `GAP_BREAK` does for the transcript file and `aria
-    /// listen --follow`.
+    /// transcribe follow`.
     static let paragraphGap: TimeInterval = 3
 
     struct Line: Equatable, Identifiable {
@@ -24,11 +24,11 @@ struct ListenTranscript: Equatable {
     private var lastSegmentAt: Date?
 
     /// `now` is when the event arrived: a gap between arrivals ends a line.
-    mutating func apply(_ event: Aria_Daemon_V1_ListenEvent, at now: Date) {
+    mutating func apply(_ event: Aria_Daemon_V1_SystemTranscriptionEvent, at now: Date) {
         offsetSeconds = max(offsetSeconds, event.offsetSeconds)
         switch event.stage {
         case .started:
-            self = ListenTranscript()
+            self = SystemTranscript()
         case .segmentTranscribed:
             append(event, at: now)
         case .speakerMerged:
@@ -51,7 +51,7 @@ struct ListenTranscript: Equatable {
         String(format: "[%02llu:%02llu:%02llu]", seconds / 3600, seconds % 3600 / 60, seconds % 60)
     }
 
-    private mutating func append(_ event: Aria_Daemon_V1_ListenEvent, at now: Date) {
+    private mutating func append(_ event: Aria_Daemon_V1_SystemTranscriptionEvent, at now: Date) {
         let text = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         defer { lastSegmentAt = now }
@@ -76,6 +76,6 @@ struct ListenTranscript: Equatable {
     }
 }
 
-extension Aria_Daemon_V1_ListenEvent {
+extension Aria_Daemon_V1_SystemTranscriptionEvent {
     fileprivate var offsetSeconds: UInt64 { UInt64(max(0, offset.seconds)) }
 }

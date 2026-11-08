@@ -13,7 +13,6 @@ mod dictate;
 mod doctor;
 mod events;
 mod history;
-mod listen;
 mod logging;
 mod memory;
 mod models;
@@ -24,6 +23,7 @@ mod service;
 mod settings;
 mod setup;
 mod speaker;
+mod transcribe;
 mod vocabulary;
 mod wake;
 
@@ -118,7 +118,7 @@ enum Command {
         #[command(subcommand)]
         command: service::ServiceCommand,
     },
-    /// Record one utterance and deliver the transcript
+    /// Record one utterance and deliver its text
     Dictate {
         #[arg(long, value_enum)]
         mode: Option<CliOutputMode>,
@@ -131,7 +131,7 @@ enum Command {
         /// Disable project spellings for this recording
         #[arg(long)]
         no_project: bool,
-        /// Save the transcript to history without typing it
+        /// Save the text to history without typing it
         #[arg(long, conflicts_with_all = ["mode", "stream"])]
         history_only: bool,
     },
@@ -142,10 +142,10 @@ enum Command {
     },
     /// Ask an assistant a question and print its reply
     Ask(ask::AskArgs),
-    /// Transcribe the machine's own audio output to a file
-    Listen {
+    /// Transcribe what this machine plays to a file
+    Transcribe {
         #[command(subcommand)]
-        command: listen::ListenCommand,
+        command: transcribe::TranscribeCommand,
     },
     /// Enroll a voice so Aria can tell who is speaking
     Speaker {
@@ -271,7 +271,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             command: assistant::AssistantCommand::Models { assistant_id, json },
         } => assistant::models(assistant_id, json),
         Command::Ask(args) => ask::run(args),
-        Command::Listen { command } => listen::run(command),
+        Command::Transcribe { command } => transcribe::run(command),
         Command::Speaker { command } => speaker::run(command),
         Command::Say {
             text,

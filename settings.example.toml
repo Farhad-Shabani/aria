@@ -55,8 +55,8 @@ enabled = true
 # Keeps each recording's audio for 24 hours.
 keep_audio = false
 
-[listen]
-# Transcribes system audio with an engine that streams. Absent uses the stt engine,
+[transcription]
+# Transcribes your Mac's audio with an engine that streams. Absent uses the stt engine,
 # or parakeet when that one can't stream.
 # backend = "moonshine"
 # Absent means setup's download for that engine.
@@ -70,7 +70,7 @@ transcripts_dir = "~/.aria/transcripts"
 id = "claude-code"
 # Where the assistant works. Absent means the caller's directory.
 # workdir = "~/src"
-# Folders whose git repos an ask may name: "in writ, why does the build fail?" runs in ROOT/Writ.
+# Folders whose git repos a chat may name: "in writ, why does the build fail?" runs in ROOT/Writ.
 project_roots = []
 # The longest a reply may take, at most 570.
 timeout_secs = 300.0
@@ -80,12 +80,12 @@ timeout_secs = 300.0
 # claude-code = "sonnet"
 
 [memory]
-# Remembers facts you state while asking, and shows them to the assistant on later asks.
-# Only spoken asks with own_voice_only and an enrolled owner feed it.
+# Remembers facts you state while asking, and shows them to the assistant in later chats.
+# Only spoken chats with own_voice_only and an enrolled owner feed it.
 enabled = false
-# The model that extracts facts after an ask.
+# The model that extracts facts after a chat.
 extract_model = "sonnet"
-# The most facts kept from one ask session.
+# The most facts kept from one conversation.
 max_facts_per_session = 10
 # Holds the facts, and lexicon.txt, the terms that fix misheard words. (restart)
 dir = "~/.aria/memory"
@@ -113,7 +113,7 @@ dir = "~/.aria/memory"
 [shortcuts]
 # The Aria key: right_option or fn. Tap to dictate, hold to talk. On a Mac, fn stops running its own macOS action. On Linux, right_option is the Right Alt key, and fn is unavailable.
 aria_key = "right_option"
-# Starts an ask: shift or command held with the Aria key, a chord, or off.
+# Starts a chat: shift or command held with the Aria key, a chord, or off.
 ask = "shift"
 # Lists the prompts that are on: shift, command, a chord, or off.
 prompt_list = "command"
@@ -138,7 +138,7 @@ enabled = false
 port = 9850
 
 [delivery]
-# The longest typing or pasting a result may take, for dictation, asks and the phone. (restart)
+# The longest typing or pasting a result may take, for dictation, chats and the phone. (restart)
 timeout_secs = 5.0
 
 # ---- Shared engines
@@ -190,7 +190,7 @@ voice = "vivian"
 [speaker]
 # Tells voices apart. Without it, transcripts have no speaker labels. (restart)
 model = "~/.aria/models/wespeaker/en/model.onnx"
-# Estimates who speaks in each audio frame, for Listen. (restart)
+# Estimates who speaks in each audio frame, for Transcription. (restart)
 segmentation_model = "~/.aria/models/pyannote/segmentation-3.0.onnx"
 # Enrolled voice profiles. (restart)
 profiles_dir = "~/.aria/speakers"

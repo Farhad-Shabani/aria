@@ -386,7 +386,7 @@ impl Session for CliSession {
             |line: &str| match step(cli, line) {
                 Ok(Some(step)) => sink.step(step),
                 // One format drift is worth one line in the log, not one
-                // per line of output, and never a failed ask.
+                // per line of output, and never a failed chat.
                 Err(Unparsed { column }) if !warned => {
                     warned = true;
                     tracing::warn!(column, assistant = ?cli, "an assistant line was not understood");

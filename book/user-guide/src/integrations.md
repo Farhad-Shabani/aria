@@ -21,11 +21,11 @@ these commands:
 - **Aria Dictate** starts manual dictation with live insertion. Set output
   to an insertion mode under **Settings → Dictation** first; it cannot use
   Copy output. Run the command again to stop. For copying, use the next command.
-- **Aria Dictate to Clipboard** copies the completed transcript. It stops on
+- **Aria Dictate to Clipboard** copies the completed text. It stops on
   silence.
-- **Aria Ask** opens Terminal, records a question, and prints the reply.
-  First, install and sign in to Claude Code or Codex as described in
-  [Ask](./voice-chat.md#before-you-start).
+- **Aria Ask** starts a chat. It opens Terminal, records a question, and
+  prints the reply. First, install and sign in to Claude Code or Codex as
+  described in [Chat with Claude Code or Codex](./chat.md#before-you-start).
 
 For insertion, keep an editable field focused in the intended app when
 opening Raycast and grant [Accessibility access](./macos.md#permissions).

@@ -32,14 +32,14 @@ impl HistoryEntry {
     pub fn dictation(&self) -> Option<&DictationContent> {
         match &self.content {
             HistoryContent::Dictation(dictation) => Some(dictation),
-            HistoryContent::Listen { .. } | HistoryContent::Ask { .. } => None,
+            HistoryContent::SystemTranscription { .. } | HistoryContent::Chat { .. } => None,
         }
     }
 
     pub fn dictation_mut(&mut self) -> Option<&mut DictationContent> {
         match &mut self.content {
             HistoryContent::Dictation(dictation) => Some(dictation),
-            HistoryContent::Listen { .. } | HistoryContent::Ask { .. } => None,
+            HistoryContent::SystemTranscription { .. } | HistoryContent::Chat { .. } => None,
         }
     }
 
@@ -49,18 +49,18 @@ impl HistoryEntry {
             .map_or(AudioAvailability::Unavailable, |dictation| dictation.audio)
     }
 
-    /// What a prompt run on the entry reads: an ask's reply, else its text,
-    /// with a Mac Audio session's transcript read in full. A part of a
+    /// What a prompt run on the entry reads: a chat's reply, else its text,
+    /// with a system transcription's transcript read in full. A part of a
     /// transcript is refused, since the result is saved as covering the entry.
     pub fn prompt_text(self) -> Result<String, HistoryError> {
         let text = match self.content {
-            HistoryContent::Ask { reply } => reply,
-            HistoryContent::Listen {
+            HistoryContent::Chat { reply } => reply,
+            HistoryContent::SystemTranscription {
                 read: Some(TranscriptRead::Whole),
                 ..
             }
             | HistoryContent::Dictation(_) => self.text,
-            HistoryContent::Listen {
+            HistoryContent::SystemTranscription {
                 read: None | Some(TranscriptRead::Truncated | TranscriptRead::Unavailable),
                 ..
             } => return Err(HistoryError::TranscriptUnreadable),
@@ -87,16 +87,16 @@ pub struct PromptResult {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HistoryContent {
     Dictation(DictationContent),
-    /// A Mac Audio session. Its text stays in the transcript file, and the
+    /// A system transcription. Its text stays in the transcript file, and the
     /// entry's text is an excerpt of it.
-    Listen {
+    SystemTranscription {
         transcript: PathBuf,
         /// How much of the file Get read into the entry's text. `None` from
         /// List and insert, where the text is the excerpt.
         read: Option<TranscriptRead>,
     },
     /// A question to the assistant, in the entry's text, and its reply.
-    Ask {
+    Chat {
         reply: String,
     },
 }
@@ -105,8 +105,8 @@ impl HistoryContent {
     pub fn section(&self) -> HistorySection {
         match self {
             Self::Dictation(_) => HistorySection::Dictation,
-            Self::Listen { .. } => HistorySection::Listen,
-            Self::Ask { .. } => HistorySection::Ask,
+            Self::SystemTranscription { .. } => HistorySection::SystemTranscription,
+            Self::Chat { .. } => HistorySection::Chat,
         }
     }
 }
@@ -136,18 +136,18 @@ pub enum TranscriptRead {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HistorySection {
     Dictation,
-    Listen,
-    Ask,
+    SystemTranscription,
+    Chat,
 }
 
 impl HistorySection {
-    pub const ALL: [Self; 3] = [Self::Dictation, Self::Listen, Self::Ask];
+    pub const ALL: [Self; 3] = [Self::Dictation, Self::SystemTranscription, Self::Chat];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Dictation => "dictation",
-            Self::Listen => "listen",
-            Self::Ask => "ask",
+            Self::SystemTranscription => "transcription",
+            Self::Chat => "chat",
         }
     }
 }
@@ -274,7 +274,7 @@ pub enum HistoryError {
     InvalidTitle,
     #[error("that history entry has no text to run a prompt on")]
     EntryEmpty,
-    #[error("that Mac Audio transcript can't be read in full")]
+    #[error("that transcript can't be read in full")]
     TranscriptUnreadable,
     #[error("history is unavailable")]
     Unavailable,

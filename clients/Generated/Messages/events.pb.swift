@@ -64,12 +64,12 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     set {payload = .speech(newValue)}
   }
 
-  public var listen: Aria_Daemon_V1_ListenEvent {
+  public var systemTranscription: Aria_Daemon_V1_SystemTranscriptionEvent {
     get {
-      if case .listen(let v)? = payload {return v}
-      return Aria_Daemon_V1_ListenEvent()
+      if case .systemTranscription(let v)? = payload {return v}
+      return Aria_Daemon_V1_SystemTranscriptionEvent()
     }
-    set {payload = .listen(newValue)}
+    set {payload = .systemTranscription(newValue)}
   }
 
   public var speaker: Aria_Daemon_V1_SpeakerEvent {
@@ -128,7 +128,7 @@ public nonisolated struct Aria_Daemon_V1_Event: Sendable {
     case dictation(Aria_Daemon_V1_DictationEvent)
     case chat(Aria_Daemon_V1_ChatEvent)
     case speech(Aria_Daemon_V1_SpeechEvent)
-    case listen(Aria_Daemon_V1_ListenEvent)
+    case systemTranscription(Aria_Daemon_V1_SystemTranscriptionEvent)
     case speaker(Aria_Daemon_V1_SpeakerEvent)
     case caption(Aria_Daemon_V1_CaptionSnapshot)
     case level(Aria_Daemon_V1_MicLevel)
@@ -183,7 +183,7 @@ nonisolated extension Aria_Daemon_V1_SubscribeRequest: SwiftProtobuf.Message, Sw
 
 nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{1}listen\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0\u{1}hotkey\0\u{1}settings\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}dictation\0\u{1}chat\0\u{1}speech\0\u{3}system_transcription\0\u{1}speaker\0\u{1}caption\0\u{1}level\0\u{1}ghost\0\u{1}hotkey\0\u{1}settings\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -231,16 +231,16 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
         }
       }()
       case 4: try {
-        var v: Aria_Daemon_V1_ListenEvent?
+        var v: Aria_Daemon_V1_SystemTranscriptionEvent?
         var hadOneofValue = false
         if let current = self.payload {
           hadOneofValue = true
-          if case .listen(let m) = current {v = m}
+          if case .systemTranscription(let m) = current {v = m}
         }
         try decoder.decodeSingularMessageField(value: &v)
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .listen(v)
+          self.payload = .systemTranscription(v)
         }
       }()
       case 5: try {
@@ -344,8 +344,8 @@ nonisolated extension Aria_Daemon_V1_Event: SwiftProtobuf.Message, SwiftProtobuf
       guard case .speech(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     }()
-    case .listen?: try {
-      guard case .listen(let v)? = self.payload else { preconditionFailure() }
+    case .systemTranscription?: try {
+      guard case .systemTranscription(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
     }()
     case .speaker?: try {

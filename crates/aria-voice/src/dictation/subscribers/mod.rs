@@ -92,9 +92,9 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::PermissionDenied
         | RpcErrorCode::Unsupported
         | RpcErrorCode::ShuttingDown
-        | RpcErrorCode::ListenUnsupportedOs
-        | RpcErrorCode::ListenPermissionDenied
-        | RpcErrorCode::ListenCaptureFailed
+        | RpcErrorCode::SystemTranscriptionUnsupportedOs
+        | RpcErrorCode::SystemTranscriptionPermissionDenied
+        | RpcErrorCode::SystemTranscriptionCaptureFailed
         | RpcErrorCode::HistoryMissing
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable

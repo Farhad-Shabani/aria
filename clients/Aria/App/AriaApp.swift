@@ -29,7 +29,7 @@ struct AriaApp: App {
                     .disabled(poller.state == .working)
                 }
                 .padding(8)
-                ListenStatusRow(status: appDelegate.listenStatus)
+                SystemTranscriptionStatusRow(status: appDelegate.systemTranscriptionStatus)
                 if let message = poller.failure?.message {
                     Text(markdown: message)
                         .font(.caption)
@@ -80,7 +80,7 @@ struct AriaApp: App {
             MenuBarLabel(
                 poller: poller,
                 status: appDelegate.status,
-                listenStatus: appDelegate.listenStatus,
+                systemTranscriptionStatus: appDelegate.systemTranscriptionStatus,
                 updates: appDelegate.updates,
                 settings: settings,
                 controller: appDelegate
@@ -158,14 +158,14 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var poller: StatusPoller
     @ObservedObject var status: StatusController
-    @ObservedObject var listenStatus: ListenStatus
+    @ObservedObject var systemTranscriptionStatus: SystemTranscriptionStatus
     @ObservedObject var updates: UpdateController
     let settings: DaemonSettings
     let controller: AppDelegate
 
     var body: some View {
         let state = MenuBarState(
-            daemon: poller.state, pill: status.live, isListenRunning: listenStatus.isRunning,
+            daemon: poller.state, pill: status.live, isSystemTranscriptionRunning: systemTranscriptionStatus.isRunning,
             isUpdateAvailable: updates.isUpdateAvailable)
         Image(nsImage: MenuBarMark.image(state))
             .accessibilityLabel(state.accessibilityLabel)

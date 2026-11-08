@@ -81,7 +81,7 @@ pub struct Delivered {
 /// A dictation sink outlives one dictation. It learns of each through
 /// `dictation_started`, once the microphone is running and before any text,
 /// and clears what one left behind in `dictation_finished`, however it
-/// ended. Listen opens its file before the session and calls neither.
+/// ended. System transcription opens its file before it starts and calls neither.
 pub trait TranscriptSink {
     type Error;
 

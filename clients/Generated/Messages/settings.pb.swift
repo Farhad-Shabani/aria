@@ -523,7 +523,7 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._assistantModels = newValue}
   }
 
-  /// Asks are sent to the assistant to remember facts.
+  /// Questions you speak are sent to Claude to remember facts.
   public var memoryEnabled: Bool {
     get {_storage._memoryEnabled}
     set {_uniqueStorage()._memoryEnabled = newValue}
@@ -552,7 +552,7 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._ariaKey = newValue}
   }
 
-  /// Starts an ask: Aria key + Shift unless changed. The Aria key then sends
+  /// Starts a chat: Aria key + Shift unless changed. The Aria key then sends
   /// and cancels it.
   public var askShortcut: Aria_Daemon_V1_Shortcut {
     get {_storage._askShortcut ?? Aria_Daemon_V1_Shortcut()}
@@ -831,7 +831,7 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
 }
 
 /// A Markdown file that says what to make of a recording, and the chord
-/// that runs it the way the ask shortcut runs an ask.
+/// that runs it the way the Ask shortcut starts a chat.
 public nonisolated struct Aria_Daemon_V1_Prompt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

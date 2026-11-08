@@ -34,7 +34,7 @@ aria dictate \
 ```
 
 Speak, then press **Esc** when the terminal shows the stop prompt. Aria stops
-recording, finishes transcription, and copies the result.
+recording, finishes transcribing, and copies the text.
 
 Without `--toggle`, silence ends the recording. With it, **Auto-stop** still
 ends the recording once you stop speaking, after 10 seconds by default. Change
@@ -55,22 +55,22 @@ another app. A command launched in Terminal starts with Terminal focused.
 Insertion requires Accessibility access, and the intended app and field must
 stay focused.
 
-`--mode insert` types the completed transcript. `--stream` types finalized
+`--mode insert` types the completed text. `--stream` types finalized
 segments while you speak. With Copy output or a speech model that can't
 stream, Aria delivers the whole text once you stop instead. If you switch to
 another app or field, Aria keeps recording. It types what you said once you're back in that field. Clicking or
 typing in that field stops the dictation, in apps that report their text
 cursor.
 
-`--mode insert-or-copy` copies the transcript when insertion can't begin. If
+`--mode insert-or-copy` copies the text when insertion can't begin. If
 you stop while away, it copies the words Aria hasn't typed yet. `--mode insert`
 keeps those words only in [history](./history.md#saving), when saving is on.
 
 On Linux, [hotkey dictation](./linux.md#try-it) pastes into the focused app.
-`--mode insert` pastes the completed transcript. `--stream` waits too, since
+`--mode insert` pastes the completed text. `--stream` waits too, since
 Aria pastes once recording stops.
 
-To save the transcript to [history](./history.md#dictate-into-history) without
+To save the text to [history](./history.md#dictate-into-history) without
 typing it, add `--history-only`.
 
 On a Mac, Aria adds a space where the text needs one. Dictating “Hello.” and then

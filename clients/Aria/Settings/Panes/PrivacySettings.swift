@@ -9,7 +9,7 @@ struct PrivacySettings: View {
                 Toggle(isOn: editor.binding(\.historyEnabled, \.historyEnabled)) {
                     Text("Save history")
                     Text(
-                        "Dictations, Mac Audio sessions, and asks with their replies stay on your Mac for up to 30 days."
+                        "Dictations, transcripts, and chats stay on your Mac for up to 30 days."
                     )
                 }
                 Toggle(isOn: editor.binding(\.historyKeepAudio, \.historyKeepAudio)) {
@@ -22,7 +22,7 @@ struct PrivacySettings: View {
             Section {
                 Toggle("Memory", isOn: editor.binding(\.memoryEnabled, \.memoryEnabled))
             } footer: {
-                Text("Asks you speak are sent to Claude to remember facts.")
+                Text("Questions you speak are sent to Claude to remember facts.")
             }
         }
     }

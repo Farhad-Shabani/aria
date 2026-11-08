@@ -24,7 +24,7 @@ final class DownloadedModelsTests: XCTestCase {
             model("whisper", bytes: 875_000_000, usedBy: [.stt]),
             model("nemotron", files: .partial, bytes: 2_500_000_000),
             model("kokoro", bytes: 354_000_000),
-            model("parakeet", bytes: 2_500_000_000, usedBy: [.stt, .listen]),
+            model("parakeet", bytes: 2_500_000_000, usedBy: [.stt, .systemTranscription]),
             model("moonshine", files: .absent, bytes: 67_000_000),
             model("speaker", bytes: 27_000_000, usedBy: [.speaker]),
             model("external", files: .external, bytes: 9_000_000_000),
@@ -43,7 +43,8 @@ final class DownloadedModelsTests: XCTestCase {
         let models = DownloadedModels(Self.mac())
         let model = { (id: String) in models.models.first { $0.id == id } }
 
-        XCTAssertEqual(model("parakeet")?.detail, "\(SetupState.size(2_500_000_000)) · Used by Dictation and Mac Audio")
+        XCTAssertEqual(
+            model("parakeet")?.detail, "\(SetupState.size(2_500_000_000)) · Used by Dictation and Transcription")
         XCTAssertEqual(model("nemotron")?.detail, "Partly downloaded")
         XCTAssertEqual(model("kokoro")?.usedBy, [], "nothing loads it, so it can be deleted")
     }

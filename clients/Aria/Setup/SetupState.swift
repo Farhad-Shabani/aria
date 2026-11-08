@@ -553,7 +553,7 @@ extension SetupState.Step {
 
     var caption: String? {
         switch self {
-        case .inspecting, .welcome: "Dictation stays on your Mac. Ask uses your selected assistant."
+        case .inspecting, .welcome: "Dictation stays on your Mac. Chat uses your selected assistant."
         case .choices: "Speech stays on your Mac. You can change these later."
         case .applying: "This takes a moment. Downloads can be canceled."
         case .grant: "Aria uses it to hear the Aria key and type what you say."

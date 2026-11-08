@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The lines of a Mac Audio session, following the newest one while the
+/// The lines of a system transcription, following the newest one while the
 /// reader stays at the end.
-struct ListenTranscriptView: View {
+struct SystemTranscriptView: View {
     private struct ScrollPosition: Equatable {
         let offset: CGFloat
         let isAtEnd: Bool
@@ -12,7 +12,7 @@ struct ListenTranscriptView: View {
     /// How near the end still counts as at the end.
     private static let endSlack: CGFloat = 8
 
-    let transcript: ListenTranscript
+    let transcript: SystemTranscript
     let isRunning: Bool
     @State private var isPinnedToEnd = true
 
@@ -31,7 +31,7 @@ struct ListenTranscriptView: View {
             .overlay {
                 if transcript.lines.isEmpty {
                     ContentUnavailableView(
-                        isRunning ? "Listening to Your Mac’s Audio…" : "Nothing Transcribed", systemImage: "waveform")
+                        isRunning ? "Transcribing Your Mac’s Audio…" : "Nothing Transcribed", systemImage: "waveform")
                 }
             }
             .onScrollGeometryChange(for: ScrollPosition.self) { geometry in
@@ -52,9 +52,9 @@ struct ListenTranscriptView: View {
         .textSelection(.enabled)
     }
 
-    private func row(_ line: ListenTranscript.Line) -> some View {
+    private func row(_ line: SystemTranscript.Line) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(ListenTranscript.stamp(line.offsetSeconds))
+            Text(SystemTranscript.stamp(line.offsetSeconds))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: Self.stampWidth, alignment: .leading)

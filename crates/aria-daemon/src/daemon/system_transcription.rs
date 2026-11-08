@@ -1,6 +1,6 @@
-//! Daemon ownership of the listen session.
+//! Daemon ownership of the system transcription.
 //!
-//! A mutexed slot rather than an actor: a listen session must outlive the
+//! A mutexed slot rather than an actor: a system transcription must outlive the
 //! RPC that started it, so nothing here ties cancellation to a request.
 
 use std::path::{Path, PathBuf};
@@ -13,21 +13,22 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::audio::Stopper;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::config::{ListenConfig, SpeakerConfig};
-use aria_voice::listen::{
-    ListenError, ListenEventEmitter, ListenSnapshot, ListenStage, ListenStarted, ListenStopped,
-    SystemAudioCapture, TranscriptFile, run_session,
+use aria_voice::config::{SpeakerConfig, SystemTranscriptionConfig};
+use aria_voice::system_transcription::{
+    SystemAudioCapture, SystemTranscriptionError, SystemTranscriptionEventEmitter,
+    SystemTranscriptionSnapshot, SystemTranscriptionStage, SystemTranscriptionStarted,
+    SystemTranscriptionStopped, TranscriptFile, run_session,
 };
 
 use super::history::HistoryStore;
 use super::host::DaemonLifetime;
 
-pub(super) struct ListenState {
+pub(super) struct SystemTranscriptionState {
     lifetime: DaemonLifetime,
     home: PathBuf,
     cache: Arc<aria_settings::SettingsCache>,
     settings: Arc<aria_settings::SettingsStore>,
-    events: ListenEventEmitter,
+    events: SystemTranscriptionEventEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
     history: Arc<HistoryStore>,
     active: Mutex<Slot>,
@@ -35,7 +36,7 @@ pub(super) struct ListenState {
 
 enum Slot {
     Idle,
-    Running(ActiveListen),
+    Running(ActiveSystemTranscription),
     /// The session ended on its own after Start had answered. Status
     /// reports why when it failed.
     Ended {
@@ -44,22 +45,22 @@ enum Slot {
     },
 }
 
-struct ActiveListen {
+struct ActiveSystemTranscription {
     stopper: Stopper,
     /// Checked around a model load, so a stop during the load ends the
     /// session once it returns instead of starting transcription.
     cancel: CancelToken,
-    thread: JoinHandle<Result<(), ListenError>>,
+    thread: JoinHandle<Result<(), SystemTranscriptionError>>,
     transcript: PathBuf,
 }
 
-impl ListenState {
+impl SystemTranscriptionState {
     pub(super) fn new(
         lifetime: DaemonLifetime,
         home: PathBuf,
         cache: Arc<aria_settings::SettingsCache>,
         settings: Arc<aria_settings::SettingsStore>,
-        events: ListenEventEmitter,
+        events: SystemTranscriptionEventEmitter,
         vocabulary: Arc<super::vocabulary::Runtime>,
         history: Arc<HistoryStore>,
     ) -> Self {
@@ -78,18 +79,21 @@ impl ListenState {
     /// Accepts a session; capture and model initialization run on worker threads.
     /// `output` overrides the configured transcripts directory with an exact
     /// file for this session.
-    pub(super) fn start(&self, output: Option<PathBuf>) -> Result<ListenStarted, RpcFailure> {
+    pub(super) fn start(
+        &self,
+        output: Option<PathBuf>,
+    ) -> Result<SystemTranscriptionStarted, RpcFailure> {
         if self.lifetime == DaemonLifetime::OnDemand {
             return Err(RpcFailure::new(
                 RpcErrorCode::Unsupported,
-                "listen needs the persistent aria daemon; start `aria daemon`",
+                "transcription needs the persistent aria daemon; start `aria daemon`",
             ));
         }
         let mut slot = self.lock();
         harvest(&mut slot);
         if let Slot::Running(active) = &*slot {
-            return Ok(ListenStarted {
-                already_listening: true,
+            return Ok(SystemTranscriptionStarted {
+                already_running: true,
                 transcript: active.transcript.clone(),
             });
         }
@@ -98,7 +102,7 @@ impl ListenState {
             RpcFailure::new(RpcErrorCode::Internal, error_chain(&error))
         };
         let settings = self.cache.effective();
-        let config = ListenConfig::load(&settings, &self.home).map_err(internal)?;
+        let config = SystemTranscriptionConfig::load(&settings, &self.home).map_err(internal)?;
         let speaker = SpeakerConfig::load(&settings.speaker, &self.home);
         // An unreadable settings file refuses the session rather than guess whether to save
         // history.
@@ -118,14 +122,14 @@ impl ListenState {
             SystemAudioCapture::spawn().map_err(|error| RpcFailure::from(&error))?;
         let stopper = capture.stopper();
         let cancel = CancelToken::new();
-        // Listen has no focused project: the user's own word list only. The
+        // System transcription has no focused project: the user's own word list only. The
         // snapshot is let go at once, so background vocabulary work does
         // not wait on a session that runs for hours.
         let vocabulary = Arc::clone(&self.vocabulary.snapshot(None).matcher);
         let record =
             saves_history.then(|| HistoryRecord::start(Arc::clone(&self.history), &transcript));
         let thread = thread::Builder::new()
-            .name("aria-listen".into())
+            .name("aria-transcribe".into())
             .spawn({
                 let events = self.events.clone();
                 let cancel = cancel.clone();
@@ -148,41 +152,41 @@ impl ListenState {
                 stopper.stop();
                 RpcFailure::new(RpcErrorCode::Internal, error_chain(&error))
             })?;
-        tracing::info!(transcript = %transcript.display(), "listen session started");
-        *slot = Slot::Running(ActiveListen {
+        tracing::info!(transcript = %transcript.display(), "system transcription started");
+        *slot = Slot::Running(ActiveSystemTranscription {
             stopper,
             cancel,
             thread,
             transcript: transcript.clone(),
         });
-        Ok(ListenStarted {
-            already_listening: false,
+        Ok(SystemTranscriptionStarted {
+            already_running: false,
             transcript,
         })
     }
 
     /// Stops the running session, reporting a session that failed instead of
     /// stopping cleanly as that failure.
-    pub(super) fn stop(&self) -> Result<ListenStopped, RpcFailure> {
+    pub(super) fn stop(&self) -> Result<SystemTranscriptionStopped, RpcFailure> {
         // The lock is held through the join so a concurrent Start cannot
         // open a second capture while this one winds down.
         let mut slot = self.lock();
         let previous = std::mem::replace(&mut *slot, Slot::Idle);
         match previous {
-            Slot::Idle => Ok(ListenStopped {
-                was_listening: false,
+            Slot::Idle => Ok(SystemTranscriptionStopped {
+                was_running: false,
                 transcript: PathBuf::new(),
             }),
-            Slot::Ended { transcript, .. } => Ok(ListenStopped {
-                was_listening: false,
+            Slot::Ended { transcript, .. } => Ok(SystemTranscriptionStopped {
+                was_running: false,
                 transcript,
             }),
             Slot::Running(active) => {
                 let transcript = active.transcript.clone();
                 join(active).map(|()| {
-                    tracing::info!(transcript = %transcript.display(), "listen session stopped");
-                    ListenStopped {
-                        was_listening: true,
+                    tracing::info!(transcript = %transcript.display(), "system transcription stopped");
+                    SystemTranscriptionStopped {
+                        was_running: true,
                         transcript,
                     }
                 })
@@ -190,22 +194,22 @@ impl ListenState {
         }
     }
 
-    pub(super) fn status(&self) -> ListenSnapshot {
+    pub(super) fn status(&self) -> SystemTranscriptionSnapshot {
         let mut slot = self.lock();
         harvest(&mut slot);
         match &*slot {
-            Slot::Idle => ListenSnapshot {
-                listening: false,
+            Slot::Idle => SystemTranscriptionSnapshot {
+                running: false,
                 transcript: PathBuf::new(),
                 error: None,
             },
-            Slot::Running(active) => ListenSnapshot {
-                listening: true,
+            Slot::Running(active) => SystemTranscriptionSnapshot {
+                running: true,
                 transcript: active.transcript.clone(),
                 error: None,
             },
-            Slot::Ended { transcript, error } => ListenSnapshot {
-                listening: false,
+            Slot::Ended { transcript, error } => SystemTranscriptionSnapshot {
+                running: false,
                 transcript: transcript.clone(),
                 error: error.as_ref().map(ToString::to_string),
             },
@@ -220,7 +224,7 @@ impl ListenState {
 }
 
 /// Daemon shutdown ends capture and preserves the transcript tail.
-impl Drop for ListenState {
+impl Drop for SystemTranscriptionState {
     fn drop(&mut self) {
         let previous = std::mem::replace(&mut *self.lock(), Slot::Idle);
         if let Slot::Running(active) = previous
@@ -229,7 +233,7 @@ impl Drop for ListenState {
             tracing::warn!(
                 code = failure.code.label(),
                 message = failure.message,
-                "listen session failed during daemon shutdown"
+                "system transcription failed during daemon shutdown"
             );
         }
     }
@@ -266,9 +270,9 @@ impl HistoryRecord {
 /// Saves the session before announcing its end, so whoever reacts to the last stage finds the
 /// session already in history.
 fn finish(
-    result: &Result<(), ListenError>,
+    result: &Result<(), SystemTranscriptionError>,
     record: Option<HistoryRecord>,
-    events: &ListenEventEmitter,
+    events: &SystemTranscriptionEventEmitter,
 ) {
     if let Some(record) = record {
         record.history.save_transcript(
@@ -279,8 +283,8 @@ fn finish(
         );
     }
     match result {
-        Ok(()) => events.emit(ListenStage::Stopped),
-        Err(error) => events.emit(ListenStage::Failed(error.into())),
+        Ok(()) => events.emit(SystemTranscriptionStage::Stopped),
+        Err(error) => events.emit(SystemTranscriptionStage::Failed(error.into())),
     }
 }
 
@@ -302,7 +306,7 @@ fn harvest(slot: &mut Slot) {
             tracing::warn!(
                 code = failure.code.label(),
                 message = failure.message,
-                "listen session ended with an error"
+                "system transcription ended with an error"
             );
             Some(failure)
         }
@@ -310,7 +314,7 @@ fn harvest(slot: &mut Slot) {
     *slot = Slot::Ended { transcript, error };
 }
 
-fn join(active: ActiveListen) -> Result<(), RpcFailure> {
+fn join(active: ActiveSystemTranscription) -> Result<(), RpcFailure> {
     active.cancel.cancel();
     active.stopper.stop();
     match active.thread.join() {
@@ -318,7 +322,7 @@ fn join(active: ActiveListen) -> Result<(), RpcFailure> {
         Ok(Err(error)) => Err(RpcFailure::from(&error)),
         Err(_panic) => Err(RpcFailure::new(
             RpcErrorCode::Internal,
-            "the listen session thread panicked",
+            "the transcription thread panicked",
         )),
     }
 }
@@ -335,11 +339,11 @@ mod tests {
         let transcript = directory.path().join("transcript.md");
         std::fs::write(&transcript, "Standup notes.").expect("the transcript is written");
         let listed_at_stop = Arc::new(Mutex::new(None));
-        let events = ListenEventEmitter::forwarded_by({
+        let events = SystemTranscriptionEventEmitter::forwarded_by({
             let history = Arc::clone(&history);
             let listed_at_stop = Arc::clone(&listed_at_stop);
             move |stage| {
-                if stage == ListenStage::Stopped {
+                if stage == SystemTranscriptionStage::Stopped {
                     let page = history
                         .list(HistoryQuery {
                             section: None,

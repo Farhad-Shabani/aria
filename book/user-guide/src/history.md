@@ -3,9 +3,9 @@
 # History
 
 Aria saves completed dictations so you can review their text. These controls
-apply to both Mac and terminal dictation. History also lists each
-[Listen](./listen.md) session that wrote a transcript to the default folder,
-and each question you send with [Ask](./voice-chat.md), with its reply. The
+apply to both Mac and terminal dictation. History also lists each transcript
+that [Transcription](./transcribe-system-audio.md) saves to the default folder,
+and each question you send in a [chat](./chat.md), with its reply. The
 assistant keeps its own conversation records.
 
 ## Saving
@@ -16,21 +16,22 @@ Saving is on by default. In the Mac app, turn it off under
 existing entries until you delete them or they expire.
 
 Aria deletes old history on its own, so personal text doesn't pile up on
-your Mac. It deletes text after 30 days. A Listen entry keeps the first KiB of
-its transcript, and the transcript file holds the rest. When the entry
+your Mac. It deletes text after 30 days. A transcript's entry keeps the first
+KiB of its text, and the transcript file holds the rest. When the entry
 expires, the transcript file stays.
 
-By default, only failed transcriptions keep their original audio. Retained
-recordings last up to 24 hours, with a 128 MiB total limit. Cancelled recordings
-and recordings with no accepted speech are not saved in history.
+By default, only recordings Aria couldn't transcribe keep their original
+audio. Retained recordings last up to 24 hours, with a 128 MiB total limit.
+Cancelled recordings and recordings with no accepted speech are not saved in
+history.
 
 ## Review
 
 On a Mac, [open Aria](./prompts.md#pick-a-prompt-in-aria). Your dictations,
-Listen sessions, and asks show by day, each with its own icon. Type to search
+transcripts, and chats show by day, each with its own icon. Type to search
 them. Press **⌘↩** to read one. Click **Copy**, or press **⌘C**, to use the
-text elsewhere. For an ask, Copy takes the reply. A long Listen session shows
-its first 1 MiB.
+text elsewhere. For a chat, Copy takes the reply. A long transcript shows its
+first 1 MiB.
 
 Press **Return** to type an entry's text into the app you came from. With no app
 behind Aria, **Return** opens the entry instead. Text over 64 KiB is too long to
@@ -38,8 +39,8 @@ type, so copy it.
 
 To see one section alone, click its icon under the search field, or press
 **⌃Tab** to step through them. You can also type its name and choose
-**Dictation History**, **Mac Audio History**, or **Ask History**. Search then
-covers only that section. Click **All**, or press **Esc**, to see everything
+**Dictations**, **Transcripts**, or **Chats**. Search then covers only that
+section. Click **All**, or press **Esc**, to see everything
 again.
 
 ## Run a prompt on an entry
@@ -77,11 +78,12 @@ aria history list
 
 The list shows each entry's ID, section, status, recording availability
 (available, expired, or unavailable), and the first 512 bytes of its text. To
-list one section, add `--section dictation`, `--section listen`, or
-`--section ask`. To list only entries that mention something, add `--query TEXT`. It matches
-the text, an ask's reply, the entry's name, and the app's name, ignoring case.
-For scripts, add `--json` to print one JSON array. Each entry also carries
-`created_at_ms` and `application`.
+list one section, add `--section dictation`, `--section transcription`, or
+`--section chat`. To list only entries that mention something, add
+`--query TEXT`. It matches the text, a chat's reply, the entry's name, and the
+app's name, ignoring case. For scripts, add `--json` to print one JSON array.
+Each entry's `section` is `dictation`, `transcription`, or `chat`. Each entry
+also carries `created_at_ms` and `application`.
 
 To print one entry's full text, or the prompt results saved under it, run:
 
@@ -137,7 +139,7 @@ aria settings set history.keep_audio on
 ```
 
 The same 24-hour and 128 MiB limits apply. Originals can include background
-speech and voices excluded from the transcript.
+speech and voices excluded from the text.
 
 To stop keeping future successful recordings:
 
@@ -164,7 +166,7 @@ Answer `y` or `yes` to confirm. Any other answer cancels. In a script, add
 `--yes`. To clear one section, add `--section` as for `aria history list`.
 Clearing can't be undone, and it leaves saving settings unchanged.
 
-Deleting a Listen entry, or clearing history, also deletes that session's
+Deleting a transcript's entry, or clearing history, also deletes its
 transcript file. Clearing history doesn't remove clipboard copies, the
 assistant's conversation records, or transcript files that history doesn't
 list. Deletion isn't secure erasure and can't remove backups. Read

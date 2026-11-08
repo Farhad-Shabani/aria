@@ -18,8 +18,8 @@ Read [Privacy](./privacy.md#prompts) before using a prompt.
 ## Before you start
 
 Set up Claude Code or Codex by following
-[Ask a question](./voice-chat.md#before-you-start). Prompts use the same
-assistant and model as Ask. You can change both in
+[Chat with Claude Code or Codex](./chat.md#before-you-start). Prompts use the
+same assistant and model as Chat. You can change both in
 [Assistant settings](./settings.md#assistant).
 
 Keep Aria.app running while you use prompt shortcuts.
@@ -175,8 +175,8 @@ The prompt file supplies the instructions. Aria asks the assistant to treat
 your spoken words as the text to rewrite or build on.
 
 Aria turns off the assistant's tools for Prompts, so a prompt can't read files,
-search the web, or run commands. Use [Ask](./voice-chat.md) for questions
-about a project.
+search the web, or run commands. Use [Chat](./chat.md) for questions about a
+project.
 
 ## When it fails
 
@@ -186,7 +186,7 @@ Common causes:
 - The prompt file moved. Its row in Settings shows **File not found**. Choose
   the file again.
 - The prompt file is empty, larger than 16 KB, or not text.
-- The assistant isn't installed or signed in. Check it with a typed
-  [Ask](./voice-chat.md#try-a-typed-question).
+- The assistant isn't installed or signed in. Check it with
+  [a typed question](./chat.md#try-a-typed-question).
 
 Dictation history doesn't keep failed runs, so say it again.

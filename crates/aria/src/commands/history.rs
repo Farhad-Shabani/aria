@@ -40,7 +40,7 @@ pub(super) enum HistoryCommand {
         /// Leave out to remove the name
         title: Option<String>,
     },
-    /// Print an entry's text, and an ask's reply
+    /// Print an entry's text, and a chat's reply
     Show {
         /// The entry's ID, as `aria history list` prints it
         #[arg(value_parser = clap::value_parser!(u64).range(1..=i64::MAX as u64))]
@@ -84,16 +84,16 @@ pub(super) enum HistoryCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(super) enum Section {
     Dictation,
-    Listen,
-    Ask,
+    Transcription,
+    Chat,
 }
 
 impl From<Section> for aria_voice::history::HistorySection {
     fn from(section: Section) -> Self {
         match section {
             Section::Dictation => Self::Dictation,
-            Section::Listen => Self::Listen,
-            Section::Ask => Self::Ask,
+            Section::Transcription => Self::SystemTranscription,
+            Section::Chat => Self::Chat,
         }
     }
 }
@@ -190,8 +190,8 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
                 eprintln!("warning: {notice}");
             }
             let reply = match &entry.content {
-                HistoryContent::Ask { reply } => Some(reply.as_str()),
-                HistoryContent::Dictation(_) | HistoryContent::Listen { .. } => None,
+                HistoryContent::Chat { reply } => Some(reply.as_str()),
+                HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
             };
             if json {
                 let mut object = entry_json(&entry);
@@ -246,9 +246,9 @@ fn confirm_clear(
 ) -> anyhow::Result<bool> {
     let scope = match section {
         None => "all history",
-        Some(Section::Dictation) => "dictation history",
-        Some(Section::Listen) => "listen history",
-        Some(Section::Ask) => "ask history",
+        Some(Section::Dictation) => "dictations",
+        Some(Section::Transcription) => "transcripts",
+        Some(Section::Chat) => "chats",
     };
     confirm(
         yes,
@@ -374,7 +374,7 @@ fn audio_label(audio: aria_voice::history::AudioAvailability) -> &'static str {
 fn transcript_notice(content: &aria_voice::history::HistoryContent) -> Option<String> {
     use aria_voice::history::{HistoryContent, TranscriptRead};
 
-    let HistoryContent::Listen { transcript, read } = content else {
+    let HistoryContent::SystemTranscription { transcript, read } = content else {
         return None;
     };
     let path = transcript.display();
@@ -427,13 +427,13 @@ mod tests {
             } if query == "weekly plan"
         ));
         assert!(matches!(
-            Cli::try_parse_from(["aria", "history", "clear", "--section", "ask"])
+            Cli::try_parse_from(["aria", "history", "clear", "--section", "chat"])
                 .unwrap()
                 .command,
             Command::History {
                 command: HistoryCommand::Clear {
                     yes: false,
-                    section: Some(Section::Ask)
+                    section: Some(Section::Chat)
                 }
             }
         ));
@@ -648,19 +648,24 @@ mod tests {
     #[test]
     fn show_warns_when_the_text_is_not_the_whole_transcript() {
         use aria_voice::history::{HistoryContent, TranscriptRead};
-        let listen = |read| HistoryContent::Listen {
+        let system_transcription = |read| HistoryContent::SystemTranscription {
             transcript: "/sessions/talk.md".into(),
             read: Some(read),
         };
 
-        let truncated = transcript_notice(&listen(TranscriptRead::Truncated)).expect("notice");
-        let unavailable = transcript_notice(&listen(TranscriptRead::Unavailable)).expect("notice");
+        let truncated =
+            transcript_notice(&system_transcription(TranscriptRead::Truncated)).expect("notice");
+        let unavailable =
+            transcript_notice(&system_transcription(TranscriptRead::Unavailable)).expect("notice");
 
         assert!(
             truncated.contains("start of a longer transcript")
                 && truncated.contains("/sessions/talk.md")
         );
         assert!(unavailable.contains("saved excerpt") && unavailable.contains("/sessions/talk.md"));
-        assert_eq!(transcript_notice(&listen(TranscriptRead::Whole)), None);
+        assert_eq!(
+            transcript_notice(&system_transcription(TranscriptRead::Whole)),
+            None
+        );
     }
 }

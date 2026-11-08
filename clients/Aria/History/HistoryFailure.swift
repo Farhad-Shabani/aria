@@ -27,7 +27,7 @@ enum HistoryFailure: Error, Equatable {
         case .missing: "This entry is no longer in history."
         case .audioUnavailable: "The recording is gone, so Aria can’t transcribe it again."
         case .projectUnavailable: "This dictation’s project folder is missing. Restore it, then transcribe again."
-        case .tooLarge: "The transcript is too large for history to store."
+        case .tooLarge: "The text is too large for history to store."
         case .busy: "Aria is busy. Try again in a moment."
         case .cancelled: "Transcribing again was canceled."
         case .timeout: "Aria took too long to respond. Try again."

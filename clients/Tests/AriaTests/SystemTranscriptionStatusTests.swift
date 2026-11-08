@@ -3,18 +3,18 @@ import XCTest
 @testable import Aria
 
 @MainActor
-final class ListenStatusTests: XCTestCase {
+final class SystemTranscriptionStatusTests: XCTestCase {
     private struct Unreachable: Error {}
 
-    private func event(_ stage: Aria_Daemon_V1_ListenStage) -> Aria_Daemon_V1_ListenEvent {
-        var event = Aria_Daemon_V1_ListenEvent()
+    private func event(_ stage: Aria_Daemon_V1_SystemTranscriptionStage) -> Aria_Daemon_V1_SystemTranscriptionEvent {
+        var event = Aria_Daemon_V1_SystemTranscriptionEvent()
         event.stage = stage
         return event
     }
 
     func testAStartedSessionIsRunningUntilItEnds() {
-        for ending in [Aria_Daemon_V1_ListenStage.stopped, .failed] {
-            let status = ListenStatus(readStatus: { false })
+        for ending in [Aria_Daemon_V1_SystemTranscriptionStage.stopped, .failed] {
+            let status = SystemTranscriptionStatus(readStatus: { false })
             status.handle(event(.started))
             XCTAssertTrue(status.isRunning)
             status.handle(event(ending))
@@ -25,7 +25,7 @@ final class ListenStatusTests: XCTestCase {
     func testAStageDuringAReadWinsOverTheRead() async {
         let reading = AsyncStream<Void>.makeStream()
         let finishing = AsyncStream<Void>.makeStream()
-        let status = ListenStatus(readStatus: {
+        let status = SystemTranscriptionStatus(readStatus: {
             reading.continuation.yield()
             for await _ in finishing.stream { break }
             return false
@@ -41,14 +41,14 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testAFailedReadLeavesTheStateAlone() async {
-        let status = ListenStatus(readStatus: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { throw Unreachable() })
         status.handle(event(.started))
         await status.catchUp()
         XCTAssertTrue(status.isRunning)
     }
 
     func testStoppingEndsTheSession() async {
-        let status = ListenStatus(readStatus: { true }, stopSession: {})
+        let status = SystemTranscriptionStatus(readStatus: { true }, stopSession: {})
         status.handle(event(.started))
         await status.stop()
         XCTAssertFalse(status.isRunning)
@@ -57,7 +57,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testAStopErrorFromASessionThatEndedIsNotAFailedStop() async {
-        let status = ListenStatus(readStatus: { false }, stopSession: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { false }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         XCTAssertFalse(status.isRunning)
@@ -65,7 +65,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testASessionThatOutlivesAStopErrorIsAFailedStop() async {
-        let status = ListenStatus(readStatus: { true }, stopSession: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { true }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         XCTAssertTrue(status.isRunning)
@@ -73,7 +73,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testANewSessionClearsAnEarlierFailedStop() async {
-        let status = ListenStatus(readStatus: { true }, stopSession: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { true }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         status.handle(event(.stopped))
@@ -104,8 +104,8 @@ final class ListenStatusTests: XCTestCase {
         XCTAssertLessThanOrEqual(daemon.readCount, readsWhenLost + 1)
     }
 
-    private func reconciled(by daemon: ScriptedDaemon) -> ListenStatus {
-        ListenStatus(readStatus: { daemon.read() }, reconcileInterval: .milliseconds(1))
+    private func reconciled(by daemon: ScriptedDaemon) -> SystemTranscriptionStatus {
+        SystemTranscriptionStatus(readStatus: { daemon.read() }, reconcileInterval: .milliseconds(1))
     }
 
     private func settled(_ condition: () -> Bool) async {
@@ -115,12 +115,12 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testAnAcceptedStartRunsAndARefusedOneSaysSo() async {
-        let started = ListenStatus(readStatus: { false }, startSession: {})
+        let started = SystemTranscriptionStatus(readStatus: { false }, startSession: {})
         await started.start()
         XCTAssertTrue(started.isRunning)
         XCTAssertFalse(started.didFailToStart)
 
-        let refused = ListenStatus(readStatus: { false }, startSession: { throw Unreachable() })
+        let refused = SystemTranscriptionStatus(readStatus: { false }, startSession: { throw Unreachable() })
         await refused.start()
         XCTAssertFalse(refused.isRunning)
         XCTAssertTrue(refused.didFailToStart)
@@ -128,7 +128,7 @@ final class ListenStatusTests: XCTestCase {
     }
 
     func testASessionJoinedLateDatesItsStartFromTheFirstOffset() {
-        let status = ListenStatus(readStatus: { true })
+        let status = SystemTranscriptionStatus(readStatus: { true })
         let now = Date(timeIntervalSince1970: 1000)
         var segment = event(.segmentTranscribed)
         segment.offset = .init(seconds: 90)

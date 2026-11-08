@@ -10,7 +10,7 @@ enum PressAction: Equatable {
 /// it is ignored until the run ends. The Aria key stops the recording and
 /// cancels the run daemon-side, so no press here does.
 ///
-/// The daemon holds the real state of a recording and an ask. This tracks
+/// The daemon holds the real state of a recording and a chat. This tracks
 /// only whether a run is going, so the daemon never has to be asked.
 struct PressGesture: Equatable {
     private enum Phase: Equatable {
@@ -21,11 +21,11 @@ struct PressGesture: Equatable {
     }
 
     private var phase = Phase.idle
-    /// Asks that ended before their ticket reached the gesture. Every
-    /// subscriber sees every ask, so a terminal's tickets land here too, and
+    /// Chats that ended before their ticket reached the gesture. Every
+    /// subscriber sees every chat, so a terminal's tickets land here too, and
     /// one slot would let a stranger's overwrite this one's.
     private var endedEarly: Set<UInt64> = []
-    /// The stream dropped while recording, so the ask's end may pass
+    /// The stream dropped while recording, so the chat's end may pass
     /// unseen before the stream is back. Its ticket is not held.
     private var lostWhileRecording = false
 
@@ -43,7 +43,7 @@ struct PressGesture: Equatable {
         lostWhileRecording = false
     }
 
-    /// An ask is over, however it ended. A stale ticket is ignored.
+    /// A chat is over, however it ended. A stale ticket is ignored.
     mutating func ended(ticket: UInt64) {
         switch phase {
         case .asking(ticket):
@@ -57,7 +57,7 @@ struct PressGesture: Equatable {
 
     var isIdle: Bool { phase == .idle }
 
-    /// The event stream dropped, so the ask's end may never arrive.
+    /// The event stream dropped, so the chat's end may never arrive.
     /// Holding it would ignore every press until it did.
     mutating func streamLost() {
         switch phase {

@@ -263,7 +263,7 @@ public nonisolated struct Aria_Daemon_V1_RelayEvent: Sendable {
 
   public var stage: Aria_Daemon_V1_RelayStage = .unspecified
 
-  /// The transcript; only on COMPLETED.
+  /// The text; only on COMPLETED.
   public var text: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

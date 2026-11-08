@@ -454,7 +454,7 @@ impl<'scope> Hearing<'scope> {
     }
 
     /// Lets the walk forget audio before both the oldest held segment and
-    /// the decoder's retained audio. Only a listen session forgets.
+    /// the decoder's retained audio. Only a system transcription forgets.
     fn forget_decided(&self) {
         if self.gate.admission() == Admission::Spoken && self.turns.is_some() {
             let undecided = self.gate.undecided_from().unwrap_or(u64::MAX);
@@ -654,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn a_listen_hearing_without_a_tracker_drops_what_has_no_speech_under_it() {
+    fn a_system_transcription_hearing_without_a_tracker_drops_what_has_no_speech_under_it() {
         // Speech, two seconds of silence, then speech up to an end that is
         // not on the detector's frame grid.
         let end = 4 * SECOND + 3;

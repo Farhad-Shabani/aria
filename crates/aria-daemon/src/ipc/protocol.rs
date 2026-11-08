@@ -3,7 +3,7 @@
 use super::wire;
 use crate::daemon::relay::{Invite, RelayStage};
 use aria_assistant::chat::{
-    AskTarget, AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind,
+    AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatTarget,
     DeliverCall, Instructions, PromptCall, PromptChoice, PromptInput, Step, Ticket,
 };
 use aria_assistant::prompts::{NewSource, PromptContents, PromptDraft, PromptSource};
@@ -30,9 +30,12 @@ use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
 use aria_voice::history::{ClearHistoryResult, PromptResult};
-use aria_voice::listen::{ListenSnapshot, ListenStage, ListenStarted, ListenStopped};
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+use aria_voice::system_transcription::{
+    SystemTranscriptionSnapshot, SystemTranscriptionStage, SystemTranscriptionStarted,
+    SystemTranscriptionStopped,
+};
 use aria_voice::transcription::LanguageCodeError;
 use prost::Message;
 use std::collections::BTreeMap;
@@ -160,7 +163,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::SpeakerNoSpeech
         | RpcErrorCode::SpeakerModelMissing
         | RpcErrorCode::SpeakerInconsistentSamples
-        | RpcErrorCode::ListenUnsupportedOs
+        | RpcErrorCode::SystemTranscriptionUnsupportedOs
         | RpcErrorCode::AssistantUnavailable
         | RpcErrorCode::AssistantSignedOut
         | RpcErrorCode::PromptUnreadable
@@ -172,7 +175,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::PromptMissing
         | RpcErrorCode::SpeakerNotEnrolled
         | RpcErrorCode::VoiceUnavailable => tonic::Code::NotFound,
-        RpcErrorCode::ListenPermissionDenied | RpcErrorCode::PermissionDenied => {
+        RpcErrorCode::SystemTranscriptionPermissionDenied | RpcErrorCode::PermissionDenied => {
             tonic::Code::PermissionDenied
         }
         RpcErrorCode::DeliveryTargetChanged | RpcErrorCode::DeliveryInterrupted => {
@@ -185,7 +188,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::SynthesisFailed
         | RpcErrorCode::PlaybackFailed
         | RpcErrorCode::AssistantFailed
-        | RpcErrorCode::ListenCaptureFailed
+        | RpcErrorCode::SystemTranscriptionCaptureFailed
         | RpcErrorCode::SpeakerProfileWriteFailed
         | RpcErrorCode::PromptWriteFailed
         | RpcErrorCode::DurabilityUnconfirmed => tonic::Code::Internal,
@@ -1200,72 +1203,72 @@ fn optional_speaker_name(name: &str) -> Result<Option<SpeakerName>, ProtocolErro
     }
 }
 
-impl From<ListenStarted> for wire::StartListenResponse {
-    fn from(started: ListenStarted) -> Self {
+impl From<SystemTranscriptionStarted> for wire::StartSystemTranscriptionResponse {
+    fn from(started: SystemTranscriptionStarted) -> Self {
         Self {
-            already_listening: started.already_listening,
+            already_running: started.already_running,
             transcript_path: started.transcript.display().to_string(),
         }
     }
 }
 
-impl From<wire::StartListenResponse> for ListenStarted {
-    fn from(response: wire::StartListenResponse) -> Self {
+impl From<wire::StartSystemTranscriptionResponse> for SystemTranscriptionStarted {
+    fn from(response: wire::StartSystemTranscriptionResponse) -> Self {
         Self {
-            already_listening: response.already_listening,
+            already_running: response.already_running,
             transcript: response.transcript_path.into(),
         }
     }
 }
 
-impl From<ListenStopped> for wire::StopListenResponse {
-    fn from(stopped: ListenStopped) -> Self {
+impl From<SystemTranscriptionStopped> for wire::StopSystemTranscriptionResponse {
+    fn from(stopped: SystemTranscriptionStopped) -> Self {
         Self {
-            was_listening: stopped.was_listening,
+            was_running: stopped.was_running,
             transcript_path: stopped.transcript.display().to_string(),
         }
     }
 }
 
-impl From<wire::StopListenResponse> for ListenStopped {
-    fn from(response: wire::StopListenResponse) -> Self {
+impl From<wire::StopSystemTranscriptionResponse> for SystemTranscriptionStopped {
+    fn from(response: wire::StopSystemTranscriptionResponse) -> Self {
         Self {
-            was_listening: response.was_listening,
+            was_running: response.was_running,
             transcript: response.transcript_path.into(),
         }
     }
 }
 
-impl From<ListenSnapshot> for wire::GetListenStatusResponse {
-    fn from(snapshot: ListenSnapshot) -> Self {
+impl From<SystemTranscriptionSnapshot> for wire::GetSystemTranscriptionStatusResponse {
+    fn from(snapshot: SystemTranscriptionSnapshot) -> Self {
         Self {
-            listening: snapshot.listening,
+            running: snapshot.running,
             transcript_path: snapshot.transcript.display().to_string(),
             error_message: snapshot.error.unwrap_or_default(),
         }
     }
 }
 
-impl From<wire::GetListenStatusResponse> for ListenSnapshot {
-    fn from(response: wire::GetListenStatusResponse) -> Self {
+impl From<wire::GetSystemTranscriptionStatusResponse> for SystemTranscriptionSnapshot {
+    fn from(response: wire::GetSystemTranscriptionStatusResponse) -> Self {
         Self {
-            listening: response.listening,
+            running: response.running,
             transcript: response.transcript_path.into(),
             error: Some(response.error_message).filter(|message| !message.is_empty()),
         }
     }
 }
 
-impl TryFrom<wire::StartListenRequest> for Option<std::path::PathBuf> {
+impl TryFrom<wire::StartSystemTranscriptionRequest> for Option<std::path::PathBuf> {
     type Error = ProtocolError;
 
-    fn try_from(request: wire::StartListenRequest) -> Result<Self, Self::Error> {
+    fn try_from(request: wire::StartSystemTranscriptionRequest) -> Result<Self, Self::Error> {
         request
             .transcript_path
             .map(|path| {
                 let output = std::path::PathBuf::from(&path);
                 if !output.is_absolute() || path.contains('\0') {
-                    return Err(ProtocolError::InvalidListenPath);
+                    return Err(ProtocolError::InvalidTranscriptPath);
                 }
                 Ok(output)
             })
@@ -1273,55 +1276,55 @@ impl TryFrom<wire::StartListenRequest> for Option<std::path::PathBuf> {
     }
 }
 
-impl From<ListenStage> for wire::Event {
-    fn from(stage: ListenStage) -> Self {
+impl From<SystemTranscriptionStage> for wire::Event {
+    fn from(stage: SystemTranscriptionStage) -> Self {
         Self {
-            payload: Some(wire::event::Payload::Listen(stage.into())),
+            payload: Some(wire::event::Payload::SystemTranscription(stage.into())),
         }
     }
 }
 
-impl From<ListenStage> for wire::ListenEvent {
-    fn from(stage: ListenStage) -> Self {
+impl From<SystemTranscriptionStage> for wire::SystemTranscriptionEvent {
+    fn from(stage: SystemTranscriptionStage) -> Self {
         match stage {
-            ListenStage::Started => Self {
-                stage: wire::ListenStage::Started as i32,
+            SystemTranscriptionStage::Started => Self {
+                stage: wire::SystemTranscriptionStage::Started as i32,
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
                 offset: None,
                 error_code: 0,
             },
-            ListenStage::SegmentTranscribed {
+            SystemTranscriptionStage::SegmentTranscribed {
                 text,
                 label,
                 at_seconds,
             } => Self {
-                stage: wire::ListenStage::SegmentTranscribed as i32,
+                stage: wire::SystemTranscriptionStage::SegmentTranscribed as i32,
                 text: text.to_string(),
                 speaker_label: label.map(|label| label.to_string()).unwrap_or_default(),
                 merged_from_label: String::new(),
                 offset: Some(wire_duration(Duration::from_secs(at_seconds))),
                 error_code: 0,
             },
-            ListenStage::SpeakerMerged { from, into } => Self {
-                stage: wire::ListenStage::SpeakerMerged as i32,
+            SystemTranscriptionStage::SpeakerMerged { from, into } => Self {
+                stage: wire::SystemTranscriptionStage::SpeakerMerged as i32,
                 text: String::new(),
                 speaker_label: into.to_string(),
                 merged_from_label: from.to_string(),
                 offset: None,
                 error_code: 0,
             },
-            ListenStage::Stopped => Self {
-                stage: wire::ListenStage::Stopped as i32,
+            SystemTranscriptionStage::Stopped => Self {
+                stage: wire::SystemTranscriptionStage::Stopped as i32,
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
                 offset: None,
                 error_code: 0,
             },
-            ListenStage::Failed(code) => Self {
-                stage: wire::ListenStage::Failed as i32,
+            SystemTranscriptionStage::Failed(code) => Self {
+                stage: wire::SystemTranscriptionStage::Failed as i32,
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
@@ -1332,34 +1335,38 @@ impl From<ListenStage> for wire::ListenEvent {
     }
 }
 
-impl TryFrom<&wire::ListenEvent> for ListenStage {
+impl TryFrom<&wire::SystemTranscriptionEvent> for SystemTranscriptionStage {
     type Error = ProtocolError;
 
-    fn try_from(event: &wire::ListenEvent) -> Result<Self, Self::Error> {
-        match wire::ListenStage::try_from(event.stage) {
-            Ok(wire::ListenStage::Started) => Ok(Self::Started),
-            Ok(wire::ListenStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
-                text: Arc::from(event.text.as_str()),
-                label: (!event.speaker_label.is_empty())
-                    .then(|| Arc::from(event.speaker_label.as_str())),
-                at_seconds: duration(
-                    event.offset.ok_or(ProtocolError::MissingBody("offset"))?,
-                    "offset",
-                )?
-                .as_secs(),
-            }),
-            Ok(wire::ListenStage::SpeakerMerged) => Ok(Self::SpeakerMerged {
+    fn try_from(event: &wire::SystemTranscriptionEvent) -> Result<Self, Self::Error> {
+        match wire::SystemTranscriptionStage::try_from(event.stage) {
+            Ok(wire::SystemTranscriptionStage::Started) => Ok(Self::Started),
+            Ok(wire::SystemTranscriptionStage::SegmentTranscribed) => {
+                Ok(Self::SegmentTranscribed {
+                    text: Arc::from(event.text.as_str()),
+                    label: (!event.speaker_label.is_empty())
+                        .then(|| Arc::from(event.speaker_label.as_str())),
+                    at_seconds: duration(
+                        event.offset.ok_or(ProtocolError::MissingBody("offset"))?,
+                        "offset",
+                    )?
+                    .as_secs(),
+                })
+            }
+            Ok(wire::SystemTranscriptionStage::SpeakerMerged) => Ok(Self::SpeakerMerged {
                 from: Arc::from(event.merged_from_label.as_str()),
                 into: Arc::from(event.speaker_label.as_str()),
             }),
-            Ok(wire::ListenStage::Stopped) => Ok(Self::Stopped),
-            Ok(wire::ListenStage::Failed) => {
+            Ok(wire::SystemTranscriptionStage::Stopped) => Ok(Self::Stopped),
+            Ok(wire::SystemTranscriptionStage::Failed) => {
                 error_code_from_wire(event.error_code).map(Self::Failed)
             }
-            Ok(wire::ListenStage::Unspecified) | Err(..) => Err(ProtocolError::InvalidEnum {
-                field: "stage",
-                value: event.stage,
-            }),
+            Ok(wire::SystemTranscriptionStage::Unspecified) | Err(..) => {
+                Err(ProtocolError::InvalidEnum {
+                    field: "stage",
+                    value: event.stage,
+                })
+            }
         }
     }
 }
@@ -1616,8 +1623,8 @@ pub(crate) fn history_section(
     use aria_voice::history::HistorySection;
     match wire::HistorySection::try_from(value) {
         Ok(wire::HistorySection::Dictation) => Ok(HistorySection::Dictation),
-        Ok(wire::HistorySection::Listen) => Ok(HistorySection::Listen),
-        Ok(wire::HistorySection::Ask) => Ok(HistorySection::Ask),
+        Ok(wire::HistorySection::SystemTranscription) => Ok(HistorySection::SystemTranscription),
+        Ok(wire::HistorySection::Chat) => Ok(HistorySection::Chat),
         Ok(wire::HistorySection::Unspecified) | Err(_) => {
             Err(ProtocolError::InvalidHistory("section"))
         }
@@ -1629,8 +1636,8 @@ impl From<aria_voice::history::HistorySection> for wire::HistorySection {
         use aria_voice::history::HistorySection;
         match section {
             HistorySection::Dictation => Self::Dictation,
-            HistorySection::Listen => Self::Listen,
-            HistorySection::Ask => Self::Ask,
+            HistorySection::SystemTranscription => Self::SystemTranscription,
+            HistorySection::Chat => Self::Chat,
         }
     }
 }
@@ -1671,7 +1678,7 @@ fn history_content(
     }
     match (history_section(section)?, details) {
         (HistorySection::Dictation, None) => Ok(HistoryContent::Dictation(dictation)),
-        (HistorySection::Listen, Some(Details::Transcript(transcript))) => {
+        (HistorySection::SystemTranscription, Some(Details::Transcript(transcript))) => {
             let read = match transcript.read.map(wire::HistoryTranscriptRead::try_from) {
                 None => None,
                 Some(Ok(wire::HistoryTranscriptRead::Whole)) => Some(TranscriptRead::Whole),
@@ -1683,12 +1690,12 @@ fn history_content(
                     return Err(ProtocolError::InvalidHistory("transcript read"));
                 }
             };
-            Ok(HistoryContent::Listen {
+            Ok(HistoryContent::SystemTranscription {
                 transcript: transcript.path.into(),
                 read,
             })
         }
-        (HistorySection::Ask, Some(Details::Reply(reply))) => Ok(HistoryContent::Ask { reply }),
+        (HistorySection::Chat, Some(Details::Reply(reply))) => Ok(HistoryContent::Chat { reply }),
         _ => Err(ProtocolError::InvalidHistory("details")),
     }
 }
@@ -1699,8 +1706,8 @@ fn history_details(
     use aria_voice::history::{HistoryContent, TranscriptRead};
     match content {
         HistoryContent::Dictation(_) => None,
-        HistoryContent::Ask { reply } => Some(wire::history_entry::Details::Reply(reply)),
-        HistoryContent::Listen { transcript, read } => Some(
+        HistoryContent::Chat { reply } => Some(wire::history_entry::Details::Reply(reply)),
+        HistoryContent::SystemTranscription { transcript, read } => Some(
             wire::history_entry::Details::Transcript(wire::HistoryTranscript {
                 path: transcript.to_string_lossy().into_owned(),
                 read: read.map(|read| {
@@ -2604,8 +2611,8 @@ impl TryFrom<wire::DictationOverrides> for DictationOverrides {
     }
 }
 
-impl From<AskTarget> for wire::ResolveAskResponse {
-    fn from(target: AskTarget) -> Self {
+impl From<ChatTarget> for wire::ResolveChatTargetResponse {
+    fn from(target: ChatTarget) -> Self {
         Self {
             workdir: target.workdir.to_string_lossy().into_owned(),
             assistant_id: wire::AssistantId::from(target.assistant_id) as i32,
@@ -2613,10 +2620,10 @@ impl From<AskTarget> for wire::ResolveAskResponse {
     }
 }
 
-impl TryFrom<wire::ResolveAskResponse> for AskTarget {
+impl TryFrom<wire::ResolveChatTargetResponse> for ChatTarget {
     type Error = ProtocolError;
 
-    fn try_from(response: wire::ResolveAskResponse) -> Result<Self, Self::Error> {
+    fn try_from(response: wire::ResolveChatTargetResponse) -> Result<Self, Self::Error> {
         if response.workdir.is_empty() {
             return Err(ProtocolError::MissingBody("assistant working directory"));
         }
@@ -2952,9 +2959,15 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::SpeakerInconsistentSamples => wire::ErrorCode::SpeakerInconsistentSamples,
         RpcErrorCode::SpeakerProfileWriteFailed => wire::ErrorCode::SpeakerProfileWriteFailed,
         RpcErrorCode::SpeakerNoSpeech => wire::ErrorCode::SpeakerNoSpeech,
-        RpcErrorCode::ListenUnsupportedOs => wire::ErrorCode::ListenUnsupportedOs,
-        RpcErrorCode::ListenPermissionDenied => wire::ErrorCode::ListenPermissionDenied,
-        RpcErrorCode::ListenCaptureFailed => wire::ErrorCode::ListenCaptureFailed,
+        RpcErrorCode::SystemTranscriptionUnsupportedOs => {
+            wire::ErrorCode::SystemTranscriptionUnsupportedOs
+        }
+        RpcErrorCode::SystemTranscriptionPermissionDenied => {
+            wire::ErrorCode::SystemTranscriptionPermissionDenied
+        }
+        RpcErrorCode::SystemTranscriptionCaptureFailed => {
+            wire::ErrorCode::SystemTranscriptionCaptureFailed
+        }
         RpcErrorCode::HistoryMissing => wire::ErrorCode::HistoryMissing,
         RpcErrorCode::HistoryAudioUnavailable => wire::ErrorCode::HistoryAudioUnavailable,
         RpcErrorCode::HistoryUnavailable => wire::ErrorCode::HistoryUnavailable,
@@ -3007,9 +3020,15 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::SpeakerInconsistentSamples) => RpcErrorCode::SpeakerInconsistentSamples,
         Ok(wire::ErrorCode::SpeakerProfileWriteFailed) => RpcErrorCode::SpeakerProfileWriteFailed,
         Ok(wire::ErrorCode::SpeakerNoSpeech) => RpcErrorCode::SpeakerNoSpeech,
-        Ok(wire::ErrorCode::ListenUnsupportedOs) => RpcErrorCode::ListenUnsupportedOs,
-        Ok(wire::ErrorCode::ListenPermissionDenied) => RpcErrorCode::ListenPermissionDenied,
-        Ok(wire::ErrorCode::ListenCaptureFailed) => RpcErrorCode::ListenCaptureFailed,
+        Ok(wire::ErrorCode::SystemTranscriptionUnsupportedOs) => {
+            RpcErrorCode::SystemTranscriptionUnsupportedOs
+        }
+        Ok(wire::ErrorCode::SystemTranscriptionPermissionDenied) => {
+            RpcErrorCode::SystemTranscriptionPermissionDenied
+        }
+        Ok(wire::ErrorCode::SystemTranscriptionCaptureFailed) => {
+            RpcErrorCode::SystemTranscriptionCaptureFailed
+        }
         Ok(wire::ErrorCode::HistoryMissing) => RpcErrorCode::HistoryMissing,
         Ok(wire::ErrorCode::HistoryAudioUnavailable) => RpcErrorCode::HistoryAudioUnavailable,
         Ok(wire::ErrorCode::HistoryUnavailable) => RpcErrorCode::HistoryUnavailable,
@@ -3047,7 +3066,7 @@ pub enum ProtocolError {
     InvalidEnum { field: &'static str, value: i32 },
 
     #[error("the transcript path must be absolute and contain no NUL bytes")]
-    InvalidListenPath,
+    InvalidTranscriptPath,
 
     #[error("missing {0}")]
     MissingBody(&'static str),
@@ -3376,24 +3395,27 @@ mod tests {
     }
 
     #[test]
-    fn a_listen_failure_crosses_as_its_message_and_no_failure_as_none() {
-        let failed = ListenSnapshot::from(wire::GetListenStatusResponse::from(ListenSnapshot {
-            listening: false,
-            transcript: "/tmp/listen.txt".into(),
-            error: Some("screen recording is not allowed".to_owned()),
-        }));
-        let running = wire::GetListenStatusResponse::from(ListenSnapshot {
-            listening: true,
-            transcript: "/tmp/listen.txt".into(),
-            error: None,
-        });
+    fn a_system_transcription_failure_crosses_as_its_message_and_no_failure_as_none() {
+        let failed = SystemTranscriptionSnapshot::from(
+            wire::GetSystemTranscriptionStatusResponse::from(SystemTranscriptionSnapshot {
+                running: false,
+                transcript: "/tmp/transcript.txt".into(),
+                error: Some("screen recording is not allowed".to_owned()),
+            }),
+        );
+        let running =
+            wire::GetSystemTranscriptionStatusResponse::from(SystemTranscriptionSnapshot {
+                running: true,
+                transcript: "/tmp/transcript.txt".into(),
+                error: None,
+            });
 
         assert_eq!(
             failed.error.as_deref(),
             Some("screen recording is not allowed")
         );
         assert_eq!(running.error_message, "");
-        assert_eq!(ListenSnapshot::from(running).error, None);
+        assert_eq!(SystemTranscriptionSnapshot::from(running).error, None);
     }
 
     #[test]
@@ -3988,32 +4010,32 @@ mod tests {
     }
 
     #[test]
-    fn every_listen_stage_survives_the_round_trip() {
+    fn every_system_transcription_stage_survives_the_round_trip() {
         let stages = [
-            ListenStage::SegmentTranscribed {
+            SystemTranscriptionStage::SegmentTranscribed {
                 text: Arc::from("hello"),
                 label: Some(Arc::from("Speaker 1")),
                 at_seconds: 754,
             },
-            ListenStage::SegmentTranscribed {
+            SystemTranscriptionStage::SegmentTranscribed {
                 text: Arc::from("hello"),
                 label: None,
                 at_seconds: 0,
             },
-            ListenStage::SpeakerMerged {
+            SystemTranscriptionStage::SpeakerMerged {
                 from: Arc::from("Speaker 3"),
                 into: Arc::from("Speaker 1"),
             },
-            ListenStage::Started,
-            ListenStage::Stopped,
-            ListenStage::Failed(RpcErrorCode::ListenPermissionDenied),
+            SystemTranscriptionStage::Started,
+            SystemTranscriptionStage::Stopped,
+            SystemTranscriptionStage::Failed(RpcErrorCode::SystemTranscriptionPermissionDenied),
         ];
 
         for stage in stages {
-            let sent = wire::ListenEvent::from(stage.clone());
+            let sent = wire::SystemTranscriptionEvent::from(stage.clone());
 
             assert_eq!(
-                ListenStage::try_from(&sent).expect("the stage should decode"),
+                SystemTranscriptionStage::try_from(&sent).expect("the stage should decode"),
                 stage
             );
         }
@@ -4599,9 +4621,9 @@ mod tests {
     }
 
     #[test]
-    fn listen_output_requires_an_absolute_path() {
+    fn system_transcription_output_requires_an_absolute_path() {
         let decode = |path: Option<&str>| {
-            Option::<std::path::PathBuf>::try_from(wire::StartListenRequest {
+            Option::<std::path::PathBuf>::try_from(wire::StartSystemTranscriptionRequest {
                 transcript_path: path.map(str::to_owned),
             })
         };
@@ -4613,24 +4635,24 @@ mod tests {
         for path in ["", "notes/transcript.txt", "/tmp/transcript\0.txt"] {
             assert!(matches!(
                 decode(Some(path)),
-                Err(ProtocolError::InvalidListenPath)
+                Err(ProtocolError::InvalidTranscriptPath)
             ));
         }
     }
 
     #[test]
-    fn an_ask_target_round_trips_and_an_empty_one_is_refused() {
-        let target = AskTarget {
+    fn a_chat_target_round_trips_and_an_empty_one_is_refused() {
+        let target = ChatTarget {
             workdir: "/tmp".into(),
             assistant_id: AssistantId::ClaudeCode,
         };
 
-        let decoded = AskTarget::try_from(wire::ResolveAskResponse::from(target.clone()))
+        let decoded = ChatTarget::try_from(wire::ResolveChatTargetResponse::from(target.clone()))
             .expect("the target should decode");
 
         assert_eq!(decoded, target);
         assert!(
-            AskTarget::try_from(wire::ResolveAskResponse {
+            ChatTarget::try_from(wire::ResolveChatTargetResponse {
                 workdir: String::new(),
                 assistant_id: wire::AssistantId::ClaudeCode as i32,
             })
@@ -4716,10 +4738,12 @@ mod history_tests {
         );
         assert!(HistoryQuery::try_from(section_filter(Some(99))).is_err());
         assert_eq!(
-            HistoryQuery::try_from(section_filter(Some(wire::HistorySection::Listen as i32)))
-                .unwrap()
-                .section,
-            Some(aria_voice::history::HistorySection::Listen)
+            HistoryQuery::try_from(section_filter(Some(
+                wire::HistorySection::SystemTranscription as i32
+            )))
+            .unwrap()
+            .section,
+            Some(aria_voice::history::HistorySection::SystemTranscription)
         );
         assert_eq!(
             HistoryQuery::try_from(section_filter(None))
@@ -4746,9 +4770,9 @@ mod history_tests {
     }
 
     #[test]
-    fn list_cuts_an_ask_reply_as_it_cuts_the_question() {
+    fn list_cuts_a_chat_reply_as_it_cuts_the_question() {
         let mut entry = entry();
-        entry.content = aria_voice::history::HistoryContent::Ask {
+        entry.content = aria_voice::history::HistoryContent::Chat {
             reply: "é".repeat(300),
         };
         let page = aria_voice::history::HistoryPage {
@@ -4760,7 +4784,7 @@ mod history_tests {
         let listed = wire::ListHistoryResponse::from(page);
 
         let Some(wire::history_entry::Details::Reply(reply)) = &listed.entries[0].details else {
-            panic!("an ask lists its reply");
+            panic!("a chat lists its reply");
         };
         assert_eq!(reply.len(), 512);
     }
@@ -4769,7 +4793,7 @@ mod history_tests {
     fn a_mac_audio_entry_carries_its_transcript_and_needs_one() {
         use aria_voice::history::{HistoryContent, TranscriptRead};
         let mut entry = entry();
-        entry.content = HistoryContent::Listen {
+        entry.content = HistoryContent::SystemTranscription {
             transcript: "/home/me/.aria/transcripts/a.txt".into(),
             read: Some(TranscriptRead::Truncated),
         };

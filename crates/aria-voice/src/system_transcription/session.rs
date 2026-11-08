@@ -1,4 +1,4 @@
-//! The listen session: a thread carrying system audio through streaming
+//! The system transcription: a thread carrying system audio through streaming
 //! transcription into the transcript file. Hearing decodes it and judges its
 //! speech and voices; the voice track settles who spoke afterwards.
 
@@ -12,7 +12,7 @@ use aria_kit::speaker::{Admission, Released, TurnFeed};
 use aria_kit::voice_activity::{SpeechDetector, VoiceActivityDetector};
 use aria_stt::EngineConfig;
 
-use crate::config::{ListenConfig, ListenTranscription, SpeakerConfig};
+use crate::config::{SpeakerConfig, SystemTranscriptionConfig, SystemTranscriptionEngine};
 use crate::hearing::{Board, Decoding, Event, Hearing, HearingError};
 use crate::transcription::{
     Language, Stream, Streaming, Transcriber, Transcription, TranscriptionError,
@@ -20,8 +20,8 @@ use crate::transcription::{
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::RecordingReader;
 
-use super::event::{ListenEventEmitter, ListenStage};
-use super::{ListenError, SystemAudioCapture, TranscriptFile};
+use super::event::{SystemTranscriptionEventEmitter, SystemTranscriptionStage};
+use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
 
 use crate::dictation::Utterance;
 use crate::speaker::{self, Diarizer, Label, VoiceTrack, VoiceprintTracker};
@@ -37,16 +37,16 @@ use super::track::VoiceThread;
     reason = "the daemon hands over each part a session owns"
 )]
 pub fn run_session(
-    config: &ListenConfig,
+    config: &SystemTranscriptionConfig,
     speaker_config: &SpeakerConfig,
     vocabulary: &Vocabulary,
-    events: &ListenEventEmitter,
+    events: &SystemTranscriptionEventEmitter,
     capture: SystemAudioCapture,
     recording: RecordingReader,
     sink: TranscriptFile,
     cancel: &CancelToken,
-) -> Result<(), ListenError> {
-    events.emit(ListenStage::Started);
+) -> Result<(), SystemTranscriptionError> {
+    events.emit(SystemTranscriptionStage::Started);
     let session = Session { vocabulary, events };
     session.run(
         &config.transcription,
@@ -60,10 +60,10 @@ pub fn run_session(
 
 struct Session<'a> {
     vocabulary: &'a Vocabulary,
-    events: &'a ListenEventEmitter,
+    events: &'a SystemTranscriptionEventEmitter,
 }
 
-/// The models listen tells speech and voices apart with: VAD, the diarizer
+/// The models that system transcription tells speech and voices apart with: VAD, the diarizer
 /// that labels voices live, and the voice track that settles them. The
 /// diarizer and the track each load the speaker model, so neither waits on
 /// the other's inference.
@@ -99,9 +99,9 @@ impl Listening<aria_kit::voice_activity::SileroVad> {
     }
 }
 
-/// `ListenTranscription` admits only an engine that streams.
+/// `SystemTranscriptionEngine` admits only an engine that streams.
 fn load(
-    transcription: &ListenTranscription,
+    transcription: &SystemTranscriptionEngine,
     cancel: &CancelToken,
 ) -> Result<(Stream, Box<dyn Transcriber>), TranscriptionError> {
     let engine = EngineConfig::try_from(transcription.config().clone())?;
@@ -112,13 +112,13 @@ fn load(
 impl Session<'_> {
     fn run(
         &self,
-        transcription: &ListenTranscription,
+        transcription: &SystemTranscriptionEngine,
         cancel: &CancelToken,
         speaker: &SpeakerConfig,
         capture: SystemAudioCapture,
         recording: RecordingReader,
         mut sink: TranscriptFile,
-    ) -> Result<(), ListenError> {
+    ) -> Result<(), SystemTranscriptionError> {
         // Forked before the model loads, because loading is seconds of audio the
         // track would otherwise never hear.
         let track_audio = recording.fork();
@@ -132,7 +132,7 @@ impl Session<'_> {
                 || capture.stopper().stop(),
             ),
             Err(TranscriptionError::Cancelled) if cancel.is_cancelled() => Ok(()),
-            Err(error) => Err(ListenError::Transcription(error)),
+            Err(error) => Err(SystemTranscriptionError::Transcription(error)),
         };
         capture.stopper().stop();
         result.and(capture.finish())
@@ -150,7 +150,7 @@ impl Session<'_> {
         // before they are joined, or the join waits for audio nobody will
         // write.
         end_capture: impl Fn(),
-    ) -> Result<(), ListenError>
+    ) -> Result<(), SystemTranscriptionError>
     where
         T: Transcriber,
         V: VoiceActivityDetector + Send,
@@ -164,7 +164,7 @@ impl Session<'_> {
             Ok(operation) => operation,
             Err(error) => {
                 end_capture();
-                return Err(ListenError::Transcription(error));
+                return Err(SystemTranscriptionError::Transcription(error));
             }
         };
         let from = recording.held_from();
@@ -201,7 +201,7 @@ impl Session<'_> {
                 Ok(hearing) => self.hear(hearing, sink, track.as_ref(), &end_capture),
                 Err(error) => {
                     end_capture();
-                    Err(listen_error(error))
+                    Err(system_transcription_error(error))
                 }
             };
             let settled = track.as_mut().map(|track| {
@@ -223,7 +223,7 @@ impl Session<'_> {
             None => Ok(()),
         });
         heard_all?;
-        settled.map_err(ListenError::Transcript)
+        settled.map_err(SystemTranscriptionError::Transcript)
     }
 
     /// Writes what `hearing` releases until it ends. Capture ends on any
@@ -235,7 +235,7 @@ impl Session<'_> {
         sink: &mut TranscriptFile,
         track: Option<&VoiceThread<'_>>,
         end_capture: &impl Fn(),
-    ) -> Result<(), ListenError> {
+    ) -> Result<(), SystemTranscriptionError> {
         let mut heard = self.follow(&mut hearing, sink, track);
         if heard.is_ok() {
             heard = match hearing.finish() {
@@ -243,7 +243,7 @@ impl Session<'_> {
                     Event::Released(released) => self.write(released, sink),
                     Event::Timeline(_) | Event::Preview(_) | Event::Idle => Ok(()),
                 }),
-                Err(error) => listen_ended(error),
+                Err(error) => system_transcription_ended(error),
             };
         }
         if heard.is_err() {
@@ -258,13 +258,13 @@ impl Session<'_> {
         hearing: &mut Hearing<'_>,
         sink: &mut TranscriptFile,
         track: Option<&VoiceThread<'_>>,
-    ) -> Result<(), ListenError> {
+    ) -> Result<(), SystemTranscriptionError> {
         loop {
             match hearing.next() {
                 Ok(Some(Event::Released(released))) => self.write(released, sink)?,
                 Ok(Some(Event::Timeline(_) | Event::Preview(_) | Event::Idle)) => {}
                 Ok(None) => return Ok(()),
-                Err(error) => return Err(listen_error(error)),
+                Err(error) => return Err(system_transcription_error(error)),
             }
             // The track walks on its own thread. Only what it decided has to
             // come back here, where the file and the emitter live.
@@ -276,25 +276,30 @@ impl Session<'_> {
                 // coalescing joins back up.
                 if !merged.is_empty() {
                     sink.rewrite(|spans| attribute_reached(track, spans))
-                        .map_err(ListenError::Transcript)?;
+                        .map_err(SystemTranscriptionError::Transcript)?;
                 }
             }
         }
     }
 
     /// Corrects a released segment and writes it under its live label.
-    fn write(&self, released: Released, sink: &mut TranscriptFile) -> Result<(), ListenError> {
+    fn write(
+        &self,
+        released: Released,
+        sink: &mut TranscriptFile,
+    ) -> Result<(), SystemTranscriptionError> {
         let heard = released.heard;
         let mut text = heard.segment.as_str().to_owned();
         if let Some(corrected) = self.vocabulary.correct(&text) {
             text = corrected;
         }
         let label = released.speaker;
-        self.events.emit(ListenStage::SegmentTranscribed {
-            text: Arc::from(text.as_str()),
-            label: label.as_ref().map(|label| Arc::from(label.to_string())),
-            at_seconds: canonical_duration(heard.window.start).as_secs(),
-        });
+        self.events
+            .emit(SystemTranscriptionStage::SegmentTranscribed {
+                text: Arc::from(text.as_str()),
+                label: label.as_ref().map(|label| Arc::from(label.to_string())),
+                at_seconds: canonical_duration(heard.window.start).as_secs(),
+            });
         sink.voiced_segment(
             Utterance {
                 text: &text,
@@ -305,7 +310,7 @@ impl Session<'_> {
             },
             released.embedding.as_deref(),
         )
-        .map_err(ListenError::Transcript)
+        .map_err(SystemTranscriptionError::Transcript)
     }
 }
 
@@ -320,21 +325,21 @@ impl<F: Fn()> Drop for EndsCapture<F> {
 /// A capture error is the recording ending abnormally; capture's result in
 /// `finish()` names the real cause. A session nobody spoke in is an empty
 /// transcript, not a failure.
-fn listen_ended(error: HearingError) -> Result<(), ListenError> {
+fn system_transcription_ended(error: HearingError) -> Result<(), SystemTranscriptionError> {
     match error {
         HearingError::Transcription(
             TranscriptionError::Capture(_) | TranscriptionError::NoSpeech,
         ) => Ok(()),
-        error => Err(listen_error(error)),
+        error => Err(system_transcription_error(error)),
     }
 }
 
-fn listen_error(error: HearingError) -> ListenError {
+fn system_transcription_error(error: HearingError) -> SystemTranscriptionError {
     match error {
-        HearingError::Transcription(error) => ListenError::Transcription(error),
+        HearingError::Transcription(error) => SystemTranscriptionError::Transcription(error),
         HearingError::Tracking(error) => {
-            ListenError::Transcription(TranscriptionError::Inference {
-                backend: "listen",
+            SystemTranscriptionError::Transcription(TranscriptionError::Inference {
+                backend: "voice tracking",
                 source: aria_kit::backend::BackendError::engine(error),
             })
         }
@@ -357,9 +362,9 @@ fn reached(spans: &[Option<Range<u64>>], reach: u64) -> usize {
 }
 
 /// Tells whoever is watching which voices turned out to be one.
-fn emit_merges(events: &ListenEventEmitter, merged: &[crate::speaker::Merged]) {
+fn emit_merges(events: &SystemTranscriptionEventEmitter, merged: &[crate::speaker::Merged]) {
     for merge in merged {
-        events.emit(ListenStage::SpeakerMerged {
+        events.emit(SystemTranscriptionStage::SpeakerMerged {
             from: Arc::from(merge.from.to_string()),
             into: Arc::from(merge.into.to_string()),
         });
@@ -381,7 +386,7 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let (sink, _) = TranscriptFile::create(directory.path()).unwrap();
             let capture_outcome = if capture_failed {
-                Err(ListenError::PermissionDenied)
+                Err(SystemTranscriptionError::PermissionDenied)
             } else {
                 Ok(())
             };
@@ -397,13 +402,13 @@ mod tests {
                 profiles_dir: directory.path().join("profiles"),
             };
             let vocabulary = Vocabulary::default();
-            let events = ListenEventEmitter::unsubscribed();
+            let events = SystemTranscriptionEventEmitter::unsubscribed();
             let session = Session {
                 vocabulary: &vocabulary,
                 events: &events,
             };
 
-            let parakeet = ListenTranscription::new(TranscriptionConfig::Parakeet {
+            let parakeet = SystemTranscriptionEngine::new(TranscriptionConfig::Parakeet {
                 model_directory: directory.path().to_path_buf(),
                 device: TranscriptionDevice::Cpu,
             })
@@ -412,9 +417,15 @@ mod tests {
 
             assert!(stopped.is_stopped());
             if !cancelled {
-                assert!(matches!(result, Err(ListenError::Transcription(_))));
+                assert!(matches!(
+                    result,
+                    Err(SystemTranscriptionError::Transcription(_))
+                ));
             } else if capture_failed {
-                assert!(matches!(result, Err(ListenError::PermissionDenied)));
+                assert!(matches!(
+                    result,
+                    Err(SystemTranscriptionError::PermissionDenied)
+                ));
             } else {
                 assert!(result.is_ok(), "stop returned {result:?}");
             }
@@ -459,7 +470,7 @@ mod tests {
             Transcription::agreement(Cadence::from_millis(100, 20_000), Answering(text));
         let session = Session {
             vocabulary,
-            events: &ListenEventEmitter::unsubscribed(),
+            events: &SystemTranscriptionEventEmitter::unsubscribed(),
         };
         let listening = Listening {
             vad,

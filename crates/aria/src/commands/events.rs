@@ -2,7 +2,7 @@ use std::io::Write;
 
 use aria_daemon::{
     ChatStage, ChatStageKind, DaemonEvent, DaemonSession, DictationStage, EnrollmentStage,
-    ListenStage, SpeechStage,
+    SpeechStage, SystemTranscriptionStage,
 };
 
 use super::runtime_paths;
@@ -63,17 +63,19 @@ pub(super) fn run() -> anyhow::Result<()> {
                 SpeechStage::Cancelled => writeln!(stdout, "speech cancelled"),
                 SpeechStage::Failed(code) => writeln!(stdout, "speech failed {}", code.label()),
             },
-            DaemonEvent::Listen(stage) => match stage {
-                ListenStage::Started => writeln!(stdout, "listen started"),
-                ListenStage::SegmentTranscribed { text, label, .. } => match label {
-                    Some(label) => writeln!(stdout, "listen segment [{label}] {text}"),
-                    None => writeln!(stdout, "listen segment {text}"),
+            DaemonEvent::SystemTranscription(stage) => match stage {
+                SystemTranscriptionStage::Started => writeln!(stdout, "transcription started"),
+                SystemTranscriptionStage::SegmentTranscribed { text, label, .. } => match label {
+                    Some(label) => writeln!(stdout, "transcription segment [{label}] {text}"),
+                    None => writeln!(stdout, "transcription segment {text}"),
                 },
-                ListenStage::SpeakerMerged { from, into } => {
-                    writeln!(stdout, "listen merged {from} -> {into}")
+                SystemTranscriptionStage::SpeakerMerged { from, into } => {
+                    writeln!(stdout, "transcription merged {from} -> {into}")
                 }
-                ListenStage::Stopped => writeln!(stdout, "listen stopped"),
-                ListenStage::Failed(code) => writeln!(stdout, "listen failed {}", code.label()),
+                SystemTranscriptionStage::Stopped => writeln!(stdout, "transcription stopped"),
+                SystemTranscriptionStage::Failed(code) => {
+                    writeln!(stdout, "transcription failed {}", code.label())
+                }
             },
             DaemonEvent::Settings(status) => writeln!(stdout, "{}", settings_line(&status)),
         };

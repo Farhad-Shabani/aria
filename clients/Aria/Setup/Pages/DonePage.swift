@@ -3,7 +3,7 @@ import SwiftUI
 struct DonePage: View {
     @ObservedObject var state: SetupState
     let ariaKey: AriaKey
-    /// Nil when the ask holds a chord or nothing.
+    /// Nil when the Ask shortcut holds a chord or nothing.
     let askCombo: ShortcutCombo?
 
     var body: some View {
