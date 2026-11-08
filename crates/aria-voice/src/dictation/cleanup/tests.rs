@@ -564,6 +564,11 @@ fn readiness_needs_the_server_to_list_the_model() {
             "llama3.2:1b",
             Some("model_missing"),
         ),
+        (
+            r#"{"object":"list","data":null}"#,
+            "qwen2.5:3b",
+            Some("model_missing"),
+        ),
         ("not json", "qwen2.5:3b", Some("invalid_response")),
     ] {
         let (endpoint, worker) = serve(move |mut stream| {

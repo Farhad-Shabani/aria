@@ -126,7 +126,7 @@ impl LlmCleanup {
         let model = target.model();
         let latest = format!("{model}:latest");
         let serves = |id: &str| id == model || (!model.contains(':') && id == latest);
-        if listed.data.iter().any(|entry| serves(&entry.id)) {
+        if listed.data.iter().flatten().any(|entry| serves(&entry.id)) {
             Ok(())
         } else {
             Err(CleanupError::ModelMissing)
@@ -423,7 +423,8 @@ fn is_number(word: &str) -> bool {
 
 #[derive(Deserialize)]
 struct ModelList {
-    data: Vec<ListedModel>,
+    /// Ollama sends `null` while it has no models.
+    data: Option<Vec<ListedModel>>,
 }
 
 #[derive(Deserialize)]
